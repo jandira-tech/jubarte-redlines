@@ -2908,7 +2908,23 @@ pub fn closing_mark_takes_revised_properties(
         .and_then(|change| dom.element(change, &W::p_pr()));
     let history_matches =
         saved.is_some_and(|saved| formatchg::normalize_para_properties(dom, saved) == old_sig);
-    if live == new && (old_sig == new || history_matches) {
+    // The revised closing paragraph may carry an authored section break
+    // although the original closing paragraph had none. Section geometry is
+    // excluded from paragraph-format signatures, but retaining the added
+    // live break without a valid old pPr would duplicate it on rejection.
+    // Source snapshots precede final-body hoisting, so this tests authored
+    // presence only; relocated final body sections never qualify.
+    let added_authored_section = settings.detect_format_changes
+        && dom.element(original, &W::sect_pr()).is_none()
+        && dom.element(revised, &W::sect_pr()).is_some_and(|section| {
+            dom.element(ppr, &W::sect_pr()).is_some_and(|live_section| {
+                sectpr_identity(dom, live_section) == sectpr_identity(dom, section)
+            })
+        });
+    if live == new
+        && (old_sig == new || history_matches)
+        && (!added_authored_section || history_matches)
+    {
         return;
     }
     let keep: Vec<NodeId> = [W::r_pr(), W::sect_pr()]
@@ -2926,7 +2942,7 @@ pub fn closing_mark_takes_revised_properties(
     for c in keep {
         dom.add(ppr, c);
     }
-    if old_sig != new {
+    if old_sig != new || added_authored_section {
         let chg = dom.new_element(W::p_pr_change());
         dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
         *id_gen += 1;
@@ -12827,6 +12843,12 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
         for t in dom.descendants(del, Some(&W::del_text())) {
             del_text.push_str(&dom.value_str(t));
         }
+        // The optional word-only remesh cannot represent an authored
+        // terminal delimiter. Earlier production already owns these exact
+        // characters; keep that markup instead of dropping or relocating it.
+        if ins_text.ends_with(char::is_whitespace) || del_text.ends_with(char::is_whitespace) {
+            continue;
+        }
         // Capture trailing period intent before tokenizing.
         let trailing_period =
             ins_text.trim_end().ends_with('.') || del_text.trim_end().ends_with('.');
@@ -15941,6 +15963,123 @@ mod coverage_round_two_tests {
     }
 
     #[test]
+    fn wholesale_mesh_preserves_each_authored_terminal_whitespace_and_format() {
+        fn source_projection(dom: &mut Dom, root: NodeId, accept: bool) -> String {
+            let copy = dom.clone_subtree(root);
+            let projected = if accept {
+                crate::revision_processor::accept_revisions_document(dom, copy)
+            } else {
+                crate::revision_processor::reject_revisions_document(dom, copy)
+            };
+            dom.serialize_element(projected)
+        }
+        for terminal in [" ", "  ", "\t", "\n", "\u{a0}"] {
+            for (old_terminal, new_terminal) in
+                [(terminal, ""), ("", terminal), (terminal, terminal)]
+            {
+                let ins = format!("Fresh is centered vivid orange document{new_terminal}");
+                let del = format!("Old is centered bold blue document{old_terminal}");
+                let (mut dom, root) = xml(&format!(
+                    "<w:p><w:pPr><w:jc w:val='center'/><w:spacing w:before='120' w:after='80'/></w:pPr><w:ins w:id='17' w:author='Whitespace editor' w:date='2026-01-02T03:04:05Z'><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t xml:space='preserve'>{ins}</w:t></w:r></w:ins><w:del w:id='19' w:author='Whitespace editor' w:date='2026-01-02T03:04:05Z'><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:delText xml:space='preserve'>{del}</w:delText></w:r></w:del></w:p>"
+                ));
+                // These are valid XML text payloads. OOXML's xml:space
+                // explicitly owns their terminal whitespace; no renderer or
+                // filesystem fixture is needed to establish its lifetime.
+                let expected = [
+                    source_projection(&mut dom, root, false),
+                    source_projection(&mut dom, root, true),
+                ];
+                let before = dom.serialize_element(root);
+                free_mesh_wholesale_body_mix(&mut dom, root);
+                assert_eq!(
+                    dom.serialize_element(root),
+                    before,
+                    "terminal={terminal:?}, old={old_terminal:?}, new={new_terminal:?}; attributed wrappers and complete properties survive"
+                );
+                for (side, accept) in [false, true].into_iter().enumerate() {
+                    assert_eq!(
+                        source_projection(&mut dom, root, accept),
+                        expected[side],
+                        "complete independently owned source payload and formatting"
+                    );
+                }
+                free_mesh_wholesale_body_mix(&mut dom, root);
+                assert_eq!(
+                    dom.serialize_element(root),
+                    before,
+                    "optional remesh is idempotent"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wholesale_mesh_without_terminal_whitespace_keeps_exact_supported_word_streams() {
+        fn owned(dom: &mut Dom, root: NodeId, accept: bool) -> Vec<(char, String)> {
+            let copy = dom.clone_subtree(root);
+            let projected = if accept {
+                crate::revision_processor::accept_revisions_document(dom, copy)
+            } else {
+                crate::revision_processor::reject_revisions_document(dom, copy)
+            };
+            dom.descendants(projected, Some(&W::t()))
+                .into_iter()
+                .flat_map(|leaf| {
+                    let rpr = dom
+                        .parent(leaf)
+                        .and_then(|run| dom.element(run, &W::r_pr()))
+                        .map(|properties| dom.serialize_element(properties))
+                        .unwrap_or_default();
+                    dom.value(leaf)
+                        .chars()
+                        .map(|character| (character, rpr.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        }
+        // M462's recorded leading delimiter is authored on the original
+        // here, so both supported Word streams have a strict source oracle.
+        let (mut dom, root) = xml(
+            "<w:p><w:pPr><w:jc w:val='center'/></w:pPr><w:ins w:id='17' w:author='Mesh editor' w:date='2026-01-02T03:04:05Z'><w:r><w:rPr><w:b/></w:rPr><w:t>Fresh is centered vivid orange document</w:t></w:r></w:ins><w:del w:id='19' w:author='Mesh editor' w:date='2026-01-02T03:04:05Z'><w:r><w:rPr><w:b/></w:rPr><w:delText xml:space='preserve'> Old is centered bold blue document</w:delText></w:r></w:del></w:p>",
+        );
+        let expected = [owned(&mut dom, root, false), owned(&mut dom, root, true)];
+        free_mesh_wholesale_body_mix(&mut dom, root);
+        let paragraph = ps(&dom, root)[0];
+        segments(
+            &dom,
+            paragraph,
+            &[
+                ("ins", "Fresh"),
+                ("del", " Old"),
+                ("r", " is"),
+                ("r", " centered"),
+                ("ins", " vivid orange"),
+                ("del", " bold blue"),
+                ("r", " document"),
+            ],
+        );
+        for (side, accept) in [false, true].into_iter().enumerate() {
+            assert_eq!(
+                owned(&mut dom, root, accept),
+                expected[side],
+                "exact characters and run formatting retain independent source ownership"
+            );
+        }
+        for name in [W::ins(), W::del()] {
+            for wrapper in dom.descendants(root, Some(&name)) {
+                assert_eq!(dom.attribute(wrapper, &W::author()), Some("Mesh editor"));
+                assert_eq!(
+                    dom.attribute(wrapper, &W::date()),
+                    Some("2026-01-02T03:04:05Z")
+                );
+            }
+        }
+        let once = dom.serialize_element(root);
+        free_mesh_wholesale_body_mix(&mut dom, root);
+        assert_eq!(dom.serialize_element(root), once);
+    }
+
+    #[test]
     fn wholesale_mesh_keeps_low_overlap_and_nontext_changes_verbatim() {
         let too_many = "centered ".repeat(41);
         for (ins, del, extra) in [
@@ -18197,41 +18336,61 @@ mod coverage_round_three_tests {
 
     #[test]
     fn revision_rows_preserve_cell_geometry_and_are_stamped_once() {
-        // Full-row insertion/deletion is inferred across multiple cells,
-        // while their width/alignment and the exact paragraph bodies survive.
+        // A fully revised empty tail owns a revised pilcrow. A live empty
+        // tail is an independent source owner and forbids wholesale row
+        // deletion/insertion, even when every visible run is revised.
         for kind in ["ins", "del"] {
-            let (mut dom, root, _) = document(&format!(
-                "<w:tbl><w:tr><w:trPr><w:trHeight w:val=\"320\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"1440\" w:type=\"dxa\"/></w:tcPr>{}</w:tc><w:tc><w:tcPr><w:vAlign w:val=\"center\"/></w:tcPr>{}<w:p/></w:tc></w:tr></w:tbl>",
-                para(kind, "First cell", ""),
-                para(kind, "Second cell", "")
-            ));
-            let row = dom.descendants(root, Some(&W::tr()))[0];
-            let cells = dom.elements(row, Some(&W::name("tc")));
-            let cell_xml = cells
-                .iter()
-                .map(|&c| dom.serialize_element(c))
-                .collect::<Vec<_>>();
-            let mut id = 500;
-            mark_fully_revised_rows(&mut dom, root, &settings(), &mut id);
-            let pr = dom.element(row, &W::tr_pr()).unwrap();
-            let mark = dom.element(pr, &W::name(kind)).unwrap();
-            assert_eq!(dom.attribute(mark, &W::id()), Some("500"));
-            assert_eq!(dom.attribute(mark, &W::author()), Some("Editor"));
-            assert_eq!(
-                dom.attribute(mark, &W::date()),
-                Some("2026-01-02T03:04:05Z")
-            );
-            assert_eq!(
-                dom.attribute(dom.element(pr, &W::name("trHeight")).unwrap(), &W::val()),
-                Some("320")
-            );
-            for (&cell, xml) in cells.iter().zip(&cell_xml) {
-                assert_eq!(&dom.serialize_element(cell), xml);
+            for live_tail in [false, true] {
+                let tail = if live_tail {
+                    "<w:p/>".to_string()
+                } else {
+                    para(kind, "", "")
+                };
+                let (mut dom, root, _) = document(&format!(
+                    "<w:tbl><w:tr><w:trPr><w:trHeight w:val=\"320\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"1440\" w:type=\"dxa\"/></w:tcPr>{}</w:tc><w:tc><w:tcPr><w:vAlign w:val=\"center\"/></w:tcPr>{}{tail}</w:tc></w:tr></w:tbl>",
+                    para(kind, "First cell", ""),
+                    para(kind, "Second cell", "")
+                ));
+                let row = dom.descendants(root, Some(&W::tr()))[0];
+                let cells = dom.elements(row, Some(&W::name("tc")));
+                let cell_xml = cells
+                    .iter()
+                    .map(|&c| dom.serialize_element(c))
+                    .collect::<Vec<_>>();
+                let mut id = 500;
+                mark_fully_revised_rows(&mut dom, root, &settings(), &mut id);
+                let pr = dom.element(row, &W::tr_pr()).unwrap();
+                if live_tail {
+                    assert!(dom.element(pr, &W::ins()).is_none());
+                    assert!(dom.element(pr, &W::del()).is_none());
+                    assert_eq!(id, 500, "live ownership creates no revision stamp");
+                } else {
+                    let mark = dom.element(pr, &W::name(kind)).unwrap();
+                    assert_eq!(dom.attribute(mark, &W::id()), Some("500"));
+                    assert_eq!(dom.attribute(mark, &W::author()), Some("Editor"));
+                    assert_eq!(
+                        dom.attribute(mark, &W::date()),
+                        Some("2026-01-02T03:04:05Z")
+                    );
+                    assert_eq!(dom.elements(pr, Some(&W::name(kind))).len(), 1);
+                    assert_eq!(id, 501);
+                }
+                assert_eq!(
+                    dom.attribute(dom.element(pr, &W::name("trHeight")).unwrap(), &W::val()),
+                    Some("320")
+                );
+                for (&cell, xml) in cells.iter().zip(&cell_xml) {
+                    assert_eq!(
+                        &dom.serialize_element(cell),
+                        xml,
+                        "{kind}, live tail={live_tail}: complete cell geometry and payload remain unchanged"
+                    );
+                }
+                let once = dom.serialize_element(root);
+                mark_fully_revised_rows(&mut dom, root, &settings(), &mut id);
+                assert_eq!(dom.serialize_element(root), once);
+                assert_eq!(id, if live_tail { 500 } else { 501 });
             }
-            let once = dom.serialize_element(root);
-            mark_fully_revised_rows(&mut dom, root, &settings(), &mut id);
-            assert_eq!(dom.serialize_element(root), once);
-            assert_eq!(id, 501);
         }
     }
 }
@@ -23533,6 +23692,20 @@ mod coverage_real_revision_merge_matrix_tests {
         format!("<w:p><w:pPr>{props}{marker}</w:pPr>{body}</w:p>")
     }
 
+    fn authored_paragraph(text: &str, family: &str, props: &str) -> String {
+        // Literal untracked source data: no revision processor manufactures
+        // paragraph/control placement from a combined private D/I fixture.
+        let payload = match family {
+            "empty" => String::new(),
+            "whitespace" => "<w:r><w:t xml:space=\"preserve\">   </w:t></w:r>".to_string(),
+            "break" => "<w:r><w:br w:type=\"page\"/></w:r>".to_string(),
+            "math" => "<m:oMath><m:r><w:rPr><w:rFonts w:ascii=\"Cambria Math\" w:hAnsi=\"Cambria Math\"/></w:rPr><m:t>x+y</m:t></m:r></m:oMath>".to_string(),
+            "field" => format!("<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>{text}</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"),
+            _ => format!("<w:r><w:rPr><w:b/><w:color w:val=\"123456\"/><w:lang w:val=\"en-US\"/></w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r>"),
+        };
+        format!("<w:p><w:pPr>{props}</w:pPr>{payload}</w:p>")
+    }
+
     fn document(fragment: &str, container: &str) -> (Dom, NodeId, NodeId) {
         let fragment = match container {
             "tc" => format!(
@@ -23669,6 +23842,68 @@ mod coverage_real_revision_merge_matrix_tests {
         }
     }
 
+    fn compact_source_difference(actual: &SourceView, expected: &SourceView) -> String {
+        let owned_difference = actual
+            .formatted_characters
+            .iter()
+            .zip(&expected.formatted_characters)
+            .position(|(actual, expected)| actual.0 != expected.0 || actual.2 != expected.2)
+            .unwrap_or(
+                actual
+                    .formatted_characters
+                    .len()
+                    .min(expected.formatted_characters.len()),
+            );
+        let context = |view: &SourceView| {
+            view.formatted_characters
+                .iter()
+                .skip(owned_difference.saturating_sub(35))
+                .take(90)
+                .map(|(character, _, _)| *character)
+                .collect::<String>()
+        };
+        let property_difference = actual
+            .formatted_characters
+            .iter()
+            .zip(&expected.formatted_characters)
+            .position(|(actual, expected)| actual.1 != expected.1);
+        let short = |value: &str| value.chars().take(400).collect::<String>();
+        let properties = property_difference
+            .map(|index| {
+                format!(
+                    "pPr difference at {index}: actual={:?}, expected={:?}",
+                    short(&actual.formatted_characters[index].1),
+                    short(&expected.formatted_characters[index].1)
+                )
+            })
+            .unwrap_or_else(|| "pPr equal on paired characters".to_string());
+        let run = actual
+            .formatted_characters
+            .get(owned_difference)
+            .zip(expected.formatted_characters.get(owned_difference))
+            .map(|(actual, expected)| {
+                format!(
+                    "rPr actual={:?}, expected={:?}",
+                    short(&actual.2),
+                    short(&expected.2)
+                )
+            })
+            .unwrap_or_else(|| "one source ends at the first owned difference".to_string());
+        format!(
+            "first owned difference={owned_difference}; chars actual={}, expected={}; actual context={:?}; expected context={:?}; {run}; {properties}; nontext equal={}, actual count={}, expected count={}; geometry equal={}, actual count={}, expected count={}",
+            actual.formatted_characters.len(),
+            expected.formatted_characters.len(),
+            context(actual),
+            context(expected),
+            actual.nontext_payloads == expected.nontext_payloads,
+            actual.nontext_payloads.len(),
+            expected.nontext_payloads.len(),
+            actual.table_geometry == expected.table_geometry,
+            actual.table_geometry.len(),
+            expected.table_geometry.len()
+        )
+    }
+
     fn exercise(family: &str) {
         let mut failures = Vec::new();
         let mut failure_count = 0;
@@ -23754,19 +23989,33 @@ mod coverage_real_revision_merge_matrix_tests {
                             let label = format!(
                                 "{family} {counts:?}, shared={shared}, inserted_first={inserted_first}, container={container}, tail={tail_kind}"
                             );
-                            // Keep the actual clean A/B sources before exercising
-                            // the private layout phase. Its MIX carriers are an
-                            // intermediate representation: the producer's property
-                            // correlations and downstream restoration are required
-                            // before paragraph-format projections are meaningful.
-                            let old_copy = dom.clone_subtree(root);
-                            let new_copy = dom.clone_subtree(root);
-                            let old_source = crate::revision_processor::reject_revisions_document(
-                                &mut dom, old_copy,
-                            );
-                            let new_source = crate::revision_processor::accept_revisions_document(
-                                &mut dom, new_copy,
-                            );
+                            // The private fixture remains a combined D/I
+                            // intermediate. Public comparison instead receives
+                            // independently authored clean A and B with identical
+                            // wrapper/shared-tail ownership. Rejecting a combined
+                            // SDT D/I tree can relocate its live blank out of the
+                            // control and is not a source-document constructor.
+                            let mut sources = Vec::new();
+                            for (side, count) in [("del", counts.0), ("ins", counts.1)] {
+                                let content = (0..count)
+                                    .map(|index| {
+                                        authored_paragraph(
+                                            &text(family, side, index, shared),
+                                            family,
+                                            &props,
+                                        )
+                                    })
+                                    .collect::<String>()
+                                    + tail;
+                                let (source_dom, source_root, _) = document(&content, container);
+                                let source_document =
+                                    dom.parse_xdocument(&source_dom.serialize_element(source_root));
+                                sources.push(dom.root(source_document).unwrap());
+                            }
+                            let old_source = sources[0];
+                            let new_source = sources[1];
+                            let clean_rejected = projected(&mut dom, old_source, false);
+                            let clean_accepted = projected(&mut dom, new_source, true);
                             let fold_boundary = container != "body" || tail_kind != "blank";
                             merge_replaced_in_container(&mut dom, target, "Editor", fold_boundary);
                             for (accept, expected) in [(false, &rejected), (true, &accepted)] {
@@ -23785,8 +24034,8 @@ mod coverage_real_revision_merge_matrix_tests {
                                     || actual.table_geometry != expected.table_geometry
                                 {
                                     failure_count += 1;
-                                    if failures.len() < 4 {
-                                        failures.push(format!("private owned payload/format/geometry: accept={accept}; {label}; actual={actual:?}; expected={expected:?}"));
+                                    if failures.len() < 32 {
+                                        failures.push(format!("private owned payload/format/geometry: accept={accept}; {label}; {}",compact_source_difference(&actual, expected)));
                                     }
                                 }
                             }
@@ -23794,7 +24043,7 @@ mod coverage_real_revision_merge_matrix_tests {
                             merge_replaced_in_container(&mut dom, target, "Editor", fold_boundary);
                             if dom.serialize_element(root) != once {
                                 failure_count += 1;
-                                if failures.len() < 4 {
+                                if failures.len() < 32 {
                                     failures.push(format!("private idempotence: {label}"));
                                 }
                             }
@@ -23820,7 +24069,9 @@ mod coverage_real_revision_merge_matrix_tests {
                                 let redline = crate::comparer::compare_bodies_faithful(
                                     &mut dom, old_input, new_input, old_body, new_body, &settings,
                                 );
-                                for (accept, expected) in [(false, &rejected), (true, &accepted)] {
+                                for (accept, expected) in
+                                    [(false, &clean_rejected), (true, &clean_accepted)]
+                                {
                                     let actual = projected(&mut dom, redline, accept);
                                     let runs = |view: &SourceView| {
                                         view.formatted_characters
@@ -23837,8 +24088,8 @@ mod coverage_real_revision_merge_matrix_tests {
                                     };
                                     if !agrees {
                                         failure_count += 1;
-                                        if failures.len() < 4 {
-                                            failures.push(format!("full caller source projection: word={word_mode}, accept={accept}; {label}; actual={actual:?}; expected={expected:?}; redline={}", dom.serialize_element(redline)));
+                                        if failures.len() < 32 {
+                                            failures.push(format!("full caller source projection: word={word_mode}, accept={accept}; {label}; {}",compact_source_difference(&actual, expected)));
                                         }
                                     }
                                 }
@@ -23858,7 +24109,7 @@ mod coverage_real_revision_merge_matrix_tests {
                                         != dom.serialize_element(repeated)
                                     {
                                         failure_count += 1;
-                                        if failures.len() < 4 {
+                                        if failures.len() < 32 {
                                             failures
                                                 .push(format!("Word repeat execution: {label}"));
                                         }
@@ -23881,7 +24132,7 @@ mod coverage_real_revision_merge_matrix_tests {
             failure_count,
             failures
                 .iter()
-                .take(4)
+                .take(32)
                 .cloned()
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -24373,7 +24624,7 @@ mod coverage_real_revision_merge_matrix_tests {
                     .collect::<String>();
                 let (mut dom, root, target) =
                     document(&(inserted + &originals + "<w:p/>"), "sdtContent");
-                let original = guarded_multi_original_complete_projection(&mut dom, root, false);
+                let original = projected(&mut dom, root, false);
                 let before = dom.elements(target, Some(&W::p()));
                 let prior_ppr = dom.element(before[1 + prior_index], &W::p_pr()).unwrap();
                 let prior_mark = dom
@@ -24384,6 +24635,36 @@ mod coverage_real_revision_merge_matrix_tests {
                 let prior_body = dom.element(before[1 + prior_index], &W::del()).unwrap();
                 assert_eq!(dom.attribute(prior_body, &W::author()), Some("Editor"));
                 assert_eq!(dom.attribute(prior_body, &W::date()), Some(DATE));
+                let intact = dom.serialize_element(root);
+                assert!(
+                    !story_tail_has_paired_original_boundary(
+                        &mut dom,
+                        &before[1..4],
+                        before[0],
+                        &before[4..],
+                        "Editor"
+                    ),
+                    "every later original mark must independently match author/date"
+                );
+                assert_eq!(
+                    dom.serialize_element(root),
+                    intact,
+                    "eligibility cannot mutate source payload or ownership"
+                );
+                let original_bodies = before[1..4]
+                    .iter()
+                    .map(|&paragraph| {
+                        dom.elements(paragraph, Some(&W::del()))
+                            .into_iter()
+                            .map(|node| dom.serialize_element(node))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let revised_body = dom
+                    .elements(before[0], Some(&W::ins()))
+                    .into_iter()
+                    .map(|node| dom.serialize_element(node))
+                    .collect::<Vec<_>>();
                 let original_properties = before[1..4]
                     .iter()
                     .map(|&p| dom.serialize_element(dom.element(p, &W::p_pr()).unwrap()))
@@ -24408,6 +24689,13 @@ mod coverage_real_revision_merge_matrix_tests {
                         "all original pilcrow properties and stamps survive"
                     );
                     assert!(para_mark_revision(&dom, paragraphs[index], &W::del()));
+                    assert_eq!(
+                        dom.elements(paragraphs[index], Some(&W::del()))
+                            .into_iter()
+                            .map(|node| dom.serialize_element(node))
+                            .collect::<Vec<_>>(),
+                        original_bodies[index]
+                    );
                     if index > 0 {
                         assert_eq!(
                             para_revision_body_text(&dom, paragraphs[index]),
@@ -24416,11 +24704,22 @@ mod coverage_real_revision_merge_matrix_tests {
                     }
                 }
                 assert!(paragraph_has_live_empty_pilcrow(&dom, paragraphs[3]));
+                assert_eq!(projected(&mut dom, root, false), original);
                 assert_eq!(
-                    guarded_multi_original_complete_projection(&mut dom, root, false),
-                    original
+                    dom.elements(paragraphs[0], Some(&W::ins()))
+                        .into_iter()
+                        .map(|node| dom.serialize_element(node))
+                        .collect::<Vec<_>>(),
+                    revised_body
                 );
                 assert!(dom.descendants(root, Some(&W::p_pr_change())).is_empty());
+                let once = dom.serialize_element(root);
+                merge_replaced_in_container(&mut dom, target, "Editor", true);
+                assert_eq!(
+                    dom.serialize_element(root),
+                    once,
+                    "foreign-history phase remains idempotent"
+                );
             }
         }
     }
@@ -24465,15 +24764,137 @@ mod coverage_real_revision_merge_matrix_tests {
                 .replace("w:id=\"31\"", "w:id=\"32\"");
             let (mut dom, root, target) =
                 document(&(inserted + &first + &last + "<w:p/>"), "sdtContent");
-            let original = guarded_multi_original_complete_projection(&mut dom, root, false);
+            let original = projected(&mut dom, root, false);
             let before = dom.elements(target, Some(&W::p()));
             let first_properties =
                 dom.serialize_element(dom.element(before[1], &W::p_pr()).unwrap());
             let last_properties =
                 dom.serialize_element(dom.element(before[2], &W::p_pr()).unwrap());
+            let intact = dom.serialize_element(root);
             assert!(!paired_replacement_has_identical_properties(
                 &mut dom, before[1], before[0]
             ));
+            assert!(
+                !story_tail_has_paired_original_boundary(
+                    &mut dom,
+                    &before[1..3],
+                    before[0],
+                    &before[3..],
+                    "Editor"
+                ),
+                "section or history never authorizes paired boundary normalization"
+            );
+            assert_eq!(
+                dom.serialize_element(root),
+                intact,
+                "negative eligibility retains complete text, stamps, section/history and geometry"
+            );
+            if protected.starts_with("<w:sectPr") {
+                // The section disqualifies the new story-tail normalization,
+                // but the established general Word I/D fold still joins into
+                // the inserted carrier and strips its mark shell (M361).
+                let expected_properties =
+                    dom.clone_subtree(dom.element(before[0], &W::p_pr()).unwrap());
+                let mark_properties = dom.element(expected_properties, &W::r_pr()).unwrap();
+                dom.remove(mark_properties);
+                let expected_properties = dom.serialize_element(expected_properties);
+                let inserted_body =
+                    dom.serialize_element(dom.element(before[0], &W::ins()).unwrap());
+                let first_deleted_body =
+                    dom.serialize_element(dom.element(before[1], &W::del()).unwrap());
+                let last_deleted_body =
+                    dom.serialize_element(dom.element(before[2], &W::del()).unwrap());
+                let original_section = dom.serialize_element(
+                    dom.element(dom.element(before[1], &W::p_pr()).unwrap(), &W::sect_pr())
+                        .unwrap(),
+                );
+                let body = dom.element(root, &W::body()).unwrap();
+                let final_section =
+                    dom.serialize_element(dom.element(body, &W::sect_pr()).unwrap());
+                merge_replaced_in_container(&mut dom, target, "Editor", true);
+                let paragraphs = dom.elements(target, Some(&W::p()));
+                assert_eq!(
+                    paragraphs.len(),
+                    3,
+                    "general section fold produces MIX,D,blank"
+                );
+                assert!(para_is_mixed_revision(&dom, paragraphs[0]));
+                assert!(!para_mark_revision(&dom, paragraphs[0], &W::ins()));
+                assert!(!para_mark_revision(&dom, paragraphs[0], &W::del()));
+                let mixed_properties = dom.element(paragraphs[0], &W::p_pr()).unwrap();
+                assert_eq!(
+                    dom.serialize_element(mixed_properties),
+                    expected_properties,
+                    "inserted carrier keeps complete authored section geometry and paragraph formatting"
+                );
+                assert_eq!(
+                    dom.serialize_element(dom.element(mixed_properties, &W::sect_pr()).unwrap()),
+                    original_section
+                );
+                assert_eq!(
+                    dom.descendants(target, Some(&W::sect_pr())).len(),
+                    1,
+                    "one authored paragraph section owner survives the general fold"
+                );
+                assert_eq!(
+                    dom.serialize_element(dom.element(body, &W::sect_pr()).unwrap()),
+                    final_section,
+                    "final body section retains independent ownership"
+                );
+                assert_eq!(
+                    dom.serialize_element(dom.element(paragraphs[0], &W::ins()).unwrap()),
+                    inserted_body
+                );
+                assert_eq!(
+                    dom.serialize_element(dom.element(paragraphs[0], &W::del()).unwrap()),
+                    first_deleted_body
+                );
+                assert_eq!(
+                    para_revision_body_text(&dom, paragraphs[0]),
+                    "Revised clause Original first clause "
+                );
+                assert!(para_mark_revision(&dom, paragraphs[1], &W::del()));
+                assert_eq!(
+                    dom.serialize_element(dom.element(paragraphs[1], &W::p_pr()).unwrap()),
+                    last_properties
+                );
+                assert_eq!(
+                    dom.serialize_element(dom.element(paragraphs[1], &W::del()).unwrap()),
+                    last_deleted_body
+                );
+                assert_eq!(
+                    para_revision_body_text(&dom, paragraphs[1]),
+                    "Original last clause "
+                );
+                assert!(paragraph_has_live_empty_pilcrow(&dom, paragraphs[2]));
+                assert_eq!(
+                    projected(&mut dom, root, false),
+                    original,
+                    "general section fold preserves original text and full paragraph/run formatting"
+                );
+                let once = dom.serialize_element(root);
+                merge_replaced_in_container(&mut dom, target, "Editor", true);
+                assert_eq!(
+                    dom.serialize_element(root),
+                    once,
+                    "general section fold remains idempotent"
+                );
+                continue;
+            }
+            let original_bodies = before[1..3]
+                .iter()
+                .map(|&paragraph| {
+                    dom.elements(paragraph, Some(&W::del()))
+                        .into_iter()
+                        .map(|node| dom.serialize_element(node))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let revised_body = dom
+                .elements(before[0], Some(&W::ins()))
+                .into_iter()
+                .map(|node| dom.serialize_element(node))
+                .collect::<Vec<_>>();
             merge_replaced_in_container(&mut dom, target, "Editor", true);
             let originals = dom
                 .elements(target, Some(&W::p()))
@@ -24494,9 +24915,32 @@ mod coverage_real_revision_merge_matrix_tests {
                 "Original last clause "
             );
             assert_eq!(
-                guarded_multi_original_complete_projection(&mut dom, root, false),
+                projected(&mut dom, root, false),
                 original,
                 "reject protected={protected}"
+            );
+            for index in 0..2 {
+                assert_eq!(
+                    dom.elements(originals[index], Some(&W::del()))
+                        .into_iter()
+                        .map(|node| dom.serialize_element(node))
+                        .collect::<Vec<_>>(),
+                    original_bodies[index]
+                );
+            }
+            assert_eq!(
+                dom.elements(originals[0], Some(&W::ins()))
+                    .into_iter()
+                    .map(|node| dom.serialize_element(node))
+                    .collect::<Vec<_>>(),
+                revised_body
+            );
+            let once = dom.serialize_element(root);
+            merge_replaced_in_container(&mut dom, target, "Editor", true);
+            assert_eq!(
+                dom.serialize_element(root),
+                once,
+                "history-preserving phase remains idempotent"
             );
         }
     }
@@ -24595,7 +25039,7 @@ mod coverage_real_revision_merge_matrix_tests {
     fn public_compare_multi_original_blank_tail_recovers_complete_clean_sources() {
         fn clean_paragraph(text: &str, props: &str) -> String {
             format!(
-                "<w:p><w:pPr>{props}</w:pPr><w:r><w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr><w:t xml:space='preserve'>{text}</w:t></w:r></w:p>"
+                "<w:p><w:pPr>{props}</w:pPr><w:r><w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr><w:t>{text}</w:t></w:r></w:p>"
             )
         }
         fn package(body: &str, container: &str) -> Vec<u8> {
@@ -24603,6 +25047,24 @@ mod coverage_real_revision_merge_matrix_tests {
                 "../../tests/fixtures/relids/image_doc.docx"
             ))
             .unwrap();
+            // Every referenced style is defined and has distinct inherited
+            // formatting. Unresolved pStyle references are intentionally
+            // removed by the public comparer and are not a faithful fixture.
+            package.set_part("word/styles.xml", format!(
+                "<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style><w:style w:type='paragraph' w:styleId='BodyText'><w:name w:val='Body Text'/><w:pPr><w:ind w:left='120'/><w:jc w:val='left'/></w:pPr><w:rPr><w:color w:val='334455'/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Heading1'><w:name w:val='heading 1'/><w:pPr><w:keepNext/><w:outlineLvl w:val='0'/></w:pPr><w:rPr><w:sz w:val='28'/></w:rPr></w:style></w:styles>", W::URI
+            ).into_bytes());
+            package.set_part("word/numbering.xml", format!(
+                "<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='1'><w:multiLevelType w:val='singleLevel'/><w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%1.'/><w:lvlJc w:val='left'/><w:pPr><w:tabs><w:tab w:val='num' w:pos='720'/></w:tabs><w:ind w:left='720' w:hanging='360'/></w:pPr></w:lvl></w:abstractNum><w:num w:numId='9'><w:abstractNumId w:val='1'/></w:num></w:numbering>", W::URI
+            ).into_bytes());
+            package.add_content_type_override(
+                "/word/numbering.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+            );
+            package.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+                "numbering.xml",
+            );
             let (dom, root, _) = document(body, container);
             package.set_part(
                 "word/document.xml",
@@ -24615,6 +25077,26 @@ mod coverage_real_revision_merge_matrix_tests {
             let mut dom = Dom::new();
             let doc = dom.parse_xdocument(&package.part_string("word/document.xml").unwrap());
             let root = dom.root(doc).unwrap();
+            // IgnorePt14Namespace adds this compatibility declaration even
+            // when no scratch markup remains. It has no document semantics;
+            // retain every other compatibility token and every real attribute.
+            assert!(
+                dom.descendants_and_self(root, None)
+                    .into_iter()
+                    .all(|node| {
+                        dom.name(node)
+                            .is_none_or(|name| name.namespace_name() != PT::URI)
+                            && dom
+                                .attributes(node)
+                                .into_iter()
+                                .all(|(name, _)| name.namespace_name() != PT::URI)
+                    }),
+                "complete public projections contain no PowerTools scratch payload"
+            );
+            let ignorable = MC::name("Ignorable");
+            if dom.attribute(root, &ignorable) == Some("pt14") {
+                dom.set_attribute_value(root, &ignorable, None);
+            }
             guarded_multi_original_complete_projection(&mut dom, root, false)
         }
         for count in [2, 3, 8] {
@@ -25096,6 +25578,215 @@ mod coverage_real_revision_merge_matrix_tests {
         mixed_spacing_to_following_empty(&mut dom, root, &settings, &mut next_id);
         assert_eq!(dom.serialize_element(body), once);
         assert_eq!(next_id, 42);
+    }
+
+    #[test]
+    fn repeated_authored_prefixes_keep_deleted_paragraphs_before_their_unchanged_table() {
+        fn owned(view: SourceView) -> (Vec<(char, String)>, Vec<String>, Vec<String>) {
+            (
+                view.formatted_characters
+                    .into_iter()
+                    .map(|(character, _, run)| (character, run))
+                    .collect(),
+                view.nontext_payloads,
+                view.table_geometry,
+            )
+        }
+        let tail = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Unchanged cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        for (family, original_count, props) in [
+            ("cover", 4, "<w:pStyle w:val='BodyText'/>"),
+            ("wrap", 3, "<w:spacing w:before='120' w:after='80'/>"),
+        ] {
+            for container in ["body", "sdtContent"] {
+                let mut dom = Dom::new();
+                let mut sources = Vec::new();
+                for (side, count) in [("del", original_count), ("ins", 2)] {
+                    let content = (0..count)
+                        .map(|index| {
+                            authored_paragraph(&text(family, side, index, true), family, props)
+                        })
+                        .collect::<String>()
+                        + tail;
+                    let (source_dom, source_root, _) = document(&content, container);
+                    let source_document =
+                        dom.parse_xdocument(&source_dom.serialize_element(source_root));
+                    sources.push(dom.root(source_document).unwrap());
+                }
+                let expected_original = projected(&mut dom, sources[0], false);
+                let expected_revised = projected(&mut dom, sources[1], true);
+                for word_mode in [false, true] {
+                    let mut settings = if word_mode {
+                        WmlComparerSettings::default()
+                    } else {
+                        WmlComparerSettings::powertools_faithful()
+                    };
+                    settings.author_for_revisions = "Order editor".into();
+                    settings.date_time_for_revisions = DATE.into();
+                    let mut results = Vec::new();
+                    for _ in 0..2 {
+                        let old_input = dom.clone_subtree(sources[0]);
+                        let new_input = dom.clone_subtree(sources[1]);
+                        let old_body = dom.element(old_input, &W::body()).unwrap();
+                        let new_body = dom.element(new_input, &W::body()).unwrap();
+                        let compared = crate::comparer::compare_bodies_faithful(
+                            &mut dom, old_input, new_input, old_body, new_body, &settings,
+                        );
+                        for (accept, expected) in
+                            [(false, &expected_original), (true, &expected_revised)]
+                        {
+                            let actual = projected(&mut dom, compared, accept);
+                            if !word_mode {
+                                assert_eq!(
+                                    &actual, expected,
+                                    "faithful full source {family}/{container}/accept={accept}"
+                                );
+                            } else {
+                                let expected_text = expected
+                                    .formatted_characters
+                                    .iter()
+                                    .map(|(character, _, _)| *character)
+                                    .collect::<String>();
+                                let actual_text = actual
+                                    .formatted_characters
+                                    .iter()
+                                    .map(|(character, _, _)| *character)
+                                    .collect::<String>();
+                                let expected_owned = (
+                                    expected
+                                        .formatted_characters
+                                        .iter()
+                                        .map(|(character, _, run)| (*character, run.clone()))
+                                        .collect::<Vec<_>>(),
+                                    expected.nontext_payloads.clone(),
+                                    expected.table_geometry.clone(),
+                                );
+                                assert!(
+                                    owned(actual) == expected_owned,
+                                    "Word original/revised ownership {family}/{container}/accept={accept}; expected text={expected_text:?}; actual text={actual_text:?}"
+                                );
+                            }
+                        }
+                        for kind in [W::ins(), W::del(), W::move_from(), W::move_to()] {
+                            for revision in dom.descendants(compared, Some(&kind)) {
+                                assert_eq!(
+                                    dom.attribute(revision, &W::author()),
+                                    Some("Order editor")
+                                );
+                                assert_eq!(dom.attribute(revision, &W::date()), Some(DATE));
+                            }
+                        }
+                        results.push(dom.serialize_element(compared));
+                    }
+                    assert_eq!(
+                        results[0], results[1],
+                        "repeat output {family}/{container}/word={word_mode}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unshared_wrap_gap_keeps_each_sources_preserved_terminal_space() {
+        fn owned(view: SourceView) -> (Vec<(char, String)>, Vec<String>, Vec<String>) {
+            (
+                view.formatted_characters
+                    .into_iter()
+                    .map(|(character, _, run)| (character, run))
+                    .collect(),
+                view.nontext_payloads,
+                view.table_geometry,
+            )
+        }
+        let tail = "";
+        for (family, original_count, props) in [("wrap", 4, "")] {
+            for container in ["body", "sdtContent", "tc"] {
+                let mut dom = Dom::new();
+                let mut sources = Vec::new();
+                for (side, count) in [("del", original_count), ("ins", 2)] {
+                    let content = (0..count)
+                        .map(|index| {
+                            authored_paragraph(&text(family, side, index, false), family, props)
+                        })
+                        .collect::<String>()
+                        + tail;
+                    let (source_dom, source_root, _) = document(&content, container);
+                    let source_document =
+                        dom.parse_xdocument(&source_dom.serialize_element(source_root));
+                    sources.push(dom.root(source_document).unwrap());
+                }
+                let expected_original = projected(&mut dom, sources[0], false);
+                let expected_revised = projected(&mut dom, sources[1], true);
+                for word_mode in [false, true] {
+                    let mut settings = if word_mode {
+                        WmlComparerSettings::default()
+                    } else {
+                        WmlComparerSettings::powertools_faithful()
+                    };
+                    settings.author_for_revisions = "Order editor".into();
+                    settings.date_time_for_revisions = DATE.into();
+                    let mut results = Vec::new();
+                    for _ in 0..2 {
+                        let old_input = dom.clone_subtree(sources[0]);
+                        let new_input = dom.clone_subtree(sources[1]);
+                        let old_body = dom.element(old_input, &W::body()).unwrap();
+                        let new_body = dom.element(new_input, &W::body()).unwrap();
+                        let compared = crate::comparer::compare_bodies_faithful(
+                            &mut dom, old_input, new_input, old_body, new_body, &settings,
+                        );
+                        for (accept, expected) in
+                            [(false, &expected_original), (true, &expected_revised)]
+                        {
+                            let actual = projected(&mut dom, compared, accept);
+                            if !word_mode {
+                                assert_eq!(
+                                    &actual, expected,
+                                    "faithful full source {family}/{container}/accept={accept}"
+                                );
+                            } else {
+                                let expected_text = expected
+                                    .formatted_characters
+                                    .iter()
+                                    .map(|(character, _, _)| *character)
+                                    .collect::<String>();
+                                let actual_text = actual
+                                    .formatted_characters
+                                    .iter()
+                                    .map(|(character, _, _)| *character)
+                                    .collect::<String>();
+                                let expected_owned = (
+                                    expected
+                                        .formatted_characters
+                                        .iter()
+                                        .map(|(character, _, run)| (*character, run.clone()))
+                                        .collect::<Vec<_>>(),
+                                    expected.nontext_payloads.clone(),
+                                    expected.table_geometry.clone(),
+                                );
+                                assert!(
+                                    owned(actual) == expected_owned,
+                                    "Word original/revised ownership {family}/{container}/accept={accept}; expected text={expected_text:?}; actual text={actual_text:?}"
+                                );
+                            }
+                        }
+                        for kind in [W::ins(), W::del(), W::move_from(), W::move_to()] {
+                            for revision in dom.descendants(compared, Some(&kind)) {
+                                assert_eq!(
+                                    dom.attribute(revision, &W::author()),
+                                    Some("Order editor")
+                                );
+                                assert_eq!(dom.attribute(revision, &W::date()), Some(DATE));
+                            }
+                        }
+                        results.push(dom.serialize_element(compared));
+                    }
+                    assert_eq!(
+                        results[0], results[1],
+                        "repeat output {family}/{container}/word={word_mode}"
+                    );
+                }
+            }
+        }
     }
 
     macro_rules! family_test {
@@ -25895,6 +26586,304 @@ mod paired_row_mark_ownership_tests {
             let properties = dom.element(row, &W::tr_pr()).unwrap();
             assert!(dom.element(properties, &W::name(row_kind)).is_some());
             assert!(dom.element(properties, &W::name(content_kind)).is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod closing_authored_section_boundary_tests {
+    use super::*;
+
+    fn parse(dom: &mut Dom, xml: &str) -> NodeId {
+        let document = dom.parse_xdocument(xml);
+        dom.root(document).unwrap()
+    }
+
+    fn section(width: u32) -> String {
+        format!("<w:sectPr><w:pgSz w:w='{width}' w:h='15840'/></w:sectPr>")
+    }
+
+    fn props(section: Option<u32>) -> String {
+        format!(
+            "<w:pPr><w:spacing w:before='120' w:after='80'/>{}</w:pPr>",
+            section.map(self::section).unwrap_or_default()
+        )
+    }
+
+    fn canonical(dom: &Dom, node: NodeId) -> String {
+        let mut attributes = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .collect::<Vec<_>>();
+        attributes.sort_by(|a, b| {
+            (a.0.namespace_name(), a.0.local_name()).cmp(&(b.0.namespace_name(), b.0.local_name()))
+        });
+        let header = format!(
+            "{:?}:{attributes:?}:{:?}",
+            dom.name(node),
+            dom.text_value(node)
+        );
+        let children = dom
+            .nodes(node)
+            .into_iter()
+            .map(|child| {
+                let child = canonical(dom, child);
+                format!("{}:{child}", child.len())
+            })
+            .collect::<String>();
+        format!("{}:{header}{}:{children}", header.len(), children.len())
+    }
+
+    fn projection(dom: &mut Dom, root: NodeId, accept: bool) -> String {
+        let copy = dom.clone_subtree(root);
+        let root = if accept {
+            crate::revision_processor::accept_revisions_document(dom, copy)
+        } else {
+            crate::revision_processor::reject_revisions_document(dom, copy)
+        };
+        remove_powertools_scratch_markup(dom, root);
+        for property in dom.descendants(root, None).into_iter().rev() {
+            if [W::p_pr(), W::r_pr()]
+                .iter()
+                .any(|name| dom.name_is(property, name))
+                && dom.nodes(property).is_empty()
+                && dom
+                    .attributes(property)
+                    .iter()
+                    .all(|(name, _)| dom.is_namespace_declaration(name))
+            {
+                dom.remove(property);
+            }
+        }
+        canonical(dom, dom.element(root, &W::body()).unwrap())
+    }
+
+    #[test]
+    fn section_addition_guard_respects_tracking_source_presence_and_exact_live_identity() {
+        for (old_section, new_section, live_section, tracking, needs_history) in [
+            (None, Some(12240), Some(12240), true, true),
+            (None, Some(12240), Some(12240), false, false),
+            (None, Some(12240), Some(10000), true, false),
+            (None, Some(12240), None, true, false),
+            (None, None, Some(12240), true, false),
+            (Some(12240), Some(12240), Some(12240), true, false),
+            (Some(12240), None, None, true, false),
+        ] {
+            let mut dom = Dom::new();
+            let old = parse(
+                &mut dom,
+                &format!(
+                    "<w:root xmlns:w='{}'>{}</w:root>",
+                    W::URI,
+                    props(old_section)
+                ),
+            );
+            let original = dom.element(old, &W::p_pr()).unwrap();
+            let new = parse(
+                &mut dom,
+                &format!(
+                    "<w:root xmlns:w='{}'>{}</w:root>",
+                    W::URI,
+                    props(new_section)
+                ),
+            );
+            let revised = dom.element(new, &W::p_pr()).unwrap();
+            let root = parse(
+                &mut dom,
+                &format!(
+                    "<w:document xmlns:w='{}'><w:body><w:p>{}<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>ONE</w:t></w:r></w:p>{}</w:body></w:document>",
+                    W::URI,
+                    props(live_section),
+                    section(12240)
+                ),
+            );
+            let before = canonical(&dom, root);
+            let original_snapshot = canonical(&dom, original);
+            let revised_snapshot = canonical(&dom, revised);
+            let settings = WmlComparerSettings {
+                detect_format_changes: tracking,
+                author_for_revisions: "Closing editor".into(),
+                date_time_for_revisions: "2026-01-01T00:00:00Z".into(),
+                ..WmlComparerSettings::default()
+            };
+            let mut next_id = 70;
+            closing_mark_takes_revised_properties(
+                &mut dom,
+                root,
+                Some(original),
+                Some(revised),
+                (None, None),
+                &settings,
+                &mut next_id,
+            );
+            let histories = dom.descendants(root, Some(&W::p_pr_change()));
+            assert_eq!(
+                histories.len(),
+                usize::from(needs_history),
+                "old={old_section:?},new={new_section:?},live={live_section:?},tracking={tracking}"
+            );
+            assert_eq!(next_id, 70 + u32::from(needs_history));
+            assert_eq!(canonical(&dom, original), original_snapshot);
+            assert_eq!(canonical(&dom, revised), revised_snapshot);
+            if needs_history {
+                let history = histories[0];
+                assert_eq!(dom.attribute(history, &W::id()), Some("70"));
+                assert_eq!(dom.attribute(history, &W::author()), Some("Closing editor"));
+                assert_eq!(
+                    dom.attribute(history, &W::date()),
+                    Some("2026-01-01T00:00:00Z")
+                );
+                let saved = dom.element(history, &W::p_pr()).unwrap();
+                assert_eq!(canonical(&dom, saved), original_snapshot);
+                assert!(dom.descendants(saved, Some(&W::sect_pr())).is_empty());
+                let accepted = dom.clone_subtree(root);
+                let accepted =
+                    crate::revision_processor::accept_revisions_document(&mut dom, accepted);
+                let rejected = dom.clone_subtree(root);
+                let rejected =
+                    crate::revision_processor::reject_revisions_document(&mut dom, rejected);
+                let accepted_paragraph = dom.descendants(accepted, Some(&W::p()))[0];
+                let rejected_paragraph = dom.descendants(rejected, Some(&W::p()))[0];
+                assert_eq!(
+                    dom.descendants(accepted_paragraph, Some(&W::sect_pr()))
+                        .len(),
+                    1
+                );
+                assert!(
+                    dom.descendants(rejected_paragraph, Some(&W::sect_pr()))
+                        .is_empty()
+                );
+                assert_eq!(dom.value(accepted_paragraph), "ONE");
+                assert_eq!(dom.value(rejected_paragraph), "ONE");
+            } else {
+                assert_eq!(canonical(&dom, root), before);
+            }
+            let once = canonical(&dom, root);
+            closing_mark_takes_revised_properties(
+                &mut dom,
+                root,
+                Some(original),
+                Some(revised),
+                (None, None),
+                &settings,
+                &mut next_id,
+            );
+            assert_eq!(canonical(&dom, root), once);
+            assert_eq!(next_id, 70 + u32::from(needs_history));
+        }
+    }
+
+    #[test]
+    fn matching_closing_history_keeps_its_existing_revision_owner_and_id() {
+        let mut dom = Dom::new();
+        let old = parse(
+            &mut dom,
+            &format!("<w:root xmlns:w='{}'>{}</w:root>", W::URI, props(None)),
+        );
+        let original = dom.element(old, &W::p_pr()).unwrap();
+        let new = parse(
+            &mut dom,
+            &format!(
+                "<w:root xmlns:w='{}'>{}</w:root>",
+                W::URI,
+                props(Some(12240))
+            ),
+        );
+        let revised = dom.element(new, &W::p_pr()).unwrap();
+        let live=props(Some(12240)).replace("</w:pPr>",&format!("<w:pPrChange w:id='55' w:author='Prior property editor' w:date='2025-11-12T00:00:00Z'>{}</w:pPrChange></w:pPr>",props(None)));
+        let root = parse(
+            &mut dom,
+            &format!(
+                "<w:document xmlns:w='{}'><w:body><w:p>{live}<w:r><w:t>ONE</w:t></w:r></w:p>{}</w:body></w:document>",
+                W::URI,
+                section(12240)
+            ),
+        );
+        let before = canonical(&dom, root);
+        let mut next_id = 70;
+        for _ in 0..2 {
+            closing_mark_takes_revised_properties(
+                &mut dom,
+                root,
+                Some(original),
+                Some(revised),
+                (None, None),
+                &WmlComparerSettings::default(),
+                &mut next_id,
+            );
+            assert_eq!(canonical(&dom, root), before);
+            assert_eq!(next_id, 70);
+        }
+        let history = dom.descendants(root, Some(&W::p_pr_change()));
+        assert_eq!(history.len(), 1);
+        assert_eq!(dom.attribute(history[0], &W::id()), Some("55"));
+        assert_eq!(
+            dom.attribute(history[0], &W::author()),
+            Some("Prior property editor")
+        );
+        assert_eq!(
+            dom.attribute(history[0], &W::date()),
+            Some("2025-11-12T00:00:00Z")
+        );
+        let accepted = dom.clone_subtree(root);
+        let accepted = crate::revision_processor::accept_revisions_document(&mut dom, accepted);
+        let rejected = dom.clone_subtree(root);
+        let rejected = crate::revision_processor::reject_revisions_document(&mut dom, rejected);
+        let ap = dom.descendants(accepted, Some(&W::p()))[0];
+        let rp = dom.descendants(rejected, Some(&W::p()))[0];
+        assert_eq!(
+            canonical(&dom, dom.element(ap, &W::p_pr()).unwrap()),
+            canonical(&dom, revised)
+        );
+        assert_eq!(
+            canonical(&dom, dom.element(rp, &W::p_pr()).unwrap()),
+            canonical(&dom, original)
+        );
+    }
+
+    #[test]
+    fn public_added_and_unchanged_authored_sections_keep_complete_source_bodies() {
+        for (original_section, revised_section, word) in [
+            (false, true, true),
+            (true, true, true),
+            (true, true, false),
+            (false, false, true),
+            (false, false, false),
+        ] {
+            let mut dom = Dom::new();
+            let roots=[original_section,revised_section].map(|has_section|parse(&mut dom,&format!("<w:document xmlns:w='{}'><w:body><w:p>{}<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>ONE</w:t></w:r></w:p>{}</w:body></w:document>",W::URI,props(has_section.then_some(12240)),section(12240))));
+            let expected_original = projection(&mut dom, roots[0], false);
+            let expected_revised = projection(&mut dom, roots[1], true);
+            let bodies = roots.map(|root| dom.element(root, &W::body()).unwrap());
+            let settings = if word {
+                WmlComparerSettings::default()
+            } else {
+                WmlComparerSettings::powertools_faithful()
+            };
+            let output = crate::comparer::compare_bodies_faithful(
+                &mut dom, roots[0], roots[1], bodies[0], bodies[1], &settings,
+            );
+            assert_eq!(
+                projection(&mut dom, output, false),
+                expected_original,
+                "reject originalsection={original_section},revisedsection={revised_section},word={word}"
+            );
+            assert_eq!(
+                projection(&mut dom, output, true),
+                expected_revised,
+                "accept originalsection={original_section},revisedsection={revised_section},word={word}"
+            );
+            assert_eq!(
+                dom.descendants(output, Some(&W::p_pr_change())).len(),
+                usize::from(!original_section && revised_section)
+            );
+            assert!(
+                dom.descendants(output, Some(&W::name("sectPrChange")))
+                    .is_empty(),
+                "unchanged final body geometry owns no new section history"
+            );
         }
     }
 }

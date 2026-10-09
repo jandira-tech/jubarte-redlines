@@ -442,6 +442,19 @@ pub fn try_compare_bodies_faithful_with_notes(
             std::collections::HashSet::new()
         };
 
+    // Only the final section authored as a direct body child is relocated by
+    // atomize. Preserve that ownership across cloned paragraph carriers; an
+    // authored mid-section can have identical geometry and must stay distinct.
+    for body in [body1, body2] {
+        for section in dom.elements(body, Some(&W::sect_pr())) {
+            dom.set_attribute_value(
+                section,
+                &crate::namespaces::PT::name("BodySectPrHoist"),
+                Some("1"),
+            );
+        }
+    }
+
     // Resolve feature-gating mc:AlternateContent (keep drawing/VML fallbacks) on
     // BOTH inputs before diffing — matches Word, and prevents run-level AltContent
     // atoms from being hoisted to invalid block positions ("unreadable content").
@@ -669,7 +682,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     });
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
-    moves::promote_skip_ahead_equals(&mut seqs, settings);
+    moves::promote_skip_ahead_equals_with_source(dom, &mut seqs, settings);
 
     let mut id = 1u32;
     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, &mut id);
@@ -782,11 +795,19 @@ pub fn try_compare_bodies_faithful_with_notes(
     // paragraph's w:pPr) are PRESERVED — removing them collapsed multi-section
     // documents (lost page/section breaks); their refs are handled by reconcile.
     {
-        // Remove only the FINAL-section sectPr (last in document order, whether a
-        // direct body child or inside the last paragraph's pPr); keep all
-        // intermediate section breaks.
-        if let Some(&last) = dom.descendants(root, Some(&W::sect_pr())).last() {
-            dom.remove(last);
+        // Remove relocated copies by their actual source owner, rather than
+        // geometry or last-descendant position. Genuine authored pPr sections
+        // and their history remain untouched, including identical geometry.
+        for section in dom.descendants(root, Some(&W::sect_pr())) {
+            if dom.attribute(section, &crate::namespaces::PT::name("BodySectPrHoist")) == Some("1")
+            {
+                dom.remove(section);
+            }
+        }
+        if let Some(body) = dom.element(root, &W::body()) {
+            for section in dom.elements(body, Some(&W::sect_pr())) {
+                dom.remove(section);
+            }
         }
         if let (Some(clean), Some(body)) = (saved_sectpr, dom.element(root, &W::body())) {
             // stamp the change record's revision id from the shared generator
@@ -1588,4 +1609,292 @@ fn final_empty_paragraphs_paired(dom: &Dom, seqs: &[atoms::CorrelatedSequence]) 
     last.correlation_status == CorrelationStatus::Equal
         && empty_final(last.com_units_1.as_deref())
         && empty_final(last.com_units_2.as_deref())
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod body_section_source_ownership_tests {
+    use super::*;
+    use crate::namespaces::{PT, W};
+
+    fn source_view(dom: &mut Dom, root: NodeId, accept: bool) -> Vec<(String, String)> {
+        let copy = dom.clone_subtree(root);
+        let projected = if accept {
+            crate::revision_processor::accept_revisions_document(dom, copy)
+        } else {
+            crate::revision_processor::reject_revisions_document(dom, copy)
+        };
+        finalize::remove_powertools_scratch_markup(dom, projected);
+        // Empty namespace-only carriers do not add formatting. Visit children
+        // first so removing an empty rPr can also empty its parent pPr; real
+        // properties, attributes and authored section/history payloads remain.
+        for carrier in dom.descendants(projected, None).into_iter().rev() {
+            if [W::r_pr(), W::p_pr()]
+                .iter()
+                .any(|name| dom.name_is(carrier, name))
+                && dom.nodes(carrier).is_empty()
+                && dom
+                    .attributes(carrier)
+                    .iter()
+                    .all(|(name, _)| dom.is_namespace_declaration(name))
+            {
+                dom.remove(carrier);
+            }
+        }
+        dom.descendants(projected, Some(&W::p()))
+            .into_iter()
+            .map(|paragraph| {
+                let props = dom
+                    .element(paragraph, &W::p_pr())
+                    .map(|ppr| dom.serialize_element(ppr))
+                    .unwrap_or_default();
+                let text = dom
+                    .descendants(paragraph, Some(&W::t()))
+                    .into_iter()
+                    .map(|text| dom.value(text))
+                    .collect::<String>();
+                (text, props)
+            })
+            .collect()
+    }
+
+    fn source(dom: &mut Dom, revised: bool, genuine: bool) -> NodeId {
+        let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+        let first_properties = format!(
+            "<w:spacing w:before='120' w:after='80'/>{}",
+            if genuine { section } else { "" }
+        );
+        let second = if revised {
+            ""
+        } else {
+            "<w:p><w:pPr><w:spacing w:before='120' w:after='80'/></w:pPr><w:r><w:t>a</w:t></w:r></w:p>"
+        };
+        let document = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:pPr>{first_properties}</w:pPr><w:r><w:t>ONE</w:t></w:r></w:p>{second}{section}</w:body></w:document>",W::URI));
+        dom.root(document).unwrap()
+    }
+
+    #[test]
+    fn faithful_final_body_sections_never_become_paragraph_breaks_even_with_identical_authored_geometry()
+     {
+        for genuine in [false, true] {
+            let mut dom = Dom::new();
+            let original = source(&mut dom, false, genuine);
+            let revised = source(&mut dom, true, genuine);
+            let expected_original = source_view(&mut dom, original, false);
+            let expected_revised = source_view(&mut dom, revised, true);
+            let original_body = dom.element(original, &W::body()).unwrap();
+            let revised_body = dom.element(revised, &W::body()).unwrap();
+            let settings = WmlComparerSettings {
+                author_for_revisions: "Section editor".into(),
+                date_time_for_revisions: "2026-01-01T00:00:00Z".into(),
+                ..WmlComparerSettings::powertools_faithful()
+            };
+            let compared = compare_bodies_faithful(
+                &mut dom,
+                original,
+                revised,
+                original_body,
+                revised_body,
+                &settings,
+            );
+            assert_eq!(
+                source_view(&mut dom, compared, false),
+                expected_original,
+                "reject genuine={genuine}"
+            );
+            assert_eq!(
+                source_view(&mut dom, compared, true),
+                expected_revised,
+                "accept genuine={genuine}"
+            );
+            let body = dom.element(compared, &W::body()).unwrap();
+            assert_eq!(dom.elements(body, Some(&W::sect_pr())).len(), 1);
+            let section = dom.element(body, &W::sect_pr()).unwrap();
+            let size = dom.element(section, &W::name("pgSz")).unwrap();
+            assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
+            assert_eq!(dom.attribute(size, &W::name("h")), Some("15840"));
+            for node in dom.descendants_and_self(compared, None) {
+                assert!(
+                    dom.attributes(node)
+                        .iter()
+                        .all(|(name, _)| name.namespace_name() != PT::URI)
+                );
+            }
+        }
+    }
+    #[test]
+    fn final_section_change_history_keeps_its_owner_and_identical_genuine_breaks() {
+        for genuine in [false, true] {
+            let mut dom = Dom::new();
+            let original = source(&mut dom, false, genuine);
+            let revised = source(&mut dom, true, genuine);
+            let original_body = dom.element(original, &W::body()).unwrap();
+            let revised_body = dom.element(revised, &W::body()).unwrap();
+            let revised_section = dom.element(revised_body, &W::sect_pr()).unwrap();
+            let revised_size = dom.element(revised_section, &W::name("pgSz")).unwrap();
+            dom.set_attribute_value(revised_size, &W::name("w"), Some("14400"));
+            let expected_original = source_view(&mut dom, original, false);
+            let expected_revised = source_view(&mut dom, revised, true);
+            let settings = WmlComparerSettings {
+                author_for_revisions: "Section editor".into(),
+                date_time_for_revisions: "2026-01-01T00:00:00Z".into(),
+                ..WmlComparerSettings::default()
+            };
+            let compared = compare_bodies_faithful(
+                &mut dom,
+                original,
+                revised,
+                original_body,
+                revised_body,
+                &settings,
+            );
+            assert_eq!(
+                source_view(&mut dom, compared, false),
+                expected_original,
+                "original authored section owner, genuine={genuine}"
+            );
+            assert_eq!(
+                source_view(&mut dom, compared, true),
+                expected_revised,
+                "revised authored section owner, genuine={genuine}"
+            );
+            for (accept, width) in [(false, "12240"), (true, "14400")] {
+                let copy = dom.clone_subtree(compared);
+                let projected = if accept {
+                    crate::revision_processor::accept_revisions_document(&mut dom, copy)
+                } else {
+                    crate::revision_processor::reject_revisions_document(&mut dom, copy)
+                };
+                let projected_body = dom.element(projected, &W::body()).unwrap();
+                let sections = dom.elements(projected_body, Some(&W::sect_pr()));
+                assert_eq!(sections.len(), 1);
+                let size = dom.element(sections[0], &W::name("pgSz")).unwrap();
+                assert_eq!(dom.attribute(size, &W::name("w")), Some(width));
+                assert!(
+                    dom.descendants(sections[0], Some(&W::name("sectPrChange")))
+                        .is_empty()
+                );
+            }
+            let body = dom.element(compared, &W::body()).unwrap();
+            let final_section = dom.element(body, &W::sect_pr()).unwrap();
+            let live_size = dom.element(final_section, &W::name("pgSz")).unwrap();
+            assert_eq!(dom.attribute(live_size, &W::name("w")), Some("14400"));
+            let history = dom
+                .element(final_section, &W::name("sectPrChange"))
+                .unwrap();
+            assert_eq!(dom.attribute(history, &W::author()), Some("Section editor"));
+            assert_eq!(
+                dom.attribute(history, &W::date()),
+                Some("2026-01-01T00:00:00Z")
+            );
+            assert!(
+                dom.attribute(history, &W::id())
+                    .unwrap()
+                    .parse::<u32>()
+                    .is_ok()
+            );
+            let old_section = dom.element(history, &W::sect_pr()).unwrap();
+            let old_size = dom.element(old_section, &W::name("pgSz")).unwrap();
+            assert_eq!(dom.attribute(old_size, &W::name("w")), Some("12240"));
+            let embedded = dom
+                .descendants(compared, Some(&W::p_pr()))
+                .into_iter()
+                .filter(|&ppr| dom.ancestors(ppr, Some(&W::p_pr_change())).is_empty())
+                .flat_map(|ppr| dom.elements(ppr, Some(&W::sect_pr())))
+                .collect::<Vec<_>>();
+            // The original ONE paragraph's deleted boundary and revised
+            // closing carrier both retain their authored break in tracked XML.
+            // Each clean projection must have exactly its source-owned break.
+            assert_eq!(embedded.len(), 2 * usize::from(genuine));
+            for section in embedded {
+                let size = dom.element(section, &W::name("pgSz")).unwrap();
+                assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
+                assert!(dom.element(section, &W::name("sectPrChange")).is_none());
+            }
+            let paragraph_histories = dom.descendants(compared, Some(&W::p_pr_change()));
+            assert_eq!(
+                paragraph_histories.len(),
+                usize::from(genuine),
+                "only addition of the revised closing break needs paragraph-property restoration"
+            );
+            for change in paragraph_histories {
+                // CT_PPrBase cannot own sectPr. The original closing paragraph
+                // had only spacing; replacement of this valid old snapshot on
+                // reject removes the added break from the revised carrier.
+                let old_properties = dom.element(change, &W::p_pr()).unwrap();
+                assert!(
+                    dom.descendants(old_properties, Some(&W::sect_pr()))
+                        .is_empty()
+                );
+                let properties = dom.elements(old_properties, None);
+                assert_eq!(properties.len(), 1);
+                assert!(dom.name_is(properties[0], &W::name("spacing")));
+                assert_eq!(
+                    dom.attribute(properties[0], &W::name("before")),
+                    Some("120")
+                );
+                assert_eq!(dom.attribute(properties[0], &W::name("after")), Some("80"));
+                assert_eq!(dom.attribute(change, &W::author()), Some("Section editor"));
+                assert_eq!(
+                    dom.attribute(change, &W::date()),
+                    Some("2026-01-01T00:00:00Z")
+                );
+                assert!(
+                    dom.attribute(change, &W::id())
+                        .unwrap()
+                        .parse::<u32>()
+                        .is_ok()
+                );
+                assert_ne!(
+                    dom.attribute(change, &W::id()),
+                    dom.attribute(history, &W::id()),
+                    "paragraph and final section histories keep independent owners"
+                );
+            }
+            for node in dom.descendants_and_self(compared, None) {
+                assert!(
+                    dom.attributes(node)
+                        .iter()
+                        .all(|(name, _)| name.namespace_name() != PT::URI)
+                );
+            }
+        }
+    }
+    #[test]
+    fn authored_body_paragraph_section_before_an_ending_table_is_never_the_final_body_owner() {
+        let mut dom = Dom::new();
+        let mut roots = Vec::new();
+        for _ in 0..2 {
+            let document = dom.parse_xdocument(&format!(
+                "<w:document xmlns:w='{}'><w:body><w:p><w:pPr><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:pPr><w:r><w:t>Authored section boundary</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w='3600' w:type='dxa'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid><w:gridCol w:w='3600'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='3600' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Closing table</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI));
+            roots.push(dom.root(document).unwrap());
+        }
+        let expected = source_view(&mut dom, roots[0], true);
+        let bodies = roots
+            .iter()
+            .map(|&root| dom.element(root, &W::body()).unwrap())
+            .collect::<Vec<_>>();
+        let settings = WmlComparerSettings::powertools_faithful();
+        let compared = compare_bodies_faithful(
+            &mut dom, roots[0], roots[1], bodies[0], bodies[1], &settings,
+        );
+        assert_eq!(source_view(&mut dom, compared, false), expected);
+        assert_eq!(source_view(&mut dom, compared, true), expected);
+        let body = dom.element(compared, &W::body()).unwrap();
+        assert_eq!(dom.elements(body, Some(&W::sect_pr())).len(), 1);
+        let paragraphs = dom.descendants(compared, Some(&W::p()));
+        assert!(
+            dom.element(
+                dom.element(paragraphs[0], &W::p_pr()).unwrap(),
+                &W::sect_pr()
+            )
+            .is_some()
+        );
+        for cell in dom.descendants(compared, Some(&W::tc())) {
+            assert!(
+                dom.descendants(cell, Some(&W::sect_pr())).is_empty(),
+                "the final body section never belongs to a table cell"
+            );
+        }
+    }
 }
