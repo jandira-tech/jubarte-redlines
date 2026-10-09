@@ -547,19 +547,18 @@ fn critic_line(pieces: &[Piece], window: Option<usize>) -> String {
             if i == 1 {
                 out.push_str("~>");
             }
+            // The window starts at or before the first change, so it never
+            // cuts a mark's text at its start; and a mark's text is never
+            // empty.
             let n = text.chars().count();
             match visible(offset, n) {
                 Some(part) => {
-                    if part.0 > 0 {
-                        out.push('…');
-                    }
                     out.push_str(&slice(text, part));
                     if part.1 < n {
                         out.push('…');
                     }
                 }
-                None if n > 0 => out.push('…'),
-                None => {}
+                None => out.push('…'),
             }
             offset += n;
         }
