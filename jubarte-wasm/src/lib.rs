@@ -409,7 +409,7 @@ fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
     if bytes.starts_with(b"PK\x03\x04") {
         return Ok(jubarte::markdown::Source::Docx(bytes));
     }
-    std::str::from_utf8(bytes)
+    std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes))
         .map(jubarte::markdown::Source::Markdown)
         .map_err(|e| js_err(format!("a side is neither a .docx nor UTF-8 Markdown: {e}")))
 }
@@ -438,7 +438,8 @@ fn typed_side(
             }
             Ok(jubarte::markdown::Source::Docx(bytes))
         }
-        SideFormat::Md => std::str::from_utf8(bytes)
+        // The native, Python and npm readers drop a UTF-8 BOM too.
+        SideFormat::Md => std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes))
             .map(jubarte::markdown::Source::Markdown)
             .map_err(|e| format!("invalid UTF-8 Markdown: {e}")),
     }
@@ -1019,6 +1020,19 @@ mod tests {
             assert!(document_view(old, new, Some(options)).is_err(), "{options}");
         }
         assert!(document_view(old, new, Some("{\"context\":4294967295}")).is_ok());
+    }
+
+    #[test]
+    fn a_markdown_side_drops_its_utf8_bom() {
+        let plain = b"Due in 30 days.\n";
+        let bom = b"\xEF\xBB\xBFDue in 30 days.\n";
+        for options in [None, Some(r#"{"oldFormat":"md","newFormat":"md"}"#)] {
+            assert_eq!(
+                document_view(bom, plain, options).unwrap(),
+                "",
+                "{options:?}"
+            );
+        }
     }
 
     #[test]
