@@ -793,11 +793,11 @@ diff --git a/out/received.docx b/out/edited/redline.docx
 
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx --format word
-…luding quarterly route-cost reports{++[c3]++} and a monthly review cal…
+…luding quarterly route-cost reports{++[c3]++} and a monthly review call.
 …erest at one percent per month.[c0]{++[c2]++}
-  ¶  This Agreement begins on {~~March~>April~~} 1, 2026 and continues…
-…r's Confidential Information secret{++ for three years after this Agre…
-{++  ¶  Delaware has no cap for commercial contracts; one percent stan…
+  ¶  This Agreement begins on {~~March~>April~~} 1, 2026 and continues until e…
+…r's Confidential Information secret{++ for three years after this Agreeme…++}…
+{++  ¶  Delaware has no cap for commercial contracts; one percent stands.++}
 {++  ¶  Do the reports cover cross-border lanes?++}
 ```
 
@@ -878,26 +878,26 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format context
 
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx --format side-by-side
-  ¶  Consulting Agreement     ¶  Consulting Agreement
-  ¶  This Consulting Agreement (the "Agreement") is made between Harbo…     ¶  This Consulting Agreement (the "Agreement") is made between Harbo…
-  ¶  1. Services     ¶  1. Services
+  ¶  Consulting Agreement                                                    ¶  Consulting Agreement
+  ¶  This Consulting Agreement (the "Agreement") is made between Harbo…      ¶  This Consulting Agreement (the "Agreement") is made between Harbo…
+  ¶  1. Services                                                             ¶  1. Services
 … {++quarterly++} route-cost reports and a {--weekly--}{++monthly++} re… | … {++quarterly++} route-cost reports[c3] and a {--weekly--}{++monthly++…
-  ¶  2. Fees     ¶  2. Fees
-…erest at one percent per month.[c0] | …erest at one percent per month.[c0][c2]
-  ¶  3. Term     ¶  3. Term
-  ¶  This Agreement begins on March 1, 2026 and continues until either… |   ¶  This Agreement begins on {--March 1, 2026--}{++April 1, 2026++} a…
-  table     table
-   row      row
-    ¶  Deliverable       ¶  Deliverable
-    ¶  Monthly       ¶  Monthly
-    ¶  Both       ¶  Both
-  ¶  4. Confidentiality     ¶  4. Confidentiality
-…r's Confidential Information secret[c1]. | …r's Confidential Information secret{++ for three years after this Agre…
-[word/comments.xml]   [word/comments.xml]
-  ¶  Is one percent the statutory cap in Delaware?     ¶  Is one percent the statutory cap in Delaware?
- >   ¶  Delaware has no cap for commercial contracts; one percent stands.
-  ¶  Add a three-year survival period?     ¶  Add a three-year survival period?
- >   ¶  Do the reports cover cross-border lanes?
+  ¶  2. Fees                                                                 ¶  2. Fees
+…erest at one percent per month.[c0]                                     | …erest at one percent per month.[c0][c2]
+  ¶  3. Term                                                                 ¶  3. Term
+  ¶  This Agreement begins on March 1, 2026 and continues until either…  |   ¶  This Agreement begins on {--March 1, 2026--}{++April 1, 2026++} a…
+  table                                                                      table
+   row                                                                        row
+    ¶  Deliverable                                                             ¶  Deliverable
+    ¶  Monthly                                                                 ¶  Monthly
+    ¶  Both                                                                    ¶  Both
+  ¶  4. Confidentiality                                                      ¶  4. Confidentiality
+…r's Confidential Information secret[c1].                                | …r's Confidential Information secret{++ for three years after this Agre…
+[word/comments.xml]                                                        [word/comments.xml]
+  ¶  Is one percent the statutory cap in Delaware?                           ¶  Is one percent the statutory cap in Delaware?
+                                                                         >   ¶  Delaware has no cap for commercial contracts; one percent stands.
+  ¶  Add a three-year survival period?                                       ¶  Add a three-year survival period?
+                                                                         >   ¶  Do the reports cover cross-border lanes?
 ```
 
 
@@ -908,8 +908,8 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format side-by-side -
   ¶  Client shall pay each invoice within {--thirty--}{++forty-five++} days of receipt. Late amounts accrue interest at one percent per month.[c0] |   ¶  Client shall pay each invoice within {--thirty--}{++forty-five++} days of receipt. Late amounts accrue interest at one percent per month.[c0][c2]
   ¶  This Agreement begins on March 1, 2026 and continues until either party ends it with {--ninety days--}{++sixty days++} written notice. |   ¶  This Agreement begins on {--March 1, 2026--}{++April 1, 2026++} and continues until either party ends it with {--ninety days--}{++sixty days++} written notice.
   ¶  Each party shall keep the other's Confidential Information secret[c1]. |   ¶  Each party shall keep the other's Confidential Information secret{++ for three years after this Agreement ends++}[c1].
- >   ¶  Delaware has no cap for commercial contracts; one percent stands.
- >   ¶  Do the reports cover cross-border lanes?
+                                                                         >   ¶  Delaware has no cap for commercial contracts; one percent stands.
+                                                                         >   ¶  Do the reports cover cross-border lanes?
 ```
 
 ### 3.2 Word, PDF and page views
@@ -1080,8 +1080,8 @@ diff --git a/received.md b/out/agent.md
 
 ```console
 $ jubarte diff received.md out/agent.md --format word
-This Agreement begins on {~~March~>April~~} 1, 2026 and continues unti…
-…r's Confidential Information secret{++ for three years after this Agre…
+This Agreement begins on {~~March~>April~~} 1, 2026 and continues until either…
+…r's Confidential Information secret{++ for three years after this Agreeme…++}…
 ```
 
 `diff X.docx Y.md -o x.docx`: the Markdown's edits as tracked changes on the Word document.

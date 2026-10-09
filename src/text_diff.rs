@@ -62,13 +62,16 @@ pub struct TextOptions {
     pub window: Option<usize>,
 }
 
+/// The default window, in Unicode scalars.
+const WINDOW: usize = 70;
+
 impl Default for TextOptions {
     fn default() -> Self {
         Self {
             unified: UnifiedOptions::default(),
             format: TextFormat::Github,
             accept_changes: false,
-            window: Some(70),
+            window: Some(WINDOW),
         }
     }
 }
@@ -609,12 +612,16 @@ fn rows_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize
         }
     }
     // Pad the old column to its widest cell, in scalars like the window, so
-    // every gutter mark and every new cell starts in the same column.
+    // every gutter mark and every new cell starts in the same column. Whole
+    // lines pad no wider than a default window and its two `…`: one long
+    // paragraph would otherwise pad every row to its length. A longer old
+    // cell pushes only its own row's mark right.
     let width = side
         .iter()
         .map(|(a, ..)| a.chars().count())
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(options.window.map_or(WINDOW + 2, |_| usize::MAX));
     for (a, mark, b) in side {
         if b.is_empty() {
             let _ = writeln!(out, "{}", format!("{a:<width$} {mark}").trim_end());
@@ -813,6 +820,16 @@ mod tests {
         assert_eq!(view("é界\nx\n", "é界\ny\n"), "é界   é界\nx  | y\n");
         // An empty unchanged line leaves no trailing spaces.
         assert_eq!(view("\nold\n", "\nnew\n"), "\nold | new\n");
+        // Whole lines pad to a default window at most; the long row alone
+        // overflows.
+        let options = TextOptions {
+            window: None,
+            ..options
+        };
+        let long = "x".repeat(200);
+        let out = diff_text_view(&format!("a\n{long}\nb\n"), "a\nb\n", &options);
+        let pad = " ".repeat(WINDOW + 1);
+        assert_eq!(out, format!("a{pad}   a\n{long} <\nb{pad}   b\n"));
     }
 
     #[test]

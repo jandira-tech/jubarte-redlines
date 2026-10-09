@@ -45,7 +45,9 @@ In the `word` view the window counts text, never the marks' delimiters. A
 mark it reaches keeps its delimiters and loses only text, so every mark a line
 opens, it closes: `{++ c d e …++}`, never `{++ c d…`. In `side-by-side` the
 old column is padded to its widest cell, so every `|`, `<` and `>` and every
-new cell start in the same column.
+new cell start in the same column. With `--full-lines` the padding stops at
+72 columns, a default window and its two `…`; a longer old cell pushes only
+its own row's mark right.
 
 Text views go to stdout and create no Word file. `-o review.patch` writes only
 the named text file, with a status message on stderr. `.patch`, `.diff`, `.txt`,
