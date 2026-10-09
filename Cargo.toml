@@ -133,6 +133,11 @@ self_update = { version = "1.3", default-features = false, features = ["ureq", "
 [target.'cfg(windows)'.dependencies]
 self_update = { version = "1.3", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
 
+# wasm32-unknown-unknown has no clock in std: `SystemTime::now` panics. The
+# host's `Date` dates new comments and DATE/TIME fields there instead.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = { version = "0.3", default-features = false }
+
 [[bin]]
 name = "jubarte"
 required-features = ["cli"]

@@ -24,6 +24,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, W15, WNE, WP};
@@ -12015,12 +12016,28 @@ mod iso8601_tests {
     }
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn utc_now() -> CivilDateTime {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_secs()).unwrap_or(0))
         .unwrap_or(0);
     civil_from_unix_secs(secs)
+}
+
+/// wasm32-unknown-unknown has no clock in std (`SystemTime::now` panics),
+/// so the host's `Date` tells the time.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn utc_now() -> CivilDateTime {
+    let now = js_sys::Date::new_0();
+    CivilDateTime {
+        y: i32::try_from(now.get_utc_full_year()).unwrap_or(1970),
+        m: now.get_utc_month() + 1,
+        d: now.get_utc_date(),
+        h: now.get_utc_hours(),
+        min: now.get_utc_minutes(),
+        s: now.get_utc_seconds(),
+    }
 }
 
 /// UTC civil time of a Unix timestamp (TIME/DATE are painted in UTC).

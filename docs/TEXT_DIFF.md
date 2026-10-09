@@ -41,6 +41,12 @@ view: clipping can hide later edits on the same line. Use `--full-lines` to
 show all content and produce an unabridged textual patch. Short lines stay
 complete. Full extraction happens before display clipping; there is no hunk cap.
 
+In the `word` view the window counts text, never the marks' delimiters. A
+mark it reaches keeps its delimiters and loses only text, so every mark a line
+opens, it closes: `{++ c d e …++}`, never `{++ c d…`. In `side-by-side` the
+old column is padded to its widest cell, so every `|`, `<` and `>` and every
+new cell start in the same column.
+
 Text views go to stdout and create no Word file. `-o review.patch` writes only
 the named text file, with a status message on stderr. `.patch`, `.diff`, `.txt`,
 `.md` and `.markdown` are supported; existing files require `--force`. Equal

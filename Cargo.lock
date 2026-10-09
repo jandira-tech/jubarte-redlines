@@ -1325,6 +1325,7 @@ dependencies = [
  "flate2",
  "foldhash",
  "image",
+ "js-sys",
  "mimalloc",
  "ooxmlsdk",
  "pulldown-cmark",

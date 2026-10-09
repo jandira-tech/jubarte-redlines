@@ -540,6 +540,7 @@ dependencies = [
  "flate2",
  "foldhash",
  "image",
+ "js-sys",
  "pulldown-cmark",
  "quick-xml 0.42.0",
  "rdocx-opc",
