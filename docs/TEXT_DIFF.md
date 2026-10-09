@@ -18,7 +18,7 @@ jubarte diff a.docx b.docx --format side-by-side
 | `word` | Changed text with fresh `{--old--}{++new++}` marks | **All changes accepted in both documents first** |
 | `normal` | Line addresses (`a`/`d`/`c`), `<`/`>` lines, no context | Preserved |
 | `context` | Old/new range blocks, `!`/`+`/`-` prefixes | Preserved |
-| `side-by-side` | Old/new columns, `|`/`<`/`>` separator | Preserved |
+| `side-by-side` | Old/new columns, `\|`/`<`/`>` separator | Preserved |
 | `critic` | Current document content represented with tracked marks | Existing representation API |
 | `patch` | Existing paragraph patch with edit IDs | Existing paragraph comparison API |
 
