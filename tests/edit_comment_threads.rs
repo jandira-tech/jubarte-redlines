@@ -416,11 +416,11 @@ fn list_comments_on_a_document_without_comments_is_empty() {
     assert!(list_comments(b"not a zip").is_err());
 }
 
-/// A plan without a date stamps the comments and replies it writes with the
-/// time it wrote them, in UTC, as `w:date` and as the `dateUtc` Word 365
-/// reads. Its tracked changes keep the pinned date.
+/// A plan without a date dates everything it writes (tracked changes,
+/// comments, replies) with the time it is applied, in UTC, as `w:date` and as
+/// the `dateUtc` Word 365 reads. One plan writes one instant.
 #[test]
-fn undated_plans_stamp_comments_and_replies_with_now() {
+fn undated_plans_date_everything_they_write_now() {
     let source = docx(&format!("{}{}", para("The cap is 10."), para("Drop this.")));
     let before = jubarte::convert::utc_now_iso8601();
     let first = apply_plan(
@@ -464,11 +464,19 @@ fn undated_plans_stamp_comments_and_replies_with_now() {
         }
     }
     assert_eq!(list_comments(&second.clean).unwrap().len(), 3);
-    for change in jubarte::changes::list_changes(&second.redline).unwrap() {
-        assert_eq!(
-            change.date.as_deref(),
-            Some(jubarte::document_comparer::DEFAULT_DATE)
+    let changes = jubarte::changes::list_changes(&second.redline).unwrap();
+    assert!(!changes.is_empty());
+    for change in changes {
+        let date = change.date.expect("dated");
+        assert!(
+            (before.as_str()..=after.as_str()).contains(&date.as_str()),
+            "{date} not in {before}..={after}"
         );
+    }
+    // The clean copy's comment and the redline's changes share one instant.
+    let comment_date = list_comments(&first.clean).unwrap()[0].date.clone();
+    for change in jubarte::changes::list_changes(&first.redline).unwrap() {
+        assert_eq!(change.date, comment_date);
     }
     // A plan's own date still dates everything it writes.
     let dated = apply_plan(

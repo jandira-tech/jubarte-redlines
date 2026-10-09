@@ -58,9 +58,8 @@ pub struct EditPlan {
     /// Revision and comment author.
     pub author: String,
     /// Revision and comment timestamp (`YYYY-MM-DDTHH:MM:SSZ`). When
-    /// omitted, revisions take a fixed date so output is reproducible, and
-    /// new comments and replies take the time they are written, in UTC, as
-    /// Word dates them.
+    /// omitted, everything the plan writes takes the time it is applied, in
+    /// UTC, as Word dates its changes; set it for reproducible output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     /// Comment initials; derived from `author` when omitted.
@@ -1597,9 +1596,8 @@ struct Transaction<'p> {
     base: Vec<u8>,
     base_sha256: String,
     resolved_revisions: ResolvedRevisions,
+    /// The plan's date, else the time it is applied.
     date: String,
-    /// The date on new comments and replies: the plan's, else now.
-    comment_date: String,
     initials: String,
     opened: Opened,
     /// The body first, then every header, footer and notes part.
@@ -1765,10 +1763,6 @@ impl<'p> Transaction<'p> {
         let date = plan
             .date
             .clone()
-            .unwrap_or_else(|| WmlComparerSettings::default().date_time_for_revisions);
-        let comment_date = plan
-            .date
-            .clone()
             .unwrap_or_else(crate::convert::utc_now_iso8601);
         let initials = plan.initials.clone().unwrap_or_else(|| {
             plan.author
@@ -1789,7 +1783,6 @@ impl<'p> Transaction<'p> {
             base_sha256,
             resolved_revisions,
             date,
-            comment_date,
             initials,
             opened,
             stories,
@@ -4391,7 +4384,6 @@ impl<'p> Transaction<'p> {
             update_fields: false,
         };
         let mut tx = Transaction::start(&self.base, &plan)?;
-        tx.comment_date.clone_from(&self.comment_date);
         tx.preset_comment_ids = self
             .deletion_comments
             .iter()
@@ -4490,7 +4482,7 @@ impl<'p> Transaction<'p> {
             family.add(&crate::comments::NewComment {
                 id: *id,
                 author: &self.plan.author,
-                date: &self.comment_date,
+                date: &self.date,
                 initials: &self.initials,
                 text,
                 parent: self.reply_parents.get(id).copied(),

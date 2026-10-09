@@ -143,7 +143,6 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
         ..tx.plan.clone()
     };
     let mut t = Transaction::start(&tx.base, &plan)?;
-    t.comment_date.clone_from(&tx.comment_date);
     t.resolved = tx.resolved.clone();
     // A watermark is header content, not a change: written as is.
     t.watermark = tx.watermark.clone();
