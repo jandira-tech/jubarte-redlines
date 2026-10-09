@@ -120,6 +120,15 @@ fn view_snapshot(source: Source<'_>, accept: bool, critic: bool) -> Result<Strin
 }
 
 fn render_view(old: &str, new: &str, options: &TextOptions) -> String {
+    // CRLF and LF end the same document line. A missing final newline is
+    // marked by the formats that have a marker for it (GitHub, normal and
+    // context); word and side-by-side compare the lines it ends.
+    let terminate = !matches!(
+        options.format,
+        TextFormat::Github | TextFormat::Normal | TextFormat::Context
+    );
+    let (old, new) = (line_endings(old, terminate), line_endings(new, terminate));
+    let (old, new) = (old.as_ref(), new.as_ref());
     if old == new {
         return String::new();
     }
@@ -136,6 +145,25 @@ fn render_view(old: &str, new: &str, options: &TextOptions) -> String {
         TextFormat::Normal => normal_view(&diff, options),
         TextFormat::Context => context_view(&diff, options, context),
         TextFormat::Word | TextFormat::SideBySide => rows_view(&diff, options, context),
+    }
+}
+
+/// `text` with LF line ends, and with a final newline when `terminate`.
+fn line_endings(text: &str, terminate: bool) -> std::borrow::Cow<'_, str> {
+    let mut text = std::borrow::Cow::Borrowed(text);
+    if text.contains("\r\n") {
+        text = text.replace("\r\n", "\n").into();
+    }
+    if terminate && !text.is_empty() && !text.ends_with('\n') {
+        text.to_mut().push('\n');
+    }
+    text
+}
+
+/// GNU diff's marker after a last line with no newline.
+fn mark_unterminated(out: &mut String, line: Option<&str>) {
+    if line.is_some_and(|line| !line.ends_with('\n')) {
+        out.push_str("\\ No newline at end of file\n");
     }
 }
 
@@ -334,14 +362,16 @@ fn normal_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions) -> String {
             address(&op.new_range())
         );
         let (old, new) = op_windows(diff, op, options.window);
-        for text in old {
+        for (index, text) in op.old_range().zip(old) {
             let _ = writeln!(out, "< {text}");
+            mark_unterminated(&mut out, diff.old_slice(index));
         }
         if op.tag() == DiffTag::Replace {
             out.push_str("---\n");
         }
-        for text in new {
+        for (index, text) in op.new_range().zip(new) {
             let _ = writeln!(out, "> {text}");
+            mark_unterminated(&mut out, diff.new_slice(index));
         }
     }
     out
@@ -372,8 +402,9 @@ fn context_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: us
                 DiffTag::Replace => "! ",
                 _ => "- ",
             };
-            for text in old {
+            for (index, text) in op.old_range().zip(old) {
                 let _ = writeln!(out, "{prefix}{text}");
+                mark_unterminated(&mut out, diff.old_slice(index));
             }
         }
         let _ = writeln!(out, "--- {} ----", address(&news));
@@ -383,8 +414,9 @@ fn context_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: us
                 DiffTag::Replace => "! ",
                 _ => "+ ",
             };
-            for text in new {
+            for (index, text) in op.new_range().zip(new) {
                 let _ = writeln!(out, "{prefix}{text}");
+                mark_unterminated(&mut out, diff.new_slice(index));
             }
         }
     }
@@ -693,6 +725,45 @@ mod tests {
             out,
             "diff --git a/old.docx b/new.docx\n--- a/old.docx\n+++ b/new.docx\n@@ -1,3 +1,3 @@\n Intro\n-Thirty days\n+Sixty days\n Signed\n"
         );
+    }
+
+    #[test]
+    fn line_terminators_never_show_as_identical_changed_lines() {
+        let formats = [
+            TextFormat::Github,
+            TextFormat::Word,
+            TextFormat::Normal,
+            TextFormat::Context,
+            TextFormat::SideBySide,
+        ];
+        for format in formats {
+            for window in [Some(70), None] {
+                let options = TextOptions {
+                    format,
+                    window,
+                    ..Default::default()
+                };
+                // CRLF against LF is the same document text.
+                assert_eq!(
+                    diff_text_view("one\r\ntwo\r\n", "one\ntwo\n", &options),
+                    "",
+                    "{format:?} {window:?}"
+                );
+                // A missing final newline is marked where the format has a
+                // marker for it, and is no change where it has none.
+                let out = diff_text_view("same", "same\n", &options);
+                match format {
+                    TextFormat::Github | TextFormat::Normal | TextFormat::Context => assert_eq!(
+                        out.matches("\\ No newline at end of file").count(),
+                        1,
+                        "{format:?} {window:?}: {out}"
+                    ),
+                    TextFormat::Word | TextFormat::SideBySide => {
+                        assert_eq!(out, "", "{format:?} {window:?}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
