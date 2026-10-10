@@ -106,6 +106,33 @@ fn kv(out: &mut String, key_value: &str, comment: Option<&str>) {
     }
 }
 
+/// `value` as a YAML scalar: plain when a YAML reader takes it back as the
+/// same string, else double-quoted (a JSON string is a valid YAML one).
+/// `flow` values sit inside `{…}`, where `,`, `[`, `]`, `{` and `}` end them.
+pub(crate) fn scalar(value: &str, flow: bool) -> String {
+    const RESERVED: [&str; 12] = [
+        "true", "false", "yes", "no", "on", "off", "y", "n", "null", "~", ".nan", ".inf",
+    ];
+    let plain = !value.is_empty()
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+        && !value.starts_with([
+            '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%',
+            '@', '`',
+        ])
+        && !value.contains(": ")
+        && !value.contains(" #")
+        && !value.ends_with(':')
+        && !(flow && value.contains([',', '[', ']', '{', '}']))
+        && !RESERVED.contains(&value.to_ascii_lowercase().as_str())
+        && value.parse::<f64>().is_err();
+    if plain {
+        value.to_string()
+    } else {
+        serde_json::to_string(value).unwrap_or_else(|_| format!("\"{value}\""))
+    }
+}
+
 fn plural(n: usize, one: &str, many: &str) -> String {
     if n == 1 {
         format!("1 {one}")
@@ -120,7 +147,11 @@ fn join(items: &[String]) -> String {
 
 pub(crate) fn render(f: &Facts) -> String {
     let mut out = String::from("---\n");
-    kv(&mut out, &format!("source: {}", f.source), None);
+    kv(
+        &mut out,
+        &format!("source: {}", scalar(f.source, false)),
+        None,
+    );
     let handle_list: Vec<String> = f
         .handles
         .order
@@ -244,12 +275,12 @@ pub(crate) fn render(f: &Facts) -> String {
     match &f.owner {
         Owner::Creator(name) => kv(
             &mut out,
-            &format!("  document_owner: {name}"),
+            &format!("  document_owner: {}", scalar(name, false)),
             Some("dc:creator"),
         ),
         Owner::LastModifiedBy(name) => kv(
             &mut out,
-            &format!("  document_owner: {name}"),
+            &format!("  document_owner: {}", scalar(name, false)),
             Some("cp:lastModifiedBy; no dc:creator"),
         ),
         Owner::None => kv(
@@ -298,7 +329,7 @@ pub(crate) fn render(f: &Facts) -> String {
         }
         kv(
             &mut out,
-            &format!("  {handle}: {author}"),
+            &format!("  {handle}: {}", scalar(author, false)),
             Some(&join(&parts)),
         );
     }
@@ -603,12 +634,7 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
 }
 
 fn entry(s: &StoryFact) -> String {
-    let text = if s.text.contains('{') || s.text.contains(':') || s.text.is_empty() {
-        format!("\"{}\"", s.text.replace('"', "\\\""))
-    } else {
-        s.text.clone()
-    };
-    let mut inner = format!("id: {}, text: {text}", s.id);
+    let mut inner = format!("id: {}, text: {}", s.id, scalar(&s.text, true));
     if let Some(align) = s.align {
         inner.push_str(&format!(", {align}"));
     }
@@ -705,16 +731,26 @@ fn part_two(out: &mut String, f: &Facts) {
     let base = resolve(f.styles, f.theme, default);
     kv(
         out,
-        &format!("  {default}: {}", describe(&base, None)),
+        &format!(
+            "  {}: {}",
+            scalar(default, false),
+            scalar(&describe(&base, None), false)
+        ),
         Some("default; unannotated paragraphs use it"),
     );
     for (level, style) in &f.heading_styles {
         kv(
             out,
             &format!(
-                "  \"{}\": {style}, {}",
+                "  \"{}\": {}",
                 "#".repeat(*level),
-                describe(&resolve(f.styles, f.theme, style), Some(&base))
+                scalar(
+                    &format!(
+                        "{style}, {}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base))
+                    ),
+                    false
+                )
             ),
             None,
         );
@@ -723,10 +759,17 @@ fn part_two(out: &mut String, f: &Facts) {
         [] => {}
         [one] => kv(
             out,
-            &format!("  table: {}", table_style_line(f.styles, one)),
+            &format!(
+                "  table: {}",
+                scalar(&table_style_line(f.styles, one), false)
+            ),
             None,
         ),
-        many => kv(out, &format!("  tables: {}", many.join(", ")), None),
+        many => kv(
+            out,
+            &format!("  tables: {}", scalar(&many.join(", "), false)),
+            None,
+        ),
     }
     if let Some(first) = f.sections.first() {
         first_section_stories(out, first);

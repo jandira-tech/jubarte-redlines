@@ -2764,3 +2764,70 @@ fn changed_by_reads_a_handle_before_a_name_and_refuses_an_empty_author() {
         assert!(stderr.contains("needs an author"), "{empty:?}: {stderr}");
     }
 }
+
+/// The header between the `---` fences, parsed by a YAML parser.
+fn header_yaml(markdown: &str) -> saphyr::Yaml<'_> {
+    use saphyr::LoadableYamlNode;
+    let text = markdown.split("---\n").nth(1).unwrap();
+    saphyr::Yaml::load_from_str(text)
+        .unwrap_or_else(|e| panic!("header is not YAML: {e}\n{text}"))
+        .remove(0)
+}
+
+/// pi review av2 F1: document values in the header (authors, owner,
+/// header/footer text) are quoted whenever plain YAML would misread them.
+#[test]
+fn the_header_stays_yaml_for_values_with_colons_commas_and_hashes() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>SIGNATURE PAGE, v2 {{draft}}</w:t></w:r></w:p></w:hdr>"#
+    );
+    let sect = r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX1"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let bytes = common::docx::docx_with_sect_pr(
+        &format!(
+            "<w:p>{}</w:p><w:p>{}</w:p>",
+            ins(1, "Counsel: Ann", "a"),
+            ins(2, "yes", "b")
+        ),
+        &[
+            core(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Jo #1, Esq.</dc:creator></cp:coreProperties>"#,
+            ),
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+        ],
+        sect,
+    );
+    let view = agent(&bytes);
+    let yaml = header_yaml(&view);
+    let authors = yaml["authors"].as_mapping().expect("authors map");
+    let names: Vec<&str> = authors.values().filter_map(saphyr::Yaml::as_str).collect();
+    assert!(names.contains(&"Counsel: Ann"), "{names:?}");
+    assert!(names.contains(&"yes"), "{names:?}");
+    assert_eq!(
+        yaml["authors"]["document_owner"].as_str(),
+        Some("Jo #1, Esq.")
+    );
+    assert_eq!(
+        yaml["headers"]["default"]["text"].as_str(),
+        Some("SIGNATURE PAGE, v2 {draft}")
+    );
+}
+
+/// Every golden's header parses as YAML.
+#[test]
+fn the_golden_headers_parse_as_yaml() {
+    for name in [
+        "received.tracked.md",
+        "received.no-comments.md",
+        "received.accept.md",
+        "received.reject.md",
+    ] {
+        let text = golden(name);
+        let yaml = header_yaml(&text);
+        assert!(yaml["source"].as_str().is_some(), "{name}");
+    }
+}
