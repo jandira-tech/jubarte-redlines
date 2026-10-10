@@ -790,15 +790,19 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         );
     }
     if let Some(ind) = ppr.and_then(|pr| pr.child("ind")) {
-        for (attr, name) in [
-            ("firstLine", "first-line"),
-            ("hanging", "hanging"),
-            ("left", "left"),
-            ("start", "left"),
-            ("right", "right"),
-            ("end", "right"),
+        // One clause per side: the strict `start`/`end` only when the
+        // transitional `left`/`right` is absent, as the layout reads them.
+        for (attrs, name) in [
+            (&["firstLine"][..], "first-line"),
+            (&["hanging"][..], "hanging"),
+            (&["left", "start"][..], "left"),
+            (&["right", "end"][..], "right"),
         ] {
-            if let Some(v) = ind.attr(attr).and_then(|v| v.parse::<f64>().ok()) {
+            if let Some(v) = attrs
+                .iter()
+                .find_map(|attr| ind.attr(attr))
+                .and_then(|v| v.parse::<f64>().ok())
+            {
                 clauses.push(format!("{name} {}", inches(v)));
             }
         }

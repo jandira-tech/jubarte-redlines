@@ -2854,3 +2854,17 @@ fn header_counts_a_text_box_revision_once() {
         "{lines:?}"
     );
 }
+
+/// pi review av1 F16 / av2 F14: `w:left` and its strict twin `w:start` (and
+/// `w:right`/`w:end`) give one clause per side, read as the layout reads
+/// them: `left` first, `start` when `left` is absent.
+#[test]
+fn id_line_gives_one_indent_per_side_when_both_spellings_are_present() {
+    let out = body(&agent(&docx(concat!(
+        r#"<w:p><w:pPr><w:ind w:left="720" w:start="1440" w:right="360" w:end="720"/></w:pPr><w:r><w:t>Both.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:ind w:start="1440" w:end="720"/></w:pPr><w:r><w:t>Strict.</w:t></w:r></w:p>"#,
+    ))))
+    .to_string();
+    assert!(out.contains("<!-- p0 left 0.5in, right 0.25in -->\nBoth."), "{out}");
+    assert!(out.contains("<!-- p1 left 1in, right 0.5in -->\nStrict."), "{out}");
+}
