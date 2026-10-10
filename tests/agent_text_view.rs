@@ -278,3 +278,125 @@ fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_m
     let out = body(&agent(&docx(tbl))).to_string();
     assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells r0 p0 r1 p1-p3, merged cells, break-ins #12 @AC in p1 -->\n"), "{out}");
 }
+
+fn ins(id: u32, author: &str, text: &str) -> String {
+    ins_at(id, author, "2026-10-01T09:00:00Z", text)
+}
+
+fn ins_at(id: u32, author: &str, date: &str, text: &str) -> String {
+    format!(
+        r#"<w:ins w:id="{id}" w:author="{author}" w:date="{date}"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:ins>"#
+    )
+}
+
+fn del(id: u32, author: &str, text: &str) -> String {
+    format!(
+        r#"<w:del w:id="{id}" w:author="{author}" w:date="2026-10-01T09:00:00Z"><w:r><w:delText xml:space="preserve">{text}</w:delText></w:r></w:del>"#
+    )
+}
+
+fn run(text: &str) -> String {
+    format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+}
+
+#[test]
+fn attribution_notes_follow_each_change_with_id_and_handle() {
+    let p = format!(
+        "<w:p>{}{}{}{}{}{}{}</w:p>",
+        run("Pay within "),
+        del(3, "Ann Counsel", "thirty"),
+        ins(4, "Ann Counsel", "forty-five"),
+        run(" days, "),
+        ins(5, "Ann Counsel", "quarterly"),
+        run(" reports"),
+        del(6, "Ann Counsel", ", nothing else")
+    );
+    assert_eq!(
+        body(&agent(&docx(&p))),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {~~thirty~>forty-five~~}{>>#3+4 @AC<<} days, {++quarterly++}{>>#5 @AC<<} reports{--, nothing else--}{>>#6 @AC<<}\n"
+    );
+}
+
+#[test]
+fn neighbouring_marks_by_one_author_share_one_note_and_keep_their_text() {
+    let p = format!(
+        "<w:p>{}{}{}</w:p>",
+        run("a "),
+        ins(7, "Ann Counsel", "bold"),
+        ins(8, "Ann Counsel", " words")
+    );
+    assert_eq!(
+        body(&agent(&docx(&p))),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold words++}{>>#7+8 @AC<<}\n"
+    );
+}
+
+#[test]
+fn a_substitution_by_two_authors_gets_two_notes_deleted_side_first() {
+    let p = format!(
+        "<w:p>{}{}{}{}</w:p>",
+        run("x "),
+        del(1, "Ann Counsel", "old"),
+        ins(2, "John Doe", "new"),
+        ins(3, "Ann Counsel", "!")
+    );
+    assert_eq!(
+        body(&agent(&docx(&p))),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nx {~~old~>new~~}{>>#1 @AC<<}{>>#2 @JD<<}{++!++}{>>#3 @AC<<}\n"
+    );
+}
+
+#[test]
+fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
+    let p = format!(
+        "<w:p>{}{}{}{}</w:p>",
+        run("a "),
+        ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "b"),
+        run(" c "),
+        ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "d")
+    );
+    let bytes = docx(&p);
+    assert!(
+        body(&agent(&bytes)).contains("{++b++}{>>#1 @AC<<} c {++d++}{>>#2 @AC<<}"),
+        "{}",
+        agent(&bytes)
+    );
+    let dated = agent_options(
+        &bytes,
+        MarkdownOptions {
+            dates: true,
+            ..agent_defaults()
+        },
+    );
+    assert!(
+        body(&dated).contains(
+            "{++b++}{>>#1 @AC 2026-10-01T09:00:00Z<<} c {++d++}{>>#2 @AC 2026-10-03T14:05:00Z<<}"
+        ),
+        "{dated}"
+    );
+    let single = docx(&format!(
+        "<w:p>{}{}</w:p>",
+        run("a "),
+        ins(1, "Ann Counsel", "b")
+    ));
+    let dated = agent_options(
+        &single,
+        MarkdownOptions {
+            dates: true,
+            ..agent_defaults()
+        },
+    );
+    assert!(body(&dated).contains("{++b++}{>>#1 @AC<<}"), "{dated}");
+}
+
+#[test]
+fn legacy_output_keeps_author_notes() {
+    let p = format!("<w:p>{}{}</w:p>", run("a "), ins(7, "Ann Counsel", "b"));
+    let legacy = docx_to_markdown(&docx(&p), &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert_eq!(
+        legacy,
+        "a {++b++}{>>Ann Counsel (2026-10-01T09:00:00Z)<<}\n"
+    );
+}

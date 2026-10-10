@@ -723,7 +723,7 @@ impl Writer<'_> {
                     }
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(change_of(child), |w| w.blocks(child, blocks, list));
+                    self.revised(self.change_of(child), |w| w.blocks(child, blocks, list));
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "customXml" | "sdtContent" | "txbxContent" => self.blocks(child, blocks, list),
@@ -1003,7 +1003,7 @@ impl Writer<'_> {
                     self.inline(child, url.as_deref().or(link), base, fields, out, extra);
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    let (mark, by) = change_of(child);
+                    let (mark, by) = self.change_of(child);
                     out.open(mark, by.as_deref());
                     self.revised((mark, by), |w| {
                         w.inline(child, link, base, fields, out, extra);
@@ -1204,7 +1204,10 @@ impl Writer<'_> {
         let mut rows = Vec::new();
         for tr in table_rows(table) {
             let mut row = Vec::new();
-            let row_marks = tr.child("trPr").map(revision_marks).unwrap_or_default();
+            let row_marks = tr
+                .child("trPr")
+                .map(|pr| self.revision_marks(pr))
+                .unwrap_or_default();
             let before = tr
                 .path(&["trPr", "gridBefore"])
                 .and_then(|g| g.attr("val"))
@@ -1246,7 +1249,8 @@ impl Writer<'_> {
         let depth = self.revisions.len();
         self.revisions.extend_from_slice(row_marks);
         if let Some(properties) = cell.child("tcPr") {
-            self.revisions.extend(revision_marks(properties));
+            let marks = self.revision_marks(properties);
+            self.revisions.extend(marks);
         }
         let mut parts = Vec::new();
         self.cell_parts(cell, &mut parts);
@@ -1269,7 +1273,10 @@ impl Writer<'_> {
                     // Nested tables are flattened to text, one row per line.
                     self.flattening += 1;
                     for tr in table_rows(child) {
-                        let row_marks = tr.child("trPr").map(revision_marks).unwrap_or_default();
+                        let row_marks = tr
+                            .child("trPr")
+                            .map(|pr| self.revision_marks(pr))
+                            .unwrap_or_default();
                         let cells: Vec<String> = row_cells(tr)
                             .map(|tc| self.cell_text(&row_marks, tc))
                             .filter(|t| !t.is_empty())
@@ -1279,7 +1286,7 @@ impl Writer<'_> {
                     self.flattening -= 1;
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(change_of(child), |w| w.cell_parts(child, parts));
+                    self.revised(self.change_of(child), |w| w.cell_parts(child, parts));
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "sdt" | "sdtContent" | "customXml" => self.cell_parts(child, parts),
@@ -1290,8 +1297,54 @@ impl Writer<'_> {
 
     /// The tracked change on a paragraph's mark, without its author inside a
     /// comment's own text.
+    /// Agent view: none; paragraph marks are printed on id and table lines.
     fn paragraph_mark(&self, p: &Element) -> Option<Change> {
+        if self.agent {
+            return None;
+        }
         paragraph_mark(p).map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
+    }
+
+    /// The agent tag of a revision element, with its timestamp when
+    /// `--dates` asks for one and the author has several.
+    fn agent_tag(&self, element: &Element) -> String {
+        let mut tagged = format!("{}{}", critic::TAG, agent::tag_of(element, &self.handles));
+        if self.dates && self.handles.needs_date(element.attr("author")) {
+            if let Some(date) = element.attr("date") {
+                tagged.push(' ');
+                tagged.push_str(date);
+            }
+        }
+        tagged
+    }
+
+    /// A tracked change's mark with its attribution: the agent tag, or the
+    /// `Author (date)` note of the plain conversion.
+    fn change_of(&self, element: &Element) -> Change {
+        let (mark, by) = change_of(element);
+        if self.agent {
+            (mark, Some(self.agent_tag(element)))
+        } else {
+            (mark, by)
+        }
+    }
+
+    /// [`revision_marks`] with agent tags when the agent view is on.
+    fn revision_marks(&self, properties: &Element) -> Vec<Change> {
+        if !self.agent {
+            return revision_marks(properties);
+        }
+        properties
+            .elements()
+            .filter_map(|p| {
+                let mark = match p.local() {
+                    "ins" | "moveTo" | "cellIns" => Mark::Insertion,
+                    "del" | "moveFrom" | "cellDel" => Mark::Deletion,
+                    _ => return None,
+                };
+                Some((mark, Some(self.agent_tag(p))))
+            })
+            .collect()
     }
 
     /// A comment's note, rendered the first time it is needed. Its text is

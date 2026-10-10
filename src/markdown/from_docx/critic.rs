@@ -56,6 +56,67 @@ impl Mark {
 /// `{>>…<<}` note (`Ana Lima (2026-09-29T14:05:00Z)`), already escaped.
 pub(crate) type Change = (Mark, Option<String>);
 
+/// Agent-view attribution: an internal tag (`0@AC`, `1+2@AC`, optionally
+/// `0@AC 2026-10-03T14:05:00Z`) behind this sentinel, so that it is never
+/// mistaken for an author's note. Printed through `agent::format_tag`;
+/// never written to the output.
+pub(crate) const TAG: &str = "\u{E000}";
+
+fn tag(by: Option<&str>) -> Option<&str> {
+    by?.strip_prefix(TAG)
+}
+
+/// The tag proper and its optional inline timestamp.
+fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
+    match tagged.split_once(' ') {
+        Some((t, date)) => (t, Some(date)),
+        None => (tagged, None),
+    }
+}
+
+/// A note's text: the formatted tag, or the plain attribution.
+fn display(by: &str) -> String {
+    match by.strip_prefix(TAG) {
+        Some(tagged) => {
+            let (t, date) = tag_parts(tagged);
+            let mut out = super::agent::format_tag(t);
+            if let Some(date) = date {
+                out.push(' ');
+                out.push_str(date);
+            }
+            out
+        }
+        None => by.to_string(),
+    }
+}
+
+/// Two attributions join as neighbours: equal notes, or two tags of one
+/// author (their ids differ by design).
+fn same_author(a: Option<&str>, b: Option<&str>) -> bool {
+    match (tag(a), tag(b)) {
+        (Some(a), Some(b)) => {
+            super::agent::handle_of(tag_parts(a).0) == super::agent::handle_of(tag_parts(b).0)
+        }
+        _ => a == b,
+    }
+}
+
+/// The tags of two neighbours or of a substitution's two sides, joined,
+/// keeping the first inline timestamp.
+fn join_tagged(a: &str, b: &str) -> String {
+    let (ta, da) = tag_parts(a);
+    let (tb, db) = tag_parts(b);
+    let mut out = format!(
+        "{TAG}{}",
+        super::agent::join_tags(&[ta.to_string(), tb.to_string()])
+    );
+    if let Some(date) = da.or(db) {
+        out.push(' ');
+        out.push_str(date);
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Leaf {
     /// Document text: escaped when rendered.
@@ -294,10 +355,12 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
         };
         if !nodes.iter().any(Node::has_content) {
             lift_comments(nodes, &mut out);
-        } else if let Some(Node::Span(.., before)) = out
-            .last_mut()
-            .filter(|last| matches!(last, Node::Span(m, b, _) if *m == mark && *b == by))
-        {
+        } else if let Some(Node::Span(_, before_by, before)) = out.last_mut().filter(|last| {
+            matches!(last, Node::Span(m, b, _) if *m == mark && same_author(b.as_deref(), by.as_deref()))
+        }) {
+            if let (Some(a), Some(b)) = (tag(before_by.as_deref()), tag(by.as_deref())) {
+                *before_by = Some(join_tagged(a, b));
+            }
             before.extend(nodes);
         } else {
             out.push(Node::Span(mark, by, nodes));
@@ -349,11 +412,15 @@ fn space_into_last_change(nodes: &mut [Node]) {
     let [
         ..,
         Node::Leaf(Leaf::Text { text, .. }),
-        Node::Span(Mark::Insertion | Mark::Deletion, _, inner),
+        Node::Span(Mark::Insertion | Mark::Deletion, by, inner),
     ] = nodes
     else {
         return;
     };
+    // A tagged change (agent view) keeps its text exactly as the file holds it.
+    if tag(by.as_deref()).is_some() {
+        return;
+    }
     // Only into text the change starts with, so the space keeps a format.
     let Some(Node::Leaf(Leaf::Text { text: first, .. })) = inner.first_mut() else {
         return;
@@ -412,9 +479,17 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 marker(out, "~>", id);
                 render(new, out, plain, ids);
                 marker(out, "~~}", id);
-                attribution(out, old_by.as_deref(), id);
-                if new_by != old_by {
-                    attribution(out, new_by.as_deref(), id);
+                match (tag(old_by.as_deref()), tag(new_by.as_deref())) {
+                    (Some(a), Some(b)) if same_author(old_by.as_deref(), new_by.as_deref()) => {
+                        let joined = join_tagged(a, b);
+                        attribution(out, Some(&joined), id);
+                    }
+                    _ => {
+                        attribution(out, old_by.as_deref(), id);
+                        if new_by != old_by {
+                            attribution(out, new_by.as_deref(), id);
+                        }
+                    }
                 }
                 index += 2;
                 continue;
@@ -522,7 +597,7 @@ fn wrap_markers(pieces: &mut [Piece]) {
 
 fn attribution(out: &mut Vec<Piece>, by: Option<&str>, id: usize) {
     if let Some(by) = by {
-        marker(out, &note(by), id);
+        marker(out, &note(&display(by)), id);
     }
 }
 
