@@ -3396,3 +3396,43 @@ fn a_comment_anchored_in_a_header_is_an_open_thread() {
         "{line}"
     );
 }
+
+/// pi review r392b F4: a comment range that starts inside a table and runs
+/// past it is named on the table line as well.
+#[test]
+fn a_table_line_names_a_range_that_starts_in_a_cell() {
+    let body_xml = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:commentRangeStart w:id="9"/>{}</w:p></w:tc></w:tr></w:tbl><w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        run("Cell"),
+        run("After"),
+        reference(9),
+        para("Quiet")
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Span."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(
+        out.contains("<!-- t0 1x1, cells p0-p0 by row, in #c9 -->"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p1 in #c9 -->"), "{out}");
+    assert!(out.contains("<!-- p2 -->"), "{out}");
+}

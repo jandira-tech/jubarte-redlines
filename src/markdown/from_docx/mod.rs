@@ -1080,7 +1080,7 @@ impl Writer<'_> {
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
                     let mut turned = 0;
-                    let spans = self.open_threads();
+                    let spans = self.threads_of(&self.open_after(child));
                     if self.agent
                         && let Some(line) = agent::table_line(
                             child,
@@ -1407,6 +1407,42 @@ impl Writer<'_> {
             }
         }
         roots
+    }
+
+    /// The comment ranges open here plus those `container` opens and leaves
+    /// open: every range a table line's `in #c5` names. A text box is a
+    /// story of its own; its ranges stay inside it.
+    fn open_after(&self, container: &Element) -> Vec<String> {
+        fn walk(e: &Element, comments: &HashMap<String, Element>, open: &mut Vec<String>) {
+            for c in e.elements() {
+                match c.local() {
+                    "txbxContent" => {}
+                    "commentRangeStart" | "commentRangeEnd" => {
+                        if let Some(id) = c.attr("id").filter(|id| comments.contains_key(*id)) {
+                            let at = open.iter().position(|o| o == id);
+                            match (c.is("commentRangeStart"), at) {
+                                (true, None) => open.push(id.to_string()),
+                                (false, Some(at)) => {
+                                    open.remove(at);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => walk(c, comments, open),
+                }
+            }
+        }
+        let mut open = self.open_comments.clone();
+        let before = open.clone();
+        walk(container, &self.comments, &mut open);
+        let mut all = before;
+        for id in open {
+            if !all.contains(&id) {
+                all.push(id);
+            }
+        }
+        all
     }
 
     /// The comment threads whose range is open here.
