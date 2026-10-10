@@ -518,6 +518,25 @@ fn an_author_cannot_forge_an_agent_tag_in_the_plain_view() {
 }
 
 #[test]
+fn a_tracked_mark_inside_a_footnote_carries_its_agent_tag() {
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1"><w:p><w:pPr><w:rPr><w:ins w:id="4" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr><w:r><w:t>First</w:t></w:r></w:p><w:p><w:r><w:t>second</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+    );
+    let bytes = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+            xml: &footnotes,
+        }],
+    );
+    let out = agent(&bytes);
+    assert!(out.contains("{>>#4 @AC<<}"), "{out}");
+    assert!(!out.contains("Ann Counsel ("), "{out}");
+}
+
+#[test]
 fn handles_keep_only_letters_and_digits() {
     let comments = format!(
         r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,

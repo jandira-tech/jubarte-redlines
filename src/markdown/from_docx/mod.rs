@@ -108,8 +108,18 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         None
     };
     let threads = agent::threads(comments_root.as_ref(), extended.as_ref());
+    let mut note_roots = Vec::new();
+    for (kind, fallback, name) in [
+        ("/footnotes", "word/footnotes.xml", "footnote"),
+        ("/endnotes", "word/endnotes.xml", "endnote"),
+    ] {
+        if let Ok(Some(root)) = package.xml(&part(kind, fallback)) {
+            note_roots.push((name, root));
+        }
+    }
     let handles = if options.ids {
-        agent::handles(&document, comments_root.as_ref())
+        let notes: Vec<&Element> = note_roots.iter().map(|(_, root)| root).collect();
+        agent::handles(&document, &notes, comments_root.as_ref())
     } else {
         agent::Handles::default()
     };
@@ -173,19 +183,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .map(|e| Numbering::parse(&e))
         .unwrap_or_default();
     let mut notes = HashMap::new();
-    for (kind, fallback, name) in [
-        ("/footnotes", "word/footnotes.xml", "footnote"),
-        ("/endnotes", "word/endnotes.xml", "endnote"),
-    ] {
-        if let Ok(Some(root)) = package.xml(&part(kind, fallback)) {
-            for note in root.children_named(name) {
-                if let Some(id) = note.attr("id") {
-                    let note = match accept {
-                        Some(accept) => revise::resolve(note, accept),
-                        None => note.clone(),
-                    };
-                    notes.insert((name == "endnote", id.to_string()), note);
-                }
+    for (name, root) in &note_roots {
+        for note in root.children_named(name) {
+            if let Some(id) = note.attr("id") {
+                let note = match accept {
+                    Some(accept) => revise::resolve(note, accept),
+                    None => note.clone(),
+                };
+                notes.insert((*name == "endnote", id.to_string()), note);
             }
         }
     }
@@ -284,7 +289,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 let inline = writer.paragraph_inline(p).0.into_inline();
                 (
                     inline.render(true).replace('\n', " "),
-                    paragraph_mark(p),
+                    writer.note_mark(p),
                     inline.edges(),
                 )
             })
@@ -1677,6 +1682,20 @@ impl Writer<'_> {
             return None;
         }
         paragraph_mark(p).map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
+    }
+
+    /// The tracked change on a note paragraph's mark. A note has no id
+    /// lines, so the agent view prints it inline with its tag.
+    fn note_mark(&self, p: &Element) -> Option<Change> {
+        if !self.agent {
+            return paragraph_mark(p);
+        }
+        let marks = p
+            .path(&["pPr", "rPr"])
+            .map(|rpr| self.revision_marks(rpr))
+            .unwrap_or_default();
+        let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
+        marks.into_iter().nth(deleted.unwrap_or(0))
     }
 
     /// The agent tag of a revision element, with its timestamp when

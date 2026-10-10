@@ -372,13 +372,21 @@ fn walk_revision_authors(
     }
 }
 
-/// Authors of revisions (document order) then of comments (comment order),
+/// Authors of revisions (document order, then footnotes and endnotes) then
+/// of comments (comment order),
 /// each with a handle: the comment `w:initials` that author wrote, else the
 /// uppercase initials of the name's words; a collision appends 2, 3, ….
-pub(crate) fn handles(document: &Element, comments: Option<&Element>) -> Handles {
+pub(crate) fn handles(
+    document: &Element,
+    notes: &[&Element],
+    comments: Option<&Element>,
+) -> Handles {
     let mut order = Vec::new();
     let mut dates: HashMap<String, BTreeSet<String>> = HashMap::new();
     walk_revision_authors(document, &mut order, &mut dates);
+    for root in notes {
+        walk_revision_authors(root, &mut order, &mut dates);
+    }
     let mut initials: HashMap<String, String> = HashMap::new();
     if let Some(comments) = comments {
         for c in comments.children_named("comment") {
@@ -1242,7 +1250,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:bookmarkStart w:id="9" w:name="_b"/><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t> u </w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -1256,7 +1264,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>a</w:t></w:r></w:ins><w:r><w:t> </w:t></w:r><w:del w:id="1" w:author="John Doe"><w:r><w:delText>b</w:delText></w:r></w:del></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         assert_eq!(handles.by_author["Ann Counsel"], "AC");
         assert_eq!(handles.by_author["John Doe"], "JD");
         let p = d.child("body").unwrap().child("p").unwrap();
@@ -1280,7 +1288,7 @@ mod tests {
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/><w:ins w:id="1" w:author="Al Cooper" w:date="2026-10-02T08:00:00Z"/><w:ins w:id="2" w:author="Al Cooper" w:date="2026-10-03T08:30:00Z"/></w:p>"#,
         );
         let comments = parse_xml(format!(r#"<w:comments {W}><w:comment w:id="5" w:author="Arthur Souza Rodrigues" w:initials="AS" w:date="2026-10-09T16:13:00Z"/><w:comment w:id="6" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:comments>"#).as_bytes()).unwrap();
-        let handles = handles(&d, Some(&comments));
+        let handles = handles(&d, &[], Some(&comments));
         assert_eq!(
             handles.order,
             ["Ann Counsel", "Al Cooper", "Arthur Souza Rodrigues"]
@@ -1305,7 +1313,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permStart w:id="30"/><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permEnd w:id="30"/></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -1324,7 +1332,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:pPr><w:pPrChange w:id="1" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="2" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         let p = d.child("body").unwrap().child("p").unwrap();
         assert_eq!(format_change_tags(p, &handles), ["1@AC", "2@AC"]);
     }
