@@ -712,3 +712,143 @@ fn header_prints_a_day_range_for_an_author_with_several_timestamps() {
         "  AC: Ann Counsel                  # 2 revisions, 2026-10-01..2026-10-03"
     );
 }
+
+const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+const HEADER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+const FOOTER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
+const STYLES_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
+const STYLES_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+
+fn hdr(text: &str, jc: Option<&str>) -> String {
+    let ppr = jc.map_or(String::new(), |j| {
+        format!(r#"<w:pPr><w:jc w:val="{j}"/></w:pPr>"#)
+    });
+    format!(r#"<w:hdr xmlns:w="{W_NS}"><w:p>{ppr}<w:r><w:t>{text}</w:t></w:r></w:p></w:hdr>"#)
+}
+
+#[test]
+fn header_describes_page_setup_styles_headers_and_footers() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="80"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/></w:tblBorders></w:tblPr></w:style></w:styles>"#
+    );
+    let header1 = hdr("SIGNATURE PAGE", Some("right"));
+    let header2 =
+        format!(r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>DRAFT</w:t></w:r></w:p><w:p/></w:hdr>"#);
+    let footer1 = format!(
+        r#"<w:ftr xmlns:w="{W_NS}"><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>"#
+    );
+    let footer2 = format!(
+        r#"<w:ftr xmlns:w="{W_NS}"><w:p><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p></w:ftr>"#
+    );
+    let body_xml = format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>{}<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        para("x")
+    );
+    // Part relationship ids are rIdX0.. in order (tests/common/docx.rs:101).
+    let sect = r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX1"/><w:footerReference w:type="even" r:id="rIdX3"/><w:footerReference w:type="default" r:id="rIdX4"/><w:headerReference w:type="first" r:id="rIdX2"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:titlePg/></w:sectPr>"#;
+    let bytes = common::docx::docx_with_sect_pr(
+        &body_xml,
+        &[
+            Part {
+                name: "word/styles.xml",
+                content_type: STYLES_CT,
+                rel_type: STYLES_REL,
+                xml: &styles,
+            },
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header1,
+            },
+            Part {
+                name: "word/header2.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header2,
+            },
+            Part {
+                name: "word/footer1.xml",
+                content_type: FOOTER_CT,
+                rel_type: FOOTER_REL,
+                xml: &footer1,
+            },
+            Part {
+                name: "word/footer2.xml",
+                content_type: FOOTER_CT,
+                rel_type: FOOTER_REL,
+                xml: &footer2,
+            },
+        ],
+        sect,
+    );
+    let out = agent(&bytes);
+    let header = out.splitn(3, "---\n").nth(1).unwrap();
+    let expected = "\
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  \"#\": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  table: TableGrid, all borders 0.5pt
+headers:
+  first: {id: header2, text: DRAFT}  # page 1 only (different first page)
+  default: {id: header1, text: SIGNATURE PAGE, right}
+footers:
+  first: none                      # page 1 shows no page number
+  default: {id: footer2, text: \"{PAGE}\"}
+  even: {id: footer1, text: \"{PAGE}\", inactive}  # defined, but even/odd headers are off
+";
+    assert!(header.ends_with(expected), "header:\n{header}");
+}
+
+#[test]
+fn header_page_line_for_a4_landscape_with_uneven_margins_and_a_gutter() {
+    let sect = r#"<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="709" w:footer="709" w:gutter="720"/></w:sectPr>"#;
+    let out = agent(&common::docx::docx_with_sect_pr(&para("x"), &[], sect));
+    assert!(out.contains("\npage: A4 landscape, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.49in, gutter 0.5in\n"), "{out}");
+}
+
+#[test]
+fn later_sections_list_their_range_and_what_differs_from_the_first() {
+    let main = hdr("MAIN", None);
+    let schedule = hdr("SCHEDULE A", None);
+    let margins = r#"<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#;
+    let body_xml = format!(
+        r#"{}<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/>{margins}</w:sectPr></w:pPr><w:r><w:t>End of part one</w:t></w:r></w:p>{}{}"#,
+        para("Intro"),
+        para("Schedule"),
+        para("Rows")
+    );
+    let sect = format!(
+        r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX1"/><w:cols w:num="2"/>{margins}</w:sectPr>"#
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        &body_xml,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &main,
+            },
+            Part {
+                name: "word/header2.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &schedule,
+            },
+        ],
+        &sect,
+    );
+    let out = agent(&bytes);
+    let header = out.splitn(3, "---\n").nth(1).unwrap();
+    assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, headers: {default: {id: header2, text: SCHEDULE A}}, columns: 2}\n"), "header:\n{header}");
+    assert!(
+        body(&out).contains("<!-- p1 section-break -->\nEnd of part one\n"),
+        "{out}"
+    );
+}

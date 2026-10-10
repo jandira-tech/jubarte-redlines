@@ -333,6 +333,166 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             (None, n) if n > 0 => (1 + n, header::PagesSource::Cached),
             (None, _) => (1 + hard, header::PagesSource::Estimated),
         };
+        let theme = package.xml("word/theme/theme1.xml").ok().flatten();
+        let mut heading_styles: Vec<(usize, String)> = Vec::new();
+        {
+            let mut ps = Vec::new();
+            body.find_all("p", &mut ps);
+            let mut uses: std::collections::BTreeMap<(usize, String), usize> =
+                std::collections::BTreeMap::new();
+            for p in &ps {
+                let Some(style) = p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) else {
+                    continue;
+                };
+                if let Some(level) = writer.styles.heading_level(style) {
+                    *uses.entry((level, style.to_string())).or_default() += 1;
+                }
+            }
+            for level in 1..=6 {
+                if let Some(((_, style), _)) = uses
+                    .iter()
+                    .filter(|((l, _), _)| *l == level)
+                    .max_by_key(|(_, n)| **n)
+                {
+                    heading_styles.push((level, style.clone()));
+                }
+            }
+        }
+        let mut table_styles: Vec<String> = Vec::new();
+        {
+            let mut tables = Vec::new();
+            body.find_all("tbl", &mut tables);
+            for t in tables {
+                if let Some(s) = t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
+                    if !table_styles.iter().any(|x| x == s) {
+                        table_styles.push(s.to_string());
+                    }
+                }
+            }
+        }
+        let even_odd = settings
+            .as_ref()
+            .is_some_and(|s| s.child("evenAndOddHeaders").is_some());
+        let sections = {
+            // A section's properties sit at its end: in the last paragraph's
+            // `w:pPr/w:sectPr`, or in `w:body` for the final section.
+            let mut ps = Vec::new();
+            body.find_all("p", &mut ps);
+            let mut ends: Vec<(usize, Element)> = ps
+                .iter()
+                .filter_map(|p| {
+                    let index: usize = p.attr(agent::INDEX)?.parse().ok()?;
+                    Some((index, p.path(&["pPr", "sectPr"])?.clone()))
+                })
+                .collect();
+            if let Some(last) = body.child("sectPr") {
+                ends.push((stamped.0.saturating_sub(1), last.clone()));
+            }
+            let mut sections: Vec<header::SectionFact> = Vec::new();
+            let mut first = 0;
+            for (last, sect) in ends {
+                let title_page = sect.child("titlePg").is_some();
+                let columns = sect
+                    .child("cols")
+                    .and_then(|c| c.attr("num"))
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(1);
+                let mut stories = Vec::new();
+                for reference in sect.elements() {
+                    let kind = match reference.local() {
+                        "headerReference" => "header",
+                        "footerReference" => "footer",
+                        _ => continue,
+                    };
+                    let ty = match reference.attr("type") {
+                        Some("first") => "first",
+                        Some("even") => "even",
+                        _ => "default",
+                    };
+                    let Some(target) = reference
+                        .attr("id")
+                        .and_then(|id| rels.get(id))
+                        .map(|r| r.target.clone())
+                    else {
+                        continue;
+                    };
+                    let path = if target.starts_with("word/") {
+                        target.clone()
+                    } else {
+                        format!("word/{}", target.trim_start_matches('/'))
+                    };
+                    let stem = std::path::Path::new(&target)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let Ok(Some(root)) = package.xml(&path) else {
+                        continue;
+                    };
+                    let paragraphs: Vec<&Element> = root.children_named("p").collect();
+                    let (index, text, align) = paragraphs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let align = p
+                                .path(&["pPr", "jc"])
+                                .and_then(|j| j.attr("val"))
+                                .and_then(|v| match v {
+                                    "center" => Some("center"),
+                                    "right" | "end" => Some("right"),
+                                    _ => None,
+                                });
+                            (i, header::story_text(p), align)
+                        })
+                        .find(|(_, text, _)| !text.is_empty())
+                        .unwrap_or((0, String::new(), None));
+                    // The id is the part stem (`header2` for `header2.xml`), Word's
+                    // own numbering; a paragraph other than the first adds `.pN`.
+                    stories.push(header::StoryFact {
+                        kind,
+                        ty,
+                        id: if index == 0 {
+                            stem.to_string()
+                        } else {
+                            format!("{stem}.p{index}")
+                        },
+                        text,
+                        align,
+                        active: match ty {
+                            "first" => title_page,
+                            "even" => even_odd,
+                            _ => true,
+                        },
+                    });
+                }
+                // A type a section does not name is inherited from the one before.
+                if let Some(previous) = sections.last() {
+                    for inherited in &previous.stories {
+                        if !stories
+                            .iter()
+                            .any(|s| s.kind == inherited.kind && s.ty == inherited.ty)
+                        {
+                            let mut s = inherited.clone();
+                            s.active = match s.ty {
+                                "first" => title_page,
+                                "even" => even_odd,
+                                _ => true,
+                            };
+                            stories.push(s);
+                        }
+                    }
+                }
+                sections.push(header::SectionFact {
+                    first,
+                    last,
+                    sect_pr: Some(sect),
+                    stories,
+                    title_page,
+                    columns,
+                });
+                first = last + 1;
+            }
+            sections
+        };
         let facts = header::Facts {
             source: options.source.as_deref().unwrap_or("(bytes)"),
             resolved: accept,
@@ -353,11 +513,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             pages_source,
             range: None,
             styles: styles_root.as_ref(),
-            theme: None,
+            theme: theme.as_ref(),
             default_style: default_style.as_deref(),
-            heading_styles: Vec::new(),
-            table_styles: Vec::new(),
-            sections: Vec::new(),
+            heading_styles,
+            table_styles,
+            sections,
         };
         markdown = format!("{}\n{markdown}", header::render(&facts));
     }

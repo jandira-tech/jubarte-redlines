@@ -306,5 +306,479 @@ pub(crate) fn render(f: &Facts) -> String {
     out
 }
 
-/// Page setup, styles, headers, footers and sections (Task 11).
-fn part_two(_out: &mut String, _f: &Facts) {}
+fn twips(e: &Element, attr: &str) -> Option<f64> {
+    e.attr(attr).and_then(|v| v.parse::<f64>().ok())
+}
+
+/// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
+fn page_setup(sect: &Element) -> String {
+    let size = sect.child("pgSz");
+    let (w, h) = (
+        size.and_then(|s| twips(s, "w")).unwrap_or(12240.0),
+        size.and_then(|s| twips(s, "h")).unwrap_or(15840.0),
+    );
+    let landscape = size.and_then(|s| s.attr("orient")) == Some("landscape") || w > h;
+    let (short, long) = if w < h { (w, h) } else { (h, w) };
+    let name = match (short as i64, long as i64) {
+        (12240, 15840) => "Letter".to_string(),
+        (12240, 20160) => "Legal".to_string(),
+        (11906, 16838) => "A4".to_string(),
+        _ => format!(
+            "{}x{}",
+            super::agent::inches(w).trim_end_matches("in"),
+            super::agent::inches(h)
+        ),
+    };
+    let mut out = format!(
+        "{name} {}",
+        if landscape { "landscape" } else { "portrait" }
+    );
+    if let Some(m) = sect.child("pgMar") {
+        let side = |a: &str| twips(m, a).unwrap_or(1440.0);
+        let (t, r, b, l) = (side("top"), side("right"), side("bottom"), side("left"));
+        let inch = super::agent::inches;
+        if t == r && r == b && b == l {
+            out.push_str(&format!(", margins {}", inch(t)));
+        } else {
+            out.push_str(&format!(
+                ", margins top {}, right {}, bottom {}, left {}",
+                inch(t),
+                inch(r),
+                inch(b),
+                inch(l)
+            ));
+        }
+        let (hd, ft) = (
+            twips(m, "header").unwrap_or(720.0),
+            twips(m, "footer").unwrap_or(720.0),
+        );
+        if hd == ft {
+            out.push_str(&format!(", header/footer {}", inch(hd)));
+        } else {
+            out.push_str(&format!(", header {}, footer {}", inch(hd), inch(ft)));
+        }
+        if let Some(g) = twips(m, "gutter").filter(|&g| g > 0.0) {
+            out.push_str(&format!(", gutter {}", inch(g)));
+        }
+    }
+    out
+}
+
+/// Resolved paragraph/run properties of a style through its `basedOn`
+/// chain and the document defaults.
+#[derive(Default)]
+struct Resolved {
+    font: Option<String>,
+    size_half_points: Option<f64>,
+    bold: bool,
+    italic: bool,
+    before: Option<f64>,
+    after: Option<f64>,
+    line: Option<(f64, String)>,
+    keep_next: bool,
+    align: Option<String>,
+}
+
+fn style_by_id<'a>(styles: &'a Element, id: &str) -> Option<&'a Element> {
+    styles
+        .children_named("style")
+        .find(|s| s.attr("styleId") == Some(id))
+}
+
+fn font_of(rpr: &Element, theme: Option<&Element>) -> Option<String> {
+    let fonts = rpr.child("rFonts")?;
+    if let Some(name) = fonts.attr("ascii") {
+        return Some(name.to_string());
+    }
+    let which = fonts
+        .attr("asciiTheme")
+        .or_else(|| fonts.attr("hAnsiTheme"))?;
+    let theme = theme?;
+    let mut scheme = Vec::new();
+    theme.find_all(
+        if which.starts_with("major") {
+            "majorFont"
+        } else {
+            "minorFont"
+        },
+        &mut scheme,
+    );
+    scheme
+        .first()?
+        .child("latin")?
+        .attr("typeface")
+        .map(str::to_string)
+}
+
+fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: Option<&Element>) {
+    if let Some(rpr) = rpr {
+        if r.font.is_none() {
+            r.font = font_of(rpr, theme);
+        }
+        if r.size_half_points.is_none() {
+            r.size_half_points = rpr.child("sz").and_then(|s| twips(s, "val"));
+        }
+        r.bold |= rpr.toggle("b").unwrap_or(false);
+        r.italic |= rpr.toggle("i").unwrap_or(false);
+    }
+    if let Some(ppr) = ppr {
+        if let Some(sp) = ppr.child("spacing") {
+            if r.before.is_none() {
+                r.before = twips(sp, "before");
+            }
+            if r.after.is_none() {
+                r.after = twips(sp, "after");
+            }
+            if r.line.is_none() {
+                if let Some(line) = twips(sp, "line") {
+                    r.line = Some((line, sp.attr("lineRule").unwrap_or("auto").to_string()));
+                }
+            }
+        }
+        r.keep_next |= ppr.child("keepNext").is_some();
+        if r.align.is_none() {
+            r.align = ppr
+                .child("jc")
+                .and_then(|j| j.attr("val"))
+                .map(str::to_string);
+        }
+    }
+}
+
+fn resolve(styles: Option<&Element>, theme: Option<&Element>, id: &str) -> Resolved {
+    let mut r = Resolved::default();
+    let Some(styles) = styles else { return r };
+    let mut current = Some(id.to_string());
+    let mut hops = 0;
+    while let Some(sid) = current.take() {
+        hops += 1;
+        if hops > 16 {
+            break;
+        }
+        let Some(style) = style_by_id(styles, &sid) else {
+            break;
+        };
+        apply(&mut r, style.child("pPr"), style.child("rPr"), theme);
+        current = style
+            .child("basedOn")
+            .and_then(|b| b.attr("val"))
+            .map(str::to_string);
+    }
+    if let Some(defaults) = styles.child("docDefaults") {
+        apply(
+            &mut r,
+            defaults.path(&["pPrDefault", "pPr"]),
+            defaults.path(&["rPrDefault", "rPr"]),
+            theme,
+        );
+    }
+    r
+}
+
+fn points(twips: f64) -> String {
+    let v = format!("{:.1}", twips / 20.0);
+    v.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+fn align_word(align: Option<&str>) -> &'static str {
+    match align {
+        Some("center") => "center",
+        Some("right" | "end") => "right",
+        Some("both" | "distribute") => "justify",
+        _ => "left",
+    }
+}
+
+/// The default style's line prints everything; a heading line always prints
+/// its font and size, then only what differs from `base` (the default
+/// style), so the legend reads as deviations.
+fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
+    let differs = |pick: fn(&Resolved) -> String| base.is_none_or(|b| pick(b) != pick(r));
+    let mut parts = Vec::new();
+    let mut font = r
+        .font
+        .clone()
+        .unwrap_or_else(|| "Times New Roman".to_string());
+    if r.bold {
+        font.push_str(" bold");
+    }
+    if r.italic {
+        font.push_str(" italic");
+    }
+    let size = r.size_half_points.unwrap_or(20.0) / 2.0;
+    let size = format!("{size:.1}");
+    parts.push(format!(
+        "{font} {}pt",
+        size.trim_end_matches('0').trim_end_matches('.')
+    ));
+    if differs(|x| format!("{:?}", x.before)) {
+        if let Some(b) = r.before.filter(|&b| b > 0.0) {
+            parts.push(format!("before {}pt", points(b)));
+        }
+    }
+    if differs(|x| format!("{:?}", x.after)) {
+        if let Some(a) = r.after.filter(|&a| a > 0.0) {
+            parts.push(format!("after {}pt", points(a)));
+        }
+    }
+    if differs(|x| format!("{:?}", x.line)) {
+        if let Some((line, rule)) = &r.line {
+            if rule == "auto" {
+                let ratio = format!("{:.2}", line / 240.0);
+                let ratio = ratio.trim_end_matches('0').trim_end_matches('.');
+                if ratio != "1" {
+                    parts.push(format!("line {ratio}"));
+                }
+            } else {
+                parts.push(format!("line {}pt {rule}", points(*line)));
+            }
+        }
+    }
+    if r.keep_next && differs(|x| x.keep_next.to_string()) {
+        parts.push("keep-next".to_string());
+    }
+    match base {
+        None => parts.push(align_word(r.align.as_deref()).to_string()),
+        Some(b) if align_word(r.align.as_deref()) != align_word(b.align.as_deref()) => {
+            parts.push(align_word(r.align.as_deref()).to_string());
+        }
+        Some(_) => {}
+    }
+    parts.join(", ")
+}
+
+fn table_style_line(styles: Option<&Element>, id: &str) -> String {
+    let borders = styles
+        .and_then(|s| style_by_id(s, id))
+        .and_then(|s| s.path(&["tblPr", "tblBorders"]));
+    let Some(borders) = borders else {
+        return id.to_string();
+    };
+    let sides = ["top", "left", "bottom", "right", "insideH", "insideV"];
+    let sizes: Vec<Option<(String, String)>> = sides
+        .iter()
+        .map(|side| {
+            borders.child(side).map(|b| {
+                (
+                    b.attr("val").unwrap_or("").to_string(),
+                    b.attr("sz").unwrap_or("").to_string(),
+                )
+            })
+        })
+        .collect();
+    match sizes.first().cloned().flatten() {
+        Some((val, sz))
+            if val == "single"
+                && sizes
+                    .iter()
+                    .all(|s| s.as_ref() == Some(&(val.clone(), sz.clone()))) =>
+        {
+            let pt = sz.parse::<f64>().map(|s| s / 8.0).unwrap_or(0.5);
+            let pt = format!("{pt:.2}");
+            format!(
+                "{id}, all borders {}pt",
+                pt.trim_end_matches('0').trim_end_matches('.')
+            )
+        }
+        _ => format!("{id}, borders vary"),
+    }
+}
+
+fn entry(s: &StoryFact) -> String {
+    let text = if s.text.contains('{') || s.text.contains(':') || s.text.is_empty() {
+        format!("\"{}\"", s.text.replace('"', "\\\""))
+    } else {
+        s.text.clone()
+    };
+    let mut inner = format!("id: {}, text: {text}", s.id);
+    if let Some(align) = s.align {
+        inner.push_str(&format!(", {align}"));
+    }
+    if !s.active {
+        inner.push_str(", inactive");
+    }
+    format!("{{{inner}}}")
+}
+
+/// The `headers:` / `footers:` blocks of the first section.
+fn first_section_stories(out: &mut String, section: &SectionFact) {
+    for kind in ["header", "footer"] {
+        let stories: Vec<&StoryFact> = section.stories.iter().filter(|s| s.kind == kind).collect();
+        if stories.is_empty() && !section.title_page {
+            continue;
+        }
+        out.push_str(&format!("{kind}s:\n"));
+        let find = |ty: &str| stories.iter().find(|s| s.ty == ty);
+        if section.title_page {
+            match find("first") {
+                Some(s) => kv(
+                    out,
+                    &format!("  first: {}", entry(s)),
+                    Some("page 1 only (different first page)"),
+                ),
+                None => kv(
+                    out,
+                    "  first: none",
+                    Some(if kind == "footer" {
+                        "page 1 shows no page number"
+                    } else {
+                        "page 1 shows no header"
+                    }),
+                ),
+            }
+        }
+        match find("default") {
+            Some(s) => kv(out, &format!("  default: {}", entry(s)), None),
+            None => kv(out, "  default: none", None),
+        }
+        if let Some(s) = find("even") {
+            kv(
+                out,
+                &format!("  even: {}", entry(s)),
+                if s.active {
+                    None
+                } else {
+                    Some("defined, but even/odd headers are off")
+                },
+            );
+        }
+    }
+}
+
+/// `{p2-p3, headers: {default: {…}}, columns: 2}`: what a later section
+/// changes against the one before it (page setup against the first).
+fn section_entry(section: &SectionFact, previous: &SectionFact, first: &SectionFact) -> String {
+    let mut parts = vec![format!("p{}-p{}", section.first, section.last)];
+    let setup = |s: &SectionFact| s.sect_pr.as_ref().map(page_setup);
+    if setup(section) != setup(first) {
+        if let Some(page) = setup(section) {
+            parts.push(format!("page: {page}"));
+        }
+    }
+    for kind in ["header", "footer"] {
+        let changed: Vec<String> = section
+            .stories
+            .iter()
+            .filter(|s| s.kind == kind)
+            .filter(|s| {
+                !previous
+                    .stories
+                    .iter()
+                    .any(|p| p.kind == s.kind && p.ty == s.ty && p.id == s.id)
+            })
+            .map(|s| format!("{}: {}", s.ty, entry(s)))
+            .collect();
+        if !changed.is_empty() {
+            parts.push(format!("{kind}s: {{{}}}", changed.join(", ")));
+        }
+    }
+    if section.columns != previous.columns {
+        parts.push(format!("columns: {}", section.columns));
+    }
+    format!("{{{}}}", parts.join(", "))
+}
+
+fn part_two(out: &mut String, f: &Facts) {
+    if let Some(sect) = f.sections.first().and_then(|s| s.sect_pr.as_ref()) {
+        kv(out, &format!("page: {}", page_setup(sect)), None);
+    }
+    out.push_str("styles:\n");
+    let default = f.default_style.unwrap_or("Normal");
+    let base = resolve(f.styles, f.theme, default);
+    kv(
+        out,
+        &format!("  {default}: {}", describe(&base, None)),
+        Some("default; unannotated paragraphs use it"),
+    );
+    for (level, style) in &f.heading_styles {
+        kv(
+            out,
+            &format!(
+                "  \"{}\": {style}, {}",
+                "#".repeat(*level),
+                describe(&resolve(f.styles, f.theme, style), Some(&base))
+            ),
+            None,
+        );
+    }
+    match f.table_styles.as_slice() {
+        [] => {}
+        [one] => kv(
+            out,
+            &format!("  table: {}", table_style_line(f.styles, one)),
+            None,
+        ),
+        many => kv(out, &format!("  tables: {}", many.join(", ")), None),
+    }
+    if let Some(first) = f.sections.first() {
+        first_section_stories(out, first);
+        if f.sections.len() > 1 {
+            out.push_str("sections:\n");
+            for (i, section) in f.sections.iter().enumerate().skip(1) {
+                kv(
+                    out,
+                    &format!(
+                        "  {}: {}",
+                        i + 1,
+                        section_entry(section, &f.sections[i - 1], first)
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+}
+
+/// A header/footer paragraph's text with fields as `{PAGE}`: field codes
+/// print, cached results do not.
+pub(crate) fn story_text(p: &Element) -> String {
+    let mut out = String::new();
+    let mut instr: Option<String> = None;
+    let mut in_result = false;
+    for run in p.elements() {
+        match run.local() {
+            "fldSimple" => {
+                let code = run
+                    .attr("instr")
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("FIELD")
+                    .to_uppercase();
+                out.push_str(&format!("{{{code}}}"));
+            }
+            "r" => {
+                for child in run.elements() {
+                    match child.local() {
+                        "fldChar" => match child.attr("fldCharType") {
+                            Some("begin") => instr = Some(String::new()),
+                            Some("separate") => in_result = true,
+                            Some("end") => {
+                                if let Some(code) = instr.take() {
+                                    let code = code
+                                        .split_whitespace()
+                                        .next()
+                                        .unwrap_or("FIELD")
+                                        .to_uppercase();
+                                    out.push_str(&format!("{{{code}}}"));
+                                }
+                                in_result = false;
+                            }
+                            _ => {}
+                        },
+                        "instrText" => {
+                            if let Some(i) = instr.as_mut() {
+                                i.push_str(&child.text());
+                            }
+                        }
+                        "t" if instr.is_none() && !in_result => out.push_str(&child.text()),
+                        "tab" => out.push('\t'),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out.trim().to_string()
+}
