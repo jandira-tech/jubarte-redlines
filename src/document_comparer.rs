@@ -5446,6 +5446,14 @@ fn mark_adopted_hf_content_as_inserted(
             }
         }
     }
+    mark_story_rows(&mut dom, root, |d| {
+        let mark = d.new_element(W::ins());
+        d.set_attribute_value(mark, &W::author(), Some(author));
+        d.set_attribute_value(mark, &W::date(), Some(date));
+        d.set_attribute_value(mark, &W::id(), Some(&next_id.to_string()));
+        next_id += 1;
+        mark
+    });
     out.set_part(part, dom.serialize_element(root).into_bytes());
 }
 
@@ -5628,7 +5636,24 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
             }
         }
     }
+    mark_story_rows(&mut dom, root, |d| revision(d, W::del()));
     out.set_part(part, dom.serialize_element(root).into_bytes());
+}
+
+/// Mark every table row of a one-sided header/footer story with the
+/// story's revision (`w:del` dropped, `w:ins` adopted), as Word's redline
+/// does. Word 16.115 hangs on a story table whose cells are all deleted
+/// while its rows are unmarked (b09, 0.12.0 release sample). Rows already
+/// carrying a mark keep it.
+fn mark_story_rows(dom: &mut Dom, story: NodeId, mut mark: impl FnMut(&mut Dom) -> NodeId) {
+    for tr in dom.descendants(story, Some(&W::name("tr"))) {
+        let trpr = crate::comparer::lcs_table::row_properties(dom, tr);
+        if dom.element(trpr, &W::ins()).is_some() || dom.element(trpr, &W::del()).is_some() {
+            continue;
+        }
+        let rev = mark(dom);
+        crate::comparer::lcs_table::add_row_mark(dom, trpr, rev);
+    }
 }
 
 /// Reset the story's last paragraph to the blank one Word's redline keeps:
@@ -9156,6 +9181,45 @@ mod coverage_boundary_tests {
             dom.element(rpr, &W::del()).is_none(),
             "story closing mark stays live"
         );
+    }
+
+    /// Word 16.115 hangs opening a redline whose footer table has every
+    /// cell deleted but no row marked (b09, release 0.12.0 sample); Word's
+    /// own redline of the pair deletes the row too.
+    #[test]
+    fn one_sided_header_footer_tables_mark_every_row() {
+        let rows = "<w:tbl><w:tr><w:tblPrEx><w:tblBorders/></w:tblPrEx><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:trHeight w:val=\"575\"/><w:trPrChange w:id=\"70\"><w:trPr/></w:trPrChange></w:trPr><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:id=\"71\"/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>";
+        for (deleted, mark) in [(true, "del"), (false, "ins")] {
+            let mut pkg = package("<w:body/>");
+            pkg.set_part("word/footer.xml", xml("ftr", rows).into_bytes());
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            let (dom, r) = part_root(&pkg, "word/footer.xml");
+            let trs = dom.descendants(r, Some(&W::name("tr")));
+            assert_eq!(children(&dom, trs[0]), ["tblPrEx", "trPr", "tc"], "{mark}");
+            assert_eq!(children(&dom, child(&dom, trs[0], "trPr")), [mark]);
+            let marked = child(&dom, child(&dom, trs[0], "trPr"), mark);
+            assert_eq!(dom.attribute(marked, &W::author()), Some("Boundary author"));
+            assert_eq!(
+                children(&dom, child(&dom, trs[1], "trPr")),
+                ["trHeight", mark, "trPrChange"]
+            );
+            assert_eq!(
+                children(&dom, child(&dom, trs[2], "trPr")),
+                ["del"],
+                "a row already marked keeps its own mark"
+            );
+            let before = pkg.part_string("word/footer.xml").unwrap();
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            assert_eq!(pkg.part_string("word/footer.xml").unwrap(), before);
+        }
     }
 
     #[test]
