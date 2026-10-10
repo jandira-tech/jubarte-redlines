@@ -48,9 +48,13 @@ fn agent_options(docx: &[u8], options: MarkdownOptions) -> String {
     docx_to_markdown(docx, &options).unwrap().markdown
 }
 
-/// The body of an agent view: what follows the YAML header.
+/// The body of an agent view: what follows the YAML header and the blank
+/// line after it.
 fn body(markdown: &str) -> &str {
-    markdown.splitn(3, "---\n").nth(2).unwrap_or(markdown)
+    markdown
+        .splitn(3, "---\n")
+        .nth(2)
+        .map_or(markdown, |b| b.strip_prefix('\n').unwrap_or(b))
 }
 
 /// The header's lines, without the `---` fences.
@@ -148,6 +152,7 @@ fn id_lines_precede_every_paragraph_and_the_header_opens_the_output() {
         para("Body text.")
     ));
     let out = agent(&bytes);
+    assert!(out.starts_with("---\nsource: sample.docx\n"), "{out}");
     assert_eq!(
         body(&out),
         "<!-- page 1 of 1 -->\n\n<!-- p0 center -->\n# Title\n\n<!-- p1 -->\nBody text.\n"
@@ -197,6 +202,10 @@ fn layout_page_texts_place_the_markers_above_the_id_lines() {
     assert_eq!(
         body(&out),
         "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nAlpha text here\n\n<!-- page 2 of 2 -->\n\n<!-- p1 -->\nBeta text here\n\n<!-- p2 -->\nGamma text here\n"
+    );
+    assert!(
+        out.contains("\nbody: p0-p2, 0 tables, 2 pages     # pages from layout\n"),
+        "{out}"
     );
 }
 
@@ -582,4 +591,124 @@ fn underline_renders_inside_bold_in_the_agent_view_only() {
         .unwrap()
         .markdown;
     assert_eq!(legacy, "keep it **secret**.\n");
+}
+
+const CORE_CT: &str = "application/vnd.openxmlformats-package.core-properties+xml";
+
+fn core(xml: &str) -> Part<'_> {
+    Part {
+        name: "docProps/core.xml",
+        content_type: CORE_CT,
+        rel_type: "",
+        xml,
+    }
+}
+
+#[test]
+fn header_counts_revisions_comments_and_authors() {
+    let p = format!(
+        "<w:p>{}{}{}{}</w:p>",
+        run("a "),
+        del(1, "Ann Counsel", "b"),
+        ins(2, "Ann Counsel", "c"),
+        ins(3, "John Doe", "d")
+    );
+    let bytes = common::docx::docx_with(
+        &p,
+        &[core(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Jane Owner</dc:creator><cp:lastModifiedBy>Someone Else</cp:lastModifiedBy></cp:coreProperties>"#,
+        )],
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert_eq!(lines[0], "source: sample.docx");
+    assert_eq!(
+        lines[1],
+        "view: tracked                      # revisions as CriticMarkup, comments inline"
+    );
+    assert_eq!(
+        lines[2],
+        "track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it"
+    );
+    assert_eq!(
+        lines[3],
+        "revisions: 2                       # 1 insertion, 1 substitution (3 Word marks)"
+    );
+    assert_eq!(lines[4], "comments: 0");
+    assert_eq!(lines[5], "authors:");
+    assert_eq!(lines[6], "  document_owner: Jane Owner       # dc:creator");
+    assert_eq!(
+        lines[7],
+        "  AC: Ann Counsel                  # 1 revision, 2026-10-01T09:00:00Z"
+    );
+    assert_eq!(
+        lines[8],
+        "  JD: John Doe                     # 1 revision, 2026-10-01T09:00:00Z"
+    );
+    assert_eq!(
+        lines[9],
+        "body: p0-p0, 0 tables, 1 page      # page count estimated from breaks"
+    );
+}
+
+#[test]
+fn header_without_core_properties_names_no_owner_and_reads_tracking_from_settings() {
+    let settings = Part {
+        name: "word/settings.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings",
+        xml: &format!(r#"<w:settings xmlns:w="{W_NS}"><w:trackRevisions/></w:settings>"#),
+    };
+    let out = agent(&common::docx::docx_with(&para("x"), &[settings]));
+    let lines = header_lines(&out);
+    assert_eq!(
+        lines[2],
+        "track_changes: on                  # w:trackRevisions set; edits are tracked"
+    );
+    assert_eq!(lines[3], "revisions: 0");
+    assert_eq!(lines[5], "authors:");
+    assert_eq!(
+        lines[6],
+        "  document_owner: none             # no docProps/core.xml"
+    );
+}
+
+#[test]
+fn header_view_lines_for_hidden_comments_accept_and_reject() {
+    let bytes = commented_docx(THREADED);
+    assert_eq!(
+        header_lines(&agent_with(&bytes, TrackChanges::All, false))[1],
+        "view: tracked, comments hidden     # 2 threads open (3 comments); carrying paragraphs are marked"
+    );
+    let p = format!("<w:p>{}{}</w:p>", run("a "), ins(0, "Ann Counsel", "b"));
+    assert_eq!(
+        header_lines(&agent_with(&docx(&p), TrackChanges::Accept, true))[1],
+        "view: accept-all                   # 1 revision by AC shown as accepted; file unchanged"
+    );
+    assert_eq!(
+        header_lines(&agent_with(&docx(&p), TrackChanges::Reject, true))[1],
+        "view: reject-all                   # 1 revision by AC shown as rejected; file unchanged"
+    );
+    assert_eq!(
+        header_lines(&agent(&bytes))[4],
+        "comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11"
+    );
+}
+
+#[test]
+fn header_prints_a_day_range_for_an_author_with_several_timestamps() {
+    let p = format!(
+        "<w:p>{}{}{}{}</w:p>",
+        run("a "),
+        ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "b"),
+        run(" c "),
+        ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "d")
+    );
+    let out = agent(&docx(&p));
+    let lines = header_lines(&out);
+    // lines[6] is the owner line, which every header prints.
+    assert_eq!(
+        lines[7],
+        "  AC: Ann Counsel                  # 2 revisions, 2026-10-01..2026-10-03"
+    );
 }

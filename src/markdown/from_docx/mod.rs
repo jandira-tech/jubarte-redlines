@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod agent;
 mod critic;
+mod header;
 mod media;
 mod ooxml;
 mod revise;
@@ -114,14 +115,22 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     };
     // Agent view: paragraphs and tables numbered before accept/reject
     // resolution, so indices match `inspect` and `edit`.
-    if options.ids {
-        if let Some(body) = document.children.iter_mut().find_map(|n| match n {
-            ooxml::Node::Element(e) if e.is("body") => Some(e),
-            _ => None,
-        }) {
-            agent::stamp(body, &handles);
-        }
-    }
+    // (paragraphs, tables) numbered, for the header.
+    let stamped = if options.ids {
+        document
+            .children
+            .iter_mut()
+            .find_map(|n| match n {
+                ooxml::Node::Element(e) if e.is("body") => Some(e),
+                _ => None,
+            })
+            .map(|body| agent::stamp(body, &handles))
+            .unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
+    // The body before resolution, for the header's counts and page facts.
+    let original = options.ids.then(|| document.clone());
     // Cached-break page lines: only in the agent view, without layout pages,
     // and only when page lines are wanted at all.
     let cached_pages =
@@ -175,7 +184,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     }
     // Accepting or rejecting the changes leaves comments out as well, except
     // in the agent view, which keeps them.
-    let comments = comments_root.filter(|_| accept.is_none() || options.ids);
+    let comments = comments_root
+        .clone()
+        .filter(|_| accept.is_none() || options.ids);
     let media = Media::load(
         &mut package,
         &rels,
@@ -204,13 +215,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         comments_inline: options.comments,
         resolved: accept.is_some(),
         dates: options.dates,
-        handles,
-        default_style,
+        handles: handles.clone(),
+        default_style: default_style.clone(),
         pending_empty: Vec::new(),
         cached_pages,
         page: 0,
         para_comments: Vec::new(),
-        threads,
+        threads: threads.clone(),
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -278,6 +289,77 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     if let Some(pages) = options.pages.as_ref().filter(|_| options.ids) {
         let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
         markdown = crate::markdown::paginate(&markdown, &pages);
+    }
+    if let Some(original) = &original {
+        let body = original.child("body").unwrap_or(original);
+        let tags = agent::collect_revisions(body, &handles);
+        let (marks, format_changes) = agent::count_marks(body);
+        let (rendered, hard) = agent::page_counts(body);
+        let settings = package.xml("word/settings.xml").ok().flatten();
+        let core = package.xml("docProps/core.xml").ok().flatten();
+        let owner = match &core {
+            None => header::Owner::None,
+            Some(core) => match (
+                core.child("creator")
+                    .map(Element::text)
+                    .filter(|t| !t.trim().is_empty()),
+                core.child("lastModifiedBy")
+                    .map(Element::text)
+                    .filter(|t| !t.trim().is_empty()),
+            ) {
+                (Some(name), _) => header::Owner::Creator(name.trim().to_string()),
+                (None, Some(name)) => header::Owner::LastModifiedBy(name.trim().to_string()),
+                (None, None) => header::Owner::None,
+            },
+        };
+        let comment_facts: Vec<header::CommentFact> = comments_root
+            .as_ref()
+            .map(|root| {
+                root.children_named("comment")
+                    .filter_map(|c| {
+                        let id = c.attr("id")?.to_string();
+                        Some(header::CommentFact {
+                            parent: threads.reply_of.get(&id).cloned(),
+                            author: c.attr("author").map(str::to_string),
+                            date: c.attr("date").map(str::to_string),
+                            id,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (pages, pages_source) = match (&options.pages, rendered) {
+            (Some(pages), _) => (pages.len().max(1), header::PagesSource::Layout),
+            (None, n) if n > 0 => (1 + n, header::PagesSource::Cached),
+            (None, _) => (1 + hard, header::PagesSource::Estimated),
+        };
+        let facts = header::Facts {
+            source: options.source.as_deref().unwrap_or("(bytes)"),
+            resolved: accept,
+            comments_inline: options.comments,
+            tracking_on: settings
+                .as_ref()
+                .is_some_and(|s| s.child("trackRevisions").is_some()),
+            tags,
+            marks,
+            format_changes,
+            comments: comment_facts,
+            handles: &handles,
+            done: &threads.done,
+            owner,
+            paragraphs: stamped.0,
+            tables: stamped.1,
+            pages,
+            pages_source,
+            range: None,
+            styles: styles_root.as_ref(),
+            theme: None,
+            default_style: default_style.as_deref(),
+            heading_styles: Vec::new(),
+            table_styles: Vec::new(),
+            sections: Vec::new(),
+        };
+        markdown = format!("{}\n{markdown}", header::render(&facts));
     }
     if !defs.is_empty() {
         markdown.push_str("\n\n");

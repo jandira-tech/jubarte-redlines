@@ -748,6 +748,88 @@ pub(crate) fn comment_head(
     head
 }
 
+/// Every logical revision in the stamped body: inline tags per paragraph,
+/// tracked paragraph marks, tracked rows and cells.
+pub(crate) fn collect_revisions(body: &Element, handles: &Handles) -> Vec<RevTag> {
+    let mut out = Vec::new();
+    collect_in(body, handles, &mut out);
+    out
+}
+
+fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
+    if e.is("txbxContent") {
+        return;
+    }
+    let attribution = |m: &Element| {
+        (
+            m.attr("author").map(str::to_string),
+            m.attr("date").map(str::to_string),
+        )
+    };
+    if e.is("p") {
+        out.extend(revision_tags(e, handles));
+        if let Some(rpr) = e.path(&["pPr", "rPr"]) {
+            for m in rpr.elements().filter(|m| kind_of(m.local()).is_some()) {
+                let (author, date) = attribution(m);
+                out.push(RevTag {
+                    kind: "mark",
+                    tag: tag_of(m, handles),
+                    author,
+                    date,
+                });
+            }
+        }
+    }
+    if e.is("tr") {
+        if let Some(trpr) = e.child("trPr") {
+            for m in trpr.elements().filter(|m| kind_of(m.local()).is_some()) {
+                let (author, date) = attribution(m);
+                out.push(RevTag {
+                    kind: "row",
+                    tag: tag_of(m, handles),
+                    author,
+                    date,
+                });
+            }
+        }
+    }
+    if e.is("tc") {
+        if let Some(tcpr) = e.child("tcPr") {
+            for m in tcpr
+                .elements()
+                .filter(|m| matches!(m.local(), "cellIns" | "cellDel"))
+            {
+                let (author, date) = attribution(m);
+                out.push(RevTag {
+                    kind: "cell",
+                    tag: tag_of(m, handles),
+                    author,
+                    date,
+                });
+            }
+        }
+    }
+    for child in e.elements() {
+        collect_in(child, handles, out);
+    }
+}
+
+/// Count of revision elements (`w:ins`, `w:del`, moves, cell marks) and of
+/// formatting changes (`*PrChange`) under `body`, text boxes excluded.
+pub(crate) fn count_marks(e: &Element) -> (usize, usize) {
+    if e.is("txbxContent") {
+        return (0, 0);
+    }
+    let mut marks = usize::from(is_revision(e.local()));
+    let mut formats = usize::from(e.local().ends_with("PrChange"));
+    for child in e.elements() {
+        let (m, f) = count_marks(child);
+        marks += m;
+        formats += f;
+    }
+    (marks, formats)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
