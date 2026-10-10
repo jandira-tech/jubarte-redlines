@@ -653,6 +653,35 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
 }
 
 #[test]
+fn resolved_views_list_formatting_and_paragraph_mark_revisions() {
+    let body_xml = concat!(
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>Now bold</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="6" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr><w:r><w:t>Kept</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Last</w:t></w:r></w:p>"#,
+    );
+    let out = agent_with(&docx(body_xml), TrackChanges::Accept, true);
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #5 @AC -->\n**Now bold**\n\n<!-- p1 rev #6 @AC -->\nKeptLast\n"
+    );
+}
+
+#[test]
+fn a_paragraph_joined_on_resolution_keeps_both_paragraphs_revisions() {
+    let body_xml = format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="10" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr>{}</w:p><w:p>{}{}</w:p>"#,
+        run("Split "),
+        run("kept "),
+        ins(11, "Ann Counsel", "added")
+    );
+    let out = agent_with(&docx(&body_xml), TrackChanges::Reject, true);
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #10 @AC; #11 @AC -->\nSplit kept\n"
+    );
+}
+
+#[test]
 fn accept_all_keeps_comments_in_the_agent_view() {
     let out = body(&agent_with(
         &commented_docx(THREADED),

@@ -17,7 +17,8 @@ pub(crate) const INDEX: &str = "\u{E000}jubarteIndex";
 /// Attribute stamped on every top-level `w:tbl`: its `t{N}` number.
 pub(crate) const TABLE: &str = "\u{E000}jubarteTable";
 /// Attribute stamped on a `w:p` that holds revisions: `kind:tag` entries
-/// separated by spaces (`ins:0@AC sub:1+2@AC`), recorded before resolution.
+/// separated by spaces (`ins:0@AC sub:1+2@AC fmt:3@JD mark-ins:4@AC`),
+/// recorded before resolution.
 pub(crate) const REVS: &str = "\u{E000}jubarteRevs";
 
 /// Author handles, order and timestamps for tags, notes and the header.
@@ -280,9 +281,19 @@ pub(crate) fn stamp(body: &mut Element, handles: &Handles) -> (usize, usize) {
 
 fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: bool) {
     if element.is("p") {
+        // Content revisions, then formatting changes, then the paragraph
+        // mark: everything resolution may strip.
+        let (mark_ins, mark_del) = mark_tags(element, handles);
         let revs: Vec<String> = revision_tags(element, handles)
             .into_iter()
             .map(|t| format!("{}:{}", t.kind, t.tag))
+            .chain(
+                format_change_tags(element, handles)
+                    .into_iter()
+                    .map(|t| format!("fmt:{t}")),
+            )
+            .chain(mark_ins.into_iter().map(|t| format!("mark-ins:{t}")))
+            .chain(mark_del.into_iter().map(|t| format!("mark-del:{t}")))
             .collect();
         element.attrs.push((INDEX.to_string(), c.p.to_string()));
         c.p += 1;
