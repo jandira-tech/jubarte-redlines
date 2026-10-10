@@ -789,6 +789,10 @@ The documented rendering surface includes:
 - footnotes and selected fields.
 
 Rendering fidelity still depends on fonts and on document features.
+WebAssembly has no installed fonts: `docxToPdf` paints with the fonts a
+document embeds and the bundled Carlito and Liberation faces, so Chinese,
+Japanese or Korean text without an embedded font is not painted (see
+[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md), item 9).
 
 Supplemental font lookup can be configured with:
 
