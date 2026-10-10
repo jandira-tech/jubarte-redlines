@@ -43,7 +43,10 @@ The script enables the `native-allocator` feature, compiles the C code with
 poisoning/unpoisoning hooks. Both are necessary: Rust instrumentation alone
 does not track allocations from this custom allocator. The feature includes
 the engine's `fast-alloc` feature, and the harness library installs mimalloc
-globally. CI runs both native targets sequentially after the ordinary targets.
+globally. `fuzz/` is its own workspace with an untracked lockfile, so the
+script first copies the root `Cargo.lock` into it and stops if mimalloc or
+libmimalloc-sys then differ from the versions the CLI ships. CI runs both
+native targets sequentially after the ordinary targets.
 Upstream LLVM Clang with sanitizer headers and a nightly Rust toolchain are
 required. On macOS the script selects Homebrew LLVM when available; Apple
 Clang's sanitizer ABI is incompatible with Rust's runtime and is rejected

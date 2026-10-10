@@ -30,6 +30,22 @@ export CXXFLAGS="${CXXFLAGS:-} -fsanitize=address -fno-omit-frame-pointer"
 target="${1:-compare}"
 if (( $# > 0 )); then shift; fi
 if (( $# == 0 )); then set -- -max_total_time=60; fi
+
+# fuzz/ is its own workspace and its lockfile is not tracked, so it can drift
+# to another allocator release. Resolve it from the shipped lockfile and stop
+# unless it builds the mimalloc the CLI ships.
+cp Cargo.lock fuzz/Cargo.lock
+cargo +nightly metadata --manifest-path fuzz/Cargo.toml --format-version 1 >/dev/null
+for crate in mimalloc libmimalloc-sys; do
+  shipped=$(grep -A1 "^name = \"$crate\"\$" Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+  fuzzed=$(grep -A1 "^name = \"$crate\"\$" fuzz/Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+  if [[ -z $shipped || $shipped != "$fuzzed" ]]; then
+    printf 'fuzz resolves %s %s, but the CLI ships %s.\n' \
+      "$crate" "${fuzzed:-nothing}" "${shipped:-nothing}" >&2
+    exit 2
+  fi
+done
+
 # cargo-fuzz enables debug assertions by default; do not pass -O.
 exec cargo +nightly fuzz run --features native-allocator --sanitizer address \
   "$target" -- "$@"
