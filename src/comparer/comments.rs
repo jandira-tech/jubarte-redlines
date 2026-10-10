@@ -684,39 +684,18 @@ pub(super) fn place_before_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, 
 /// the run that holds it; before any character, before the first run.
 pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, node: NodeId) {
     match segs.partition_point(|s| s.start < o).checked_sub(1) {
-        None => {
-            if let Some(first) = segs.first() {
-                dom.add_before_self(first.run, node);
-            }
-        }
+        None => match segs.first() {
+            // before any character, in a paragraph with none: its start
+            Some(first) if first.is_mark() => add_at_paragraph_start(dom, first.leaf, false, node),
+            Some(first) => dom.add_before_self(first.run, node),
+            None => {}
+        },
         // after a mark: the start of the next paragraph's content, or the
         // end of the last paragraph
         Some(i) if segs[i].is_mark() => match segs.get(i + 1) {
             Some(next) if next.is_mark() => {
-                let p = next.leaf;
-                // A paragraph whose content opens with a deletion takes the
-                // end inside it, as Word writes a range's end in deleted text.
-                let content = dom
-                    .elements(p, None)
-                    .into_iter()
-                    .find(|&c| dom.name(c) != Some(W::p_pr()));
-                // A range ending on a deleted mark, before a paragraph with
-                // no content and a deleted mark, ends in a deletion of its
-                // own there (5f0fed8e2a).
                 let ends_deleted = mark_deletion(dom, segs[i].leaf).is_some();
-                let content = match (content, mark_deletion(dom, p)) {
-                    (None, Some(mark)) if ends_deleted => {
-                        let del = dom.clone_subtree(mark);
-                        dom.add(p, del);
-                        Some(del)
-                    }
-                    (c, _) => c,
-                };
-                match (content, dom.element(p, &W::p_pr())) {
-                    (Some(del), _) if dom.name(del) == Some(W::del()) => dom.add_first(del, node),
-                    (_, Some(ppr)) => dom.add_after_self(ppr, node),
-                    (_, None) => dom.add_first(p, node),
-                }
+                add_at_paragraph_start(dom, next.leaf, ends_deleted, node);
             }
             Some(_) => {
                 split_run_before_leaf(dom, segs, i + 1);
@@ -738,6 +717,31 @@ pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, n
             split_seg(dom, segs, i, k);
             dom.add_after_self(segs[i].run, node);
         }
+    }
+}
+
+/// Put `node` at the start of paragraph `p`'s content, never outside it.
+/// A paragraph whose content opens with a deletion takes it inside, as Word
+/// writes a range's end in deleted text; `ends_deleted` (the range ends on a
+/// deleted mark) before a paragraph with no content and a deleted mark ends
+/// in a deletion of its own there (5f0fed8e2a).
+fn add_at_paragraph_start(dom: &mut Dom, p: NodeId, ends_deleted: bool, node: NodeId) {
+    let content = dom
+        .elements(p, None)
+        .into_iter()
+        .find(|&c| dom.name(c) != Some(W::p_pr()));
+    let content = match (content, mark_deletion(dom, p)) {
+        (None, Some(mark)) if ends_deleted => {
+            let del = dom.clone_subtree(mark);
+            dom.add(p, del);
+            Some(del)
+        }
+        (c, _) => c,
+    };
+    match (content, dom.element(p, &W::p_pr())) {
+        (Some(del), _) if dom.name(del) == Some(W::del()) => dom.add_first(del, node),
+        (_, Some(ppr)) => dom.add_after_self(ppr, node),
+        (_, None) => dom.add_first(p, node),
     }
 }
 
@@ -1559,7 +1563,7 @@ pub fn carry_comments(
     }
     let no_map = HashMap::new();
     let mut a_side = HashSet::new();
-    let anchored = if ids_b.is_empty() {
+    let mut anchored = if ids_b.is_empty() {
         // only A has comments; its parts are already in out (out is A's clone)
         inject_side(
             dom,
@@ -1600,6 +1604,31 @@ pub fn carry_comments(
         ));
         anchored
     };
+    // B can still define a comment of A's whose anchors it lost (a deleted
+    // paragraph's comment left in its part): B carries no place for it, so
+    // A's anchor does, as in Word's Compare.
+    if !ids_b.is_empty() && !ids_a.is_empty() {
+        let b_defs = comment_id_fingerprint_of(pkg2);
+        let lost: HashSet<String> = comment_id_fingerprint_of(pkg1)
+            .into_iter()
+            .filter(|(id, fingerprint)| {
+                !anchored.contains_key(id) && b_defs.get(id) == Some(fingerprint)
+            })
+            .map(|(id, _)| id)
+            .collect();
+        if !lost.is_empty() {
+            a_side.extend(lost.iter().cloned());
+            anchored.extend(inject_side(
+                dom,
+                result_root,
+                (pkg1, main1),
+                false,
+                author,
+                &no_map,
+                Some(&lost),
+            ));
+        }
+    }
     let anchored = select_anchor_aware_comments(out, &anchored, &a_side);
     // Also strip body anchors for dropped ids so they don't linger orphan-free
     // as range markers without a comments.xml entry (Ring-1).
@@ -2095,10 +2124,12 @@ mod deeper_boundary_tests {
             );
             if want {
                 let p = dom.descendants(root, Some(&W::p()))[0];
+                // Before any text, the anchor opens the paragraph: the same
+                // placement carries the reference run, and a run straight in
+                // `w:body` makes Word load the document empty (2026-10-10).
                 if after && offset == 0 {
-                    let body = dom.element(root, &W::body()).unwrap();
-                    assert_eq!(dom.parent(anchor), Some(body));
-                    assert_eq!(children(&dom, body), ["commentRangeEnd:", "p:"]);
+                    assert_eq!(dom.parent(anchor), Some(p));
+                    assert_eq!(children(&dom, p), ["commentRangeEnd:"]);
                 } else {
                     assert_eq!(dom.parent(anchor), Some(p));
                     let names = children(&dom, p);

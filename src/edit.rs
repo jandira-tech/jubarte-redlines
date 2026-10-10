@@ -4631,6 +4631,7 @@ impl<'p> Transaction<'p> {
             crate::settings::apply_settings(&mut self.opened.pkg, &main, request)
                 .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
         }
+        let lost_reference = self.removes_comment_reference(&written);
         let marked = if self.whole_marks.is_empty() {
             None
         } else {
@@ -4646,12 +4647,51 @@ impl<'p> Transaction<'p> {
             Some(bytes)
         };
         self.write_stories(&written);
+        if lost_reference {
+            // A comment whose reference went with deleted text goes too, as
+            // Accept All takes it (Word rule R1): no definition is left
+            // without an anchor.
+            let stories: Vec<String> =
+                crate::revision_processor::revision_bearing_parts(&self.opened.pkg)
+                    .into_iter()
+                    .filter(|(_, is_styles)| !is_styles)
+                    .map(|(part, _)| part)
+                    .collect();
+            crate::revision_processor::prune_orphan_comments(&mut self.opened.pkg, &stories);
+        }
         let clean = self
             .opened
             .pkg
             .to_zip()
             .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
         Ok((clean, marked))
+    }
+
+    /// Whether the plan took a comment reference out of a story it writes
+    /// (a deleted paragraph's, or deleted text's), read against the story as
+    /// the package still holds it.
+    fn removes_comment_reference(&self, stories: &std::collections::BTreeSet<usize>) -> bool {
+        if self.opened.pkg.part_bytes("word/comments.xml").is_none() {
+            return false;
+        }
+        let name = W::name("commentReference");
+        let ids = |dom: &Dom, root: NodeId| -> std::collections::HashSet<String> {
+            dom.descendants(root, Some(&name))
+                .into_iter()
+                .filter_map(|r| dom.attribute(r, &W::id()).map(str::to_string))
+                .collect()
+        };
+        stories.iter().any(|&story| {
+            let StoryPart { part, root, .. } = &self.stories[story];
+            let Some(xml) = self.opened.pkg.part_string(part) else {
+                return false;
+            };
+            let mut source = Dom::new();
+            let document = source.parse_xdocument(&xml);
+            source.root(document).is_some_and(|source_root| {
+                !ids(&source, source_root).is_subset(&ids(&self.opened.dom, *root))
+            })
+        })
     }
 
     fn write_stories(&mut self, stories: &std::collections::BTreeSet<usize>) {
@@ -5055,6 +5095,7 @@ fn apply_text_edit(
         }
         return;
     }
+    let inside = inner_comment_references(dom, projection, start, end);
     let mut pending = Some(replacement);
     for seg in &projection.segments {
         if seg.end <= start || seg.start >= end {
@@ -5079,6 +5120,57 @@ fn apply_text_edit(
                 dom.remove(element);
             }
         }
+    }
+    remove_comment_references(dom, &inside);
+}
+
+/// The comment references between the first and the last character of
+/// `[start, end)`: a selection over them takes their mark along, and Word
+/// then drops the comment (rule R1).
+fn inner_comment_references(
+    dom: &Dom,
+    projection: &Projection,
+    start: usize,
+    end: usize,
+) -> Vec<NodeId> {
+    let node = |seg: &crate::inspect::Segment| match seg.piece {
+        Piece::Text { t, .. } => t,
+        Piece::Glyph { element, .. } => element,
+    };
+    let mut covered = projection
+        .segments
+        .iter()
+        .filter(|seg| seg.end > start && seg.start < end);
+    // One covered piece has nothing between its ends.
+    let (Some(first), Some(last)) = (covered.next().map(node), covered.next_back().map(node))
+    else {
+        return Vec::new();
+    };
+    let Some(&paragraph) = dom.ancestors(first, Some(&W::p())).first() else {
+        return Vec::new();
+    };
+    let order = dom.descendants(paragraph, None);
+    let at = |n: NodeId| order.iter().position(|&o| o == n);
+    let (Some(from), Some(to)) = (at(first), at(last)) else {
+        return Vec::new();
+    };
+    dom.descendants(paragraph, Some(&W::name("commentReference")))
+        .into_iter()
+        .filter(|&r| at(r).is_some_and(|i| from < i && i < to))
+        .collect()
+}
+
+/// Remove comment references, with the run when it holds nothing else.
+fn remove_comment_references(dom: &mut Dom, references: &[NodeId]) {
+    for &reference in references {
+        let run = dom.parent(reference).filter(|&r| {
+            dom.name_is(r, &W::r())
+                && dom
+                    .elements(r, None)
+                    .into_iter()
+                    .all(|c| c == reference || dom.name_is(c, &W::r_pr()))
+        });
+        dom.remove(run.unwrap_or(reference));
     }
 }
 
