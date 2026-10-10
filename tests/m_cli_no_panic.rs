@@ -198,3 +198,31 @@ fn compare_with_an_orphan_footnote_reference_returns_err() {
     let err = compare_documents(&doc, &modified, "Author").expect_err("orphan ref → Err");
     assert!(format!("{err}").contains("77"), "{err}");
 }
+
+/// A reader that stops early (`jubarte FILE | head`) closes the pipe while the
+/// agent view is still being written: the CLI stops quietly, as `cat` does.
+#[cfg(unix)]
+#[test]
+fn a_closed_stdout_pipe_ends_the_view_without_a_panic() {
+    use std::io::Read;
+    use std::process::Stdio;
+    // Its agent view (about 230 KB) is larger than any pipe buffer.
+    let big = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/corpus/broken_ones_two/sources/file_22.docx"
+    );
+    for args in [&["read", "--no-page-markers", big][..], &[big][..]] {
+        let mut child = Command::new(BIN)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut first = [0u8; 16];
+        child.stdout.take().unwrap().read_exact(&mut first).unwrap();
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+    }
+}

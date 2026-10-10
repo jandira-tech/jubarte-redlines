@@ -773,8 +773,20 @@ fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Re
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
-    print!("{}", view.markdown);
-    Ok(())
+    print_view(&view.markdown)
+}
+
+/// Writes a view to stdout. A reader that stops early (`jubarte FILE | head`)
+/// closes the pipe; the view then ends quietly, as `cat`'s output does.
+fn print_view(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+            Err(format!("writing to stdout: {e}"))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Whether `edit` and `add` track their changes.
@@ -1025,8 +1037,7 @@ fn run_edit(
         Some(&job.out_dir.join(shown).display().to_string()),
     )
     .map_err(|e| fail(format!("reading the redline back: {e}")))?;
-    print!("{view}");
-    Ok(())
+    print_view(&view).map_err(fail)
 }
 
 /// One `edit` or `add` invocation, parsed.

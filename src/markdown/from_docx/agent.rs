@@ -612,6 +612,12 @@ pub(crate) fn escape_markdown(text: &str) -> String {
 /// A leading `*` is already `\*` from `escape_markdown`.
 pub(crate) fn escape_block_start(line: &str) -> String {
     let bytes = line.as_bytes();
+    // A block opener may sit after up to three spaces; four make plain text.
+    let indent = bytes.iter().take_while(|&&b| b == b' ').count();
+    if (1..=3).contains(&indent) {
+        let (spaces, rest) = line.split_at(indent);
+        return format!("{spaces}{}", escape_block_start(rest));
+    }
     let hashes = bytes.iter().take_while(|&&b| b == b'#').count();
     let opens = ((1..=6).contains(&hashes) && bytes.get(hashes).is_none_or(|&b| b == b' '))
         || matches!(bytes.first(), Some(b'>' | b'|'))
@@ -1464,6 +1470,15 @@ mod tests {
             ("1.5 litres", "1.5 litres"),
             ("1.", "1\\."),
             ("plain", "plain"),
+            // CommonMark lets a block opener sit after up to three spaces.
+            ("   =", "   \\="),
+            ("  # Fees", "  \\# Fees"),
+            (" > q", " \\> q"),
+            ("   - x", "   \\- x"),
+            ("  1. one", "  1\\. one"),
+            // Four spaces (or a tab) inside a paragraph are plain text.
+            ("    # x", "    # x"),
+            ("\t- x", "\t- x"),
         ] {
             assert_eq!(escape_block_start(line), escaped, "{line}");
         }

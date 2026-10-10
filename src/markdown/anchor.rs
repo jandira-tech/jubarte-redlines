@@ -107,15 +107,15 @@ fn without_emphasis(text: &str) -> String {
     let spaced = |i: usize| {
         i > 0 && chars[i - 1].is_whitespace() && chars.get(i + 1).is_some_and(|c| c.is_whitespace())
     };
-    let stars: Vec<usize> = (0..chars.len())
-        .filter(|&i| chars[i] == '*' && !spaced(i))
-        .collect();
-    if stars.len().is_multiple_of(2) {
-        text = chars
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !stars.contains(i))
-            .map(|(_, c)| c)
+    let star = |i: usize| chars[i] == '*' && !spaced(i);
+    if (0..chars.len())
+        .filter(|&i| star(i))
+        .count()
+        .is_multiple_of(2)
+    {
+        text = (0..chars.len())
+            .filter(|&i| !star(i))
+            .map(|i| chars[i])
             .collect();
     }
     let chars: Vec<char> = text.chars().collect();
@@ -124,15 +124,15 @@ fn without_emphasis(text: &str) -> String {
             && chars[i - 1].is_alphanumeric()
             && chars.get(i + 1).is_some_and(|c| c.is_alphanumeric())
     };
-    let edges: Vec<usize> = (0..chars.len())
-        .filter(|&i| chars[i] == '_' && !inner(i))
-        .collect();
-    if edges.len().is_multiple_of(2) {
-        text = chars
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !edges.contains(i))
-            .map(|(_, c)| c)
+    let edge = |i: usize| chars[i] == '_' && !inner(i);
+    if (0..chars.len())
+        .filter(|&i| edge(i))
+        .count()
+        .is_multiple_of(2)
+    {
+        text = (0..chars.len())
+            .filter(|&i| !edge(i))
+            .map(|i| chars[i])
             .collect();
     }
     text
