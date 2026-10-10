@@ -133,7 +133,7 @@ const COMMANDS = {
         ? wasm.diffDocumentsCritic(a, b, o.author, o.date)
         : wasm.redlineDocuments(a, b, o.author, o.date);
       write(output, redline);
-      if (!o.quiet) console.log(`wrote ${output} (${redline.length} bytes)`);
+      if (!o.quiet) console.log(`wrote ${output} (${Buffer.byteLength(redline)} bytes)`);
     },
   },
   diff: {
