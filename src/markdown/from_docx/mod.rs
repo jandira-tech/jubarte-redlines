@@ -290,6 +290,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
         markdown = crate::markdown::paginate(&markdown, &pages);
     }
+    let mut range = None;
+    if let Some(select) = options.select.as_ref().filter(|_| options.ids) {
+        let (selected, described) =
+            agent::select_blocks(&markdown, select, stamped.0.saturating_sub(1))
+                .map_err(ooxml::invalid)?;
+        markdown = selected;
+        range = Some(described);
+    }
     if let Some(original) = &original {
         let body = original.child("body").unwrap_or(original);
         let tags = agent::collect_revisions(body, &handles);
@@ -511,7 +519,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             tables: stamped.1,
             pages,
             pages_source,
-            range: None,
+            range,
             styles: styles_root.as_ref(),
             theme: theme.as_ref(),
             default_style: default_style.as_deref(),

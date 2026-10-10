@@ -8,6 +8,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::ooxml::{Element, Node};
+use crate::markdown::{Pick, Select};
 
 // The stamps start with U+E000, which no XML name can hold, so a file
 // cannot forge them.
@@ -828,6 +829,215 @@ pub(crate) fn count_marks(e: &Element) -> (usize, usize) {
         formats += f;
     }
     (marks, formats)
+}
+
+/// One block of the rendered body: its lines, the paragraph span it covers
+/// and, for a table, its number.
+struct Block {
+    text: String,
+    span: Option<(usize, usize)>,
+    table: Option<usize>,
+    /// The `<!-- page N of M -->` line that preceded it, if any.
+    page: Option<String>,
+}
+
+/// Every `pN` in a table or empty-run line, for its span.
+fn numbers_after(line: &str, key: &str) -> Vec<usize> {
+    let Some(at) = line.find(key) else {
+        return Vec::new();
+    };
+    line[at + key.len()..]
+        .split(|c: char| !c.is_ascii_digit() && c != 'p')
+        .filter_map(|piece| piece.strip_prefix('p')?.parse().ok())
+        .collect()
+}
+
+/// Splits a rendered body on blank lines into blocks keyed by their id
+/// lines; a page marker attaches to the block after it; a block with no id
+/// line (notes, footnote definitions) attaches to the block before it.
+fn blocks_of(body: &str) -> Vec<Block> {
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut page: Option<String> = None;
+    for chunk in body.split("\n\n").filter(|c| !c.trim().is_empty()) {
+        let first = chunk.lines().next().unwrap_or("");
+        if first.starts_with("<!-- page ") {
+            page = Some(first.to_string());
+            continue;
+        }
+        let head = first.strip_prefix("<!-- ").unwrap_or("");
+        if let Some(rest) = head.strip_prefix('p') {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(start) = digits.parse::<usize>() {
+                let end = rest
+                    .strip_prefix(&digits)
+                    .and_then(|r| r.strip_prefix("-p"))
+                    .map(|r| {
+                        r.chars()
+                            .take_while(char::is_ascii_digit)
+                            .collect::<String>()
+                    })
+                    .and_then(|d| d.parse::<usize>().ok())
+                    .unwrap_or(start);
+                blocks.push(Block {
+                    text: chunk.to_string(),
+                    span: Some((start, end)),
+                    table: None,
+                    page: page.take(),
+                });
+                continue;
+            }
+        }
+        if let Some(rest) = head.strip_prefix('t') {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(table) = digits.parse::<usize>() {
+                let cells = numbers_after(first, "cells ");
+                let span = match (cells.iter().min(), cells.iter().max()) {
+                    (Some(&a), Some(&b)) => Some((a, b)),
+                    _ => None,
+                };
+                blocks.push(Block {
+                    text: chunk.to_string(),
+                    span,
+                    table: Some(table),
+                    page: page.take(),
+                });
+                continue;
+            }
+        }
+        match blocks.last_mut() {
+            Some(last) => {
+                last.text.push_str("\n\n");
+                last.text.push_str(chunk);
+            }
+            None => blocks.push(Block {
+                text: chunk.to_string(),
+                span: None,
+                table: None,
+                page: page.take(),
+            }),
+        }
+    }
+    blocks
+}
+
+fn span_text(a: usize, b: usize) -> String {
+    if a == b {
+        format!("p{a}")
+    } else {
+        format!("p{a}-p{b}")
+    }
+}
+
+/// The selected blocks of `body` joined back, and the `range:` text.
+pub(crate) fn select_blocks(
+    body: &str,
+    select: &Select,
+    last: usize,
+) -> Result<(String, String), String> {
+    let blocks = blocks_of(body);
+    let keep: Vec<bool>;
+    let range: String;
+    match select {
+        Select::Head(n) | Select::Tail(n) if *n == 0 => {
+            return Err(format!(
+                "{} needs a count above 0",
+                if matches!(select, Select::Head(_)) {
+                    "head"
+                } else {
+                    "tail"
+                }
+            ));
+        }
+        Select::Head(n) => {
+            keep = (0..blocks.len()).map(|i| i < *n).collect();
+            let spans: Vec<(usize, usize)> =
+                blocks.iter().take(*n).filter_map(|b| b.span).collect();
+            range = format!(
+                "head {n} ({})",
+                span_text(
+                    spans.first().map_or(0, |s| s.0),
+                    spans.last().map_or(0, |s| s.1)
+                )
+            );
+        }
+        Select::Tail(n) => {
+            let skip = blocks.len().saturating_sub(*n);
+            keep = (0..blocks.len()).map(|i| i >= skip).collect();
+            let spans: Vec<(usize, usize)> =
+                blocks.iter().skip(skip).filter_map(|b| b.span).collect();
+            range = format!(
+                "tail {n} ({})",
+                span_text(
+                    spans.first().map_or(0, |s| s.0),
+                    spans.last().map_or(0, |s| s.1)
+                )
+            );
+        }
+        Select::Picks(picks) => {
+            let mut wanted: Vec<(usize, usize)> = Vec::new();
+            let mut tables: Vec<usize> = Vec::new();
+            let mut names: Vec<(usize, String)> = Vec::new();
+            for pick in picks {
+                match pick {
+                    Pick::Paragraphs { from, to } => {
+                        let to = to.unwrap_or(last);
+                        for n in [*from, to] {
+                            if n > last {
+                                return Err(format!("p{n} is past the last paragraph p{last}"));
+                            }
+                        }
+                        wanted.push((*from, to));
+                        names.push((*from, span_text(*from, to)));
+                    }
+                    Pick::Table(t) => {
+                        let Some(block) = blocks.iter().find(|b| b.table == Some(*t)) else {
+                            return Err(format!("t{t} is not a table of this document"));
+                        };
+                        tables.push(*t);
+                        names.push((block.span.map_or(0, |s| s.0), format!("t{t}")));
+                    }
+                }
+            }
+            keep = blocks
+                .iter()
+                .map(|b| {
+                    b.table.is_some_and(|t| tables.contains(&t))
+                        || b.span.is_some_and(|(a, z)| {
+                            wanted.iter().any(|&(from, to)| a <= to && from <= z)
+                        })
+                })
+                .collect();
+            names.sort_by_key(|(at, _)| *at);
+            range = names
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>()
+                .join(", ");
+        }
+    }
+    let mut out = String::new();
+    let mut page_due: Option<&str> = None;
+    let mut page_written: Option<&str> = None;
+    for (block, keep) in blocks.iter().zip(&keep) {
+        if let Some(page) = &block.page {
+            page_due = Some(page.as_str());
+        }
+        if !keep {
+            continue;
+        }
+        if let Some(page) = page_due.take() {
+            if page_written != Some(page) {
+                out.push_str(page);
+                out.push_str("\n\n");
+                page_written = Some(page);
+            }
+        }
+        out.push_str(&block.text);
+        out.push_str("\n\n");
+    }
+    // `convert` ends the Markdown with its newline.
+    out.truncate(out.trim_end_matches('\n').len());
+    Ok((out, range))
 }
 
 #[cfg(test)]

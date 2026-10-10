@@ -852,3 +852,101 @@ fn later_sections_list_their_range_and_what_differs_from_the_first() {
         "{out}"
     );
 }
+
+fn four_paragraphs_and_a_table() -> Vec<u8> {
+    docx(&format!(
+        "{}{}{TABLE_3X2}{}{}",
+        para("Zero"),
+        para("One"),
+        para("Eight"),
+        para("Nine")
+    ))
+}
+
+fn selected(select: Select) -> String {
+    agent_options(
+        &four_paragraphs_and_a_table(),
+        MarkdownOptions {
+            select: Some(select),
+            ..agent_defaults()
+        },
+    )
+}
+
+#[test]
+fn head_prints_the_first_blocks_and_a_range_line() {
+    let out = selected(Select::Head(2));
+    assert!(out.contains("\nbody: p0-p9, 1 table, 1 page       # page count estimated from breaks\nrange: head 2 (p0-p1) of p0-p9\n"), "{out}");
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nZero\n\n<!-- p1 -->\nOne\n"
+    );
+}
+
+#[test]
+fn tail_prints_the_last_blocks_with_the_page_they_are_on() {
+    let out = selected(Select::Tail(2));
+    assert!(out.contains("\nrange: tail 2 (p8-p9) of p0-p9\n"), "{out}");
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 1 -->\n\n<!-- p8 -->\nEight\n\n<!-- p9 -->\nNine\n"
+    );
+}
+
+#[test]
+fn picks_print_paragraphs_ranges_and_whole_tables_in_document_order() {
+    let out = selected(Select::parse("p9, p1, p4").unwrap());
+    assert!(out.contains("\nrange: p1, p4, p9 of p0-p9\n"), "{out}");
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nOne\n\n<!-- t0 center 3x2, cells p2-p7 by row, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p9 -->\nNine\n"
+    );
+    let out = selected(Select::parse("t0,p8-").unwrap());
+    assert!(out.contains("\nrange: t0, p8-p9 of p0-p9\n"), "{out}");
+    assert!(
+        body(&out).starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 3x2"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_pick_past_the_end_is_an_error() {
+    let err = docx_to_markdown(
+        &four_paragraphs_and_a_table(),
+        &MarkdownOptions {
+            select: Some(Select::parse("p12").unwrap()),
+            ..agent_defaults()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("p12 is past the last paragraph p9"), "{err}");
+    let err = docx_to_markdown(
+        &four_paragraphs_and_a_table(),
+        &MarkdownOptions {
+            select: Some(Select::Head(0)),
+            ..agent_defaults()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("head needs a count above 0"), "{err}");
+}
+
+#[test]
+fn a_selection_keeps_the_page_marker_of_a_later_page() {
+    let bytes = docx(&format!(
+        "{}{}<w:p><w:r><w:lastRenderedPageBreak/><w:t>Two</w:t></w:r></w:p>{}",
+        para("Zero"),
+        para("One"),
+        para("Three")
+    ));
+    let out = agent_options(
+        &bytes,
+        MarkdownOptions {
+            select: Some(Select::parse("p3").unwrap()),
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(body(&out), "<!-- page 2 of 2 -->\n\n<!-- p3 -->\nThree\n");
+}
