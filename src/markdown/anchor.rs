@@ -94,9 +94,9 @@ fn without_block_mark(text: &str) -> &str {
 }
 
 /// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>` and
-/// `</u>` always; single `*` and word-edge `_` runs only when they pair up
-/// (`*x*`, `_x_`, `__x__`), so `2 * 3`, `snake_case` and `snake__case` keep
-/// theirs.
+/// `</u>` always; single `*` and `_` runs only when they pair up (`*x*`,
+/// `_x_`, `__x__`), so `2 * 3`, `snake_case`, `snake__case` and
+/// `foo__bar__` keep theirs.
 fn without_emphasis(text: &str) -> String {
     let mut text = text.to_string();
     for mark in ["**", "~~", "==", "<u>", "</u>"] {
@@ -119,31 +119,45 @@ fn without_emphasis(text: &str) -> String {
             .map(|i| chars[i])
             .collect();
     }
+    // `_` runs pair as CommonMark pairs them: a run opens only with no
+    // letter or digit before it and text after it, closes only with text
+    // before it and no letter or digit after it, and closes the nearest
+    // open run of its length. `snake__case` and `foo__bar__` stay text.
     let chars: Vec<char> = text.chars().collect();
-    // An `_` run with a letter or digit on both sides sits inside a word.
-    let mut inner = vec![false; chars.len()];
+    let mut drop = vec![false; chars.len()];
+    let mut open: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
     while i < chars.len() {
-        let end = i + chars[i..].iter().take_while(|&&c| c == '_').count();
-        if end > i {
-            let flanked = i > 0
-                && chars[i - 1].is_alphanumeric()
-                && chars.get(end).is_some_and(|c| c.is_alphanumeric());
-            inner[i..end].fill(flanked);
-            i = end;
-        } else {
+        if chars[i] != '_' {
             i += 1;
+            continue;
         }
+        let end = i + chars[i..].iter().take_while(|&&c| c == '_').count();
+        let before = i.checked_sub(1).map(|b| chars[b]);
+        let after = chars.get(end).copied();
+        let closes =
+            before.is_some_and(|c| !c.is_whitespace()) && !after.is_some_and(char::is_alphanumeric);
+        let opens =
+            after.is_some_and(|c| !c.is_whitespace()) && !before.is_some_and(char::is_alphanumeric);
+        let opener = closes
+            .then(|| open.iter().rposition(|&(a, z)| z - a == end - i))
+            .flatten();
+        if let Some(at) = opener {
+            let (a, z) = open[at];
+            drop[a..z].fill(true);
+            drop[i..end].fill(true);
+            open.truncate(at);
+        } else if opens {
+            open.push((i, end));
+        }
+        i = end;
     }
-    let edge = |i: usize| chars[i] == '_' && !inner[i];
-    if (0..chars.len())
-        .filter(|&i| edge(i))
-        .count()
-        .is_multiple_of(2)
-    {
-        text = (0..chars.len())
-            .filter(|&i| !edge(i))
-            .map(|i| chars[i])
+    if drop.contains(&true) {
+        text = chars
+            .iter()
+            .zip(&drop)
+            .filter(|(_, d)| !**d)
+            .map(|(c, _)| *c)
             .collect();
     }
     text
@@ -215,6 +229,12 @@ mod tests {
             ("a__b__c", "a__b__c"),
             ("__init__", "init"),
             ("__bold__ and snake__case", "bold and snake__case"),
+            // CodeRabbit #392: an intraword run cannot open, so the trailing
+            // run closes nothing and both stay text (CommonMark).
+            ("foo__bar__", "foo__bar__"),
+            ("__x__y", "__x__y"),
+            ("a _b_ c", "a b c"),
+            ("_a_ and foo__bar__", "a and foo__bar__"),
             ("unclosed {++ insert", "unclosed {++ insert"),
             ("\\# 1", "# 1"),
         ] {
