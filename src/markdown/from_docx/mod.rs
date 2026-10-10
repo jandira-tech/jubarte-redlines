@@ -1072,11 +1072,13 @@ impl Writer<'_> {
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
                     let mut turned = 0;
+                    let spans = self.open_threads();
                     if self.agent
                         && let Some(line) = agent::table_line(
                             child,
                             self.resolved,
                             (!self.comments_inline).then_some(&self.comments),
+                            &spans,
                             &self.handles,
                         )
                     {
@@ -1186,8 +1188,17 @@ impl Writer<'_> {
             .and_then(num_pr)
             .or_else(|| style.as_deref().and_then(|s| self.styles.num(s)));
 
+        let open_before = self.open_comments.clone();
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
+        // Comment threads whose range runs past this paragraph, for its id
+        // line: their highlight repeats here with the note elsewhere.
+        let mut spans = self.threads_of(&open_before);
+        for id in self.open_threads() {
+            if !spans.contains(&id) {
+                spans.push(id);
+            }
+        }
         // Computed once. The agent view counts empty paragraphs too, as Word
         // does (it shows an empty numbered paragraph's label and spends its
         // number). The plain conversion counts written paragraphs only: its
@@ -1268,6 +1279,7 @@ impl Writer<'_> {
                 page_break,
                 resolved: self.resolved,
                 comments: &comments,
+                spans: &spans,
                 empty,
             };
             blocks.push_line(&agent::id_line(p, &facts, &self.handles));
@@ -1372,6 +1384,26 @@ impl Writer<'_> {
             self.page = page;
             self.announce = true;
         }
+    }
+
+    /// The thread roots among `ids`, for an id line's `in #c5` (agent view,
+    /// comments inline).
+    fn threads_of(&self, ids: &[String]) -> Vec<String> {
+        if !(self.agent && self.comments_inline) {
+            return Vec::new();
+        }
+        let mut roots: Vec<String> = Vec::new();
+        for id in ids {
+            if !roots.contains(id) && !self.threads.reply_of.contains_key(id) {
+                roots.push(id.clone());
+            }
+        }
+        roots
+    }
+
+    /// The comment threads whose range is open here.
+    fn open_threads(&self) -> Vec<String> {
+        self.threads_of(&self.open_comments)
     }
 
     /// The Markdown marker for a numbered paragraph (`1.`) and the label Word

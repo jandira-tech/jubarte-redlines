@@ -3230,3 +3230,64 @@ fn an_unanchored_comment_is_not_an_open_thread() {
     );
     assert!(!body(&view).contains("#c54"), "{view}");
 }
+
+/// A comment range over several paragraphs repeats `{==…==}` in each, with
+/// its note only at the end; every id line it crosses names the thread so
+/// the highlights read as one comment. A one-paragraph range adds nothing.
+#[test]
+fn id_lines_inside_a_multi_paragraph_comment_name_it() {
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}</w:p>{}<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl><w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p><w:p><w:commentRangeStart w:id="7"/>{}<w:commentRangeEnd w:id="7"/>{}</w:p>"#,
+        run("Start"),
+        para("Middle"),
+        para("Cell"),
+        run("End"),
+        reference(9),
+        run("Alone"),
+        reference(7)
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Span."
+        ),
+        comment(
+            7,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0B0B0B0B",
+            "One."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    for p in [0, 1, 3] {
+        assert!(
+            out.contains(&format!("<!-- p{p} in #c9 -->")),
+            "p{p}:\n{out}"
+        );
+    }
+    assert!(
+        out.contains("<!-- t0 1x1, cells p2-p2 by row, in #c9 -->"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p4 -->"), "{out}");
+    assert!(
+        out.contains("{==Start==}") && out.contains("{==End==}{>>#c9 @AC: Span.<<}"),
+        "{out}"
+    );
+}

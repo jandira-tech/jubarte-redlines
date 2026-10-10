@@ -185,7 +185,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments #c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments #c{ids} · in #c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev #0 @AC; #1+2 @AC -->
 ```
 
@@ -196,8 +196,10 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches.
-- `num "1."` is the auto-number label; `bullet` a bulleted item. Labels are
-  not document text.
+- `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
+  in its level's number format: `1)`, `a)`, `ii.`, `1.2`); `bullet` a
+  bulleted item. Labels are not document text, and a list body keeps its
+  Markdown marker (`1.`).
 - `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
   its `w:pPr` holds `w:sectPr`.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
@@ -207,6 +209,10 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
   A paragraph joined into the one before it hands its revisions over.
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
+- `in #c5`: with comments inline, the comment threads whose range runs on
+  past the paragraph. CriticMarkup cannot span paragraphs, so such a range
+  repeats `{==…==}` in each and shows its note only where it ends; the
+  clause says which thread a highlight belongs to.
 - Empty paragraphs: `<!-- p19 empty -->`, consecutive ones
   `<!-- p19-p23 empty -->`. An empty paragraph that holds a tracked mark, a
   formatting change, a resolved revision or a hidden comment keeps its own
@@ -220,8 +226,13 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
 A table gets one line: `<!-- t0 center 3x2, cells p8-p13 by row, header row
 repeats -->`, `cells r0 p8-p10 r1 p11-p14` when a cell holds other than one
 paragraph, then `merged cells`, `break-ins #12 @AC in p9`, `break-del …`,
-`rev … in pN` (resolved views) and, with `--comments none`,
-`comments #c9 in p11`. `tN` counts top-level body tables.
+`rev … in pN` (resolved views), with `--comments none`
+`comments #c9 in p11`, and `in #c5` for a comment range open across it.
+`tN` counts top-level body tables.
+
+The header's `comments:` line counts open and resolved threads, and apart
+from them a comment no story anchors (no range or reference in the body or
+a note): `1 thread open, 1 unanchored`. Word draws no balloon for it.
 
 ### Tags
 

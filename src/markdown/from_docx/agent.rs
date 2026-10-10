@@ -521,6 +521,9 @@ pub(crate) struct LineFacts<'a> {
     pub resolved: bool,
     /// Comment ids to list (comments hidden).
     pub comments: &'a [String],
+    /// Comment threads whose range runs on past this paragraph (comments
+    /// inline): `in #c5`.
+    pub spans: &'a [String],
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 empty, break-ins #3 @AC -->`.
     pub empty: bool,
@@ -856,6 +859,10 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         let ids: Vec<String> = f.comments.iter().map(|c| format!("#c{c}")).collect();
         clauses.push(format!("comments {}", ids.join(" ")));
     }
+    if !f.spans.is_empty() {
+        let ids: Vec<String> = f.spans.iter().map(|c| format!("#c{c}")).collect();
+        clauses.push(format!("in {}", ids.join(" ")));
+    }
     line(&head, &clauses)
 }
 
@@ -890,11 +897,13 @@ pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
 
 /// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
 /// `None` for a nested table (not numbered). With `comments` (comments
-/// hidden) the cells' comment ids print as `comments #c9 in p3`.
+/// hidden) the cells' comment ids print as `comments #c9 in p3`; `spans`
+/// are the comment threads whose range runs through the table (`in #c5`).
 pub(crate) fn table_line(
     tbl: &Element,
     resolved: bool,
     comments: Option<&HashMap<String, Element>>,
+    spans: &[String],
     handles: &Handles,
 ) -> Option<String> {
     let t = tbl.attr(TABLE)?;
@@ -1027,6 +1036,10 @@ pub(crate) fn table_line(
     }
     if !held.is_empty() {
         clauses.push(format!("comments {}", held.join("; ")));
+    }
+    if !spans.is_empty() {
+        let ids: Vec<String> = spans.iter().map(|c| format!("#c{c}")).collect();
+        clauses.push(format!("in {}", ids.join(" ")));
     }
     Some(line(&head, &clauses))
 }
