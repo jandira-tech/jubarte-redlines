@@ -1316,13 +1316,15 @@ fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, Strin
 }
 
 /// Whether a block of the agent view carries a tracked change or a comment:
-/// a note in its text, or a mark clause on its id or table line.
+/// a note in its text, or a mark clause on its id or table line (`in #c5`
+/// for a block inside a comment range whose note is elsewhere).
 fn is_marked(block: &str) -> bool {
     let first = block.lines().next().unwrap_or("");
     block.contains("{>>#")
         || [
             " rev #",
             " comments #",
+            " in #",
             " break-ins #",
             " break-del #",
             " fmt #",

@@ -3291,3 +3291,108 @@ fn id_lines_inside_a_multi_paragraph_comment_name_it() {
         "{out}"
     );
 }
+
+/// pi review r392b F3: `read --changed` keeps every paragraph a comment
+/// range crosses, not only the one that carries the note, as the hidden
+/// mode already does through its `comments #cN` clause.
+#[test]
+fn changed_keeps_every_paragraph_inside_a_comment_range() {
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}</w:p>{}<w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        run("Start"),
+        para("Middle"),
+        run("End"),
+        reference(9),
+        para("Outside")
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Span."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    for by in [None, Some("@AC")] {
+        let out = changed_by(&bytes, by, true);
+        for p in 0..=2 {
+            assert!(
+                out.contains(&format!("<!-- p{p} in #c9 -->")),
+                "{by:?} p{p}:\n{out}"
+            );
+        }
+        assert!(!out.contains("Outside"), "{by:?}:\n{out}");
+        assert!(out.contains(" (p0, p1, p2) of p0-p3"), "{by:?}:\n{out}");
+    }
+}
+
+/// pi review r392b F1: a comment anchored in a header is an open thread, as
+/// `jubarte comments` lists it; only a comment no story holds is unanchored.
+#[test]
+fn a_comment_anchored_in_a_header_is_an_open_thread() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
+        comment(
+            5,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Header note."
+        ),
+        comment(
+            7,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0B0B0B0B",
+            "Lost."
+        )
+    );
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:commentRangeStart w:id="5"/>{}<w:commentRangeEnd w:id="5"/>{}</w:p></w:hdr>"#,
+        run("HdrText"),
+        reference(5)
+    );
+    let bytes = common::docx::docx_with_sect(
+        &para("Body"),
+        &[
+            Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            },
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let view = agent(&bytes);
+    let line = header_lines(&view)
+        .into_iter()
+        .find(|l| l.starts_with("comments: "))
+        .unwrap_or_default();
+    assert!(
+        line.starts_with("comments: 1 thread open, 1 unanchored ")
+            && line.contains("c5, c7 (unanchored")
+            && !line.contains("c5 (unanchored"),
+        "{line}"
+    );
+}

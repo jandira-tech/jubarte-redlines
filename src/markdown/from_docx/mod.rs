@@ -360,6 +360,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         for (_, root) in &note_roots {
             agent::comment_anchors(root, &mut anchored);
         }
+        // Headers and footers are stories too: Word balloons their comments.
+        let mut stories = rels.targets_of_type("/header");
+        stories.extend(rels.targets_of_type("/footer"));
+        for target in stories {
+            if let Ok(Some(root)) = package.xml(&target) {
+                agent::comment_anchors(&root, &mut anchored);
+            }
+        }
         let comment_facts: Vec<header::CommentFact> = comments_root
             .as_ref()
             .map(|root| {
