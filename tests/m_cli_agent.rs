@@ -377,7 +377,7 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
     let file = write_fixture(dir.path());
     let output = dir.path().join("result.pdf");
     let report = dir.path().join("report.json");
-    let (code, _, stderr) = run(&[
+    let (code, stdout, stderr) = run(&[
         "convert",
         file.to_str().unwrap(),
         "--pdf",
@@ -389,7 +389,9 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
         "--report",
         report.to_str().unwrap(),
     ]);
-    assert_eq!(code, 1, "{stderr}");
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("invalid value '0'"), "{stderr}");
     assert!(stderr.contains("dpi"), "{stderr}");
     assert!(!output.exists());
     assert!(!report.exists());

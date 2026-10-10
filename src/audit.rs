@@ -923,3 +923,100 @@ fn decorative(dom: &Dom, doc_pr: NodeId) -> bool {
 fn under_fallback(dom: &Dom, node: NodeId) -> bool {
     !dom.ancestors(node, Some(&MC::name("Fallback"))).is_empty()
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_memory_spacer_ownership_tests {
+    use super::*;
+    use crate::opc::PartFs;
+
+    fn package(body: &str) -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+        pkg
+    }
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spacer_audit_respects_authored_sections_page_breaks_and_table_cell_ownership() {
+        let blank = "<w:p><w:pPr><w:spacing w:after='80'/></w:pPr></w:p>";
+        let section =
+            "<w:p><w:pPr><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:pPr></w:p>";
+        let page = "<w:p><w:r><w:br w:type='page'/></w:r></w:p>";
+        let table = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr>{blank}{blank}</w:tc></w:tr></w:tbl>"
+        );
+        for (label, body, warns) in [
+            ("authored vertical spacer", format!("{blank}{blank}"), true),
+            ("single authored blank", blank.to_string(), false),
+            (
+                "second blank closes source section",
+                format!("{blank}{section}"),
+                false,
+            ),
+            (
+                "section carrier precedes two independent blanks",
+                format!("{section}{blank}{blank}"),
+                true,
+            ),
+            (
+                "page break splits blank run",
+                format!("{blank}{page}{blank}"),
+                false,
+            ),
+            ("cell blanks own their geometry", table.clone(), false),
+            (
+                "table separates body spacer owners",
+                format!("{blank}{table}{blank}"),
+                false,
+            ),
+        ] {
+            let pkg = package(&body);
+            let original = snapshot(&pkg);
+            let bytes = pkg.to_zip().unwrap();
+            let report = audit_report_with(&bytes, &["EMPTY_SPACER_PARAGRAPH"], None).unwrap();
+            assert_eq!(report.rules, ["EMPTY_SPACER_PARAGRAPH"]);
+            assert!(!report.layout);
+            let expected = if warns {
+                vec![AuditFinding {
+                    code: "EMPTY_SPACER_PARAGRAPH".into(),
+                    rule_set: "style".into(),
+                    severity: "info".into(),
+                    location: if label == "section carrier precedes two independent blanks" {
+                        "body:p:1".into()
+                    } else {
+                        "body:p:0".into()
+                    },
+                    message: if label == "section carrier precedes two independent blanks" {
+                        "2 consecutive empty paragraphs (body:p:1 to body:p:2) are used as vertical space".into()
+                    } else {
+                        "2 consecutive empty paragraphs (body:p:0 to body:p:1) are used as vertical space".into()
+                    },
+                }]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(report.findings, expected, "{label}");
+            assert_eq!(
+                audit_report_with(&bytes, &["EMPTY_SPACER_PARAGRAPH"], None).unwrap(),
+                report
+            );
+            assert_eq!(
+                snapshot(&PartFs::open(&bytes).unwrap()),
+                original,
+                "{label}: audit is source read-only"
+            );
+        }
+    }
+}

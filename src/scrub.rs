@@ -508,6 +508,7 @@ fn xml_holds(xml: &str, needle: &str) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -571,5 +572,119 @@ mod tests {
         let xml = format!(r#"<w:document xmlns:w="{w}"><w:body/></w:document>"#);
         assert!(!xml_holds(&xml, "body"));
         assert!(xml_holds(&format!("{xml}<!-- body -->"), "body"));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_memory_leak_boundary_tests {
+    use super::*;
+
+    fn package(body: &str) -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+        pkg
+    }
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn public_leaks_reports_exact_xml_and_binary_part_owners_without_mutating_sources() {
+        for secret in ["PrivateReviewer", "PendingReviewer"] {
+            let mut pkg = package("<w:p><w:r><w:t>Independent body payload</w:t></w:r></w:p>");
+            pkg.set_part(
+                "customXml/comment.xml",
+                format!("<metadata><!-- {secret} --></metadata>").into_bytes(),
+            );
+            pkg.set_part(
+                "customXml/pi.xml",
+                format!("<?privacy {secret}?><metadata/>").into_bytes(),
+            );
+            pkg.set_part(
+                "customXml/attribute.xml",
+                format!("<metadata id='{secret}'/>").into_bytes(),
+            );
+            pkg.set_part(
+                "customXml/namespace.xml",
+                format!("<metadata xmlns:private='urn:{secret}'/>").into_bytes(),
+            );
+            pkg.set_part("customXml/utf8.bin", secret.as_bytes().to_vec());
+            pkg.set_part(
+                "customXml/utf16.bin",
+                secret.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+            );
+            pkg.set_part(
+                "customXml/clean.bin",
+                b"Independent binary payload".to_vec(),
+            );
+            for part in [
+                "/customXml/utf8.bin",
+                "/customXml/utf16.bin",
+                "/customXml/clean.bin",
+            ] {
+                pkg.add_content_type_override(part, "application/octet-stream");
+            }
+            let original = snapshot(&pkg);
+            let bytes = pkg.to_zip().unwrap();
+            let expected = vec![
+                "customXml/attribute.xml",
+                "customXml/comment.xml",
+                "customXml/pi.xml",
+                "customXml/utf16.bin",
+                "customXml/utf8.bin",
+            ];
+            assert_eq!(leaks(&bytes, secret), expected);
+            assert_eq!(leaks(&bytes, secret), expected);
+            assert!(leaks(&bytes, "").is_empty());
+            assert!(leaks(&bytes, "absent reviewer").is_empty());
+            assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), original);
+        }
+    }
+    #[test]
+    fn decoded_entities_and_split_word_runs_are_secrets_but_numeric_ids_are_not() {
+        let body = "<w:p><w:pPr><w:spacing w:before='1234' w:after='-1234'/></w:pPr><w:r><w:t>Jane </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>Doe &amp; </w:t></w:r><w:r><w:t>Associates</w:t></w:r></w:p>";
+        let mut pkg = package(body);
+        pkg.set_part(
+            "customXml/encoded.xml",
+            b"<metadata owner='Jane &amp; Doe'>independent</metadata>".to_vec(),
+        );
+        let original = snapshot(&pkg);
+        let bytes = pkg.to_zip().unwrap();
+        assert_eq!(
+            leaks(&bytes, "Jane Doe & Associates"),
+            ["word/document.xml"]
+        );
+        assert_eq!(leaks(&bytes, "Jane & Doe"), ["customXml/encoded.xml"]);
+        assert!(leaks(&bytes, "1234").is_empty());
+        assert!(leaks(&bytes, "spacing").is_empty());
+        assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), original);
+    }
+    #[test]
+    fn invalid_aliases_are_rejected_before_any_source_property_is_rewritten() {
+        let pkg = package("<w:p><w:r><w:t>Owned source payload</w:t></w:r></w:p>");
+        let original = snapshot(&pkg);
+        let bytes = pkg.to_zip().unwrap();
+        for alias in ["", "  ", "Reviewer\nname", "Reviewer\tname"] {
+            let options = ScrubOptions {
+                author_alias: Some(alias.into()),
+                rsids: false,
+                docprops: false,
+                comments: false,
+            };
+            assert!(
+                matches!(scrub(&bytes,&options),Err(ScrubError::Invalid(message)) if message=="author_alias must be a nonempty name without control characters")
+            );
+            assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), original);
+        }
     }
 }

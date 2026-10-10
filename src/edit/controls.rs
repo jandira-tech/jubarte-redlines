@@ -705,6 +705,7 @@ fn format_date(pattern: &str, y: i32, m: u32, d: u32) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -736,5 +737,125 @@ mod tests {
         assert_eq!(format_date("ddd 'the' d", 2026, 10, 4), "Sun the 4");
         assert_eq!(format_date("'open", 2026, 10, 4), "open");
         assert_eq!(format_date("yyyy.MM", 2026, 10, 4), "2026.10");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod control_source_boundary_tests {
+    use super::*;
+    use crate::edit::{EditPlan, apply_plan, preview_plan};
+    use crate::opc::PartFs;
+    fn parse(body: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!("<w:document xmlns:w='{}' xmlns:w14='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI,W14::URI));
+        let root = dom.root(document).unwrap();
+        (dom, root)
+    }
+    fn package(body: &str) -> Vec<u8> {
+        let (dom, root) = parse(body);
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+        ))
+        .unwrap();
+        pkg.set_part(
+            "word/document.xml",
+            dom.serialize_element(root).into_bytes(),
+        );
+        pkg.to_zip().unwrap()
+    }
+    fn plan(operations: &str) -> EditPlan {
+        EditPlan::from_json(&format!(r#"{{"schema_version":1,"author":"Editor","date":"2001-02-03T04:05:06Z","operations":[{operations}]}}"#)).unwrap()
+    }
+    #[test]
+    fn filling_empty_authored_controls_creates_only_missing_metadata_and_payload() {
+        for block in [false, true] {
+            for properties in [false, true] {
+                for content in [false, true] {
+                    let props = if properties {
+                        "<w:sdtPr><w:alias w:val='Clause'/><w:tag w:val='stable-clause'/><w:id w:val='31'/><w:richText/></w:sdtPr>"
+                    } else {
+                        ""
+                    };
+                    let content = if content { "<w:sdtContent/>" } else { "" };
+                    let sdt = format!("<w:sdt>{props}{content}</w:sdt>");
+                    let body = if block {
+                        sdt
+                    } else {
+                        format!("<w:p>{sdt}</w:p>")
+                    };
+                    let (mut dom, root) = parse(&body);
+                    let sdt = dom.descendants(root, Some(&W::sdt()))[0];
+                    let parent = dom.parent(sdt);
+                    let metadata = dom
+                        .element(sdt, &W::sdt_pr())
+                        .map(|pr| dom.serialize_element(pr));
+                    fill(&mut dom, sdt, block, &FillValue::Text("new clause".into()));
+                    assert_eq!(dom.parent(sdt), parent);
+                    let pr = dom.element(sdt, &W::sdt_pr()).unwrap();
+                    assert_eq!(dom.elements(sdt, Some(&W::sdt_pr())).len(), 1);
+                    if let Some(metadata) = metadata {
+                        assert_eq!(dom.serialize_element(pr), metadata);
+                    } else {
+                        assert!(dom.elements(pr, None).is_empty());
+                    }
+                    let content = dom.element(sdt, &W::sdt_content()).unwrap();
+                    assert_eq!(dom.elements(sdt, Some(&W::sdt_content())).len(), 1);
+                    let holder = if block {
+                        assert_eq!(dom.elements(content, None).len(), 1);
+                        dom.element(content, &W::p()).unwrap()
+                    } else {
+                        content
+                    };
+                    let runs = dom.elements(holder, Some(&W::r()));
+                    assert_eq!(runs.len(), 1);
+                    assert!(dom.element(runs[0], &W::r_pr()).is_none());
+                    let text = dom.element(runs[0], &W::t()).unwrap();
+                    assert_eq!(dom.value(text), "new clause");
+                    assert_eq!(
+                        dom.attribute(text, &XNamespace::xml().name("space")),
+                        Some("preserve")
+                    );
+                    assert_eq!(dom.value(root), "new clause");
+                }
+            }
+        }
+    }
+    #[test]
+    fn public_block_controls_refuse_section_loss_and_both_nested_fill_orders() {
+        let content = "<w:sdt><w:sdtPr><w:tag w:val='Section'/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:pPr><w:sectPr><w:pgSz w:w='10000' w:h='14000'/></w:sectPr></w:pPr><w:r><w:t>owned section</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>independent tail</w:t></w:r></w:p>";
+        let source = package(content);
+        let operation =
+            plan(r#"{"kind":"fill_control","control":{"tag":"Section"},"text":"replacement"}"#);
+        assert_eq!(
+            apply_plan(&source, &operation).unwrap_err().code,
+            "UNSUPPORTED_STRUCTURE"
+        );
+        assert_eq!(
+            preview_plan(&source, &operation).unwrap_err().code,
+            "UNSUPPORTED_STRUCTURE"
+        );
+        let nested = "<w:sdt><w:sdtPr><w:tag w:val='Outer'/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:sdt><w:sdtPr><w:tag w:val='Inner'/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>owned nested clause</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt><w:p/>";
+        let source = package(nested);
+        for first in ["Outer", "Inner"] {
+            let second = if first == "Outer" { "Inner" } else { "Outer" };
+            let operations = plan(&format!(
+                r#"{{"kind":"fill_control","control":{{"tag":"{first}"}},"text":"first"}},{{"kind":"fill_control","control":{{"tag":"{second}"}},"text":"second"}}"#
+            ));
+            assert_eq!(
+                apply_plan(&source, &operations).unwrap_err().code,
+                "OVERLAPPING_EDITS"
+            );
+            assert_eq!(
+                preview_plan(&source, &operations).unwrap_err().code,
+                "OVERLAPPING_EDITS"
+            );
+        }
+        let source_pkg = PartFs::open(&source).unwrap();
+        let (dom, root) = parse(nested);
+        assert_eq!(
+            source_pkg.part_string("word/document.xml").unwrap(),
+            dom.serialize_element(root)
+        );
     }
 }

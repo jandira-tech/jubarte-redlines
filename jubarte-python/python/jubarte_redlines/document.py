@@ -265,6 +265,8 @@ class Document:
             compress=options.compress,
             revisions=options.revisions,
             revision_palette=options.revision_palette,
+            move_comments=options.move_comments,
+            changed_only=options.changed_only,
         )
 
     # -- agent surface -----------------------------------------------------
@@ -316,13 +318,16 @@ class Document:
         author: str | None = None,
         date: str | None = None,
         columns: int = 72,
-        format: Literal["patch", "critic"] = "patch",
+        format: Literal["patch", "critic", "github", "unified", "text", "word", "normal", "context", "side-by-side"] = "patch",
+        context: int = 3,
+        accept_changes: bool = False,
+        full_lines: bool = False,
     ) -> Diff:
         """The changes from this document to ``other`` (a ``Document`` or
         Markdown text), as ``jubarte_redlines.diff`` gives them."""
         if not isinstance(other, (Document, str)):
             raise TypeError("other must be a Document or Markdown text")
-        return diff(self, other, author=author, date=date, columns=columns, format=format)
+        return diff(self, other, author=author, date=date, columns=columns, format=format, context=context, accept_changes=accept_changes, full_lines=full_lines)
 
     def preview(self, plan: EditPlan | dict[str, object] | str) -> EditReport:
         """Resolve every operation and report, without producing documents."""
@@ -364,6 +369,8 @@ class Document:
                 dpi=float(dpi),
                 revisions=options.revisions,
                 revision_palette=options.revision_palette,
+                move_comments=options.move_comments,
+                changed_only=options.changed_only,
             )
         )
 
@@ -389,6 +396,8 @@ class Document:
             revisions=options.revisions,
             revision_palette=options.revision_palette,
             pages=None if pages is None else _zero_based(pages),
+            move_comments=options.move_comments,
+            changed_only=options.changed_only,
         )
         return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
 
@@ -561,7 +570,10 @@ def diff(
     author: str | None = None,
     date: str | None = None,
     columns: int = 72,
-    format: Literal["patch", "critic"] = "patch",
+    format: Literal["patch", "critic", "github", "unified", "text", "word", "normal", "context", "side-by-side"] = "patch",
+    context: int = 3,
+    accept_changes: bool = False,
+    full_lines: bool = False,
 ) -> Diff:
     """The changes from ``old`` to ``new``: the changed paragraphs, each at
     its ``body:p:N`` id in a Word document or ``line:N`` in Markdown, with
@@ -573,13 +585,25 @@ def diff(
     header [default: ``git config user.name``, else Redline; now].
     ``columns`` wraps the lines (0 does not). ``format="critic"`` gives the
     whole document as CriticMarkup instead, as ``jubarte diff --format
-    critic`` does.
+    critic`` does. ``github`` (aliases ``unified`` and ``text``) gives a Git
+    unified text patch with ``context`` unchanged lines around each hunk,
+    preserving existing tracked marks and every document story. It has no
+    paragraph hunks and does not look up an author or timestamp. ``word``
+    accepts both inputs' revisions before creating new CriticMarkup;
+    ``normal``, ``context`` and ``side-by-side`` show traditional text diffs.
+    Other views preserve revisions unless ``accept_changes=True``. Views
+    use the core's 70-character display window; ``full_lines=True`` disables it.
     """
-    if format not in ("patch", "critic"):
-        raise ValueError("format must be patch or critic")
+    if format not in ("patch", "critic", "github", "unified", "text", "word", "normal", "context", "side-by-side"):
+        raise ValueError("format must be patch, critic, github, unified, text, word, normal, context or side-by-side")
+    if type(context) is not int or not 0 <= context <= 2**32 - 1:
+        raise ValueError("context must be an integer in the u32 range (0..4294967295)")
     if not isinstance(columns, int) or columns < 0:
         raise ValueError("columns must be a nonnegative integer")
     (old_side, old_name), (new_side, new_name) = _side(old, "old"), _side(new, "new")
+    if format in ("github", "unified", "text", "word", "normal", "context", "side-by-side"):
+        return Diff(text=_native.diff_view(old_side, new_side, format=format, old_name=old_name, new_name=new_name,
+                                           context=context, accept_changes=accept_changes, full_lines=full_lines), hunks=())
     return _decode_diff(
         _native.diff_json(
             old_side,

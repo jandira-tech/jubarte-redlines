@@ -1057,12 +1057,11 @@ fn cell_pprs(pkg: &[u8]) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// A row the revision rewrites into more, differently formatted cells:
-/// Word's redline gives each paired cell the revision's tcPr and records
-/// the original's in a `tcPrChange` (ff42b4a7a3: the shaded two-cell
-/// "npm / github" row becomes the bordered three-cell header row).
-/// Accepted, no cell keeps the original's shading or width. The cells took
-/// the tcPr of their first atom — a deleted one, so the original's.
+/// A synthetic one-table replacement conserves both complete cell partitions.
+/// The real ff42b4a7a3 pair is a six-table document against a directory and
+/// uses the specialized M348 Word mesh; its paired-cell history is checked
+/// separately below. This smaller shared-heading fixture must not imply that
+/// arbitrary horizontal repartitioning can safely pair individual cells.
 #[test]
 fn a_rewritten_row_takes_the_revised_cell_properties() {
     let shaded =
@@ -1098,12 +1097,25 @@ fn a_rewritten_row_takes_the_revised_cell_properties() {
         assert!(live.contains(r#"w:w="3120""#), "{cells:?}");
         assert!(!live.contains("F8FAFC"), "{cells:?}");
     }
-    assert!(
-        cells[0]
-            .iter()
-            .any(|pr| pr.contains("<w:tcPrChange") && pr.contains("F8FAFC")),
-        "{cells:?}"
-    );
+    // Cell revisions can instead preserve whole rows. Require the complete
+    // projected cell content and properties, rather than a history container
+    // on a revised cell that has no original partner in this route.
+    use jubarte::comparer::WmlComparerSettings;
+    use jubarte::document_comparer::compare_documents_with_settings;
+    for compared in [
+        redline.clone(),
+        compare_documents_with_settings(&base, &next, &WmlComparerSettings::powertools_faithful())
+            .unwrap(),
+    ] {
+        assert_eq!(
+            cell_state(&accept_revisions(&compared).unwrap()),
+            cell_state(&next)
+        );
+        assert_eq!(
+            cell_state(&reject_revisions(&compared).unwrap()),
+            cell_state(&base)
+        );
+    }
 
     let accepted = accept_revisions(&redline).unwrap();
     assert_word_valid_package(&accepted);
@@ -1115,6 +1127,151 @@ fn a_rewritten_row_takes_the_revised_cell_properties() {
             .all(|pr| !pr.contains("F8FAFC") && !pr.contains("4680")),
         "{cells:?}"
     );
+}
+
+fn canonical_cell_properties(dom: &Dom, node: jubarte::xmllinq::NodeId) -> String {
+    let mut attributes: Vec<_> = dom
+        .attributes(node)
+        .into_iter()
+        .filter(|(name, _)| !dom.is_namespace_declaration(name))
+        .map(|(name, value)| format!("{}:{}={value}", name.namespace_name(), name.local_name()))
+        .collect();
+    attributes.sort();
+    let children: String = dom
+        .elements(node, None)
+        .into_iter()
+        .filter(|&child| !dom.name_is(child, &W::name("tcPrChange")))
+        .map(|child| canonical_cell_properties(dom, child))
+        .collect();
+    format!(
+        "{}:{attributes:?}[{children}]",
+        dom.name(node).unwrap().local_name()
+    )
+}
+
+/// All physical table/row/cell boundaries, full live tcPr, and paragraph text.
+type CellState = (String, Vec<String>);
+
+fn cell_state(package: &[u8]) -> Vec<Vec<Vec<CellState>>> {
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&part_string(package, "word/document.xml").unwrap());
+    let root = dom.root(document).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    dom.elements(body, Some(&W::tbl()))
+        .into_iter()
+        .map(|table| {
+            dom.elements(table, Some(&W::tr()))
+                .into_iter()
+                .map(|row| {
+                    dom.elements(row, Some(&W::tc()))
+                        .into_iter()
+                        .map(|cell| {
+                            let properties = dom
+                                .element(cell, &W::tc_pr())
+                                .map(|properties| canonical_cell_properties(&dom, properties))
+                                .unwrap_or_default();
+                            let paragraphs = dom
+                                .elements(cell, Some(&W::p()))
+                                .into_iter()
+                                .map(|paragraph| {
+                                    dom.descendants(paragraph, Some(&W::t()))
+                                        .into_iter()
+                                        .map(|text| dom.value(text))
+                                        .collect()
+                                })
+                                .collect();
+                            (properties, paragraphs)
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn observed_m348_rewritten_cells_keep_revised_properties_and_complete_original_history() {
+    use jubarte::comparer::WmlComparerSettings;
+    use jubarte::document_comparer::compare_documents_with_settings;
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
+    let a = source.join("eigenpal_docx_editor_suggesting_mixed_edits.docx");
+    let b = source.join("employee_directory_table_2.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: fixtures missing");
+        return;
+    }
+    let original = std::fs::read(a).unwrap();
+    let revised = std::fs::read(b).unwrap();
+    let a_state = cell_state(&accept_revisions(&original).unwrap());
+    let b_state = cell_state(&accept_revisions(&revised).unwrap());
+    assert_eq!(a_state.len(), 6);
+    assert_eq!(a_state[0][0].len(), 2);
+    assert_eq!(b_state[0].len(), 4);
+    assert_eq!(b_state[0][0].len(), 3);
+    let configuration = WmlComparerSettings {
+        author_for_revisions: "Cell Editor".into(),
+        date_time_for_revisions: "2026-10-08T12:00:00Z".into(),
+        ..WmlComparerSettings::default()
+    };
+    let output = compare_documents_with_settings(&original, &revised, &configuration).unwrap();
+    assert_word_valid_package(&output);
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&part_string(&output, "word/document.xml").unwrap());
+    let root = dom.root(document).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let table = dom.elements(body, Some(&W::tbl()))[0];
+    let row = dom.elements(table, Some(&W::tr()))[0];
+    let cells = dom.elements(row, Some(&W::tc()));
+    assert_eq!(
+        cells.len(),
+        3,
+        "Word keeps the revised directory header partition"
+    );
+    for (index, &cell) in cells.iter().enumerate() {
+        let properties = dom.element(cell, &W::tc_pr()).unwrap();
+        assert_eq!(
+            canonical_cell_properties(&dom, properties),
+            b_state[0][0][index].0
+        );
+        if index < 2 {
+            let change = dom
+                .element(properties, &W::name("tcPrChange"))
+                .expect("actual ff42b4a7a3 paired-cell history contract");
+            let snapshot = dom.element(change, &W::tc_pr()).unwrap();
+            assert_eq!(
+                canonical_cell_properties(&dom, snapshot),
+                a_state[0][0][index].0,
+                "old widths, shading and margins are all recorded"
+            );
+            assert_eq!(dom.attribute(change, &W::author()), Some("Cell Editor"));
+            assert_eq!(
+                dom.attribute(change, &W::date()),
+                Some("2026-10-08T12:00:00Z")
+            );
+            let deleted: String = dom
+                .descendants(cell, Some(&W::del_text()))
+                .into_iter()
+                .map(|text| dom.value(text))
+                .collect();
+            assert!(deleted.contains(if index == 0 { "npm" } else { "github" }));
+        }
+    }
+    let accepted = accept_revisions(&output).unwrap();
+    assert_word_valid_package(&accepted);
+    assert_eq!(
+        cell_state(&accepted),
+        b_state,
+        "revised directory content and cell formatting"
+    );
+    let faithful = compare_documents_with_settings(
+        &original,
+        &revised,
+        &WmlComparerSettings::powertools_faithful(),
+    )
+    .unwrap();
+    assert_eq!(cell_state(&accept_revisions(&faithful).unwrap()), b_state);
+    assert_eq!(cell_state(&reject_revisions(&faithful).unwrap()), a_state);
 }
 
 /// The body's closing paragraph mark `w:rPr` children (local names with
@@ -2162,5 +2319,73 @@ fn the_normal_cascade_keeps_normal_s_old_language_slots_the_style_leaves_open() 
         r#"w:bidi="ar-SA""#,
     ] {
         assert!(record.contains(want), "{want}: {record}");
+    }
+}
+
+/// A document whose stylesheet is Normal with `normal_rpr` and Body Text
+/// (based on Normal) with `body_rpr`, and one Body Text paragraph.
+fn docx_body_text_style(normal_rpr: &str, body_rpr: &str) -> Vec<u8> {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr>{normal_rpr}</w:rPr></w:style><w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:basedOn w:val="Normal"/><w:rPr>{body_rpr}</w:rPr></w:style></w:styles>"#,
+        w = common::docx::W_NS
+    );
+    common::docx::docx_with(
+        r#"<w:p><w:pPr><w:pStyle w:val="BodyText"/></w:pPr><w:r><w:t>Press release body.</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    )
+}
+
+/// The original's Body Text restates its Normal (Arial, es-ES); the
+/// revision's Body Text declares nothing and its Normal moves to Times New
+/// Roman. The change lives in Normal, which records it; Word's redline leaves
+/// Body Text without a record. Ours recorded the restated Arial on Body Text
+/// too, and Word's Reject All of that record wrote garbage of its own (sz=20,
+/// widowControl, autoSpaceDE/DN) onto the style: the original's 11pt press
+/// release came back at 10pt (c719b900f0: 48.42 against A's own PDF; Word's
+/// redline 90.13).
+#[test]
+fn a_style_restating_its_parent_records_no_change_of_its_own() {
+    let arial = r#"<w:rFonts w:ascii="Arial" w:eastAsia="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:lang w:val="es-ES"/>"#;
+    let base = docx_body_text_style(arial, arial);
+    let next = docx_body_text_style(
+        r#"<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/>"#,
+        "",
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let styles = part_string(&redline, "word/styles.xml").unwrap();
+    let body_text = styles
+        .split("<w:style ")
+        .find(|s| s.contains(r#"w:styleId="BodyText""#))
+        .expect("Body Text kept");
+    assert!(!body_text.contains("rPrChange"), "{body_text}");
+    let normal = styles
+        .split("<w:style ")
+        .find(|s| s.contains(r#"w:styleId="Normal""#))
+        .unwrap();
+    assert!(normal.contains("rPrChange"), "{normal}");
+    // Removing duplicate history must not leave the old explicit Arial
+    // overriding the revised Normal's font.
+    assert!(!body_text.contains("<w:rFonts"), "{body_text}");
+    let live_normal = normal.split("<w:rPrChange").next().unwrap();
+    assert!(
+        live_normal.contains(r#"w:ascii="Times New Roman""#),
+        "{normal}"
+    );
+    for (pkg, font) in [
+        (accept_revisions(&redline).unwrap(), "Times New Roman"),
+        (reject_revisions(&redline).unwrap(), "Arial"),
+    ] {
+        assert_word_valid_package(&pkg);
+        let body = style_xml(&pkg, "BodyText");
+        assert!(!body.contains("<w:rFonts"), "inherits {font}: {body}");
+        assert!(!body.contains("rPrChange"), "{body}");
+        let normal = style_xml(&pkg, "Normal");
+        assert!(normal.contains(&format!(r#"w:ascii="{font}""#)), "{normal}");
     }
 }

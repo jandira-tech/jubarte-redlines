@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "source_sha256": "569c088c60325538e72d5264acea8c548a3fde313cd0e678e069eebb08ffcd4a",
+  "author": "Agent",
+  "date": "2026-10-02T15:00:00Z",
+  "existing_revisions": "keep",
+  "operations": [
+    {
+      "id": "start-date",
+      "kind": "replace",
+      "paragraph": { "starts_with": "This Agreement begins on" },
+      "find": "March 1, 2026",
+      "replacement": "April 1, 2026"
+    },
+    {
+      "id": "survival",
+      "kind": "insert",
+      "paragraph": { "starts_with": "Each party shall keep" },
+      "after": "Confidential Information secret",
+      "text": " for three years after this Agreement ends"
+    },
+    {
+      "id": "answer-cap",
+      "kind": "reply_comment",
+      "comment_id": 0,
+      "text": "Delaware has no cap for commercial contracts; one percent stands."
+    },
+    {
+      "id": "resolve-survival",
+      "kind": "resolve_comment",
+      "comment_id": 1
+    },
+    {
+      "id": "ask-scope",
+      "kind": "comment",
+      "paragraph": { "starts_with": "Consultant will deliver" },
+      "find": "route-cost reports",
+      "text": "Do the reports cover cross-border lanes?"
+    }
+  ]
+}

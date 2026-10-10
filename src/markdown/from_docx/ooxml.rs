@@ -838,6 +838,7 @@ impl ListIndent {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -883,5 +884,199 @@ mod tests {
         assert_eq!(list.item(0, "10.", "a"), "10. a");
         assert_eq!(list.item(1, "-", "b"), "    - b");
         assert_eq!(list.item(0, "11.", "c\nd"), "11. c\n    d");
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod ooxml_package_boundary_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    fn package_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn png() -> Vec<u8> {
+        use image::ImageEncoder as _;
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&[31, 47, 59], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn media_relationships_extract_owned_bytes_once_and_leave_non_images_as_alt_text() {
+        let image = png();
+        let relationships = br#"<Relationships><Relationship Id="a" Type="urn:test/image" Target="media/a.png"/><Relationship Id="duplicate" Type="urn:test/image" Target="media/a.png"/><Relationship Id="external" Type="urn:test/image" Target="https://example.invalid/a.png" TargetMode="External"/><Relationship Id="other" Type="urn:test/chart" Target="media/other.bin"/><Relationship Id="missing" Type="urn:test/image" Target="media/missing.png"/><Relationship Id="vector" Type="urn:test/image" Target="media/a.svg"/><Relationship Id="empty" Type="urn:test/hyperlink" Target="" TargetMode="External"/><Relationship Id="incomplete" Type="urn:test/image"/></Relationships>"#;
+        let bytes = package_bytes(&[
+            ("word/_rels/document.xml.rels", relationships),
+            ("word/media/a.png", &image),
+            ("word/media/a.svg", b"<svg/>"),
+            ("word/media/other.bin", b"owned chart"),
+        ]);
+        let frozen = bytes.clone();
+        let mut package = Package::open(&bytes, "docx").unwrap();
+        let rels = package.rels("word/document.xml").unwrap();
+        assert!(rels.get("incomplete").is_none());
+        assert_eq!(
+            rels.link("external").as_deref(),
+            Some("https://example.invalid/a.png")
+        );
+        assert_eq!(rels.link("empty"), None);
+        assert_eq!(rels.link("a"), None);
+        let mut disabled = Media::load(&mut package, &rels, None);
+        assert!(disabled.files.is_empty());
+        assert_eq!(
+            disabled.markdown("drawing", Some("word/media/a.png")),
+            Some("![drawing](a.png)".to_string())
+        );
+        let mut media = Media::load(&mut package, &rels, Some(Extracted::new("media files/")));
+        assert_eq!(media.files.len(), 2);
+        assert_eq!(media.files["word/media/a.png"], image);
+        assert_eq!(media.files["word/media/a.svg"], b"<svg/>");
+        use sha2::{Digest as _, Sha256};
+        let hash = Sha256::digest(&image)
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            media.markdown("A [chart]", Some("word/media/a.png")),
+            Some(format!("![A \\[chart\\]](<media files/{hash}.png>)"))
+        );
+        assert_eq!(
+            media.markdown("again", Some("word/media/a.png")),
+            Some(format!("![again](<media files/{hash}.png>)"))
+        );
+        assert_eq!(
+            media.markdown("vector", Some("word/media/a.svg")),
+            Some("![vector](a.svg)".to_string())
+        );
+        assert_eq!(
+            media.markdown("missing", Some("word/media/missing.png")),
+            Some("![missing](missing.png)".to_string())
+        );
+        assert_eq!(
+            media.markdown("external", Some("https://example.invalid/a.png")),
+            Some("![external](a.png)".to_string())
+        );
+        let files = media.into_files();
+        assert_eq!(
+            files,
+            std::collections::BTreeMap::from([(format!("{hash}.png"), image)])
+        );
+        assert_eq!(bytes, frozen);
+    }
+
+    #[test]
+    fn media_part_limit_retains_the_first_512_authored_targets_in_relationship_order() {
+        let payloads = (0..MAX_MEDIA_PARTS + 1)
+            .map(|i| {
+                (
+                    format!("word/media/image{i}.bin"),
+                    format!("owned image {i}").into_bytes(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut relationships = String::from("<Relationships>");
+        for i in 0..payloads.len() {
+            relationships.push_str(&format!(
+                "<Relationship Id=\"i{i}\" Type=\"urn:test/image\" Target=\"media/image{i}.bin\"/>"
+            ));
+        }
+        relationships.push_str("</Relationships>");
+        let mut entries = vec![("word/_rels/document.xml.rels", relationships.as_bytes())];
+        entries.extend(
+            payloads
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+        );
+        let bytes = package_bytes(&entries);
+        let mut package = Package::open(&bytes, "docx").unwrap();
+        let rels = package.rels("word/document.xml").unwrap();
+        let media = Media::load(&mut package, &rels, Some(Extracted::new("images")));
+        assert_eq!(media.files.len(), MAX_MEDIA_PARTS);
+        for (name, payload) in &payloads[..MAX_MEDIA_PARTS] {
+            assert_eq!(media.files.get(name), Some(payload));
+        }
+        assert!(!media.files.contains_key(&payloads[MAX_MEDIA_PARTS].0));
+        assert!(media.into_files().is_empty());
+    }
+
+    #[test]
+    fn literal_hyperlinks_and_mail_addresses_use_exact_autolink_forms() {
+        for (text, url, expected) in [
+            (
+                "https://example.invalid",
+                "https://example.invalid",
+                "<https://example.invalid>",
+            ),
+            (
+                "ada@example.invalid",
+                "mailto:ada@example.invalid",
+                "<mailto:ada@example.invalid>",
+            ),
+            (
+                "other@example.invalid",
+                "mailto:ada@example.invalid",
+                "[other@example.invalid](mailto:ada@example.invalid)",
+            ),
+            ("   ", "https://example.invalid", ""),
+            (
+                "label",
+                "https://example.invalid/a b)",
+                "[label](https://example.invalid/a%20b%29)",
+            ),
+        ] {
+            let mut inline = Inline::default();
+            inline.push("", true, true, Some("unused"));
+            inline.push(text, false, false, Some(url));
+            assert_eq!(inline.render(true), expected);
+            assert_eq!(inline.render(false), expected);
+        }
+        let mut list = ListIndent::default();
+        assert_eq!(
+            list.item(3, "10.", "one\ntwo"),
+            "      10. one\n          two"
+        );
+        list.reset();
+        assert_eq!(list.item(0, "-", "next"), "- next");
+    }
+
+    #[test]
+    fn utf16_xml_keeps_namespaced_attributes_and_authored_text() {
+        let xml = "<w:p xmlns:w='urn:w' w:val='owned'>Aé水<![CDATA[<drawing>]]></w:p>";
+        for big_endian in [false, true] {
+            let mut bytes = if big_endian {
+                vec![0xfe, 0xff]
+            } else {
+                vec![0xff, 0xfe]
+            };
+            for code in xml.encode_utf16() {
+                bytes.extend_from_slice(&if big_endian {
+                    code.to_be_bytes()
+                } else {
+                    code.to_le_bytes()
+                });
+            }
+            let root = parse_xml(&bytes).unwrap();
+            assert_eq!(root.name, "w:p");
+            assert_eq!(root.attr("val"), Some("owned"));
+            assert_eq!(root.text(), "Aé水<drawing>");
+            assert_eq!(root.children.len(), 1);
+        }
+        let recovered = parse_xml(b"<p><r>owned").unwrap();
+        assert_eq!(recovered.name, "p");
+        assert_eq!(recovered.child("r").unwrap().text(), "owned");
+        for invalid in [b"</p>".as_slice(), b"<p x='unterminated>"] {
+            assert!(parse_xml(invalid).is_err(), "{invalid:?}");
+        }
     }
 }

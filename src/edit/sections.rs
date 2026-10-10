@@ -510,6 +510,7 @@ pub(super) fn targets_overlap(a: &Targets, b: &Targets) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -616,6 +617,179 @@ mod tests {
         assert_eq!(
             names,
             ["headerReference", "pgSz", "pgMar", "cols", "docGrid"]
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod mid_section_authored_history_boundary_tests {
+    use super::*;
+    use crate::opc::PartFs;
+    const DATE: &str = "2001-02-03T04:05:06Z";
+    fn package(revised: bool, prior: bool) -> Vec<u8> {
+        let mut pkg = PartFs::open(include_bytes!(
+            "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+        ))
+        .unwrap();
+        pkg.set_part(
+            "word/owned-header.xml",
+            format!(
+                "<w:hdr xmlns:w='{}'><w:p><w:r><w:t>owned header</w:t></w:r></w:p></w:hdr>",
+                W::URI
+            )
+            .into_bytes(),
+        );
+        pkg.set_part(
+            "word/owned-footer.xml",
+            format!(
+                "<w:ftr xmlns:w='{}'><w:p><w:r><w:t>owned footer</w:t></w:r></w:p></w:ftr>",
+                W::URI
+            )
+            .into_bytes(),
+        );
+        pkg.add_content_type_override(
+            "/word/owned-header.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        );
+        pkg.add_content_type_override(
+            "/word/owned-footer.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+        );
+        let header = pkg.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            "owned-header.xml",
+        );
+        let footer = pkg.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+            "owned-footer.xml",
+        );
+        let history = if prior {
+            "<w:sectPrChange w:id='45' w:author='Prior owner' w:date='2000-01-02T03:04:05Z'><w:sectPr><w:pgSz w:w='10000' w:h='14000'/></w:sectPr></w:sectPrChange>"
+        } else {
+            ""
+        };
+        let (width, height, orientation) = if revised {
+            (15840, 12240, " w:orient='landscape'")
+        } else {
+            (12240, 15840, "")
+        };
+        let xml = format!(
+            "<w:document xmlns:w='{}' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><w:body><w:p><w:pPr><w:sectPr><w:headerReference w:type='default' r:id='{header}'/><w:footerReference w:type='default' r:id='{footer}'/><w:pgSz w:w='{width}' w:h='{height}'{orientation}/><w:pgMar w:top='1440' w:right='1440' w:bottom='1440' w:left='1440'/>{history}</w:sectPr></w:pPr><w:bookmarkStart w:id='400' w:name='Clause'/><w:r><w:rPr><w:b/></w:rPr><w:t>owned first section</w:t></w:r><w:bookmarkEnd w:id='400'/></w:p><w:p><w:r><w:t>independent final section</w:t></w:r></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",
+            W::URI
+        );
+        pkg.set_part("word/document.xml", xml.into_bytes());
+        pkg.to_zip().unwrap()
+    }
+    #[test]
+    fn unchanged_and_already_recorded_mid_sections_preserve_exact_package_and_attribution() {
+        let base = package(false, false);
+        for revised in [false, true] {
+            let redline = package(revised, true);
+            let out = record_mid_changes(&redline, &base, "New owner", DATE).unwrap();
+            assert_eq!(
+                out, redline,
+                "existing history must remain exact even when live geometry differs"
+            );
+            let pkg = PartFs::open(&out).unwrap();
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+            let root = dom.root(document).unwrap();
+            let records = dom.descendants(root, Some(&W::name("sectPrChange")));
+            assert_eq!(records.len(), 1);
+            assert_eq!(dom.attribute(records[0], &W::id()), Some("45"));
+            assert_eq!(dom.attribute(records[0], &W::author()), Some("Prior owner"));
+            assert_eq!(
+                dom.attribute(records[0], &W::date()),
+                Some("2000-01-02T03:04:05Z")
+            );
+        }
+        let redline = package(false, false);
+        assert_eq!(
+            record_mid_changes(&redline, &base, "New owner", DATE).unwrap(),
+            redline
+        );
+    }
+    #[test]
+    fn changed_mid_section_records_only_authored_base_properties_and_preserves_relationship_owners()
+    {
+        let base = package(false, false);
+        let redline = package(true, false);
+        let source_base = PartFs::open(&base).unwrap();
+        let source_red = PartFs::open(&redline).unwrap();
+        let out = record_mid_changes(&redline, &base, "New owner", DATE).unwrap();
+        let result = PartFs::open(&out).unwrap();
+        for part in source_red.parts() {
+            if part != "word/document.xml" {
+                assert_eq!(
+                    result.part_bytes(&part),
+                    source_red.part_bytes(&part),
+                    "independent part {part}"
+                );
+            }
+        }
+        assert_eq!(
+            result.part_bytes("word/_rels/document.xml.rels"),
+            source_red.part_bytes("word/_rels/document.xml.rels")
+        );
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&result.part_string("word/document.xml").unwrap());
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let sections = mid_sections(&dom, body);
+        assert_eq!(sections.len(), 1);
+        let live = sections[0];
+        assert_eq!(
+            dom.elements(live, Some(&W::name("headerReference"))).len(),
+            1
+        );
+        assert_eq!(
+            dom.elements(live, Some(&W::name("footerReference"))).len(),
+            1
+        );
+        let record = dom.element(live, &W::name("sectPrChange")).unwrap();
+        assert_eq!(dom.attribute(record, &W::id()), Some("401"));
+        assert_eq!(dom.attribute(record, &W::author()), Some("New owner"));
+        assert_eq!(dom.attribute(record, &W::date()), Some(DATE));
+        let old = dom.element(record, &W::sect_pr()).unwrap();
+        assert_eq!(
+            dom.elements(old, None)
+                .iter()
+                .map(|&n| dom.name(n).unwrap())
+                .collect::<Vec<_>>(),
+            vec![W::name("pgSz"), W::name("pgMar")]
+        );
+        let mut original = Dom::new();
+        let original_doc =
+            original.parse_xdocument(&source_base.part_string("word/document.xml").unwrap());
+        let original_root = original.root(original_doc).unwrap();
+        let original_body = original.element(original_root, &W::body()).unwrap();
+        let original_section = mid_sections(&original, original_body)[0];
+        let mut expected_geometry = geometry_signature(&original, original_section);
+        // Foreign-DOM property clones carry the source prefix binding on
+        // each copied element. This lexical declaration preserves exactly
+        // the authored expanded names and every original geometry attribute.
+        for (_, attrs) in &mut expected_geometry {
+            attrs.push(("{http://www.w3.org/2000/xmlns/}w".into(), W::URI.into()));
+            attrs.sort();
+        }
+        assert_eq!(geometry_signature(&dom, old), expected_geometry);
+        let children = dom.elements(body, None);
+        assert_eq!(dom.value(children[0]), "owned first section");
+        assert_eq!(dom.value(children[1]), "independent final section");
+        assert_eq!(
+            dom.attribute(
+                dom.element(live, &W::name("pgSz")).unwrap(),
+                &W::name("orient")
+            ),
+            Some("landscape")
+        );
+        assert_eq!(
+            record_mid_changes(&out, &base, "Another owner", DATE).unwrap(),
+            out,
+            "second recording must be exact identity"
         );
     }
 }

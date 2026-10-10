@@ -17,7 +17,7 @@
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBool, PyBytes, PyInt};
 
 create_exception!(
     jubarte_redlines,
@@ -33,16 +33,31 @@ fn err(e: impl std::fmt::Display) -> PyErr {
     JubarteError::new_err(jubarte::admission::code_first(&message).unwrap_or(message))
 }
 
+/// Where a PDF's comments go and which pages it keeps: the binary's
+/// `--move-comments` and `--changed-only`.
+#[derive(Clone, Copy, Default)]
+struct PageChoice {
+    move_comments: bool,
+    changed_only: bool,
+}
+
 fn pdf_options(
     compress: bool,
     revisions: &str,
     revision_palette: Option<&str>,
+    page: PageChoice,
 ) -> PyResult<jubarte::convert::PdfOptions> {
     let revisions = jubarte::convert::RevisionStyle::from_choice(revisions, revision_palette)
         .map_err(JubarteError::new_err)?;
     Ok(jubarte::convert::PdfOptions {
         compress,
         revisions,
+        comments: if page.move_comments {
+            jubarte::convert::CommentPlacement::End
+        } else {
+            jubarte::convert::CommentPlacement::Margin
+        },
+        changed_only: page.changed_only,
     })
 }
 
@@ -199,17 +214,26 @@ fn get_revisions_json(
 /// `"conventional"` (red struck deletions, blue underlined insertions, green
 /// moves double-struck and double-underlined), `"word"` (Microsoft Word's
 /// markup) or `"custom"` with
-/// `revision_palette="deleted=#AA0000:strike,..."`.
+/// `revision_palette="deleted=#AA0000:strike,..."`. `move_comments=True`
+/// lists the comments after the last page instead of in balloons beside the
+/// text; `changed_only=True` keeps only the pages a tracked change touches
+/// (a document without changes keeps its first page).
 #[pyfunction]
-#[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None))]
+#[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None, move_comments = false, changed_only = false))]
 fn docx_to_pdf(
     py: Python<'_>,
     docx: &[u8],
     compress: bool,
     revisions: &str,
     revision_palette: Option<&str>,
+    move_comments: bool,
+    changed_only: bool,
 ) -> PyResult<Py<PyBytes>> {
-    let options = pdf_options(compress, revisions, revision_palette)?;
+    let page = PageChoice {
+        move_comments,
+        changed_only,
+    };
+    let options = pdf_options(compress, revisions, revision_palette, page)?;
     let out = py
         .detach(|| jubarte::convert::docx_to_pdf_with(docx, options))
         .map_err(err)?;
@@ -217,16 +241,23 @@ fn docx_to_pdf(
 }
 
 /// Rasterize every page to PNG at `dpi` → list of PNG bytes, page order.
+/// `move_comments` and `changed_only` as in `docx_to_pdf`.
 #[pyfunction]
-#[pyo3(signature = (docx, dpi = 96.0, revisions = "conventional", revision_palette = None))]
+#[pyo3(signature = (docx, dpi = 96.0, revisions = "conventional", revision_palette = None, move_comments = false, changed_only = false))]
 fn docx_to_png(
     py: Python<'_>,
     docx: &[u8],
     dpi: f32,
     revisions: &str,
     revision_palette: Option<&str>,
+    move_comments: bool,
+    changed_only: bool,
 ) -> PyResult<Vec<Py<PyBytes>>> {
-    let options = pdf_options(false, revisions, revision_palette)?;
+    let page = PageChoice {
+        move_comments,
+        changed_only,
+    };
+    let options = pdf_options(false, revisions, revision_palette, page)?;
     let pages = py
         .detach(|| jubarte::convert::docx_to_png(docx, options, dpi))
         .map_err(err)?;
@@ -248,9 +279,15 @@ type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
 ///
 /// `report_json` is `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
 /// `pages` (zero-based) rasterizes only those pages, ascending and without
-/// repeats; the report still covers every page.
+/// repeats; the report still covers every page. `move_comments` and
+/// `changed_only` as in `docx_to_pdf`; with `changed_only` the report and
+/// `pages` count the kept pages.
 #[pyfunction]
-#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None, pages = None))]
+#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None, pages = None, move_comments = false, changed_only = false))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
+)]
 fn render(
     docx: &Bound<'_, PyBytes>,
     pdf: bool,
@@ -259,8 +296,14 @@ fn render(
     revisions: &str,
     revision_palette: Option<&str>,
     pages: Option<Vec<usize>>,
+    move_comments: bool,
+    changed_only: bool,
 ) -> PyResult<Rendered> {
-    let options = pdf_options(compress, revisions, revision_palette)?;
+    let page = PageChoice {
+        move_comments,
+        changed_only,
+    };
+    let options = pdf_options(compress, revisions, revision_palette, page)?;
     let request = jubarte::convert::RenderRequest {
         pdf,
         png_dpi,
@@ -311,7 +354,7 @@ fn diff_render_json(
 ) -> PyResult<RenderDiffOut> {
     let options = jubarte::convert::DiffOptions {
         dpi,
-        pdf: pdf_options(false, revisions, revision_palette)?,
+        pdf: pdf_options(false, revisions, revision_palette, PageChoice::default())?,
         overlay,
     };
     let diff = py
@@ -355,6 +398,144 @@ impl Side<'_> {
 /// `diff_json`'s and `redline_diff_json`'s result: the text, and the hunks
 /// as JSON (`[{"at", "removed", "text"}]`, empty for CriticMarkup).
 type Diffed = (String, String);
+
+/// Python integers only: PyO3's u32 extraction otherwise accepts bool.
+struct Context(u32);
+
+impl FromPyObject<'_, '_> for Context {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        let invalid = || {
+            pyo3::exceptions::PyValueError::new_err(
+                "context must be an integer in the u32 range (0..4294967295)",
+            )
+        };
+        if obj.is_instance_of::<PyBool>() || !obj.is_instance_of::<PyInt>() {
+            return Err(invalid());
+        }
+        obj.extract::<u32>().map(Self).map_err(|_| invalid())
+    }
+}
+
+/// Complete document text as a Git unified patch; no redline is constructed.
+#[pyfunction]
+#[pyo3(signature = (old, new, *, old_name = "old.docx", new_name = "new.docx", context = Context(3)))]
+fn diff_unified(
+    py: Python<'_>,
+    old: Side<'_>,
+    new: Side<'_>,
+    old_name: &str,
+    new_name: &str,
+    context: Context,
+) -> PyResult<String> {
+    let options = jubarte::text_diff::UnifiedOptions {
+        old_name: old_name.to_string(),
+        new_name: new_name.to_string(),
+        context: context.0 as usize,
+    };
+    let (old, new) = (old.source(), new.source());
+    py.detach(|| jubarte::text_diff::diff_documents(old, new, &options))
+        .map_err(err)
+}
+
+/// A document review view, with the core display window by default.
+#[pyfunction]
+#[pyo3(signature = (old, new, *, format = "github", context = Context(3), **view))]
+fn diff_view(
+    py: Python<'_>,
+    old: Side<'_>,
+    new: Side<'_>,
+    format: &str,
+    context: Context,
+    view: Option<&Bound<'_, pyo3::types::PyDict>>,
+) -> PyResult<String> {
+    use jubarte::text_diff::{TextFormat, TextOptions, UnifiedOptions};
+    let mut old_name = "old.docx".to_string();
+    let mut new_name = "new.docx".to_string();
+    let mut accept_changes = false;
+    let mut full_lines = false;
+    if let Some(view) = view {
+        for (key, value) in view.iter() {
+            let key: String = key.extract()?;
+            match key.as_str() {
+                "old_name" => old_name = value.extract()?,
+                "new_name" => new_name = value.extract()?,
+                "accept_changes" => accept_changes = value.extract()?,
+                "full_lines" => full_lines = value.extract()?,
+                _ => {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "unexpected keyword argument '{key}'"
+                    )));
+                }
+            }
+        }
+    }
+    let format = match format {
+        "github" | "unified" | "text" => TextFormat::Github,
+        "word" => TextFormat::Word,
+        "normal" => TextFormat::Normal,
+        "context" => TextFormat::Context,
+        "side-by-side" => TextFormat::SideBySide,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "format must be github, word, normal, context or side-by-side",
+            ));
+        }
+    };
+    let defaults = TextOptions::default();
+    let options = TextOptions {
+        unified: UnifiedOptions {
+            old_name,
+            new_name,
+            context: context.0 as usize,
+        },
+        format,
+        accept_changes,
+        window: if full_lines { None } else { defaults.window },
+    };
+    let (old, new) = (old.source(), new.source());
+    py.detach(|| jubarte::text_diff::diff_documents_view(old, new, &options))
+        .map_err(err)
+}
+
+/// Pure shared clap parser. Arguments exclude argv0; no host I/O is done.
+#[pyfunction]
+#[pyo3(signature = (arguments, program = "jubarte-redlines", supported = None))]
+fn parse_cli_json(arguments: Vec<String>, program: &str, supported: Option<Vec<String>>) -> String {
+    jubarte::cli::parse_json(&arguments, program, &supported.unwrap_or_default())
+}
+
+/// Word or Markdown sides as a Word tracked-changes document.
+#[pyfunction]
+#[pyo3(signature = (old, new, *, author, date))]
+fn redline_documents(
+    py: Python<'_>,
+    old: Side<'_>,
+    new: Side<'_>,
+    author: &str,
+    date: &str,
+) -> PyResult<Py<PyBytes>> {
+    let (old, new) = (old.source(), new.source());
+    let settings = jubarte::comparer::WmlComparerSettings {
+        author_for_revisions: author.to_string(),
+        date_time_for_revisions: date.to_string(),
+        ..Default::default()
+    };
+    let bytes = py
+        .detach(|| {
+            jubarte::markdown::redline(
+                old,
+                new,
+                &jubarte::markdown::RedlineOptions {
+                    settings,
+                    ..Default::default()
+                },
+            )
+        })
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &bytes).unbind())
+}
 
 fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> {
     let hunks: Vec<serde_json::Value> = patch
@@ -483,10 +664,26 @@ fn inspect_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
         .map_err(err)
 }
 
-/// Body paragraphs as Markdown with `[body:p:N]` ids.
+/// Body paragraphs with ids, or Markdown with a tracked-change selection.
 #[pyfunction]
-fn markdown(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
-    py.detach(|| jubarte::inspect::markdown(docx)).map_err(err)
+#[pyo3(signature = (docx, track_changes = None))]
+fn markdown(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResult<String> {
+    let Some(choice) = track_changes else {
+        return py.detach(|| jubarte::inspect::markdown(docx)).map_err(err);
+    };
+    let choice = jubarte::markdown::TrackChanges::parse(choice)
+        .ok_or_else(|| err("track_changes must be all, accept or reject"))?;
+    py.detach(|| {
+        jubarte::markdown::docx_to_markdown(
+            docx,
+            &jubarte::markdown::MarkdownOptions {
+                track_changes: choice,
+                extract_media: None,
+            },
+        )
+        .map(|read| read.markdown)
+    })
+    .map_err(err)
 }
 
 /// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
@@ -736,6 +933,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_view, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_cli_json, m)?)?;
+    m.add_function(wrap_pyfunction!(redline_documents, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;

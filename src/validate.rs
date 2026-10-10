@@ -1787,3 +1787,911 @@ pub fn audit_tracked(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod validation_boundary_tests {
+    use super::*;
+
+    fn pkg() -> PartFs {
+        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+    }
+
+    fn xml(dom: &mut Dom, body: &str) -> NodeId {
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{}" xmlns:mc="{}"><w:body>{body}</w:body></w:document>"#,
+            W::URI,
+            MC::URI
+        ));
+        dom.root(doc).unwrap()
+    }
+
+    #[test]
+    fn metadata_ids_check_width_hex_digits_and_the_word_boundary_independently() {
+        for (value, bound, expected) in [
+            ("12345678", true, None),
+            ("abcdef01", false, None),
+            ("7FFFFFFF", true, None),
+            ("80000000", true, Some("outside Word")),
+            ("80000000", false, None),
+            ("1234567", true, Some("not an 8-digit")),
+            ("123456789", false, Some("not an 8-digit")),
+            ("1234567z", true, Some("not an 8-digit")),
+            ("é234567", false, Some("not an 8-digit")),
+        ] {
+            let mut findings = Vec::new();
+            check_hex_id("test", value, bound, "part", &mut findings);
+            assert_eq!(findings.len(), usize::from(expected.is_some()), "{value}");
+            if let Some(message) = expected {
+                assert_eq!(findings[0].code, "COMMENT_PARTS_INCONSISTENT");
+                assert!(findings[0].message.contains(message));
+                assert!(findings[0].word_fatal);
+            }
+        }
+    }
+
+    #[test]
+    fn paragraph_ids_ignore_invalid_or_unterminated_values_and_find_both_attributes() {
+        let source = r#"w14:paraId="7fffffff" w14:textId="80000000" w14:paraId="ZZZZZZZZ" w14:textId="00000000" w14:paraId="FFFFFFFF" w14:textId="unfinished"#;
+        assert_eq!(
+            para_id_values(source),
+            vec![0x7fffffff, u32::MAX, 0x80000000, 0]
+        );
+        assert_eq!(
+            out_of_range_para_ids(source),
+            vec![
+                ("w14:paraId=\"", "FFFFFFFF".into()),
+                ("w14:textId=\"", "80000000".into()),
+                ("w14:textId=\"", "00000000".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn deletion_scope_stops_at_textboxes_and_nested_insertions_stay_live() {
+        let mut dom = Dom::new();
+        let root = xml(
+            &mut dom,
+            "<w:p><w:del><w:r><w:t>deleted</w:t></w:r><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins><w:r><w:txbxContent><w:p><w:r><w:delText>uncovered</w:delText></w:r></w:p></w:txbxContent></w:r></w:del></w:p><w:p><w:moveFrom><w:r><w:delText>moved</w:delText></w:r></w:moveFrom><w:r><w:delText>stranded</w:delText></w:r></w:p>",
+        );
+        let texts = dom.descendants(root, Some(&W::name("delText")));
+        assert!(!covered_by_deletion(&dom, texts[0]));
+        assert!(covered_by_deletion(&dom, texts[1]));
+        assert!(!covered_by_deletion(&dom, texts[2]));
+        fix_deleted_text(&mut dom, root);
+        let live = dom
+            .descendants(root, Some(&W::t()))
+            .into_iter()
+            .map(|n| dom.value(n))
+            .collect::<Vec<_>>();
+        assert_eq!(live, ["inserted", "uncovered", "moved", "stranded"]);
+        assert_eq!(
+            dom.value(dom.descendants(root, Some(&W::name("delText")))[0]),
+            "deleted"
+        );
+    }
+
+    #[test]
+    fn bookmarks_are_forbidden_in_each_single_value_control_but_allowed_in_rich_text() {
+        for control in SINGLE_VALUE_CONTROLS.into_iter().chain(["richText"]) {
+            let mut dom = Dom::new();
+            let root = xml(
+                &mut dom,
+                &format!(
+                    "<w:sdt><w:sdtPr><w:{control}/></w:sdtPr><w:sdtContent><w:p><w:bookmarkStart w:id=\"1\"/><w:r><w:t>value</w:t></w:r><w:bookmarkEnd w:id=\"1\"/></w:p></w:sdtContent></w:sdt><w:p><w:bookmarkStart w:id=\"2\"/></w:p>"
+                ),
+            );
+            let forbidden = bookmarks_in_single_value_controls(&dom, root);
+            assert_eq!(forbidden.len(), if control == "richText" { 0 } else { 2 });
+            drop_bookmarks_in_single_value_controls(&mut dom, root);
+            assert_eq!(
+                dom.descendants(root, Some(&W::name("bookmarkStart"))).len(),
+                if control == "richText" { 2 } else { 1 }
+            );
+            assert_eq!(dom.value(root), "value");
+        }
+    }
+
+    #[test]
+    fn comment_auxiliary_parts_reject_missing_duplicate_and_unmatched_ids() {
+        let mut pkg = pkg();
+        let expected = HashSet::from(["11111111".to_string()]);
+        pkg.set_part("word/commentsExtended.xml", br#"<root><row/><row paraId="11111111" paraIdParent="11111111"/><row paraId="11111111"/><row paraId="22222222"/></root>"#.to_vec());
+        let mut out = Vec::new();
+        let graph = check_comments_extended(&pkg, &expected, &mut out).unwrap();
+        assert_eq!(
+            graph.keys,
+            HashSet::from(["11111111".into(), "22222222".into()])
+        );
+        assert_eq!(out.len(), 4);
+        assert!(out.iter().any(|f| f.code == "COMMENT_PARENT_CYCLE"));
+        assert!(out.iter().any(|f| f.message.contains("has no paraId")));
+        assert!(out.iter().any(|f| f.message.contains("duplicate")));
+        assert!(out.iter().any(|f| f.message.contains("no matching")));
+        pkg.set_part("word/commentsIds.xml", br#"<root><row/><row paraId="11111111"/><row paraId="11111111" durableId="22222222"/><row paraId="33333333" durableId="22222222"/></root>"#.to_vec());
+        out.clear();
+        assert_eq!(
+            check_comments_ids(&pkg, &expected, &mut out),
+            Some(HashSet::from(["22222222".into()]))
+        );
+        assert_eq!(out.len(), 5);
+        pkg.set_part(
+            "word/commentsExtensible.xml",
+            br#"<root><row/><row durableId="22222222"/><row durableId="22222222"/></root>"#
+                .to_vec(),
+        );
+        out.clear();
+        check_comments_extensible(&pkg, Some(&HashSet::from(["22222222".into()])), &mut out);
+        assert_eq!(out.len(), 2);
+        out.clear();
+        check_comments_extensible(&pkg, None, &mut out);
+        assert_eq!(out.len(), 3);
+        assert!(
+            out.iter()
+                .any(|f| f.message.contains("without commentsIds"))
+        );
+    }
+
+    #[test]
+    fn graph_cycles_are_reported_without_confusing_acyclic_chains() {
+        let mut out = Vec::new();
+        check_parent_cycles(
+            &HashMap::from([("a".into(), "b".into()), ("b".into(), "c".into())]),
+            &mut out,
+        );
+        assert!(out.is_empty());
+        check_parent_cycles(
+            &HashMap::from([
+                ("a".into(), "b".into()),
+                ("b".into(), "a".into()),
+                ("tail".into(), "a".into()),
+            ]),
+            &mut out,
+        );
+        assert_eq!(out.len(), 3);
+        assert!(out.iter().all(|f| f.code == "COMMENT_PARENT_CYCLE"));
+    }
+
+    #[test]
+    fn namespace_prefix_lists_distinguish_application_data_bound_and_unknown_prefixes() {
+        let mut pkg = pkg();
+        pkg.set_part("custom.xml", format!(r#"<root xmlns:mc="{}" xmlns:known="urn:known" Requires="application" mc:Ignorable="known xml w14 unknown"><mc:Choice Requires="known"/><child mc:PreserveElements="known:thing unknown:thing"/></root>"#, MC::URI).into_bytes());
+        let mut out = Vec::new();
+        check_namespace_qname_context(&pkg, "custom.xml", &mut out);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out.iter().filter(|f| f.repairable).count(), 1);
+        assert!(out.iter().all(|f| f.code == "MC_UNBOUND_PREFIX"));
+        for attribute in [
+            "Ignorable",
+            "PreserveAttributes",
+            "PreserveElements",
+            "ProcessContent",
+            "MustUnderstand",
+        ] {
+            assert!(is_namespace_qname_list(&W::p(), &MC::name(attribute)));
+        }
+        assert!(!is_namespace_qname_list(&W::p(), &MC::name("other")));
+        assert!(!is_namespace_qname_list(
+            &W::p(),
+            &XName::get("Requires", "")
+        ));
+        assert!(is_namespace_qname_list(
+            &MC::name("Choice"),
+            &XName::get("Requires", "")
+        ));
+    }
+
+    #[test]
+    fn absent_or_unreadable_parts_are_not_modified_by_edit_part() {
+        let mut pkg = pkg();
+        edit_part(&mut pkg, "absent.xml", |_, _| {
+            panic!("missing part must not call editor")
+        });
+        assert!(pkg.part_bytes("absent.xml").is_none());
+        pkg.set_part("empty.xml", Vec::new());
+        edit_part(&mut pkg, "empty.xml", |_, _| {
+            panic!("empty part must not call editor")
+        });
+        assert_eq!(pkg.part_bytes("empty.xml"), Some([].as_slice()));
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod validation_owner_boundary_tests {
+    use super::*;
+    fn package() -> PartFs {
+        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+    }
+    #[test]
+    fn relationship_target_diagnostics_distinguish_owned_payloads_from_unresolved_and_external_targets()
+     {
+        for (target, mode, present, missing) in [
+            ("media/picture.bin", false, true, false),
+            ("/word/media/picture.bin", false, true, false),
+            ("word/media/picture.bin", false, true, false),
+            ("media/missing.bin", false, false, true),
+            ("https://example.invalid/picture.bin", false, false, false),
+            ("http://example.invalid/picture.bin", false, false, false),
+            ("mailto:owner@example.invalid", false, false, false),
+            ("media/missing.bin", true, false, false),
+        ] {
+            let mut pkg = package();
+            let id = if mode {
+                pkg.add_document_relationship_external(
+                    "word/document.xml",
+                    "urn:test:payload",
+                    target,
+                )
+            } else {
+                pkg.add_document_relationship("word/document.xml", "urn:test:payload", target)
+            };
+            if present {
+                pkg.set_part("word/media/picture.bin", vec![1, 2, 3, 4]);
+            }
+            pkg.set_part("word/document.xml", format!("<w:document xmlns:w='{}' xmlns:r='{}'><w:body><w:p><w:r><w:drawing r:embed=\"{id}\"/></w:r></w:p></w:body></w:document>", W::URI, R::URI).into_bytes());
+            let before = pkg.to_zip().unwrap();
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            assert_eq!(
+                findings
+                    .iter()
+                    .filter(|f| f.code == "MISSING_REL_TARGET")
+                    .count(),
+                usize::from(missing),
+                "{target} external={mode}"
+            );
+            assert!(findings.iter().all(|f| f.code != "DANGLING_RELATIONSHIP"));
+            if missing {
+                assert!(
+                    findings
+                        .iter()
+                        .any(|f| f.message.contains(&id) && f.message.contains(target))
+                );
+            }
+            assert_eq!(pkg.to_zip().unwrap(), before);
+        }
+    }
+    #[test]
+    fn orphan_comment_cleanup_preserves_live_references_and_neighbor_run_properties() {
+        for (content, remains) in [
+            ("", false),
+            ("<w:rPr><w:b/></w:rPr>", false),
+            ("<w:rPr><w:i/></w:rPr><w:t>Keep</w:t>", true),
+        ] {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:commentRangeStart w:id='3'/><w:r>{content}<w:commentReference w:id='3'/></w:r><w:commentRangeEnd w:id='3'/><w:r><w:rPr><w:color w:val='246810'/></w:rPr><w:commentReference w:id='4'/><w:t>Live</w:t></w:r></w:p></w:body></w:document>", W::URI));
+            let root = dom.root(doc).unwrap();
+            drop_orphan_comment_anchors(&mut dom, root, &HashSet::from(["4".to_string()]));
+            assert!(
+                dom.descendants(root, Some(&W::name("commentRangeStart")))
+                    .is_empty()
+            );
+            assert!(
+                dom.descendants(root, Some(&W::name("commentRangeEnd")))
+                    .is_empty()
+            );
+            let refs = dom.descendants(root, Some(&W::name("commentReference")));
+            assert_eq!(refs.len(), 1);
+            assert_eq!(dom.attribute(refs[0], &W::id()), Some("4"));
+            assert_eq!(
+                dom.descendants(root, Some(&W::r())).len(),
+                if remains { 2 } else { 1 }
+            );
+            let texts: Vec<_> = dom
+                .descendants(root, Some(&W::t()))
+                .into_iter()
+                .map(|n| dom.value(n))
+                .collect();
+            assert_eq!(
+                texts,
+                if remains {
+                    vec!["Keep", "Live"]
+                } else {
+                    vec!["Live"]
+                }
+            );
+            let live_pr = dom
+                .element(dom.parent(refs[0]).unwrap(), &W::r_pr())
+                .unwrap();
+            assert_eq!(
+                dom.attribute(dom.element(live_pr, &W::name("color")).unwrap(), &W::val()),
+                Some("246810")
+            );
+            let once = dom.serialize_element(root);
+            drop_orphan_comment_anchors(&mut dom, root, &HashSet::from(["4".to_string()]));
+            assert_eq!(dom.serialize_element(root), once);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_memory_validator_owner_boundary_tests {
+    use super::*;
+    fn package(body: &str) -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w=\"{}\" xmlns:w14=\"{}\" xmlns:mc=\"{}\" mc:Ignorable=\"w14\"><w:body>{body}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr></w:body></w:document>",W::URI,W14::URI,MC::URI).into_bytes());
+        pkg
+    }
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn missing_opaque_part_type_has_exact_public_diagnostics_and_no_speculative_repair() {
+        let mut pkg = package("<w:p><w:r><w:t>Owned source payload</w:t></w:r></w:p>");
+        assert!(
+            ring1(&pkg).is_empty(),
+            "the source fixture has no unrelated Ring1 defects"
+        );
+        pkg.set_part(
+            "customXml/source-owned.opaque",
+            b"Independent opaque payload".to_vec(),
+        );
+        let source = snapshot(&pkg);
+        let bytes = pkg.to_zip().unwrap();
+        let expected = Finding {
+            code: "MISSING_CONTENT_TYPE".into(),
+            part: "customXml/source-owned.opaque".into(),
+            path: String::new(),
+            message: "part 'customXml/source-owned.opaque' has no content type".into(),
+            word_fatal: true,
+            repairable: false,
+        };
+        assert_eq!(ring1(&pkg), vec![expected.clone()]);
+        let report = validate(&bytes).unwrap();
+        assert_eq!(report, vec![expected.clone()]);
+        let result = repair(&bytes).unwrap();
+        assert_eq!(
+            result.docx, bytes,
+            "an unknown opaque part requires a maintainer-selected type, not guessed rewriting"
+        );
+        assert!(result.repaired.is_empty());
+        assert_eq!(result.remaining, vec![expected]);
+        assert_eq!(snapshot(&PartFs::open(&result.docx).unwrap()), source);
+        let again = repair(&result.docx).unwrap();
+        assert_eq!(again, result);
+    }
+
+    #[test]
+    fn repairing_comment_paragraph_ids_retains_reply_graph_source_text_and_all_relationships() {
+        // Ring1 deliberately diagnoses a serialized Word range violation.
+        // The actual source package is otherwise complete: both comment
+        // definitions have balanced body anchors and a real acyclic reply
+        // graph. Identical paraId/textId aliases refer to the same source
+        // owner; masked collisions must choose a free ID exactly once.
+        for old in ["80000001", "00000000", "FFFFFFFF"] {
+            let body = "<w:p w14:paraId=\"00000003\"><w:pPr><w:spacing w:after=\"80\"/></w:pPr><w:commentRangeStart w:id=\"1\"/><w:r><w:rPr><w:b/></w:rPr><w:t>Root source ação</w:t></w:r><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p><w:p w14:paraId=\"00000004\" w14:textId=\"7FFFFFFF\"><w:commentRangeStart w:id=\"2\"/><w:r><w:rPr><w:i/></w:rPr><w:t>Reply source café</w:t></w:r><w:commentRangeEnd w:id=\"2\"/><w:r><w:commentReference w:id=\"2\"/></w:r></w:p>";
+            let mut pkg = package(body);
+            let comments = format!(
+                "<w:comments xmlns:w=\"{}\" xmlns:w14=\"{}\" xmlns:mc=\"{}\" mc:Ignorable=\"w14\"><w:comment w:id=\"1\" w:author=\"Original reviewer\" w:initials=\"OR\" w:date=\"2025-02-03T04:05:06Z\"><w:p w14:paraId=\"00000001\"><w:pPr><w:spacing w:after=\"120\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Root comment ação</w:t></w:r></w:p></w:comment><w:comment w:id=\"2\" w:author=\"Reply reviewer\" w:initials=\"RR\" w:date=\"2025-03-04T05:06:07Z\"><w:p w14:paraId=\"{old}\" w14:textId=\"{old}\"><w:pPr><w:spacing w:after=\"240\"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Reply comment café</w:t></w:r></w:p></w:comment></w:comments>",
+                W::URI,
+                W14::URI,
+                MC::URI
+            );
+            let extended = format!(
+                "<w15:commentsEx xmlns:w15=\"http://schemas.microsoft.com/office/word/2012/wordml\"><w15:commentEx w15:paraId=\"00000001\" w15:done=\"0\"/><w15:commentEx w15:paraId=\"{old}\" w15:paraIdParent=\"00000001\" w15:done=\"1\"/></w15:commentsEx>"
+            );
+            pkg.set_part("word/comments.xml", comments.clone().into_bytes());
+            pkg.set_part("word/commentsExtended.xml", extended.clone().into_bytes());
+            for (part, content_type, relationship) in COMMENT_FAMILY.into_iter().take(2) {
+                pkg.add_content_type_override(&format!("/{part}"), content_type);
+                pkg.add_document_relationship(
+                    "word/document.xml",
+                    relationship,
+                    part.strip_prefix("word/").unwrap(),
+                );
+            }
+            let source = snapshot(&pkg);
+            let bytes = pkg.to_zip().unwrap();
+            let original_records = crate::comments::list_comments(&bytes).unwrap();
+            let before = validate(&bytes).unwrap();
+            let range = before
+                .iter()
+                .filter(|finding| finding.code == "PARA_ID_OUT_OF_RANGE")
+                .cloned()
+                .collect::<Vec<_>>();
+            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),part:"word/comments.xml".into(),path:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:true,repairable:true});
+            assert_eq!(range, expected_range);
+            let result = repair(&bytes).unwrap();
+            assert!(
+                result.remaining.is_empty(),
+                "{old}: every reported range or graph inconsistency must be resolved, got {:?}",
+                result.remaining
+            );
+            assert_eq!(result.repaired, expected_range);
+            let output = PartFs::open(&result.docx).unwrap();
+            let expected_comments = comments
+                .replace(&format!("paraId=\"{old}\""), "paraId=\"00000002\"")
+                .replace(&format!("textId=\"{old}\""), "textId=\"00000002\"");
+            let expected_extended =
+                extended.replace(&format!("paraId=\"{old}\""), "paraId=\"00000002\"");
+            let expected = source
+                .iter()
+                .map(|(name, contents)| {
+                    (
+                        name.clone(),
+                        match name.as_str() {
+                            "word/comments.xml" => expected_comments.as_bytes().to_vec(),
+                            "word/commentsExtended.xml" => expected_extended.as_bytes().to_vec(),
+                            _ => contents.clone(),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                snapshot(&output),
+                expected,
+                "{old}: repair must change only the owned identifier aliases, not source formats/text/history/relationships"
+            );
+            assert_eq!(
+                crate::comments::list_comments(&result.docx).unwrap(),
+                original_records,
+                "{old}: complete comment records and reply topology survive"
+            );
+            assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), source);
+            let again = repair(&result.docx).unwrap();
+            assert_eq!(again.docx, result.docx);
+            assert!(again.repaired.is_empty());
+            assert!(again.remaining.is_empty());
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod literal_revision_repair_contract_tests {
+    use super::*;
+
+    fn tree(source: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{}" xmlns:r="{}"><w:body>{source}</w:body></w:document>"#,
+            W::URI,
+            R::URI
+        ));
+        (dom, doc)
+    }
+
+    #[test]
+    fn duplicate_move_ids_keep_exact_range_pairings_and_every_unrelated_source_node() {
+        let source = r#"<w:p><w:bookmarkStart w:id="40" w:name="owned"/><w:moveFromRangeStart w:id="7"/><w:r><w:t>first</w:t></w:r><w:moveFromRangeEnd w:id="7"/><w:moveFromRangeStart w:id="7"/><w:r><w:t>second</w:t></w:r><w:moveFromRangeEnd w:id="7"/><w:moveToRangeStart w:id="8"/><w:r><w:t>third</w:t></w:r><w:moveToRangeEnd w:id="8"/><w:moveToRangeStart w:id="8"/><w:r><w:t>fourth</w:t></w:r><w:moveToRangeEnd w:id="8"/><w:ins w:id="9" w:author="A" w:date="2026-10-09T00:00:00Z"><w:r><w:t>fifth</w:t></w:r></w:ins><w:ins w:id="9" w:author="B" w:date="2026-10-09T00:00:00Z"><w:r><w:t>sixth</w:t></w:r></w:ins><w:bookmarkEnd w:id="40"/></w:p>"#;
+        let (mut dom, doc) = tree(source);
+        let root = dom.root(doc).unwrap();
+        let expected=source.replacen(r#"<w:moveFromRangeStart w:id="7"/><w:r><w:t>second</w:t></w:r><w:moveFromRangeEnd w:id="7"/>"#,r#"<w:moveFromRangeStart w:id="41"/><w:r><w:t>second</w:t></w:r><w:moveFromRangeEnd w:id="41"/>"#,1)
+          .replacen(r#"<w:moveToRangeStart w:id="8"/><w:r><w:t>fourth</w:t></w:r><w:moveToRangeEnd w:id="8"/>"#,r#"<w:moveToRangeStart w:id="42"/><w:r><w:t>fourth</w:t></w:r><w:moveToRangeEnd w:id="42"/>"#,1)
+          .replacen(r#"<w:ins w:id="9" w:author="B""#,r#"<w:ins w:id="43" w:author="B""#,1);
+        let (expected_dom, expected_doc) = tree(&expected);
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+
+    #[test]
+    fn repair_declines_missing_ids_and_unmatched_ranges_without_inventing_content() {
+        let source = r#"<w:p><w:ins><w:r><w:t>missing id</w:t></w:r></w:ins><w:moveFromRangeStart w:id="3"/><w:moveFromRangeStart w:id="3"/><w:moveToRangeEnd w:id="3"/><w:r><w:t>unmatched range retained</w:t></w:r></w:p>"#;
+        let expected = source.replacen(
+            r#"<w:moveFromRangeStart w:id="3"/><w:moveToRangeEnd"#,
+            r#"<w:moveFromRangeStart w:id="4"/><w:moveToRangeEnd"#,
+            1,
+        );
+        let (mut dom, doc) = tree(source);
+        let root = dom.root(doc).unwrap();
+        let (expected_dom, expected_doc) = tree(&expected);
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod paragraph_id_collision_owner_tests {
+    use super::*;
+
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut names = pkg.parts();
+        names.sort();
+        names
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn paragraph_id_collision_repair_preserves_all_owners_and_shared_references() {
+        for old_id in ["00000000", "80000000", "80000001", "FFFFFFFF"] {
+            let mut pkg =
+                PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+            let document = format!(
+                r#"<w:document xmlns:w="{}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p w14:paraId="00000001" w14:textId="00000002"><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>existing ids</w:t></w:r></w:p><w:p w14:paraId="7FFFFFFF"><w:r><w:t>upper existing id</w:t></w:r></w:p><w:p w14:paraId="{old_id}" w14:textId="{old_id}"><w:pPr><w:keepNext/><w:pPrChange w:id="51" w:author="Source" w:date="2026-10-09T00:00:00Z"><w:pPr><w:spacing w:before="120"/></w:pPr></w:pPrChange></w:pPr><w:r><w:rPr><w:i/><w:color w:val="123456"/></w:rPr><w:t>ação τέλος</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
+                W::URI
+            );
+            pkg.set_part("word/document.xml", document.as_bytes().to_vec());
+            let refs = format!(
+                r#"<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w15:commentEx w15:paraId="{old_id}" w15:paraIdParent="{old_id}" w15:done="0"/></w15:commentsEx>"#
+            );
+            pkg.set_part("word/commentsExtended.xml", refs.as_bytes().to_vec());
+            pkg.add_content_type_override(
+                "/word/commentsExtended.xml",
+                "application/vnd.ms-word.commentsExtended+xml",
+            );
+            pkg.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+                "commentsExtended.xml",
+            );
+            let before = snapshot(&pkg);
+            let mut expected = before.clone();
+            for (name, bytes) in &mut expected {
+                if name == "word/document.xml" || name == "word/commentsExtended.xml" {
+                    *bytes = String::from_utf8(bytes.clone())
+                        .unwrap()
+                        .replace(&format!("=\"{old_id}\""), "=\"00000003\"")
+                        .into_bytes();
+                }
+            }
+            renumber_out_of_range_para_ids(&mut pkg);
+            assert_eq!(
+                snapshot(&pkg),
+                expected,
+                "{old_id}: only the out-of-range shared id changes"
+            );
+            renumber_out_of_range_para_ids(&mut pkg);
+            assert_eq!(
+                snapshot(&pkg),
+                expected,
+                "{old_id}: a repeat preserves every part byte"
+            );
+            assert_ne!(before, expected);
+        }
+    }
+
+    #[test]
+    fn dangling_relationship_repair_keeps_empty_known_and_nonrelationship_owners() {
+        let source = format!(
+            r#"<w:document xmlns:w="{}" xmlns:r="{}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body><w:p><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:drawing><a:blip r:embed="missing" r:link="known"/></w:drawing><w:t>owned</w:t></w:r><w:hyperlink r:id="known"><w:r><w:t>keep</w:t></w:r></w:hyperlink><w:hyperlink r:id=""><w:r><w:t>empty reference</w:t></w:r></w:hyperlink><w:hyperlink r:id="missing"><w:r><w:t>attribute removed, text kept</w:t></w:r></w:hyperlink><w:ins w:id="52" w:author="Source" w:date="2026-10-09T00:00:00Z"><w:r><w:t>tracked source</w:t></w:r></w:ins></w:p><w:altChunk r:id="missing"/><w:sectPr><w:headerReference w:type="default" r:id="missing"/><w:footerReference w:type="default" r:id="known"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
+            W::URI,
+            R::URI
+        );
+        let expected = source
+            .replace(r#" r:embed="missing""#, "")
+            .replace(r#"<w:hyperlink r:id="missing">"#, "<w:hyperlink>")
+            .replace(r#"<w:altChunk r:id="missing"/>"#, "")
+            .replace(
+                r#"<w:headerReference w:type="default" r:id="missing"/>"#,
+                "",
+            );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&source);
+        let root = dom.root(doc).unwrap();
+        let mut expected_dom = Dom::new();
+        let expected_doc = expected_dom.parse_xdocument(&expected);
+        let ids = HashSet::from(["known".to_string()]);
+        drop_dangling_relationship_attributes(&mut dom, root, &ids);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+        drop_dangling_relationship_attributes(&mut dom, root, &ids);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_comment_family_validation_contract_tests {
+    use super::*;
+
+    fn package() -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body><w:p><w:r><w:t>Owned body</w:t></w:r></w:p></w:body></w:document>",W::URI).into_bytes());
+        pkg
+    }
+    fn frozen(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|part| {
+                let bytes = pkg.part_bytes(&part).unwrap().to_vec();
+                (part, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn auxiliary_comment_parts_without_their_source_definition_are_reported_individually() {
+        for (part, content_type, rel_type) in &COMMENT_FAMILY[1..] {
+            let mut pkg = package();
+            pkg.set_part(part, b"<root/>".to_vec());
+            pkg.add_content_type_override(part, content_type);
+            pkg.add_document_relationship("word/document.xml", rel_type, &format!("/{part}"));
+            let before = frozen(&pkg);
+            let mut findings = Vec::new();
+            check_comment_graph(&pkg, &mut findings);
+            assert_eq!(
+                findings,
+                vec![Finding::new(
+                    "COMMENT_PARTS_INCONSISTENT",
+                    part,
+                    "",
+                    format!("'{part}' exists without word/comments.xml")
+                )]
+            );
+            assert!(ring1(&pkg).contains(&findings[0]));
+            assert_eq!(frozen(&pkg), before);
+        }
+    }
+
+    #[test]
+    fn each_comment_family_relationship_requires_its_exact_owned_part_and_content_type() {
+        for (part, content_type, rel_type) in COMMENT_FAMILY {
+            for case in 0..6 {
+                let mut pkg = package();
+                if case != 5 {
+                    pkg.set_part(part, b"<root/>".to_vec());
+                }
+                pkg.add_content_type_override(
+                    part,
+                    if case == 0 {
+                        "application/wrong"
+                    } else {
+                        content_type
+                    },
+                );
+                let mut rid = None;
+                let target = if case == 4 {
+                    "wrong.xml".to_string()
+                } else {
+                    format!("/{part}")
+                };
+                if case != 1 {
+                    rid = Some(if case == 3 {
+                        pkg.add_document_relationship_external(
+                            "word/document.xml",
+                            rel_type,
+                            &format!("/{part}"),
+                        )
+                    } else {
+                        pkg.add_document_relationship("word/document.xml", rel_type, &target)
+                    });
+                }
+                if case == 2 {
+                    pkg.add_document_relationship(
+                        "word/document.xml",
+                        rel_type,
+                        &format!("/{part}"),
+                    );
+                }
+                let before = frozen(&pkg);
+                let mut findings = Vec::new();
+                check_comment_family_packaging(&pkg, "word/document.xml", &mut findings);
+                let expected = match case {
+                    0 => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        part,
+                        "",
+                        format!("'{part}' has the wrong content type (expected '{content_type}')"),
+                    ),
+                    1 | 2 => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        "word/document.xml",
+                        "",
+                        format!(
+                            "'word/document.xml' needs exactly one relationship to '{part}', found {}",
+                            if case == 1 { 0 } else { 2 }
+                        ),
+                    ),
+                    3 | 4 => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        "word/document.xml",
+                        "",
+                        format!(
+                            "comment relationship '{}' on 'word/document.xml' resolves to '{}' instead of '{part}'",
+                            rid.unwrap(),
+                            if case == 3 {
+                                format!("/{part}")
+                            } else {
+                                "wrong.xml".into()
+                            }
+                        ),
+                    ),
+                    _ => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        "word/document.xml",
+                        "",
+                        format!(
+                            "'word/document.xml' has a relationship for missing comment part '{part}'"
+                        ),
+                    ),
+                };
+                assert_eq!(findings, vec![expected], "{part}/case{case}");
+                assert_eq!(frozen(&pkg), before);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod retained_namespace_finding_source_contract_tests {
+    use super::*;
+
+    #[test]
+    fn repair_reports_unbound_unknown_prefixes_without_discarding_owned_story_content() {
+        for known in [false, true] {
+            let ignorable = if known {
+                "w14 UnknownFoo UnknownBar"
+            } else {
+                "UnknownFoo UnknownBar"
+            };
+            let mut pkg =
+                PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+            let body = format!(
+                "<w:document xmlns:w='{}' xmlns:mc='{}' mc:Ignorable='{ignorable}'><w:body><w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Owned body</w:t></w:r></w:p></w:body></w:document>",
+                W::URI,
+                MC::URI
+            );
+            let header = format!(
+                "<w:hdr xmlns:w='{}' xmlns:mc='{}' mc:Ignorable='UnknownFoo'><w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Owned header</w:t></w:r></w:p></w:hdr>",
+                W::URI,
+                MC::URI
+            );
+            pkg.set_part("word/document.xml", body.into_bytes());
+            pkg.set_part("word/header1.xml", header.into_bytes());
+            pkg.add_content_type_override(
+                "word/header1.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            );
+            pkg.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                "header1.xml",
+            );
+            let source = pkg.to_zip().unwrap();
+            let before = validate(&source).unwrap();
+            assert_eq!(before.len(), 3 + usize::from(known), "{before:?}");
+            assert!(before.iter().all(|f| f.code == "MC_UNBOUND_PREFIX"));
+            assert_eq!(
+                before
+                    .iter()
+                    .filter(|f| f.part == "word/document.xml")
+                    .count(),
+                2 + usize::from(known)
+            );
+            assert_eq!(
+                before
+                    .iter()
+                    .filter(|f| f.part == "word/header1.xml")
+                    .count(),
+                1
+            );
+            let out = repair(&source).unwrap();
+            assert_eq!(
+                out.repaired,
+                before
+                    .iter()
+                    .filter(|finding| finding.repairable)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(out.repaired.len(), usize::from(known));
+            assert_eq!(
+                out.remaining,
+                before
+                    .iter()
+                    .filter(|finding| !finding.repairable)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            );
+            let after = PartFs::open(&out.docx).unwrap();
+            for part in pkg.parts() {
+                let old = pkg.part_bytes(&part).unwrap();
+                let new = after.part_bytes(&part).unwrap();
+                if matches!(part.as_str(), "word/document.xml" | "word/header1.xml") {
+                    let mut dom = Dom::new();
+                    let old_document = dom.parse_xdocument(std::str::from_utf8(old).unwrap());
+                    let old_root = dom.root(old_document).unwrap();
+                    if known && part == "word/document.xml" {
+                        dom.set_attribute_value(
+                            old_root,
+                            &crate::xmllinq::XNamespace::xmlns().name("w14"),
+                            Some(crate::namespaces::W14::URI),
+                        );
+                    }
+                    let expected = dom.serialize_element(old_root);
+                    let new_document = dom.parse_xdocument(std::str::from_utf8(new).unwrap());
+                    let new_root = dom.root(new_document).unwrap();
+                    assert_eq!(dom.serialize_element(new_root), expected, "{part}");
+                } else {
+                    assert_eq!(new, old, "{part}");
+                }
+            }
+            assert_eq!(pkg.to_zip().unwrap(), source);
+            let again = repair(&out.docx).unwrap();
+            assert_eq!(again.remaining, out.remaining);
+            assert!(again.repaired.is_empty());
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod duplicate_drawing_owned_repair_contract_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_drawing_repair_renumbers_only_ids_and_preserves_every_shape_owner() {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let drawing = |id, name, color| {
+            format!(
+                "<w:r><w:rPr><w:b/></w:rPr><w:drawing><wp:inline><wp:extent cx='914400' cy='457200'/><wp:docPr id='{id}' name='{name}' descr='Owned shape'/><a:graphic><a:graphicData uri='http://schemas.microsoft.com/office/word/2010/wordprocessingShape'><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x='0' y='0'/><a:ext cx='914400' cy='457200'/></a:xfrm><a:prstGeom prst='rect'><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val='{color}'/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+            )
+        };
+        let xml = |first, second| {
+            format!(
+                "<w:document xmlns:w='{}' xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing' xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main' xmlns:wps='http://schemas.microsoft.com/office/word/2010/wordprocessingShape'><w:body><w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Owned prefix</w:t></w:r>{}{}<w:r><w:t>Owned suffix</w:t></w:r></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",
+                W::URI,
+                drawing(first, "First", "123456"),
+                drawing(second, "Second", "987654")
+            )
+        };
+        pkg.set_part("word/document.xml", xml(7, 7).into_bytes());
+        let source = pkg.to_zip().unwrap();
+        let findings = validate(&source).unwrap();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, "DUPLICATE_DOCPR_ID");
+        assert!(findings[0].repairable);
+        assert!(!findings[0].word_fatal);
+        let repaired = repair(&source).unwrap();
+        assert_eq!(repaired.repaired, findings);
+        assert!(repaired.remaining.is_empty(), "{:?}", repaired.remaining);
+        let output = PartFs::open(&repaired.docx).unwrap();
+        let mut dom = Dom::new();
+        let expected = dom.parse_xdocument(&xml(1, 2));
+        let expected_root = dom.root(expected).unwrap();
+        let expected = dom.serialize_element(expected_root);
+        let actual = dom.parse_xdocument(&output.part_string("word/document.xml").unwrap());
+        let actual_root = dom.root(actual).unwrap();
+        assert_eq!(dom.serialize_element(actual_root), expected);
+        for part in pkg
+            .parts()
+            .into_iter()
+            .filter(|part| part != "word/document.xml")
+        {
+            assert_eq!(output.part_bytes(&part), pkg.part_bytes(&part), "{part}");
+        }
+        assert_eq!(pkg.to_zip().unwrap(), source);
+        let again = repair(&repaired.docx).unwrap();
+        assert!(again.repaired.is_empty());
+        assert!(again.remaining.is_empty());
+        assert_eq!(again.docx, repaired.docx);
+    }
+}

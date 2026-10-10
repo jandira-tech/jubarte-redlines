@@ -1,6 +1,10 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export function diffDocumentsUnified(old: Uint8Array, _new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+
+
+
 /**
  * What [`appendDocuments`](append_documents) returns.
  */
@@ -163,12 +167,31 @@ export function compareDocuments(original: Uint8Array, modified: Uint8Array, aut
 export function diffDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string;
 
 /**
+ * The complete document as CriticMarkup; existing paragraph patches stay separate.
+ */
+export function diffDocumentsCritic(old: Uint8Array, _new: Uint8Array, author?: string | null, date?: string | null): string;
+
+/**
+ * Document review view. `optionsJson` is a strict camelCase object with
+ * `format` (github, word, normal, context, side-by-side), `oldName`,
+ * `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+ * and `newFormat` (docx/md). Defaults use the core display window; Word
+ * always accepts both inputs' revisions before creating new CriticMarkup.
+ */
+export function diffDocumentsView(old: Uint8Array, _new: Uint8Array, options_json?: string | null): string;
+
+/**
  * Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
  * coordinates an edit plan uses.
  *
  * Mirrors `jubarte::inspect::markdown`.
  */
 export function documentMarkdown(docx: Uint8Array): string;
+
+/**
+ * Markdown without paragraph ids, with tracked changes kept or resolved.
+ */
+export function documentMarkdownWithChanges(docx: Uint8Array, track_changes: string): string;
 
 /**
  * The JSON-lines form of a report (`load`, one `op` per operation,
@@ -236,11 +259,21 @@ export function listComments(docx: Uint8Array, author?: string | null, latest?: 
 export function markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | null): Uint8Array;
 
 /**
+ * Shared clap parsing, with no filesystem, clock or process access.
+ */
+export function parseCli(arguments_json: string, program?: string | null, supported_json?: string | null): string;
+
+/**
  * Resolve every operation of an edit plan without producing documents.
  *
  * Mirrors `jubarte::edit::preview_plan`.
  */
 export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput;
+
+/**
+ * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
+ */
+export function redlineDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string): Uint8Array;
 
 /**
  * Reject the changes `filterJson` selects and keep the rest tracked
@@ -310,7 +343,11 @@ export interface InitOutput {
     readonly capabilities: (a: number) => void;
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
+    readonly diffDocumentsCritic: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly diffDocumentsUnified: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly diffDocumentsView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly documentMarkdown: (a: number, b: number, c: number) => void;
+    readonly documentMarkdownWithChanges: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly editReportJsonl: (a: number, b: number, c: number) => void;
     readonly editoutput_clean: (a: number, b: number) => void;
     readonly editoutput_json: (a: number, b: number) => void;
@@ -323,7 +360,9 @@ export interface InitOutput {
     readonly listChanges: (a: number, b: number, c: number) => void;
     readonly listComments: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly markdownToDocx: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly parseCli: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly redlineDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly rejectChanges: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly rejectRevisions: (a: number, b: number, c: number) => void;
     readonly repairDocument: (a: number, b: number, c: number) => void;

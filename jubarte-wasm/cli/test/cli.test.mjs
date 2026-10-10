@@ -8,6 +8,7 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -105,9 +106,26 @@ test("text, inspect, capabilities and convert", () => {
   assert.match(r.out, /^wrote .*out\.pdf \(\d+ bytes, \d+ pages?\)\n$/);
   assert.equal(fs.readFileSync(pdf).subarray(0, 5).toString(), "%PDF-");
   const png = run("convert", tracked, "--png");
-  assert.equal(png.code, 1);
+  assert.equal(png.code, 2);
   assert.match(png.err, /PNG pages need the Python or Rust build/);
-  assert.match(run("convert", tracked, "--revisions", "custom").err, /--revisions custom needs --revision-palette/);
+  assert.match(run("convert", tracked, "--revisions", "custom").err, /--revision-palette/);
+});
+
+test("convert --move-comments and --changed-only", () => {
+  const pages = (r) => {
+    assert.equal(r.code, 0, r.err);
+    return Number(/, (\d+) pages?\)/.exec(r.out)[1]);
+  };
+  const out = path.join(tmp, "flags.pdf");
+  assert.equal(pages(run("convert", tracked, "-o", out, "--force")), 1);
+  assert.equal(pages(run("convert", tracked, "-o", out, "--force", "--move-comments")), 2, "the comments get a page after the last");
+  // A long redline whose one change is on its first page.
+  const wasm = createRequire(bin)("jubarte-wasm");
+  const long = Array.from({ length: 120 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
+  const redline = path.join(tmp, "long.docx");
+  fs.writeFileSync(redline, wasm.compareDocuments(wasm.markdownToDocx(long), wasm.markdownToDocx(long.replace("Paragraph 0.", "Paragraph zero.")), "Ann"));
+  assert.ok(pages(run("convert", redline, "-o", out, "--force")) > 1);
+  assert.equal(pages(run("convert", redline, "-o", out, "--force", "--changed-only")), 1);
 });
 
 test("edit writes the bundle, and a refused plan exits 3", () => {
@@ -132,14 +150,344 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
 test("help, version and usage errors", () => {
   const help = run("--help");
   assert.equal(help.code, 0);
-  assert.match(help.out, /^usage: jubarte-redlines <command>/);
-  assert.match(help.out, /redline, compare/);
-  assert.match(run("redline", "--help").out, /^usage: jubarte-redlines redline ORIGINAL MODIFIED/);
-  assert.match(run("--version").out, /^jubarte-redlines \d+\.\d+\.\d+ \(engine \d+\.\d+\.\d+/);
+  assert.match(help.out, /Usage: jubarte-redlines/);
+  assert.match(help.out, /compare/);
+  assert.match(run("redline", "--help").out, /Usage: jubarte-redlines (?:redline|compare)/);
+  assert.match(run("--version").out, /^jubarte-redlines \d+\.\d+\.\d+/);
   assert.equal(run().code, 2);
   assert.equal(run("frobnicate").code, 2);
   const bad = run("redline", "only-one.docx");
   assert.equal(bad.code, 2);
-  assert.match(bad.err, /redline needs ORIGINAL and MODIFIED/);
+  assert.match(bad.err, /required|MODIFIED/);
   assert.equal(run("redline", "a", "b", "--nope").code, 2);
+});
+
+test("github aliases write text without implicit Word output (integration)", () => {
+  const a = copy(path.join(pair, "base.docx"), "unified-a.docx");
+  const b = copy(path.join(pair, "next.docx"), "unified-b.docx");
+  const first = run("diff", a, b, "--format", "github", "--context", "0");
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /^diff --git /);
+  assert.ok(!fs.existsSync(path.join(tmp, "unified-a_v_unified-b.docx")));
+  for (const format of ["unified", "text"]) {
+    const out = path.join(tmp, `${format}.patch`);
+    const result = run("diff", a, b, "--format", format, "--context", "0", "-o", out);
+    assert.equal(result.code, 0, result.err);
+    assert.equal(fs.readFileSync(out, "utf8"), first.out);
+  }
+});
+
+test("format contradictions and unsupported flags fail before I/O (integration)", () => {
+  const output = path.join(tmp, "never-github.docx");
+  for (const extra of [["--format", "github"], ["--format", "github", "--to", "docx"], ["--format", "github", "--context", "-1"]]) {
+    const result = run("diff", "missing-a.docx", "missing-b.docx", "-o", output, ...extra);
+    assert.equal(result.code, 2, result.err);
+    assert.doesNotMatch(result.err, /reading/);
+    assert.ok(!fs.existsSync(output));
+  }
+  for (const args of [["inspect", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["compare", "a", "b", "--mode", "powertools"]]) {
+    const result = run(...args);
+    assert.equal(result.code, 2, result.err);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+});
+
+test("Markdown paragraph/critic output and shorthand comparison (integration)", () => {
+  const a = path.join(tmp, "short-a.md"), b = path.join(tmp, "short-b.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  const patch = run("diff", a, b, "--author", "Legal", "--date", "2026-09-30T14:05:00Z");
+  assert.equal(patch.code, 0, patch.err);
+  assert.match(patch.out, /\[-30-\]\{\+45\+\}/);
+  assert.equal(run("diff", a, b, "--format", "critic").out, "Due in {~~30~>45~~} days.\n");
+  const compared = run(a, b, "--quiet");
+  assert.equal(compared.code, 0, compared.err);
+  assert.equal(compared.out, "");
+  assert.equal(fs.readFileSync(path.join(tmp, "short-a_v_short-b.docx")).subarray(0, 2).toString(), "PK");
+  const converted = run("convert", a, "--to", "docx");
+  assert.equal(converted.code, 0, converted.err);
+  assert.equal(fs.readFileSync(path.join(tmp, "short-a.docx")).subarray(0, 2).toString(), "PK");
+  const accepted = run("text", tracked, "--track-changes", "accept");
+  assert.equal(accepted.code, 0, accepted.err);
+  assert.doesNotMatch(accepted.out, /\[body:p:/);
+});
+
+test("all views write only the requested text file with status on stderr (integration)", () => {
+  const a = path.join(tmp, "view-old.txt"), b = path.join(tmp, "view-new.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  for (const format of ["github", "unified", "text", "word", "normal", "context", "side-by-side"]) {
+    const stdout = run("diff", a, b, "--format", format, "--full-lines", "-U", "0");
+    assert.equal(stdout.code, 0, stdout.err);
+    assert.ok(stdout.out.includes("30") && stdout.out.includes("45"));
+    if (format === "github") assert.ok(stdout.out.includes(a) && stdout.out.includes(b));
+    const out = path.join(tmp, `view-${format}.patch`);
+    const saved = run("diff", a, b, "--format", format, "--full-lines", "-U", "0", "-o", out);
+    assert.equal(saved.code, 0, saved.err);
+    assert.equal(saved.out, "");
+    assert.match(saved.err, /wrote/);
+    assert.equal(fs.readFileSync(out, "utf8"), stdout.out);
+  }
+  assert.ok(!fs.existsSync(path.join(tmp, "view-old_v_view-new.docx")));
+});
+
+test("patch output txt inference and unknown suffix fallback match native (integration)", () => {
+  const a = path.join(tmp, "inference-old.md"), b = path.join(tmp, "inference-new.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  for (const suffix of ["txt", "unknown"]) {
+    const out = path.join(tmp, `inference.${suffix}`), result = run("diff", a, b, "-o", out);
+    assert.equal(result.code, 0, result.err);
+    assert.equal(fs.readFileSync(out, "utf8"), "Due in {~~30~>45~~} days.\n");
+    assert.match(result.out, /\[-30-\]\{\+45\+\}/);
+  }
+});
+
+test("declared docx UTF-8 never silently compares as Markdown (integration)", () => {
+  const a = path.join(tmp, "pretend.docx"), b = path.join(tmp, "pretend-new.md");
+  fs.writeFileSync(a, "UTF-8 masquerading as DOCX\n");
+  fs.writeFileSync(b, "new\n");
+  for (const format of ["patch", "critic", "github", "word", "normal", "context", "side-by-side"]) {
+    const result = run("diff", a, b, "--format", format);
+    assert.equal(result.code, 1, result.err);
+    assert.equal(result.out, "");
+    assert.ok(!fs.existsSync(path.join(tmp, "pretend_v_pretend-new.docx")));
+  }
+  const out = path.join(tmp, "pretend-redline.docx");
+  assert.equal(run("compare", a, b, "-o", out).code, 1);
+  assert.ok(!fs.existsSync(out));
+});
+
+test("CLI accepts both revision histories and word always accepts (integration)", () => {
+  const a = path.join(tmp, "history-old.md"), b = path.join(tmp, "history-new.md");
+  fs.writeFileSync(a, "Due in {~~30~>45~~} days.\n");
+  fs.writeFileSync(b, "Due in {~~60~>45~~} days.\n");
+  const preserved = run("diff", a, b, "--format", "github");
+  assert.equal(preserved.code, 0, preserved.err);
+  assert.ok(preserved.out.includes("30") && preserved.out.includes("60"));
+  const accepted = run("diff", a, b, "--format", "github", "--accept-changes");
+  assert.equal(accepted.code, 0, accepted.err);
+  assert.equal(accepted.out, "");
+  const word = run("diff", a, b, "--format", "word");
+  assert.equal(word.code, 0, word.err);
+  assert.equal(word.out, "");
+});
+
+test("unknown output suffix defaults to Word for Word inputs (integration)", () => {
+  const out = path.join(tmp, "word-fallback.unknown");
+  const result = run("diff", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(fs.readFileSync(out).subarray(0, 4).toString("hex"), "504b0304");
+  assert.ok(result.out.length > 0);
+});
+
+
+test("explicit Markdown input and UTF-8 BOM share native text behavior", () => {
+  const a = path.join(tmp, "declared-old.docx"), b = path.join(tmp, "declared-new.docx");
+  fs.writeFileSync(a, "\ufeffDue 30 days.\n");
+  fs.writeFileSync(b, "Due 45 days.\n");
+  const result = run("diff", a, b, "--from", "md", "--format", "word", "--full-lines");
+  assert.equal(result.code, 0, result.err);
+  assert.equal(result.out, "Due {~~30~>45~~} days.\n");
+});
+
+
+test("diff PDF forwards page options (integration)", () => {
+  const wasm = createRequire(bin)("jubarte-wasm");
+  const long = Array.from({ length: 120 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
+  const a = path.join(tmp, "page-options-old.md"), b = path.join(tmp, "page-options-new.md");
+  fs.writeFileSync(a, long);
+  fs.writeFileSync(b, long.replace("Paragraph 0.", "Paragraph zero."));
+  const all = path.join(tmp, "diff-all.pdf"), kept = path.join(tmp, "diff-kept.pdf");
+  for (const [output, flags] of [[all, []], [kept, ["--changed-only"]]]) {
+    const result = run("diff", a, b, "-o", output, ...flags);
+    assert.equal(result.code, 0, result.err);
+  }
+  assert.ok(wasm.pdfPageCount(fs.readFileSync(all)) > 1);
+  assert.equal(wasm.pdfPageCount(fs.readFileSync(kept)), 1);
+  const end = path.join(tmp, "diff-end.pdf");
+  const moved = run("diff", tracked, tracked, "-o", end, "--move-comments");
+  assert.equal(moved.code, 0, moved.err);
+  assert.equal(wasm.pdfPageCount(fs.readFileSync(end)), 2);
+});
+
+test("Markdown refuses render-only options (integration)", () => {
+  const source = path.join(tmp, "page-options-draft.md");
+  fs.writeFileSync(source, "# Draft\n");
+  for (const flag of ["--move-comments", "--changed-only"]) {
+    const result = run("convert", source, flag);
+    assert.equal(result.code, 1, result.err);
+    assert.match(result.err, /applies to PDF or PNG output only/);
+  }
+  assert.ok(!fs.existsSync(path.join(tmp, "page-options-draft.docx")));
+});
+
+test("I/O failures report the operation and leave no output (integration)", () => {
+  const missing = run("text", "absent.docx");
+  assert.equal(missing.code, 1);
+  assert.match(missing.err, /reading absent\.docx:/);
+  assert.equal(missing.out, "");
+  const unwritable = path.join(tmp, "missing-parent", "accepted.docx");
+  const failure = run("accept", tracked, "-o", unwritable);
+  assert.equal(failure.code, 1);
+  assert.match(failure.err, /writing .*accepted\.docx:/);
+  assert.equal(failure.out, "");
+  assert.ok(!fs.existsSync(unwritable));
+});
+
+test("legacy revisions and tracked text projections retain their contracts (integration)", () => {
+  const revisions = run("revisions", tracked);
+  assert.equal(revisions.code, 0, revisions.err);
+  assert.match(revisions.out, /Deleted\tBo Chen\t/);
+  assert.match(revisions.out, /\d+ revision\(s\)\n$/);
+  for (const mode of ["accept", "reject"]) {
+    const text = run("text", tracked, "--track-changes", mode);
+    assert.equal(text.code, 0, text.err);
+    assert.ok(text.out.length > 0);
+    const output = path.join(tmp, `project-${mode}.pdf`);
+    const pdf = run("convert", tracked, "--track-changes", mode, "-o", output);
+    assert.equal(pdf.code, 0, pdf.err);
+    assert.equal(fs.readFileSync(output).subarray(0, 5).toString(), "%PDF-");
+  }
+});
+
+test("Markdown conversion supports a reference, inferred output and PDF (integration)", () => {
+  const source = path.join(tmp, "reference-draft.md");
+  fs.writeFileSync(source, "# Draft\n\nA clause.\n");
+  const docx = run("convert", source, "--reference-doc", untracked);
+  assert.equal(docx.code, 0, docx.err);
+  assert.match(docx.out, /reference-draft\.docx/);
+  assert.match(run("text", path.join(tmp, "reference-draft.docx")).out, /A clause\./);
+  const pdf = run("convert", source, "--pdf");
+  assert.equal(pdf.code, 0, pdf.err);
+  assert.equal(fs.readFileSync(path.join(tmp, "reference-draft.pdf")).subarray(0, 5).toString(), "%PDF-");
+});
+
+test("comparison refuses Markdown output of Word inputs and sniffs unknown input suffixes (integration)", () => {
+  // As natively, a .md output is CriticMarkup of two Markdown documents.
+  const markdown = path.join(tmp, "compare-output.md");
+  const result = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", markdown);
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.err, /Markdown output needs both documents in Markdown/);
+  assert.ok(!fs.existsSync(markdown));
+  const a = copy(path.join(pair, "base.docx"), "sniff-a.bin");
+  const b = copy(path.join(pair, "next.docx"), "sniff-b.bin");
+  const inferred = run("diff", a, b);
+  assert.equal(inferred.code, 0, inferred.err);
+  assert.equal(fs.readFileSync(path.join(tmp, "sniff-a_v_sniff-b.docx")).subarray(0, 4).toString("hex"), "504b0304");
+});
+
+test("edit previews write nothing and quiet application still writes its report (integration)", () => {
+  const plan = path.join(tmp, "coverage-edit-plan.json");
+  const paragraph = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Legal", date: "2026-01-02T03:04:05Z", operations: [{ id: "replace", kind: "replace", paragraph: { index: paragraph.index }, find: paragraph.text.split(" ")[0], replacement: "Readers" }] }));
+  const dir = path.join(tmp, "coverage-preview");
+  const preview = run("edit", untracked, "--plan", plan, "--out-dir", dir, "--dry-run");
+  assert.equal(preview.code, 0, preview.err);
+  assert.match(preview.out, /"ev":"summary"/);
+  assert.ok(!fs.existsSync(dir));
+  const applied = run("edit", untracked, "--plan", plan, "--out-dir", dir, "--quiet");
+  assert.equal(applied.code, 0, applied.err);
+  assert.equal(applied.out, "");
+  assert.ok(fs.readFileSync(path.join(dir, "report.jsonl"), "utf8").includes('"ev":"save"'));
+  const own = run("edit", tracked, "--plan", plan, "--out-dir", path.dirname(tracked), "--force");
+  assert.equal(own.code, 1);
+  assert.match(own.err, /input's own directory/);
+  const badPlan = path.join(tmp, "malformed-plan.json");
+
+  const invalid = run("edit", tracked, "--plan", badPlan, "--out-dir", path.join(tmp, "bad-plan-output"));
+  assert.equal(invalid.code, 1);
+  assert.match(invalid.err, /reading .*malformed-plan\.json/);
+});
+
+test("unsupported host options are rejected before input I/O (integration)", () => {
+  const comparison = [
+    ["--powertools-faithful"], ["--detail-threshold", "0.1"], ["--no-paragraph-merge"],
+  ];
+  for (const flags of comparison) {
+    const result = run("compare", "missing-a.docx", "missing-b.docx", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.match(result.err, /not supported/);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+  for (const flags of [["--from", "docx"], ["--resource-path", "."], ["--fail-on-substitution"], ["--no-page-markers"], ["--dpi", "120"], ["--pages", "1"], ["--report", "report.json"], ["--font-report", "fonts.json"], ["--to", "md"], ["-o", "output.md"], ["--to", "docx"], ["-o", "output.docx"]]) {
+    const result = run("convert", "missing.docx", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+  for (const flags of [["--pdf"], ["--png"], ["--dpi", "120"], ["--revisions", "word"]]) {
+    const result = run("edit", "missing.docx", "--plan", "missing.json", "--out-dir", "missing-dir", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.match(result.err, /not supported/);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+  for (const flags of [["--reference-doc", "missing.docx"], ["--critic"]]) {
+    const result = run("diff", "missing-a.docx", "missing-b.docx", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+});
+
+test("convert to Word sniffs inputs whose name does not say Markdown (integration)", () => {
+  for (const name of ["sniff-draft.txt", "sniff-notes.mkd", "SNIFF"]) {
+    const file = path.join(tmp, name), out = path.join(tmp, `${name}.docx`);
+    fs.writeFileSync(file, "# Notes\n\nDue in 30 days.\n");
+    const result = run("convert", file, "-o", out);
+    assert.equal(result.code, 0, `${name}: ${result.err}`);
+    assert.equal(fs.readFileSync(out).subarray(0, 2).toString(), "PK");
+  }
+  // A Word file under a name that says nothing is still refused, unwritten.
+  const zip = copy(untracked, "SNIFF-WORD"), out = path.join(tmp, "sniff-word.docx");
+  const refused = run("convert", zip, "-o", out);
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /--to docx requires Markdown input/);
+  assert.ok(!fs.existsSync(out));
+});
+
+test("diff, compare and convert follow the native input and output contract (integration)", () => {
+  const a = path.join(tmp, "contract-a.md"), b = path.join(tmp, "contract-b.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  const word = path.join(tmp, "contract-a.docx");
+  assert.equal(run("convert", a, "--to", "docx", "-o", word).code, 0);
+
+  // Markdown output needs both documents in Markdown, in diff and compare.
+  for (const args of [["diff", word, b, "-o", path.join(tmp, "contract-d.md")], ["compare", word, b, "-o", path.join(tmp, "contract-c.md")]]) {
+    const result = run(...args);
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.err, /Markdown output needs both documents in Markdown/);
+    assert.ok(!fs.existsSync(args.at(-1)));
+  }
+
+  // --format critic writing a redline says so and prints no CriticMarkup;
+  // the patch keeps stdout to itself.
+  const redline = path.join(tmp, "contract-critic.docx");
+  const critic = run("diff", word, b, "--format", "critic", "-o", redline);
+  assert.equal(critic.code, 0, critic.err);
+  assert.doesNotMatch(critic.out, /\{~~/);
+  assert.match(critic.out, /^wrote /);
+  const patch = run("diff", word, b, "-o", path.join(tmp, "contract-patch.docx"));
+  assert.equal(patch.code, 0, patch.err);
+  assert.doesNotMatch(patch.out, /wrote/);
+  assert.match(patch.err, /wrote/);
+
+  // --from md holds for the paragraph patch: Word bytes are not UTF-8.
+  const forced = run("diff", word, word, "--from", "md");
+  assert.equal(forced.code, 1, forced.out);
+  assert.match(forced.err, /Markdown must be UTF-8/);
+  assert.equal(forced.out, "");
+
+  // Markdown is told from the bytes when the name says nothing.
+  const notes = path.join(tmp, "NOTES");
+  fs.writeFileSync(notes, "Plain notes.\n");
+  const converted = run("convert", notes, "-o", path.join(tmp, "notes.pdf"));
+  assert.equal(converted.code, 0, converted.err);
+
+  // Malformed UTF-8 is refused, not replaced.
+  const broken = path.join(tmp, "broken.md");
+  fs.writeFileSync(broken, Buffer.from([0x41, 0xff, 0x42, 0x0a]));
+  const refused = run("convert", broken, "-o", path.join(tmp, "broken.pdf"));
+  assert.equal(refused.code, 1, refused.out);
+  assert.match(refused.err, /Markdown must be UTF-8/);
+  assert.ok(!fs.existsSync(path.join(tmp, "broken.pdf")));
 });

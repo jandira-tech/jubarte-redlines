@@ -638,10 +638,14 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
         ]
         .concat();
         let out = jubarte(&args, dir.path());
-        // Exit 1, as the sibling `--pages` without `--png` refusal.
-        assert_eq!(out.status.code(), Some(1), "{flag:?}: {out:?}");
+        // The shared clap parser rejects this option/output mismatch as
+        // a usage error before reading the document or writing output.
+        assert_eq!(out.status.code(), Some(2), "{flag:?}: {out:?}");
+        assert!(out.stdout.is_empty());
+        assert!(!dir.path().join("again.docx").exists());
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("applies to PDF or PNG output"), "{stderr}");
+        assert!(stderr.contains("Usage:"), "{stderr}");
     }
 }
 

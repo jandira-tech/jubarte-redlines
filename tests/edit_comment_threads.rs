@@ -415,3 +415,80 @@ fn list_comments_on_a_document_without_comments_is_empty() {
     assert!(list_comments(&docx(&para("x"))).unwrap().is_empty());
     assert!(list_comments(b"not a zip").is_err());
 }
+
+/// A plan without a date dates everything it writes (tracked changes,
+/// comments, replies) with the time it is applied, in UTC, as `w:date` and as
+/// the `dateUtc` Word 365 reads. One plan writes one instant.
+#[test]
+fn undated_plans_date_everything_they_write_now() {
+    let source = docx(&format!("{}{}", para("The cap is 10."), para("Drop this.")));
+    let before = jubarte::convert::utc_now_iso8601();
+    let first = apply_plan(
+        &source,
+        &plan(
+            r#"{"schema_version":1,"author":"Ann","operations":[
+        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"},
+        {"kind":"replace","paragraph":"body:p:0","find":"10","replacement":"12"},
+        {"kind":"delete_paragraph","paragraph":"body:p:1","comment":"Not needed"}]}"#,
+        ),
+    )
+    .unwrap();
+    let root = list_comments(&first.clean).unwrap()[0].id;
+    let second = apply_plan(
+        &first.redline,
+        &plan(&format!(
+            r#"{{"schema_version":1,"author":"Bob","existing_revisions":"keep","operations":[
+        {{"kind":"reply_comment","comment_id":{root},"text":"Agreed"}}]}}"#
+        )),
+    )
+    .unwrap();
+    let after = jubarte::convert::utc_now_iso8601();
+    for package in [&first.clean, &first.redline, &second.clean, &second.redline] {
+        let comments = list_comments(package).unwrap();
+        assert!(!comments.is_empty());
+        let extensible = part_string(package, "word/commentsExtensible.xml").unwrap_or_default();
+        for comment in comments {
+            let date = comment.date.expect("dated");
+            assert!(
+                date.len() == 20
+                    && date.ends_with('Z')
+                    && (before.as_str()..=after.as_str()).contains(&date.as_str()),
+                "{date} not in {before}..={after}: {} {:?}",
+                comment.text,
+                comment.parent
+            );
+            assert!(
+                extensible.contains(&format!(r#"w16cex:dateUtc="{date}""#)),
+                "{extensible}"
+            );
+        }
+    }
+    assert_eq!(list_comments(&second.clean).unwrap().len(), 3);
+    let changes = jubarte::changes::list_changes(&second.redline).unwrap();
+    assert!(!changes.is_empty());
+    for change in changes {
+        let date = change.date.expect("dated");
+        assert!(
+            (before.as_str()..=after.as_str()).contains(&date.as_str()),
+            "{date} not in {before}..={after}"
+        );
+    }
+    // The clean copy's comment and the redline's changes share one instant.
+    let comment_date = list_comments(&first.clean).unwrap()[0].date.clone();
+    for change in jubarte::changes::list_changes(&first.redline).unwrap() {
+        assert_eq!(change.date, comment_date);
+    }
+    // A plan's own date still dates everything it writes.
+    let dated = apply_plan(
+        &source,
+        &plan(
+            r#"{"schema_version":1,"author":"Ann","date":"2026-01-02T03:04:05Z","operations":[
+        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"}]}"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        list_comments(&dated.clean).unwrap()[0].date.as_deref(),
+        Some("2026-01-02T03:04:05Z")
+    );
+}

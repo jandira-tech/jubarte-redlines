@@ -356,6 +356,7 @@ fn mask(line: &str, offset: usize, unpainted: &[std::ops::Range<usize>]) -> Stri
 
 /// The labels the document's link reference definitions define.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn definitions(markdown: &str) -> Vec<String> {
     let parser = pulldown_cmark::Parser::new_ext(markdown, super::write::parser_options());
     let mut labels: Vec<String> = parser
@@ -369,6 +370,7 @@ fn definitions(markdown: &str) -> Vec<String> {
 
 /// The page text of `markdown`'s first line, as `paginate` keys it.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn line_text(markdown: &str) -> String {
     let line = markdown.split_inclusive('\n').next().unwrap_or("");
     visible_text(mask(line, 0, &unpainted(markdown)).trim_end_matches('\n'))
@@ -425,6 +427,7 @@ fn find(stream: &[(char, usize)], from: usize, key: &[char]) -> Option<usize> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -743,5 +746,71 @@ mod tests {
     #[test]
     fn no_pages_leaves_the_markdown_alone() {
         assert_eq!(paginate("Text.\n", &[]), "Text.\n");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod source_autolink_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn commonmark_uri_scheme_boundaries_preserve_exact_targets() {
+        for target in [
+            "ab:",
+            "AZ09+.-:owned",
+            "abcdefghijklmnopqrstuvwxyzABCDEF:owned",
+            "mailto:owned@example.org",
+            "https:Ω\u{a0}owned",
+        ] {
+            let source = format!("<{target}> suffix");
+            assert_eq!(autolink(&source), Some(target), "{target}");
+        }
+        for target in [
+            "a:owned",
+            "abcdefghijklmnopqrstuvwxyzABCDEFG:owned",
+            "1a:owned",
+            "a_:owned",
+            "éa:owned",
+            "ab:space here",
+            "ab:tab\there",
+            "ab:new\nline",
+            "ab:<nested",
+            "ab:\u{7f}control",
+        ] {
+            assert_eq!(autolink(&format!("<{target}>")), None, "{target}");
+        }
+        for source in [
+            "<>",
+            "<ab:unterminated",
+            "ab:unbracketed",
+            "<span>",
+            "<br/>",
+        ] {
+            assert_eq!(autolink(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn commonmark_mailbox_boundaries_keep_literal_punctuation_and_decline_invalid_owners() {
+        for target in [
+            "a@b",
+            "a.!#$%&'*+/=?^_`{|}~-@domain-name.example",
+            "A09@B09.EXAMPLE",
+        ] {
+            assert_eq!(autolink(&format!("<{target}>")), Some(target), "{target}");
+        }
+        for target in [
+            "@domain",
+            "local@",
+            "Ω@domain",
+            "local@Ω",
+            "local@domain_name",
+            "local@@domain",
+            "local@domain/name",
+            "(local)@domain",
+        ] {
+            assert_eq!(autolink(&format!("<{target}>")), None, "{target}");
+        }
     }
 }

@@ -64,6 +64,7 @@ all-features = true
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
 [lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage, coverage_nightly)'] }
 unsafe_code = "deny" # the library and CLI forbid it outright; the allocation-counting examples and tests need it
 
 [lints.clippy]
@@ -111,9 +112,9 @@ serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan 
 serde_json = "1"
 tiny-skia = "0.12" # DOCX→PNG page raster over the layout display list
 pulldown-cmark = { version = "0.13", default-features = false } # Markdown → DOCX (`jubarte::markdown`); CommonMark + GFM tables/footnotes
-similar = { version = "3", default-features = false } # line and word diffs of Markdown (`jubarte::markdown::diff_markdown`)
+similar = { version = "3", default-features = false, features = ["text"] } # Markdown and Git/GitHub unified text diffs
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
-clap = { version = "4.5", features = ["derive"], optional = true }
+clap = { version = "4.5", features = ["derive", "string", "wrap_help"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
 # (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);
 # mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
@@ -131,6 +132,11 @@ self_update = { version = "1.3", default-features = false, features = ["ureq", "
 # turns on zipsign's zip verifier when `signatures` is on (above).
 [target.'cfg(windows)'.dependencies]
 self_update = { version = "1.3", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
+
+# wasm32-unknown-unknown has no clock in std: `SystemTime::now` panics. The
+# host's `Date` dates new comments and DATE/TIME fields there instead.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = { version = "0.3", default-features = false }
 
 [[bin]]
 name = "jubarte"

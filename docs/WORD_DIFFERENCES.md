@@ -78,9 +78,7 @@ The other 3 of the 32 are not differences:
 
 - **Paragraph formatting (`w:pPrChange`).** Word records the change in 8
   pairs where we record none, and we record it in 4 pairs where Word
-  doesn't. We no longer record one on a paragraph whose properties did not
-  change (a story's last paragraph with a few words revised, an unchanged
-  justified paragraph); Word never does.
+  doesn't.
 - **Table formatting (`w:tblPrChange`, `w:tblGridChange`).** We record more
   than Word does (5 pairs).
 - **Row and cell formatting (`w:trPrChange`, `w:tcPrChange`).** Word records
@@ -235,10 +233,11 @@ The other 3 of the 32 are not differences:
   counting as 1 (RW1, KB2, JW2R2, RW3R3). A resolved comment
   (`w15:done`) is faded: text BFBFBF, stroke in the author's tint, fill
   16 % of that, the range under the pale fill.
-- **Status.** Copied under `RevisionStyle::Word`; bracket ticks at the
-  range ends and a comment's own run formatting (one corpus document
-  sets 12pt Verdana bold inside a comment) are not painted yet. The
-  bench's r4/r5 probe documents (tracking on, no revisions) show a black
+- **Status.** Copied under `RevisionStyle::Word`. A comment's own run
+  formatting (one corpus document sets 12pt Verdana bold inside a
+  comment) is not painted yet: the balloon shows its text in the Balloon
+  Text size. The bench's r4/r5
+  probe documents (tracking on, no revisions) show a black
   changed-line bar beside the commented paragraph; three real documents
   with tracking on and live balloons show none, so no bar is drawn.
 
@@ -269,7 +268,10 @@ The other 3 of the 32 are not differences:
   - `PAGEREF \p`; `REF` with `\n`, `\r`, `\w`, `\p`, `\t`, `\d`, or a
     bookmark that spans paragraphs; `SEQ \s` and every later field of that
     identifier;
-  - number formats other than Arabic (`\* roman`, `\#`, `\@`);
+  - the number formats `\* Ordinal`, `\* CardText`, `\* Hex`, `\#` and
+    `\@`, and any format on a `PAGEREF` whose page is labelled by its
+    section ("iii", "2-1"). A last `\*` switch Word does not know gets
+    Word's "Error! Unknown switch argument.";
   - a `PAGEREF` to a bookmark outside any paragraph or in a header, which
     the layout does not page. A `PAGEREF` to a bookmark the document lacks
     gets Word's "Error! Bookmark not defined.", and a `REF` Word's "Error!
@@ -287,6 +289,24 @@ The other 3 of the 32 are not differences:
 - **Which is better.** Word's, when a Word is at hand. Ours is for a file
   that has to read right without one: a generated report, a TOC
   placeholder, a PDF made headless.
+
+### 12. Revised content controls (Compare, M390)
+
+Word comparison mode (`jubarte A B`, the default) removes `w:sdt` wrappers
+and their `w:sdtPr` metadata from paragraphs carrying inserted or deleted
+content. The displayed text and tracked changes remain. Accept All and
+Reject All therefore recover that text without the removed control's tag,
+alias, lock or nesting. Controls in unchanged paragraphs keep their wrappers.
+This reproduces the existing Word reference case `missing_sectpr × fields_test`,
+pinned by `tests/m390_fields_test_unwraps_sdts.rs`; `KNOWN_ISSUES.md` item 7
+records the same limitation for form fills.
+
+PowerTools faithful mode (`--mode powertools`) skips M390 and can preserve
+control ancestry around the recovered source text. The deterministic nested
+control regressions in `tests/compare_boundary_matrix.rs` check both modes:
+Word's explicit flattening and faithful mode's original/revised ID, tag and
+alias ancestry. Use faithful mode when retaining revised form controls matters;
+for `fill_control`, the clean edit output also retains the control.
 
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
@@ -335,8 +355,7 @@ These are in Word's own redlines, so jubarte producing them is not a bug
   then the whole old TOC;
 - two paragraphs joined into one laid out as the first paragraph's mark
   deleted and only the separator inserted, with the second paragraph's
-  words left unchanged (checked in Word 16 on 2026-09-28; jubarte matches
-  this in both modes since 0.10.0).
+  words left unchanged (checked in Word 16 on 2026-09-28).
 
 Word's redlines never contain a complex field whose begin and end are in
 different revision states, or crossed fields. jubarte never emits either.
@@ -347,3 +366,52 @@ different revision states, or crossed fields. jubarte never emits either.
 python3 tools/parity_ladder.py sweep      # compare against tools/parity_baseline.tsv
 uv run --project ../neurotic_docx_bench python tools/redline40/redline40.py run --label NAME --against baseline-0.9.3
 ```
+
+### M337: Word retains an extra empty cell after horizontal table replacement
+
+For `sd_2766_pirates_tracked_changes_3285d875` →
+`sd_1494_table_left_indent_11bb24c7`, the Word reference
+`737a91c72fe6eb78743835a3566c7af356c29f5b1915734a3b48a5ba142b85d4`
+retains four physical cells in each of the first revised table's two rows.
+The revised source authored three cells per row. Word records cell-property
+changes and deletes the old text, but records no cell deletion for the fourth
+cell. Accepting its redline therefore produces table cell counts
+`[[4, 4], [3, 3]]` rather than the source's `[[3, 3], [3, 3]]`.
+
+Word mode preserves that observed paragraph and table shape only within the
+M337 unrelated-source route: one original five-row, four-cell table facing two
+revised two-row, three-cell tables, with the first revised table empty. This
+can be worse than preserving the revised source: acceptance keeps an extra
+empty column. `--mode powertools` uses separate inserted/deleted row lifetimes
+and restores the authored cell counts on both acceptance and rejection. Use
+that mode when exact source table reconstruction matters. Other horizontal
+partition changes retain the conservative row lifecycle fallback in both modes.
+
+The public M337 regression checks both projections and the Word paragraph
+shape; the reference is indexed by `corpus/word/notices/RENAMED.csv` in
+`neurotic_docx_bench`.
+
+The same bounded Word free-mesh exception covers three further observed
+references. `pirates × table_border_widths` (`28d97cb1f1`) accepts the first
+revised table with four cells instead of its authored two.
+`eigenpal_docx_editor_suggesting_mixed_edits × employee_directory_table_2`
+(`b351836b34`) rejects the first original table with three cells instead of
+its authored two. `rFonts_rstyle_linked_combos × rtl_table` (`b26364fa4f`)
+rejects the original's first two rows with three cells instead of two. Each
+exception is authorized only inside that family's existing Word free-mesh
+route and requires its observed complete source table geometry. The original
+Word mixed-cell assertions remain in place. Faithful mode keeps exact authored
+cell partitions, spans and text on both projections for all four families.
+
+### Folded demo title paragraph history (M465)
+
+The saved Word redline `615a0006cf` folds deleted “Double Spacing Bold Demo”
+into the inserted “1. What this is” heading. The heading keeps the revised
+bottom border and paragraph spacing live, but Word saves an empty
+`pPrChange` rather than the original title's `spacing line="276"`.
+
+Jubarte keeps that mixed paragraph shape and the revised heading layout.
+When format tracking is enabled, its history contains the complete original
+paragraph properties so rejection restores the authored title spacing.
+Disabling format tracking retains the existing behavior without a property
+history. This improves source reconstruction over Word's empty snapshot.

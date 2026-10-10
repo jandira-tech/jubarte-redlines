@@ -1134,3 +1134,391 @@ fn layout_lines(pkg: &Package, rels: &[Rel]) -> (Vec<String>, usize) {
     }
     (out, pages)
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod story_diagnostic_contract_tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const PR: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+    fn dom(xml: &str) -> (Dom, NodeId) {
+        let mut d = Dom::new();
+        let doc = d.parse_xdocument(xml);
+        let root = d.root(doc).unwrap();
+        (d, root)
+    }
+
+    fn document(body: &str) -> String {
+        format!(
+            r#"<w:document xmlns:w="{W}" xmlns:r="{R}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body>{body}</w:body></w:document>"#
+        )
+    }
+
+    // The dependency's own in-memory ZIP writer, also used by debug.rs tests.
+    fn package(entries: &[(&str, &str)]) -> Package {
+        let mut out = Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut out);
+            zip.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zip.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#).unwrap();
+            for (name, text) in entries {
+                zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                zip.write_all(text.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        Package::open(&out.into_inner()).unwrap()
+    }
+
+    fn report(body: &str, styles: &StyleBook, rels: &[Rel]) -> (Vec<String>, usize) {
+        let (d, root) = dom(&document(body));
+        let before = d.serialize_element(root);
+        let mut lines = Vec::new();
+        let count = part_lines(&d, root, styles, rels, &mut lines);
+        assert_eq!(d.serialize_element(root), before);
+        (lines, count)
+    }
+
+    #[test]
+    fn nested_complex_fields_record_each_code_once_and_ignore_unowned_instructions() {
+        let body = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> IF </w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> pa</w:instrText></w:r><w:r><w:instrText>ge </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText> = 2 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>yes</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:fldSimple w:instr=" DATE "><w:r><w:t>June</w:t></w:r></w:fldSimple></w:p>"#;
+        assert_eq!(
+            report(body, &StyleBook::default(), &[]),
+            (
+                vec![
+                    "  field DATE ×1".into(),
+                    "  field IF ×1".into(),
+                    "  field PAGE ×1".into()
+                ],
+                1
+            )
+        );
+        // Intentional malformed diagnostic probes: unmatched field ends,
+        // empty instructions, and a run outside any paragraph paint no field.
+        let malformed = r#"<w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>orphan</w:t></w:r><w:p><w:r><w:instrText>STRAY</w:instrText><w:fldChar w:fldCharType="end"/></w:r><w:r><w:fldChar w:fldCharType="begin"/><w:instrText> </w:instrText><w:fldChar w:fldCharType="end"/></w:r><w:fldSimple w:instr=" "/></w:p>"#;
+        assert_eq!(
+            report(malformed, &StyleBook::default(), &[]),
+            (Vec::new(), 1)
+        );
+    }
+
+    #[test]
+    fn shading_reports_literal_solid_theme_and_pattern_ink_with_explicit_resets() {
+        for (attrs, expected) in [
+            (
+                r#"w:val="solid" w:color="A1B2C3" w:fill="FFFFFF""#,
+                Some("A1B2C3"),
+            ),
+            (r#"w:val="solid" w:color="auto""#, Some("solid:auto")),
+            (r#"w:val="solid""#, Some("solid:auto")),
+            (
+                r#"w:val="clear" w:themeFill="accent2" w:fill="112233""#,
+                Some("theme:accent2"),
+            ),
+            (
+                r#"w:val="pct20" w:fill="112233" w:color="445566""#,
+                Some("112233/pct20:445566"),
+            ),
+            (
+                r#"w:val="pct20" w:fill="auto" w:color="445566""#,
+                Some("/pct20:445566"),
+            ),
+            (r#"w:val="clear" w:fill="auto""#, None),
+            (r#"w:val="clear""#, None),
+            (r#"w:val="nil" w:fill="112233""#, None),
+        ] {
+            let (d, root) = dom(&format!(r#"<w:shd xmlns:w="{W}" {attrs}/>"#));
+            let before = d.serialize_element(root);
+            assert_eq!(shd(&d, root).as_deref(), expected, "{attrs}");
+            assert_eq!(d.serialize_element(root), before);
+        }
+        let (d, root) = dom(&format!(
+            r#"<w:rPr xmlns:w="{W}"><w:color/><w:highlight/></w:rPr>"#
+        ));
+        assert_eq!(color(&d, root), Some(None));
+        assert_eq!(highlight(&d, root), Some(None));
+        let (d, root) = dom(&format!(
+            r#"<w:rPr xmlns:w="{W}"><w:color w:themeColor="accent1" w:themeTint="80" w:themeShade="40"/></w:rPr>"#
+        ));
+        assert_eq!(
+            color(&d, root),
+            Some(Some("theme:accent1/tint:80/shade:40".into()))
+        );
+    }
+
+    #[test]
+    fn inherited_frame_overrides_and_repeated_run_tallies_keep_first_source_sample() {
+        let (d, root) = dom(&format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:type="paragraph" w:styleId="Base"><w:name w:val="Base face"/><w:pPr><w:framePr w:w="2000" w:x="100" w:hAnchor="page"/></w:pPr><w:rPr><w:color w:val="112233"/><w:highlight w:val="yellow"/><w:rFonts w:ascii="Example" w:hAnsi="Example"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child face"/><w:basedOn w:val="Base"/><w:pPr><w:framePr w:x="200"/></w:pPr></w:style></w:styles>"#
+        ));
+        let styles = StyleBook::new(&d, root);
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Child"/><w:framePr w:x="300"/></w:pPr><w:r><w:t>first</w:t></w:r><w:r><w:t>second</w:t></w:r><w:r><w:rPr><w:color w:val="auto"/><w:highlight w:val="none"/></w:rPr><w:t>reset</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(body, &styles, &[]),
+            (
+                vec![
+                    "  frame(hAnchor=page,w=2000,x=300) \"firstsecondreset\"".into(),
+                    "  color 112233 via \"Base face\" ×2 \"first\"".into(),
+                    "  highlight yellow via \"Base face\" ×2 \"first\"".into(),
+                    "  pstyle \"Child face\" ×1".into(),
+                    "  rfonts \"Example\" via \"Base face\" ×3".into(),
+                ],
+                1
+            )
+        );
+    }
+
+    #[test]
+    fn nested_table_shading_and_textbox_frames_report_only_their_own_text() {
+        let body = r#"<w:tbl><w:tblPr><w:tblpPr w:tblpX="40" w:horzAnchor="margin"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:fill="112233"/></w:tcPr><w:p><w:r><w:t>Outer</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w="1500"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:fill="445566"/></w:tcPr><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc></w:tr></w:tbl><w:p><w:pPr><w:framePr w:w="900"/></w:pPr><w:r><w:t>Host</w:t><w:pict><v:shape><v:textbox><w:txbxContent><w:tbl><w:tblGrid><w:gridCol w:w="800"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#;
+        assert_eq!(
+            report(body, &StyleBook::default(), &[]),
+            (
+                vec![
+                    "  table 1 1x1 float(horzAnchor=margin,tblpX=40) cells-shd[112233×1] \"Outer\""
+                        .into(),
+                    "  table 2 1x1 nested cells-shd[445566×1] \"Inner\"".into(),
+                    "  frame(w=900) \"Host\"".into(),
+                    "  table 3 1x1 in-textbox \"Box\"".into(),
+                    "  vml pict ×1".into(),
+                ],
+                5
+            )
+        );
+        // Explicit malformed table probe, not a schema-valid authored table.
+        assert_eq!(
+            report("<w:tbl/>", &StyleBook::default(), &[]),
+            (vec!["  table 1 0x0".into()], 0)
+        );
+    }
+
+    #[test]
+    fn section_columns_geometry_and_story_reference_diagnostics_are_literal() {
+        let rels = [Rel {
+            kind: "header".into(),
+            id: "h".into(),
+            part: "word/header1.xml".into(),
+        }];
+        let body = r#"<w:sectPr><w:headerReference w:type="first" r:id="h"/><w:footerReference w:type="default" r:id="missing"/><w:type w:val="continuous"/><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/><w:pgMar w:top="100" w:right="200" w:bottom="300" w:left="400" w:header="50" w:footer="60"/><w:cols w:equalWidth="0"><w:col w:w="2000" w:space="300"/><w:col w:w="4000"/></w:cols><w:titlePg/><w:sectPrChange w:id="1" w:author="A"><w:sectPr><w:pgSz w:w="1" w:h="2"/></w:sectPr></w:sectPrChange></w:sectPr>"#;
+        assert_eq!(report(body, &StyleBook::default(), &rels), (vec!["  section 1 page=15840x12240 landscape margins=100,200,300,400 header=50 footer=60 cols=2[2000+300,4000] type=continuous titlePg first-header=word/header1.xml default-footer=missing?".into()], 0));
+        for (attrs, children, expected) in [
+            (r#"w:num="2""#, "", "  section 1 cols=2"),
+            (r#"w:num="1""#, "", "  section 1"),
+            ("", "", "  section 1"),
+            (
+                r#"w:equalWidth="false" w:num="3""#,
+                "",
+                "  section 1 cols=3",
+            ), // malformed missing unequal column definitions
+            (
+                r#"w:equalWidth="1" w:num="2""#,
+                r#"<w:col w:w="1000"/>"#,
+                "  section 1 cols=2",
+            ),
+        ] {
+            assert_eq!(
+                report(
+                    &format!("<w:sectPr><w:cols {attrs}>{children}</w:cols></w:sectPr>"),
+                    &StyleBook::default(),
+                    &[]
+                ),
+                (vec![expected.into()], 0)
+            );
+        }
+        // Required type is deliberately absent to test the diagnostic fallback.
+        assert_eq!(
+            report(
+                r#"<w:sectPr><w:headerReference r:id="h"/></w:sectPr>"#,
+                &StyleBook::default(),
+                &rels
+            ),
+            (
+                vec!["  section 1 default-header=word/header1.xml".into()],
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn anchor_alignment_and_offsets_preserve_authored_extent_name_and_layer() {
+        for (behind, suffix) in [
+            ("1", " behind"),
+            ("true", " behind"),
+            ("0", ""),
+            ("false", ""),
+        ] {
+            let body = format!(
+                r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="{behind}" simplePos="0" relativeHeight="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset> 123 </wp:posOffset></wp:positionV><wp:extent cx="914400" cy="457200"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Picture 1"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="urn:diagnostic:graphic"/></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#
+            );
+            assert_eq!(
+                report(&body, &StyleBook::default(), &[]),
+                (
+                    vec![format!(
+                        "  anchor wrapSquare H=margin:center V=paragraph:123 914400x457200{suffix} \"Picture 1\""
+                    )],
+                    1
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn memory_package_filter_resolves_story_roles_and_excludes_nonstories_without_mutation() {
+        let main = document(
+            r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="h"/></w:sectPr>"#,
+        );
+        let root_rels = format!(
+            r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+        );
+        let main_rels = format!(
+            r#"<Relationships xmlns="{PR}"><Relationship Id="h" Type="{R}/header" Target="header1.xml"/><Relationship Id="external" Type="{R}/hyperlink" Target="https://example.invalid/" TargetMode="External"/></Relationships>"#
+        );
+        let header = format!(
+            r#"<w:hdr xmlns:w="{W}"><w:p><w:r><w:rPr><w:color w:val="112233"/></w:rPr><w:t>Head</w:t></w:r></w:p></w:hdr>"#
+        );
+        let pkg = package(&[
+            ("_rels/.rels", &root_rels),
+            ("word/_rels/document.xml.rels", &main_rels),
+            ("word/document.xml", &main),
+            ("word/header1.xml", &header),
+            ("word/styles.xml", "<styles/>"),
+            ("word/empty.xml", ""),
+            ("word/picture.bin", "binary"),
+        ]);
+        let before: Vec<_> = pkg.entries.iter().map(|e| (&e.name, &e.data)).collect();
+        let raw = pkg.raw.clone();
+        let result = render_parts(&pkg, Some("header"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result["word/header1.xml"],
+            (
+                vec![
+                    "  shown as section 1 default header".into(),
+                    "  color 112233 ×1 \"Head\"".into()
+                ],
+                1
+            )
+        );
+        assert_eq!(
+            render_parts(&pkg, Some("word/"))
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["word/document.xml", "word/header1.xml"]
+        );
+        assert_eq!(pkg.raw, raw);
+        assert_eq!(
+            pkg.entries
+                .iter()
+                .map(|e| (&e.name, &e.data))
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    #[test]
+    fn malformed_package_relationship_diagnostics_do_not_invent_main_or_story_parts() {
+        for relationships in [
+            None,
+            Some(""),
+            Some(
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="other" Type="urn:other" Target="word/document.xml"/></Relationships>"#,
+            ),
+        ] {
+            let main = document("<w:p/>");
+            let mut entries = vec![("word/document.xml", main.as_str())];
+            if let Some(xml) = relationships {
+                entries.push(("_rels/.rels", xml));
+            }
+            let pkg = package(&entries);
+            assert!(main_rels(&pkg).is_empty());
+            assert_eq!(
+                render_parts(&pkg, Some("document")),
+                BTreeMap::from([("word/document.xml".into(), (Vec::new(), 1))])
+            );
+            assert!(parse(&pkg, "word/absent.xml").is_none());
+        }
+    }
+
+    #[test]
+    fn table_style_resets_and_look_flags_report_only_live_conditional_fills() {
+        let (d, root) = dom(&format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:type="table" w:styleId="Base"><w:name w:val="Base table"/><w:tblPr><w:shd w:fill="111111"/></w:tblPr><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:fill="222222"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="firstCol"><w:tcPr><w:shd w:fill="333333"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="band1Horz"><w:tcPr><w:shd w:fill="444444"/></w:tcPr></w:tblStylePr></w:style><w:style w:type="table" w:styleId="Child"><w:name w:val="Child table"/><w:basedOn w:val="Base"/><w:tblPr><w:shd w:val="nil"/></w:tblPr></w:style></w:styles>"#
+        ));
+        let styles = StyleBook::new(&d, root);
+        for (first_row, first_col, no_band, suffix) in [
+            (
+                "1",
+                "1",
+                "0",
+                " style-shd[firstRow=222222,firstCol=333333,band1Horz=444444]",
+            ),
+            ("0", "1", "1", " style-shd[firstCol=333333]"),
+            ("1", "0", "1", " style-shd[firstRow=222222]"),
+            ("0", "0", "1", ""),
+        ] {
+            let body = format!(
+                r#"<w:tbl><w:tblPr><w:tblStyle w:val="Child"/><w:tblLook w:firstRow="{first_row}" w:firstColumn="{first_col}" w:noHBand="{no_band}"/></w:tblPr><w:tblGrid><w:gridCol w:w="2400"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+            );
+            assert_eq!(
+                report(&body, &styles, &[]),
+                (
+                    vec![format!(
+                        "  table 1 1x1 style=\"Child table\"{suffix} \"Cell\""
+                    )],
+                    1
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn revisions_cross_transparent_owners_but_live_field_payload_breaks_adjacency() {
+        let deleted =
+            r#"<w:del w:id="1" w:author="A"><w:r><w:delText>Old</w:delText></w:r></w:del>"#;
+        let inserted = r#"<w:ins w:id="2" w:author="A"><w:r><w:t>New</w:t></w:r></w:ins>"#;
+        let body = format!(
+            r#"<w:p><w:hyperlink r:id="link">{deleted}</w:hyperlink><w:sdt><w:sdtPr><w:id w:val="42"/></w:sdtPr><w:sdtContent>{inserted}</w:sdtContent></w:sdt></w:p><w:p>{inserted}<w:r><w:rPr/><w:t/><w:commentReference w:id="0"/></w:r>{deleted}</w:p>"#
+        );
+        assert_eq!(
+            report(&body, &StyleBook::default(), &[]),
+            (
+                vec![
+                    "  revisions del→ins ×1 \"OldNew\"".into(),
+                    "  revisions ins→del ×1 \"NewOld\"".into()
+                ],
+                2
+            )
+        );
+        for separating_run in [
+            "<w:r><w:t> </w:t></w:r>",
+            "<w:r><w:tab/></w:r>",
+            "<w:r><w:br/></w:r>",
+        ] {
+            assert_eq!(
+                report(
+                    &format!("<w:p>{deleted}{separating_run}{inserted}</w:p>"),
+                    &StyleBook::default(),
+                    &[]
+                ),
+                (Vec::new(), 1)
+            );
+        }
+        let field = format!(
+            r#"<w:p>{deleted}<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple>{inserted}</w:p>"#
+        );
+        assert_eq!(
+            report(&field, &StyleBook::default(), &[]),
+            (vec!["  field PAGE ×1".into()], 1)
+        );
+    }
+}

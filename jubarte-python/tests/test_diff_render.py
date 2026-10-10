@@ -50,7 +50,7 @@ def test_pages_must_be_page_numbers(bad: list[object]) -> None:
 
 
 def test_a_page_past_the_end_is_an_engine_error() -> None:
-    with pytest.raises(JubarteError, match="page 4 is out of range: the document has 3 pages"):
+    with pytest.raises(JubarteError, match="page 4 is out of range: the output has 3 pages"):
         Document.from_bytes(pages("A", "B", "C")).render(pdf=False, png_dpi=20, pages=[4])
 
 
@@ -123,7 +123,12 @@ def test_cli_convert_pages_names_files_by_page_number(tmp_path: Path, capsys: py
 def test_cli_convert_pages_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str], why: str) -> None:
     src = tmp_path / "in.docx"
     src.write_bytes(pages("A", "B", "C"))
-    assert main(["convert", str(src), "--dpi", "20", *argv]) == 1
+    if why == "page 9 is out of range":
+        assert main(["convert", str(src), "--dpi", "20", *argv]) == 1
+    else:
+        with pytest.raises(SystemExit) as exit:
+            main(["convert", str(src), "--dpi", "20", *argv])
+        assert exit.value.code == 2
     assert why in capsys.readouterr().err
     assert sorted(p.name for p in tmp_path.iterdir()) == ["in.docx"]
 

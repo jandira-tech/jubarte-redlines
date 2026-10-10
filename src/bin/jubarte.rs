@@ -8,7 +8,9 @@
 //! jubarte original.docx modified.docx
 //!   → writes original_v_modified.docx
 //! jubarte -b a.docx -m b.docx -o out.docx --author "Jane" --date 2024-01-02T00:00:00Z
-//! jubarte diff old.md new.md                 (CriticMarkup on stdout)
+//! jubarte compare original.docx modified.docx
+//! jubarte diff old.md new.md                 (inline paragraph patch on stdout)
+//! jubarte diff old.docx new.docx --format github (unified text patch)
 //! jubarte convert draft.md -o draft.docx     (CriticMarkup as tracked changes)
 //! ```
 //!
@@ -20,12 +22,13 @@
 //! flags, and validation are handled by clap (gated behind the default `cli`
 //! feature).
 
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use jubarte::cli::*;
 
 /// CLI-only global allocator. The redline pipeline spends ~41% of CPU self-time
 /// in allocation/copy/free/drop of xmllinq nodes (measured with samply on the
@@ -37,656 +40,11 @@ use clap::Parser;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-/// Generate a tracked-changes (redline) .docx from two documents.
-///
-/// The redline is the ORIGINAL document with every difference against MODIFIED
-/// expressed as Word tracked changes (insertions, deletions, moves, and format
-/// changes), so it opens cleanly in Microsoft Word.
-#[derive(Parser, Debug)]
-#[command(
-    name = "jubarte",
-    version,
-    about = "Generate a tracked-changes (redline) .docx from two documents",
-    long_about = None,
-    after_help = "EXAMPLES:\n  \
-        jubarte contract.docx contract-rev2.docx\n      \
-        → writes contract_v_contract-rev2.docx next to the original\n\n  \
-        jubarte -b old.docx -m new.docx -o redline.docx --author \"Legal\"\n  \
-        jubarte a.docx b.docx --force --quiet\n  \
-        jubarte contract.docx edited.md          the Markdown's edits as a Word redline\n  \
-        jubarte old.md new.md -o changes.md      the changes as CriticMarkup",
-)]
-struct Cli {
-    /// Subcommand (e.g. `revisions`); plain compare when omitted.
-    #[command(subcommand)]
-    command: Option<Command>,
-
-    /// The original / base document (.docx or Markdown).
-    #[arg(value_name = "ORIGINAL")]
-    original_pos: Option<PathBuf>,
-
-    /// The modified document (.docx or Markdown).
-    #[arg(value_name = "MODIFIED")]
-    modified_pos: Option<PathBuf>,
-
-    /// Original/base document (overrides the positional ORIGINAL).
-    #[arg(short = 'b', long = "original", value_name = "FILE")]
-    original: Option<PathBuf>,
-
-    /// Modified document (overrides the positional MODIFIED).
-    #[arg(short = 'm', long = "modified", value_name = "FILE")]
-    modified: Option<PathBuf>,
-
-    /// Output path [default: <original-dir>/<original>_v_<modified>.docx]. A
-    /// `.md` output writes the changes as CriticMarkup (both documents
-    /// Markdown).
-    #[arg(short = 'o', long, value_name = "FILE")]
-    output: Option<PathBuf>,
-
-    /// Author name recorded on the revisions.
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
-    author: String,
-
-    /// Revision timestamp (ISO 8601); pinned for reproducible output.
-    #[arg(
-        short = 'd',
-        long,
-        value_name = "ISO8601",
-        default_value = jubarte::document_comparer::DEFAULT_DATE
-    )]
-    date: String,
-
-    /// Overwrite the output file if it already exists.
-    #[arg(long)]
-    force: bool,
-
-    /// Do not print the success message.
-    #[arg(short = 'q', long)]
-    quiet: bool,
-
-    /// LCS detail threshold [default: 0.02, or 0.15 under
-    /// --mode powertools]. 0.02 = Word-style within-paragraph word diffs
-    /// with weak-match voiding; 0.15 = the PowerTools-faithful coarse
-    /// fallback; 0 = confetti with no voiding. An explicit value always wins
-    /// over either preset (Option distinguishes unset from explicitly-set —
-    /// no sentinel ambiguity).
-    #[arg(long, value_name = "RATIO")]
-    detail_threshold: Option<f64>,
-
-    /// Whose redline to reproduce: `word` lays changes out as Microsoft Word
-    /// Compare does; `powertools` is the Open-Xml-PowerTools coarse fallback.
-    /// docs/WORD_DIFFERENCES.md lists where the two, and Word, differ.
-    #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word)]
-    mode: CompareMode,
-
-    /// Same as --mode powertools.
-    #[arg(long)]
-    powertools_faithful: bool,
-
-    /// DEBUG: zero WmlComparerSettings::merge_replaced_paragraphs — the
-    /// word-visual UMBRELLA gate — which disables the WHOLE word-visual pass
-    /// family (merge, flatten, reorder, margins, …), not just the paragraph
-    /// merge (pagination experiments; hidden). Redundant with
-    /// --powertools-faithful, which sets the same preset.
-    #[arg(long, hide = true)]
-    no_paragraph_merge: bool,
+trait ScrubOptions {
+    fn options(&self) -> jubarte::scrub::ScrubOptions;
 }
 
-/// D.6 — `redline revisions <file> [--json]`: list the tracked revisions in
-/// a redline .docx (the `WmlComparer.GetRevisions` facade).
-#[derive(clap::Subcommand, Debug)]
-enum Command {
-    /// List the tracked revisions in a redline .docx.
-    Revisions {
-        /// The redline document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit the list as JSON lines instead of a human summary.
-        #[arg(long)]
-        json: bool,
-    },
-    /// List each tracked change with the id `accept --id`, `reject --id` and
-    /// edit plans take.
-    Changes {
-        /// The document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit one JSON object per line.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Accept tracked changes (package-wide) and write the result: every
-    /// change, or those --id/--author/--kind select (the rest stay tracked).
-    Accept {
-        /// The document (.docx) whose revisions to accept.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Output path.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        #[command(flatten)]
-        selection: Selection,
-    },
-    /// Reject tracked changes (package-wide) and write the result: every
-    /// change, or those --id/--author/--kind select (the rest stay tracked).
-    Reject {
-        /// The document (.docx) whose revisions to reject.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Output path.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        #[command(flatten)]
-        selection: Selection,
-    },
-    /// Convert a .docx to PDF and/or PNG pages (independent of LibreOffice),
-    /// or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes,
-    /// or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables).
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte convert contract.docx                   PDF, Word-style layout\n  \
-        jubarte convert draft.md                        draft.docx, CriticMarkup as tracked changes\n  \
-        jubarte convert draft.md -o draft.pdf           the changes painted in a PDF\n  \
-        jubarte convert draft.md --reference-doc house.docx -o draft.docx\n  \
-        jubarte convert draft.md -t md --track-changes accept   the text with every change accepted\n  \
-        jubarte convert contract.docx -t md             Markdown with <!-- page N of M --> lines\n  \
-        jubarte convert old.doc                         old.docx (text, headings, lists, tables)\n  \
-        jubarte convert notes.md --no-critic            {++ and the other delimiters as text")]
-    Convert {
-        /// The document to convert: .docx, Markdown (.md, .markdown), or a
-        /// Word 97-2003 .doc (read into a .docx first).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Output path [default: <stem>.pdf next to a .docx, <stem>.docx next
-        /// to Markdown; Markdown output goes to stdout]. PNG pages are named
-        /// <stem>-page-NN.png beside it.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: Option<PathBuf>,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        /// Write the PDF (the default when neither --pdf nor --png is given).
-        #[arg(long)]
-        pdf: bool,
-        /// Rasterize every page to PNG (<stem>-page-NN.png).
-        #[arg(long)]
-        png: bool,
-        /// PNG resolution in dots per inch (1-1200).
-        #[arg(long, default_value_t = 96.0, value_name = "DPI")]
-        dpi: f32,
-        /// Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`).
-        #[arg(long, value_name = "FILE")]
-        report: Option<PathBuf>,
-        /// Deflate the PDF's streams (`/FlateDecode`). Much smaller output;
-        /// the trade is that the page content is no longer plain text, so it
-        /// cannot be read with `strings` or `grep`.
-        #[arg(long)]
-        compress: bool,
-        /// Write a JSON font-resolution report (`[{requested, step, physical,
-        /// bold, italic, synthetic, substituted}, …]`) for this document
-        /// (plan Step 2f).
-        #[arg(long, value_name = "FILE")]
-        font_report: Option<PathBuf>,
-        /// How tracked changes are painted: `conventional` (deletions red
-        /// struck through, insertions blue underlined, moves green:
-        /// double-struck where they left, double-underlined where they landed),
-        /// `word` (what Microsoft Word's Save as PDF paints), or `custom`
-        /// (see --revision-palette).
-        #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
-        revisions: Revisions,
-        /// Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with
-        /// kinds deleted, inserted, moved-from, moved-to and lines strike,
-        /// double-strike, underline, double-underline, plain. Kinds left out
-        /// keep their conventional mark.
-        #[arg(long, value_name = "SPEC")]
-        revision_palette: Option<String>,
-        /// Formats and Markdown reading.
-        #[command(flatten)]
-        markdown: MarkdownArgs,
-        /// Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout
-        /// still runs over the whole document. Needs PNG output.
-        #[arg(long, value_name = "SPEC")]
-        pages: Option<String>,
-        /// Exit 4 when a requested font was substituted (listed on stderr
-        /// and in --report). Every output is still written. Exit status:
-        /// 0 ok, 1 error, 4 a requested font was substituted.
-        #[arg(long)]
-        fail_on_substitution: bool,
-        /// Give up after this many seconds: exit 124 (as `timeout(1)`) with
-        /// nothing more written. An output being written at that moment
-        /// may be left partial.
-        #[arg(long, value_name = "SECONDS", value_parser = parse_timeout)]
-        timeout: Option<std::time::Duration>,
-    },
-    /// Compare two documents, Word or Markdown: the changed paragraphs as a
-    /// patch on stdout, each change `[-old-]{+new+}` in its paragraph, and
-    /// with --output a Word redline (.docx), CriticMarkup (.md) or a PDF
-    /// with the changes painted.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte diff old.md new.md                       the patch on stdout\n  \
-        jubarte diff old.md new.md --format critic       CriticMarkup on stdout, as pandiff\n  \
-        jubarte diff old.md new.md -o changes.docx       Word tracked changes\n  \
-        jubarte diff old.md new.md -o changes.pdf        the changes painted in a PDF\n  \
-        jubarte diff contract.docx edited.md -o redline.docx\n      \
-        the Markdown's edits as tracked changes on the Word document\n\n\
-        GIT:\n  \
-        git config --global difftool.jubarte.cmd 'jubarte diff \"$LOCAL\" \"$REMOTE\"'\n  \
-        git difftool -t jubarte -y -- '*.md'")]
-    Diff {
-        /// The old document: .docx or Markdown.
-        #[arg(value_name = "OLD")]
-        old: PathBuf,
-        /// The new document: .docx or Markdown.
-        #[arg(value_name = "NEW")]
-        new: PathBuf,
-        /// Output path; its extension picks the format (.md, .docx, .pdf,
-        /// .png) [default: none for two Markdown documents, else
-        /// <old>_v_<new>.docx next to OLD]. The patch is printed either way.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: Option<PathBuf>,
-        /// What goes to stdout: `patch` (the changed paragraphs, with their
-        /// ids) or `critic` (the whole document as CriticMarkup, as pandiff).
-        #[arg(long, value_enum, value_name = "FORMAT", default_value_t = PatchFormat::Patch)]
-        format: PatchFormat,
-        /// Wrap the patch's lines at this many columns; 0 does not wrap.
-        #[arg(long, value_name = "N", default_value_t = jubarte::markdown::DEFAULT_COLUMNS)]
-        columns: usize,
-        /// Output format, when --output does not say.
-        #[arg(short = 't', long = "to", value_enum, value_name = "FORMAT")]
-        to: Option<Format>,
-        /// Input format of both documents [default: from each file].
-        #[arg(short = 'f', long = "from", value_enum, value_name = "FORMAT")]
-        from: Option<Format>,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        /// Who made the changes: the patch's owner and the revisions'
-        /// author [default: `git config user.name`, else Redline].
-        #[arg(short = 'a', long, value_name = "NAME")]
-        author: Option<String>,
-        /// When (ISO 8601) [default: now]; pin it for reproducible output.
-        #[arg(short = 'd', long, value_name = "ISO8601")]
-        date: Option<String>,
-        /// Whose redline to reproduce (see `jubarte --help`).
-        #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word)]
-        mode: CompareMode,
-        /// LCS detail threshold (see `jubarte --help`).
-        #[arg(long, value_name = "RATIO")]
-        detail_threshold: Option<f64>,
-        /// Two Markdown documents written as Word take styles, page setup,
-        /// headers and footers from this .docx.
-        #[arg(long, value_name = "FILE")]
-        reference_doc: Option<PathBuf>,
-        /// Read CriticMarkup in the Markdown documents as tracked changes
-        /// (Word output). By default a document compared is text.
-        #[arg(long)]
-        critic: bool,
-        /// Where images named by the Markdown are found [default: each
-        /// Markdown file's directory].
-        #[arg(long, value_name = "DIR")]
-        resource_path: Option<PathBuf>,
-        /// How tracked changes are painted in PDF or PNG output (see
-        /// `convert --help`).
-        #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
-        revisions: Revisions,
-        /// Marks for --revisions custom (see `convert --help`).
-        #[arg(long, value_name = "SPEC")]
-        revision_palette: Option<String>,
-    },
-    /// Read a .docx: body paragraphs with ids, style, formatting spans and
-    /// limitations, plus package facts.
-    Inspect {
-        /// The document (.docx) to read.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit the snapshot as JSON (`schema_version`, `source_sha256`,
-        /// `summary`, `paragraphs`, `stories`, `tables`) instead of a human
-        /// summary.
-        #[arg(long)]
-        json: bool,
-        /// Print each body table as a grid instead of the paragraphs: a
-        /// `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one
-        /// line per row of tab-separated `ids=text` cells.
-        #[arg(long, conflicts_with = "json")]
-        tables: bool,
-    },
-    /// Print the body as Markdown with a `[body:p:N]` id before every
-    /// paragraph: the coordinates an edit plan uses.
-    Text {
-        /// The document (.docx) to read.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Print the document as Markdown with its tracked changes as
-        /// CriticMarkup (all), or with every change accepted or rejected,
-        /// like `convert --to md`. The output then has no `[body:p:N]` ids.
-        #[arg(long, value_enum, value_name = "CHOICE")]
-        track_changes: Option<TrackChanges>,
-    },
-    /// Apply an edit plan: write the clean copy, the Word redline and a
-    /// per-operation report (optionally PDF and PNG pages) into a new
-    /// directory. A refused plan writes nothing and exits 3.
-    Edit {
-        /// The source document (.docx). Never modified.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Edit plan JSON (see `jubarte capabilities --json` for the kinds).
-        #[arg(long, value_name = "PLAN.json")]
-        plan: PathBuf,
-        /// Directory to create for clean.docx, redline.docx, report.jsonl.
-        #[arg(long, value_name = "DIR")]
-        out_dir: PathBuf,
-        /// Resolve and report only; write nothing.
-        #[arg(long)]
-        dry_run: bool,
-        /// Replace an existing output directory's files.
-        #[arg(long)]
-        force: bool,
-        /// Also write redline.pdf and clean.pdf.
-        #[arg(long)]
-        pdf: bool,
-        /// Also write redline-page-NN.png and clean-page-NN.png.
-        #[arg(long)]
-        png: bool,
-        /// PNG resolution in dots per inch (1-1200).
-        #[arg(long, default_value_t = 96.0, value_name = "DPI")]
-        dpi: f32,
-        /// How tracked changes are painted in the redline PDF/PNG.
-        #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
-        revisions: Revisions,
-        /// Marks for --revisions custom (see `convert --help`).
-        #[arg(long, value_name = "SPEC")]
-        revision_palette: Option<String>,
-        /// Print nothing on success (patch.diff and report.jsonl are still
-        /// written).
-        #[arg(short = 'q', long)]
-        quiet: bool,
-    },
-    /// What this binary can do, for agents choosing an operation.
-    Capabilities {
-        /// Emit JSON (the default output is JSON too; the flag documents intent).
-        #[arg(long)]
-        json: bool,
-    },
-    /// Install the latest jubarte release from GitHub. Contacts GitHub only
-    /// when run; nothing checks for updates otherwise.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte self-update --check          installed and latest versions\n  \
-        jubarte self-update                  ask, then install the latest release\n  \
-        jubarte self-update --yes            install without asking\n  \
-        jubarte self-update --version 0.9.3  install that release (also older)")]
-    SelfUpdate {
-        /// Print the installed and latest versions; install nothing.
-        #[arg(long)]
-        check: bool,
-        /// Install without asking (needed without a terminal).
-        #[arg(long, short = 'y')]
-        yes: bool,
-        /// Install this release instead of the latest, older ones included.
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-    /// Triage a .docx Word refuses, or compare two builds of one. Short
-    /// output: counts by kind, a few examples each; with two files, only
-    /// what differs.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte debug out.docx                    orphans, fields, bookmarks, package, structure\n  \
-        jubarte debug out.docx --list             the package's entries\n  \
-        jubarte debug old.docx new.docx --list    entries that differ\n  \
-        jubarte debug old.docx new.docx -c elements -p document.xml\n  \
-        jubarte debug out.docx -c ids             revision/docPr ids used twice\n  \
-        jubarte debug out.docx -c textbox -g FILENAME\n  \
-        jubarte debug out.docx -c text            paragraphs with ins/del marks\n  \
-        jubarte debug a.docx b.docx -c text       paragraphs that differ, per part\n  \
-        jubarte debug a.docx b.docx -c runs       the same, with direct formatting\n  \
-        jubarte debug out.docx -c runs -g \"Q: Can\"   one paragraph's runs, whole\n  \
-        jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records\n  \
-        jubarte debug a.docx b.docx -c styledefs  style definitions that differ, paired by name\n  \
-        jubarte debug a.docx b.docx -c numbering  list levels that differ, by numId\n  \
-        jubarte debug a.docx b.docx -c xml -p document.xml\n  \
-        jubarte debug diff a.docx ours.docx word.docx   element by element, three-way")]
-    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
-    Debug {
-        #[command(subcommand)]
-        sub: Option<DebugCommand>,
-        /// One package, or two to compare (A then B).
-        #[arg(value_name = "FILE", num_args = 1..=2, required = true)]
-        files: Vec<PathBuf>,
-        /// List the package's entries (sizes); with two files, the entries
-        /// that differ.
-        #[arg(short = 'l', long)]
-        list: bool,
-        /// Reports to run [default: orphans, fields, bookmarks, package,
-        /// structure].
-        #[arg(short = 'c', long = "check", value_enum, value_delimiter = ',')]
-        checks: Vec<DebugCheck>,
-        /// Only parts whose name contains this (e.g. document.xml).
-        #[arg(short = 'p', long, value_name = "NAME")]
-        part: Option<String>,
-        /// Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole).
-        #[arg(short = 'g', long, value_name = "TEXT")]
-        grep: Option<String>,
-        /// Examples per finding kind.
-        #[arg(short = 'n', long, value_name = "N", default_value_t = 5)]
-        limit: usize,
-        /// text/xml/runs of two files: common lines shown around each change.
-        #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
-        context: usize,
-    },
-    /// Which pages of two .docx files look different: both are laid out and
-    /// rasterized at one resolution and compared pixel for pixel. Exits 0
-    /// when every page is the same, 5 when any page differs.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte diff-render before.docx after.docx                  changed pages on stdout\n  \
-        jubarte diff-render before.docx after.docx --out-dir diff   PNGs of the changed pages and diff.json\n  \
-        jubarte diff-render a.docx b.docx --json                    the diff.json document on stdout\n\n\
-        With --out-dir, each page that differs is written as a-page-NN.png,\n\
-        b-page-NN.png and diff-page-NN.png (b's page with the changed pixels\n\
-        magenta and boxed); diff.json lists every page with its changed_ratio,\n\
-        bbox and, for a page only one side has, only_in.")]
-    DiffRender {
-        /// The document before.
-        #[arg(value_name = "A")]
-        a: PathBuf,
-        /// The document after.
-        #[arg(value_name = "B")]
-        b: PathBuf,
-        /// Raster resolution of both sides in dots per inch (1-1200).
-        #[arg(long, default_value_t = 100.0, value_name = "DPI")]
-        dpi: f32,
-        /// Write the changed pages' PNGs and diff.json here (created if
-        /// missing).
-        #[arg(long, value_name = "DIR")]
-        out_dir: Option<PathBuf>,
-        /// Print diff.json to stdout instead of one line per changed page.
-        #[arg(long)]
-        json: bool,
-        /// Skip the diff-page-NN.png overlays.
-        #[arg(long)]
-        no_overlay: bool,
-        /// Overwrite files already in --out-dir.
-        #[arg(long)]
-        force: bool,
-    },
-    /// List every comment with its thread (`parent`, `done`) and the text
-    /// it is anchored to, with its surroundings.
-    Comments {
-        /// The document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit one JSON object per line.
-        #[arg(long)]
-        json: bool,
-        /// Only this author's comments (exact match).
-        #[arg(long, value_name = "NAME")]
-        author: Option<String>,
-        /// One comment per thread: the newest.
-        #[arg(long)]
-        latest: bool,
-    },
-    /// Append documents: B after A, then C after that, carrying images,
-    /// links, styles, lists and notes. Comments are dropped (warned) unless
-    /// --carry-comments.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte append a.docx b.docx -o ab.docx\n  \
-        jubarte append cover.docx body.docx annex.docx -o all.docx --section-break continuous\n  \
-        jubarte append letter.docx exhibit.docx -o out.docx --keep-sections\n  \
-        jubarte append review_a.docx review_b.docx -o both.docx --carry-comments")]
-    Append {
-        /// The documents (.docx), in order.
-        #[arg(value_name = "FILE", num_args = 2.., required = true)]
-        files: Vec<PathBuf>,
-        /// Output path.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
-        /// What separates each document from the one before it.
-        #[arg(long, value_enum, default_value_t = SectionBreakArg::NextPage)]
-        section_break: SectionBreakArg,
-        /// Keep each appended document's final section (page size, margins,
-        /// headers, footers) as a section of its own.
-        #[arg(long)]
-        keep_sections: bool,
-        /// Carry the comments each appended document's body and notes
-        /// anchor, with their threads and resolution (those in headers and
-        /// footers are still dropped). Off, comments are dropped and warned.
-        #[arg(long)]
-        carry_comments: bool,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        /// Print nothing on success.
-        #[arg(short, long)]
-        quiet: bool,
-    },
-    /// Word-validity findings beyond the schema: what makes Word refuse or
-    /// repair the file. Exit 0 clean, 2 findings, 1 unreadable.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte validate contract.docx\n  \
-        jubarte validate contract.docx --json\n  \
-        jubarte validate contract.docx --repair fixed.docx\n  \
-        jubarte validate review/redline.docx --original contract.docx --author Claude")]
-    Validate {
-        /// The document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// JSON Lines: one object per finding, nothing when there is none.
-        #[arg(long)]
-        json: bool,
-        /// Write the repaired package here; remaining findings still exit 2.
-        #[arg(long, value_name = "FILE")]
-        repair: Option<PathBuf>,
-        /// Audit tracked edits: every text change against ORIGINAL must be a
-        /// revision by --author.
-        #[arg(long, value_name = "FILE", requires = "author")]
-        original: Option<PathBuf>,
-        /// The author every change must carry (with --original).
-        #[arg(long, value_name = "NAME", requires = "original")]
-        author: Option<String>,
-        /// Replace an existing --repair output.
-        #[arg(long)]
-        force: bool,
-    },
-    /// Field results written back into the document from jubarte's layout.
-    Fields {
-        #[command(subcommand)]
-        sub: FieldsCommand,
-    },
-    /// Remove who touched a document before it goes out: author names (as
-    /// one alias), rsids, the people and dates in the document properties,
-    /// and comments. Text and tracked changes stay. Without a flag, all
-    /// four go under the alias "Author"; with flags, only those given.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \
-        jubarte scrub redline.docx -o out.docx --author-alias Counsel --rsids\n  \
-        jubarte scrub redline.docx -o out.docx --comments          comments only")]
-    Scrub {
-        /// The document (.docx) to scrub.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Output path.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        #[command(flatten)]
-        scrub: ScrubSelection,
-    },
-    /// Audit a .docx for accessibility, style and structure defects, each
-    /// finding located by paragraph id. Exits 0 when nothing fails, 2 on
-    /// any `error` finding (or any `warning` with --strict).
-    #[command(after_help = "Rules (code, set, severity):\n  \
-        HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,\n  \
-        TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,\n  \
-        LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,\n  \
-        DIRECT_FORMATTING_OVERRIDES_STYLE style info,\n  \
-        STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info")]
-    Audit {
-        /// The document (.docx) to audit.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit `{findings, rules, layout}` as JSON.
-        #[arg(long)]
-        json: bool,
-        /// Rule sets (a11y, style, structure) or rule codes, comma-separated
-        /// [default: every rule].
-        #[arg(long, value_name = "RULES", value_delimiter = ',')]
-        rules: Vec<String>,
-        /// Fail (exit 2) on warnings too, not only on errors.
-        #[arg(long)]
-        strict: bool,
-    },
-}
-
-/// `jubarte fields` subcommands.
-#[derive(clap::Subcommand, Debug)]
-enum FieldsCommand {
-    /// Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC
-    /// fields from jubarte's layout; TOCs are rebuilt from the headings.
-    /// Field codes stay, so Word can update them again. Page numbers are
-    /// jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md).
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte fields update in.docx -o out.docx          one line per field written\n  \
-        jubarte fields update in.docx -o out.docx --json   {\"page_count\", \"fields\": [...]}")]
-    Update {
-        /// The document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Output path.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        /// Print the fields written as JSON.
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-/// What `jubarte scrub` removes; everything when no flag is given.
-#[derive(clap::Args, Debug, Default, PartialEq)]
-struct ScrubSelection {
-    /// Name every author (revisions, comments, people.xml) takes.
-    #[arg(long, value_name = "NAME")]
-    author_alias: Option<String>,
-    /// Remove rsids, the edit-session ids that tie copies together.
-    #[arg(long)]
-    rsids: bool,
-    /// Remove creator, last editor, revision number, dates, manager,
-    /// company and custom properties.
-    #[arg(long)]
-    docprops: bool,
-    /// Remove every comment.
-    #[arg(long)]
-    comments: bool,
-}
-
-impl ScrubSelection {
+impl ScrubOptions for ScrubSelection {
     fn options(&self) -> jubarte::scrub::ScrubOptions {
         if *self == Self::default() {
             return jubarte::scrub::ScrubOptions::default();
@@ -696,6 +54,32 @@ impl ScrubSelection {
             rsids: self.rsids,
             docprops: self.docprops,
             comments: self.comments,
+        }
+    }
+}
+
+trait SelectionFilter {
+    fn filter(&self) -> jubarte::changes::ChangeFilter;
+}
+
+impl SelectionFilter for Selection {
+    fn filter(&self) -> jubarte::changes::ChangeFilter {
+        use jubarte::changes::ChangeKind;
+        let given = |v: &[String]| (!v.is_empty()).then(|| v.to_vec());
+        jubarte::changes::ChangeFilter {
+            ids: given(&self.ids),
+            authors: given(&self.authors),
+            kinds: (!self.kinds.is_empty()).then(|| {
+                self.kinds
+                    .iter()
+                    .map(|k| match k {
+                        KindArg::Insertion => ChangeKind::Insertion,
+                        KindArg::Deletion => ChangeKind::Deletion,
+                        KindArg::Move => ChangeKind::Move,
+                        KindArg::Formatting => ChangeKind::Formatting,
+                    })
+                    .collect()
+            }),
         }
     }
 }
@@ -712,142 +96,6 @@ fn run_scrub(
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
 }
 
-/// `jubarte debug` subcommands.
-#[derive(clap::Subcommand, Debug)]
-enum DebugCommand {
-    /// What differs between two or more packages, element by element:
-    /// styles paired by type and name, paragraphs by their text, headers
-    /// and footers by section role. Each hunk prints the lines not every
-    /// file holds; with three or more files each line names the files that
-    /// hold it. rsids, paragraph ids, revision ids/authors/dates,
-    /// relationship ids (shown as what they point to), docProps save
-    /// stamps, attribute order, on/off values and empty property blocks
-    /// are dropped unless --raw.
-    #[command(after_help = "EXAMPLES:\n  \
-        jubarte debug diff a.docx b.docx\n  \
-        jubarte debug diff a.docx ours_rej.docx word_rej.docx -p styles\n  \
-        jubarte debug diff a.docx ours_rej.docx word_rej.docx --style \"Body Text\" --full\n  \
-        jubarte debug diff a.docx ours.docx --para-text \"Section 4\"")]
-    Diff {
-        /// Two or more packages; the first is the reference (`-` lines).
-        #[arg(value_name = "FILE", num_args = 2.., required = true)]
-        files: Vec<PathBuf>,
-        /// Only parts whose name or role contains this (e.g. styles,
-        /// document.xml, "default header").
-        #[arg(short = 'p', long, value_name = "NAME")]
-        part: Option<String>,
-        /// Only the style with this name or id (case-insensitive).
-        #[arg(long, value_name = "NAME")]
-        style: Option<String>,
-        /// Only paragraphs whose text contains this, in any file.
-        #[arg(long = "para-text", value_name = "TEXT")]
-        para_text: Option<String>,
-        /// Keep rsids, ids, authors, dates, on/off values and empty blocks.
-        #[arg(long)]
-        raw: bool,
-        /// Print each shown element's common lines too.
-        #[arg(long)]
-        full: bool,
-        /// Hunks per part (0: all).
-        #[arg(short = 'n', long, value_name = "N", default_value_t = 60)]
-        limit: usize,
-    },
-}
-
-/// `jubarte debug --check`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum DebugCheck {
-    /// Deleted text outside its story's w:del; live text inside one; bare runs
-    /// in a text box whose anchor is deleted.
-    Orphans,
-    /// Field nesting per story; fields partly deleted.
-    Fields,
-    /// Duplicate/unpaired bookmarks; start and end in different sdt, cell,
-    /// text box or revision; bookmarks in plain-text or list controls.
-    Bookmarks,
-    /// Content types, relationship ids and targets, dangling note/comment
-    /// references, undeclared mc:Ignorable prefixes.
-    Package,
-    /// Empty field codes, cells not ending in a paragraph, rows without cells,
-    /// nested same-kind revisions, a body sectPr that is not last.
-    Structure,
-    /// Revision and docPr ids used twice (not in the default triage: Word
-    /// opens such files).
-    Ids,
-    /// Style links and references naming no style; two styles with one type
-    /// and name (Word pairs styles by name).
-    Styles,
-    /// Where bookmark starts and ends sit (parent chains, tallied).
-    Chains,
-    /// Element counts.
-    Elements,
-    /// Text box stories as XML (see --grep).
-    Textbox,
-    /// Paragraph text per story part, with {+inserted+} / [-deleted-] runs
-    /// and the mark state; with two files, the lines that differ.
-    Text,
-    /// Part XML one element per line, without namespace declarations,
-    /// rsids or paraIds; with two files, the lines that differ.
-    Xml,
-    /// `text` with each paragraph's direct properties [..], its mark's «..»
-    /// and each run's direct formatting «..»; with two files, the lines that
-    /// differ.
-    Runs,
-    /// Property-change records (pPrChange, tcPrChange, sectPrChange, …):
-    /// where each sits and what the live properties add (+) and drop (-)
-    /// against the recorded ones; with two files, the lines that differ.
-    Changes,
-    /// Style definitions by type and name (localized ids pair): docDefaults,
-    /// then each style's default flag and basedOn/link by name, and a line
-    /// per pPr/rPr/tblPr/… block; with two files, the lines that differ.
-    Styledefs,
-    /// List levels by numId and level as paragraphs see them (abstract
-    /// definition plus the list's overrides; abstract ids renumber, so
-    /// they are left out); with two files, the lines that differ.
-    Numbering,
-    /// What each story part should put on the page (tables with style,
-    /// float and shading; shaded, highlighted, coloured and hidden text;
-    /// fonts; fields; ins/del order; frames; sections), and "(layout)":
-    /// jubarte's page count and the face each font resolved to; with two
-    /// files, the lines that differ.
-    Render,
-}
-
-impl From<DebugCheck> for jubarte::debug::Check {
-    fn from(c: DebugCheck) -> Self {
-        use jubarte::debug::Check;
-        match c {
-            DebugCheck::Orphans => Check::Orphans,
-            DebugCheck::Fields => Check::Fields,
-            DebugCheck::Bookmarks => Check::Bookmarks,
-            DebugCheck::Package => Check::Package,
-            DebugCheck::Structure => Check::Structure,
-            DebugCheck::Ids => Check::Ids,
-            DebugCheck::Styles => Check::Styles,
-            DebugCheck::Chains => Check::Chains,
-            DebugCheck::Elements => Check::Elements,
-            DebugCheck::Textbox => Check::Textbox,
-            DebugCheck::Text => Check::Text,
-            DebugCheck::Xml => Check::Xml,
-            DebugCheck::Runs => Check::Runs,
-            DebugCheck::Changes => Check::Changes,
-            DebugCheck::Styledefs => Check::StyleDefs,
-            DebugCheck::Numbering => Check::Numbering,
-            DebugCheck::Render => Check::Render,
-        }
-    }
-}
-
-/// `jubarte diff --format`: what goes to stdout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum PatchFormat {
-    /// The changed paragraphs, as `git diff --word-diff` with CriticMarkup
-    /// comments and highlights.
-    Patch,
-    /// The whole document as CriticMarkup, as pandiff prints it.
-    Critic,
-}
-
 /// Who a patch's changes are by when `--author` does not say: git's
 /// `user.name`, else Redline.
 fn default_author() -> String {
@@ -861,158 +109,6 @@ fn default_author() -> String {
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "Redline".to_string())
-}
-
-/// `jubarte --mode` (compare).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum CompareMode {
-    /// Microsoft Word Compare's layout: word-level detail, replaced paragraphs
-    /// merged, Word's alignment passes.
-    Word,
-    /// Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15), no
-    /// Word alignment passes.
-    Powertools,
-}
-
-/// A document format for `-f/--from` and `-t/--to`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum Format {
-    /// Word (.docx).
-    Docx,
-    /// Markdown: CommonMark with GitHub tables, task lists and footnotes,
-    /// and CriticMarkup.
-    #[value(alias = "markdown")]
-    Md,
-    /// PDF, laid out as Word does.
-    Pdf,
-    /// PNG pages.
-    Png,
-}
-
-impl Format {
-    /// The format a file name says, by extension.
-    fn of_path(path: &Path) -> Option<Self> {
-        let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-        match extension.as_str() {
-            "docx" | "docm" | "dotx" | "dotm" => Some(Self::Docx),
-            "md" | "markdown" | "mdown" | "mkd" | "mkdn" | "txt" => Some(Self::Md),
-            "pdf" => Some(Self::Pdf),
-            "png" => Some(Self::Png),
-            _ => None,
-        }
-    }
-
-    /// An input's format: the one asked for, else its extension, else its
-    /// bytes (a zip is Word, anything else Markdown).
-    fn of_input(asked: Option<Self>, path: &Path, bytes: &[u8]) -> Self {
-        asked
-            .or_else(|| Format::of_path(path).filter(|f| matches!(f, Self::Docx | Self::Md)))
-            .unwrap_or(if bytes.starts_with(b"PK\x03\x04") {
-                Self::Docx
-            } else {
-                Self::Md
-            })
-    }
-}
-
-/// `--track-changes`, pandoc's values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum TrackChanges {
-    /// Keep them: CriticMarkup becomes Word tracked changes and comments.
-    All,
-    /// Accept every change.
-    Accept,
-    /// Reject every change.
-    Reject,
-}
-
-impl From<TrackChanges> for jubarte::markdown::TrackChanges {
-    fn from(choice: TrackChanges) -> Self {
-        match choice {
-            TrackChanges::All => Self::All,
-            TrackChanges::Accept => Self::Accept,
-            TrackChanges::Reject => Self::Reject,
-        }
-    }
-}
-
-/// `convert`'s format and Markdown flags.
-#[derive(clap::Args, Debug)]
-struct MarkdownArgs {
-    /// Input format [default: from the file: .md and .markdown are Markdown,
-    /// a zip is Word].
-    #[arg(short = 'f', long = "from", value_enum, value_name = "FORMAT")]
-    from: Option<Format>,
-    /// Output format [default: from --output, else pdf for Word and docx for
-    /// Markdown].
-    #[arg(short = 't', long = "to", value_enum, value_name = "FORMAT")]
-    to: Option<Format>,
-    /// Keep tracked changes (all), or write the document with every change
-    /// accepted or rejected (pandoc's flag): CriticMarkup in Markdown, Word's
-    /// revisions in a .docx. With --to md, the Markdown itself is resolved.
-    #[arg(long, value_enum, value_name = "CHOICE", default_value_t = TrackChanges::All)]
-    track_changes: TrackChanges,
-    /// Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as
-    /// text.
-    #[arg(long)]
-    no_critic: bool,
-    /// Markdown to Word: take styles, numbering, page setup, headers and
-    /// footers from this .docx (pandoc's --reference-doc).
-    #[arg(long, value_name = "FILE")]
-    reference_doc: Option<PathBuf>,
-    /// Markdown to Word: where images are found [default: the Markdown
-    /// file's directory].
-    #[arg(long, value_name = "DIR")]
-    resource_path: Option<PathBuf>,
-    /// Markdown to Word: author of the tracked changes and comments.
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
-    author: String,
-    /// Markdown to Word: their date (ISO 8601); pinned for reproducible
-    /// output.
-    #[arg(
-        short = 'd',
-        long,
-        value_name = "ISO8601",
-        default_value = jubarte::document_comparer::DEFAULT_DATE
-    )]
-    date: String,
-    /// Markdown to Word: the page size when there is no --reference-doc
-    /// (one-inch margins either way); a reference's page setup wins.
-    #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
-    page: Page,
-    /// Word to Markdown: leave out the `<!-- page N of M -->` lines, and the
-    /// layout pass that places them.
-    #[arg(long)]
-    no_page_markers: bool,
-}
-
-/// `--page`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum Page {
-    /// US Letter, 8.5 by 11 inches.
-    Letter,
-    /// ISO A4, 210 by 297 mm.
-    A4,
-}
-
-impl From<Page> for jubarte::markdown::PageSize {
-    fn from(choice: Page) -> Self {
-        match choice {
-            Page::Letter => Self::Letter,
-            Page::A4 => Self::A4,
-        }
-    }
-}
-
-/// `jubarte convert --revisions`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum Revisions {
-    /// Red strike, blue underline, green double marks for moves.
-    Conventional,
-    /// Microsoft Word's own markup.
-    Word,
-    /// --revision-palette.
-    Custom,
 }
 
 /// The library's revision style for `--revisions` / `--revision-palette`.
@@ -1070,53 +166,6 @@ fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
 /// resolution, and write the result under the compare path's no-clobber
 /// contract. Generic over the resolver's error so neither `OpcError`'s path nor
 /// the two arms' bodies are duplicated.
-/// Which tracked changes `accept` / `reject` resolve; all of them when no
-/// flag is given, else those matching every flag kind given.
-#[derive(clap::Args, Debug, Default, PartialEq)]
-struct Selection {
-    /// Only this change (`body:rev:12`, as `jubarte changes` lists it).
-    /// Repeatable.
-    #[arg(long = "id", value_name = "ID")]
-    ids: Vec<String>,
-    /// Only changes by this author. Repeatable.
-    #[arg(long = "author", value_name = "NAME")]
-    authors: Vec<String>,
-    /// Only changes of this kind. Repeatable.
-    #[arg(long = "kind", value_enum, value_name = "KIND")]
-    kinds: Vec<KindArg>,
-}
-
-/// `--kind` values.
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq)]
-enum KindArg {
-    Insertion,
-    Deletion,
-    Move,
-    Formatting,
-}
-
-impl Selection {
-    fn filter(&self) -> jubarte::changes::ChangeFilter {
-        use jubarte::changes::ChangeKind;
-        let given = |v: &[String]| (!v.is_empty()).then(|| v.to_vec());
-        jubarte::changes::ChangeFilter {
-            ids: given(&self.ids),
-            authors: given(&self.authors),
-            kinds: (!self.kinds.is_empty()).then(|| {
-                self.kinds
-                    .iter()
-                    .map(|k| match k {
-                        KindArg::Insertion => ChangeKind::Insertion,
-                        KindArg::Deletion => ChangeKind::Deletion,
-                        KindArg::Move => ChangeKind::Move,
-                        KindArg::Formatting => ChangeKind::Formatting,
-                    })
-                    .collect()
-            }),
-        }
-    }
-}
-
 fn run_resolution(
     file: &Path,
     output: &Path,
@@ -1210,23 +259,14 @@ struct ConvertJob<'a> {
     pages: Option<&'a [usize]>,
     /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
     fail_on_substitution: bool,
+    /// Comment placement and page selection.
+    page: PageOptions,
+    /// Say what was written on stderr: stdout carries a patch.
+    status_to_stderr: bool,
 }
 
 /// `convert --timeout`: the deadline passed.
 const EXIT_TIMEOUT: i32 = 124;
-
-/// `--timeout`: positive seconds, fractions allowed.
-fn parse_timeout(value: &str) -> Result<std::time::Duration, String> {
-    let seconds: f64 = value
-        .parse()
-        .map_err(|_| format!("'{value}' is not a number of seconds"))?;
-    if !(seconds.is_finite() && seconds > 0.0) {
-        return Err(format!(
-            "'{value}': the timeout must be a finite number of seconds above 0"
-        ));
-    }
-    std::time::Duration::try_from_secs_f64(seconds).map_err(|e| format!("'{value}': {e}"))
-}
 
 /// Exit [`EXIT_TIMEOUT`] once `limit` has passed, whatever the main thread
 /// is doing (layout of a pathological document cannot be interrupted).
@@ -1313,10 +353,11 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         Some(bytes) => bytes.to_vec(),
         None => read_document(job.file)?,
     };
-    let options = jubarte::convert::PdfOptions {
+    let options = job.page.apply(jubarte::convert::PdfOptions {
         compress: job.compress,
         revisions: job.revisions,
-    };
+        ..jubarte::convert::PdfOptions::default()
+    });
     let rendered = jubarte::convert::render(
         &bytes,
         options,
@@ -1349,23 +390,29 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     }
     if let Some(pdf) = &rendered.pdf {
         std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
-        println!(
-            "wrote {} ({} bytes, {pages} page{})",
-            output.display(),
-            pdf.len(),
-            if pages == 1 { "" } else { "s" }
+        say(
+            job.status_to_stderr,
+            format_args!(
+                "wrote {} ({} bytes, {pages} page{})",
+                output.display(),
+                pdf.len(),
+                if pages == 1 { "" } else { "s" }
+            ),
         );
     }
     if job.png {
         for (path, png) in png_paths.iter().zip(&rendered.pngs) {
             std::fs::write(path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
         }
-        println!(
-            "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
-            rendered.pngs.len(),
-            if rendered.pngs.len() == 1 { "" } else { "s" },
-            dir.join(&stem).display(),
-            job.dpi
+        say(
+            job.status_to_stderr,
+            format_args!(
+                "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
+                rendered.pngs.len(),
+                if rendered.pngs.len() == 1 { "" } else { "s" },
+                dir.join(&stem).display(),
+                job.dpi
+            ),
         );
     }
     if let Some(report) = job.font_report {
@@ -1405,6 +452,15 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         }
     }
     Ok(())
+}
+
+/// A status line: on stdout, or on stderr when stdout carries a patch.
+fn say(to_stderr: bool, line: std::fmt::Arguments<'_>) {
+    if to_stderr {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
+    }
 }
 
 /// `<stem>-page-NN.png`, zero-padded to the page count's width (at least 2).
@@ -1760,6 +816,7 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     let options = jubarte::convert::PdfOptions {
         compress: true,
         revisions: job.revisions,
+        ..jubarte::convert::PdfOptions::default()
     };
     let request = jubarte::convert::RenderRequest {
         pdf: job.pdf,
@@ -1961,33 +1018,30 @@ struct Job {
     no_paragraph_merge: bool,
 }
 
-impl Cli {
-    /// Merge positional and named inputs (named flags win), compute the default
-    /// output path, and validate that both documents are supplied.
-    fn resolve(self) -> Result<Job, String> {
-        let original = self
-            .original
-            .or(self.original_pos)
-            .ok_or("missing ORIGINAL document (a positional arg or --original/-b)")?;
-        let modified = self
-            .modified
-            .or(self.modified_pos)
-            .ok_or("missing MODIFIED document (a positional arg or --modified/-m)")?;
-        let output = self
-            .output
-            .unwrap_or_else(|| default_output(&original, &modified));
-        Ok(Job {
-            original,
-            modified,
-            output,
-            author: self.author,
-            date: self.date,
-            force: self.force,
-            quiet: self.quiet,
-            detail_threshold: self.detail_threshold,
-            powertools_faithful: self.powertools_faithful || self.mode == CompareMode::Powertools,
-            no_paragraph_merge: self.no_paragraph_merge,
-        })
+/// Native runtime defaults; required inputs have already been checked by clap.
+fn resolve_compare(compare: CompareArgs) -> Job {
+    let original = compare
+        .original
+        .or(compare.original_pos)
+        .expect("clap requires ORIGINAL");
+    let modified = compare
+        .modified
+        .or(compare.modified_pos)
+        .expect("clap requires MODIFIED");
+    let output = compare
+        .output
+        .unwrap_or_else(|| default_output(&original, &modified));
+    Job {
+        original,
+        modified,
+        output,
+        author: compare.author,
+        date: compare.date,
+        force: compare.force,
+        quiet: compare.quiet,
+        detail_threshold: compare.detail_threshold,
+        powertools_faithful: compare.powertools_faithful || compare.mode == CompareMode::Powertools,
+        no_paragraph_merge: compare.no_paragraph_merge,
     }
 }
 
@@ -2245,9 +1299,48 @@ struct DiffJob<'a> {
     critic: bool,
     resource_path: Option<&'a Path>,
     revisions: jubarte::convert::RevisionStyle,
+    /// Comment placement and page selection in PDF or PNG output.
+    page: PageOptions,
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
     patch: Option<usize>,
+}
+
+/// Unified text diff uses the shared core directly, with no redline/render pass.
+fn run_text_diff(
+    old_path: &Path,
+    new_path: &Path,
+    output: Option<&Path>,
+    from: Option<Format>,
+    force: bool,
+    options: &jubarte::text_diff::TextOptions,
+) -> Result<(), String> {
+    if let Some(path) = output {
+        ensure_writable(path, force)?;
+    }
+    let old_bytes = read_document(old_path)?;
+    let new_bytes = read_document(new_path)?;
+    let old = Input::new(
+        old_path,
+        Format::of_input(from, old_path, &old_bytes),
+        old_bytes,
+    )?;
+    let new = Input::new(
+        new_path,
+        Format::of_input(from, new_path, &new_bytes),
+        new_bytes,
+    )?;
+    let patch = jubarte::text_diff::diff_documents_view(old.source(), new.source(), options)?;
+    if let Some(path) = output {
+        std::fs::write(path, &patch).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        eprintln!("wrote {} ({} bytes)", path.display(), patch.len());
+        Ok(())
+    } else {
+        use std::io::Write as _;
+        std::io::stdout()
+            .write_all(patch.as_bytes())
+            .map_err(|e| format!("writing to stdout: {e}"))
+    }
 }
 
 fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
@@ -2271,6 +1364,16 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         } else {
             Format::Docx
         });
+    if matches!(to, Format::Docx | Format::Md) {
+        for (given, flag) in [
+            (job.page.move_comments, "--move-comments"),
+            (job.page.changed_only, "--changed-only"),
+        ] {
+            if given {
+                return Err(format!("{flag} applies to PDF or PNG output only"));
+            }
+        }
+    }
     let output = match (job.output, to) {
         (Some(path), _) => Some(path.to_path_buf()),
         (None, Format::Md) => None,
@@ -2305,53 +1408,68 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             &options,
         )?
     };
-    if let Some(columns) = job.patch {
-        // A refused output prints no patch.
-        if let (Format::Md | Format::Docx, Some(path)) = (to, &output) {
-            ensure_writable(path, job.force)?;
-        }
-        let name = |path: &Path| path.display().to_string();
-        let patch = jubarte::markdown::patch_documents(
-            old.source(),
-            new.source(),
-            &options,
-            &jubarte::markdown::PatchOptions {
-                old_name: name(job.old),
-                new_name: name(job.new),
-                owner: jubarte::markdown::Attribution {
-                    author: job.settings.author_for_revisions.clone(),
-                    date: job.settings.date_time_for_revisions.clone(),
+    // The patch is printed only once the output is written, so a refused
+    // output prints no patch.
+    let patch = match job.patch {
+        Some(columns) => {
+            let name = |path: &Path| path.display().to_string();
+            let patch = jubarte::markdown::patch_documents(
+                old.source(),
+                new.source(),
+                &options,
+                &jubarte::markdown::PatchOptions {
+                    old_name: name(job.old),
+                    new_name: name(job.new),
+                    owner: jubarte::markdown::Attribution {
+                        author: job.settings.author_for_revisions.clone(),
+                        date: job.settings.date_time_for_revisions.clone(),
+                    },
                 },
-            },
-        )
-        .map_err(|e| format!("compare failed: {e}"))?;
-        print!("{}", patch.render(columns));
-        if output.is_none() {
-            return Ok(());
+            )
+            .map_err(|e| format!("compare failed: {e}"))?;
+            Some(patch.render(columns))
         }
+        None => None,
+    };
+    if let (Some(patch), None) = (&patch, &output) {
+        print!("{patch}");
+        return Ok(());
     }
+    write_diff_output(job, to, output, &out, patch.is_some())?;
+    if let Some(patch) = patch {
+        print!("{patch}");
+    }
+    Ok(())
+}
+
+/// Write `diff`'s Markdown, Word, PDF or PNG output. With a patch on
+/// stdout (`patch_on_stdout`), what was written is said on stderr.
+fn write_diff_output(
+    job: &DiffJob<'_>,
+    to: Format,
+    output: Option<PathBuf>,
+    out: &[u8],
+    patch_on_stdout: bool,
+) -> Result<(), String> {
     match (to, output) {
         (Format::Md, None) => {
             use std::io::Write as _;
             std::io::stdout()
-                .write_all(&out)
+                .write_all(out)
                 .map_err(|e| format!("writing to stdout: {e}"))
         }
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
-            std::fs::write(&path, &out).map_err(|e| format!("writing {}: {e}", path.display()))?;
-            let wrote = format!("wrote {} ({} bytes)", path.display(), out.len());
-            // With the patch on stdout, the rest goes to stderr.
-            if job.patch.is_some() {
-                eprintln!("{wrote}");
-            } else {
-                println!("{wrote}");
-            }
+            std::fs::write(&path, out).map_err(|e| format!("writing {}: {e}", path.display()))?;
+            say(
+                patch_on_stdout,
+                format_args!("wrote {} ({} bytes)", path.display(), out.len()),
+            );
             Ok(())
         }
         (Format::Pdf | Format::Png, output) => run_convert(&ConvertJob {
             file: job.old,
-            bytes: Some(&out),
+            bytes: Some(out),
             output: output.as_deref(),
             force: job.force,
             compress: false,
@@ -2363,6 +1481,8 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: job.page,
+            status_to_stderr: patch_on_stdout,
         })
         .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
@@ -2454,6 +1574,8 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             (job.report.is_some(), "--report"),
             (job.font_report.is_some(), "--font-report"),
             (job.fail_on_substitution, "--fail-on-substitution"),
+            (job.page.move_comments, "--move-comments"),
+            (job.page.changed_only, "--changed-only"),
         ] {
             if given {
                 return Err(format!("{flag} applies to PDF or PNG output only").into());
@@ -2772,8 +1894,9 @@ fn main() -> ExitCode {
 }
 
 fn cli_main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit());
     match cli.command {
+        Some(Command::Compare(compare)) => return exit_code(run(&resolve_compare(compare))),
         Some(Command::Revisions { file, json }) => {
             return exit_code(run_revisions(&file, json));
         }
@@ -2834,6 +1957,7 @@ fn cli_main() -> ExitCode {
             pages: page_spec,
             fail_on_substitution,
             timeout,
+            page,
         }) => {
             if let Some(limit) = timeout {
                 arm_timeout(limit);
@@ -2860,6 +1984,8 @@ fn cli_main() -> ExitCode {
                 report: report.as_deref(),
                 pages: selected.as_deref(),
                 fail_on_substitution,
+                page,
+                status_to_stderr: false,
             };
             return convert_exit_code(run_convert_any(&job, &markdown));
         }
@@ -2871,6 +1997,9 @@ fn cli_main() -> ExitCode {
             from,
             format,
             columns,
+            context,
+            accept_changes,
+            full_lines,
             force,
             author,
             date,
@@ -2881,7 +2010,37 @@ fn cli_main() -> ExitCode {
             resource_path,
             revisions,
             revision_palette,
+            page,
         }) => {
+            if format.is_text_view() {
+                use jubarte::text_diff::{TextFormat, TextOptions, UnifiedOptions};
+                let style = match format {
+                    PatchFormat::Github => TextFormat::Github,
+                    PatchFormat::Word => TextFormat::Word,
+                    PatchFormat::Normal => TextFormat::Normal,
+                    PatchFormat::Context => TextFormat::Context,
+                    PatchFormat::SideBySide => TextFormat::SideBySide,
+                    PatchFormat::Patch | PatchFormat::Critic => unreachable!("text view"),
+                };
+                let options = TextOptions {
+                    unified: UnifiedOptions {
+                        old_name: old.display().to_string(),
+                        new_name: new.display().to_string(),
+                        context,
+                    },
+                    format: style,
+                    accept_changes,
+                    window: (!full_lines).then_some(70),
+                };
+                return exit_code(run_text_diff(
+                    &old,
+                    &new,
+                    output.as_deref(),
+                    from,
+                    force,
+                    &options,
+                ));
+            }
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
                 Err(e) => return exit_code(Err(e)),
@@ -2904,6 +2063,7 @@ fn cli_main() -> ExitCode {
                 critic,
                 resource_path: resource_path.as_deref(),
                 revisions: style,
+                page,
                 patch: (format == PatchFormat::Patch).then_some(columns),
             }));
         }
@@ -3100,37 +2260,7 @@ fn cli_main() -> ExitCode {
         }
         None => {}
     }
-    let job = match cli.resolve() {
-        Ok(job) => job,
-        Err(e) => {
-            eprintln!("error: {e}");
-            eprintln!("try 'jubarte --help'");
-            return ExitCode::from(2);
-        }
-    };
-    exit_code(run(&job))
-}
-
-/// `jubarte append --section-break`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum SectionBreakArg {
-    /// Each document starts on a new page.
-    NextPage,
-    /// Each document continues on the same page (a continuous section
-    /// break with --keep-sections).
-    Continuous,
-    /// Nothing between the documents (continuous with --keep-sections).
-    None,
-}
-
-impl From<SectionBreakArg> for jubarte::append::SectionBreak {
-    fn from(arg: SectionBreakArg) -> Self {
-        match arg {
-            SectionBreakArg::NextPage => Self::NextPage,
-            SectionBreakArg::Continuous => Self::Continuous,
-            SectionBreakArg::None => Self::None,
-        }
-    }
+    exit_code(run(&resolve_compare(cli.compare)))
 }
 
 /// `jubarte append`: fold the documents left, `append(append(A, B), C)`.
@@ -3205,6 +2335,7 @@ fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Res
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
@@ -3316,10 +2447,12 @@ mod tests {
     use clap::CommandFactory;
 
     fn job_of(args: &[&str]) -> Job {
-        Cli::try_parse_from(args)
-            .expect("parse")
-            .resolve()
-            .expect("resolve")
+        let cli = Cli::try_parse_from(args).expect("parse");
+        match cli.command {
+            Some(Command::Compare(compare)) => resolve_compare(compare),
+            None => resolve_compare(cli.compare),
+            other => panic!("expected compare, got {other:?}"),
+        }
     }
 
     /// clap's own invariants (catches derive-config mistakes like duplicate shorts).
@@ -3429,20 +2562,23 @@ mod tests {
     }
 
     #[test]
-    fn missing_inputs_error_at_resolve() {
-        let only_one = Cli::try_parse_from(["jubarte", "one.docx"])
-            .unwrap()
-            .resolve();
-        assert!(only_one.unwrap_err().contains("missing MODIFIED"));
-        let none = Cli::try_parse_from(["jubarte"]).unwrap().resolve();
-        assert!(none.unwrap_err().contains("missing ORIGINAL"));
+    fn missing_inputs_are_clap_usage_errors() {
+        let only_one = Cli::try_parse_from(["jubarte", "one.docx"]).unwrap_err();
+        assert_eq!(
+            only_one.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(Cli::try_parse_from(["jubarte"]).is_err());
     }
 
     #[test]
     fn extra_positional_and_unknown_flag_rejected_by_clap() {
         use clap::error::ErrorKind;
         let extra = Cli::try_parse_from(["jubarte", "a.docx", "b.docx", "c.docx"]).unwrap_err();
-        assert_eq!(extra.kind(), ErrorKind::UnknownArgument);
+        assert!(matches!(
+            extra.kind(),
+            ErrorKind::UnknownArgument | ErrorKind::ArgumentConflict
+        ));
         let bogus = Cli::try_parse_from(["jubarte", "--bogus"]).unwrap_err();
         assert_eq!(bogus.kind(), ErrorKind::UnknownArgument);
         let missing_val = Cli::try_parse_from(["jubarte", "--author"]).unwrap_err();
@@ -3485,13 +2621,13 @@ mod tests {
 
     /// Prior behavior path: a two-positional invocation whose filenames do
     /// NOT collide with the subcommand name is unaffected by adding
-    /// `command` to `Cli` — `cli.command` stays `None` and `resolve()`
+    /// `command` to `Cli` — `cli.command` stays `None` and the native resolver
     /// merges the positionals exactly as before this PR.
     #[test]
     fn plain_compare_positionals_leave_command_none() {
         let cli = Cli::try_parse_from(["jubarte", "a.docx", "b.docx"]).unwrap();
         assert!(cli.command.is_none());
-        let job = cli.resolve().unwrap();
+        let job = resolve_compare(cli.compare);
         assert_eq!(job.original, PathBuf::from("a.docx"));
         assert_eq!(job.modified, PathBuf::from("b.docx"));
     }
@@ -3751,6 +2887,8 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect_err("report over the PDF must be refused");
         assert!(
@@ -3773,6 +2911,8 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect_err("report over the input must be refused");
         assert!(
@@ -3842,6 +2982,8 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: true,
+            page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect_err("a substituted font fails the run");
         assert_eq!(err.code, EXIT_FONT_SUBSTITUTED);
@@ -3880,6 +3022,8 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -4092,6 +3236,8 @@ mod tests {
             report: None,
             pages,
             fail_on_substitution: false,
+            page: PageOptions::default(),
+            status_to_stderr: false,
         }
     }
 
@@ -4134,7 +3280,7 @@ mod tests {
         let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
         assert!(
             err.message
-                .contains("page 6 is out of range: the document has 3 pages"),
+                .contains("page 6 is out of range: the output has 3 pages"),
             "{}",
             err.message
         );

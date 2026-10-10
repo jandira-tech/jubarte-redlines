@@ -1,6 +1,10 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export function diffDocumentsUnified(old: Uint8Array, _new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+
+
+
 /**
  * What [`appendDocuments`](append_documents) returns.
  */
@@ -180,12 +184,31 @@ export function compareDocuments(original: Uint8Array, modified: Uint8Array, aut
 export function diffDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string;
 
 /**
+ * The complete document as CriticMarkup; existing paragraph patches stay separate.
+ */
+export function diffDocumentsCritic(old: Uint8Array, _new: Uint8Array, author?: string | null, date?: string | null): string;
+
+/**
+ * Document review view. `optionsJson` is a strict camelCase object with
+ * `format` (github, word, normal, context, side-by-side), `oldName`,
+ * `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+ * and `newFormat` (docx/md). Defaults use the core display window; Word
+ * always accepts both inputs' revisions before creating new CriticMarkup.
+ */
+export function diffDocumentsView(old: Uint8Array, _new: Uint8Array, options_json?: string | null): string;
+
+/**
  * Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
  * coordinates an edit plan uses.
  *
  * Mirrors `jubarte::inspect::markdown`.
  */
 export function documentMarkdown(docx: Uint8Array): string;
+
+/**
+ * Markdown without paragraph ids, with tracked changes kept or resolved.
+ */
+export function documentMarkdownWithChanges(docx: Uint8Array, track_changes: string): string;
 
 /**
  * Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -199,8 +222,12 @@ export function documentMarkdown(docx: Uint8Array): string;
  * `revisions` (optional, default `"conventional"`) paints tracked changes:
  * `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
  * `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+ * `moveComments` (optional, default `false`) lists the comments after the
+ * last page instead of in balloons beside the text; `changedOnly`
+ * (optional, default `false`) keeps only the pages a tracked change
+ * touches (a document without changes keeps its first page).
  */
-export function docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null): Uint8Array;
+export function docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array;
 
 /**
  * The JSON-lines form of a report (`load`, one `op` per operation,
@@ -268,6 +295,11 @@ export function listComments(docx: Uint8Array, author?: string | null, latest?: 
 export function markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | null): Uint8Array;
 
 /**
+ * Shared clap parsing, with no filesystem, clock or process access.
+ */
+export function parseCli(arguments_json: string, program?: string | null, supported_json?: string | null): string;
+
+/**
  * Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
  * readable PDF).
  *
@@ -281,6 +313,11 @@ export function pdfPageCount(pdf: Uint8Array): number;
  * Mirrors `jubarte::edit::preview_plan`.
  */
 export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput;
+
+/**
+ * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
+ */
+export function redlineDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string): Uint8Array;
 
 /**
  * Reject the changes `filterJson` selects and keep the rest tracked
