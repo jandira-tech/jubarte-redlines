@@ -45,6 +45,36 @@ function copy(from, name) {
   return to;
 }
 
+test("field refresh is unsupported before reading or overwriting any file", () => {
+  const out = path.join(tmp, "field-refresh.docx");
+  const report = path.join(tmp, "field-refresh.json");
+  fs.writeFileSync(out, "preserve document");
+  fs.writeFileSync(report, "preserve report");
+  for (const extra of [[], ["--to", "docx"], ["--track-changes", "accept"], ["--track-changes", "reject"], ["--report", report, "--force"]]) {
+    const result = run("convert", "missing.docx", "-o", out, "--update-fields", ...extra);
+    assert.equal(result.code, 2, result.err);
+    assert.match(result.err, /--update-fields.*not supported/);
+    assert.doesNotMatch(result.err, /reading|ENOENT|already exists/);
+    assert.equal(result.out, "");
+    assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
+    assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
+  }
+});
+
+test("removed command help and legacy listing flags are unavailable", () => {
+  const help = run("--help");
+  assert.equal(help.code, 0, help.err);
+  assert.match(help.out, /\n  changes /);
+  assert.doesNotMatch(help.out, /\n  (revisions|fields) /);
+  for (const args of [["revisions", "missing.docx", "--json"], ["fields", "update", "missing.docx", "-o", "unused.docx"]]) {
+    const result = run(...args);
+    assert.equal(result.code, 2, result.err);
+    assert.doesNotMatch(result.err, /reading|ENOENT/);
+    assert.equal(result.out, "");
+    assert.ok(!fs.existsSync(path.join(tmp, "unused.docx")));
+  }
+});
+
 test("redline writes a Word redline and refuses to overwrite it", () => {
   const out = path.join(tmp, "redline.docx");
   const r = run("redline", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out, "--author", "Legal");
