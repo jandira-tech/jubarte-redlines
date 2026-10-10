@@ -8,7 +8,10 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 Engine defects and unresolved design conflicts.
 
-> **Re-checked 2026-10-01 against 0.10.1.** Open items below are the complete set.
+> **Last full re-check: 2026-10-01, against 0.10.1.** Open items below are the
+> complete set. Findings added since then name the build they were checked on
+> (issue 8: the 0.12.0 release candidate, 2026-10-10); the other items have
+> not been re-checked against 0.12.0.
 
 ## Open
 
