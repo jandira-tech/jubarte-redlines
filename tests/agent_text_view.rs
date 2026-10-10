@@ -570,3 +570,16 @@ fn accept_all_keeps_comments_in_the_agent_view() {
         "{out}"
     );
 }
+
+#[test]
+fn underline_renders_inside_bold_in_the_agent_view_only() {
+    let p = r#"<w:p><w:r><w:t xml:space="preserve">keep it </w:t></w:r><w:r><w:rPr><w:b/><w:u w:val="single"/></w:rPr><w:t>secret</w:t></w:r><w:r><w:rPr><w:u w:val="none"/></w:rPr><w:t>.</w:t></w:r></w:p>"#;
+    assert_eq!(
+        body(&agent(&docx(p))),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nkeep it **<u>secret</u>**.\n"
+    );
+    let legacy = docx_to_markdown(&docx(p), &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert_eq!(legacy, "keep it **secret**.\n");
+}

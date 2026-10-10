@@ -1089,6 +1089,11 @@ impl Writer<'_> {
             .and_then(|r| r.toggle("i"))
             .or(style_italic)
             .unwrap_or(base.1);
+        // Agent view only: the plain conversion has no underline.
+        let underline = self.agent
+            && rpr
+                .and_then(|r| r.child("u"))
+                .is_some_and(|u| u.attr("val").is_none_or(|v| v != "none"));
         // A raised or lowered run keeps its tags, which the Markdown
         // reader takes back to w:vertAlign; a note reference is already
         // `[^n]`.
@@ -1110,7 +1115,7 @@ impl Writer<'_> {
         }
         let opened = out.len();
         for child in run.elements() {
-            self.run_child(child, link, (bold, italic), fields, out, extra);
+            self.run_child(child, link, (bold, italic, underline), fields, out, extra);
         }
         if let Some((_, close)) = tags {
             if out.len() == opened {
@@ -1125,7 +1130,7 @@ impl Writer<'_> {
         &mut self,
         child: &Element,
         link: Option<&str>,
-        (bold, italic): (bool, bool),
+        style: (bool, bool, bool),
         fields: &mut Vec<Field>,
         out: &mut Critic,
         extra: &mut Vec<String>,
@@ -1134,14 +1139,14 @@ impl Writer<'_> {
         let field_link = fields.iter().rev().find_map(|f| f.link.clone());
         let link = field_link.as_deref().or(link);
         match child.local() {
-            "t" | "delText" if !hidden => out.push(&child.text(), bold, italic, link),
-            "tab" | "ptab" if !hidden => out.push("\t", bold, italic, link),
+            "t" | "delText" if !hidden => out.push_styled(&child.text(), style, link),
+            "tab" | "ptab" if !hidden => out.push_styled("\t", style, link),
             "br" | "cr" if !hidden => {
                 if child.attr("type") != Some("page") {
                     out.push("\n", false, false, None);
                 }
             }
-            "noBreakHyphen" if !hidden => out.push("-", bold, italic, link),
+            "noBreakHyphen" if !hidden => out.push_styled("-", style, link),
             "instrText" | "delInstrText" => {
                 if let Some(field) = fields.last_mut()
                     && !field.in_result
@@ -1200,7 +1205,7 @@ impl Writer<'_> {
             "AlternateContent" => {
                 if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
                     for inner in choice.elements() {
-                        self.run_child(inner, link, (bold, italic), fields, out, extra);
+                        self.run_child(inner, link, style, fields, out, extra);
                     }
                 }
             }
