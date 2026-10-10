@@ -3436,3 +3436,55 @@ fn a_table_line_names_a_range_that_starts_in_a_cell() {
     assert!(out.contains("<!-- p1 in #c9 -->"), "{out}");
     assert!(out.contains("<!-- p2 -->"), "{out}");
 }
+
+/// pi review r392b F2: the range line points at the headers:/footers: lines
+/// only when a header or footer holds a change of the selection, and it
+/// names the footnote blocks it keeps.
+#[test]
+fn the_range_line_names_kept_notes_and_points_only_at_changed_headers() {
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1"><w:p>{}</w:p></w:footnote></w:footnotes>"#,
+        ins(7, "Ann Counsel", "footnote change")
+    );
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        run("Plain header")
+    );
+    let bytes = common::docx::docx_with_sect(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &footnotes,
+            },
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let range = |by: Option<&str>| {
+        header_lines(&changed_by(&bytes, by, true))
+            .into_iter()
+            .find(|l| l.starts_with("range: "))
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
+    let kept = range(None);
+    assert!(
+        kept.starts_with("range: changed ([^1]) of p0-p0") && !kept.contains("headers:"),
+        "{kept}"
+    );
+    let nobody = range(Some("Zed Zimmer"));
+    assert!(
+        nobody.starts_with("range: changed by Zed Zimmer (none)") && !nobody.contains('#'),
+        "{nobody}"
+    );
+    assert!(changed_by(&bytes, None, true).contains("[^1]: {++footnote change++}"));
+    assert!(!changed_by(&bytes, Some("Zed Zimmer"), true).contains("[^1]:"));
+}

@@ -371,6 +371,25 @@ pub(crate) fn stamped_revs(element: &Element) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// Whether `e` holds a tracked change, by the author `by` names when given:
+/// a resolved `@AC` handle, or a full name.
+pub(crate) fn revised_by(e: &Element, by: Option<&str>, handles: &Handles) -> bool {
+    e.elements().any(|c| {
+        let revision = matches!(
+            c.local(),
+            "ins" | "del" | "moveFrom" | "moveTo" | "cellIns" | "cellDel" | "cellMerge"
+        ) || c.local().ends_with("PrChange")
+            || c.local() == "tblGridChange";
+        let author = c.attr("author");
+        (revision
+            && by.is_none_or(|by| match by.strip_prefix('@') {
+                Some(handle) => handles.of(author) == Some(handle),
+                None => author == Some(by),
+            }))
+            || revised_by(c, by, handles)
+    })
+}
+
 /// The comment ids a range or a reference under `e` anchors.
 pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
     for c in e.elements() {
@@ -1336,8 +1355,12 @@ fn is_marked(block: &str) -> bool {
 /// The selected blocks of `body` joined back, and the `range:` text. A
 /// `Select::Changed` author arrives resolved: `@AC` for a known handle, the
 /// text as given otherwise (no block holds an unknown author's marks).
+/// `notes` (the `[^1]: …` definitions) keeps those the kept blocks cite,
+/// and under `Select::Changed` those holding a selected mark, named in the
+/// range by their label.
 pub(crate) fn select_blocks(
     body: &str,
+    notes: &mut Vec<String>,
     select: &Select,
     last: Option<usize>,
     comment_handles: &HashMap<String, String>,
@@ -1345,6 +1368,7 @@ pub(crate) fn select_blocks(
     let blocks = blocks_of(body);
     let keep: Vec<bool>;
     let range: String;
+    let mut changed_notes: Vec<String> = Vec::new();
     match select {
         Select::Head(n) | Select::Tail(n) if *n == 0 => {
             return Err(format!(
@@ -1383,17 +1407,20 @@ pub(crate) fn select_blocks(
         }
         Select::Changed { by } => {
             let handle = by.as_deref().map(|by| by.strip_prefix('@'));
-            keep = blocks
-                .iter()
-                .map(|block| {
-                    is_marked(&block.text)
-                        && match handle {
-                            None => true,
-                            Some(Some(handle)) => has_handle(&block.text, handle, comment_handles),
-                            Some(None) => false,
-                        }
-                })
-                .collect();
+            let selected = |text: &str| {
+                is_marked(text)
+                    && match handle {
+                        None => true,
+                        Some(Some(handle)) => has_handle(text, handle, comment_handles),
+                        Some(None) => false,
+                    }
+            };
+            keep = blocks.iter().map(|block| selected(&block.text)).collect();
+            for note in notes.iter().filter(|note| selected(note)) {
+                if let Some(label) = note_label(note) {
+                    changed_notes.push(label.to_string());
+                }
+            }
             let names: Vec<String> = blocks
                 .iter()
                 .zip(&keep)
@@ -1403,6 +1430,7 @@ pub(crate) fn select_blocks(
                     (None, Some((a, z))) => Some(span_text(a, z)),
                     _ => None,
                 })
+                .chain(changed_notes.iter().map(|label| format!("[^{label}]")))
                 .collect();
             range = format!(
                 "changed{} ({})",
@@ -1500,7 +1528,19 @@ pub(crate) fn select_blocks(
     }
     // `convert` ends the Markdown with its newline.
     out.truncate(out.trim_end_matches('\n').len());
+    notes.retain(|note| {
+        note_label(note).is_some_and(|label| {
+            changed_notes.iter().any(|l| l == label) || out.contains(&format!("[^{label}]"))
+        })
+    });
     Ok((out, range))
+}
+
+/// The label of a note definition, `1` for `[^1]: …`.
+fn note_label(note: &str) -> Option<&str> {
+    note.strip_prefix("[^")?
+        .split_once("]:")
+        .map(|(label, _)| label)
 }
 
 #[cfg(test)]

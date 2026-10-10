@@ -303,8 +303,11 @@ anchor is tried first; when it does not occur, the anchor without its marks
 (escapes resolved) is tried, and the report's `op` line records
 `anchor_given` and `anchor_read_as`. The CLI prints
 `note: op-1: anchor "# Fees" read as "Fees" (Markdown marks are not document
-text)`. `read --changed` keeps the blocks with a change or a comment;
-`--by AUTHOR` (a handle or a full name) keeps one author's.
+text)`. `read --changed` keeps the blocks with a change or a comment, every
+paragraph of a comment range included; `--by AUTHOR` (a handle or a full
+name) keeps one author's. A selection keeps the footnotes its blocks cite;
+`--changed` also keeps a changed footnote and names it in `range:`
+(`changed (p4, [^2])`).
 
 ### Commands
 
@@ -359,8 +362,8 @@ without their Markdown marks, with a note.
 
 - Tracked paragraph marks inside comment bodies are not shown.
 - Headers and footers are header lines (`headers:`, `footers:`), not body
-  blocks: a change only they hold leaves `--changed` and the view `edit`
-  prints with no block, and the `range:` line says to read those lines.
+  blocks: when one holds a change `--changed` selects, the `range:` line
+  says to read those lines (with no block left when only they changed).
 - Page markers need the layout pass; `--no-page-markers` skips it. When
   the layout fails, the markers come from Word's cached page breaks, else
   from hard breaks and section starts. That fallback does not mix the two

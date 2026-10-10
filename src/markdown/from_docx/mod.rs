@@ -117,6 +117,17 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             note_roots.push((name, root));
         }
     }
+    // Header and footer parts, for their comment anchors and changes.
+    let mut story_roots = Vec::new();
+    for target in rels
+        .targets_of_type("/header")
+        .into_iter()
+        .chain(rels.targets_of_type("/footer"))
+    {
+        if let Ok(Some(root)) = package.xml(&target) {
+            story_roots.push(root);
+        }
+    }
     let handles = if options.ids {
         let notes: Vec<&Element> = note_roots.iter().map(|(_, root)| root).collect();
         agent::handles(&document, &notes, comments_root.as_ref())
@@ -309,6 +320,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         markdown = crate::markdown::paginate(&markdown, &pages);
     }
     let mut range = None;
+    let mut stories_changed = false;
     if let Some(select) = options.select.as_ref().filter(|_| options.ids) {
         let select = match select {
             super::Select::Changed { by: Some(by) } => super::Select::Changed {
@@ -316,6 +328,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             },
             other => other.clone(),
         };
+        if let super::Select::Changed { by } = &select {
+            stories_changed = story_roots
+                .iter()
+                .any(|root| agent::revised_by(root, by.as_deref(), &handles));
+        }
         // Hidden comments print ids only; `--by` reads their authors here.
         let comment_handles: HashMap<String, String> = writer
             .comments
@@ -324,6 +341,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             .collect();
         let (selected, described) = agent::select_blocks(
             &markdown,
+            &mut defs,
             &select,
             stamped.0.checked_sub(1),
             &comment_handles,
@@ -361,12 +379,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             agent::comment_anchors(root, &mut anchored);
         }
         // Headers and footers are stories too: Word balloons their comments.
-        let mut stories = rels.targets_of_type("/header");
-        stories.extend(rels.targets_of_type("/footer"));
-        for target in stories {
-            if let Ok(Some(root)) = package.xml(&target) {
-                agent::comment_anchors(&root, &mut anchored);
-            }
+        for root in &story_roots {
+            agent::comment_anchors(root, &mut anchored);
         }
         let comment_facts: Vec<header::CommentFact> = comments_root
             .as_ref()
@@ -566,6 +580,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             pages,
             pages_source,
             range,
+            stories_changed,
             styles: styles_root.as_ref(),
             theme: theme.as_ref(),
             default_style: default_style.as_deref(),

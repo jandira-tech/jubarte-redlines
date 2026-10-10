@@ -87,6 +87,8 @@ pub(crate) struct Facts<'a> {
     pub pages_source: PagesSource,
     /// `range:` line after `body:` when a selection is active (Task 12).
     pub range: Option<String>,
+    /// A header or footer holds a change `range`'s `--changed` selects.
+    pub stories_changed: bool,
     pub styles: Option<&'a Element>,
     pub theme: Option<&'a Element>,
     pub default_style: Option<&'a str>,
@@ -388,18 +390,16 @@ pub(crate) fn render(f: &Facts) -> String {
         } else {
             format!(" of {span}")
         };
-        // A change only a header, footer or story holds shows on the
-        // headers:/footers: lines, not as a body block.
-        let none = range.starts_with("changed")
-            && range.ends_with("(none)")
-            && f.sections.iter().any(|s| !s.stories.is_empty());
-        kv(
-            &mut out,
-            &format!("range: {range}{of}"),
-            none.then_some(
-                "no body block; header and footer text is on the headers:/footers: lines",
-            ),
-        );
+        // A header or footer change shows on the headers:/footers: lines,
+        // not as a body block.
+        let note = f.stories_changed.then(|| {
+            if range.ends_with("(none)") {
+                "no body block; header and footer text is on the headers:/footers: lines"
+            } else {
+                "a header or footer change too: its text is on the headers:/footers: lines"
+            }
+        });
+        kv(&mut out, &format!("range: {range}{of}"), note);
     }
     part_two(&mut out, f);
     out.push_str("---\n");
