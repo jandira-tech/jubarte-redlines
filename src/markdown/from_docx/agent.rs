@@ -270,10 +270,11 @@ pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<Str
     (ins, del)
 }
 
-/// Tags of the formatting changes recorded in a paragraph.
+/// Tags of the formatting changes recorded in a paragraph, a text box Word
+/// stores twice read once.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
     fn walk(e: &Element, handles: &Handles, out: &mut Vec<String>) {
-        for child in e.elements() {
+        for child in shown_children(e) {
             if child.is("rPrChange") || child.is("pPrChange") {
                 out.push(tag_of(child, handles));
             } else {
@@ -662,11 +663,11 @@ pub(crate) fn escape_line_starts(text: &str) -> String {
         .join("\n")
 }
 
-/// The authors of the formatting changes (`*PrChange`) under `e`, text
-/// boxes excluded, in document order.
+/// The authors of the formatting changes (`*PrChange`) under `e` in document
+/// order, text boxes included once, as `count_marks` counts them.
 pub(crate) fn format_change_authors(e: &Element) -> Vec<Option<String>> {
     fn walk(e: &Element, out: &mut Vec<Option<String>>) {
-        for c in e.elements().filter(|c| !c.is("txbxContent")) {
+        for c in shown_children(e) {
             if c.local().ends_with("PrChange") {
                 out.push(c.attr("author").map(str::to_string));
             }

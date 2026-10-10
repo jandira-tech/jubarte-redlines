@@ -3010,3 +3010,36 @@ fn the_dates_flag_reaches_the_cli_view() {
         "{dated}"
     );
 }
+
+/// pi review r392 F2: a formatting change in a text box Word stores twice
+/// (Choice and Fallback) counts once in the total, once for its author and
+/// once on the id line.
+#[test]
+fn header_counts_a_text_box_formatting_change_once() {
+    let story = |id: u32| {
+        format!(
+            r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>boxed</w:t></w:r></w:p>"#
+        )
+    };
+    let boxed = format!(
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent>{}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#,
+        story(31),
+        story(32)
+    );
+    let view = agent(&docx(&boxed));
+    let lines = header_lines(&view);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("revisions: 0 ") && l.contains("1 formatting change")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("1 formatting change")),
+        "{lines:?}"
+    );
+    assert!(view.contains("fmt #31 @AC"), "{view}");
+    assert!(!view.contains("#32"), "{view}");
+}
