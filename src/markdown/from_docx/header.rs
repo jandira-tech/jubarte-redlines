@@ -55,7 +55,6 @@ pub(crate) struct SectionFact {
 pub(crate) struct CommentFact {
     pub id: String,
     pub author: Option<String>,
-    pub date: Option<String>,
     pub parent: Option<String>,
 }
 

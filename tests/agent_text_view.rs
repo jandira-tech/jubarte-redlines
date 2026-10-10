@@ -950,3 +950,58 @@ fn a_selection_keeps_the_page_marker_of_a_later_page() {
     );
     assert_eq!(body(&out), "<!-- page 2 of 2 -->\n\n<!-- p3 -->\nThree\n");
 }
+
+#[test]
+fn cli_read_prints_the_agent_view_with_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    let tracked = ok(&["read", "received.docx"], dir.path());
+    assert_eq!(
+        ok(&["text", "received.docx"], dir.path()),
+        tracked,
+        "text is an alias of read"
+    );
+    assert!(
+        tracked.starts_with("---\nsource: received.docx\nview: tracked "),
+        "{tracked}"
+    );
+    assert!(tracked.contains("# pages from layout\n"), "{tracked}");
+    let hidden = ok(&["read", "received.docx", "--comments", "none"], dir.path());
+    assert!(
+        hidden.contains("view: tracked, comments hidden"),
+        "{hidden}"
+    );
+    let accepted = ok(
+        &["read", "received.docx", "--track-changes", "accept"],
+        dir.path(),
+    );
+    assert!(accepted.contains("view: accept-all"), "{accepted}");
+    let rejected = ok(
+        &["read", "received.docx", "--track-changes", "reject"],
+        dir.path(),
+    );
+    assert!(rejected.contains("view: reject-all"), "{rejected}");
+    let fast = ok(&["read", "received.docx", "--no-page-markers"], dir.path());
+    assert!(
+        fast.contains("# pages from Word's cached layout\n"),
+        "{fast}"
+    );
+    assert!(!fast.contains("<!-- page "), "{fast}");
+    let head = ok(&["read", "received.docx", "--head", "3"], dir.path());
+    assert!(
+        head.contains("\nrange: head 3 (p0-p2) of p0-p20\n"),
+        "{head}"
+    );
+    let picked = ok(&["read", "received.docx", "-p", "p5,t0"], dir.path());
+    assert!(picked.contains("\nrange: p5, t0 of p0-p20\n"), "{picked}");
+    let dated = ok(&["read", "received.docx", "--dates"], dir.path());
+    assert!(dated.contains("{>>#0 @AC<<}"), "{dated}");
+    let bad = jubarte(&["read", "received.docx", "-p", "p99"], dir.path());
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("p99 is past the last paragraph p20"));
+    let both = jubarte(
+        &["read", "received.docx", "--head", "2", "--tail", "2"],
+        dir.path(),
+    );
+    assert!(!both.status.success());
+}

@@ -740,21 +740,40 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
         .any(|finding| finding.severity == "error" || (strict && finding.severity == "warning")))
 }
 
-fn run_text(file: &Path, track_changes: Option<TrackChanges>) -> Result<(), String> {
+/// `read`: the agent view, with page markers from the layout pass unless
+/// `--no-page-markers` skips it.
+fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
     let bytes = read_document(file)?;
-    let Some(choice) = track_changes else {
-        print!(
-            "{}",
-            jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
-        );
-        return Ok(());
+    let select = match (args.paragraphs.as_deref(), args.head, args.tail) {
+        (Some(spec), _, _) => Some(jubarte::markdown::Select::parse(spec)?),
+        (None, Some(n), _) => Some(jubarte::markdown::Select::Head(n)),
+        (None, None, Some(n)) => Some(jubarte::markdown::Select::Tail(n)),
+        (None, None, None) => None,
+    };
+    let track_changes = args.track_changes.unwrap_or(TrackChanges::All);
+    let pages = if args.no_page_markers {
+        None
+    } else {
+        page_texts(
+            &bytes,
+            track_changes,
+            jubarte::convert::RevisionStyle::default(),
+        )
+        .map_err(|e| eprintln!("warning: no page markers: {e}"))
+        .ok()
     };
     let read = jubarte::markdown::docx_to_markdown(
         &bytes,
         &jubarte::markdown::MarkdownOptions {
-            track_changes: choice.into(),
+            track_changes: track_changes.into(),
             extract_media: None,
-            ..jubarte::markdown::MarkdownOptions::default()
+            ids: true,
+            comments: args.comments == CommentsArg::Inline,
+            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
+            pages,
+            page_markers: !args.no_page_markers,
+            dates: args.dates,
+            select,
         },
     )
     .map_err(|e| e.to_string())?;
@@ -1502,6 +1521,25 @@ fn paginated(
     track_changes: TrackChanges,
     revisions: jubarte::convert::RevisionStyle,
 ) -> String {
+    match page_texts(docx, track_changes, revisions) {
+        Ok(pages) => {
+            let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
+            jubarte::markdown::paginate(markdown, &pages)
+        }
+        Err(e) => {
+            eprintln!("warning: no page markers: {e}");
+            markdown.to_string()
+        }
+    }
+}
+
+/// The text the layout pass paints on each page, with the document's changes
+/// kept, accepted or rejected, for `<!-- page N of M -->` lines.
+fn page_texts(
+    docx: &[u8],
+    track_changes: TrackChanges,
+    revisions: jubarte::convert::RevisionStyle,
+) -> Result<Vec<String>, String> {
     let resolved = match track_changes {
         TrackChanges::All => Ok(std::borrow::Cow::Borrowed(docx)),
         TrackChanges::Accept => jubarte::document_comparer::accept_revisions(docx)
@@ -1522,21 +1560,7 @@ fn paginated(
         )
         .map_err(|e| format!("layout failed: {e}"))
     });
-    match rendered {
-        Ok(rendered) => {
-            let pages: Vec<&str> = rendered
-                .report
-                .pages
-                .iter()
-                .map(|p| p.text.as_str())
-                .collect();
-            jubarte::markdown::paginate(markdown, &pages)
-        }
-        Err(e) => {
-            eprintln!("warning: no page markers: {e}");
-            markdown.to_string()
-        }
-    }
+    rendered.map(|rendered| rendered.report.pages.into_iter().map(|p| p.text).collect())
 }
 
 fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), ConvertFailure> {
@@ -2076,10 +2100,7 @@ fn cli_main() -> ExitCode {
                 run_inspect(&file, json)
             });
         }
-        Some(Command::Text {
-            file,
-            track_changes,
-        }) => return exit_code(run_text(&file, track_changes)),
+        Some(Command::Read { file, args }) => return exit_code(run_text(&file, &args)),
         Some(Command::Edit {
             file,
             plan,

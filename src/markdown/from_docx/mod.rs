@@ -329,7 +329,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         Some(header::CommentFact {
                             parent: threads.reply_of.get(&id).cloned(),
                             author: c.attr("author").map(str::to_string),
-                            date: c.attr("date").map(str::to_string),
                             id,
                         })
                     })

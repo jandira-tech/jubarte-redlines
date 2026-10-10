@@ -506,11 +506,8 @@ impl Inline {
         (leading, trailing)
     }
 
-    pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
-        self.push_styled(text, (bold, italic, false), link);
-    }
-
-    /// [`Inline::push`] with underline, which only the agent view sets.
+    /// Appends text with its bold, italic and underline (underline only in
+    /// the agent view), merging into the last span when they all match.
     pub(crate) fn push_styled(
         &mut self,
         text: &str,
@@ -886,6 +883,12 @@ impl ListIndent {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    impl Inline {
+        pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
+            self.push_styled(text, (bold, italic, false), link);
+        }
+    }
 
     #[test]
     fn resolves_relative_targets() {
