@@ -331,8 +331,10 @@ The options apply to every operation of the command: `--author NAME`
 `clean.docx`, `patch.diff` and `report.jsonl` are written) or
 `--editing-mode` (the edits land directly: `clean.docx` and `report.jsonl`
 only), `--existing-revisions auto|keep|accept|reject|refuse` (default `auto`:
-`keep` when the file already has tracked changes), `--out-dir DIR` (default
-`<stem>.edit` beside the file; refused when it exists unless `--force`).
+`keep` when the file has tracked changes; `--editing-mode` refuses
+`keep`, so pass `accept` or `reject` for such a file), `--out-dir DIR`
+(default `<stem>.edit` beside the file; refused when it exists unless
+`--force`).
 `--style` takes `bold`, `italic`, `underline`, `strike`, `caps`,
 `highlight=yellow`, `font=Calibri`, `size=11` and `color=FF0000`; any other
 value is a paragraph style (`Heading2`). After applying, the command prints

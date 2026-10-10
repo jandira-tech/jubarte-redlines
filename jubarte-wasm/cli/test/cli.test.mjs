@@ -174,6 +174,16 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
   assert.equal(refused.code, 3);
   assert.equal(JSON.parse(refused.out.trim().split("\n").at(-1)).code, "EXISTING_REVISIONS");
   assert.ok(!fs.existsSync(path.join(tmp, "refused")));
+  // Under --editing-mode, a plan that is not JSON or not an object is INVALID_PLAN, exit 3.
+  for (const [name, text] of [["bad.json", "not json"], ["null.json", "null"]]) {
+    const bad = path.join(tmp, name);
+    fs.writeFileSync(bad, text);
+    const out = path.join(tmp, `invalid-${name}`);
+    const invalid = run("edit", untracked, "--plan", bad, "--editing-mode", "--out-dir", out);
+    assert.equal(invalid.code, 3, invalid.err);
+    assert.match(invalid.err, /INVALID_PLAN/);
+    assert.ok(!fs.existsSync(out));
+  }
 });
 
 test("edit and add by flags print the changed blocks, as the binary does", () => {

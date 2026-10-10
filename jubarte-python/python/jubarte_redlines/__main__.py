@@ -256,7 +256,11 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
     doc = _read(args.file)
     plan_text, notes = _edit_plan(args, verb, doc.to_bytes())
     editing = bool(args.editing_mode)
-    if editing and json.loads(plan_text).get("existing_revisions") == "keep":
+    try:
+        parsed = json.loads(plan_text)
+    except ValueError:
+        parsed = None  # the engine reports it as INVALID_PLAN below
+    if editing and isinstance(parsed, dict) and parsed.get("existing_revisions") == "keep":
         print(f"error: {_EDITING_KEEPS}", file=sys.stderr)
         raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))

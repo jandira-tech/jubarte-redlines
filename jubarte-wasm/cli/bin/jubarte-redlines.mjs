@@ -289,11 +289,21 @@ function editPlan(verb, docx, o) {
   }
 }
 
+/** Whether the plan keeps the source's revisions; a plan that is not a JSON
+ * object answers no, and the engine then reports it as INVALID_PLAN. */
+function planKeepsRevisions(plan) {
+  try {
+    return JSON.parse(plan)?.existing_revisions === "keep";
+  } catch {
+    return false;
+  }
+}
+
 function runEdit(verb, file, o) {
   const docx = read(file);
   const { plan, notes } = editPlan(verb, docx, o);
   const editing = Boolean(o.editing_mode);
-  if (editing && JSON.parse(plan).existing_revisions === "keep") {
+  if (editing && planKeepsRevisions(plan)) {
     throw new UsageError("--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject");
   }
   const outDir = o.out_dir ?? path.join(path.dirname(file), `${stem(file)}.edit`);

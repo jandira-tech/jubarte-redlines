@@ -175,6 +175,17 @@ def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path:
     assert "{his or her→an}" in capsys.readouterr().out
 
 
+def test_editing_mode_reports_an_invalid_plan_as_the_binary_does(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Not JSON, or JSON that is not an object: INVALID_PLAN and exit 3, no traceback.
+    for name, text in (("bad.json", "not json"), ("list.json", "[1]")):
+        plan_path = tmp_path / name
+        plan_path.write_text(text)
+        out_dir = tmp_path / f"out_{name}"
+        assert main(["edit", str(letter), "--plan", str(plan_path), "--editing-mode", "--out-dir", str(out_dir)]) == 3
+        assert "INVALID_PLAN" in capsys.readouterr().err
+        assert not out_dir.exists()
+
+
 def test_refusal_summary_message_is_the_engine_detail(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     # Same shape as the Rust CLI: code and operation have their own keys.
     plan = {"schema_version": 1, "author": "Claude", "operations": [{"id": "bad", "kind": "replace", "paragraph": {"index": 2}, "find": "nowhere", "replacement": "x"}]}

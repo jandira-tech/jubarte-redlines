@@ -262,8 +262,7 @@ pub struct CompareArgs {
     #[arg(value_name = "ORIGINAL", required_unless_present = "original")]
     pub original_pos: Option<PathBuf>,
 
-    /// The modified document (.docx or Markdown). With ORIGINAL alone, the
-    /// agent view of that one document is printed (same as `read`).
+    /// The modified document (.docx or Markdown).
     #[arg(value_name = "MODIFIED")]
     pub modified_pos: Option<PathBuf>,
 
