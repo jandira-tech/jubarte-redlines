@@ -109,8 +109,8 @@ fn kv(out: &mut String, key_value: &str, comment: Option<&str>) {
     }
 }
 
-/// `value` as a YAML scalar: plain when a YAML reader takes it back as the
-/// same string, else double-quoted (a JSON string is a valid YAML one).
+/// `value` as a YAML scalar: plain when every YAML reader, 1.1 or 1.2, takes
+/// it back as the same string, else double-quoted (a JSON string is a valid YAML one).
 /// `flow` values sit inside `{…}`, where `,`, `[`, `]`, `{` and `}` end them.
 pub(crate) fn scalar(value: &str, flow: bool) -> String {
     const RESERVED: [&str; 12] = [
@@ -128,7 +128,10 @@ pub(crate) fn scalar(value: &str, flow: bool) -> String {
         && !value.ends_with(':')
         && !(flow && value.contains([',', '[', ']', '{', '}']))
         && !RESERVED.contains(&value.to_ascii_lowercase().as_str())
-        && value.parse::<f64>().is_err();
+        // One word that opens with a digit, `+` or `.` may be a number, a
+        // time (`12:30`, base 60 in YAML 1.1) or a date to some reader.
+        && !(value.starts_with(|c: char| c.is_ascii_digit() || c == '+' || c == '.')
+            && !value.contains(char::is_whitespace));
     if plain {
         value.to_string()
     } else {
@@ -976,6 +979,31 @@ mod tests {
         assert_eq!(paragraphs.len(), 2);
         assert_eq!(story_text(paragraphs[0]), "");
         assert_eq!(story_text(paragraphs[1]), "body");
+    }
+
+    /// pi review r392 F1/F6: values a YAML 1.1 or 1.2 reader takes as a
+    /// number, a time or a date are quoted; prose that starts with a digit
+    /// stays plain.
+    #[test]
+    fn number_and_time_like_values_are_quoted() {
+        for value in [
+            "0x2A",
+            "0o17",
+            "+.inf",
+            ".Inf",
+            "12:30",
+            "1:30:45",
+            "1_000",
+            "2026-10-01",
+            "42",
+            "1e5",
+            "+1",
+        ] {
+            assert_eq!(scalar(value, false), format!("\"{value}\""), "{value}");
+        }
+        for value in ["1. Introduction", "3 survive", "Page 2", "x0x2A"] {
+            assert_eq!(scalar(value, true), value, "{value}");
+        }
     }
 
     /// pi review av2 F18: a line break inside a header paragraph is a line
