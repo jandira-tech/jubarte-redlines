@@ -570,3 +570,406 @@ fn accept_all_keeps_comments_in_the_agent_view() {
         "{out}"
     );
 }
+
+#[test]
+fn selection_parser_accepts_zero_equal_endpoints_and_whitespace() {
+    use jubarte::markdown::Pick;
+    assert_eq!(
+        Select::parse(" , p0 , 2 - p2, p3 - , - p4, t0, ,").unwrap(),
+        Select::Picks(vec![
+            Pick::Paragraphs {
+                from: 0,
+                to: Some(0)
+            },
+            Pick::Paragraphs {
+                from: 2,
+                to: Some(2)
+            },
+            Pick::Paragraphs { from: 3, to: None },
+            Pick::Paragraphs {
+                from: 0,
+                to: Some(4)
+            },
+            Pick::Table(0),
+        ])
+    );
+}
+
+#[test]
+fn selection_parser_rejects_malformed_items_even_after_a_valid_pick() {
+    for item in [
+        "p", "t", "p-", "-p", "p1-p2-p3", "t1-t2", "p1.5", "p1x", "P1",
+    ] {
+        let expected = format!("{item}: expected pN, pN-pM or tN");
+        assert_eq!(
+            Select::parse(&format!("p0, {item}")),
+            Err(expected),
+            "{item}"
+        );
+    }
+    for spec in ["", " ", ",,,", " , \t, \n"] {
+        assert_eq!(Select::parse(spec), Err("no paragraphs selected".into()));
+    }
+}
+
+#[test]
+fn selection_parser_checks_platform_integer_boundaries() {
+    use jubarte::markdown::Pick;
+    let max = usize::MAX;
+    assert_eq!(
+        Select::parse(&format!("p{max},t{max}")),
+        Ok(Select::Picks(vec![
+            Pick::Paragraphs {
+                from: max,
+                to: Some(max)
+            },
+            Pick::Table(max),
+        ]))
+    );
+    let overflow = (max as u128 + 1).to_string();
+    for item in [
+        format!("p{overflow}"),
+        format!("t{overflow}"),
+        format!("p0-p{overflow}"),
+    ] {
+        assert_eq!(
+            Select::parse(&item),
+            Err(format!("{item}: expected pN, pN-pM or tN"))
+        );
+    }
+}
+
+#[test]
+fn selection_parser_rejects_backwards_ranges_in_all_number_spellings() {
+    for item in ["p2-p1", "2-1", "p2-1", "2-p1", "p2 - p1"] {
+        assert_eq!(
+            Select::parse(item),
+            Err(format!("{item}: the range runs backwards"))
+        );
+    }
+}
+
+#[test]
+fn paginate_keeps_multiple_id_lines_with_their_block() {
+    let md = "<!-- p0 -->\nAlpha text here\n\n<!-- p1 empty -->\n<!-- p2 -->\nBeta text here\n";
+    assert_eq!(
+        jubarte::markdown::paginate(md, &["Alpha text here", "Beta text here"]),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nAlpha text here\n\n<!-- page 2 of 2 -->\n\n<!-- p1 empty -->\n<!-- p2 -->\nBeta text here\n"
+    );
+}
+
+#[test]
+fn paginate_preserves_trailing_id_lines_without_a_final_newline() {
+    for md in [
+        "<!-- p0 empty -->",
+        "Alpha text here\n\n<!-- p1 empty -->\n<!-- p2 empty -->",
+    ] {
+        assert_eq!(
+            jubarte::markdown::paginate(md, &["Alpha text here"]),
+            format!("<!-- page 1 of 1 -->\n\n{md}")
+        );
+        assert_eq!(jubarte::markdown::paginate(md, &[]), md);
+    }
+}
+
+#[test]
+fn paginate_does_not_move_id_like_comments_out_of_code_fences() {
+    let md = "Alpha text here\n\n```html\n<!-- p99 -->\nBeta text here\n```\n\n<!-- p1 -->\nGamma text here\n";
+    assert_eq!(
+        jubarte::markdown::paginate(md, &["Alpha text here", "Beta text here Gamma text here"]),
+        "<!-- page 1 of 2 -->\n\nAlpha text here\n\n```html\n<!-- p99 -->\nBeta text here\n```\n\n<!-- page 2 of 2 -->\n\n<!-- p1 -->\nGamma text here\n"
+    );
+}
+
+#[test]
+fn paginate_keeps_id_lines_inside_a_continuing_list() {
+    let md = "<!-- p0 -->\n- Alpha text here\n\n<!-- p1 -->\n- Beta text here\n\n<!-- p2 -->\nGamma text here\n";
+    assert_eq!(
+        jubarte::markdown::paginate(md, &["Alpha text here", "Beta text here Gamma text here"]),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 -->\n- Alpha text here\n\n<!-- p1 -->\n- Beta text here\n\n<!-- page 2 of 2 -->\n\n<!-- p2 -->\nGamma text here\n"
+    );
+}
+
+#[test]
+fn cached_page_markers_can_be_disabled_without_losing_ids_or_text() {
+    let bytes = docx(&format!(
+        "{}<w:p><w:r><w:lastRenderedPageBreak/><w:t>Beta text here</w:t></w:r></w:p>",
+        para("Alpha text here")
+    ));
+    let out = agent_options(
+        &bytes,
+        MarkdownOptions {
+            page_markers: false,
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(
+        body(&out),
+        "<!-- p0 -->\nAlpha text here\n\n<!-- p1 -->\nBeta text here\n"
+    );
+}
+
+#[test]
+fn layout_pages_override_cached_breaks_even_when_cached_markers_are_disabled() {
+    let bytes = docx(&format!(
+        "{}{}",
+        para("Alpha text here"),
+        para("Beta text here")
+    ));
+    let out = agent_options(
+        &bytes,
+        MarkdownOptions {
+            pages: Some(vec!["Alpha text here".into(), "Beta text here".into()]),
+            page_markers: false,
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nAlpha text here\n\n<!-- page 2 of 2 -->\n\n<!-- p1 -->\nBeta text here\n"
+    );
+}
+
+#[test]
+fn empty_layout_pages_do_not_fall_back_to_cached_breaks() {
+    let bytes = docx(r#"<w:p><w:r><w:lastRenderedPageBreak/><w:t>Text</w:t></w:r></w:p>"#);
+    let out = agent_options(
+        &bytes,
+        MarkdownOptions {
+            pages: Some(vec![]),
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(body(&out), "<!-- p0 -->\nText\n");
+}
+
+#[test]
+fn agent_only_options_leave_plain_conversion_byte_identical() {
+    let bytes = commented_docx(THREADED);
+    for track_changes in [
+        TrackChanges::All,
+        TrackChanges::Accept,
+        TrackChanges::Reject,
+    ] {
+        let plain = agent_options(
+            &bytes,
+            MarkdownOptions {
+                track_changes,
+                ..MarkdownOptions::default()
+            },
+        );
+        let configured = agent_options(
+            &bytes,
+            MarkdownOptions {
+                track_changes,
+                ids: false,
+                comments: false,
+                source: Some("different.docx".into()),
+                pages: Some(vec!["Fee.".into(), "Keep it secret".into()]),
+                page_markers: false,
+                dates: true,
+                select: Some(Select::Head(0)),
+                ..MarkdownOptions::default()
+            },
+        );
+        assert_eq!(configured, plain, "{track_changes:?}");
+    }
+}
+
+#[test]
+fn agent_preserves_spaces_across_runs_while_plain_conversion_collapses_them() {
+    let bytes = docx(&format!(
+        "<w:p>{}{}</w:p>",
+        run("  Alpha  "),
+        run("  Beta  ")
+    ));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nAlpha    Beta\n"
+    );
+    assert_eq!(
+        agent_options(&bytes, MarkdownOptions::default()),
+        "Alpha Beta\n"
+    );
+}
+
+#[test]
+fn insertion_before_deletion_still_attributes_the_deleted_side_first() {
+    let bytes = docx(&format!(
+        "<w:p>{}{}</w:p>",
+        ins(2, "John Doe", "new"),
+        del(1, "Ann Counsel", "old")
+    ));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{~~old~>new~~}{>>#1 @AC<<}{>>#2 @JD<<}\n"
+    );
+}
+
+#[test]
+fn a_plain_run_prevents_adjacent_revision_tags_from_merging() {
+    let bytes = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        ins(1, "Ann Counsel", "one"),
+        run(" / "),
+        ins(2, "Ann Counsel", "two")
+    ));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>#1 @AC<<} / {++two++}{>>#2 @AC<<}\n"
+    );
+    assert_eq!(
+        body(&agent_with(&bytes, TrackChanges::Accept, true)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #1 @AC; #2 @AC -->\none / two\n"
+    );
+}
+
+#[test]
+fn three_colliding_author_initials_stay_distinct_in_revision_notes() {
+    let bytes = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        ins(1, "Ann Counsel", "one"),
+        ins(2, "Al Cooper", "two"),
+        ins(3, "Amy Cole", "three")
+    ));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>#1 @AC<<}{++two++}{>>#2 @AC2<<}{++three++}{>>#3 @AC3<<}\n"
+    );
+}
+
+#[test]
+fn missing_revision_id_and_author_have_explicit_unknown_tags() {
+    let bytes = docx("<w:p><w:ins><w:r><w:t>new</w:t></w:r></w:ins></w:p>");
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>#? @??<<}\n"
+    );
+}
+
+#[test]
+fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers() {
+    let bytes = docx(&format!(
+        "<w:tbl><w:tr><w:tc><w:p>{}{}</w:p></w:tc></w:tr></w:tbl>{}",
+        del(1, "Ann Counsel", "old"),
+        ins(2, "Ann Counsel", "new"),
+        para("After")
+    ));
+    for (mode, text) in [(TrackChanges::Accept, "new"), (TrackChanges::Reject, "old")] {
+        assert_eq!(
+            body(&agent_with(&bytes, mode, true)),
+            format!(
+                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, rev #1+2 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
+            )
+        );
+    }
+}
+
+#[test]
+fn rejecting_changes_preserves_comment_threads_and_hidden_comment_ids() {
+    let bytes = commented_docx(THREADED);
+    for comments in [true, false] {
+        assert_eq!(
+            body(&agent_with(&bytes, TrackChanges::Reject, comments)),
+            body(&agent_with(&bytes, TrackChanges::All, comments))
+        );
+    }
+}
+
+#[test]
+fn unknown_thread_parents_do_not_create_dangling_reply_tags() {
+    let extended = THREADED.replace(
+        "w15:paraIdParent=\"11A5D0F2\"",
+        "w15:paraIdParent=\"FFFFFFFF\"",
+    );
+    let out = agent(&commented_docx(&extended));
+    assert!(body(&out).contains("{>>#c6 @AS: Disagree.<<}"), "{out}");
+    assert!(!body(&out).contains(" re #c"), "{out}");
+}
+
+#[test]
+fn resolved_boolean_true_is_equivalent_to_one_on_comment_threads() {
+    let numeric = THREADED.replacen("w15:done=\"0\"", "w15:done=\"1\"", 1);
+    let boolean = THREADED.replacen("w15:done=\"0\"", "w15:done=\"true\"", 1);
+    let out = agent(&commented_docx(&boolean));
+    assert!(body(&out).contains("#c5 @AC resolved:"), "{out}");
+    assert_eq!(out, agent(&commented_docx(&numeric)));
+}
+
+#[test]
+fn comment_dates_include_revision_dates_when_deciding_whether_to_print_inline() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            5,
+            "Ann Counsel",
+            "AC",
+            "2026-10-03T14:05:00Z",
+            "11A5D0F2",
+            "Check this."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &format!(
+            "<w:p>{}{}</w:p>",
+            ins(1, "Ann Counsel", "New text"),
+            reference(5)
+        ),
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let dated = agent_options(
+        &bytes,
+        MarkdownOptions {
+            dates: true,
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(
+        body(&dated),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>#1 @AC 2026-10-01T09:00:00Z<<}{>>#c5 @AC 2026-10-03T14:05:00Z: Check this.<<}\n"
+    );
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>#1 @AC<<}{>>#c5 @AC: Check this.<<}\n"
+    );
+}
+
+#[test]
+fn hidden_comments_deduplicate_references_and_ignore_missing_comments() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            5,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "11A5D0F2",
+            "Check this."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &format!(
+            "<w:p>{}{}{}{}</w:p>{}",
+            run("Text"),
+            reference(5),
+            reference(5),
+            reference(999),
+            para("After")
+        ),
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    assert_eq!(
+        body(&agent_with(&bytes, TrackChanges::All, false)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 comments #c5 -->\nText\n\n<!-- p1 -->\nAfter\n"
+    );
+}
