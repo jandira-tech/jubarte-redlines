@@ -3142,11 +3142,13 @@ fn id_line_number_is_the_label_word_prints() {
         content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
         rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
         xml: &format!(
-            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0">{}{}{}{}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#,
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0">{}{}{}{}{}{}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#,
             lvl(0, "decimal", "%1)"),
             lvl(1, "lowerLetter", "%2)"),
             lvl(2, "lowerRoman", "%3)"),
-            lvl(3, "upperLetter", "%1.%4")
+            lvl(3, "upperLetter", "%1.%4"),
+            lvl(4, "decimalZero", r"&quot;Ch\&quot; %5"),
+            lvl(5, "decimal", "X%6.%7Y")
         ),
     };
     let item = |ilvl: u8, text: &str| {
@@ -3162,6 +3164,8 @@ fn id_line_number_is_the_label_word_prints() {
         item(1, "two a"),
         item(2, "two a i"),
         item(3, "deep"),
+        item(4, "quoted"),
+        item(5, "deeper"),
     ]
     .concat();
     let out = body(&agent(&common::docx::docx_with(&body_xml, &[numbering]))).to_string();
@@ -3173,6 +3177,9 @@ fn id_line_number_is_the_label_word_prints() {
         (4, "a)"),
         (5, "i)"),
         (6, "2.A"),
+        // pi review r392b tests F5: a quote or backslash in the label is
+        // escaped, so the clause still parses.
+        (7, r#"\"Ch\\\" 01"#),
     ] {
         assert!(
             out.contains(&format!("<!-- p{p} num \"{label}\" -->")),
@@ -3180,6 +3187,10 @@ fn id_line_number_is_the_label_word_prints() {
         );
     }
     assert!(out.contains("1. one\n"), "{out}");
+    // pi review r392b F7: a `%k` deeper than the paragraph's level (here
+    // `%7` at level 6, undefined) makes Word print no label and no list
+    // indent (Word probe lvl_undef_1010): a plain paragraph.
+    assert!(out.contains("<!-- p8 -->\ndeeper"), "{out}");
 }
 
 /// A comment no story anchors (no range, no reference) is not an open

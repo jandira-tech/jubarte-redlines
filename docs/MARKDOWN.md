@@ -197,7 +197,10 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches.
 - `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
-  in its level's number format: `1)`, `a)`, `ii.`, `1.2`); `bullet` a
+  in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
+  it is escaped with `\`). A level text naming a deeper level (`%3` on
+  level 2) gets no label, and no list indent, from Word: the view shows
+  a plain paragraph. `bullet` is a
   bulleted item. Labels are not document text, and a list body keeps its
   Markdown marker (`1.`).
 - `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:

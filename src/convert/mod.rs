@@ -5498,6 +5498,9 @@ impl Numbering {
     }
 
     fn render(&self, abs: &str, num_id: &str, ilvl: u32, lvl: &NumLevel, this: u32) -> String {
+        if names_deeper_level(&lvl.text, ilvl) {
+            return String::new();
+        }
         if lvl.fmt == NumFmt::Bullet {
             // Word ListBullet is U+F0B7 in Symbol (cmap has F0B7/00B7, not
             // U+2022). Mapping PUA→U+2022 painted Aptos 0x95 and skipped
@@ -5570,6 +5573,23 @@ impl Numbering {
         }
         out
     }
+}
+
+/// Whether a level text names a level deeper than `ilvl` (`%3` on level 1,
+/// 0-based). Word then prints no label and no list indent, though the
+/// paragraph still counts (probe lvl_undef_1010).
+pub(crate) fn names_deeper_level(text: &str, ilvl: u32) -> bool {
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '%'
+            && let Some(k) = chars.clone().next().and_then(|d| d.to_digit(10))
+            && (1..=9).contains(&k)
+            && k > ilvl + 1
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn parse_num_fmt(val: &str) -> NumFmt {
@@ -43801,6 +43821,26 @@ mod numbering_tests {
         format!(
             r#"<w:lvl w:ilvl="{ilvl}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/>{extra}</w:lvl>"#
         )
+    }
+
+    #[test]
+    fn a_label_naming_a_deeper_level_is_no_label_but_still_counts() {
+        // Word probe lvl_undef_1010: `%1.%3` on level 1 prints nothing and
+        // drops the list indent, yet restarts level 2 (i, ii, then i).
+        let mut n = numbering_xml(
+            &format!(
+                "{}{}{}",
+                lvl(0, "decimal", "%1.", ""),
+                lvl(1, "lowerLetter", "%1.%3", ""),
+                lvl(2, "lowerRoman", "%3)", "")
+            ),
+            r#"<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>"#,
+        );
+        let labels: Vec<String> = [0, 2, 2, 1, 2, 0]
+            .iter()
+            .map(|&l| n.next_marker("1", l).trim().to_string())
+            .collect();
+        assert_eq!(labels, ["1.", "i)", "ii)", "", "i)", "2."]);
     }
 
     #[test]

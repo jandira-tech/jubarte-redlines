@@ -848,7 +848,11 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     match f.marker {
         Some("-") => clauses.push("bullet".to_string()),
-        Some(label) => clauses.push(format!("num \"{label}\"")),
+        // `\` and `"` escaped, so the quoted label always parses.
+        Some(label) => clauses.push(format!(
+            "num \"{}\"",
+            label.replace('\\', "\\\\").replace('"', "\\\"")
+        )),
         None => {}
     }
     if f.page_break {

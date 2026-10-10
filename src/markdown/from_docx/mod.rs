@@ -1498,8 +1498,13 @@ impl Writer<'_> {
         }
         let counters = *counters;
         // `%k` is level k's counter in level k's format; a level not used
-        // yet stands at its start.
+        // yet stands at its start. A `%k` deeper than the paragraph's own
+        // level makes Word print no label and no list indent, though the
+        // paragraph counted above (probe lvl_undef_1010): no list item.
         let text = level.text.unwrap_or_else(|| format!("%{}.", ilvl + 1));
+        if crate::convert::names_deeper_level(&text, u32::try_from(ilvl).unwrap_or(u32::MAX)) {
+            return None;
+        }
         let mut label = String::new();
         let mut chars = text.chars().peekable();
         while let Some(c) = chars.next() {
