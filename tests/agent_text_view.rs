@@ -1005,3 +1005,19 @@ fn cli_read_prints_the_agent_view_with_flags() {
     );
     assert!(!both.status.success());
 }
+
+#[test]
+fn received_docx_tracked_view_matches_the_golden() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    assert_eq!(ok(&["read", "received.docx"], dir.path()), golden("received.tracked.md"));
+}
+
+#[test]
+fn received_docx_other_views_match_their_goldens() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    assert_eq!(ok(&["read", "received.docx", "--comments", "none"], dir.path()), golden("received.no-comments.md"));
+    assert_eq!(ok(&["read", "received.docx", "--track-changes", "accept"], dir.path()), golden("received.accept.md"));
+    assert_eq!(ok(&["read", "received.docx", "--track-changes", "reject"], dir.path()), golden("received.reject.md"));
+}

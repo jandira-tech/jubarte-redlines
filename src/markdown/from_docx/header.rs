@@ -728,56 +728,131 @@ fn part_two(out: &mut String, f: &Facts) {
     }
 }
 
-/// A header/footer paragraph's text with fields as `{PAGE}`: field codes
-/// print, cached results do not.
-pub(crate) fn story_text(p: &Element) -> String {
-    let mut out = String::new();
-    let mut instr: Option<String> = None;
-    let mut in_result = false;
-    for run in p.elements() {
-        match run.local() {
-            "fldSimple" => {
-                let code = run
-                    .attr("instr")
-                    .unwrap_or("")
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("FIELD")
-                    .to_uppercase();
-                out.push_str(&format!("{{{code}}}"));
-            }
-            "r" => {
-                for child in run.elements() {
-                    match child.local() {
-                        "fldChar" => match child.attr("fldCharType") {
-                            Some("begin") => instr = Some(String::new()),
-                            Some("separate") => in_result = true,
-                            Some("end") => {
-                                if let Some(code) = instr.take() {
-                                    let code = code
-                                        .split_whitespace()
-                                        .next()
-                                        .unwrap_or("FIELD")
-                                        .to_uppercase();
-                                    out.push_str(&format!("{{{code}}}"));
-                                }
-                                in_result = false;
-                            }
-                            _ => {}
-                        },
-                        "instrText" => {
-                            if let Some(i) = instr.as_mut() {
-                                i.push_str(&child.text());
-                            }
-                        }
-                        "t" if instr.is_none() && !in_result => out.push_str(&child.text()),
-                        "tab" => out.push('\t'),
-                        _ => {}
+/// A header/footer part's paragraphs in document order, including those
+/// Word wraps in block-level content controls (its page-number gallery puts
+/// the footer's `PAGE` paragraph inside a `w:sdt`) or custom XML. Tables and
+/// text boxes are not entered.
+pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
+    fn walk<'a>(parent: &'a Element, out: &mut Vec<&'a Element>) {
+        for child in parent.elements() {
+            match child.local() {
+                "p" => out.push(child),
+                "sdt" => {
+                    if let Some(content) = child.child("sdtContent") {
+                        walk(content, out);
                     }
                 }
+                "customXml" => walk(child, out),
+                _ => {}
             }
-            _ => {}
         }
     }
-    out.trim().to_string()
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out
+}
+
+/// A header/footer paragraph's text with fields as `{PAGE}`: field codes
+/// print, cached results do not. Runs inside hyperlinks, content controls,
+/// smart tags, custom XML and insertions count; deleted runs do not.
+pub(crate) fn story_text(p: &Element) -> String {
+    #[derive(Default)]
+    struct State {
+        out: String,
+        instr: Option<String>,
+        in_result: bool,
+    }
+    fn code(instr: &str) -> String {
+        let name = instr
+            .split_whitespace()
+            .next()
+            .unwrap_or("FIELD")
+            .to_uppercase();
+        format!("{{{name}}}")
+    }
+    fn walk(parent: &Element, s: &mut State) {
+        for run in parent.elements() {
+            match run.local() {
+                "fldSimple" => s.out.push_str(&code(run.attr("instr").unwrap_or(""))),
+                "hyperlink" | "smartTag" | "customXml" | "ins" => walk(run, s),
+                "sdt" => {
+                    if let Some(content) = run.child("sdtContent") {
+                        walk(content, s);
+                    }
+                }
+                "r" => {
+                    for child in run.elements() {
+                        match child.local() {
+                            "fldChar" => match child.attr("fldCharType") {
+                                Some("begin") => s.instr = Some(String::new()),
+                                Some("separate") => s.in_result = true,
+                                Some("end") => {
+                                    if let Some(instr) = s.instr.take() {
+                                        s.out.push_str(&code(&instr));
+                                    }
+                                    s.in_result = false;
+                                }
+                                _ => {}
+                            },
+                            "instrText" => {
+                                if let Some(i) = s.instr.as_mut() {
+                                    i.push_str(&child.text());
+                                }
+                            }
+                            "t" if s.instr.is_none() && !s.in_result => {
+                                s.out.push_str(&child.text())
+                            }
+                            "tab" => s.out.push('\t'),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut s = State::default();
+    walk(p, &mut s);
+    s.out.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::markdown::from_docx::ooxml::parse_xml;
+
+    const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+    fn ftr(inner: &str) -> Element {
+        parse_xml(format!("<w:ftr {W}>{inner}</w:ftr>").as_bytes()).unwrap()
+    }
+
+    const PAGE_RUNS: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+
+    #[test]
+    fn a_page_field_in_a_block_content_control_is_found() {
+        let root = ftr(&format!(
+            "<w:sdt><w:sdtPr/><w:sdtContent><w:p>{PAGE_RUNS}</w:p></w:sdtContent></w:sdt><w:p/>"
+        ));
+        let paragraphs = story_paragraphs(&root);
+        assert_eq!(paragraphs.len(), 2);
+        assert_eq!(story_text(paragraphs[0]), "{PAGE}");
+        assert_eq!(story_text(paragraphs[1]), "");
+    }
+
+    #[test]
+    fn runs_inside_inline_wrappers_count_and_deletions_do_not() {
+        let root = ftr(&format!(
+            r#"<w:p><w:hyperlink><w:r><w:t>Page </w:t></w:r></w:hyperlink><w:sdt><w:sdtContent>{PAGE_RUNS}</w:sdtContent></w:sdt><w:ins><w:r><w:t> of </w:t></w:r></w:ins><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:fldSimple w:instr=" numpages "><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p>"#
+        ));
+        assert_eq!(story_text(story_paragraphs(&root)[0]), "Page {PAGE} of {NUMPAGES}");
+    }
+
+    #[test]
+    fn tables_in_a_footer_are_not_entered() {
+        let root = ftr("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>body</w:t></w:r></w:p>");
+        let paragraphs = story_paragraphs(&root);
+        assert_eq!(paragraphs.len(), 1);
+        assert_eq!(story_text(paragraphs[0]), "body");
+    }
 }

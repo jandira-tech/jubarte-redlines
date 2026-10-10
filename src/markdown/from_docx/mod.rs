@@ -435,7 +435,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     let Ok(Some(root)) = package.xml(&path) else {
                         continue;
                     };
-                    let paragraphs: Vec<&Element> = root.children_named("p").collect();
+                    let paragraphs = header::story_paragraphs(&root);
                     let (index, text, align) = paragraphs
                         .iter()
                         .enumerate()
