@@ -92,6 +92,13 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert out.startswith(f"---\nsource: {word} (not written; -o keeps it)\n"), out
     assert "{~~30~>45~~}" in out, out
     assert not word.exists()
+    # The view is the output, so --quiet does not hide it (pi review av5 F6);
+    # read options apply to it.
+    assert main([str(a), str(b), "--quiet"]) == 0
+    assert "{~~30~>45~~}" in capsys.readouterr().out
+    assert main([str(a), str(b), "--track-changes", "accept"]) == 0
+    accepted = capsys.readouterr().out
+    assert "{~~" not in accepted and "rev #" in accepted, accepted
     # -o writes it; compare A B writes the default name.
     assert main([str(a), str(b), "-o", str(word), "--quiet"]) == 0
     assert word.read_bytes().startswith(b"PK")

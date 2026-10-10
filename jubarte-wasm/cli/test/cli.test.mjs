@@ -271,6 +271,12 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.ok(shown.out.startsWith(`---\nsource: ${word} (not written; -o keeps it)\n`), shown.out);
   assert.ok(shown.out.includes("{~~30~>45~~}"), shown.out);
   assert.ok(!fs.existsSync(word));
+  // The view is the output, so --quiet does not hide it (pi review av5 F6);
+  // read options apply to it.
+  assert.ok(run(a, b, "--quiet").out.includes("{~~30~>45~~}"));
+  const acceptedView = run(a, b, "--track-changes", "accept");
+  assert.equal(acceptedView.code, 0, acceptedView.err);
+  assert.ok(!acceptedView.out.includes("{~~") && acceptedView.out.includes("rev #"), acceptedView.out);
   const compared = run(a, b, "-o", word, "--quiet");
   assert.equal(compared.code, 0, compared.err);
   assert.equal(compared.out, "");
