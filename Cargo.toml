@@ -82,7 +82,7 @@ needless_pass_by_value = "warn"
 default = ["cli", "fast-alloc", "self-update"]
 # The `jubarte` binary's CLI (clap). Library consumers can opt out with
 # `default-features = false` to keep the dependency tree minimal.
-cli = ["dep:clap"]
+cli = ["dep:clap", "dep:same-file"]
 # CLI global allocator (mimalloc). Default-on; disable with
 # `--no-default-features --features cli` to fall back to the system allocator
 # (used for allocator A/B measurement). Only the binary installs it, but a
@@ -115,6 +115,9 @@ pulldown-cmark = { version = "0.13", default-features = false } # Markdown → D
 similar = { version = "3", default-features = false, features = ["text"] } # Markdown and Git/GitHub unified text diffs
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
 clap = { version = "4.5", features = ["derive", "string", "wrap_help"], optional = true }
+# CLI file identity: a side file that names the input through a hard link,
+# a symlink or another case is refused (Windows has no stable std API).
+same-file = { version = "1", optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
 # (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);
 # mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the

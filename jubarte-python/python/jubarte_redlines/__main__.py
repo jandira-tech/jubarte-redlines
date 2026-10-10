@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 from collections.abc import Sequence
@@ -100,6 +101,26 @@ def _named_kind(path: Path) -> str | None:
 def _ensure_writable(path: Path, force: bool) -> None:
     if path.exists() and not force:
         raise CliError(f"output '{path}' already exists (use --force to overwrite)")
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two CLI paths name the same file. Two existing paths are
+    compared by identity, which sees through hard links, symlinks and a
+    volume that ignores case; a path not written yet by its resolved form."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return a.resolve() == b.resolve()
+
+
+def _check_side_file(side: Path, flag: str, others: tuple[tuple[Path, str], ...], force: bool) -> None:
+    """A side file (``--report``, ``--font-report``) is written apart from the
+    output, after the input is read, so sharing a path with either would
+    silently replace one with the other; ``--force`` never allows that."""
+    for other, name in others:
+        if _same_file(side, other):
+            raise CliError(f"{flag} '{side}' is the same file as the {name}")
+    _ensure_writable(side, force)
 
 
 def _write(path: Path, data: bytes | str) -> int:
@@ -406,11 +427,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
             return _write_updated_fields(args, doc)
     output: Path = args.output or args.file.with_suffix(".pdf")
     want_pdf = args.pdf or not args.png
-    for side, what in ((args.font_report, "--font-report"), (args.report, "--report")):
+    for side, flag in ((args.font_report, "--font-report"), (args.report, "--report")):
         if side is not None:
-            if side.resolve() in (output.resolve(), args.file.resolve()):
-                raise CliError(f"{what} '{side}' is the same file as the PDF output or the input")
-            _ensure_writable(side, args.force)
+            _check_side_file(side, flag, ((output, "PDF output"), (args.file, "input")), args.force)
     selected = None if args.pages is None else _parse_pages(args.pages)
     if selected is not None and not args.png:
         raise CliError("--pages selects PNG pages; add --png")
@@ -442,9 +461,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
 def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
     """`convert --update-fields`: the .docx with refreshed field results."""
     output: Path = args.output
-    _ensure_writable(output, args.force)
     if args.report is not None:
-        _ensure_writable(args.report, args.force)
+        _check_side_file(args.report, "--report", ((output, "Word output"), (args.file, "input")), args.force)
+    _ensure_writable(output, args.force)
     updated = doc.update_fields()
     for field in updated.fields:
         print(f"{field.paragraph}\t{field.kind}\t{json.dumps(field.old, ensure_ascii=False)} -> {json.dumps(field.new, ensure_ascii=False)}")

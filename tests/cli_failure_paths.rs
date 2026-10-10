@@ -159,6 +159,116 @@ fn output_directories_produce_write_errors_without_replacing_input() {
 }
 
 #[test]
+fn convert_update_fields_refuses_a_report_on_the_input_or_the_output() {
+    // CodeRabbit on #393: the report is written apart from the .docx, so a
+    // shared path would silently replace one with the other.
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(
+        r#"<w:p><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    let update = [
+        "convert",
+        "input.docx",
+        "-o",
+        "updated.docx",
+        "--update-fields",
+    ];
+    for (report, force, says) in [
+        ("input.docx", false, "the same file as the input"),
+        ("input.docx", true, "the same file as the input"),
+        ("updated.docx", false, "the same file as the Word output"),
+    ] {
+        let args = [
+            update.as_slice(),
+            &["--report", report],
+            if force { &["--force"][..] } else { &[] },
+        ]
+        .concat();
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(&format!("--report '{report}' is {says}")),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("input.docx")).unwrap(),
+            original
+        );
+        assert!(!dir.path().join("updated.docx").exists());
+    }
+    // An existing report is kept without --force, and replaced with it.
+    std::fs::write(dir.path().join("fields.json"), "keep").unwrap();
+    let kept = run(
+        dir.path(),
+        &[update.as_slice(), &["--report", "fields.json"]].concat(),
+    );
+    assert_eq!(kept.status.code(), Some(1), "{kept:?}");
+    assert!(String::from_utf8_lossy(&kept.stderr).contains("already exists"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("fields.json")).unwrap(),
+        "keep"
+    );
+    assert!(!dir.path().join("updated.docx").exists());
+    success(&run(
+        dir.path(),
+        &[update.as_slice(), &["--report", "fields.json", "--force"]].concat(),
+    ));
+    assert!(
+        std::fs::read_to_string(dir.path().join("fields.json"))
+            .unwrap()
+            .contains("NUMPAGES")
+    );
+}
+
+#[test]
+fn convert_update_fields_refuses_a_report_that_names_the_input_another_way() {
+    // A hard link, a symlink, and on a volume that ignores case a case
+    // variant all name the input; writing the report through any of them
+    // used to replace the input with JSON.
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(
+        r#"<w:p><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    std::fs::hard_link(dir.path().join("input.docx"), dir.path().join("hard.json")).unwrap();
+    let mut aliases = vec!["hard.json"];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("input.docx", dir.path().join("link.json")).unwrap();
+        aliases.push("link.json");
+    }
+    if dir.path().join("INPUT.DOCX").exists() {
+        aliases.push("INPUT.DOCX");
+    }
+    for alias in aliases {
+        let args = [
+            "convert",
+            "input.docx",
+            "-o",
+            "updated.docx",
+            "--update-fields",
+            "--report",
+            alias,
+            "--force",
+        ];
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(&format!("--report '{alias}' is the same file as the input")),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("input.docx")).unwrap(),
+            original
+        );
+        assert!(!dir.path().join("updated.docx").exists());
+    }
+}
+
+#[test]
 fn debug_diff_disambiguates_duplicate_stems_and_duplicate_paths() {
     let dir = tempfile::tempdir().unwrap();
     for (folder, text) in [("old", "Original clause"), ("new", "Revised clause")] {

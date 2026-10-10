@@ -3610,7 +3610,7 @@ fn an_author_who_changed_only_a_header_has_a_handle() {
             rel_type: HEADER_REL,
             xml: &header,
         }],
-        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
     );
     let full = agent(&bytes);
     assert!(full.contains("\n  HG: Hedda Gabler"), "{full}");
@@ -3626,4 +3626,53 @@ fn an_author_who_changed_only_a_header_has_a_handle() {
             "--by {by}: {range}"
         );
     }
+}
+
+#[test]
+fn a_header_reviser_takes_a_handle_before_a_commenter_with_the_same_initials() {
+    // pi review of #394: revision authors, a header's too, take handles
+    // before commenters; the later of two equal handles gets a 2.
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        ins(7, "Hedda Gabler", "Draft")
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            9,
+            "Henry Gale",
+            "HG",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Why?"
+        )
+    );
+    let body = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}</w:p>"#,
+        run("Body"),
+        reference(9)
+    );
+    let bytes = common::docx::docx_with_sect(
+        &body,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let out = agent(&bytes);
+    let reviser = out.find("\n  HG: Hedda Gabler").expect(&out);
+    let commenter = out.find("\n  HG2: Henry Gale").expect(&out);
+    assert!(reviser < commenter, "{out}");
+    assert!(out.contains("{>>#c9 @HG2: Why?<<}"), "{out}");
 }

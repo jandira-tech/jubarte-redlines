@@ -1366,6 +1366,7 @@ dependencies = [
  "rdocx-opc",
  "regex",
  "rustybuzz",
+ "same-file",
  "saphyr",
  "self_update",
  "serde",

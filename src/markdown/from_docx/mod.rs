@@ -1152,9 +1152,11 @@ impl Writer<'_> {
         self.revisions.pop();
     }
 
-    /// A comment range start or end. The commented text is highlighted; a range
-    /// that spans paragraphs gets one highlight per paragraph, because
-    /// CriticMarkup cannot cross a block.
+    /// A comment range start or end. With comments shown, the commented text
+    /// is highlighted; a range that spans paragraphs gets one highlight per
+    /// paragraph, because CriticMarkup cannot cross a block. With them hidden
+    /// (the agent view's `--comments none`), nothing is highlighted: the range
+    /// is only tracked, so each line it covers can name it.
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
         if self.agent
             && !self.in_comment

@@ -271,6 +271,49 @@ mod tests {
         }
     }
 
+    /// The text pulldown-cmark, the crate's Markdown reader, keeps of `s`.
+    fn reader_text(s: &str) -> String {
+        pulldown_cmark::Parser::new(s)
+            .filter_map(|event| match event {
+                pulldown_cmark::Event::Text(text) => Some(text.into_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn underscore_emphasis_reads_as_the_markdown_reader_reads_it() {
+        // pi review of #394: the inputs it traced against CommonMark. In
+        // `_x(__(y)__)__` the last run closes on the first, since CommonMark's
+        // openers_bottom also keys on whether the closer can open (markdown-it
+        // agrees: `<em>x(<strong>(y)</strong>)</em>_`).
+        for s in [
+            "_x(__(y)__)__",
+            "_foo__",
+            "__foo_",
+            "___foo___",
+            "_foo___",
+            "__a_ b__",
+            "___foo___bar___",
+            "_foo___bar___baz_",
+            "_a _b_ c_",
+            "_(__foo__)_",
+            "-_ x__-",
+            "-___-___-",
+            "___foo__",
+            "__foo___",
+            "foo_bar_baz_",
+            "snake__case",
+            "__init__",
+            "foo-_(bar)_",
+            "foo__bar__",
+            "__x__y",
+            "a _b_ c",
+        ] {
+            assert_eq!(plain_anchor(s), reader_text(s), "{s}");
+        }
+    }
+
     #[test]
     fn unescape_markdown_resolves_punctuation_escapes_only() {
         assert_eq!(unescape_markdown("\\*a\\_b\\\\ \\n \\é"), "*a_b\\ \\n \\é");
