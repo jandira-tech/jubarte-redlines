@@ -526,3 +526,43 @@ fn hidden_comments_are_listed_on_the_id_line() {
         "<!-- page 1 of 1 -->\n\n<!-- p0 comments #c5 #c6 -->\nFee. Late amounts accrue interest.\n\n<!-- p1 comments #c11 -->\nKeep it secret.\n"
     );
 }
+
+#[test]
+fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
+    let p0 = format!(
+        "<w:p>{}{}{}{}</w:p>",
+        run("Deliver "),
+        ins(0, "Ann Counsel", "quarterly"),
+        run(" reports "),
+        del(1, "Ann Counsel", "weekly")
+    );
+    let p1 = format!(
+        "<w:p>{}{}{}</w:p>",
+        run("Within "),
+        del(3, "Ann Counsel", "thirty"),
+        ins(4, "Ann Counsel", "forty-five")
+    );
+    let bytes = docx(&format!("{p0}{p1}"));
+    assert_eq!(
+        body(&agent_with(&bytes, TrackChanges::Accept, true)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #0 @AC; #1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev #3+4 @AC -->\nWithin forty-five\n"
+    );
+    assert_eq!(
+        body(&agent_with(&bytes, TrackChanges::Reject, true)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #0 @AC; #1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev #3+4 @AC -->\nWithin thirty\n"
+    );
+}
+
+#[test]
+fn accept_all_keeps_comments_in_the_agent_view() {
+    let out = body(&agent_with(
+        &commented_docx(THREADED),
+        TrackChanges::Accept,
+        true,
+    ))
+    .to_string();
+    assert!(
+        out.contains("{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}"),
+        "{out}"
+    );
+}

@@ -165,6 +165,8 @@ pub(crate) struct Critic {
     /// The paragraph is joined to more text on the same line (a flattened
     /// table's cells): see [`space_into_last_change`].
     inline_end: bool,
+    /// Agent view: runs of spaces stay as the file holds them.
+    keep_spaces: bool,
 }
 
 impl Critic {
@@ -175,6 +177,11 @@ impl Critic {
             plain: true,
             ..Self::default()
         }
+    }
+
+    /// Agent view: keeps runs of spaces as the file holds them.
+    pub(crate) fn set_keep_spaces(&mut self) {
+        self.keep_spaces = true;
     }
 
     /// Marks the paragraph as joined to more text on the same line.
@@ -275,6 +282,9 @@ impl Critic {
         render(&nodes, &mut pieces, self.plain, &mut 0);
         wrap_markers(&mut pieces);
         let mut inline = Inline::default();
+        if self.keep_spaces {
+            inline.keep_spaces();
+        }
         for piece in pieces {
             inline.push(&piece.text, piece.bold, piece.italic, piece.link.as_deref());
         }

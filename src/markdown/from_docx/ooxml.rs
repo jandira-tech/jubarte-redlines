@@ -476,9 +476,16 @@ pub(crate) struct Span {
 #[derive(Debug, Default)]
 pub(crate) struct Inline {
     spans: Vec<Span>,
+    /// Agent view: runs of spaces are not collapsed.
+    keep_spaces: bool,
 }
 
 impl Inline {
+    /// Agent view: keeps runs of spaces as the file holds them.
+    pub(crate) fn keep_spaces(&mut self) {
+        self.keep_spaces = true;
+    }
+
     /// Whether the text starts and ends with a space, which rendering trims.
     pub(crate) fn edges(&self) -> (bool, bool) {
         let spaced = |c: char| matches!(c, ' ' | '\u{a0}' | '\t');
@@ -548,7 +555,7 @@ impl Inline {
             }
             index = end;
         }
-        tidy_inline(&out)
+        tidy_inline(&out, self.keep_spaces)
     }
 }
 
@@ -613,7 +620,7 @@ fn split_ws(s: &str) -> (&str, &str, &str) {
 }
 
 /// Collapse runs of spaces, trim line ends, and drop empty lines inside a paragraph.
-fn tidy_inline(s: &str) -> String {
+fn tidy_inline(s: &str, keep_spaces: bool) -> String {
     let mut lines = Vec::new();
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
@@ -621,7 +628,7 @@ fn tidy_inline(s: &str) -> String {
         for c in line.chars() {
             let is_space = c == ' ' || c == '\u{a0}';
             if is_space {
-                if !prev_space {
+                if keep_spaces || !prev_space {
                     out.push(' ');
                 }
             } else {

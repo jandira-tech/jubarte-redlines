@@ -973,6 +973,9 @@ impl Writer<'_> {
         if self.flattening > 0 {
             inline.set_inline_end();
         }
+        if self.agent {
+            inline.set_keep_spaces();
+        }
         let mut extra = Vec::new();
         let mut fields = Vec::new();
         let (bold, italic) = p
