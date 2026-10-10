@@ -17,7 +17,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
-- `jubarte FILE` prints the agent view (`read FILE`); `jubarte A B` prints
+- `jubarte FILE` prints the agent view (`read FILE`; a lone name without
+  an extension needs `read`); `jubarte A B` prints
   the agent view of their redline, with the `read` options (`-o FILE` writes
   it instead; `compare A B` still writes `<A>_v_<B>.docx`). Same on the
   Python and npm CLIs.

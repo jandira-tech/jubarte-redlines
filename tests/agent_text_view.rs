@@ -1586,6 +1586,22 @@ fn select_from_flags_refuses_by_without_changed_and_changed_with_picks() {
     assert!(Select::from_flags(None, None, None, false, Some("AC")).is_err());
     assert!(Select::from_flags(Some("p1"), None, None, true, None).is_err());
     assert!(Select::from_flags(None, Some(2), None, true, None).is_err());
+    // pi review r392 F3: the Python and WASM APIs call from_flags directly, so
+    // a blank author is refused here as well as by clap, and padding is cut.
+    // pi review r392b F6: one `@` marks a handle; `@@AC` and `@ AC` name
+    // nobody.
+    for blank in ["", "  ", "@", " @ ", "@@AC", "@ AC"] {
+        assert!(
+            Select::from_flags(None, None, None, true, Some(blank)).is_err(),
+            "{blank:?}"
+        );
+    }
+    assert_eq!(
+        Select::from_flags(None, None, None, true, Some(" AC ")),
+        Ok(Some(Select::Changed {
+            by: Some("AC".into())
+        }))
+    );
 }
 
 #[test]
@@ -2599,6 +2615,54 @@ fn editing_mode_refuses_to_keep_other_tracked_changes() {
         xml.contains("forty-five") && xml.contains("Overdue"),
         "{xml}"
     );
+    // pi review av4 F14: rejecting them restores the base text, and a second
+    // run into the same folder needs --force with flag operations too.
+    let reject = |force: bool| {
+        let mut args = vec![
+            "edit",
+            "one/redline.docx",
+            "-p",
+            "p2",
+            "--anchor",
+            "Late",
+            "--content",
+            "Overdue",
+            "--editing-mode",
+            "--existing-revisions",
+            "reject",
+            "--out-dir",
+            "four",
+        ];
+        if force {
+            args.push("--force");
+        }
+        jubarte(&args, dir.path())
+    };
+    let first = reject(false);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let xml = common::docx::part_string(
+        &std::fs::read(dir.path().join("four/clean.docx")).unwrap(),
+        "word/document.xml",
+    )
+    .unwrap();
+    assert!(
+        xml.contains("thirty") && !xml.contains("forty-five") && xml.contains("Overdue"),
+        "{xml}"
+    );
+    assert!(
+        !reject(false).status.success(),
+        "an existing folder needs --force"
+    );
+    let forced = reject(true);
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
 }
 
 /// A backslash in a table cell is escaped once, and a pipe stays a pipe.
@@ -2656,4 +2720,986 @@ fn cli_edit_matches_an_anchor_copied_across_a_hard_break() {
         stdout.contains(r#""code":"UNSUPPORTED_STRUCTURE""#) && stdout.contains(r#""matches":1"#),
         "found, then refused for the break: {stdout}"
     );
+}
+
+fn changed_by(docx: &[u8], by: Option<&str>, comments: bool) -> String {
+    agent_options(
+        docx,
+        &MarkdownOptions {
+            comments,
+            page_markers: false,
+            select: Some(Select::Changed {
+                by: by.map(str::to_string),
+            }),
+            ..agent_defaults()
+        },
+    )
+}
+
+/// pi review av3 F3: document text that reads like CriticMarkup is escaped in
+/// the view, so neither a reader nor `--changed` takes it for a mark.
+#[test]
+fn literal_critic_markup_in_the_text_is_escaped_and_not_a_change() {
+    let doc = docx(&format!(
+        "{}{}",
+        para("Use {++bold++} and {>>#0 @AC<<} marks"),
+        para("quiet")
+    ));
+    let view = agent(&doc);
+    assert!(
+        view.contains("Use {\\++bold++\\} and {\\>>#0 @AC<<\\} marks"),
+        "{view}"
+    );
+    let changed = changed_by(&doc, None, true);
+    assert!(
+        changed.contains("\nrange: changed (none) of p0-p1\n"),
+        "{changed}"
+    );
+}
+
+/// pi review av3 F2: with comments hidden, `--by` still finds the paragraph
+/// that holds only that author's comment.
+#[test]
+fn changed_by_keeps_a_hidden_comment_of_that_author() {
+    let doc = one_comment_docx(&format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        run("Fee."),
+        reference(9),
+        para("quiet")
+    ));
+    let hidden = changed_by(&doc, Some("AC"), false);
+    assert!(
+        hidden.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{hidden}"
+    );
+    let inline = changed_by(&doc, Some("AC"), true);
+    assert!(
+        inline.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{inline}"
+    );
+}
+
+/// A handle typed in the document's own text is not that author's mark.
+#[test]
+fn changed_by_ignores_a_handle_written_in_the_text() {
+    let doc = docx(&format!(
+        "<w:p>{}{}</w:p><w:p>{}</w:p>",
+        run("Ask @AC first."),
+        ins(1, "Bob Day", " Done."),
+        ins(2, "Ann Counsel", "Agreed.")
+    ));
+    let view = changed_by(&doc, Some("AC"), true);
+    assert!(
+        view.contains("\nrange: changed by @AC (p1) of p0-p1\n"),
+        "{view}"
+    );
+}
+
+/// pi review av3 F4/F7: `--by` is read as a handle first (the handle the
+/// view prints), then as a full name; an empty author is refused.
+#[test]
+fn changed_by_reads_a_handle_before_a_name_and_refuses_an_empty_author() {
+    // "AC" is Ann Counsel's handle; a second author literally named "AC"
+    // gets another handle and must not take `--by AC` from her.
+    let doc = docx(&format!(
+        "<w:p>{}</w:p><w:p>{}</w:p>",
+        ins(1, "Ann Counsel", "Hers."),
+        ins(2, "AC", "Theirs.")
+    ));
+    let by_handle = changed_by(&doc, Some("AC"), true);
+    assert!(
+        by_handle.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{by_handle}"
+    );
+    let by_name = changed_by(&doc, Some("Ann Counsel"), true);
+    assert!(
+        by_name.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{by_name}"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    for empty in ["", "@", " "] {
+        let out = jubarte(
+            &["read", "received.docx", "--changed", "--by", empty],
+            dir.path(),
+        );
+        assert_eq!(out.status.code(), Some(2), "{empty:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("needs an author"), "{empty:?}: {stderr}");
+    }
+}
+
+/// The header between the `---` fences, parsed by a YAML parser.
+fn header_yaml(markdown: &str) -> saphyr::Yaml<'_> {
+    use saphyr::LoadableYamlNode;
+    let text = markdown.split("---\n").nth(1).unwrap();
+    saphyr::Yaml::load_from_str(text)
+        .unwrap_or_else(|e| panic!("header is not YAML: {e}\n{text}"))
+        .remove(0)
+}
+
+/// pi review av2 F1: document values in the header (authors, owner,
+/// header/footer text) are quoted whenever plain YAML would misread them.
+#[test]
+fn the_header_stays_yaml_for_values_with_colons_commas_and_hashes() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>SIGNATURE PAGE, v2 {{draft}}</w:t></w:r></w:p></w:hdr>"#
+    );
+    let sect = r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX1"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let bytes = common::docx::docx_with_sect_pr(
+        &format!(
+            "<w:p>{}</w:p><w:p>{}</w:p>",
+            ins(1, "Counsel: Ann", "a"),
+            ins(2, "yes", "b")
+        ),
+        &[
+            core(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Jo #1, Esq.</dc:creator></cp:coreProperties>"#,
+            ),
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+        ],
+        sect,
+    );
+    let view = agent(&bytes);
+    let yaml = header_yaml(&view);
+    let authors = yaml["authors"].as_mapping().expect("authors map");
+    let names: Vec<&str> = authors.values().filter_map(saphyr::Yaml::as_str).collect();
+    assert!(names.contains(&"Counsel: Ann"), "{names:?}");
+    assert!(names.contains(&"yes"), "{names:?}");
+    assert_eq!(
+        yaml["authors"]["document_owner"].as_str(),
+        Some("Jo #1, Esq.")
+    );
+    assert_eq!(
+        yaml["headers"]["default"]["text"].as_str(),
+        Some("SIGNATURE PAGE, v2 {draft}")
+    );
+}
+
+/// Every golden's header parses as YAML.
+#[test]
+fn the_golden_headers_parse_as_yaml() {
+    for name in [
+        "received.tracked.md",
+        "received.no-comments.md",
+        "received.accept.md",
+        "received.reject.md",
+    ] {
+        let text = golden(name);
+        let yaml = header_yaml(&text);
+        assert!(yaml["source"].as_str().is_some(), "{name}");
+    }
+}
+
+/// pi review av2 F2: a revision in a text box counts once in the header, as
+/// the body shows it once: the `mc:Choice` shape, not its VML fallback copy.
+#[test]
+fn header_counts_a_text_box_revision_once() {
+    let story = ins(7, "Ann Counsel", "boxed");
+    let boxed = format!(
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p>{story}</w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{story}</w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#
+    );
+    let view = agent(&docx(&boxed));
+    assert_eq!(view.matches("{++boxed++}").count(), 1, "{view}");
+    let lines = header_lines(&view);
+    assert!(
+        lines.iter().any(|l| l.starts_with("revisions: 1 ")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("# 1 revision")),
+        "{lines:?}"
+    );
+}
+
+/// pi review av1 F16 / av2 F14: `w:left` and its strict twin `w:start` (and
+/// `w:right`/`w:end`) give one clause per side, read as the layout reads
+/// them: `left` first, `start` when `left` is absent.
+#[test]
+fn id_line_gives_one_indent_per_side_when_both_spellings_are_present() {
+    let out = body(&agent(&docx(concat!(
+        r#"<w:p><w:pPr><w:ind w:left="720" w:start="1440" w:right="360" w:end="720"/></w:pPr><w:r><w:t>Both.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:ind w:start="1440" w:end="720"/></w:pPr><w:r><w:t>Strict.</w:t></w:r></w:p>"#,
+    ))))
+    .to_string();
+    assert!(
+        out.contains("<!-- p0 left 0.5in, right 0.25in -->\nBoth."),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p1 left 1in, right 0.5in -->\nStrict."),
+        "{out}"
+    );
+}
+
+/// pi review av2 F13 / av3 F6: a body with no paragraph names none: no
+/// `p0-p0`, and a paragraph pick is refused instead of printing nothing.
+#[test]
+fn an_empty_body_names_no_paragraph_and_refuses_a_pick() {
+    let empty = docx("");
+    let view = agent(&empty);
+    let lines = header_lines(&view);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("body: no paragraphs, 0 tables, 1 page")),
+        "{lines:?}"
+    );
+    let changed = changed_by(&empty, None, true);
+    assert!(changed.contains("\nrange: changed (none)\n"), "{changed}");
+    let picked = docx_to_markdown(
+        &empty,
+        &MarkdownOptions {
+            select: Some(Select::parse("p0").unwrap()),
+            ..agent_defaults()
+        },
+    );
+    let error = picked.expect_err("p0 does not exist").to_string();
+    assert!(error.contains("the body has no paragraphs"), "{error}");
+}
+
+/// pi review av2 F8: a core.xml that names nobody is not a missing one.
+#[test]
+fn an_owner_less_core_part_is_not_called_missing() {
+    let bytes = common::docx::docx_with(
+        &para("x"),
+        &[core(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator> </dc:creator></cp:coreProperties>"#,
+        )],
+    );
+    let view = agent(&bytes);
+    assert!(
+        header_lines(&view).contains(
+            &"  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy"
+        ),
+        "{view}"
+    );
+}
+
+/// pi review av2 F5: when layout fails the view still marks pages, from the
+/// document's own breaks; the warning says so instead of "no page markers".
+#[test]
+fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
+    let bytes = common::docx::docx_with(
+        &para("Hello"),
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &format!(r#"<w:styles xmlns:w="{W_NS}"><w:style"#),
+        }],
+    );
+    let view = jubarte::markdown::read(
+        &bytes,
+        &jubarte::markdown::ReadOptions {
+            track_changes: TrackChanges::All,
+            comments: true,
+            dates: false,
+            page_markers: true,
+            select: None,
+            source: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        view.markdown.contains("<!-- page 1 of 1 -->"),
+        "{}",
+        view.markdown
+    );
+    assert_eq!(view.warnings.len(), 1, "{:?}", view.warnings);
+    let warning = &view.warnings[0];
+    assert!(
+        warning.starts_with("layout failed, page markers come from the document's breaks: "),
+        "{warning}"
+    );
+}
+
+/// pi review av2 F10: `w:bdo`/`w:dir` are transparent to revisions as they
+/// are to the text: a deletion then an insertion across one pairs as the
+/// substitution the tracked view shows, and the resolved `rev` agrees.
+#[test]
+fn a_bidi_wrapper_does_not_split_a_substitution() {
+    let doc = docx(&format!(
+        r#"<w:p>{}<w:bdo w:val="rtl">{}</w:bdo></w:p>"#,
+        del(1, "Ann Counsel", "a"),
+        ins(2, "Ann Counsel", "b")
+    ));
+    let tracked = agent(&doc);
+    assert!(tracked.contains("{~~a~>b~~}{>>#1+2 @AC<<}"), "{tracked}");
+    let accepted = agent_with(&doc, TrackChanges::Accept, true);
+    assert!(accepted.contains("<!-- p0 rev #1+2 @AC -->"), "{accepted}");
+}
+
+/// pi review av2 F19: `read --dates` reaches the view through the CLI; an
+/// author with two timestamps gets them inline only with the flag.
+#[test]
+fn the_dates_flag_reaches_the_cli_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = format!(
+        "<w:p>{}{}{}</w:p>",
+        ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "b"),
+        run(" c "),
+        ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "d")
+    );
+    std::fs::write(dir.path().join("dated.docx"), docx(&p)).unwrap();
+    let plain = ok(&["read", "dated.docx", "--no-page-markers"], dir.path());
+    assert!(plain.contains("{++b++}{>>#1 @AC<<}"), "{plain}");
+    let dated = ok(
+        &["read", "dated.docx", "--no-page-markers", "--dates"],
+        dir.path(),
+    );
+    assert!(
+        dated.contains("{++b++}{>>#1 @AC 2026-10-01T09:00:00Z<<}"),
+        "{dated}"
+    );
+}
+
+/// pi review r392 F2: a formatting change in a text box Word stores twice
+/// (Choice and Fallback) counts once in the total, once for its author and
+/// once on the id line.
+#[test]
+fn header_counts_a_text_box_formatting_change_once() {
+    let story = |id: u32| {
+        format!(
+            r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>boxed</w:t></w:r></w:p>"#
+        )
+    };
+    let boxed = format!(
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent>{}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#,
+        story(31),
+        story(32)
+    );
+    let view = agent(&docx(&boxed));
+    let lines = header_lines(&view);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("revisions: 0 ") && l.contains("1 formatting change")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("1 formatting change")),
+        "{lines:?}"
+    );
+    assert!(view.contains("fmt #31 @AC"), "{view}");
+    assert!(!view.contains("#32"), "{view}");
+}
+
+/// pi review av4 F10: a change only in a header leaves no body block to
+/// show; the range line says where the change is to be read instead of
+/// printing a bare empty view.
+#[test]
+fn a_header_only_change_points_at_the_headers_line() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        ins(5, "Ann Counsel", "NEW HEADER")
+    );
+    let sect = r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let bytes = common::docx::docx_with_sect_pr(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        sect,
+    );
+    let view = jubarte::markdown::changed_view(&bytes, "Ann Counsel", false, None).unwrap();
+    let range = header_lines(&view)
+        .into_iter()
+        .find(|l| l.starts_with("range: "))
+        .unwrap_or_default();
+    assert!(range.contains("(none)"), "{view}");
+    assert!(
+        range.contains("# no body block; header and footer text is on the headers:/footers: lines"),
+        "{view}"
+    );
+    assert!(view.contains("text: NEW HEADER"), "{view}");
+}
+
+/// The id line names a list paragraph by the label Word prints: its level's
+/// `lvlText` with each `%k` in that level's number format (`1)`, `a)`,
+/// `i)`, `1.a`), while the body keeps a Markdown list marker.
+#[test]
+fn id_line_number_is_the_label_word_prints() {
+    let lvl = |i: u8, fmt: &str, text: &str| {
+        format!(
+            r#"<w:lvl w:ilvl="{i}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/></w:lvl>"#
+        )
+    };
+    let numbering = Part {
+        name: "word/numbering.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+        xml: &format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0">{}{}{}{}{}{}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#,
+            lvl(0, "decimal", "%1)"),
+            lvl(1, "lowerLetter", "%2)"),
+            lvl(2, "lowerRoman", "%3)"),
+            lvl(3, "upperLetter", "%1.%4"),
+            lvl(4, "decimalZero", r"&quot;Ch\&quot; %5"),
+            lvl(5, "decimal", "X%6.%7Y")
+        ),
+    };
+    let item = |ilvl: u8, text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body_xml = [
+        item(0, "one"),
+        item(1, "one a"),
+        item(1, "one b"),
+        item(0, "two"),
+        item(1, "two a"),
+        item(2, "two a i"),
+        item(3, "deep"),
+        item(4, "quoted"),
+        item(5, "deeper"),
+    ]
+    .concat();
+    let out = body(&agent(&common::docx::docx_with(&body_xml, &[numbering]))).to_string();
+    for (p, label) in [
+        (0, "1)"),
+        (1, "a)"),
+        (2, "b)"),
+        (3, "2)"),
+        (4, "a)"),
+        (5, "i)"),
+        (6, "2.A"),
+        // pi review r392b tests F5: a quote or backslash in the label is
+        // escaped, so the clause still parses.
+        (7, r#"\"Ch\\\" 01"#),
+    ] {
+        assert!(
+            out.contains(&format!("<!-- p{p} num \"{label}\" -->")),
+            "p{p} {label}:\n{out}"
+        );
+    }
+    assert!(out.contains("1. one\n"), "{out}");
+    // pi review r392b F7: a `%k` deeper than the paragraph's level (here
+    // `%7` at level 6, undefined) makes Word print no label and no list
+    // indent (Word probe lvl_undef_1010): a plain paragraph.
+    assert!(out.contains("<!-- p8 -->\ndeeper"), "{out}");
+}
+
+/// A comment no story anchors (no range, no reference) is not an open
+/// thread: Word draws no balloon for it. The header counts it apart.
+#[test]
+fn an_unanchored_comment_is_not_an_open_thread() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
+        comment(
+            54,
+            "Eric White",
+            "EW",
+            "2014-10-28T20:22:00Z",
+            "0B0B0B0B",
+            "Old."
+        ),
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Check."
+        )
+    );
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}</w:p>"#,
+        run("Fees"),
+        reference(9)
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let view = agent(&bytes);
+    let line = header_lines(&view)
+        .into_iter()
+        .find(|l| l.starts_with("comments: "))
+        .unwrap_or_default();
+    assert!(
+        line.starts_with("comments: 1 thread open, 1 unanchored ")
+            && line
+                .contains("# 2 comments: c9, c54 (unanchored: in no story, Word shows no balloon)"),
+        "{line}"
+    );
+    assert!(!body(&view).contains("#c54"), "{view}");
+}
+
+/// A comment range over several paragraphs repeats `{==…==}` in each, with
+/// its note only at the end; every id line it crosses names the thread so
+/// the highlights read as one comment. A one-paragraph range adds nothing.
+#[test]
+fn id_lines_inside_a_multi_paragraph_comment_name_it() {
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}</w:p>{}<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl><w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p><w:p><w:commentRangeStart w:id="7"/>{}<w:commentRangeEnd w:id="7"/>{}</w:p>"#,
+        run("Start"),
+        para("Middle"),
+        para("Cell"),
+        run("End"),
+        reference(9),
+        run("Alone"),
+        reference(7)
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Span."
+        ),
+        comment(
+            7,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0B0B0B0B",
+            "One."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    for p in [0, 1, 3] {
+        assert!(
+            out.contains(&format!("<!-- p{p} in #c9 -->")),
+            "p{p}:\n{out}"
+        );
+    }
+    assert!(
+        out.contains("<!-- t0 1x1, cells p2-p2 by row, in #c9 -->"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p4 -->"), "{out}");
+    assert!(
+        out.contains("{==Start==}") && out.contains("{==End==}{>>#c9 @AC: Span.<<}"),
+        "{out}"
+    );
+}
+
+/// pi review r392b F3: `read --changed` keeps every paragraph a comment
+/// range crosses, not only the one that carries the note, as the hidden
+/// mode already does through its `comments #cN` clause.
+#[test]
+fn changed_keeps_every_paragraph_inside_a_comment_range() {
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}</w:p>{}<w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        run("Start"),
+        para("Middle"),
+        run("End"),
+        reference(9),
+        para("Outside")
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Span."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    for by in [None, Some("@AC")] {
+        let out = changed_by(&bytes, by, true);
+        for p in 0..=2 {
+            assert!(
+                out.contains(&format!("<!-- p{p} in #c9 -->")),
+                "{by:?} p{p}:\n{out}"
+            );
+        }
+        assert!(!out.contains("Outside"), "{by:?}:\n{out}");
+        assert!(out.contains(" (p0, p1, p2) of p0-p3"), "{by:?}:\n{out}");
+    }
+}
+
+/// pi review r392b F1: a comment anchored in a header is an open thread, as
+/// `jubarte comments` lists it; only a comment no story holds is unanchored.
+#[test]
+fn a_comment_anchored_in_a_header_is_an_open_thread() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
+        comment(
+            5,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Header note."
+        ),
+        comment(
+            7,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0B0B0B0B",
+            "Lost."
+        )
+    );
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:commentRangeStart w:id="5"/>{}<w:commentRangeEnd w:id="5"/>{}</w:p></w:hdr>"#,
+        run("HdrText"),
+        reference(5)
+    );
+    let bytes = common::docx::docx_with_sect(
+        &para("Body"),
+        &[
+            Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            },
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let view = agent(&bytes);
+    let line = header_lines(&view)
+        .into_iter()
+        .find(|l| l.starts_with("comments: "))
+        .unwrap_or_default();
+    assert!(
+        line.starts_with("comments: 1 thread open, 1 unanchored ")
+            && line.contains("c5, c7 (unanchored")
+            && !line.contains("c5 (unanchored"),
+        "{line}"
+    );
+}
+
+/// pi review r392b F4: a comment range that starts inside a table and runs
+/// past it is named on the table line as well.
+#[test]
+fn a_table_line_names_a_range_that_starts_in_a_cell() {
+    let body_xml = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:commentRangeStart w:id="9"/>{}</w:p></w:tc></w:tr></w:tbl><w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        run("Cell"),
+        run("After"),
+        reference(9),
+        para("Quiet")
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Span."
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(
+        out.contains("<!-- t0 1x1, cells p0-p0 by row, in #c9 -->"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p1 in #c9 -->"), "{out}");
+    assert!(out.contains("<!-- p2 -->"), "{out}");
+}
+
+/// pi review r392b F2: the range line points at the headers:/footers: lines
+/// only when a header or footer holds a change of the selection, and it
+/// names the footnote blocks it keeps.
+#[test]
+fn the_range_line_names_kept_notes_and_points_only_at_changed_headers() {
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1"><w:p>{}</w:p></w:footnote></w:footnotes>"#,
+        ins(7, "Ann Counsel", "footnote change")
+    );
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        run("Plain header")
+    );
+    let bytes = common::docx::docx_with_sect(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &footnotes,
+            },
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let range = |by: Option<&str>| {
+        header_lines(&changed_by(&bytes, by, true))
+            .into_iter()
+            .find(|l| l.starts_with("range: "))
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
+    let kept = range(None);
+    assert!(
+        kept.starts_with("range: changed ([^1]) of p0-p0") && !kept.contains("headers:"),
+        "{kept}"
+    );
+    let nobody = range(Some("Zed Zimmer"));
+    assert!(
+        nobody.starts_with("range: changed by Zed Zimmer (none)") && !nobody.contains('#'),
+        "{nobody}"
+    );
+    assert!(changed_by(&bytes, None, true).contains("[^1]: {++footnote change++}"));
+    assert!(!changed_by(&bytes, Some("Zed Zimmer"), true).contains("[^1]:"));
+}
+
+#[test]
+fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
+    let bytes = docx(&para("Body"));
+    for source in [
+        "",
+        "null",
+        "TRUE",
+        "off",
+        "~",
+        "0123",
+        "12:30",
+        "2026-10-01",
+        "-draft",
+        "[draft]",
+        "name: draft",
+        "draft #1",
+        " trailing ",
+        "quoted \"draft\"\\copy",
+        "first\nsecond\tcolumn",
+        "café.docx",
+    ] {
+        let view = agent_options(
+            &bytes,
+            &MarkdownOptions {
+                source: Some(source.into()),
+                ..agent_defaults()
+            },
+        );
+        assert_eq!(
+            header_yaml(&view)["source"].as_str(),
+            Some(source),
+            "{source:?}: {view}"
+        );
+        assert!(body(&view).contains("<!-- p0 -->\nBody"), "{view}");
+    }
+}
+
+#[test]
+fn pr392_alternate_content_uses_only_the_rendered_branch_for_authors_and_counts() {
+    let choice = format!(
+        r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
+        ins(1, "Ann Counsel", "Chosen")
+    );
+    let fallback = format!(
+        r#"<mc:Fallback><w:pict><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:pict></mc:Fallback>"#,
+        ins(2, "Bob Day", "Fallback")
+    );
+    for (branches, kept, absent, handle, author) in [
+        (
+            format!("{choice}{fallback}"),
+            "Chosen",
+            "Fallback",
+            "AC",
+            "Ann Counsel",
+        ),
+        (fallback, "Fallback", "Chosen", "BD", "Bob Day"),
+    ] {
+        let bytes = docx(&format!(
+            r#"<w:p>{}<w:r><mc:AlternateContent>{branches}</mc:AlternateContent></w:r></w:p>"#,
+            run("Host")
+        ));
+        let view = agent(&bytes);
+        assert_eq!(
+            body(&view).matches(&format!("{{++{kept}++}}")).count(),
+            1,
+            "{view}"
+        );
+        assert!(!body(&view).contains(absent), "{view}");
+        let yaml = header_yaml(&view);
+        assert_eq!(yaml["authors"][handle].as_str(), Some(author), "{view}");
+        // The only other author entry is document_owner.
+        assert_eq!(yaml["authors"].as_mapping().unwrap().len(), 2, "{view}");
+        assert!(
+            header_lines(&view)
+                .iter()
+                .any(|line| line.starts_with("revisions: 1 ")),
+            "{view}"
+        );
+    }
+}
+
+#[test]
+fn pr392_changed_filter_does_not_treat_literal_critic_forms_as_revisions() {
+    for literal in [
+        "{++new++}",
+        "{--old--}",
+        "{~~old~>new~~}",
+        "{==highlight==}",
+        "{>>#7 @AC: note<<}",
+    ] {
+        let bytes = docx(&format!(
+            "{}<w:p>{}</w:p>",
+            para(literal),
+            ins(7, "Ann Counsel", "Actual change")
+        ));
+        for by in [None, Some("AC"), Some("@AC"), Some("Ann Counsel")] {
+            let view = changed_by(&bytes, by, true);
+            assert!(
+                view.contains(" (p1) of p0-p1\n"),
+                "{literal}, {by:?}: {view}"
+            );
+            assert!(body(&view).contains("{++Actual change++}"), "{view}");
+            assert!(!body(&view).contains("<!-- p0"), "{view}");
+        }
+    }
+}
+
+#[test]
+fn pr392_footer_change_hint_is_scoped_to_the_selected_author() {
+    let footer = format!(
+        r#"<w:ftr xmlns:w="{W_NS}"><w:p>{}</w:p></w:ftr>"#,
+        ins(1, "Ann Counsel", "New footer")
+    );
+    let bytes = common::docx::docx_with_sect(
+        &format!("<w:p>{}</w:p>", ins(2, "Bob Day", "Body change")),
+        &[Part {
+            name: "word/footer1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+            xml: &footer,
+        }],
+        r#"<w:footerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    for (by, expected_blocks, hint) in [
+        // Header/footer-only authors are selected by full name; this view
+        // assigns handles to body/note revisions and comments.
+        ("Ann Counsel", "(none)", true),
+        ("BD", "(p0)", false),
+        ("Bob Day", "(p0)", false),
+        ("Nobody", "(none)", false),
+    ] {
+        let view = changed_by(&bytes, Some(by), true);
+        let range = header_lines(&view)
+            .into_iter()
+            .find(|line| line.starts_with("range:"))
+            .unwrap();
+        assert!(range.contains(expected_blocks), "{by}: {view}");
+        assert_eq!(range.contains("headers:/footers:"), hint, "{by}: {view}");
+    }
+}
+
+#[test]
+fn pr392_comment_range_ending_in_a_table_does_not_leak_to_the_next_paragraph() {
+    let bytes = one_comment_docx(&format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}</w:p><w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p></w:tc></w:tr></w:tbl>{}"#,
+        run("Start"),
+        run("End"),
+        reference(9),
+        para("Quiet")
+    ));
+    let view = agent(&bytes);
+    assert!(view.contains("<!-- p0 in #c9 -->"), "{view}");
+    assert!(
+        view.contains("<!-- t0 1x1, cells p1-p1 by row, in #c9 -->"),
+        "{view}"
+    );
+    assert!(view.contains("<!-- p2 -->\nQuiet"), "{view}");
+    let selected = changed_by(&bytes, Some("AC"), true);
+    assert!(body(&selected).contains("<!-- t0"), "{selected}");
+    assert!(!body(&selected).contains("Quiet"), "{selected}");
+}
+
+#[test]
+fn pr392_word_list_labels_keep_start_values_across_number_format_boundaries() {
+    for (format, start, labels) in [
+        ("lowerLetter", 26, ["z)", "aa)"]),
+        ("upperLetter", 26, ["Z)", "AA)"]),
+        ("upperRoman", 49, ["XLIX)", "L)"]),
+        ("decimalZero", 9, ["09)", "10)"]),
+    ] {
+        let numbering = format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="{start}"/><w:numFmt w:val="{format}"/><w:lvlText w:val="%1)"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+        );
+        let item = |text| {
+            format!(
+                r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+            )
+        };
+        let bytes = common::docx::docx_with(
+            &format!("{}{}", item("First"), item("Second")),
+            &[Part {
+                name: "word/numbering.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+                xml: &numbering,
+            }],
+        );
+        let view = agent(&bytes);
+        for (index, label) in labels.iter().enumerate() {
+            assert!(
+                view.contains(&format!("<!-- p{index} num \"{label}\" -->")),
+                "{format}: {view}"
+            );
+        }
+        assert!(body(&view).contains(&format!("{start}. First")), "{view}");
+        assert!(
+            body(&view).contains(&format!("{}. Second", start + 1)),
+            "{view}"
+        );
+    }
 }

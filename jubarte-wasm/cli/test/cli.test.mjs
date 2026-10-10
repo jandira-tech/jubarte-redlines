@@ -271,10 +271,25 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.ok(shown.out.startsWith(`---\nsource: ${word} (not written; -o keeps it)\n`), shown.out);
   assert.ok(shown.out.includes("{~~30~>45~~}"), shown.out);
   assert.ok(!fs.existsSync(word));
+  // The view is the output, so --quiet does not hide it (pi review av5 F6);
+  // read options apply to it.
+  assert.ok(run(a, b, "--quiet").out.includes("{~~30~>45~~}"));
+  const acceptedView = run(a, b, "--track-changes", "accept");
+  assert.equal(acceptedView.code, 0, acceptedView.err);
+  assert.ok(!acceptedView.out.includes("{~~") && acceptedView.out.includes("rev #"), acceptedView.out);
   const compared = run(a, b, "-o", word, "--quiet");
   assert.equal(compared.code, 0, compared.err);
   assert.equal(compared.out, "");
   assert.equal(fs.readFileSync(word).subarray(0, 2).toString(), "PK");
+  // --changed --by keeps the author's block, by handle or by name (pi
+  // review av3 F8: only the (none) path was tested).
+  const signed = path.join(tmp, "signed.docx");
+  assert.equal(run(a, b, "-o", signed, "--author", "Ann Counsel", "--quiet").code, 0);
+  for (const by of ["AC", "Ann Counsel"]) {
+    const mine = run("read", signed, "--changed", "--by", by, "--no-page-markers");
+    assert.equal(mine.code, 0, mine.err);
+    assert.ok(mine.out.includes("\nrange: changed by @AC (p0) of p0") && mine.out.includes("{~~30~>45~~}"), mine.out);
+  }
   // One file is the agent view (read).
   const one = run(untracked, "--no-page-markers");
   assert.equal(one.code, 0, one.err);
@@ -490,6 +505,11 @@ test("unsupported host options are rejected before input I/O (integration)", () 
     const result = run("convert", "missing.docx", ...flags);
     assert.equal(result.code, 2, `${flags}: ${result.err}`);
     assert.doesNotMatch(result.err, /reading/);
+    // pi review av2 F16: the advice names a read that runs as written.
+    if (flags.includes("md") || flags.includes("output.md")) {
+      assert.match(result.err, /read FILE/);
+      assert.doesNotMatch(result.err, /--track-changes/);
+    }
   }
   for (const flags of [["--pdf"], ["--png"], ["--dpi", "120"], ["--revisions", "word"]]) {
     const result = run("edit", "missing.docx", "--plan", "missing.json", "--out-dir", "missing-dir", ...flags);
@@ -566,4 +586,66 @@ test("diff, compare and convert follow the native input and output contract (int
   assert.equal(refused.code, 1, refused.out);
   assert.match(refused.err, /Markdown must be UTF-8/);
   assert.ok(!fs.existsSync(path.join(tmp, "broken.pdf")));
+});
+
+test("edit keeps its files when the view cannot be read back", () => {
+  // pi review r392b tests F6: a preload makes changedView throw; the edit is
+  // written, so the failure is a warning and the exit code stays 0.
+  const preload = path.join(tmp, "broken-view.cjs");
+  fs.writeFileSync(
+    preload,
+    `const wasm = require(${JSON.stringify(path.join(cliDir, "node_modules", "jubarte-wasm"))});\n` +
+      `wasm.changedView = () => { throw new Error("read back failed"); };\n`,
+  );
+  const first = run("inspect", untracked, "--json");
+  const para = JSON.parse(first.out).paragraphs.find((p) => p.text.length > 3);
+  const plan = path.join(tmp, "plan-broken-view.json");
+  fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Claude", date: "2026-09-25T12:00:00Z", operations: [{ kind: "replace", paragraph: { index: para.index }, find: para.text.split(" ")[0], replacement: "Changed" }] }));
+  const dir = path.join(tmp, "review-broken-view");
+  const r = spawnSync(process.execPath, ["--require", preload, bin, "edit", untracked, "--plan", plan, "--out-dir", dir], { encoding: "utf8", cwd: tmp });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, "redline.docx")));
+  assert.match(r.stderr, /warning: the changed blocks cannot be shown: read back failed/);
+});
+
+test("pr392: editing mode preserves its complete bundle after a view failure", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jubarte-view-failure-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const preload = path.join(dir, "broken-view.cjs");
+  const called = path.join(dir, "called.json");
+  fs.writeFileSync(preload,
+    `const fs = require("node:fs");\n` +
+    `const wasm = require(${JSON.stringify(path.join(cliDir, "node_modules", "jubarte-wasm"))});\n` +
+    `wasm.changedView = (_bytes, author, accepted, source) => {\n` +
+    `  fs.writeFileSync(${JSON.stringify(called)}, JSON.stringify({author, accepted, source}));\n` +
+    `  throw "view unavailable";\n` +
+    `};\n`);
+  // Empty plans are valid and isolate the post-write view from edit semantics.
+  const plan = path.join(dir, "plan.json");
+  fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Ann Counsel", date: "2026-10-01T09:00:00Z", operations: [] }));
+  for (const quiet of [false, true]) {
+    fs.rmSync(called, { force: true });
+    const out = path.join(dir, quiet ? "quiet" : "shown");
+    const r = spawnSync(process.execPath, ["--require", preload, bin, "edit", untracked, "--plan", plan, "--editing-mode", "--out-dir", out, ...(quiet ? ["--quiet"] : [])], { encoding: "utf8", timeout: 10000 });
+    assert.ifError(r.error);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(fs.readdirSync(out).sort(), ["clean.docx", "report.jsonl"]);
+    assert.equal(fs.readFileSync(path.join(out, "clean.docx")).subarray(0, 2).toString(), "PK");
+    const report = fs.readFileSync(path.join(out, "report.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    const saved = report.find((row) => row.ev === "save");
+    assert.deepEqual(saved.outputs.map((output) => output.f), ["clean.docx"]);
+    assert.equal(saved.outputs[0].bytes, fs.statSync(path.join(out, "clean.docx")).size);
+    assert.equal(report.at(-1).ev, "summary");
+    assert.equal(report.at(-1).status, "ok");
+    if (quiet) {
+      assert.equal(r.stdout, "");
+      assert.equal(r.stderr, "");
+      assert.ok(!fs.existsSync(called), "quiet mode must not attempt the view");
+    } else {
+      assert.deepEqual(JSON.parse(fs.readFileSync(called, "utf8")), { author: "Ann Counsel", accepted: true, source: path.join(out, "clean.docx") });
+      assert.match(r.stderr, /warning: the changed blocks cannot be shown: view unavailable/);
+      assert.match(r.stdout, /"ev":"summary"/);
+      assert.doesNotMatch(r.stdout, /---\nsource:/);
+    }
+  }
 });

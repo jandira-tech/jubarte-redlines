@@ -280,6 +280,19 @@ pub enum Pick {
     Table(usize),
 }
 
+/// The author `--changed --by` names, its padding cut: a handle such as `AC`
+/// or `@AC` (one `@`, the handle right after it), or the full name. The CLI
+/// and the bindings both check it here.
+pub fn author(by: &str) -> Result<&str, String> {
+    let by = by.trim();
+    let name = by.strip_prefix('@').unwrap_or(by);
+    if name.is_empty() || name.starts_with('@') || name.starts_with(char::is_whitespace) {
+        Err("needs an author: a handle such as AC, or the full name".into())
+    } else {
+        Ok(by)
+    }
+}
+
 impl Select {
     /// The selection of `read`'s `-p`, `--head` and `--tail` (in that order
     /// of precedence), or of `--changed` with its `--by`; `None` when none is
@@ -297,6 +310,7 @@ impl Select {
         if changed && (paragraphs.is_some() || head.is_some() || tail.is_some()) {
             return Err("changed excludes paragraphs, head and tail".to_string());
         }
+        let by = by.map(author).transpose()?;
         Ok(match (paragraphs, head, tail) {
             _ if changed => Some(Self::Changed {
                 by: by.map(str::to_string),
@@ -475,7 +489,14 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
             options.track_changes,
             crate::convert::RevisionStyle::default(),
         )
-        .map_err(|e| warnings.push(format!("no page markers: {e}")))
+        // The converter still marks pages, from the document's own breaks.
+        .map_err(|e| {
+            let e = e.to_string();
+            warnings.push(format!(
+                "layout failed, page markers come from the document's breaks: {}",
+                e.strip_prefix("layout failed: ").unwrap_or(&e)
+            ));
+        })
         .ok()
     } else {
         None

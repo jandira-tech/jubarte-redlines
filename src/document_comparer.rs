@@ -10833,7 +10833,8 @@ mod coverage_boundary_tests {
                     let (dom, r) = part_root(&pkg, part);
                     let ps = dom.elements(r, Some(&W::p()));
                     let inserted = child(&dom, ps[0], "ins");
-                    assert_revision(&dom, inserted, "1");
+                    // New marks number above the foreign w:ins 91 the story keeps.
+                    assert_revision(&dom, inserted, "92");
                     assert_eq!(
                         dom.elements(inserted, None)
                             .iter()
@@ -10846,7 +10847,7 @@ mod coverage_boundary_tests {
                     if ppr {
                         let mark = child(&dom, child(&dom, ps[0], "pPr"), "rPr");
                         assert_eq!(children(&dom, mark), ["ins", "i"]);
-                        assert_revision(&dom, child(&dom, mark, "ins"), "2");
+                        assert_revision(&dom, child(&dom, mark, "ins"), "93");
                     } else {
                         assert!(dom.element(ps[0], &W::p_pr()).is_none());
                     }

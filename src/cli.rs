@@ -100,6 +100,7 @@ pub struct ReadArgs {
         long,
         value_name = "AUTHOR",
         requires = "changed",
+        value_parser = parse_author,
         help_heading = "Read options"
     )]
     pub by: Option<String>,
@@ -124,7 +125,7 @@ pub struct EditOptions {
     #[arg(long, value_name = "NAME", default_value = "Modified User")]
     pub author: String,
     /// Their timestamp (ISO 8601) [default: now, UTC].
-    #[arg(long, value_name = "ISO8601", alias = "date")]
+    #[arg(long, value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
     pub datetime: Option<String>,
     /// The edits are tracked changes (the default): redline.docx,
     /// clean.docx, patch.diff and report.jsonl are written and the view
@@ -289,6 +290,7 @@ pub struct CompareArgs {
         short = 'd',
         long,
         value_name = "ISO8601",
+        value_parser = parse_datetime,
         default_value = crate::document_comparer::DEFAULT_DATE
     )]
     pub date: String,
@@ -540,6 +542,7 @@ pub enum Command {
             short = 'd',
             long,
             value_name = "ISO8601",
+        value_parser = parse_datetime,
             help_heading = "Word redline"
         )]
         date: Option<String>,
@@ -1307,6 +1310,7 @@ pub struct MarkdownArgs {
         short = 'd',
         long,
         value_name = "ISO8601",
+        value_parser = parse_datetime,
         default_value = crate::document_comparer::DEFAULT_DATE
     )]
     pub date: String,
@@ -1422,6 +1426,81 @@ fn styles() -> clap::builder::Styles {
         .usage(AnsiColor::Cyan.on_default() | Effects::BOLD)
         .literal(AnsiColor::Green.on_default())
         .placeholder(AnsiColor::Yellow.on_default())
+}
+
+/// A revision timestamp: an xsd:dateTime as Word writes `w:date`
+/// (`2026-10-01T09:00:00Z`, optional fraction and offset of at most 14:00).
+/// xsd's `24:00:00` and leap second `:60` are refused: Word writes neither.
+fn parse_datetime(value: &str) -> Result<String, String> {
+    let bad = || "expected an ISO 8601 date and time such as 2026-10-01T09:00:00Z".to_string();
+    let b = value.as_bytes();
+    let digits = |from: usize, to: usize| -> Option<u32> {
+        let s = value.get(from..to)?;
+        s.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| s.parse().ok())
+            .flatten()
+    };
+    let shape = b.len() >= 19
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[10] == b'T'
+        && b[13] == b':'
+        && b[16] == b':';
+    let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) = (
+        digits(0, 4),
+        digits(5, 7),
+        digits(8, 10),
+        digits(11, 13),
+        digits(14, 16),
+        digits(17, 19),
+    ) else {
+        return Err(bad());
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1..=12 => 31,
+        _ => 0,
+    };
+    let mut rest = &value[19.min(value.len())..];
+    if let Some(fraction) = rest.strip_prefix('.') {
+        let n = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if n == 0 {
+            return Err(bad());
+        }
+        rest = &fraction[n..];
+    }
+    let zone = match rest.as_bytes() {
+        [] | [b'Z'] => true,
+        [b'+' | b'-', h1, h2, b':', m1, m2] => {
+            let hours = u32::from(h1.wrapping_sub(b'0')) * 10 + u32::from(h2.wrapping_sub(b'0'));
+            let minutes = u32::from(m1.wrapping_sub(b'0')) * 10 + u32::from(m2.wrapping_sub(b'0'));
+            [h1, h2, m1, m2].iter().all(|c| c.is_ascii_digit())
+                && minutes <= 59
+                && hours * 60 + minutes <= 14 * 60
+        }
+        _ => false,
+    };
+    if shape
+        && year >= 1
+        && (1..=days).contains(&day)
+        && hour <= 23
+        && minute <= 59
+        && second <= 59
+        && zone
+    {
+        Ok(value.to_string())
+    } else {
+        Err(bad())
+    }
+}
+
+/// `--by`: a handle (`AC`, `@AC`) or a full name, never blank.
+fn parse_author(value: &str) -> Result<String, String> {
+    crate::markdown::author(value).map(str::to_string)
 }
 
 fn parse_dpi(value: &str) -> Result<f32, String> {
@@ -1928,8 +2007,17 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 );
             }
             let mut args = compare_json(&compare);
-            args["view"] = serde_json::to_value(ReadArgs::from_arg_matches(&matches)?)
-                .expect("UTF-8 CLI arguments");
+            // Without -o the redline is printed as the read view, which an
+            // adapter without read cannot do; with -o it is a plain compare.
+            if accepts("read") {
+                args["view"] = serde_json::to_value(ReadArgs::from_arg_matches(&matches)?)
+                    .expect("UTF-8 CLI arguments");
+            } else if compare.output.is_none() {
+                return Err(command.error(
+                    clap::error::ErrorKind::InvalidSubcommand,
+                    "this task is not supported by this adapter",
+                ));
+            }
             Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}).to_string())
         }
     })();

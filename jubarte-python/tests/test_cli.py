@@ -367,3 +367,81 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
     assert "\nRecitals\n" in out and "{++" not in out, out
+
+
+def test_convert_to_md_points_at_a_read_that_works(letter, capsys):
+    # pi review av2 F16: `read FILE --track-changes` with no value is a usage error.
+    with pytest.raises(SystemExit) as exit:
+        main(["convert", str(letter), "-t", "md"])
+    assert exit.value.code == 2
+    err = capsys.readouterr().err
+    assert "read FILE" in err
+    assert "--track-changes" not in err
+
+
+def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(letter: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """pi review r392b tests F6: the files are written and the report says
+    so; a view that cannot be read back is a warning and exit 0."""
+    from jubarte_redlines import _native
+
+    def broken(*_args: object, **_kwargs: object) -> str:
+        raise _native.JubarteError("read back failed")
+
+    monkeypatch.setattr(_native, "changed_view", broken)
+    plan = {
+        "schema_version": 1,
+        "author": "Claude",
+        "date": "2026-09-25T12:00:00Z",
+        "operations": [{"kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"}],
+    }
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    out_dir = tmp_path / "review"
+    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)]) == 0
+    assert (out_dir / "redline.docx").is_file()
+    err = capsys.readouterr().err
+    assert "warning: the changed blocks cannot be shown: read back failed" in err
+
+
+@pytest.mark.parametrize("editing,quiet", [(False, False), (True, False), (True, True)])
+def test_pr392_view_failure_preserves_bundle_and_quiet_skips_view(
+    letter: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], editing: bool, quiet: bool,
+) -> None:
+    from jubarte_redlines import _native
+
+    calls: list[tuple[str, bool, str]] = []
+
+    def broken(_docx: bytes, author: str, *, accepted: bool, source: str) -> str:
+        calls.append((author, accepted, source))
+        raise _native.JubarteError("view unavailable")
+
+    monkeypatch.setattr(_native, "changed_view", broken)
+    out_dir = tmp_path / "bundle"
+    args = ["edit", str(letter), "-p", "p0", "--anchor", "Heading", "--content", "Title",
+            "--author", "Ann Counsel", "--datetime", "2026-10-01T09:00:00Z", "--out-dir", str(out_dir)]
+    if editing:
+        args.append("--editing-mode")
+    if quiet:
+        args.append("--quiet")
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    expected = {"clean.docx", "report.jsonl"} if editing else {"clean.docx", "redline.docx", "patch.diff", "report.jsonl"}
+    assert {file.name for file in out_dir.iterdir()} == expected
+    assert (out_dir / "clean.docx").read_bytes().startswith(b"PK")
+    rows = [json.loads(line) for line in (out_dir / "report.jsonl").read_text().splitlines()]
+    saved = next(row for row in rows if row["ev"] == "save")
+    assert {output["f"] for output in saved["outputs"]} == expected - {"report.jsonl"}
+    for output in saved["outputs"]:
+        assert output["bytes"] == (out_dir / output["f"]).stat().st_size
+    assert rows[-1]["ev"] == "summary"
+    assert rows[-1]["status"] == "ok"
+    if quiet:
+        assert calls == []
+        assert captured.out == captured.err == ""
+    else:
+        shown = out_dir / ("clean.docx" if editing else "redline.docx")
+        assert calls == [("Ann Counsel", editing, str(shown))]
+        assert "warning: the changed blocks cannot be shown: view unavailable" in captured.err
+        assert '"ev":"summary"' in captured.out.replace(" ", "")
+        assert "---\nsource:" not in captured.out

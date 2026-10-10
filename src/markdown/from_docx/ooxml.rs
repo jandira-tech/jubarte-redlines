@@ -210,6 +210,17 @@ impl Rels {
             .find(|r| r.kind.ends_with(suffix))
     }
 
+    /// The package-internal targets of every relationship of a type, in
+    /// document order.
+    pub(crate) fn targets_of_type(&self, suffix: &str) -> Vec<String> {
+        self.order
+            .iter()
+            .filter_map(|id| self.by_id.get(id))
+            .filter(|r| !r.external && r.kind.ends_with(suffix))
+            .map(|r| r.target.clone())
+            .collect()
+    }
+
     /// A hyperlink target for a relationship id: external URLs only.
     pub(crate) fn link(&self, id: &str) -> Option<String> {
         self.get(id)

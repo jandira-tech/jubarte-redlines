@@ -12,6 +12,9 @@ use super::ooxml::Element;
 pub(crate) enum Owner {
     Creator(String),
     LastModifiedBy(String),
+    /// `docProps/core.xml` is there but names nobody.
+    Unnamed,
+    /// No `docProps/core.xml`.
     None,
 }
 
@@ -56,6 +59,9 @@ pub(crate) struct CommentFact {
     pub id: String,
     pub author: Option<String>,
     pub parent: Option<String>,
+    /// A range or reference to it sits in the body or a note. Without one
+    /// Word draws no balloon, so it is no open thread.
+    pub anchored: bool,
 }
 
 pub(crate) struct Facts<'a> {
@@ -81,6 +87,8 @@ pub(crate) struct Facts<'a> {
     pub pages_source: PagesSource,
     /// `range:` line after `body:` when a selection is active (Task 12).
     pub range: Option<String>,
+    /// A header or footer holds a change `range`'s `--changed` selects.
+    pub stories_changed: bool,
     pub styles: Option<&'a Element>,
     pub theme: Option<&'a Element>,
     pub default_style: Option<&'a str>,
@@ -106,6 +114,36 @@ fn kv(out: &mut String, key_value: &str, comment: Option<&str>) {
     }
 }
 
+/// `value` as a YAML scalar: plain when every YAML reader, 1.1 or 1.2, takes
+/// it back as the same string, else double-quoted (a JSON string is a valid YAML one).
+/// `flow` values sit inside `{…}`, where `,`, `[`, `]`, `{` and `}` end them.
+pub(crate) fn scalar(value: &str, flow: bool) -> String {
+    const RESERVED: [&str; 12] = [
+        "true", "false", "yes", "no", "on", "off", "y", "n", "null", "~", ".nan", ".inf",
+    ];
+    let plain = !value.is_empty()
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+        && !value.starts_with([
+            '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%',
+            '@', '`',
+        ])
+        && !value.contains(": ")
+        && !value.contains(" #")
+        && !value.ends_with(':')
+        && !(flow && value.contains([',', '[', ']', '{', '}']))
+        && !RESERVED.contains(&value.to_ascii_lowercase().as_str())
+        // One word that opens with a digit, `+` or `.` may be a number, a
+        // time (`12:30`, base 60 in YAML 1.1) or a date to some reader.
+        && !(value.starts_with(|c: char| c.is_ascii_digit() || c == '+' || c == '.')
+            && !value.contains(char::is_whitespace));
+    if plain {
+        value.to_string()
+    } else {
+        serde_json::to_string(value).unwrap_or_else(|_| format!("\"{value}\""))
+    }
+}
+
 fn plural(n: usize, one: &str, many: &str) -> String {
     if n == 1 {
         format!("1 {one}")
@@ -120,7 +158,11 @@ fn join(items: &[String]) -> String {
 
 pub(crate) fn render(f: &Facts) -> String {
     let mut out = String::from("---\n");
-    kv(&mut out, &format!("source: {}", f.source), None);
+    kv(
+        &mut out,
+        &format!("source: {}", scalar(f.source, false)),
+        None,
+    );
     let handle_list: Vec<String> = f
         .handles
         .order
@@ -137,7 +179,16 @@ pub(crate) fn render(f: &Facts) -> String {
     } else {
         format!(" by {}", join(&handle_list))
     };
-    let threads: Vec<&CommentFact> = f.comments.iter().filter(|c| c.parent.is_none()).collect();
+    let threads: Vec<&CommentFact> = f
+        .comments
+        .iter()
+        .filter(|c| c.parent.is_none() && c.anchored)
+        .collect();
+    let unanchored: Vec<&CommentFact> = f
+        .comments
+        .iter()
+        .filter(|c| c.parent.is_none() && !c.anchored)
+        .collect();
     match (f.resolved, f.comments_inline) {
         (None, true) => kv(
             &mut out,
@@ -214,7 +265,10 @@ pub(crate) fn render(f: &Facts) -> String {
         if open < threads.len() {
             key.push_str(&format!(", {} resolved", threads.len() - open));
         }
-        let list: Vec<String> = threads
+        if !unanchored.is_empty() {
+            key.push_str(&format!(", {} unanchored", unanchored.len()));
+        }
+        let mut list: Vec<String> = threads
             .iter()
             .map(|t| {
                 let replies: Vec<String> = f
@@ -230,6 +284,11 @@ pub(crate) fn render(f: &Facts) -> String {
                 }
             })
             .collect();
+        list.extend(
+            unanchored
+                .iter()
+                .map(|c| format!("c{} (unanchored: in no story, Word shows no balloon)", c.id)),
+        );
         kv(
             &mut out,
             &key,
@@ -244,13 +303,18 @@ pub(crate) fn render(f: &Facts) -> String {
     match &f.owner {
         Owner::Creator(name) => kv(
             &mut out,
-            &format!("  document_owner: {name}"),
+            &format!("  document_owner: {}", scalar(name, false)),
             Some("dc:creator"),
         ),
         Owner::LastModifiedBy(name) => kv(
             &mut out,
-            &format!("  document_owner: {name}"),
+            &format!("  document_owner: {}", scalar(name, false)),
             Some("cp:lastModifiedBy; no dc:creator"),
+        ),
+        Owner::Unnamed => kv(
+            &mut out,
+            "  document_owner: none",
+            Some("docProps/core.xml names no dc:creator or cp:lastModifiedBy"),
         ),
         Owner::None => kv(
             &mut out,
@@ -298,15 +362,19 @@ pub(crate) fn render(f: &Facts) -> String {
         }
         kv(
             &mut out,
-            &format!("  {handle}: {author}"),
+            &format!("  {handle}: {}", scalar(author, false)),
             Some(&join(&parts)),
         );
     }
-    let last = f.paragraphs.saturating_sub(1);
+    // `p0-pN`, or nothing to name in a body without paragraphs.
+    let span = f
+        .paragraphs
+        .checked_sub(1)
+        .map_or_else(|| "no paragraphs".to_string(), |last| format!("p0-p{last}"));
     kv(
         &mut out,
         &format!(
-            "body: p0-p{last}, {}, {}",
+            "body: {span}, {}, {}",
             plural(f.tables, "table", "tables"),
             plural(f.pages, "page", "pages")
         ),
@@ -317,7 +385,21 @@ pub(crate) fn render(f: &Facts) -> String {
         }),
     );
     if let Some(range) = &f.range {
-        kv(&mut out, &format!("range: {range} of p0-p{last}"), None);
+        let of = if f.paragraphs == 0 {
+            String::new()
+        } else {
+            format!(" of {span}")
+        };
+        // A header or footer change shows on the headers:/footers: lines,
+        // not as a body block.
+        let note = f.stories_changed.then(|| {
+            if range.ends_with("(none)") {
+                "no body block; header and footer text is on the headers:/footers: lines"
+            } else {
+                "a header or footer change too: its text is on the headers:/footers: lines"
+            }
+        });
+        kv(&mut out, &format!("range: {range}{of}"), note);
     }
     part_two(&mut out, f);
     out.push_str("---\n");
@@ -603,12 +685,7 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
 }
 
 fn entry(s: &StoryFact) -> String {
-    let text = if s.text.contains('{') || s.text.contains(':') || s.text.is_empty() {
-        format!("\"{}\"", s.text.replace('"', "\\\""))
-    } else {
-        s.text.clone()
-    };
-    let mut inner = format!("id: {}, text: {text}", s.id);
+    let mut inner = format!("id: {}, text: {}", s.id, scalar(&s.text, true));
     if let Some(align) = s.align {
         inner.push_str(&format!(", {align}"));
     }
@@ -705,16 +782,26 @@ fn part_two(out: &mut String, f: &Facts) {
     let base = resolve(f.styles, f.theme, default);
     kv(
         out,
-        &format!("  {default}: {}", describe(&base, None)),
+        &format!(
+            "  {}: {}",
+            scalar(default, false),
+            scalar(&describe(&base, None), false)
+        ),
         Some("default; unannotated paragraphs use it"),
     );
     for (level, style) in &f.heading_styles {
         kv(
             out,
             &format!(
-                "  \"{}\": {style}, {}",
+                "  \"{}\": {}",
                 "#".repeat(*level),
-                describe(&resolve(f.styles, f.theme, style), Some(&base))
+                scalar(
+                    &format!(
+                        "{style}, {}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base))
+                    ),
+                    false
+                )
             ),
             None,
         );
@@ -723,10 +810,17 @@ fn part_two(out: &mut String, f: &Facts) {
         [] => {}
         [one] => kv(
             out,
-            &format!("  table: {}", table_style_line(f.styles, one)),
+            &format!(
+                "  table: {}",
+                scalar(&table_style_line(f.styles, one), false)
+            ),
             None,
         ),
-        many => kv(out, &format!("  tables: {}", many.join(", ")), None),
+        many => kv(
+            out,
+            &format!("  tables: {}", scalar(&many.join(", "), false)),
+            None,
+        ),
     }
     if let Some(first) = f.sections.first() {
         first_section_stories(out, first);
@@ -755,14 +849,16 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
 }
 
 /// A header/footer paragraph's text with fields as `{PAGE}`: field codes
-/// print, cached results do not. Runs inside hyperlinks, content controls,
-/// smart tags, custom XML and insertions count; deleted runs do not.
+/// print, cached results do not, and a field nested in another prints as the
+/// outer one. Line breaks are newlines. Runs inside hyperlinks, content
+/// controls, smart tags, custom XML and insertions count; deleted runs do not.
 pub(crate) fn story_text(p: &Element) -> String {
     #[derive(Default)]
     struct State {
         out: String,
-        instr: Option<String>,
-        in_result: bool,
+        /// Open complex fields, outermost first: the instruction so far and
+        /// whether the field has reached its result.
+        fields: Vec<(String, bool)>,
     }
     fn code(instr: &str) -> String {
         let name = instr
@@ -786,25 +882,30 @@ pub(crate) fn story_text(p: &Element) -> String {
                     for child in run.elements() {
                         match child.local() {
                             "fldChar" => match child.attr("fldCharType") {
-                                Some("begin") => s.instr = Some(String::new()),
-                                Some("separate") => s.in_result = true,
+                                Some("begin") => s.fields.push((String::new(), false)),
+                                Some("separate") => {
+                                    if let Some(field) = s.fields.last_mut() {
+                                        field.1 = true;
+                                    }
+                                }
                                 Some("end") => {
-                                    if let Some(instr) = s.instr.take() {
+                                    if let Some((instr, _)) = s.fields.pop()
+                                        && s.fields.is_empty()
+                                    {
                                         s.out.push_str(&code(&instr));
                                     }
-                                    s.in_result = false;
                                 }
                                 _ => {}
                             },
                             "instrText" => {
-                                if let Some(i) = s.instr.as_mut() {
-                                    i.push_str(&child.text());
+                                if let Some((instr, false)) = s.fields.last_mut() {
+                                    instr.push_str(&child.text());
                                 }
                             }
-                            "t" if s.instr.is_none() && !s.in_result => {
-                                s.out.push_str(&child.text());
-                            }
+                            _ if !s.fields.is_empty() => {}
+                            "t" => s.out.push_str(&child.text()),
                             "tab" => s.out.push('\t'),
+                            "br" | "cr" => s.out.push('\n'),
                             _ => {}
                         }
                     }
@@ -909,5 +1010,53 @@ mod tests {
         assert_eq!(paragraphs.len(), 2);
         assert_eq!(story_text(paragraphs[0]), "");
         assert_eq!(story_text(paragraphs[1]), "body");
+    }
+
+    /// pi review r392 F1/F6: values a YAML 1.1 or 1.2 reader takes as a
+    /// number, a time or a date are quoted; prose that starts with a digit
+    /// stays plain.
+    #[test]
+    fn number_and_time_like_values_are_quoted() {
+        for value in [
+            "0x2A",
+            "0o17",
+            "+.inf",
+            ".Inf",
+            "12:30",
+            "1:30:45",
+            "1_000",
+            "2026-10-01",
+            "42",
+            "1e5",
+            "+1",
+        ] {
+            assert_eq!(scalar(value, false), format!("\"{value}\""), "{value}");
+        }
+        for value in ["1. Introduction", "3 survive", "Page 2", "x0x2A"] {
+            assert_eq!(scalar(value, true), value, "{value}");
+        }
+    }
+
+    /// pi review av2 F18: a line break inside a header paragraph is a line
+    /// break in its text, not two words glued together.
+    #[test]
+    fn a_break_in_a_header_line_is_a_newline() {
+        let root = ftr(
+            r#"<w:p><w:r><w:t>line one</w:t><w:br/><w:t>line two</w:t><w:cr/><w:t>three</w:t></w:r></w:p>"#,
+        );
+        assert_eq!(
+            story_text(story_paragraphs(&root)[0]),
+            "line one\nline two\nthree"
+        );
+    }
+
+    /// pi review av2 F18: a field nested in another's instruction does not
+    /// replace it; the outer field names the code, its result stays hidden.
+    #[test]
+    fn a_nested_field_keeps_the_outer_code() {
+        let root = ftr(&format!(
+            r#"<w:p><w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF </w:instrText></w:r>{PAGE_RUNS}<w:r><w:instrText xml:space="preserve"> > 1 "more" "" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>more</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t> end</w:t></w:r></w:p>"#
+        ));
+        assert_eq!(story_text(story_paragraphs(&root)[0]), "Page {IF} end");
     }
 }

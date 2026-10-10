@@ -148,12 +148,11 @@ fn styles(tokens: &[String]) -> Result<(Option<RunFormat>, Option<String>), Stri
 }
 
 /// `--content` as document text: Markdown escapes resolved (`\#` → `#`); a
-/// note when emphasis marks remain, since they are written as text.
+/// note when the view would read marks in it (emphasis, CriticMarkup, a
+/// block mark), since they are written as text.
 fn content_text(content: &str) -> (String, Option<&'static str>) {
     let text = crate::markdown::unescape_markdown(content);
-    let marks = ["**", "__", "~~", "==", "<u>", "</u>"]
-        .iter()
-        .any(|m| text.contains(m));
+    let marks = crate::markdown::plain_anchor(content) != text;
     (
         text,
         marks.then_some("content keeps its Markdown marks as text; use --style for formatting"),
@@ -285,6 +284,9 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
             inline_edit(paragraph(), anchor, text, run_format)
                 .map_err(|m| format!("-p {at}: {m}"))?
         }
+        (Verb::Edit, None, Some(_), None) if op.delete && !op.styles.is_empty() => {
+            return bad("--delete takes no --style");
+        }
         (Verb::Edit, None, Some(anchor), None) if op.delete => K::Delete {
             paragraph: paragraph(),
             find: anchor.clone(),
@@ -351,7 +353,16 @@ fn inline_edit(
     use OperationKind as K;
     let plain = crate::markdown::plain_anchor(anchor);
     if text == anchor || text == plain {
-        return Err("--content equals the anchor; nothing to change".into());
+        // Same words with a style: "make the anchor bold".
+        return match format {
+            Some(format) => Ok(K::FormatRun {
+                paragraph,
+                find: anchor.to_string(),
+                format,
+                occurrence: None,
+            }),
+            None => Err("--content equals the anchor; nothing to change".into()),
+        };
     }
     let after = text.strip_prefix(anchor).or_else(|| {
         text.strip_prefix(plain.as_str())
@@ -456,6 +467,25 @@ mod tests {
         flag_operation(verb, op).map(|(k, _)| k)
     }
 
+    /// pi review av4 F5: deleting an anchor has nothing to format, with or
+    /// without the anchor.
+    #[test]
+    fn delete_refuses_a_style_with_an_anchor_too() {
+        let mut delete = op("p4");
+        delete.anchor = Some("Fees".into());
+        delete.delete = true;
+        delete.styles = vec!["bold".into()];
+        assert_eq!(
+            kind(Verb::Edit, &delete).unwrap_err(),
+            "-p p4: --delete takes no --style"
+        );
+        delete.styles = vec!["Heading2".into()];
+        assert_eq!(
+            kind(Verb::Edit, &delete).unwrap_err(),
+            "-p p4: --delete takes no --style"
+        );
+    }
+
     #[test]
     fn add_refuses_what_it_cannot_write() {
         let mut new = op("p1");
@@ -547,6 +577,60 @@ mod tests {
             matches!(k, OperationKind::Replace { ref replacement, .. } if replacement == "sixty")
         );
         assert!(inline_edit(Selector::Name("p1".into()), "# x", "x".into(), None).is_err());
+    }
+
+    /// pi review av4 F12: the note fires whenever the content reads
+    /// differently as Markdown, CriticMarkup and block marks included, and
+    /// not for escaped marks or a lone `*`.
+    #[test]
+    fn content_notes_every_mark_the_view_would_read() {
+        for noted in [
+            "**bold**",
+            "{++x++}",
+            "{~~a~>b~~}",
+            "# Title",
+            "_x_",
+            "<u>u</u>",
+        ] {
+            assert!(content_text(noted).1.is_some(), "{noted}");
+        }
+        for plain in [
+            "\\*\\*x\\*\\*",
+            "*italics?",
+            "2 * 3",
+            "snake__case",
+            "plain",
+            " lead",
+            "trail ",
+            "two\nlines",
+            "a = b",
+            "x - y",
+        ] {
+            assert!(content_text(plain).1.is_none(), "{plain}");
+        }
+    }
+
+    /// pi review av4 F8: "make thirty bold" written as `--anchor thirty
+    /// --content thirty --style bold` formats the run instead of refusing.
+    #[test]
+    fn content_equal_to_the_anchor_with_a_style_formats_the_run() {
+        let bold = RunFormat {
+            bold: Some(true),
+            ..RunFormat::default()
+        };
+        for content in ["thirty", "**thirty**"] {
+            let k = inline_edit(
+                Selector::Name("p1".into()),
+                "**thirty**",
+                content.into(),
+                Some(bold.clone()),
+            )
+            .unwrap();
+            assert!(
+                matches!(k, OperationKind::FormatRun { ref find, ref format, .. } if find == "**thirty**" && format.bold == Some(true)),
+                "{content}"
+            );
+        }
     }
 
     #[test]

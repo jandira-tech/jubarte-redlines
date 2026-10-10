@@ -30,6 +30,25 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
+/// `println!` for the listings: a reader that stops early (`jubarte inspect
+/// FILE | head`) ends the process quietly, as `write_stdout` ends a view.
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        stdout_line(format_args!($($arg)*))
+    };
+}
+
+fn stdout_line(line: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    if let Err(e) = writeln!(std::io::stdout().lock(), "{line}") {
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("error: writing to stdout: {e}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+}
+
 /// CLI-only global allocator. The redline pipeline spends ~41% of CPU self-time
 /// in allocation/copy/free/drop of xmllinq nodes (measured with samply on the
 /// RFP17 fixtures — `produce::coalesce_recurse`/`reconstruct_element` churn).
@@ -188,7 +207,7 @@ fn run_changes(file: &Path, json: bool) -> Result<(), String> {
     let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
     for c in &changes {
         if json {
-            println!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+            outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
             continue;
         }
         let kind = serde_json::to_value(c.kind).map_err(|e| e.to_string())?;
@@ -198,7 +217,7 @@ fn run_changes(file: &Path, json: bool) -> Result<(), String> {
             .as_deref()
             .map(|id| format!("\tinside {id}"))
             .unwrap_or_default();
-        println!(
+        outln!(
             "{}\t{}\t{}\t{}\t{preview:?}{inside}",
             c.id,
             kind.as_str().unwrap_or("?"),
@@ -207,7 +226,7 @@ fn run_changes(file: &Path, json: bool) -> Result<(), String> {
         );
     }
     if !json {
-        println!("{} change(s)", changes.len());
+        outln!("{} change(s)", changes.len());
     }
     Ok(())
 }
@@ -218,7 +237,7 @@ fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> 
     let comments = jubarte::comments::select_comments(comments, author, latest);
     for c in &comments {
         if json {
-            println!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+            outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
             continue;
         }
         let text: String = c.text.chars().take(60).collect();
@@ -228,7 +247,7 @@ fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> 
             .map(|p| format!("\treply to {p}"))
             .unwrap_or_default();
         let done = if c.done { "\tresolved" } else { "" };
-        println!(
+        outln!(
             "{}\t{}\t{}\t{text:?}\ton {anchor:?}{thread}{done}",
             c.id,
             c.paragraph.as_deref().unwrap_or("-"),
@@ -236,7 +255,7 @@ fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> 
         );
     }
     if !json {
-        println!("{} comment(s)", comments.len());
+        outln!("{} comment(s)", comments.len());
     }
     Ok(())
 }
@@ -459,7 +478,7 @@ fn say(to_stderr: bool, line: std::fmt::Arguments<'_>) {
     if to_stderr {
         eprintln!("{line}");
     } else {
-        println!("{line}");
+        outln!("{line}");
     }
 }
 
@@ -575,12 +594,12 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
         }
     }
     if job.json {
-        println!("{summary}");
+        outln!("{summary}");
     } else {
         for page in &changed {
             match page.only_in {
-                Some(side) => println!("page {}: only in {side}", page.index + 1),
-                None => println!(
+                Some(side) => outln!("page {}: only in {side}", page.index + 1),
+                None => outln!(
                     "page {}: {:.2}% of pixels changed, box {:?}",
                     page.index + 1,
                     page.changed_ratio * 100.0,
@@ -588,7 +607,7 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
                 ),
             }
         }
-        println!(
+        outln!(
             "{} of {} page{} differ{}",
             changed.len(),
             diff.pages.len(),
@@ -609,7 +628,7 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
 fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
     let bytes = read_document(file)?;
     if json {
-        println!(
+        outln!(
             "{}",
             jubarte::inspect::inspect_json(&bytes).map_err(|e| e.to_string())?
         );
@@ -617,7 +636,7 @@ fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
     }
     let summary = jubarte::inspect::summary(&bytes).map_err(|e| e.to_string())?;
     let paragraphs = jubarte::inspect::paragraphs(&bytes).map_err(|e| e.to_string())?;
-    println!(
+    outln!(
         "sha256: {}\nparagraphs: {}  tables: {}  fields: {}  sections: {}  comments: {}  revisions: {}  footnotes: {}  endnotes: {}  headers: {}  footers: {}  images: {}  numbering: {}  track_changes: {}",
         jubarte::inspect::source_sha256(&bytes),
         summary.paragraphs,
@@ -655,7 +674,7 @@ fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
         } else {
             ""
         };
-        println!("{}\t[{}]\t{preview}{more}", p.id, flags.join(","));
+        outln!("{}\t[{}]\t{preview}{more}", p.id, flags.join(","));
     }
     Ok(())
 }
@@ -664,12 +683,12 @@ fn run_inspect_tables(file: &Path) -> Result<(), String> {
     let bytes = read_document(file)?;
     let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
     if tables.is_empty() {
-        println!("no tables");
+        outln!("no tables");
     }
     for table in &tables {
         let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
         let widths: Vec<String> = table.widths_dxa.iter().map(u32::to_string).collect();
-        println!(
+        outln!(
             "table {}: {}x{columns} header_rows={} widths={}",
             table.index,
             table.rows.len(),
@@ -693,7 +712,7 @@ fn run_inspect_tables(file: &Path) -> Result<(), String> {
                     format!("{ids}={text}")
                 })
                 .collect();
-            println!("{}", cells.join("\t"));
+            outln!("{}", cells.join("\t"));
         }
     }
     Ok(())
@@ -706,15 +725,18 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
     let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
     let report = jubarte::audit::audit_report(&bytes, &rules).map_err(|e| e.to_string())?;
     if json {
-        println!(
+        outln!(
             "{}",
             serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
         );
     } else {
         for finding in &report.findings {
-            println!(
+            outln!(
                 "{}\t{}\t{}\t{}",
-                finding.severity, finding.code, finding.location, finding.message
+                finding.severity,
+                finding.code,
+                finding.location,
+                finding.message
             );
         }
         let count = |severity: &str| {
@@ -724,7 +746,7 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
                 .filter(|finding| finding.severity == severity)
                 .count()
         };
-        println!(
+        outln!(
             "{} findings: {} error, {} warning, {} info ({} rules{})",
             report.findings.len(),
             count("error"),
@@ -773,8 +795,21 @@ fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Re
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
-    print!("{}", view.markdown);
-    Ok(())
+    write_stdout(&view.markdown)
+}
+
+/// Writes a view, a conversion or a diff to stdout. A reader that stops early
+/// (`jubarte FILE | head`) closes the pipe; the output then ends quietly, as
+/// `cat`'s does.
+fn write_stdout(text: impl AsRef<[u8]>) -> Result<(), String> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_ref()).and_then(|()| out.flush()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+            Err(format!("writing to stdout: {e}"))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Whether `edit` and `add` track their changes.
@@ -874,8 +909,7 @@ fn run_edit(
     }
     if job.dry_run {
         let report = jubarte::edit::preview_plan(source, plan).map_err(|e| refused(&e))?;
-        print!("{}", report.to_jsonl());
-        return Ok(());
+        return write_stdout(report.to_jsonl()).map_err(fail);
     }
     let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
     let mut jsonl = result.report.to_jsonl();
@@ -989,24 +1023,24 @@ fn run_edit(
         return Ok(());
     }
     let summary = jsonl.lines().last().unwrap_or("").to_string();
-    println!("{summary}");
+    outln!("{summary}");
     let names: Vec<&str> = outputs
         .iter()
         .map(|(name, _)| name.as_str())
         .chain(["report.jsonl"])
         .collect();
-    println!(
+    outln!(
         "wrote {} ({} files: {})",
         job.out_dir.display(),
         names.len(),
         names.join(", ")
     );
     for note in notes {
-        println!("note: {note}");
+        outln!("note: {note}");
     }
     for outcome in &result.report.operations {
         if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
-            println!(
+            outln!(
                 "note: {}: anchor {given:?} read as {read_as:?} (Markdown marks are not document text)",
                 outcome.id
             );
@@ -1018,15 +1052,20 @@ fn run_edit(
         Mode::Suggesting => "redline.docx",
         Mode::Editing => "clean.docx",
     };
-    let view = jubarte::markdown::changed_view(
+    // The files are written and report.jsonl says so: a view that cannot be
+    // read back is a warning, not a failed edit.
+    match jubarte::markdown::changed_view(
         &result.redline,
         &result.report.author,
         job.mode == Mode::Editing,
         Some(&job.out_dir.join(shown).display().to_string()),
-    )
-    .map_err(|e| fail(format!("reading the redline back: {e}")))?;
-    print!("{view}");
-    Ok(())
+    ) {
+        Ok(view) => write_stdout(&view).map_err(fail),
+        Err(e) => {
+            eprintln!("warning: the changed blocks cannot be shown: {e}");
+            Ok(())
+        }
+    }
 }
 
 /// One `edit` or `add` invocation, parsed.
@@ -1122,7 +1161,7 @@ fn refused(e: &jubarte::edit::EditError) -> (u8, String) {
         "operation": e.operation,
         "message": e.message,
     });
-    println!("{report_lines}{summary}");
+    outln!("{report_lines}{summary}");
     (EXIT_PLAN_REFUSED, format!("plan refused: {e}"))
 }
 
@@ -1150,13 +1189,13 @@ fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
         // Shared serialization (also the wasm `getRevisions` shape): full JSON
         // string escaping — backslash, quote, and ALL control chars < 0x20.
         for r in &revs {
-            println!("{}", jubarte::document_comparer::revision_to_json(r));
+            outln!("{}", jubarte::document_comparer::revision_to_json(r));
         }
     } else {
         for r in &revs {
             let text = r.text.as_deref().unwrap_or("");
             let preview: String = text.chars().take(60).collect();
-            println!(
+            outln!(
                 "{:?}\t{}\t{}\t{:?}",
                 r.revision_type,
                 r.author.as_deref().unwrap_or("-"),
@@ -1164,7 +1203,7 @@ fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
                 preview
             );
         }
-        println!("{} revision(s)", revs.len());
+        outln!("{} revision(s)", revs.len());
     }
     Ok(())
 }
@@ -1304,7 +1343,7 @@ fn run(job: &Job) -> Result<(), String> {
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))?;
 
     if !job.quiet {
-        println!("wrote {} ({} bytes)", output.display(), out.len());
+        outln!("wrote {} ({} bytes)", output.display(), out.len());
     }
     Ok(())
 }
@@ -1517,10 +1556,7 @@ fn run_text_diff(
         eprintln!("wrote {} ({} bytes)", path.display(), patch.len());
         Ok(())
     } else {
-        use std::io::Write as _;
-        std::io::stdout()
-            .write_all(patch.as_bytes())
-            .map_err(|e| format!("writing to stdout: {e}"))
+        write_stdout(&patch)
     }
 }
 
@@ -1613,14 +1649,13 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         None => None,
     };
     if let (Some(patch), None) = (&patch, &output) {
-        print!("{patch}");
-        return Ok(());
+        return write_stdout(patch);
     }
     write_diff_output(job, to, output, &out, patch.is_some())?;
-    if let Some(patch) = patch {
-        print!("{patch}");
+    match patch {
+        Some(patch) => write_stdout(&patch),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// Write `diff`'s Markdown, Word, PDF or PNG output. With a patch on
@@ -1633,12 +1668,7 @@ fn write_diff_output(
     patch_on_stdout: bool,
 ) -> Result<(), String> {
     match (to, output) {
-        (Format::Md, None) => {
-            use std::io::Write as _;
-            std::io::stdout()
-                .write_all(out)
-                .map_err(|e| format!("writing to stdout: {e}"))
-        }
+        (Format::Md, None) => write_stdout(out),
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
             std::fs::write(&path, out).map_err(|e| format!("writing {}: {e}", path.display()))?;
@@ -1787,13 +1817,10 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                     ensure_writable(output, job.force)?;
                     std::fs::write(output, &text)
                         .map_err(|e| format!("writing {}: {e}", output.display()))?;
-                    println!("wrote {} ({} bytes)", output.display(), text.len());
+                    outln!("wrote {} ({} bytes)", output.display(), text.len());
                     Ok(())
                 }
-                None => {
-                    print!("{text}");
-                    Ok(())
-                }
+                None => write_stdout(&text).map_err(ConvertFailure::from),
             }
         }
         (Format::Docx, Format::Docx) => {
@@ -1808,7 +1835,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                     ensure_writable(&output, job.force)?;
                     std::fs::write(&output, &bytes)
                         .map_err(|e| format!("writing {}: {e}", output.display()))?;
-                    println!("wrote {} ({} bytes)", output.display(), bytes.len());
+                    outln!("wrote {} ({} bytes)", output.display(), bytes.len());
                     return Ok(());
                 }
                 TrackChanges::All => {
@@ -1828,7 +1855,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             })?;
             std::fs::write(output, &out)
                 .map_err(|e| format!("writing {}: {e}", output.display()))?;
-            println!("wrote {} ({} bytes)", output.display(), out.len());
+            outln!("wrote {} ({} bytes)", output.display(), out.len());
             Ok(())
         }
         (Format::Md, Format::Md) => {
@@ -1844,10 +1871,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                     std::fs::write(output, &out)
                         .map_err(|e| format!("writing {}: {e}", output.display()).into())
                 }
-                None => {
-                    print!("{out}");
-                    Ok(())
-                }
+                None => write_stdout(&out).map_err(ConvertFailure::from),
             }
         }
         (Format::Md, Format::Docx | Format::Pdf | Format::Png) => {
@@ -1881,7 +1905,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             ensure_writable(&output, job.force)?;
             std::fs::write(&output, &written.docx)
                 .map_err(|e| format!("writing {}: {e}", output.display()))?;
-            println!("wrote {} ({} bytes)", output.display(), written.docx.len());
+            outln!("wrote {} ({} bytes)", output.display(), written.docx.len());
             Ok(())
         }
         (Format::Pdf | Format::Png, _) => {
@@ -1918,8 +1942,7 @@ fn run_debug(
     } else {
         jubarte::debug::report(&a, b.as_deref(), &opts)?
     };
-    print!("{out}");
-    Ok(())
+    write_stdout(&out)
 }
 
 /// One `jubarte validate` run.
@@ -1950,7 +1973,7 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
             let fixed = repair(&docx).map_err(|e| e.to_string())?;
             std::fs::write(out, &fixed.docx).map_err(|e| format!("{}: {e}", out.display()))?;
             if !job.json {
-                println!(
+                outln!(
                     "repaired {} finding(s) into {}",
                     fixed.repaired.len(),
                     out.display()
@@ -1966,18 +1989,18 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
     }
     for f in &findings {
         if job.json {
-            println!("{}", serde_json::to_string(f).map_err(|e| e.to_string())?);
+            outln!("{}", serde_json::to_string(f).map_err(|e| e.to_string())?);
         } else {
             let star = if f.word_fatal { '*' } else { ' ' };
-            println!("{star} {}\t{}#{}\t{}", f.code, f.part, f.path, f.message);
+            outln!("{star} {}\t{}#{}\t{}", f.code, f.part, f.path, f.message);
         }
     }
     if !job.json {
         if findings.is_empty() {
-            println!("no findings");
+            outln!("no findings");
         } else {
             let fatal = findings.iter().filter(|f| f.word_fatal).count();
-            println!("{} finding(s), {fatal} Word-fatal", findings.len());
+            outln!("{} finding(s), {fatal} Word-fatal", findings.len());
         }
     }
     Ok(findings.is_empty())
@@ -2027,8 +2050,7 @@ fn run_debug_diff(
         .map(String::as_str)
         .zip(bytes.iter().map(Vec::as_slice))
         .collect();
-    print!("{}", jubarte::debug::diff::diff(&pairs, opts)?);
-    Ok(())
+    write_stdout(&jubarte::debug::diff::diff(&pairs, opts)?)
 }
 
 /// The stack the CLI runs on: what Linux and macOS give a main thread.
@@ -2286,7 +2308,7 @@ fn cli_main() -> ExitCode {
             return edit_exit(run_flags(&flags));
         }
         Some(Command::Capabilities { .. }) => {
-            println!("{}", jubarte::capabilities::capabilities_json("cli"));
+            outln!("{}", jubarte::capabilities::capabilities_json("cli"));
             return ExitCode::SUCCESS;
         }
         Some(Command::SelfUpdate {
@@ -2465,7 +2487,7 @@ fn run_append(
     }
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))?;
     if !quiet {
-        println!("wrote {} ({} bytes)", output.display(), out.len());
+        outln!("wrote {} ({} bytes)", output.display(), out.len());
     }
     Ok(())
 }
@@ -2496,13 +2518,16 @@ fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Res
             "page_count": updated.page_count,
             "fields": updated.fields,
         });
-        println!("{report}");
+        outln!("{report}");
         return Ok(());
     }
     for field in &updated.fields {
-        println!(
+        outln!(
             "{}\t{}\t{:?} -> {:?}",
-            field.paragraph, field.kind, field.old, field.new
+            field.paragraph,
+            field.kind,
+            field.old,
+            field.new
         );
     }
     eprintln!(

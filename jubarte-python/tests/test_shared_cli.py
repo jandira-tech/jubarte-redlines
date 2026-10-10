@@ -92,12 +92,28 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert out.startswith(f"---\nsource: {word} (not written; -o keeps it)\n"), out
     assert "{~~30~>45~~}" in out, out
     assert not word.exists()
+    # The view is the output, so --quiet does not hide it (pi review av5 F6);
+    # read options apply to it.
+    assert main([str(a), str(b), "--quiet"]) == 0
+    assert "{~~30~>45~~}" in capsys.readouterr().out
+    assert main([str(a), str(b), "--track-changes", "accept"]) == 0
+    accepted = capsys.readouterr().out
+    assert "{~~" not in accepted and "rev #" in accepted, accepted
     # -o writes it; compare A B writes the default name.
     assert main([str(a), str(b), "-o", str(word), "--quiet"]) == 0
     assert word.read_bytes().startswith(b"PK")
     assert capsys.readouterr().out == ""
     assert main(["compare", str(a), str(b), "--quiet", "--force"]) == 0
     assert word.read_bytes().startswith(b"PK")
+    # --changed --by keeps the author's block, by handle or by name (pi
+    # review av3 F8: only the (none) path was tested).
+    signed = tmp_path / "signed.docx"
+    assert main([str(a), str(b), "-o", str(signed), "--author", "Ann Counsel", "--quiet"]) == 0
+    capsys.readouterr()
+    for by in ("AC", "Ann Counsel"):
+        assert main(["read", str(signed), "--changed", "--by", by, "--no-page-markers"]) == 0
+        out = capsys.readouterr().out
+        assert "\nrange: changed by @AC (p0) of p0" in out and "{~~30~>45~~}" in out, out
     assert main(["diff", str(word), str(word)]) == 0
     assert (tmp_path / "before_v_after_v_before_v_after.docx").read_bytes().startswith(b"PK")
 

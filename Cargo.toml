@@ -149,6 +149,8 @@ criterion = "0.8"
 ooxmlsdk = { version = "0.13.1", default-features = false, features = ["parts"] }
 # tests/agent_text_view.rs: read revision ids back out of the agent view.
 regex = "1"
+# tests/agent_text_view.rs: the agent view's header must parse as YAML.
+saphyr = "0.1"
 tempfile = "3"
 # tests/self_update_signature.rs: sign a throwaway .tar.gz exactly as
 # `zipsign sign tar` does in release.yml, then check it with the updater's

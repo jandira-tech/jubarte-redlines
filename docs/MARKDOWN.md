@@ -185,7 +185,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments #c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments #c{ids} · in #c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev #0 @AC; #1+2 @AC -->
 ```
 
@@ -196,8 +196,13 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches.
-- `num "1."` is the auto-number label; `bullet` a bulleted item. Labels are
-  not document text.
+- `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
+  in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
+  it is escaped with `\`). A level text naming a deeper level (`%3` on
+  level 2) gets no label, and no list indent, from Word: the view shows
+  a plain paragraph. `bullet` is a
+  bulleted item. Labels are not document text, and a list body keeps its
+  Markdown marker (`1.`).
 - `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
   its `w:pPr` holds `w:sectPr`.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
@@ -207,6 +212,10 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
   A paragraph joined into the one before it hands its revisions over.
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
+- `in #c5`: with comments inline, the comment threads whose range runs on
+  past the paragraph. CriticMarkup cannot span paragraphs, so such a range
+  repeats `{==…==}` in each and shows its note only where it ends; the
+  clause says which thread a highlight belongs to.
 - Empty paragraphs: `<!-- p19 empty -->`, consecutive ones
   `<!-- p19-p23 empty -->`. An empty paragraph that holds a tracked mark, a
   formatting change, a resolved revision or a hidden comment keeps its own
@@ -220,8 +229,13 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
 A table gets one line: `<!-- t0 center 3x2, cells p8-p13 by row, header row
 repeats -->`, `cells r0 p8-p10 r1 p11-p14` when a cell holds other than one
 paragraph, then `merged cells`, `break-ins #12 @AC in p9`, `break-del …`,
-`rev … in pN` (resolved views) and, with `--comments none`,
-`comments #c9 in p11`. `tN` counts top-level body tables.
+`rev … in pN` (resolved views), with `--comments none`
+`comments #c9 in p11`, and `in #c5` for a comment range open across it.
+`tN` counts top-level body tables.
+
+The header's `comments:` line counts open and resolved threads, and apart
+from them a comment no story anchors (no range or reference in the body or
+a note): `1 thread open, 1 unanchored`. Word draws no balloon for it.
 
 ### Tags
 
@@ -255,7 +269,8 @@ timestamp, or the day range when the author has several.
 
 ### Reading back
 
-An agent view is CriticMarkup plus id lines, so it reads back as follows. A
+An agent view is CriticMarkup plus id lines. The Markdown-to-Word applier
+does not read it back yet; this is the contract it will honour. A
 change followed by a tagged note (`{>>#12 @AC<<}`) is the document's revision
 `body:rev:12` (`footnotes:rev:12` under a footnote id line): kept as it is
 when unchanged, accepted or rejected when the agent removed its text. A
@@ -269,8 +284,8 @@ Defaults when the Markdown is incomplete, in order: `source:` names a base
 document, and everything not stated comes from it by id; a note's own
 `@handle` and timestamp; the handle's single timestamp from `authors:`; if
 `authors:` lists exactly one non-owner author, that author; else the author
-`Modified User`; a missing date is the header's `date:` line, else the
-conversion time in UTC, with a warning; `document_owner` missing is
+`Modified User`; a missing date is the conversion time in UTC, with a
+warning; `document_owner` missing is
 `Original User`; with no header at all, Letter portrait, one-inch margins,
 Normal Calibri 11pt and the writer's other defaults. A header without
 `source:` is honoured for `page:`, the `styles:` lines it names, and
@@ -291,8 +306,11 @@ anchor is tried first; when it does not occur, the anchor without its marks
 (escapes resolved) is tried, and the report's `op` line records
 `anchor_given` and `anchor_read_as`. The CLI prints
 `note: op-1: anchor "# Fees" read as "Fees" (Markdown marks are not document
-text)`. `read --changed` keeps the blocks with a change or a comment;
-`--by AUTHOR` (a handle or a full name) keeps one author's.
+text)`. `read --changed` keeps the blocks with a change or a comment, every
+paragraph of a comment range included; `--by AUTHOR` (a handle or a full
+name) keeps one author's. A selection keeps the footnotes its blocks cite;
+`--changed` also keeps a changed footnote and names it in `range:`
+(`changed (p4, [^2])`).
 
 ### Commands
 
@@ -346,7 +364,14 @@ without their Markdown marks, with a note.
 ### Limits of the agent view
 
 - Tracked paragraph marks inside comment bodies are not shown.
-- Page markers need the layout pass; `--no-page-markers` skips it.
+- Headers and footers are header lines (`headers:`, `footers:`), not body
+  blocks: when one holds a change `--changed` selects, the `range:` line
+  says to read those lines (with no block left when only they changed).
+- Page markers need the layout pass; `--no-page-markers` skips it. When
+  the layout fails, the markers come from Word's cached page breaks, else
+  from hard breaks and section starts. That fallback does not mix the two
+  (a page break added after Word last saved turns no page) and does not
+  add the blank page an odd- or even-page section start can need.
 - A table is one block for `-p`, `--head` and `--tail`.
 - With comments inline, a comment range between two changes by one author
   splits their note (`{>>#7 @AC<<}` … `{>>#8 @AC<<}`): CriticMarkup cannot

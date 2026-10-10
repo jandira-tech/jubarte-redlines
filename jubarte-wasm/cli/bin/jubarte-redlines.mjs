@@ -358,7 +358,16 @@ function runEdit(verb, file, o) {
     }
   }
   const shown = path.join(outDir, editing ? "clean.docx" : "redline.docx");
-  process.stdout.write(wasm.changedView(result.redline, report.author, editing, shown));
+  // The files are written and report.jsonl says so: a view that cannot be
+  // read back is a warning, not a failed edit.
+  let view;
+  try {
+    view = wasm.changedView(result.redline, report.author, editing, shown);
+  } catch (error) {
+    console.error(`warning: the changed blocks cannot be shown: ${error.message ?? error}`);
+    return;
+  }
+  process.stdout.write(view);
 }
 
 /** The agent view of `docx` with the read options `o`; `source` is its header name. */
@@ -427,7 +436,7 @@ function validateHost(name, o) {
     }
     const extension = path.extname(o.output ?? "").toLowerCase();
     if (o.to === "md" || (o.to == null && [".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn"].includes(extension))) {
-      throw new UsageError("Markdown output with page markers is not supported by the npm CLI; use read --track-changes");
+      throw new UsageError("Markdown output with page markers is not supported by the npm CLI; `read FILE` prints the agent text view");
     }
     // A Word name fails before any read; a name that says nothing is
     // sniffed like every other input, in `convert`.

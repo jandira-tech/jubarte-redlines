@@ -329,7 +329,13 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
             given, read_as = json.dumps(outcome.anchor_given, ensure_ascii=False), json.dumps(outcome.anchor_read_as, ensure_ascii=False)
             print(f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)")
     shown = out_dir / ("clean.docx" if editing else "redline.docx")
-    view = _native.changed_view(result.redline.to_bytes(), result.report.author, accepted=editing, source=str(shown))
+    # The files are written and report.jsonl says so: a view that cannot be
+    # read back is a warning, not a failed edit.
+    try:
+        view = _native.changed_view(result.redline.to_bytes(), result.report.author, accepted=editing, source=str(shown))
+    except _native.JubarteError as exc:
+        print(f"warning: the changed blocks cannot be shown: {exc}", file=sys.stderr)
+        return EXIT_OK
     sys.stdout.write(view)
     return EXIT_OK
 
@@ -738,7 +744,7 @@ class SharedParser:
             to = values.get("to")
             extension = Path(values.get("output") or "").suffix.lower()
             if to == "md" or (to is None and extension in (".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn")):
-                self.error("--to md with page markers is not supported by the Python CLI; use read --track-changes")
+                self.error("--to md with page markers is not supported by the Python CLI; `read FILE` prints the agent text view")
             if (to == "docx" or (to is None and extension == ".docx")) and Path(values["file"]).suffix.lower() not in (".md", ".markdown"):
                 self.error("--to docx requires Markdown input in the Python CLI")
             if to in ("pdf", "png"):

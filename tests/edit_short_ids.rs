@@ -101,3 +101,164 @@ fn a_short_id_that_points_nowhere_is_refused_and_named() {
         assert!(e.to_string().contains(message), "{short}: {e}");
     }
 }
+
+/// A text box inside a cell is not one of the cell's paragraphs: the view
+/// numbers the cell `host, ALPHA, BETA` (the box's own paragraph has no id),
+/// and `tN.rR.cC.pK` counts the same way.
+#[test]
+fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
+    let host = r#"<w:p><w:r><w:pict><w:shape><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></w:shape></w:pict></w:r></w:p>"#;
+    let table = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{host}{}{}</w:tc></w:tr></w:tbl>"#,
+        para("ALPHA"),
+        para("BETA")
+    );
+    let source = docx_with_sect(&format!("{}{table}{}", para("Zero"), para("Six")), &[], "");
+    let out = apply_plan(
+        &source,
+        &plan(
+            r#"[
+        {"kind":"replace","paragraph":"t0.r0.c0.p1","find":"ALPHA","replacement":"Alpha"},
+        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"BETA","replacement":"Beta"}]"#,
+        ),
+    )
+    .unwrap();
+    assert!(out.report.ok, "{:?}", out.report.operations);
+    assert_eq!(at(&out, 0), "body:p:2");
+    assert_eq!(at(&out, 1), "body:p:3");
+    let refused = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"replace","paragraph":"t0.r0.c0.p3","find":"x","replacement":"y"}]"#),
+    );
+    let message = match refused {
+        Ok(result) => format!("{:?}", result.report.operations),
+        Err(e) => e.to_string(),
+    };
+    assert!(message.contains("has 3 paragraphs, no p3"), "{message}");
+}
+
+/// pi review r392b F5: a table nested in a cell is part of the cell in the
+/// view (`cells r0 p2-p4`), so `tN.rR.cC.pK` counts its paragraphs too.
+#[test]
+fn a_cell_paragraph_id_counts_the_nested_table_as_the_view_does() {
+    let inner = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>"#,
+        para("INNER")
+    );
+    let table = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}{inner}{}</w:tc></w:tr></w:tbl>"#,
+        para("HEAD"),
+        para("TAIL")
+    );
+    let source = docx_with_sect(&format!("{}{table}{}", para("Zero"), para("Six")), &[], "");
+    let view = jubarte::markdown::docx_to_markdown(
+        &source,
+        &jubarte::markdown::MarkdownOptions {
+            ids: true,
+            page_markers: false,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(view.contains("cells r0 p1-p3"), "{view}");
+    let out = apply_plan(
+        &source,
+        &plan(
+            r#"[
+        {"kind":"replace","paragraph":"t0.r0.c0.p1","find":"INNER","replacement":"Inner"},
+        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"TAIL","replacement":"Tail"}]"#,
+        ),
+    )
+    .unwrap();
+    assert!(out.report.ok, "{:?}", out.report.operations);
+    assert_eq!(at(&out, 0), "body:p:2");
+    assert_eq!(at(&out, 1), "body:p:3");
+}
+
+#[test]
+fn pr392_nested_cell_paragraphs_skip_text_boxes_and_stop_at_the_outer_cell() {
+    let boxed = r#"<w:r><w:pict><w:shape><w:txbxContent><w:p><w:r><w:t>BOX</w:t></w:r></w:p></w:txbxContent></w:shape></w:pict></w:r>"#;
+    let table = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p>{boxed}<w:r><w:t>INNER</w:t></w:r></w:p></w:tc></w:tr></w:tbl>{}</w:tc><w:tc>{}</w:tc></w:tr></w:tbl>"#,
+        para("HEAD"),
+        para("TAIL"),
+        para("NEIGHBOR")
+    );
+    let source = docx_with_sect(&table, &[], "");
+    for (short, find, paragraph) in [
+        ("t0.r0.c0.p1", "INNER", "body:p:1"),
+        ("t0.r0.c0.p2", "TAIL", "body:p:2"),
+        ("t0.r0.c1", "NEIGHBOR", "body:p:3"),
+    ] {
+        let out = apply_plan(
+            &source,
+            &plan(
+                &serde_json::json!([{
+                    "kind":"replace", "paragraph":short, "find":find, "replacement":"Edited"
+                }])
+                .to_string(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(at(&out, 0), paragraph);
+        let clean = jubarte::markdown::docx_to_markdown(&out.clean, &Default::default())
+            .unwrap()
+            .markdown;
+        assert!(clean.contains("BOX"), "{short}: {clean}");
+        assert!(clean.contains("Edited"), "{short}: {clean}");
+        assert!(!clean.contains(find), "{short}: {clean}");
+    }
+    let error = apply_plan(&source, &plan(r#"[{"kind":"replace","paragraph":"t0.r0.c0.p3","find":"NEIGHBOR","replacement":"Wrong"}]"#)).unwrap_err();
+    assert_eq!(error.code, "ANCHOR_NOT_FOUND");
+    assert!(
+        error.to_string().contains("has 3 paragraphs, no p3"),
+        "{error}"
+    );
+}
+
+/// pi review av4 F14: the CLI's `-p` takes the same cell and story ids as a
+/// plan, one group per operation.
+#[test]
+fn the_cli_p_flag_takes_cell_and_story_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("src.docx"), source()).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args([
+            "edit",
+            "src.docx",
+            "-p",
+            "t0.r1.c1.p1",
+            "--anchor",
+            "later",
+            "--content",
+            "earlier",
+            "-p",
+            "header1",
+            "--anchor",
+            "DRAFT",
+            "--content",
+            "FINAL",
+            "--out-dir",
+            "out",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let redline = std::fs::read(dir.path().join("out/redline.docx")).unwrap();
+    let body = common::docx::part_string(&redline, "word/document.xml").unwrap();
+    assert!(
+        body.contains(">earlier<") && body.contains(">later<"),
+        "{body}"
+    );
+    let header = common::docx::part_string(&redline, "word/header1.xml").unwrap();
+    assert!(
+        header.contains(">FINAL<") && header.contains(">DRAFT<"),
+        "{header}"
+    );
+}
