@@ -80,3 +80,56 @@ fn settling_the_named_revision_frees_its_text() {
         .collect();
     assert_eq!(texts[4], "Payment within 60 days.");
 }
+
+/// B8: rewrite keeps a hyperlink, a field and a content control it does
+/// not change, and refuses by name a rewrite that would change one.
+#[test]
+fn rewrite_keeps_the_structures_it_leaves_alone_and_names_the_one_it_would_change() {
+    let check = |paragraph: &str, text: &str, keeps: &str| {
+        let out = apply_plan(
+            &source(),
+            &plan(
+                "",
+                &format!(
+                    r#"[{{"kind":"rewrite","paragraph":"{paragraph}","text":{}}}]"#,
+                    serde_json::to_string(text).unwrap()
+                ),
+            ),
+        )
+        .unwrap();
+        let texts: Vec<String> = paragraphs(&out.clean)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.text)
+            .collect();
+        assert!(texts.iter().any(|t| t == text), "{texts:?}");
+        for bytes in [&out.clean, &out.redline] {
+            let body = common::docx::part_string(bytes, "word/document.xml").unwrap();
+            assert!(body.contains(keeps), "{keeps}: {body}");
+        }
+    };
+    check("p0", "See the terms above.", "<w:hyperlink");
+    check("p1", "Page 3 of this deed.", "<w:fldSimple");
+    check("p2", "Master Agreement", "<w:fldChar");
+    check("p3", "Signed by Ann Counsel today.", "<w:sdt>");
+    for (paragraph, text, says) in [
+        ("p0", "See the rules below.", "a hyperlink"),
+        ("p0", "See below.", "a hyperlink"),
+        ("p1", "Page 4 of the deed.", "the field \"PAGE\""),
+        ("p3", "Signed by Bo Counsel.", "a content control"),
+    ] {
+        let e = apply_plan(
+            &source(),
+            &plan(
+                "",
+                &format!(
+                    r#"[{{"kind":"rewrite","paragraph":"{paragraph}","text":{}}}]"#,
+                    serde_json::to_string(text).unwrap()
+                ),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{text}: {e}");
+        assert!(e.message.contains(says), "{text}: {e}");
+    }
+}
