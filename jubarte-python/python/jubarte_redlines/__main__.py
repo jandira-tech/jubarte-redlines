@@ -191,6 +191,8 @@ def cmd_read(args: argparse.Namespace) -> int:
         paragraphs=args.paragraphs,
         head=args.head,
         tail=args.tail,
+        changed=args.changed,
+        by=args.by,
         source=args.file.name,
     )
     for warning in warnings:

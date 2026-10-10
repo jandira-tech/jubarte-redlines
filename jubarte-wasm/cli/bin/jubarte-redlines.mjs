@@ -207,7 +207,8 @@ const COMMANDS = {
       const view = JSON.parse(wasm.readView(read(file), JSON.stringify({
         trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
         pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined,
-        head: o.head ?? undefined, tail: o.tail ?? undefined, source: path.basename(file),
+        head: o.head ?? undefined, tail: o.tail ?? undefined,
+        changed: o.changed || undefined, by: o.by ?? undefined, source: path.basename(file),
       })));
       for (const warning of view.warnings) console.error(`warning: ${warning}`);
       process.stdout.write(view.markdown);

@@ -67,6 +67,9 @@ pub(crate) struct Facts<'a> {
     pub tags: Vec<RevTag>,
     pub marks: usize,
     pub format_changes: usize,
+    /// The author of every formatting change, as stored (`None` when the
+    /// change names none).
+    pub format_authors: Vec<Option<String>>,
     pub comments: Vec<CommentFact>,
     pub handles: &'a Handles,
     /// Resolved comment ids (`w15:done`), from `agent::Threads`.
@@ -88,11 +91,13 @@ pub(crate) struct Facts<'a> {
     pub sections: Vec<SectionFact>,
 }
 
-/// `key: value` padded to 35 columns then `# comment`; a longer key/value
-/// takes two spaces.
+/// `key: value` padded to 35 columns then `# comment`; a key/value longer
+/// than 33 characters takes two spaces. An empty comment writes none.
 fn kv(out: &mut String, key_value: &str, comment: Option<&str>) {
-    match comment {
-        Some(c) if key_value.len() <= 33 => out.push_str(&format!("{key_value:<35}# {c}\n")),
+    match comment.filter(|c| !c.is_empty()) {
+        Some(c) if key_value.chars().count() <= 33 => {
+            out.push_str(&format!("{key_value:<35}# {c}\n"));
+        }
         Some(c) => out.push_str(&format!("{key_value}  # {c}\n")),
         None => {
             out.push_str(key_value);
@@ -172,7 +177,9 @@ pub(crate) fn render(f: &Facts) -> String {
         );
     }
     if f.tags.is_empty() {
-        kv(&mut out, "revisions: 0", None);
+        let formatting = (f.format_changes > 0)
+            .then(|| plural(f.format_changes, "formatting change", "formatting changes"));
+        kv(&mut out, "revisions: 0", formatting.as_deref());
     } else {
         let count = |kind: &str| f.tags.iter().filter(|t| t.kind == kind).count();
         let mut parts = Vec::new();
@@ -265,9 +272,21 @@ pub(crate) fn render(f: &Facts) -> String {
             .iter()
             .filter(|c| c.author.as_deref() == Some(author.as_str()))
             .count();
+        let formatting = f
+            .format_authors
+            .iter()
+            .filter(|a| a.as_deref() == Some(author.as_str()))
+            .count();
         let mut parts = Vec::new();
         if revisions > 0 {
             parts.push(plural(revisions, "revision", "revisions"));
+        }
+        if formatting > 0 {
+            parts.push(plural(
+                formatting,
+                "formatting change",
+                "formatting changes",
+            ));
         }
         if comments > 0 {
             parts.push(plural(comments, "comment", "comments"));
@@ -811,6 +830,51 @@ mod tests {
     }
 
     const PAGE_RUNS: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+
+    /// Review t09-15: header and footer ids must number paragraphs exactly as
+    /// `edit` resolves them, so the two walks are checked against each other.
+    #[test]
+    fn story_paragraphs_agree_with_the_paragraphs_edit_resolves() {
+        let xml = format!(
+            r#"<w:ftr {W}><w:p/><w:tbl><w:tr><w:tc><w:p/><w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl></w:tc></w:tr></w:tbl><w:sdt><w:sdtContent><w:p/></w:sdtContent></w:sdt><w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p/></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p><w:customXml><w:p/></w:customXml></w:ftr>"#
+        );
+        let ours = story_paragraphs(&parse_xml(xml.as_bytes()).unwrap()).len();
+        let mut dom = crate::xmllinq::Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let root = dom.root(document).unwrap();
+        let edits = crate::inspect::story_paragraph_nodes(&dom, root).len();
+        assert_eq!(ours, edits);
+        assert_eq!(ours, 6);
+    }
+
+    #[test]
+    fn a_long_value_aligns_by_characters_not_bytes() {
+        let mut ascii = String::new();
+        // 32 characters (35 bytes): the padded branch.
+        kv(
+            &mut ascii,
+            "  document_owner: Jorgen Osterbo",
+            Some("dc:creator"),
+        );
+        let mut accented = String::new();
+        kv(
+            &mut accented,
+            "  document_owner: Jørgen Østerbø",
+            Some("dc:creator"),
+        );
+        assert_eq!(
+            ascii.find('#'),
+            accented.chars().position(|c| c == '#'),
+            "{ascii}{accented}"
+        );
+    }
+
+    #[test]
+    fn an_empty_comment_leaves_no_hash() {
+        let mut out = String::new();
+        kv(&mut out, "  AC: Ann Counsel", Some(""));
+        assert_eq!(out, "  AC: Ann Counsel\n");
+    }
 
     #[test]
     fn a_page_field_in_a_block_content_control_is_found() {

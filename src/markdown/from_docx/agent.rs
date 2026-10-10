@@ -320,6 +320,23 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
             element.attrs.push((REVS.to_string(), revs.join(" ")));
         }
     }
+    // Row and cell revisions, which resolution strips with the `trPr` and
+    // `tcPr` markers: the table line names them by row and cell.
+    let held = match element.local() {
+        "tr" => element.child("trPr").map(|pr| ("row", pr)),
+        "tc" => element.child("tcPr").map(|pr| ("cell", pr)),
+        _ => None,
+    };
+    if let Some((kind, pr)) = held {
+        let revs: Vec<String> = pr
+            .elements()
+            .filter(|m| matches!(m.local(), "ins" | "del" | "cellIns" | "cellDel"))
+            .map(|m| format!("{kind}:{}", tag_of(m, handles)))
+            .collect();
+        if !revs.is_empty() {
+            element.attrs.push((REVS.to_string(), revs.join(" ")));
+        }
+    }
     if element.is("tbl") && !in_cell {
         element.attrs.push((TABLE.to_string(), c.t.to_string()));
         c.t += 1;
@@ -335,9 +352,11 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
     }
 }
 
-/// The `kind:tag` entries stamped on a paragraph, as (kind, tag).
-pub(crate) fn stamped_revs(p: &Element) -> Vec<(String, String)> {
-    p.attr(REVS)
+/// The `kind:tag` entries stamped on a paragraph, row or cell, as (kind,
+/// tag).
+pub(crate) fn stamped_revs(element: &Element) -> Vec<(String, String)> {
+    element
+        .attr(REVS)
         .map(|revs| {
             revs.split(' ')
                 .filter_map(|r| {
@@ -523,12 +542,66 @@ fn holds(e: &Element, hit: &dyn Fn(&Element) -> bool) -> bool {
         .any(|c| !c.is("txbxContent") && (hit(c) || holds(c, hit)))
 }
 
+/// How many elements under `e` (text boxes excluded) `hit` matches.
+fn count(e: &Element, hit: &dyn Fn(&Element) -> bool) -> usize {
+    e.elements()
+        .filter(|c| !c.is("txbxContent"))
+        .map(|c| usize::from(hit(c)) + count(c, hit))
+        .sum()
+}
+
+fn is_page_break(e: &Element) -> bool {
+    e.is("br") && e.attr("type") == Some("page")
+}
+
 pub(crate) fn has_page_break(p: &Element) -> bool {
-    holds(p, &|e| e.is("br") && e.attr("type") == Some("page"))
+    holds(p, &is_page_break)
 }
 
 pub(crate) fn has_rendered_page_break(p: &Element) -> bool {
     holds(p, &|e| e.is("lastRenderedPageBreak"))
+}
+
+/// The hard page breaks in `p`: a paragraph can hold several.
+pub(crate) fn page_breaks(p: &Element) -> usize {
+    count(p, &is_page_break)
+}
+
+/// The cached page breaks in `p`: a paragraph that runs over three pages
+/// holds two.
+pub(crate) fn rendered_page_breaks(p: &Element) -> usize {
+    count(p, &|e| e.is("lastRenderedPageBreak"))
+}
+
+/// The authors of the formatting changes (`*PrChange`) under `e`, text
+/// boxes excluded, in document order.
+pub(crate) fn format_change_authors(e: &Element) -> Vec<Option<String>> {
+    fn walk(e: &Element, out: &mut Vec<Option<String>>) {
+        for c in e.elements().filter(|c| !c.is("txbxContent")) {
+            if c.local().ends_with("PrChange") {
+                out.push(c.attr("author").map(str::to_string));
+            }
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
+/// The tables under `e` in document order, text boxes excluded.
+pub(crate) fn tables(e: &Element) -> Vec<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+        for c in e.elements().filter(|c| !c.is("txbxContent")) {
+            if c.is("tbl") {
+                out.push(c);
+            }
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
 }
 
 /// The paragraphs under `e` in document order, text boxes excluded.
@@ -577,10 +650,10 @@ pub(crate) fn table_breaks(tbl: &Element, cached: bool) -> (bool, usize) {
     let ps = paragraphs(tbl);
     if cached {
         let first = ps.first().is_some_and(|p| has_rendered_page_break(p));
-        let all = ps.iter().filter(|p| has_rendered_page_break(p)).count();
+        let all: usize = ps.iter().map(|p| rendered_page_breaks(p)).sum();
         (first, all - usize::from(first))
     } else {
-        (false, ps.iter().filter(|p| has_page_break(p)).count())
+        (false, ps.iter().map(|p| page_breaks(p)).sum())
     }
 }
 
@@ -702,8 +775,8 @@ pub(crate) fn page_marker(page: usize, total: usize) -> String {
 /// cached-break page count.
 pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
     let ps = paragraphs(body);
-    let rendered = ps.iter().filter(|p| has_rendered_page_break(p)).count();
-    let hard = ps.iter().filter(|p| has_page_break(p)).count() + page_sections(body).len();
+    let rendered = ps.iter().map(|p| rendered_page_breaks(p)).sum();
+    let hard = ps.iter().map(|p| page_breaks(p)).sum::<usize>() + page_sections(body).len();
     (rendered, hard)
 }
 
@@ -713,18 +786,18 @@ pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
 pub(crate) fn table_line(
     tbl: &Element,
     resolved: bool,
-    comments: bool,
+    comments: Option<&HashMap<String, Element>>,
     handles: &Handles,
 ) -> Option<String> {
     let t = tbl.attr(TABLE)?;
-    let rows: Vec<&Element> = tbl.children_named("tr").collect();
+    let rows: Vec<&Element> = super::table_rows(tbl);
     let cols = tbl
         .child("tblGrid")
         .map(|g| g.children_named("gridCol").count())
         .filter(|&c| c > 0)
         .unwrap_or_else(|| {
             rows.iter()
-                .map(|r| r.children_named("tc").count())
+                .map(|r| super::row_cells(r).count())
                 .max()
                 .unwrap_or(0)
         });
@@ -745,9 +818,23 @@ pub(crate) fn table_line(
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
     let mut held: Vec<String> = Vec::new();
-    for tr in &rows {
+    for (r, tr) in rows.iter().enumerate() {
         let mut range: Option<(usize, usize)> = None;
-        for tc in tr.children_named("tc") {
+        if resolved {
+            revs.extend(
+                stamped_revs(tr)
+                    .into_iter()
+                    .map(|(_, tag)| format!("{} in r{r}", format_tag(&tag))),
+            );
+        }
+        for (c, tc) in super::row_cells(tr).enumerate() {
+            if resolved {
+                revs.extend(
+                    stamped_revs(tc)
+                        .into_iter()
+                        .map(|(_, tag)| format!("{} in r{r}.c{c}", format_tag(&tag))),
+                );
+            }
             if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
                 merged = true;
             }
@@ -772,7 +859,12 @@ pub(crate) fn table_line(
                             .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
                     );
                 }
-                let ids = if comments { comment_ids(p) } else { Vec::new() };
+                let ids: Vec<String> = comments.map_or_else(Vec::new, |known| {
+                    comment_ids(p)
+                        .into_iter()
+                        .filter(|id| known.contains_key(id))
+                        .collect()
+                });
                 if !ids.is_empty() {
                     let ids: Vec<String> = ids.iter().map(|c| format!("#c{c}")).collect();
                     held.push(format!("{} in p{i}", ids.join(" ")));
@@ -1073,7 +1165,37 @@ fn span_text(a: usize, b: usize) -> String {
     }
 }
 
-/// The selected blocks of `body` joined back, and the `range:` text.
+/// `@HH` in `text` where the handle ends (the next char is not
+/// alphanumeric).
+fn has_handle(text: &str, handle: &str) -> bool {
+    let key = format!("@{handle}");
+    text.match_indices(&key).any(|(at, _)| {
+        text[at + key.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric())
+    })
+}
+
+/// Whether a block of the agent view carries a tracked change or a comment:
+/// a note in its text, or a mark clause on its id or table line.
+fn is_marked(block: &str) -> bool {
+    let first = block.lines().next().unwrap_or("");
+    block.contains("{>>#")
+        || [
+            " rev #",
+            " comments #",
+            " break-ins #",
+            " break-del #",
+            " fmt #",
+        ]
+        .iter()
+        .any(|key| first.contains(key))
+}
+
+/// The selected blocks of `body` joined back, and the `range:` text. A
+/// `Select::Changed` author arrives resolved: `@AC` for a known handle, the
+/// text as given otherwise (no block holds an unknown author's marks).
 pub(crate) fn select_blocks(
     body: &str,
     select: &Select,
@@ -1118,6 +1240,40 @@ pub(crate) fn select_blocks(
                 )
             );
         }
+        Select::Changed { by } => {
+            let handle = by.as_deref().map(|by| by.strip_prefix('@'));
+            keep = blocks
+                .iter()
+                .map(|block| {
+                    is_marked(&block.text)
+                        && match handle {
+                            None => true,
+                            Some(Some(handle)) => has_handle(&block.text, handle),
+                            Some(None) => false,
+                        }
+                })
+                .collect();
+            let names: Vec<String> = blocks
+                .iter()
+                .zip(&keep)
+                .filter(|(_, keep)| **keep)
+                .filter_map(|(block, _)| match (block.table, block.span) {
+                    (Some(t), _) => Some(format!("t{t}")),
+                    (None, Some((a, z))) => Some(span_text(a, z)),
+                    _ => None,
+                })
+                .collect();
+            range = format!(
+                "changed{} ({})",
+                by.as_deref()
+                    .map_or(String::new(), |by| format!(" by {by}")),
+                if names.is_empty() {
+                    "none".to_string()
+                } else {
+                    names.join(", ")
+                }
+            );
+        }
         Select::Picks(picks) => {
             let mut wanted: Vec<(usize, usize)> = Vec::new();
             let mut tables: Vec<usize> = Vec::new();
@@ -1141,6 +1297,24 @@ pub(crate) fn select_blocks(
                         tables.push(*t);
                         names.push((block.span.map_or(0, |s| s.0), format!("t{t}")));
                     }
+                }
+            }
+            // Accepting or rejecting can join a paragraph into the one
+            // before it, which then holds its index.
+            for &(from, to) in &wanted {
+                let found = blocks
+                    .iter()
+                    .any(|b| b.span.is_some_and(|(a, z)| a <= to && from <= z));
+                if !found
+                    && let Some((a, _)) = blocks
+                        .iter()
+                        .filter_map(|b| b.span)
+                        .filter(|&(a, _)| a < from)
+                        .max_by_key(|&(a, _)| a)
+                {
+                    return Err(format!(
+                        "p{from} is part of p{a} in this view (accepting or rejecting joined them); pick p{a}, or read the tracked view"
+                    ));
                 }
             }
             keep = blocks

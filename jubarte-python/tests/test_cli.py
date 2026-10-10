@@ -45,6 +45,23 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert main(["read", str(letter), "-p", "p1"]) == 0
     out = capsys.readouterr().out
     assert "<!-- p1 -->\nThe individual" in out and "<!-- p0" not in out, out
+    # The letter holds no marks: --changed keeps nothing, and says so.
+    assert main(["read", str(letter), "--changed", "--by", "AC"]) == 0
+    out = capsys.readouterr().out
+    assert "\nrange: changed by AC (none) of p0-" in out and "<!-- p1" not in out, out
+    with pytest.raises(SystemExit):
+        main(["read", str(letter), "--by", "AC"])
+    # The binary's other read flags parse and act the same way here.
+    assert main(["read", str(letter), "--head", "1", "--no-page-markers"]) == 0
+    out = capsys.readouterr().out
+    assert "\nrange: head 1 (p0) of p0-" in out and "<!-- p1" not in out, out
+    assert main(["read", str(letter), "--tail", "1", "--no-page-markers"]) == 0
+    assert "\nrange: tail 1 (p" in capsys.readouterr().out
+    for flags in (["--track-changes", "accept"], ["--track-changes", "reject"], ["--comments", "none"], ["--dates"]):
+        assert main(["read", str(letter), "--no-page-markers", *flags]) == 0, flags
+        assert "<!-- p0" in capsys.readouterr().out, flags
+    with pytest.raises(SystemExit):
+        main(["read", str(letter), "--head", "1", "--tail", "1"])
 
 
 def test_the_module_runs_as_a_program(letter: Path) -> None:

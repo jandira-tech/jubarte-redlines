@@ -72,6 +72,8 @@ def read_view(
     paragraphs: str | None = None,
     head: int | None = None,
     tail: int | None = None,
+    changed: bool = False,
+    by: str | None = None,
     source: str | None = None,
 ) -> tuple[str, list[str]]: ...
 def edit_json(docx: bytes, plan_json: str) -> tuple[bool, bytes | None, bytes | None, str]: ...

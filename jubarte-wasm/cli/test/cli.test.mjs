@@ -108,6 +108,22 @@ test("read (alias text), inspect, capabilities and convert", () => {
   const picked = run("read", untracked, "-p", "p0");
   assert.equal(picked.code, 0, picked.err);
   assert.doesNotMatch(picked.out, /<!-- p1[ -]/);
+  // No marks in the document: --changed keeps nothing, and says so.
+  const changed = run("read", untracked, "--changed", "--by", "AC");
+  assert.equal(changed.code, 0, changed.err);
+  assert.match(changed.out, /\nrange: changed by AC \(none\) of p0-/);
+  assert.notEqual(run("read", untracked, "--by", "AC").code, 0);
+  // The binary's other read flags parse and act the same way here.
+  const head = run("read", untracked, "--head", "1", "--no-page-markers");
+  assert.equal(head.code, 0, head.err);
+  assert.match(head.out, /\nrange: head 1 \(p0\) of p0-/);
+  assert.match(run("read", untracked, "--tail", "1", "--no-page-markers").out, /\nrange: tail 1 \(p/);
+  for (const flags of [["--track-changes", "accept"], ["--track-changes", "reject"], ["--comments", "none"], ["--dates"]]) {
+    const view = run("read", untracked, "--no-page-markers", ...flags);
+    assert.equal(view.code, 0, `${flags}: ${view.err}`);
+    assert.match(view.out, /\n<!-- p0[ -]/);
+  }
+  assert.notEqual(run("read", untracked, "--head", "1", "--tail", "1").code, 0);
   const summary = run("inspect", untracked);
   assert.match(summary.out, /^sha256: [0-9a-f]{64}\nparagraphs: \d+ /);
   assert.match(summary.out, /\nbody:p:0\t\[/);

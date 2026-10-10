@@ -80,6 +80,22 @@ pub struct ReadArgs {
     /// Only the last N blocks.
     #[arg(long, value_name = "N", help_heading = "Read options")]
     pub tail: Option<usize>,
+    /// Only the blocks with a tracked change or a comment.
+    #[arg(
+        long,
+        conflicts_with_all = ["paragraphs", "head", "tail"],
+        help_heading = "Read options"
+    )]
+    pub changed: bool,
+    /// With --changed: only the blocks with this author's marks (a handle
+    /// such as AC, or the full name).
+    #[arg(
+        long,
+        value_name = "AUTHOR",
+        requires = "changed",
+        help_heading = "Read options"
+    )]
+    pub by: Option<String>,
 }
 
 /// `--comments` of `read`.

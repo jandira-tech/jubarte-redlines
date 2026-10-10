@@ -689,7 +689,9 @@ fn markdown(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResul
 
 /// The agent view (`read`) → `(markdown, warnings)`: a YAML header, then
 /// Markdown with `<!-- pN -->` id lines and every change and comment with
-/// its id. `paragraphs` (`"p3,p10-p20,t0"`), `head` and `tail` select blocks.
+/// its id. `paragraphs` (`"p3,p10-p20,t0"`), `head` and `tail` select blocks;
+/// `changed` keeps the blocks with marks, `by` only one author's (a handle
+/// or a full name).
 #[pyfunction]
 #[pyo3(signature = (
     docx,
@@ -701,6 +703,8 @@ fn markdown(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResul
     paragraphs = None,
     head = None,
     tail = None,
+    changed = false,
+    by = None,
     source = None,
 ))]
 #[expect(
@@ -717,6 +721,8 @@ fn read_view(
     paragraphs: Option<&str>,
     head: Option<usize>,
     tail: Option<usize>,
+    changed: bool,
+    by: Option<&str>,
     source: Option<String>,
 ) -> PyResult<(String, Vec<String>)> {
     let track_changes = match track_changes {
@@ -724,7 +730,8 @@ fn read_view(
         Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
             .ok_or_else(|| err("track_changes must be all, accept or reject"))?,
     };
-    let select = jubarte::markdown::Select::from_flags(paragraphs, head, tail).map_err(err)?;
+    let select =
+        jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
     let options = jubarte::markdown::ReadOptions {
         track_changes,
         comments,

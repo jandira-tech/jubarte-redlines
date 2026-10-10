@@ -307,8 +307,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     }
     let mut range = None;
     if let Some(select) = options.select.as_ref().filter(|_| options.ids) {
+        let select = match select {
+            super::Select::Changed { by: Some(by) } => super::Select::Changed {
+                by: Some(resolve_author(by, &handles)),
+            },
+            other => other.clone(),
+        };
         let (selected, described) =
-            agent::select_blocks(&markdown, select, stamped.0.saturating_sub(1))
+            agent::select_blocks(&markdown, &select, stamped.0.saturating_sub(1))
                 .map_err(ooxml::invalid)?;
         markdown = selected;
         range = Some(described);
@@ -358,8 +364,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let theme = package.xml("word/theme/theme1.xml").ok().flatten();
         let mut heading_styles: Vec<(usize, String)> = Vec::new();
         {
-            let mut ps = Vec::new();
-            body.find_all("p", &mut ps);
+            let ps = agent::paragraphs(body);
             let mut uses: std::collections::BTreeMap<(usize, String), usize> =
                 std::collections::BTreeMap::new();
             for p in &ps {
@@ -382,9 +387,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
         let mut table_styles: Vec<String> = Vec::new();
         {
-            let mut tables = Vec::new();
-            body.find_all("tbl", &mut tables);
-            for t in tables {
+            for t in agent::tables(body) {
                 if let Some(s) = t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val"))
                     && !table_styles.iter().any(|x| x == s)
                 {
@@ -525,6 +528,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             tags,
             marks,
             format_changes,
+            format_authors: agent::format_change_authors(body),
             comments: comment_facts,
             handles: &handles,
             done: &threads.done,
@@ -559,6 +563,18 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
 
 /// A paragraph's line breaks (`w:br`) as Markdown hard breaks, which a
 /// bare newline is not: it reads as a space.
+/// `--by`'s author as `@HH` when it names a known author: a full name as
+/// stored, or a handle with or without its `@`. Anything else stays as given
+/// and matches no block.
+fn resolve_author(by: &str, handles: &agent::Handles) -> String {
+    let bare = by.strip_prefix('@').unwrap_or(by);
+    handles
+        .by_author
+        .get(by)
+        .or_else(|| handles.by_author.values().find(|handle| *handle == bare))
+        .map_or_else(|| bare.to_string(), |handle| format!("@{handle}"))
+}
+
 fn hard_breaks(text: &str) -> String {
     text.replace('\n', "\\\n")
 }
@@ -609,6 +625,7 @@ struct Style {
     num: Option<(String, usize)>,
     bold: Option<bool>,
     italic: Option<bool>,
+    underline: Option<bool>,
 }
 
 #[derive(Default)]
@@ -644,6 +661,7 @@ impl Styles {
                     num: ppr.and_then(|p| p.child("numPr")).and_then(num_pr),
                     bold: rpr.and_then(|r| r.toggle("b")),
                     italic: rpr.and_then(|r| r.toggle("i")),
+                    underline: rpr.and_then(|r| r.child("u")).map(is_underlined),
                 },
             );
         }
@@ -707,6 +725,16 @@ impl Styles {
             chain.iter().find_map(|s| s.italic),
         )
     }
+
+    /// Whether the style chain underlines, nearest style first.
+    fn underline(&self, id: &str) -> Option<bool> {
+        self.chain(id).iter().find_map(|s| s.underline)
+    }
+}
+
+/// `w:u` underlines unless its value is `none`.
+fn is_underlined(u: &Element) -> bool {
+    u.attr("val").is_none_or(|v| v != "none")
 }
 
 fn num_pr(numpr: &Element) -> Option<(String, usize)> {
@@ -998,7 +1026,7 @@ impl Writer<'_> {
                         && let Some(line) = agent::table_line(
                             child,
                             self.resolved,
-                            !self.comments_inline,
+                            (!self.comments_inline).then_some(&self.comments),
                             &self.handles,
                         )
                     {
@@ -1110,15 +1138,19 @@ impl Writer<'_> {
 
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
-        // Computed once, and only for a written paragraph, as the plain
-        // conversion always did, so Word's list counters advance alike.
-        let list_marker: Option<(String, usize)> = if written && heading.is_none() {
+        // Computed once. The agent view counts empty paragraphs too, as Word
+        // does (it shows an empty numbered paragraph's label and spends its
+        // number). The plain conversion counts written paragraphs only: its
+        // labels are text, so a tracked change that merges an empty numbered
+        // paragraph away would leave the resolved markup a number off
+        // (Word's own markup shows both, `4.3.`).
+        let list_marker: Option<(String, usize)> = if (written || self.agent) && heading.is_none() {
             num.clone()
                 .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)).map(|m| (m, ilvl)))
         } else {
             None
         };
-        let heading_marker: Option<String> = if self.agent && written && heading.is_some() {
+        let heading_marker: Option<String> = if self.agent && heading.is_some() {
             num.clone()
                 .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)))
         } else {
@@ -1138,13 +1170,16 @@ impl Writer<'_> {
             };
             self.para_comments.clear();
             let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
+            let numbered = heading_marker.is_some() || list_marker.is_some();
             if empty
+                && !numbered
                 && comments.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
             {
                 if self.page_sections.is_none() && agent::has_rendered_page_break(p) {
                     self.flush_empty(blocks);
                     self.page_lines(blocks, true);
+                    self.turn_pages(agent::rendered_page_breaks(p) - 1);
                 }
                 self.pending_empty.push(index);
                 return;
@@ -1152,6 +1187,12 @@ impl Writer<'_> {
             self.flush_empty(blocks);
             let opens = self.opens_page(agent::has_rendered_page_break(p));
             self.page_lines(blocks, opens);
+            // The pages a paragraph turns past the one it opens or ends.
+            self.turn_pages(if self.page_sections.is_none() {
+                agent::rendered_page_breaks(p).saturating_sub(1)
+            } else {
+                agent::page_breaks(p).saturating_sub(1)
+            });
             if self
                 .page_sections
                 .as_ref()
@@ -1429,7 +1470,13 @@ impl Writer<'_> {
         let underline = self.agent
             && rpr
                 .and_then(|r| r.child("u"))
-                .is_some_and(|u| u.attr("val").is_none_or(|v| v != "none"));
+                .map(is_underlined)
+                .or_else(|| {
+                    rpr.and_then(|r| r.child("rStyle"))
+                        .and_then(|s| s.attr("val"))
+                        .and_then(|s| self.styles.underline(s))
+                })
+                .unwrap_or(false);
         // A raised or lowered run keeps its tags, which the Markdown
         // reader takes back to w:vertAlign; a note reference is already
         // `[^n]`.

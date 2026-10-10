@@ -512,6 +512,21 @@ Resolve every operation of an edit plan without producing documents.
 
 Mirrors `jubarte::edit::preview_plan`.
 
+### `readView`
+
+```typescript
+readView(docx: Uint8Array, options_json?: string | null): string
+```
+
+The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+then Markdown with `<!-- pN -->` id lines and every change and comment
+with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+`head`, `tail`, `source` (the name printed as `source:`).
+
+Mirrors `jubarte::markdown::read`.
+
 ### `redlineDocuments`
 
 ```typescript
@@ -643,7 +658,8 @@ Tasks:
   convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
   diff          Review differences as GitHub, word, normal, context or side-by-side text
   inspect       Inspect document facts, paragraphs, styles and tables
-  text          Read Markdown with edit IDs `[body:p:N]`, or with tracked marks
+  read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
+                comments with ids [alias: text]
   edit          Apply a JSON edit plan; write clean copy, redline and report (refusal:
                 exit 3)
   capabilities  What this binary can do, for agents choosing an operation
@@ -1236,31 +1252,62 @@ Options:
   -h, --help    Print help
 ```
 
-#### `jubarte-redlines text`
+#### `jubarte-redlines read`
 
 ```text
-$ jubarte-redlines text --help
-Read Markdown with edit IDs `[body:p:N]`, or with tracked marks
+$ jubarte-redlines read --help
+Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
-Usage: jubarte-redlines text [OPTIONS] <FILE>
+A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
+is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>#12
+@AC<<}`) and comments with theirs (`{>>#c5 @AC: …<<}`).
+
+Usage: jubarte-redlines read [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
           The document (.docx) to read
 
 Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Read options:
       --track-changes <CHOICE>
-          Print the document as Markdown with its tracked changes as CriticMarkup (all),
-          or with every change accepted or rejected, like `convert --to md`. The output
-          then has no `[body:p:N]` ids
+          Tracked changes inline (all, the default), or the text with every change
+          accepted or rejected; the id lines then list what changed
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
           - accept: Accept every change
           - reject: Reject every change
 
-  -h, --help
-          Print help (see a summary with '-h')
+      --comments <MODE>
+          Comments inline (default) or hidden, with their ids on the id line of the
+          paragraph that holds them
+
+          Possible values:
+          - inline: Comments inline, with their ids
+          - none:   Comments hidden; their ids on the id lines
+
+          [default: inline]
+
+      --dates
+          Timestamps on the notes of an author whose changes do not all share one (the
+          header shows an author's single timestamp)
+
+      --no-page-markers
+          Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
+          M -->` lines
+
+  -p, --paragraphs <SPEC>
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+
+      --head <N>
+          Only the first N blocks (a table is one block)
+
+      --tail <N>
+          Only the last N blocks
 ```
 
 #### `jubarte-redlines edit`

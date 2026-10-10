@@ -245,7 +245,8 @@ impl Default for MarkdownOptions {
     }
 }
 
-/// Which blocks of the agent view to print (`-p`, `--head`, `--tail`).
+/// Which blocks of the agent view to print (`-p`, `--head`, `--tail`,
+/// `--changed`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Select {
     /// The first `n` blocks (a table is one block).
@@ -254,6 +255,13 @@ pub enum Select {
     Tail(usize),
     /// Paragraphs and tables by id, in document order.
     Picks(Vec<Pick>),
+    /// The blocks that carry a tracked change or a comment; with `by`, only
+    /// those with that author's marks (`by` is a handle such as `AC`, with
+    /// or without the `@`, or the author's full name).
+    Changed {
+        /// The author whose marks a block must hold.
+        by: Option<String>,
+    },
 }
 
 /// One item of a `-p` selection.
@@ -271,14 +279,26 @@ pub enum Pick {
 }
 
 impl Select {
-    /// The selection of `read`'s `-p`, `--head` and `--tail`, in that order
-    /// of precedence; `None` when none is given.
+    /// The selection of `read`'s `-p`, `--head` and `--tail` (in that order
+    /// of precedence), or of `--changed` with its `--by`; `None` when none is
+    /// given. `--changed` excludes the other three, and `--by` needs it.
     pub fn from_flags(
         paragraphs: Option<&str>,
         head: Option<usize>,
         tail: Option<usize>,
+        changed: bool,
+        by: Option<&str>,
     ) -> Result<Option<Self>, String> {
+        if by.is_some() && !changed {
+            return Err("by needs changed".to_string());
+        }
+        if changed && (paragraphs.is_some() || head.is_some() || tail.is_some()) {
+            return Err("changed excludes paragraphs, head and tail".to_string());
+        }
         Ok(match (paragraphs, head, tail) {
+            _ if changed => Some(Self::Changed {
+                by: by.map(str::to_string),
+            }),
             (Some(spec), _, _) => Some(Self::parse(spec)?),
             (None, Some(n), _) => Some(Self::Head(n)),
             (None, None, Some(n)) => Some(Self::Tail(n)),

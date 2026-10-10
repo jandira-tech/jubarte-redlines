@@ -730,9 +730,21 @@ pub enum Side {
     After,
 }
 
+/// The number after `prefix` in a part of a short id (`p12`, `r1`, `c2`),
+/// digits only.
+fn short_number(text: &str, prefix: char) -> Option<usize> {
+    let digits = text.strip_prefix(prefix)?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
 /// Paragraph selector; every form must match exactly one paragraph. Ids
-/// name their story (`body:p:3`, `header1:p:0`); the other forms search the
-/// body unless they carry a `story` (`header1`, `footnotes`, ...).
+/// name their story (`body:p:3`, `header1:p:0`) or use the agent view's
+/// short forms (`p3`, `header1`, `header1.p1`, `footer2`, `t0.r1.c2`,
+/// `t0.r1.c2.p1`); the report prints the long form. The other forms search
+/// the body unless they carry a `story` (`header1`, `footnotes`, ...).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
@@ -3131,21 +3143,158 @@ impl<'p> Transaction<'p> {
             .collect()
     }
 
+    /// The long id of a short one, as the agent view prints them: `p3` →
+    /// `body:p:3`; `header1` and `header1.p1` → `header1:p:0` and
+    /// `header1:p:1` (the part stem, Word's own numbering); `footer2`
+    /// likewise; `t0.r1.c2` and `t0.r1.c2.p1` → that cell's first (or K-th)
+    /// paragraph. `None` when `id` is not a short id.
+    fn long_id(&self, id: &str) -> Option<Result<String, String>> {
+        let (head, rest): (&str, Vec<&str>) = match id.split_once('.') {
+            Some((head, rest)) => (head, rest.split('.').collect()),
+            None => (id, Vec::new()),
+        };
+        if let Some(n) = short_number(head, 'p') {
+            return rest.is_empty().then(|| Ok(format!("body:p:{n}")));
+        }
+        if let Some(n) = short_number(head, 't') {
+            return Some(self.table_paragraph(head, n, &rest));
+        }
+        let is_part = ["header", "footer"].iter().any(|kind| {
+            head.strip_prefix(kind)
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        });
+        if !is_part {
+            return None;
+        }
+        let index = match rest.as_slice() {
+            [] => 0,
+            [p] => short_number(p, 'p')?,
+            _ => return None,
+        };
+        Some(if self.stories.iter().any(|s| s.id == head) {
+            Ok(format!("{head}:p:{index}"))
+        } else {
+            let known: Vec<&str> = self
+                .stories
+                .iter()
+                .map(|s| s.id.as_str())
+                .filter(|s| s.starts_with("header") || s.starts_with("footer"))
+                .collect();
+            Err(format!(
+                "{head} is not a part of this document (headers and footers: {})",
+                if known.is_empty() {
+                    "none".to_string()
+                } else {
+                    known.join(", ")
+                }
+            ))
+        })
+    }
+
+    /// `t{n}.r{R}.c{C}[.p{K}]`: the long id of that cell's K-th own
+    /// paragraph. Tables are the body's top-level `w:tbl` elements outside
+    /// text boxes, in document order (nested tables are not numbered, as in
+    /// the agent view); rows and cells count as they appear in the XML, a
+    /// merged cell once.
+    fn table_paragraph(&self, head: &str, n: usize, rest: &[&str]) -> Result<String, String> {
+        let dom = &self.opened.dom;
+        let (tc, tr, tbl, p, txbx) = (W::tc(), W::name("tr"), W::tbl(), W::p(), W::txbx_content());
+        let nearest = |node: NodeId, name: &crate::xmllinq::XName| {
+            dom.ancestors(node, Some(name)).first().copied()
+        };
+        let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+        let tables: Vec<NodeId> = dom
+            .descendants(self.opened.body, Some(&tbl))
+            .into_iter()
+            .filter(|&t| nearest(t, &tc).is_none() && nearest(t, &txbx).is_none())
+            .collect();
+        let Some(&table) = tables.get(n) else {
+            return Err(format!(
+                "{head} is not a table of this document ({})",
+                plural(tables.len(), "table")
+            ));
+        };
+        let (row, cell, index) = match rest {
+            [r, c] => (short_number(r, 'r'), short_number(c, 'c'), Some(0)),
+            [r, c, k] => (
+                short_number(r, 'r'),
+                short_number(c, 'c'),
+                short_number(k, 'p'),
+            ),
+            _ => (None, None, None),
+        };
+        let (Some(row), Some(cell), Some(index)) = (row, cell, index) else {
+            return Err(format!(
+                "{head}: a table id needs a row and a cell, as t0.r1.c2"
+            ));
+        };
+        let rows: Vec<NodeId> = dom
+            .descendants(table, Some(&tr))
+            .into_iter()
+            .filter(|&r| nearest(r, &tbl) == Some(table))
+            .collect();
+        let Some(&row_node) = rows.get(row) else {
+            return Err(format!(
+                "{head} has {}, no row {row}",
+                plural(rows.len(), "row")
+            ));
+        };
+        let cells: Vec<NodeId> = dom
+            .descendants(row_node, Some(&tc))
+            .into_iter()
+            .filter(|&c| nearest(c, &tr) == Some(row_node))
+            .collect();
+        let Some(&cell_node) = cells.get(cell) else {
+            return Err(format!(
+                "{head}.r{row} has {}, no cell {cell}",
+                plural(cells.len(), "cell")
+            ));
+        };
+        let own: Vec<NodeId> = dom
+            .descendants(cell_node, Some(&p))
+            .into_iter()
+            .filter(|&q| nearest(q, &tc) == Some(cell_node))
+            .collect();
+        let Some(&node) = own.get(index) else {
+            return Err(format!(
+                "{head}.r{row}.c{cell} has {}, no p{index}",
+                plural(own.len(), "paragraph")
+            ));
+        };
+        let global = self
+            .paragraph_nodes
+            .iter()
+            .position(|&q| q == node)
+            .ok_or_else(|| {
+                format!("{head}: that paragraph is inside a text box and cannot be edited")
+            })?;
+        let (story, in_story) = self.paragraph_story[global];
+        Ok(format!("{}:p:{in_story}", self.stories[story].id))
+    }
+
     fn select(&self, selector: &Selector) -> Result<usize, (String, String, usize)> {
         let not_found = |message: String| Err(("ANCHOR_NOT_FOUND".to_string(), message, 0));
         let (story, index) = match selector {
-            Selector::Name(id) | Selector::Id { id } => match id
-                .rsplit_once(":p:")
-                .and_then(|(story, n)| Some((story, n.parse::<usize>().ok()?)))
-            {
-                Some((story, n)) => (story, Some(n)),
-                None => return not_found(format!("unknown paragraph id {id}")),
-            },
-            Selector::Index { index, story } => {
-                (story.as_deref().unwrap_or(BODY_STORY), Some(*index))
+            Selector::Name(id) | Selector::Id { id } => {
+                let long = match self.long_id(id) {
+                    Some(Ok(long)) => long,
+                    Some(Err(message)) => return not_found(message),
+                    None => id.clone(),
+                };
+                match long
+                    .rsplit_once(":p:")
+                    .and_then(|(story, n)| Some((story.to_string(), n.parse::<usize>().ok()?)))
+                {
+                    Some((story, n)) => (story, Some(n)),
+                    None => return not_found(format!("unknown paragraph id {id}")),
+                }
             }
+            Selector::Index { index, story } => (
+                story.as_deref().unwrap_or(BODY_STORY).to_string(),
+                Some(*index),
+            ),
             Selector::StartsWith { story, .. } | Selector::Contains { story, .. } => {
-                (story.as_deref().unwrap_or(BODY_STORY), None)
+                (story.as_deref().unwrap_or(BODY_STORY).to_string(), None)
             }
         };
         let Some(story_index) = self.stories.iter().position(|s| s.id == story) else {

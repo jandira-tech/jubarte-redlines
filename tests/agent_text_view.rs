@@ -1496,3 +1496,496 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
         "{text}"
     );
 }
+
+fn marked_docx() -> Vec<u8> {
+    docx(&format!(
+        r#"{}<w:p><w:r><w:t xml:space="preserve">Pay in </w:t></w:r>{}<w:r><w:t xml:space="preserve"> days.</w:t></w:r></w:p>{}<w:p><w:r><w:t xml:space="preserve">Fee: </w:t></w:r>{}</w:p>"#,
+        para("Quiet"),
+        ins(0, "Ann Counsel", "ten"),
+        para("Also quiet"),
+        del(1, "Bob Lee", "waived"),
+    ))
+}
+
+fn changed(by: Option<&str>) -> MarkdownOptions {
+    MarkdownOptions {
+        select: Some(Select::Changed {
+            by: by.map(str::to_string),
+        }),
+        ..agent_defaults()
+    }
+}
+
+#[test]
+fn changed_keeps_the_blocks_with_marks_by_anyone_or_by_one_author() {
+    let bytes = marked_docx();
+    let all = agent_options(&bytes, &changed(None));
+    assert!(
+        all.contains("\nrange: changed (p1, p3) of p0-p3\n"),
+        "{all}"
+    );
+    assert_eq!(
+        body(&all),
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{>>#0 @AC<<} days.\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n"
+    );
+    let bob = agent_options(&bytes, &changed(Some("Bob Lee")));
+    assert!(
+        bob.contains("\nrange: changed by @BL (p3) of p0-p3\n"),
+        "{bob}"
+    );
+    assert_eq!(
+        body(&bob),
+        "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n"
+    );
+    for handle in ["BL", "@BL"] {
+        let by_handle = agent_options(&bytes, &changed(Some(handle)));
+        assert_eq!(body(&by_handle), body(&bob), "{handle}");
+    }
+    let nobody = agent_options(&bytes, &changed(Some("Cy Young")));
+    assert!(
+        nobody.contains("\nrange: changed by Cy Young (none) of p0-p3\n"),
+        "{nobody}"
+    );
+    assert!(body(&nobody).trim().is_empty(), "{nobody}");
+    // An unknown short name is not taken for a handle.
+    let bo = agent_options(&bytes, &changed(Some("Bo")));
+    assert!(
+        bo.contains("\nrange: changed by Bo (none) of p0-p3\n"),
+        "{bo}"
+    );
+}
+
+#[test]
+fn changed_finds_marks_the_resolved_views_carry_on_the_id_line() {
+    let bytes = marked_docx();
+    let accepted = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            track_changes: TrackChanges::Accept,
+            ..changed(Some("AC"))
+        },
+    );
+    assert!(
+        accepted.contains("\nrange: changed by @AC (p1) of p0-p3\n"),
+        "{accepted}"
+    );
+    assert!(
+        accepted.contains("<!-- p1 rev #0 @AC -->\nPay in ten days.\n"),
+        "{accepted}"
+    );
+}
+
+#[test]
+fn select_from_flags_refuses_by_without_changed_and_changed_with_picks() {
+    assert_eq!(
+        Select::from_flags(None, None, None, true, Some("AC")),
+        Ok(Some(Select::Changed {
+            by: Some("AC".into())
+        }))
+    );
+    assert!(Select::from_flags(None, None, None, false, Some("AC")).is_err());
+    assert!(Select::from_flags(Some("p1"), None, None, true, None).is_err());
+    assert!(Select::from_flags(None, Some(2), None, true, None).is_err());
+}
+
+#[test]
+fn cli_read_changed_prints_only_the_changed_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    let changed = ok(
+        &["read", "received.docx", "--changed", "--no-page-markers"],
+        dir.path(),
+    );
+    assert!(
+        changed.contains("\nrange: changed (p3, p5, p7, t0, p18) of p0-p20\n"),
+        "{changed}"
+    );
+    assert!(
+        !changed.contains("<!-- p0 ") && !changed.contains("<!-- p1 "),
+        "{changed}"
+    );
+    let by = ok(
+        &[
+            "read",
+            "received.docx",
+            "--changed",
+            "--by",
+            "AS",
+            "--no-page-markers",
+        ],
+        dir.path(),
+    );
+    assert!(
+        by.contains("\nrange: changed by @AS (p5) of p0-p20\n"),
+        "{by}"
+    );
+    assert!(
+        by.contains("{>>#c6 @AS re #c5: Disagree.<<}") && !by.contains("<!-- p3 "),
+        "{by}"
+    );
+    let bad = jubarte(
+        &["read", "received.docx", "--changed", "-p", "p1"],
+        dir.path(),
+    );
+    assert!(!bad.status.success(), "--changed conflicts with -p");
+    let bad = jubarte(&["read", "received.docx", "--by", "AS"], dir.path());
+    assert!(!bad.status.success(), "--by needs --changed");
+}
+
+/// PR #385 review: every cached or hard break counts, not every paragraph
+/// holding one.
+#[test]
+fn a_paragraph_spanning_three_pages_counts_every_break() {
+    let cached = docx(&format!(
+        r#"{}<w:p><w:r><w:t>Long</w:t></w:r><w:r><w:lastRenderedPageBreak/><w:t>more</w:t></w:r><w:r><w:lastRenderedPageBreak/><w:t>most</w:t></w:r></w:p>{}"#,
+        para("One"),
+        para("Tail")
+    ));
+    assert_eq!(
+        body(&agent(&cached)),
+        "<!-- page 1 of 3 -->\n\n<!-- p0 -->\nOne\n\n<!-- page 2 of 3 -->\n\n<!-- p1 -->\nLongmoremost\n\n<!-- page 3 of 3 -->\n\n<!-- p2 -->\nTail\n"
+    );
+    let hard = docx(&format!(
+        r#"<w:p><w:r><w:t>A</w:t><w:br w:type="page"/><w:t>B</w:t><w:br w:type="page"/><w:t>C</w:t></w:r></w:p>{}"#,
+        para("D")
+    ));
+    let out = body(&agent(&hard)).to_string();
+    assert!(
+        out.starts_with("<!-- page 1 of 3 -->\n\n<!-- p0 page-break -->\n"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("\n<!-- page 3 of 3 -->\n\n<!-- p1 -->\nD\n"),
+        "{out}"
+    );
+}
+
+/// PR #385 review: Word shows an empty numbered paragraph's label and spends
+/// its number; the agent view keeps that paragraph's line with its label.
+/// The plain conversion still counts written paragraphs only (see
+/// `Writer::paragraph`).
+#[test]
+fn an_empty_numbered_paragraph_spends_its_number() {
+    let numbering = Part {
+        name: "word/numbering.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+        xml: &format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+        ),
+    };
+    let item = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>{}</w:p>"#,
+            if text.is_empty() {
+                String::new()
+            } else {
+                format!("<w:r><w:t>{text}</w:t></w:r>")
+            }
+        )
+    };
+    let bytes = common::docx::docx_with(
+        &format!("{}{}{}", item("First"), item(""), item("Third")),
+        &[numbering],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(out.contains("<!-- p1 empty, num \"2.\" -->\n"), "{out}");
+    assert!(out.contains("<!-- p2 num \"3.\" -->\n3. Third"), "{out}");
+    let plain = docx_to_markdown(&bytes, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert!(plain.contains("2. Third"), "{plain}");
+}
+
+/// PR #385 review: rows and cells inside content controls count on the
+/// table line, as the pipe table below it prints them.
+#[test]
+fn table_line_counts_rows_inside_content_controls() {
+    let row = |a: &str, b: &str| {
+        format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>{a}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{b}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let tbl = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt></w:tbl>"#,
+        row("a", "b"),
+        row("c", "d")
+    );
+    let out = body(&agent(&docx(&tbl))).to_string();
+    assert!(
+        out.contains("<!-- t0 2x2, cells p0-p3 by row -->\n"),
+        "{out}"
+    );
+}
+
+/// PR #385 review: an inserted row's revision survives into the resolved
+/// views' table line; rejecting it removes the row.
+#[test]
+fn a_row_revision_shows_on_the_table_line_after_resolution() {
+    let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:ins w:id="7" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>c</w:t></w:r></w:ins></w:p></w:tc><w:tc><w:p><w:ins w:id="9" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl>"#;
+    let bytes = docx(tbl);
+    let accepted = body(&agent_with(&bytes, TrackChanges::Accept, true)).to_string();
+    assert!(accepted.contains(" rev #7 @AC in r1"), "{accepted}");
+    let rejected = body(&agent_with(&bytes, TrackChanges::Reject, true)).to_string();
+    assert!(
+        rejected.contains("<!-- t0 1x2, cells p0-p1 by row -->"),
+        "{rejected}"
+    );
+}
+
+/// Review t09-15: a pick that accepting or rejecting merged into its
+/// neighbour is named, not silently dropped.
+#[test]
+fn a_pick_merged_away_by_resolution_names_the_paragraph_that_holds_it() {
+    let body_xml = format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="10" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr>{}</w:p><w:p>{}{}</w:p>"#,
+        run("Split "),
+        run("kept "),
+        ins(11, "Ann Counsel", "added")
+    );
+    let bytes = docx(&body_xml);
+    let pick = || Some(Select::parse("p1").unwrap());
+    let err = docx_to_markdown(
+        &bytes,
+        &MarkdownOptions {
+            track_changes: TrackChanges::Reject,
+            select: pick(),
+            ..agent_defaults()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("p1 is part of p0 in this view"), "{err}");
+    let tracked = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            select: pick(),
+            ..agent_defaults()
+        },
+    );
+    assert!(tracked.contains("\n<!-- p1"), "{tracked}");
+}
+
+/// Review t09-15: a selection that starts mid-page still names its page.
+#[test]
+fn a_selection_starting_mid_page_names_its_page() {
+    let bytes = docx(&format!(
+        r#"{}<w:p><w:r><w:lastRenderedPageBreak/><w:t>Two</w:t></w:r></w:p>{}{}"#,
+        para("One"),
+        para("Three"),
+        para("Four")
+    ));
+    let out = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            select: Some(Select::parse("p3").unwrap()),
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(body(&out), "<!-- page 2 of 2 -->\n\n<!-- p3 -->\nFour\n");
+}
+
+/// Review t09-15: formatting-only changes are counted in the header, by
+/// author too.
+#[test]
+fn header_counts_formatting_only_changes() {
+    let bytes = docx(
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("revisions: 0 ") && l.ends_with("# 1 formatting change")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  AC: Ann Counsel ") && l.ends_with("# 1 formatting change")),
+        "{out}"
+    );
+}
+
+/// Review t09-15: a comment reference with no comment behind it is listed
+/// nowhere, in a cell as in a paragraph.
+#[test]
+fn an_orphan_comment_reference_in_a_cell_is_not_listed() {
+    let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r><w:r><w:commentReference w:id="9"/></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let out = agent_with(&docx(tbl), TrackChanges::All, false);
+    assert!(!out.contains("#c9"), "{out}");
+}
+
+/// Review t09-15: the header's style facts skip text boxes, as every other
+/// count does.
+#[test]
+fn header_table_styles_skip_tables_in_text_boxes() {
+    let boxed = r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:tbl><w:tblPr><w:tblStyle w:val="PlainTable"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>in box</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#;
+    let top = r#"<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>top</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let out = agent(&docx(&format!("{top}{boxed}")));
+    assert!(!out.contains("PlainTable"), "{out}");
+    assert!(out.contains("TableGrid"), "{out}");
+}
+
+/// Review t09-15: underline from a character style shows as `<u>`, as bold
+/// and italic from a style do.
+#[test]
+fn underline_from_a_character_style_shows() {
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="character" w:styleId="Under"><w:name w:val="Under"/><w:rPr><w:u w:val="single"/></w:rPr></w:style><w:style w:type="character" w:styleId="Plain"><w:name w:val="Plain"/><w:basedOn w:val="Under"/><w:rPr><w:u w:val="none"/></w:rPr></w:style></w:styles>"#
+        ),
+    };
+    let bytes = common::docx::docx_with(
+        r#"<w:p><w:r><w:rPr><w:rStyle w:val="Under"/></w:rPr><w:t>styled</w:t></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:rStyle w:val="Plain"/></w:rPr><w:t>plain</w:t></w:r></w:p>"#,
+        &[styles],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(out.contains("<u>styled</u> plain"), "{out}");
+}
+
+#[test]
+fn changed_author_handles_match_whole_handles_including_collision_suffixes() {
+    let bytes = docx(&format!(
+        "<w:p>{}</w:p><w:p>{}</w:p>{}",
+        ins(0, "Ann Counsel", "First author"),
+        ins(1, "Alice Cooper", "Second author"),
+        para("Quiet")
+    ));
+    // Both authors have the same initials; matching @AC must not match @AC2.
+    for (by, kept, excluded) in [
+        ("Ann Counsel", "First author", "Second author"),
+        ("Alice Cooper", "Second author", "First author"),
+    ] {
+        let out = agent_options(&bytes, &changed(Some(by)));
+        assert!(body(&out).contains(kept), "{out}");
+        assert!(!body(&out).contains(excluded), "{out}");
+        assert!(!body(&out).contains("Quiet"), "{out}");
+    }
+    for unknown in ["@missing", "@", "", "ann counsel", "AC999"] {
+        let out = agent_options(&bytes, &changed(Some(unknown)));
+        assert!(body(&out).trim().is_empty(), "{unknown}: {out}");
+    }
+}
+
+#[test]
+fn changed_keeps_comment_only_blocks_and_ignores_orphan_references() {
+    let bytes = one_comment_docx(&format!(
+        "{}<w:p>{}{}</w:p><w:p>{}{}</w:p>",
+        para("Quiet"),
+        run("Reviewed"),
+        reference(9),
+        run("Orphan"),
+        reference(99)
+    ));
+    for comments in [true, false] {
+        let out = agent_options(
+            &bytes,
+            &MarkdownOptions {
+                comments,
+                ..changed(None)
+            },
+        );
+        assert!(out.contains("range: changed (p1) of p0-p2"), "{out}");
+        assert!(body(&out).contains("Reviewed"), "{out}");
+        assert!(
+            !body(&out).contains("Quiet") && !body(&out).contains("Orphan"),
+            "{out}"
+        );
+    }
+    let by_author = agent_options(&bytes, &changed(Some("Ann Counsel")));
+    assert!(body(&by_author).contains("Reviewed"), "{by_author}");
+    assert!(!body(&by_author).contains("Orphan"), "{by_author}");
+}
+
+#[test]
+fn changed_selects_whole_tables_for_hidden_comments() {
+    let bytes = one_comment_docx(&format!(
+        "<w:tbl><w:tr><w:tc>{}</w:tc><w:tc><w:p>{}{}</w:p></w:tc></w:tr></w:tbl>{}",
+        para("Context cell"),
+        run("Reviewed cell"),
+        reference(9),
+        para("Quiet")
+    ));
+    let out = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            comments: false,
+            ..changed(None)
+        },
+    );
+    assert!(out.contains("range: changed (t0) of p0-p2"), "{out}");
+    assert!(
+        body(&out).contains("Context cell") && body(&out).contains("Reviewed cell"),
+        "{out}"
+    );
+    assert!(!body(&out).contains("Quiet"), "{out}");
+}
+
+#[test]
+fn changed_finds_formatting_and_break_marks_without_inline_revisions() {
+    let bytes = docx(&format!(
+        r#"{}<w:p><w:pPr><w:rPr><w:ins w:id="4" w:author="Ann Counsel"/></w:rPr></w:pPr>{}</w:p><w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Bob Lee"><w:rPr/></w:rPrChange></w:rPr><w:t>Formatted</w:t></w:r></w:p>"#,
+        para("Quiet"),
+        run("Split")
+    ));
+    let all = agent_options(&bytes, &changed(None));
+    assert!(all.contains("range: changed (p1, p2) of p0-p2"), "{all}");
+    for (by, kept, excluded) in [("AC", "Split", "Formatted"), ("BL", "Formatted", "Split")] {
+        let out = agent_options(&bytes, &changed(Some(by)));
+        assert!(body(&out).contains(kept), "{out}");
+        assert!(
+            !body(&out).contains(excluded) && !body(&out).contains("Quiet"),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn changed_in_reject_view_keeps_the_deleted_authors_block() {
+    let out = agent_options(
+        &marked_docx(),
+        &MarkdownOptions {
+            track_changes: TrackChanges::Reject,
+            ..changed(Some("Bob Lee"))
+        },
+    );
+    assert!(out.contains("range: changed by @BL (p3) of p0-p3"), "{out}");
+    assert!(body(&out).contains("Fee: waived"), "{out}");
+    assert!(
+        !body(&out).contains("Pay in") && !body(&out).contains("Quiet"),
+        "{out}"
+    );
+    assert!(!body(&out).contains("{--"), "{out}");
+}
+
+#[test]
+fn changed_flags_reject_even_zero_length_or_empty_conflicting_selections() {
+    for (paragraphs, head, tail) in [
+        (Some(""), None, None),
+        (None, Some(0), None),
+        (None, None, Some(0)),
+    ] {
+        assert_eq!(
+            Select::from_flags(paragraphs, head, tail, true, None),
+            Err("changed excludes paragraphs, head and tail".into())
+        );
+    }
+    assert_eq!(
+        Select::from_flags(None, None, None, false, Some("")),
+        Err("by needs changed".into())
+    );
+    assert_eq!(Select::from_flags(None, None, None, false, None), Ok(None));
+    assert_eq!(
+        Select::from_flags(None, None, None, true, None),
+        Ok(Some(Select::Changed { by: None }))
+    );
+    assert_eq!(
+        Select::from_flags(None, None, Some(0), false, None),
+        Ok(Some(Select::Tail(0)))
+    );
+}

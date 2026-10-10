@@ -320,7 +320,9 @@ export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput
  * with its id. Options (JSON, all optional): `trackChanges` (all, accept,
  * reject), `comments` (inline, none), `dates`, `pageMarkers` (default
  * true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
- * `head`, `tail`, `source` (the name printed as `source:`).
+ * `head`, `tail`, `changed` (only the blocks with marks) with `by` (one
+ * author's: a handle or a full name), `source` (the name printed as
+ * `source:`).
  *
  * Mirrors `jubarte::markdown::read`.
  */
