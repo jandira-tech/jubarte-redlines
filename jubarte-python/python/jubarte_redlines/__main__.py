@@ -577,20 +577,6 @@ def _diff_done(args: argparse.Namespace, wrote: str, patch: str) -> None:
         sys.stdout.write(patch)
 
 
-def cmd_revisions(args: argparse.Namespace) -> int:
-    from . import get_revisions
-
-    rows = get_revisions(_read(args.file).to_bytes())
-    if args.json:
-        for row in rows:
-            print(json.dumps(row, ensure_ascii=False))
-    else:
-        for row in rows:
-            print(f"{row['type']}\t{row.get('author') or '-'}\t{row.get('part')}\t{(row.get('text') or '')[:60]!r}")
-        print(f"{len(rows)} revision(s)")
-    return EXIT_OK
-
-
 def cmd_changes(args: argparse.Namespace) -> int:
     for change in (changes := _read(args.file).changes()):
         row = {key: value for key, value in asdict(change).items() if value is not None}
@@ -683,7 +669,7 @@ def cmd_capabilities(_args: argparse.Namespace) -> int:
 _HANDLERS = {
     "inspect": cmd_inspect, "read": cmd_read, "edit": cmd_edit, "add": cmd_add,
     "convert": cmd_convert, "compare": cmd_compare, "diff": cmd_diff,
-    "revisions": cmd_revisions, "changes": cmd_changes, "comments": cmd_comments,
+    "changes": cmd_changes, "comments": cmd_comments,
     "accept": cmd_accept, "reject": cmd_reject, "diff-render": cmd_diff_render,
     "validate": cmd_validate, "capabilities": cmd_capabilities,
 }
