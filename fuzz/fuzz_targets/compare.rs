@@ -11,6 +11,7 @@
 use jubarte::admission::InputLimits;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
+use jubarte_fuzz as _;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

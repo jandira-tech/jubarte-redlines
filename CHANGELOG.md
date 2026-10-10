@@ -17,10 +17,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Security
 
-- Bound OPC metadata to 256 attributes per element before rdocx-opc's
-  quick-xml 0.37 duplicate checks (RUSTSEC-2026-0194 denial of service).
-  Oversized metadata is now refused. The dependency itself remains affected;
-  direct use of its re-exported parser is outside this mitigation.
+- Upgrade rdocx-opc to 0.2 with quick-xml 0.41, fixing RUSTSEC-2026-0194
+  and RUSTSEC-2026-0195 across the native, Python, WASM and in-process
+  graphs, including the public `Relationships::from_xml` parser. Keep
+  the 256-attribute OPC admission budget and remove the advisory exceptions
+  and obsolete WASM-only dependency patch. Relationship/content-type parser
+  behavior is preserved; consumers sharing dependency types must also use
+  rdocx-opc 0.2 (the re-exported XML errors now use quick-xml 0.41).
+- Add direct relationship-parser regression tests and fuzzing. Fuzz checks
+  now block CI; native runs instrument mimalloc's C code and enable its
+  AddressSanitizer allocation tracking alongside Rust instrumentation.
 - Add contribution and private vulnerability-reporting policies, daily
   dependency/history-secret checks, mandatory release security checks and
   an OpenSSF criterion evidence ledger.

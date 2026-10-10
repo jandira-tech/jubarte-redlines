@@ -97,7 +97,9 @@ perf-profile = []
 self-update = ["cli", "dep:self_update"]
 
 [dependencies]
-rdocx-opc = "0.1" # OPC/zip package layer
+# 0.2 keeps the OPC parsing semantics and requires patched quick-xml >=0.41.
+# This also protects callers of our public Relationships::from_xml re-export.
+rdocx-opc = "0.2" # OPC/zip package layer
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)

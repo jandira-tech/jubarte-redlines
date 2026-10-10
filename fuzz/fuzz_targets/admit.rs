@@ -6,6 +6,8 @@
 //! allocate without bound. Small budgets keep every iteration fast.
 #![no_main]
 
+use jubarte_fuzz as _;
+
 use jubarte::admission::{InputLimits, admit};
 use libfuzzer_sys::fuzz_target;
 

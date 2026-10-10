@@ -18,14 +18,7 @@ targets = [
 [advisories]
 version = 2
 yanked = "warn"
-# No fixed rdocx-opc release exists. The engine bounds OPC metadata to
-# 256 attributes BEFORE every upstream parse (src/opc/mod.rs regression test).
-# NsReader is not used by rdocx-opc. These exceptions do not claim the
-# dependency itself is fixed; direct use of its re-exported parsers is unsafe
-# on untrusted input. Reassess by 2026-11-06; remove on upstream upgrade.
 ignore = [
-    { id = "RUSTSEC-2026-0194", reason = "engine OPC preflight bounds attributes to 256; reassess 2026-11-06; see SECURITY.md" },
-    { id = "RUSTSEC-2026-0195", reason = "rdocx-opc uses Reader, not affected NsReader; reassess 2026-11-06" },
     # Direct rustybuzz 0.20 (shaping). Unmaintained as of 2026-08; migrating
     # off it is plan Step 2e / PR5 (FaceKey registry), not a CI ignore-forever.
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; migrate with FaceKey/harfbuzz in plan 2e" },

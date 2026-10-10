@@ -150,10 +150,8 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
     runs-on: self-hosted
-    # Non-blocking until the targets have run clean for a while; a crash
-    # here is still a real finding (see fuzz/README.md).
-    continue-on-error: true
-    timeout-minutes: 20
+    # Four ordinary runs, two native runs, and a cold instrumented C build.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -173,6 +171,20 @@ jobs:
         run: cargo fuzz run strict_to_transitional -- -max_total_time=60
       - if: ${{ !cancelled() }}
         run: cargo fuzz run compare -- -max_total_time=60
+      - if: ${{ !cancelled() }}
+        run: cargo fuzz run relationships -- -max_total_time=60
+      # Exercise the shipped native allocator with C instrumentation and
+      # mimalloc's ASan allocation hooks as well as Rust ASan.
+      - if: ${{ !cancelled() }}
+        run: bash scripts/fuzz-native.sh compare -max_total_time=60
+      - if: ${{ !cancelled() }}
+        run: bash scripts/fuzz-native.sh relationships -max_total_time=60
+      - if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-reproducers
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
 
   package:
     name: publish dry run

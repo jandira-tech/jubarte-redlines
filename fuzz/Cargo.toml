@@ -14,6 +14,12 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 jubarte-redlines = { path = "..", default-features = false }
+mimalloc = { version = "0.1", default-features = false, optional = true }
+
+[features]
+# Install the same global allocator as the shipped CLI. Invoke through
+# scripts/fuzz-native.sh so the C allocator is instrumented as well as Rust.
+native-allocator = ["dep:mimalloc", "jubarte-redlines/fast-alloc"]
 
 # A standalone package, like the bindings: the root `[workspace]` is empty.
 [workspace]
@@ -35,6 +41,13 @@ bench = false
 [[bin]]
 name = "compare"
 path = "fuzz_targets/compare.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relationships"
+path = "fuzz_targets/relationships.rs"
 test = false
 doc = false
 bench = false

@@ -58,15 +58,13 @@ user authentication, password storage, encryption or key agreement.
 
 ### Temporary dependency exceptions
 
-`rdocx-opc` 0.1.2 still uses quick-xml 0.37.5. RUSTSEC-2026-0194 is mitigated
-inside the engine by scanning OPC metadata with the fixed parser and refusing
-more than 256 attributes per element **before** the old parser sees it. The
-cap applies to relationship and content-type XML; a package exceeding it is
-refused. RUSTSEC-2026-0195 affects `NsReader`, which rdocx-opc does not use.
-The WASM copy already uses quick-xml 0.42. Neither exception means the upstream
-crate is fixed: do not call the re-exported `Relationships::from_xml` directly
-with untrusted XML. Maintainers must reassess these exceptions by 2026-11-06
-and upgrade as soon as upstream publishes a fixed version. The unmaintained
+`rdocx-opc` 0.2 requires patched quick-xml 0.41, fixing RUSTSEC-2026-0194
+and RUSTSEC-2026-0195 in every binding and the public relationship parser.
+There are no exceptions for these vulnerabilities in the advisory policy.
+OPC package admission retains its 256-attribute budget as an additional
+resource limit; a direct `Relationships::from_xml` call does not enforce
+that package-specific limit. Callers still need process/input resource limits
+for untrusted XML. The unmaintained
 rustybuzz/ttf-parser exceptions track a separate migration, not a known
 exploitable vulnerability; revisit them on each release.
 
@@ -79,8 +77,8 @@ bash scripts/security-check.sh
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-The script audits every engine/binding dependency graph and scans reachable git
-history and the current tracked/unignored files for secrets with redacted output.
+The script audits every engine/binding and fuzz dependency graph and scans
+reachable git history and current tracked/unignored files for secrets with redacted output.
 The scheduled security workflow runs daily and on pushes/pull requests. Clippy
 is the static source analyzer (beyond rustc's warnings); it also runs in CI and
 before release. Fuzzing with sanitizers is dynamic analysis; ordinary tests
@@ -91,6 +89,9 @@ run with debug assertions. Run all fuzz targets before a major release:
 cargo +nightly fuzz run admit -- -max_total_time=60
 cargo +nightly fuzz run strict_to_transitional -- -max_total_time=60
 cargo +nightly fuzz run compare -- -max_total_time=60
+cargo +nightly fuzz run relationships -- -max_total_time=60
+bash scripts/fuzz-native.sh compare -max_total_time=60
+bash scripts/fuzz-native.sh relationships -max_total_time=60
 ```
 
 A crash is a finding to triage, even when malformed input triggers it. Fix
