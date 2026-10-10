@@ -351,7 +351,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             ) {
                 (Some(name), _) => header::Owner::Creator(name.trim().to_string()),
                 (None, Some(name)) => header::Owner::LastModifiedBy(name.trim().to_string()),
-                (None, None) => header::Owner::None,
+                (None, None) => header::Owner::Unnamed,
             },
         };
         let comment_facts: Vec<header::CommentFact> = comments_root

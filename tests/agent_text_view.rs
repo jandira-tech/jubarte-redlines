@@ -2900,3 +2900,21 @@ fn an_empty_body_names_no_paragraph_and_refuses_a_pick() {
     let error = picked.expect_err("p0 does not exist").to_string();
     assert!(error.contains("the body has no paragraphs"), "{error}");
 }
+
+/// pi review av2 F8: a core.xml that names nobody is not a missing one.
+#[test]
+fn an_owner_less_core_part_is_not_called_missing() {
+    let bytes = common::docx::docx_with(
+        &para("x"),
+        &[core(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator> </dc:creator></cp:coreProperties>"#,
+        )],
+    );
+    let view = agent(&bytes);
+    assert!(
+        header_lines(&view).contains(
+            &"  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy"
+        ),
+        "{view}"
+    );
+}

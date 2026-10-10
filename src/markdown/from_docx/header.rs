@@ -12,6 +12,9 @@ use super::ooxml::Element;
 pub(crate) enum Owner {
     Creator(String),
     LastModifiedBy(String),
+    /// `docProps/core.xml` is there but names nobody.
+    Unnamed,
+    /// No `docProps/core.xml`.
     None,
 }
 
@@ -282,6 +285,11 @@ pub(crate) fn render(f: &Facts) -> String {
             &mut out,
             &format!("  document_owner: {}", scalar(name, false)),
             Some("cp:lastModifiedBy; no dc:creator"),
+        ),
+        Owner::Unnamed => kv(
+            &mut out,
+            "  document_owner: none",
+            Some("docProps/core.xml names no dc:creator or cp:lastModifiedBy"),
         ),
         Owner::None => kv(
             &mut out,
