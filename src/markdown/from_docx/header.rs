@@ -815,14 +815,16 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
 }
 
 /// A header/footer paragraph's text with fields as `{PAGE}`: field codes
-/// print, cached results do not. Runs inside hyperlinks, content controls,
-/// smart tags, custom XML and insertions count; deleted runs do not.
+/// print, cached results do not, and a field nested in another prints as the
+/// outer one. Line breaks are newlines. Runs inside hyperlinks, content
+/// controls, smart tags, custom XML and insertions count; deleted runs do not.
 pub(crate) fn story_text(p: &Element) -> String {
     #[derive(Default)]
     struct State {
         out: String,
-        instr: Option<String>,
-        in_result: bool,
+        /// Open complex fields, outermost first: the instruction so far and
+        /// whether the field has reached its result.
+        fields: Vec<(String, bool)>,
     }
     fn code(instr: &str) -> String {
         let name = instr
@@ -846,25 +848,30 @@ pub(crate) fn story_text(p: &Element) -> String {
                     for child in run.elements() {
                         match child.local() {
                             "fldChar" => match child.attr("fldCharType") {
-                                Some("begin") => s.instr = Some(String::new()),
-                                Some("separate") => s.in_result = true,
+                                Some("begin") => s.fields.push((String::new(), false)),
+                                Some("separate") => {
+                                    if let Some(field) = s.fields.last_mut() {
+                                        field.1 = true;
+                                    }
+                                }
                                 Some("end") => {
-                                    if let Some(instr) = s.instr.take() {
+                                    if let Some((instr, _)) = s.fields.pop()
+                                        && s.fields.is_empty()
+                                    {
                                         s.out.push_str(&code(&instr));
                                     }
-                                    s.in_result = false;
                                 }
                                 _ => {}
                             },
                             "instrText" => {
-                                if let Some(i) = s.instr.as_mut() {
-                                    i.push_str(&child.text());
+                                if let Some((instr, false)) = s.fields.last_mut() {
+                                    instr.push_str(&child.text());
                                 }
                             }
-                            "t" if s.instr.is_none() && !s.in_result => {
-                                s.out.push_str(&child.text());
-                            }
+                            _ if !s.fields.is_empty() => {}
+                            "t" => s.out.push_str(&child.text()),
                             "tab" => s.out.push('\t'),
+                            "br" | "cr" => s.out.push('\n'),
                             _ => {}
                         }
                     }
@@ -969,5 +976,28 @@ mod tests {
         assert_eq!(paragraphs.len(), 2);
         assert_eq!(story_text(paragraphs[0]), "");
         assert_eq!(story_text(paragraphs[1]), "body");
+    }
+
+    /// pi review av2 F18: a line break inside a header paragraph is a line
+    /// break in its text, not two words glued together.
+    #[test]
+    fn a_break_in_a_header_line_is_a_newline() {
+        let root = ftr(
+            r#"<w:p><w:r><w:t>line one</w:t><w:br/><w:t>line two</w:t><w:cr/><w:t>three</w:t></w:r></w:p>"#,
+        );
+        assert_eq!(
+            story_text(story_paragraphs(&root)[0]),
+            "line one\nline two\nthree"
+        );
+    }
+
+    /// pi review av2 F18: a field nested in another's instruction does not
+    /// replace it; the outer field names the code, its result stays hidden.
+    #[test]
+    fn a_nested_field_keeps_the_outer_code() {
+        let root = ftr(&format!(
+            r#"<w:p><w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF </w:instrText></w:r>{PAGE_RUNS}<w:r><w:instrText xml:space="preserve"> > 1 "more" "" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>more</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t> end</w:t></w:r></w:p>"#
+        ));
+        assert_eq!(story_text(story_paragraphs(&root)[0]), "Page {IF} end");
     }
 }
