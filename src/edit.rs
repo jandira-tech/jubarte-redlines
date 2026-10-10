@@ -210,6 +210,8 @@ pub enum OperationKind {
         occurrence: Option<usize>,
     },
     /// Comment on exactly one occurrence of `find`, or on the whole paragraph.
+    /// The range may cross tabs, symbols, hyperlinks, fields, content
+    /// controls and revisions: a comment edits nothing.
     Comment {
         /// Paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -2336,16 +2338,13 @@ impl<'p> Transaction<'p> {
                 ..
             } => {
                 check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                // A comment edits nothing: its range may cross a tab, a
+                // symbol, a hyperlink, a field or a revision.
                 let (start, end) = match find {
-                    Some(find) => self
-                        .find_range(projection, find, *occurrence, &mut outcome)
+                    Some(find) => locate(projection, find, *occurrence, &mut outcome)
                         .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
                     None => {
                         outcome.matches = 1;
-                        if !text.is_empty() {
-                            self.check_range(projection, 0, text.len())
-                                .map_err(|m| fail("UNSUPPORTED_STRUCTURE", m, outcome.clone()))?;
-                        }
                         (0, text.len())
                     }
                 };
@@ -2369,10 +2368,6 @@ impl<'p> Transaction<'p> {
                 outcome.matches = 1;
                 if let Some(note) = comment {
                     check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
-                    if !text.is_empty() {
-                        self.check_range(projection, 0, text.len())
-                            .map_err(|m| fail("UNSUPPORTED_STRUCTURE", m, outcome.clone()))?;
-                    }
                 }
                 let node = self.paragraph_nodes[para];
                 let dom = &self.opened.dom;
@@ -3444,66 +3439,7 @@ impl<'p> Transaction<'p> {
         occurrence: Option<usize>,
         outcome: &mut EditOutcome,
     ) -> Result<(usize, usize), (String, String)> {
-        if find.is_empty() {
-            return Err(("INVALID_EDIT".into(), "find must be nonempty".into()));
-        }
-        let text = &projection.text;
-        let hits_of = |needle: &str| -> Vec<usize> {
-            text.char_indices()
-                .map(|(i, _)| i)
-                .filter(|&i| text[i..].starts_with(needle))
-                .collect()
-        };
-        let mut needle = find.to_string();
-        let mut hits = hits_of(find);
-        // An anchor copied out of the agent view can carry Markdown marks
-        // (`# `, `**`, CriticMarkup notes) that are not document text: the
-        // literal is tried first, then the text without them.
-        if hits.is_empty() {
-            let plain = crate::markdown::plain_anchor(find);
-            if !plain.is_empty() && plain != find {
-                let plain_hits = hits_of(&plain);
-                if !plain_hits.is_empty() {
-                    outcome.anchor_given = Some(find.to_string());
-                    outcome.anchor_read_as = Some(plain.clone());
-                    needle = plain;
-                    hits = plain_hits;
-                }
-            }
-        }
-        outcome.matches = hits.len();
-        let start = match (hits.as_slice(), occurrence) {
-            ([], _) => {
-                return Err((
-                    "ANCHOR_NOT_FOUND".into(),
-                    format!("{find:?} does not occur in the paragraph"),
-                ));
-            }
-            (_, Some(0)) => {
-                return Err(("INVALID_EDIT".into(), "occurrence is 1-based".into()));
-            }
-            ([one], None) => *one,
-            (many, None) => {
-                let n = many.len();
-                return Err((
-                    "AMBIGUOUS_ANCHOR".into(),
-                    format!(
-                        "{find:?} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"
-                    ),
-                ));
-            }
-            (many, Some(k)) if k <= many.len() => many[k - 1],
-            (many, Some(k)) => {
-                let n = many.len();
-                return Err((
-                    "AMBIGUOUS_ANCHOR".into(),
-                    format!(
-                        "{find:?} occurs {n} times in the paragraph; occurrence {k} is outside occurrence 1..={n}"
-                    ),
-                ));
-            }
-        };
-        let end = start + needle.len();
+        let (start, end) = locate(projection, find, occurrence, outcome)?;
         self.check_range(projection, start, end)
             .map_err(|m| ("UNSUPPORTED_STRUCTURE".to_string(), m))?;
         Ok((start, end))
@@ -4891,6 +4827,77 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
         }
     }
     (pos as i64 + delta).max(0) as usize
+}
+
+/// The unique occurrence of `find` in the paragraph, or its
+/// `occurrence`-th hit (1-based) when given (overlapping occurrences
+/// count), whatever structure it crosses.
+fn locate(
+    projection: &Projection,
+    find: &str,
+    occurrence: Option<usize>,
+    outcome: &mut EditOutcome,
+) -> Result<(usize, usize), (String, String)> {
+    if find.is_empty() {
+        return Err(("INVALID_EDIT".into(), "find must be nonempty".into()));
+    }
+    let text = &projection.text;
+    let hits_of = |needle: &str| -> Vec<usize> {
+        text.char_indices()
+            .map(|(i, _)| i)
+            .filter(|&i| text[i..].starts_with(needle))
+            .collect()
+    };
+    let mut needle = find.to_string();
+    let mut hits = hits_of(find);
+    // An anchor copied out of the agent view can carry Markdown marks
+    // (`# `, `**`, CriticMarkup notes) that are not document text: the
+    // literal is tried first, then the text without them.
+    if hits.is_empty() {
+        let plain = crate::markdown::plain_anchor(find);
+        if !plain.is_empty() && plain != find {
+            let plain_hits = hits_of(&plain);
+            if !plain_hits.is_empty() {
+                outcome.anchor_given = Some(find.to_string());
+                outcome.anchor_read_as = Some(plain.clone());
+                needle = plain;
+                hits = plain_hits;
+            }
+        }
+    }
+    outcome.matches = hits.len();
+    let start = match (hits.as_slice(), occurrence) {
+        ([], _) => {
+            return Err((
+                "ANCHOR_NOT_FOUND".into(),
+                format!("{find:?} does not occur in the paragraph"),
+            ));
+        }
+        (_, Some(0)) => {
+            return Err(("INVALID_EDIT".into(), "occurrence is 1-based".into()));
+        }
+        ([one], None) => *one,
+        (many, None) => {
+            let n = many.len();
+            return Err((
+                "AMBIGUOUS_ANCHOR".into(),
+                format!(
+                    "{find:?} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"
+                ),
+            ));
+        }
+        (many, Some(k)) if k <= many.len() => many[k - 1],
+        (many, Some(k)) => {
+            let n = many.len();
+            return Err((
+                "AMBIGUOUS_ANCHOR".into(),
+                format!(
+                    "{find:?} occurs {n} times in the paragraph; occurrence {k} is outside occurrence 1..={n}"
+                ),
+            ));
+        }
+    };
+    Ok((start, start + needle.len()))
 }
 
 /// `seg` is a `w:sym`, projected as U+FFFC.

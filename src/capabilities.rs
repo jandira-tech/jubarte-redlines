@@ -142,7 +142,8 @@ pub struct Limits {
     pub plain_text_runs: bool,
     /// Edits refuse ranges crossing fields, hyperlinks, content controls,
     /// revisions and symbols. A range over a tab, a line break or a
-    /// non-breaking hyphen removes it.
+    /// non-breaking hyphen removes it. A comment edits nothing and may
+    /// cover any of them.
     pub refuses_opaque_ranges: bool,
     /// Legacy `.doc` input is not read: an OLE compound file (a Word
     /// 97-2003 `.doc`, or an encrypted document of any Word version) is
