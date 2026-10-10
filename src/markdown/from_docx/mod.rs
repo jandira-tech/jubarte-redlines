@@ -39,6 +39,20 @@ pub(crate) struct Options {
     /// Collect raster pictures and name them under this directory. `None`
     /// writes pictures as their alt text.
     pub(crate) media_dir: Option<String>,
+    /// The agent view (see `agent.rs` and `header.rs`).
+    pub(crate) ids: bool,
+    /// With `ids`: comments inline, or hidden and listed on id lines.
+    pub(crate) comments: bool,
+    /// With `ids`: the `source:` name in the header.
+    pub(crate) source: Option<String>,
+    /// With `ids`: painted page texts for the page markers.
+    pub(crate) pages: Option<Vec<String>>,
+    /// With `ids` and no `pages`: cached-break page lines, or none.
+    pub(crate) page_markers: bool,
+    /// With `ids`: inline timestamps on notes.
+    pub(crate) dates: bool,
+    /// With `ids`: which blocks to print.
+    pub(crate) select: Option<super::Select>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

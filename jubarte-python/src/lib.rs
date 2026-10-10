@@ -679,6 +679,7 @@ fn markdown(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResul
             &jubarte::markdown::MarkdownOptions {
                 track_changes: choice,
                 extract_media: None,
+                ..jubarte::markdown::MarkdownOptions::default()
             },
         )
         .map(|read| read.markdown)

@@ -195,7 +195,7 @@ impl std::fmt::Debug for DocxOptions<'_> {
 }
 
 /// How [`docx_to_markdown`] reads a document.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkdownOptions {
     /// `All` writes tracked changes and comments as CriticMarkup; `Accept`
     /// and `Reject` write the text after Word's Accept All or Reject All,
@@ -205,6 +205,119 @@ pub struct MarkdownOptions {
     /// under this directory, as pandoc's `--extract-media`. `None` writes a
     /// picture as its alt text.
     pub extract_media: Option<String>,
+    /// Agent view: a YAML header, an id line before every block, Word's
+    /// ids on revisions and comments. Off, the plain conversion, unchanged.
+    pub ids: bool,
+    /// With `ids`: comments inline (`true`), or hidden with their ids on the
+    /// id line of the paragraph that holds them.
+    pub comments: bool,
+    /// With `ids`: the name printed as `source:` in the header; `None`
+    /// prints `(bytes)`.
+    pub source: Option<String>,
+    /// With `ids`: the text painted on each page by the layout pass
+    /// (`convert::RenderReport::pages`), for `<!-- page N of M -->` lines.
+    /// `None` falls back to Word's cached page breaks.
+    pub pages: Option<Vec<String>>,
+    /// With `ids` and no `pages`: write `<!-- page N of M -->` lines from
+    /// Word's cached breaks (`true`, the default), or no page lines at all;
+    /// the header's page count is unaffected.
+    pub page_markers: bool,
+    /// With `ids`: timestamps inline on the notes of an author whose marks
+    /// and comments do not all share one timestamp.
+    pub dates: bool,
+    /// With `ids`: which blocks of the body to print.
+    pub select: Option<Select>,
+}
+
+impl Default for MarkdownOptions {
+    fn default() -> Self {
+        Self {
+            track_changes: TrackChanges::All,
+            extract_media: None,
+            ids: false,
+            comments: true,
+            source: None,
+            pages: None,
+            page_markers: true,
+            dates: false,
+            select: None,
+        }
+    }
+}
+
+/// Which blocks of the agent view to print (`-p`, `--head`, `--tail`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Select {
+    /// The first `n` blocks (a table is one block).
+    Head(usize),
+    /// The last `n` blocks.
+    Tail(usize),
+    /// Paragraphs and tables by id, in document order.
+    Picks(Vec<Pick>),
+}
+
+/// One item of a `-p` selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// `pN`, `pN-pM`, `pN-` (to the end, `to: None`), `-pM` (`from: 0`).
+    Paragraphs {
+        /// The first paragraph of the pick.
+        from: usize,
+        /// The last paragraph of the pick; `None` runs to the end.
+        to: Option<usize>,
+    },
+    /// `tN`: the whole table.
+    Table(usize),
+}
+
+impl Select {
+    /// `p2, p5-p7, 12, p17-, -p1, t0`: comma-separated picks; a bare number
+    /// is a paragraph.
+    pub fn parse(spec: &str) -> Result<Self, String> {
+        fn number(item: &str, text: &str) -> Result<usize, String> {
+            let text = text.trim();
+            text.strip_prefix('p')
+                .unwrap_or(text)
+                .parse()
+                .map_err(|_| format!("{item}: expected pN, pN-pM or tN"))
+        }
+        let mut picks = Vec::new();
+        for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(table) = item.strip_prefix('t') {
+                let n = table
+                    .parse()
+                    .map_err(|_| format!("{item}: expected pN, pN-pM or tN"))?;
+                picks.push(Pick::Table(n));
+                continue;
+            }
+            let (from, to) = match item.split_once('-') {
+                None => {
+                    let n = number(item, item)?;
+                    (n, Some(n))
+                }
+                Some((a, b)) => (
+                    if a.trim().is_empty() {
+                        0
+                    } else {
+                        number(item, a)?
+                    },
+                    if b.trim().is_empty() {
+                        None
+                    } else {
+                        Some(number(item, b)?)
+                    },
+                ),
+            };
+            if to.is_some_and(|to| to < from) {
+                return Err(format!("{item}: the range runs backwards"));
+            }
+            picks.push(Pick::Paragraphs { from, to });
+        }
+        if picks.is_empty() {
+            return Err("no paragraphs selected".to_string());
+        }
+        Ok(Self::Picks(picks))
+    }
 }
 
 /// A document read as Markdown.
@@ -244,6 +357,13 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
         &from_docx::Options {
             revisions,
             media_dir: options.extract_media.clone(),
+            ids: options.ids,
+            comments: options.comments,
+            source: options.source.clone(),
+            pages: options.pages.clone(),
+            page_markers: options.page_markers,
+            dates: options.dates,
+            select: options.select.clone(),
         },
     )
     .map_err(|error| MarkdownError::Docx(error.to_string()))?;

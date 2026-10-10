@@ -272,6 +272,7 @@ pub fn document_markdown_with_changes(docx: &[u8], track_changes: &str) -> Resul
         &jubarte::markdown::MarkdownOptions {
             track_changes: choice,
             extract_media: None,
+            ..jubarte::markdown::MarkdownOptions::default()
         },
     )
     .map(|read| read.markdown)

@@ -754,6 +754,7 @@ fn run_text(file: &Path, track_changes: Option<TrackChanges>) -> Result<(), Stri
         &jubarte::markdown::MarkdownOptions {
             track_changes: choice.into(),
             extract_media: None,
+            ..jubarte::markdown::MarkdownOptions::default()
         },
     )
     .map_err(|e| e.to_string())?;
@@ -1612,6 +1613,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 &jubarte::markdown::MarkdownOptions {
                     track_changes: markdown.track_changes.into(),
                     extract_media: None,
+                    ..jubarte::markdown::MarkdownOptions::default()
                 },
             )
             .map_err(|e| format!("convert failed: {e}"))?;
