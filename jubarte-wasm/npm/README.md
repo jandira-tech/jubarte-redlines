@@ -91,7 +91,7 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` (so also `inspectDocument`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`) |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` (so also `inspectDocument`, `readView`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`) |
 | `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf` / `pdfPageCount` (same export set as `node-slim`) |
 
 ## API
@@ -113,6 +113,7 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `pdfPageCount` | `(pdf) → number` | Page count of a PDF (`0` if the bytes are not a readable PDF). *Full builds only.* |
 | `initPanicHook` | `() → void` | Route wasm panics to `console.error`. Safe to call multiple times. |
 | `inspectDocument` | `(docx) → string` | Inspection snapshot as JSON: `source_sha256`, `summary`, `paragraphs` with `body:p:N` ids, text, style, formatting spans and limitations, `stories` (headers, footers, notes) with `header1:p:N`-style ids, and `tables` (each body table's cells with their paragraph ids and text, `header_rows`, `widths_dxa`). |
+| `readView` | `(docx, optionsJson?) → string` | The agent view as JSON `{markdown, warnings}`: a YAML header, then Markdown with `<!-- pN -->` id lines and every change and comment with its id. Options (camelCase, all optional): `trackChanges` (`all`, `accept`, `reject`), `comments` (`inline`, `none`), `dates`, `pageMarkers` (default `true`), `paragraphs` (`"p3,p10-p20,t0"`), `head`, `tail`, `changed` with `by` (only the blocks with marks; one author's), `source`. |
 | `documentMarkdown` | `(docx) → string` | Body, then every header, footer and notes story, as Markdown with a `[body:p:N]` / `[header1:p:N]` id before every paragraph. |
 | `sourceSha256` | `(docx) → string` | SHA-256 of the bytes: the `source_sha256` guard an edit plan carries. |
 | `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan: every operation kind `capabilities()` lists under `edit_operations` (text edits, paragraphs, tables, lists, comments and their threads, footnotes, images, page setup, TOC, watermark, content controls, redaction, settings). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |

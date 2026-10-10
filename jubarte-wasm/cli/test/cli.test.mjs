@@ -108,6 +108,11 @@ test("read (alias text), inspect, capabilities and convert", () => {
   const picked = run("read", untracked, "-p", "p0");
   assert.equal(picked.code, 0, picked.err);
   assert.doesNotMatch(picked.out, /<!-- p1[ -]/);
+  // No marks in the document: --changed keeps nothing, and says so.
+  const changed = run("read", untracked, "--changed", "--by", "AC");
+  assert.equal(changed.code, 0, changed.err);
+  assert.match(changed.out, /\nrange: changed by AC \(none\) of p0-/);
+  assert.notEqual(run("read", untracked, "--by", "AC").code, 0);
   const summary = run("inspect", untracked);
   assert.match(summary.out, /^sha256: [0-9a-f]{64}\nparagraphs: \d+ /);
   assert.match(summary.out, /\nbody:p:0\t\[/);

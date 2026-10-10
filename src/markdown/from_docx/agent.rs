@@ -1073,7 +1073,37 @@ fn span_text(a: usize, b: usize) -> String {
     }
 }
 
-/// The selected blocks of `body` joined back, and the `range:` text.
+/// `@HH` in `text` where the handle ends (the next char is not
+/// alphanumeric).
+fn has_handle(text: &str, handle: &str) -> bool {
+    let key = format!("@{handle}");
+    text.match_indices(&key).any(|(at, _)| {
+        text[at + key.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric())
+    })
+}
+
+/// Whether a block of the agent view carries a tracked change or a comment:
+/// a note in its text, or a mark clause on its id or table line.
+fn is_marked(block: &str) -> bool {
+    let first = block.lines().next().unwrap_or("");
+    block.contains("{>>#")
+        || [
+            " rev #",
+            " comments #",
+            " break-ins #",
+            " break-del #",
+            " fmt #",
+        ]
+        .iter()
+        .any(|key| first.contains(key))
+}
+
+/// The selected blocks of `body` joined back, and the `range:` text. A
+/// `Select::Changed` author arrives resolved: `@AC` for a known handle, the
+/// text as given otherwise (no block holds an unknown author's marks).
 pub(crate) fn select_blocks(
     body: &str,
     select: &Select,
@@ -1116,6 +1146,40 @@ pub(crate) fn select_blocks(
                     spans.first().map_or(0, |s| s.0),
                     spans.last().map_or(0, |s| s.1)
                 )
+            );
+        }
+        Select::Changed { by } => {
+            let handle = by.as_deref().map(|by| by.strip_prefix('@'));
+            keep = blocks
+                .iter()
+                .map(|block| {
+                    is_marked(&block.text)
+                        && match handle {
+                            None => true,
+                            Some(Some(handle)) => has_handle(&block.text, handle),
+                            Some(None) => false,
+                        }
+                })
+                .collect();
+            let names: Vec<String> = blocks
+                .iter()
+                .zip(&keep)
+                .filter(|(_, keep)| **keep)
+                .filter_map(|(block, _)| match (block.table, block.span) {
+                    (Some(t), _) => Some(format!("t{t}")),
+                    (None, Some((a, z))) => Some(span_text(a, z)),
+                    _ => None,
+                })
+                .collect();
+            range = format!(
+                "changed{} ({})",
+                by.as_deref()
+                    .map_or(String::new(), |by| format!(" by {by}")),
+                if names.is_empty() {
+                    "none".to_string()
+                } else {
+                    names.join(", ")
+                }
             );
         }
         Select::Picks(picks) => {

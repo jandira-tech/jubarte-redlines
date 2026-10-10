@@ -744,8 +744,13 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
 /// `--no-page-markers` skips it.
 fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
     let bytes = read_document(file)?;
-    let select =
-        jubarte::markdown::Select::from_flags(args.paragraphs.as_deref(), args.head, args.tail)?;
+    let select = jubarte::markdown::Select::from_flags(
+        args.paragraphs.as_deref(),
+        args.head,
+        args.tail,
+        args.changed,
+        args.by.as_deref(),
+    )?;
     let view = jubarte::markdown::read(
         &bytes,
         &jubarte::markdown::ReadOptions {

@@ -1496,3 +1496,138 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
         "{text}"
     );
 }
+
+fn marked_docx() -> Vec<u8> {
+    docx(&format!(
+        r#"{}<w:p><w:r><w:t xml:space="preserve">Pay in </w:t></w:r>{}<w:r><w:t xml:space="preserve"> days.</w:t></w:r></w:p>{}<w:p><w:r><w:t xml:space="preserve">Fee: </w:t></w:r>{}</w:p>"#,
+        para("Quiet"),
+        ins(0, "Ann Counsel", "ten"),
+        para("Also quiet"),
+        del(1, "Bob Lee", "waived"),
+    ))
+}
+
+fn changed(by: Option<&str>) -> MarkdownOptions {
+    MarkdownOptions {
+        select: Some(Select::Changed {
+            by: by.map(str::to_string),
+        }),
+        ..agent_defaults()
+    }
+}
+
+#[test]
+fn changed_keeps_the_blocks_with_marks_by_anyone_or_by_one_author() {
+    let bytes = marked_docx();
+    let all = agent_options(&bytes, &changed(None));
+    assert!(
+        all.contains("\nrange: changed (p1, p3) of p0-p3\n"),
+        "{all}"
+    );
+    assert_eq!(
+        body(&all),
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{>>#0 @AC<<} days.\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n"
+    );
+    let bob = agent_options(&bytes, &changed(Some("Bob Lee")));
+    assert!(
+        bob.contains("\nrange: changed by @BL (p3) of p0-p3\n"),
+        "{bob}"
+    );
+    assert_eq!(
+        body(&bob),
+        "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n"
+    );
+    for handle in ["BL", "@BL"] {
+        let by_handle = agent_options(&bytes, &changed(Some(handle)));
+        assert_eq!(body(&by_handle), body(&bob), "{handle}");
+    }
+    let nobody = agent_options(&bytes, &changed(Some("Cy Young")));
+    assert!(
+        nobody.contains("\nrange: changed by Cy Young (none) of p0-p3\n"),
+        "{nobody}"
+    );
+    assert!(body(&nobody).trim().is_empty(), "{nobody}");
+    // An unknown short name is not taken for a handle.
+    let bo = agent_options(&bytes, &changed(Some("Bo")));
+    assert!(
+        bo.contains("\nrange: changed by Bo (none) of p0-p3\n"),
+        "{bo}"
+    );
+}
+
+#[test]
+fn changed_finds_marks_the_resolved_views_carry_on_the_id_line() {
+    let bytes = marked_docx();
+    let accepted = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            track_changes: TrackChanges::Accept,
+            ..changed(Some("AC"))
+        },
+    );
+    assert!(
+        accepted.contains("\nrange: changed by @AC (p1) of p0-p3\n"),
+        "{accepted}"
+    );
+    assert!(
+        accepted.contains("<!-- p1 rev #0 @AC -->\nPay in ten days.\n"),
+        "{accepted}"
+    );
+}
+
+#[test]
+fn select_from_flags_refuses_by_without_changed_and_changed_with_picks() {
+    assert_eq!(
+        Select::from_flags(None, None, None, true, Some("AC")),
+        Ok(Some(Select::Changed {
+            by: Some("AC".into())
+        }))
+    );
+    assert!(Select::from_flags(None, None, None, false, Some("AC")).is_err());
+    assert!(Select::from_flags(Some("p1"), None, None, true, None).is_err());
+    assert!(Select::from_flags(None, Some(2), None, true, None).is_err());
+}
+
+#[test]
+fn cli_read_changed_prints_only_the_changed_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    let changed = ok(
+        &["read", "received.docx", "--changed", "--no-page-markers"],
+        dir.path(),
+    );
+    assert!(
+        changed.contains("\nrange: changed (p3, p5, p7, t0, p18) of p0-p20\n"),
+        "{changed}"
+    );
+    assert!(
+        !changed.contains("<!-- p0 ") && !changed.contains("<!-- p1 "),
+        "{changed}"
+    );
+    let by = ok(
+        &[
+            "read",
+            "received.docx",
+            "--changed",
+            "--by",
+            "AS",
+            "--no-page-markers",
+        ],
+        dir.path(),
+    );
+    assert!(
+        by.contains("\nrange: changed by @AS (p5) of p0-p20\n"),
+        "{by}"
+    );
+    assert!(
+        by.contains("{>>#c6 @AS re #c5: Disagree.<<}") && !by.contains("<!-- p3 "),
+        "{by}"
+    );
+    let bad = jubarte(
+        &["read", "received.docx", "--changed", "-p", "p1"],
+        dir.path(),
+    );
+    assert!(!bad.status.success(), "--changed conflicts with -p");
+    let bad = jubarte(&["read", "received.docx", "--by", "AS"], dir.path());
+    assert!(!bad.status.success(), "--by needs --changed");
+}

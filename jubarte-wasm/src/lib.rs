@@ -290,6 +290,8 @@ struct ReadViewOptions {
     paragraphs: Option<String>,
     head: Option<usize>,
     tail: Option<usize>,
+    changed: bool,
+    by: Option<String>,
     source: Option<String>,
 }
 
@@ -312,6 +314,8 @@ fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
         options.paragraphs.as_deref(),
         options.head,
         options.tail,
+        options.changed,
+        options.by.as_deref(),
     )?;
     let view = jubarte::markdown::read(
         docx,
@@ -333,7 +337,9 @@ fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
 /// with its id. Options (JSON, all optional): `trackChanges` (all, accept,
 /// reject), `comments` (inline, none), `dates`, `pageMarkers` (default
 /// true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
-/// `head`, `tail`, `source` (the name printed as `source:`).
+/// `head`, `tail`, `changed` (only the blocks with marks) with `by` (one
+/// author's: a handle or a full name), `source` (the name printed as
+/// `source:`).
 ///
 /// Mirrors `jubarte::markdown::read`.
 #[wasm_bindgen(js_name = readView)]

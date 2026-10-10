@@ -810,6 +810,13 @@ Read options:
 
       --tail <N>
           Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
 ```
 
 #### `jubarte edit`

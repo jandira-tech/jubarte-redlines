@@ -307,8 +307,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     }
     let mut range = None;
     if let Some(select) = options.select.as_ref().filter(|_| options.ids) {
+        let select = match select {
+            super::Select::Changed { by: Some(by) } => super::Select::Changed {
+                by: Some(resolve_author(by, &handles)),
+            },
+            other => other.clone(),
+        };
         let (selected, described) =
-            agent::select_blocks(&markdown, select, stamped.0.saturating_sub(1))
+            agent::select_blocks(&markdown, &select, stamped.0.saturating_sub(1))
                 .map_err(ooxml::invalid)?;
         markdown = selected;
         range = Some(described);
@@ -559,6 +565,18 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
 
 /// A paragraph's line breaks (`w:br`) as Markdown hard breaks, which a
 /// bare newline is not: it reads as a space.
+/// `--by`'s author as `@HH` when it names a known author: a full name as
+/// stored, or a handle with or without its `@`. Anything else stays as given
+/// and matches no block.
+fn resolve_author(by: &str, handles: &agent::Handles) -> String {
+    let bare = by.strip_prefix('@').unwrap_or(by);
+    handles
+        .by_author
+        .get(by)
+        .or_else(|| handles.by_author.values().find(|handle| *handle == bare))
+        .map_or_else(|| bare.to_string(), |handle| format!("@{handle}"))
+}
+
 fn hard_breaks(text: &str) -> String {
     text.replace('\n', "\\\n")
 }

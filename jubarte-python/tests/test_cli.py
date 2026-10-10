@@ -45,6 +45,12 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert main(["read", str(letter), "-p", "p1"]) == 0
     out = capsys.readouterr().out
     assert "<!-- p1 -->\nThe individual" in out and "<!-- p0" not in out, out
+    # The letter holds no marks: --changed keeps nothing, and says so.
+    assert main(["read", str(letter), "--changed", "--by", "AC"]) == 0
+    out = capsys.readouterr().out
+    assert "\nrange: changed by AC (none) of p0-" in out and "<!-- p1" not in out, out
+    with pytest.raises(SystemExit):
+        main(["read", str(letter), "--by", "AC"])
 
 
 def test_the_module_runs_as_a_program(letter: Path) -> None:
