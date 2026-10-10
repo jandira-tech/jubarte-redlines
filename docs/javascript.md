@@ -758,8 +758,53 @@ Compare options:
   [ORIGINAL]
           The original / base document (.docx or Markdown)
 
+Read options:
+      --track-changes <CHOICE>
+          Tracked changes inline (all, the default), or the text with every change
+          accepted or rejected; the id lines then list what changed
+
+          Possible values:
+          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
+          - accept: Accept every change
+          - reject: Reject every change
+
+      --comments <MODE>
+          Comments inline (default) or hidden, with their ids on the id line of the
+          paragraph that holds them
+
+          Possible values:
+          - inline: Comments inline, with their ids
+          - none:   Comments hidden; their ids on the id lines
+
+          [default: inline]
+
+      --dates
+          Timestamps on the notes of an author whose changes do not all share one (the
+          header shows an author's single timestamp)
+
+      --no-page-markers
+          Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
+          M -->` lines
+
+  -p, --paragraphs <SPEC>
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+
+      --head <N>
+          Only the first N blocks (a table is one block)
+
+      --tail <N>
+          Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
+
 Examples:
   jubarte-redlines compare old.docx new.docx -o redline.docx
+  jubarte-redlines contract.docx
   jubarte-redlines inspect contract.docx --json
   jubarte-redlines diff old.docx new.docx --format github
   jubarte-redlines convert contract.docx -o contract.pdf

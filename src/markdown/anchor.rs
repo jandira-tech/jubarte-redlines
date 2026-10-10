@@ -101,8 +101,22 @@ fn without_emphasis(text: &str) -> String {
     for mark in ["**", "__", "~~", "==", "<u>", "</u>"] {
         text = text.replace(mark, "");
     }
-    if text.matches('*').count().is_multiple_of(2) {
-        text = text.replace('*', "");
+    // A `*` with spaces on both sides (`2 * 3`) is text; the rest are marks
+    // when they pair up.
+    let chars: Vec<char> = text.chars().collect();
+    let spaced = |i: usize| {
+        i > 0 && chars[i - 1].is_whitespace() && chars.get(i + 1).is_some_and(|c| c.is_whitespace())
+    };
+    let stars: Vec<usize> = (0..chars.len())
+        .filter(|&i| chars[i] == '*' && !spaced(i))
+        .collect();
+    if stars.len().is_multiple_of(2) {
+        text = chars
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !stars.contains(i))
+            .map(|(_, c)| c)
+            .collect();
     }
     let chars: Vec<char> = text.chars().collect();
     let inner = |i: usize| {
@@ -133,6 +147,10 @@ pub fn plain_anchor(text: &str) -> String {
     let mut hidden = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
+        // The view's hard break: `\` before a newline is the newline.
+        if c == '\\' && chars.peek() == Some(&'\n') {
+            continue;
+        }
         if c == '\\'
             && let Some(&next) = chars.peek()
             && ESCAPABLE.contains(next)
@@ -175,6 +193,9 @@ mod tests {
             ("a_b", "a_b"),
             ("*x*", "x"),
             ("2 * 3", "2 * 3"),
+            ("2 * 3 * 4", "2 * 3 * 4"),
+            ("*a* times 2 * 3", "a times 2 * 3"),
+            ("Intro\\\n\\# Not", "Intro\n# Not"),
             ("\\\\*", "\\*"),
             ("snake_case and _x_", "snake_case and x"),
             ("unclosed {++ insert", "unclosed {++ insert"),

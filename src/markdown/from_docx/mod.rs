@@ -579,11 +579,30 @@ fn hard_breaks(text: &str) -> String {
     text.replace('\n', "\\\n")
 }
 
-/// Escape a table cell for a Markdown pipe table.
-fn table_cell(value: &str) -> String {
+/// Escape a table cell for a Markdown pipe table. `escaped` text (the agent
+/// view's) already has its backslashes escaped: its escapes are copied as
+/// they are, and only a bare `|` gains one.
+fn table_cell(value: &str, escaped: bool) -> String {
+    let value = if escaped {
+        let mut out = String::with_capacity(value.len());
+        let mut chars = value.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    out.push(c);
+                    if let Some(next) = chars.next() {
+                        out.push(next);
+                    }
+                }
+                '|' => out.push_str("\\|"),
+                _ => out.push(c),
+            }
+        }
+        out
+    } else {
+        value.replace('\\', "\\\\").replace('|', "\\|")
+    };
     value
-        .replace('\\', "\\\\")
-        .replace('|', "\\|")
         .replace("\r\n", " ")
         .replace(['\n', '\r'], " ")
         .trim()
@@ -591,7 +610,7 @@ fn table_cell(value: &str) -> String {
 }
 
 /// Rows as a Markdown pipe table; the first row is the header.
-fn markdown_table(rows: &[Vec<String>]) -> String {
+fn markdown_table(rows: &[Vec<String>], escaped: bool) -> String {
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
     if width == 0 {
         return String::new();
@@ -602,6 +621,7 @@ fn markdown_table(rows: &[Vec<String>]) -> String {
         for column in 0..width {
             out.push_str(&table_cell(
                 row.get(column).map(String::as_str).unwrap_or(""),
+                escaped,
             ));
             out.push('|');
         }
@@ -1686,7 +1706,7 @@ impl Writer<'_> {
         for row in &mut rows {
             row.truncate(width);
         }
-        markdown_table(&rows)
+        markdown_table(&rows, self.agent)
     }
 
     /// A cell's paragraphs joined with `<br>`, inside the tracked changes of its

@@ -744,6 +744,13 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
 /// `--no-page-markers` skips it.
 fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
     let bytes = read_document(file)?;
+    let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
+    print_agent_view(&bytes, source, args)
+}
+
+/// The agent view of `bytes` on stdout, its warnings on stderr; `source` is
+/// the name the header prints.
+fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Result<(), String> {
     let select = jubarte::markdown::Select::from_flags(
         args.paragraphs.as_deref(),
         args.head,
@@ -752,14 +759,14 @@ fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
         args.by.as_deref(),
     )?;
     let view = jubarte::markdown::read(
-        &bytes,
+        bytes,
         &jubarte::markdown::ReadOptions {
             track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
             comments: args.comments == CommentsArg::Inline,
             dates: args.dates,
             page_markers: !args.no_page_markers,
             select,
-            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
+            source,
         },
     )
     .map_err(|e| e.to_string())?;
@@ -1045,6 +1052,11 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         flags.options,
         &source,
     )?;
+    if flags.options.editing_mode
+        && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan)
+    {
+        return Err((EXIT_USAGE, message.to_string()));
+    }
     let out_dir = flags
         .options
         .out_dir
@@ -1162,7 +1174,10 @@ fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
 struct Job {
     original: PathBuf,
     modified: PathBuf,
-    output: PathBuf,
+    /// `None` (the shorthand without -o): print the redline's agent view.
+    output: Option<PathBuf>,
+    /// The options of that view.
+    read: ReadArgs,
     author: String,
     date: String,
     force: bool,
@@ -1173,7 +1188,9 @@ struct Job {
 }
 
 /// Native runtime defaults; required inputs have already been checked by clap.
-fn resolve_compare(compare: CompareArgs) -> Job {
+/// `explicit` is `compare A B`, which writes `<A>_v_<B>.docx` by default;
+/// the shorthand `A B` prints the redline's view unless -o names a file.
+fn resolve_compare(compare: CompareArgs, read: ReadArgs, explicit: bool) -> Job {
     let original = compare
         .original
         .or(compare.original_pos)
@@ -1184,11 +1201,12 @@ fn resolve_compare(compare: CompareArgs) -> Job {
         .expect("clap requires MODIFIED");
     let output = compare
         .output
-        .unwrap_or_else(|| default_output(&original, &modified));
+        .or_else(|| explicit.then(|| default_output(&original, &modified)));
     Job {
         original,
         modified,
         output,
+        read,
         author: compare.author,
         date: compare.date,
         force: compare.force,
@@ -1241,7 +1259,10 @@ fn comparer_settings(
 }
 
 fn run(job: &Job) -> Result<(), String> {
-    ensure_writable(&job.output, job.force)?;
+    if let Some(output) = &job.output {
+        ensure_writable(output, job.force)?;
+    }
+    let to_markdown = job.output.as_deref().and_then(Format::of_path) == Some(Format::Md);
     let original = read_document(&job.original)?;
     let modified = read_document(&job.modified)?;
     let settings = comparer_settings(
@@ -1255,9 +1276,7 @@ fn run(job: &Job) -> Result<(), String> {
         Format::of_input(None, &job.original, &original),
         Format::of_input(None, &job.modified, &modified),
     );
-    let out = if formats == (Format::Docx, Format::Docx)
-        && Format::of_path(&job.output) != Some(Format::Md)
-    {
+    let out = if formats == (Format::Docx, Format::Docx) && !to_markdown {
         jubarte::document_comparer::compare_documents_with_settings(&original, &modified, &settings)
             .map_err(|e| {
                 refusal("compare", &e).unwrap_or_else(|| format!("compare failed: {e:?}"))
@@ -1265,7 +1284,11 @@ fn run(job: &Job) -> Result<(), String> {
     } else {
         let old = Input::new(&job.original, formats.0, original)?;
         let new = Input::new(&job.modified, formats.1, modified)?;
-        let to = Format::of_path(&job.output).unwrap_or(Format::Docx);
+        let to = job
+            .output
+            .as_deref()
+            .and_then(Format::of_path)
+            .unwrap_or(Format::Docx);
         let options = jubarte::markdown::RedlineOptions {
             settings,
             ..Default::default()
@@ -1273,11 +1296,15 @@ fn run(job: &Job) -> Result<(), String> {
         compared(&old, &new, to, &options)?
     };
 
-    std::fs::write(&job.output, &out)
-        .map_err(|e| format!("writing {}: {e}", job.output.display()))?;
+    let Some(output) = &job.output else {
+        let name = default_output(&job.original, &job.modified);
+        let source = format!("{} (not written; -o keeps it)", name.display());
+        return print_agent_view(&out, Some(source), &job.read);
+    };
+    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))?;
 
     if !job.quiet {
-        println!("wrote {} ({} bytes)", job.output.display(), out.len());
+        println!("wrote {} ({} bytes)", output.display(), out.len());
     }
     Ok(())
 }
@@ -2026,7 +2053,9 @@ fn main() -> ExitCode {
 fn cli_main() -> ExitCode {
     let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit());
     match cli.command {
-        Some(Command::Compare(compare)) => return exit_code(run(&resolve_compare(compare))),
+        Some(Command::Compare(compare)) => {
+            return exit_code(run(&resolve_compare(compare, ReadArgs::default(), true)));
+        }
         Some(Command::Revisions { file, json }) => {
             return exit_code(run_revisions(&file, json));
         }
@@ -2402,7 +2431,15 @@ fn cli_main() -> ExitCode {
         }
         None => {}
     }
-    exit_code(run(&resolve_compare(cli.compare)))
+    if cli.compare.modified.is_none() && cli.compare.modified_pos.is_none() {
+        let file = cli
+            .compare
+            .original
+            .or(cli.compare.original_pos)
+            .expect("clap requires ORIGINAL");
+        return exit_code(run_text(&file, &cli.read));
+    }
+    exit_code(run(&resolve_compare(cli.compare, cli.read, false)))
 }
 
 /// `jubarte append`: fold the documents left, `append(append(A, B), C)`.
@@ -2591,8 +2628,8 @@ mod tests {
     fn job_of(args: &[&str]) -> Job {
         let cli = Cli::try_parse_from(args).expect("parse");
         match cli.command {
-            Some(Command::Compare(compare)) => resolve_compare(compare),
-            None => resolve_compare(cli.compare),
+            Some(Command::Compare(compare)) => resolve_compare(compare, ReadArgs::default(), true),
+            None => resolve_compare(cli.compare, cli.read, false),
             other => panic!("expected compare, got {other:?}"),
         }
     }
@@ -2608,7 +2645,9 @@ mod tests {
         let j = job_of(&["jubarte", "a.docx", "b.docx"]);
         assert_eq!(j.original, PathBuf::from("a.docx"));
         assert_eq!(j.modified, PathBuf::from("b.docx"));
-        assert_eq!(j.output, PathBuf::from("a_v_b.docx"));
+        assert_eq!(j.output, None, "the shorthand prints the view without -o");
+        let j = job_of(&["jubarte", "compare", "a.docx", "b.docx"]);
+        assert_eq!(j.output, Some(PathBuf::from("a_v_b.docx")));
         assert_eq!(j.author, "Redline");
         assert_eq!(j.date, "1970-01-01T00:00:00Z");
         assert!(!j.force && !j.quiet);
@@ -2658,7 +2697,7 @@ mod tests {
             "--force",
             "--quiet",
         ]);
-        assert_eq!(j.output, PathBuf::from("out.docx"));
+        assert_eq!(j.output, Some(PathBuf::from("out.docx")));
         assert_eq!(j.author, "Jane Doe");
         assert_eq!(j.date, "2024-01-02T00:00:00Z");
         assert!(j.force && j.quiet);
@@ -2684,7 +2723,16 @@ mod tests {
         let j = job_of(&["jubarte", "--original", "x.docx", "--modified", "y.docx"]);
         assert_eq!(j.original, PathBuf::from("x.docx"));
         assert_eq!(j.modified, PathBuf::from("y.docx"));
-        assert_eq!(j.output, PathBuf::from("x_v_y.docx"));
+        assert_eq!(j.output, None);
+        let j = job_of(&[
+            "jubarte",
+            "compare",
+            "--original",
+            "x.docx",
+            "--modified",
+            "y.docx",
+        ]);
+        assert_eq!(j.output, Some(PathBuf::from("x_v_y.docx")));
     }
 
     #[test]
@@ -2705,7 +2753,10 @@ mod tests {
 
     #[test]
     fn missing_inputs_are_clap_usage_errors() {
-        let only_one = Cli::try_parse_from(["jubarte", "one.docx"]).unwrap_err();
+        // `jubarte one.docx` is the agent view; `compare` still needs two.
+        let read = Cli::try_parse_from(["jubarte", "one.docx"]).unwrap();
+        assert!(read.command.is_none() && read.compare.modified_pos.is_none());
+        let only_one = Cli::try_parse_from(["jubarte", "compare", "one.docx"]).unwrap_err();
         assert_eq!(
             only_one.kind(),
             clap::error::ErrorKind::MissingRequiredArgument
@@ -2769,7 +2820,7 @@ mod tests {
     fn plain_compare_positionals_leave_command_none() {
         let cli = Cli::try_parse_from(["jubarte", "a.docx", "b.docx"]).unwrap();
         assert!(cli.command.is_none());
-        let job = resolve_compare(cli.compare);
+        let job = resolve_compare(cli.compare, cli.read, false);
         assert_eq!(job.original, PathBuf::from("a.docx"));
         assert_eq!(job.modified, PathBuf::from("b.docx"));
     }

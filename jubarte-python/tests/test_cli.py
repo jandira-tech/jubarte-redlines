@@ -42,6 +42,9 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
         assert out.startswith(f"---\nsource: {letter.name}\n"), out
         assert "<!-- p0" in out and "<!-- p1 -->\nThe individual" in out, out
         assert "<!-- page " not in out, out
+    # `FILE` alone is `read FILE`.
+    assert main([str(letter), "--no-page-markers"]) == 0
+    assert capsys.readouterr().out == out
     assert main(["read", str(letter), "-p", "p1"]) == 0
     out = capsys.readouterr().out
     assert "<!-- p1 -->\nThe individual" in out and "<!-- p0" not in out, out
@@ -170,6 +173,17 @@ def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path:
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--dry-run"]) == 0
     assert not out_dir.exists()
     assert "{his or her→an}" in capsys.readouterr().out
+
+
+def test_editing_mode_reports_an_invalid_plan_as_the_binary_does(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Not JSON, or JSON that is not an object: INVALID_PLAN and exit 3, no traceback.
+    for name, text in (("bad.json", "not json"), ("list.json", "[1]")):
+        plan_path = tmp_path / name
+        plan_path.write_text(text)
+        out_dir = tmp_path / f"out_{name}"
+        assert main(["edit", str(letter), "--plan", str(plan_path), "--editing-mode", "--out-dir", str(out_dir)]) == 3
+        assert "INVALID_PLAN" in capsys.readouterr().err
+        assert not out_dir.exists()
 
 
 def test_refusal_summary_message_is_the_engine_detail(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -353,3 +367,51 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
     assert "\nRecitals\n" in out and "{++" not in out, out
+
+
+@pytest.mark.parametrize("mode,kept,removed", [("accept", "45", "30"), ("reject", "30", "45")])
+def test_shorthand_view_preserves_existing_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, kept: str, removed: str,
+) -> None:
+    old, new = tmp_path / "old.md", tmp_path / "new.md"
+    old.write_text("Unchanged intro.\n\nDue in 30 days.\n", encoding="utf-8")
+    new.write_text("Unchanged intro.\n\nDue in 45 days.\n", encoding="utf-8")
+    output = tmp_path / "old_v_new.docx"
+    sentinel = b"existing output must survive"
+    output.write_bytes(sentinel)
+
+    assert main([
+        str(old), str(new), "--track-changes", mode, "--changed", "--by", "Legal",
+        "--author", "Legal", "--no-page-markers",
+    ]) == 0
+    shown = capsys.readouterr().out
+    assert shown.startswith(f"---\nsource: {output} (not written; -o keeps it)\n")
+    assert f"Due in {kept} days." in shown
+    assert f"Due in {removed} days." not in shown
+    assert "Unchanged intro" not in shown
+    assert "<!-- page " not in shown
+    assert output.read_bytes() == sentinel
+
+    assert main(["compare", str(old), str(new)]) == 1
+    assert "already exists" in capsys.readouterr().err
+    assert output.read_bytes() == sentinel
+
+
+@pytest.mark.parametrize("task,dry_run", [("edit", False), ("edit", True), ("add", False)])
+def test_editing_mode_keep_is_usage_error_before_output(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], task: str, dry_run: bool,
+) -> None:
+    output = tmp_path / "never-created"
+    args = [
+        task, str(letter), "-p", "p0", "--content", "Replacement",
+        "--existing-revisions", "keep", "--editing-mode", "--out-dir", str(output),
+    ]
+    if dry_run:
+        args.append("--dry-run")
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2
+    captured = capsys.readouterr()
+    assert "--existing-revisions accept or reject" in captured.err
+    assert captured.out == ""
+    assert not output.exists()

@@ -85,10 +85,19 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert "[-30-]{+45+}" in capsys.readouterr().out
     assert main(["diff", str(a), str(b), "--format", "critic"]) == 0
     assert capsys.readouterr().out == "Due in {~~30~>45~~} days.\n"
-    assert main([str(a), str(b), "--quiet"]) == 0
+    # The shorthand prints the redline's agent view and writes nothing.
     word = tmp_path / "before_v_after.docx"
+    assert main([str(a), str(b)]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"---\nsource: {word} (not written; -o keeps it)\n"), out
+    assert "{~~30~>45~~}" in out, out
+    assert not word.exists()
+    # -o writes it; compare A B writes the default name.
+    assert main([str(a), str(b), "-o", str(word), "--quiet"]) == 0
     assert word.read_bytes().startswith(b"PK")
     assert capsys.readouterr().out == ""
+    assert main(["compare", str(a), str(b), "--quiet", "--force"]) == 0
+    assert word.read_bytes().startswith(b"PK")
     assert main(["diff", str(word), str(word)]) == 0
     assert (tmp_path / "before_v_after_v_before_v_after.docx").read_bytes().startswith(b"PK")
 

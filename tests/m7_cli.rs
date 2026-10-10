@@ -44,7 +44,13 @@ fn assert_loadable(path: &Path) {
 fn default_output_name_in_original_dir_and_loadable() {
     let dir = tmpdir();
     let (a, b) = seed(dir.path());
-    let out = Command::new(BIN).arg(&a).arg(&b).output().unwrap();
+    // `compare A B` writes the default name; the shorthand prints instead.
+    let out = Command::new(BIN)
+        .arg("compare")
+        .arg(&a)
+        .arg(&b)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -128,7 +134,8 @@ fn missing_input_file_errors() {
 
 #[test]
 fn missing_arguments_exit_code_2() {
-    let out = Command::new(BIN).arg(ORIG).output().unwrap();
+    // One document alone is `read`; `compare` with one is a usage error.
+    let out = Command::new(BIN).arg("compare").arg(ORIG).output().unwrap();
     assert_eq!(out.status.code(), Some(2), "missing MODIFIED → usage error");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -203,7 +210,14 @@ fn plain_compare_surface_still_works_alongside_revisions_subcommand() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(dir.path().join("a_v_b.docx").exists());
+    // Without -o the shorthand prints the redline's agent view, writes nothing.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.starts_with("---\nsource: ")
+            && stdout.contains("a_v_b.docx (not written; -o keeps it)"),
+        "{stdout}"
+    );
+    assert!(!dir.path().join("a_v_b.docx").exists());
 }
 
 /// D.6 — `redline revisions <file that isn't a docx>` fails (exit code 1)

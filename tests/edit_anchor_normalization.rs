@@ -116,3 +116,29 @@ fn a_lone_star_or_underscore_is_text_not_a_mark() {
         assert_eq!(jubarte::markdown::plain_anchor(find), plain, "{find}");
     }
 }
+
+#[test]
+fn plain_anchor_preserves_literal_stars_among_emphasis_and_unicode() {
+    for (given, expected) in [
+        ("*café* × 2 * 3 * 4", "café × 2 * 3 * 4"),
+        ("*α*\t*\tβ * γ", "α\t*\tβ * γ"),
+        ("a * b * c", "a * b * c"),
+        ("unpaired* and 2 * 3", "unpaired* and 2 * 3"),
+        (r"\*literal\* and *italic*", "*literal* and italic"),
+    ] {
+        assert_eq!(jubarte::markdown::plain_anchor(given), expected, "{given}");
+    }
+}
+
+#[test]
+fn plain_anchor_distinguishes_hard_breaks_from_literal_backslashes() {
+    for (given, expected) in [
+        ("café\\\n\\# Fees\\\nnext", "café\n# Fees\nnext"),
+        ("line\\\n", "line\n"),
+        ("line\\\\\nnext", "line\\\nnext"),
+        (r"path\name", r"path\name"),
+        ("trailing\\", "trailing\\"),
+    ] {
+        assert_eq!(jubarte::markdown::plain_anchor(given), expected, "{given:?}");
+    }
+}

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
     arg_required_else_help = true,
     subcommand_help_heading = "Tasks",
     next_help_heading = "Compare options",
-    after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte old.docx new.docx                shorthand for compare\n  jubarte inspect contract.docx --json\n  jubarte diff old.docx new.docx --format github\n  jubarte convert contract.docx -o contract.pdf\n\nRun jubarte <task> --help for task options.",
+    after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte contract.docx                    print the agent view (read)\n  jubarte old.docx new.docx                redline printed as the agent view (-o writes it)\n  jubarte inspect contract.docx --json\n  jubarte diff old.docx new.docx --format github\n  jubarte convert contract.docx -o contract.pdf\n\nRun jubarte <task> --help for task options.",
 )]
 pub struct Cli {
     /// Subcommand (e.g. `revisions`); plain compare when omitted.
@@ -33,6 +33,12 @@ pub struct Cli {
     #[command(flatten)]
     #[serde(flatten)]
     pub compare: CompareArgs,
+
+    /// Options of the one-file shorthand (`jubarte FILE`) and of the view
+    /// `jubarte A B` prints.
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub read: ReadArgs,
 }
 
 /// Options of `read`.
@@ -257,7 +263,7 @@ pub struct CompareArgs {
     pub original_pos: Option<PathBuf>,
 
     /// The modified document (.docx or Markdown).
-    #[arg(value_name = "MODIFIED", required_unless_present = "modified")]
+    #[arg(value_name = "MODIFIED")]
     pub modified_pos: Option<PathBuf>,
 
     /// Original/base document (overrides the positional ORIGINAL).
@@ -1501,14 +1507,103 @@ fn serialize_timeout<S: serde::Serializer>(
 
 /// Cross-option constraints whose meaning depends on an enum value or output
 /// extension. These are usage errors, checked before any runtime I/O.
+/// The ids of [`ReadArgs`], as the top-level shorthand declares them.
+const READ_OPTION_IDS: [&str; 9] = [
+    "track_changes",
+    "comments",
+    "dates",
+    "no_page_markers",
+    "paragraphs",
+    "head",
+    "tail",
+    "changed",
+    "by",
+];
+
 fn validate_matches(
     matches: &clap::ArgMatches,
     command: &mut clap::Command,
 ) -> Result<(), clap::Error> {
     use clap::{error::ErrorKind, parser::ValueSource};
     let Some((name, args)) = matches.subcommand() else {
+        // The shorthand: read options go with the printed view, which -o
+        // replaces by a file.
+        let read_option = READ_OPTION_IDS.into_iter().any(|id| {
+            matches.try_contains_id(id).unwrap_or(false)
+                && matches.value_source(id) == Some(ValueSource::CommandLine)
+        });
+        if matches.try_contains_id("output").unwrap_or(false)
+            && matches.value_source("output") == Some(ValueSource::CommandLine)
+            && read_option
+        {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                "read options apply to the printed view; drop -o to print it",
+            ));
+        }
+        let given = |id: &str| {
+            matches.try_contains_id(id).unwrap_or(false)
+                && matches.value_source(id) == Some(ValueSource::CommandLine)
+        };
+        if given("output") && !given("modified_pos") && !given("modified") {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                "-o writes a redline of two documents; one document alone prints its view",
+            ));
+        }
+        // `jubarte --head 2 read a.docx`: options before a task make clap read
+        // the task's name as ORIGINAL.
+        if let Some(task) = matches
+            .try_get_one::<PathBuf>("original_pos")
+            .ok()
+            .flatten()
+            .and_then(|p| p.to_str())
+            .and_then(|name| command.find_subcommand(name))
+            .map(|task| task.get_name().to_string())
+        {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                format!(
+                    "options go after the task: `{} {task} … [OPTIONS]`",
+                    command.get_name()
+                ),
+            ));
+        }
+        // One bare word is more likely a mistyped task than a document.
+        let lone = |id: &str| {
+            matches
+                .try_get_one::<PathBuf>(id)
+                .ok()
+                .flatten()
+                .filter(|_| matches.value_source(id) == Some(ValueSource::CommandLine))
+        };
+        if lone("modified_pos").is_none()
+            && lone("modified").is_none()
+            && let Some(file) = lone("original_pos")
+            && file.extension().is_none()
+        {
+            return Err(command.error(
+                ErrorKind::InvalidSubcommand,
+                format!(
+                    "'{}' is not a task; to read a file without an extension, use `read FILE`",
+                    file.display()
+                ),
+            ));
+        }
         return Ok(());
     };
+    if name == "compare"
+        && !["modified", "modified_pos"]
+            .into_iter()
+            .any(|id| args.try_contains_id(id).unwrap_or(false))
+    {
+        let mut task = command.find_subcommand(name).expect("parsed task").clone();
+        task.set_bin_name(format!("{} {name}", command.get_name()));
+        return Err(task.error(
+            ErrorKind::MissingRequiredArgument,
+            "compare needs <MODIFIED> (or -m FILE)",
+        ));
+    }
     let mut task = command.find_subcommand(name).expect("parsed task").clone();
     task.set_bin_name(format!("{} {name}", command.get_name()));
     let error =
@@ -1748,6 +1843,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     }
     let examples: Vec<String> = [
         ("compare", "compare old.docx new.docx -o redline.docx"),
+        ("read", "contract.docx"),
         ("inspect", "inspect contract.docx --json"),
         ("diff", "diff old.docx new.docx --format github"),
         ("convert", "convert contract.docx -o contract.pdf"),
@@ -1813,7 +1909,28 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                     "this task is not supported by this adapter",
                 ));
             }
-            Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": compare_json(&compare)}).to_string())
+            if compare.modified.is_none() && compare.modified_pos.is_none() {
+                if !accepts("read") {
+                    return Err(command.error(
+                        clap::error::ErrorKind::InvalidSubcommand,
+                        "this task is not supported by this adapter",
+                    ));
+                }
+                let read = ReadArgs::from_arg_matches(&matches)?;
+                let mut args = serde_json::to_value(&read).expect("UTF-8 CLI arguments");
+                args["file"] = serde_json::to_value(
+                    compare.original.as_ref().or(compare.original_pos.as_ref()),
+                )
+                .expect("UTF-8 path");
+                return Ok(
+                    serde_json::json!({"exit_code": 0, "command": "read", "args": args})
+                        .to_string(),
+                );
+            }
+            let mut args = compare_json(&compare);
+            args["view"] = serde_json::to_value(ReadArgs::from_arg_matches(&matches)?)
+                .expect("UTF-8 CLI arguments");
+            Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}).to_string())
         }
     })();
     result.unwrap_or_else(|error| error_json(&error))

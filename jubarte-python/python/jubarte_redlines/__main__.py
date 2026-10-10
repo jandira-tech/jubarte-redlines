@@ -180,26 +180,37 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_read(args: argparse.Namespace) -> int:
+def _print_view(docx: bytes, options: dict, source: str) -> int:
+    """The agent view of ``docx`` with the read options ``options``."""
     from . import _native
 
     markdown, warnings = _native.read_view(
-        _read(args.file).to_bytes(),
-        track_changes=args.track_changes,
-        comments=args.comments == "inline",
-        dates=args.dates,
-        page_markers=not args.no_page_markers,
-        paragraphs=args.paragraphs,
-        head=args.head,
-        tail=args.tail,
-        changed=args.changed,
-        by=args.by,
-        source=args.file.name,
+        docx,
+        track_changes=options.get("track_changes"),
+        comments=options.get("comments", "inline") == "inline",
+        dates=bool(options.get("dates")),
+        page_markers=not options.get("no_page_markers"),
+        paragraphs=options.get("paragraphs"),
+        head=options.get("head"),
+        tail=options.get("tail"),
+        changed=bool(options.get("changed")),
+        by=options.get("by"),
+        source=source,
     )
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     sys.stdout.write(markdown)
     return EXIT_OK
+
+
+def cmd_read(args: argparse.Namespace) -> int:
+    return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
+
+
+_EDITING_KEEPS = (
+    "--editing-mode needs a document without tracked changes; it has some, "
+    "so pass --existing-revisions accept or reject"
+)
 
 
 def _default_out_dir(file: Path) -> Path:
@@ -245,6 +256,13 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
     doc = _read(args.file)
     plan_text, notes = _edit_plan(args, verb, doc.to_bytes())
     editing = bool(args.editing_mode)
+    try:
+        parsed = json.loads(plan_text)
+    except ValueError:
+        parsed = None  # the engine reports it as INVALID_PLAN below
+    if editing and isinstance(parsed, dict) and parsed.get("existing_revisions") == "keep":
+        print(f"error: {_EDITING_KEEPS}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
     out_dir: Path = args.out_dir if args.out_dir is not None else _default_out_dir(args.file)
@@ -461,7 +479,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     original = _read_side(args.original, args.old_format)
     modified = _read_side(args.modified, args.new_format)
-    output: Path = args.output or args.original.with_name(f"{args.original.stem}_v_{args.modified.stem}.docx")
+    default = args.original.with_name(f"{args.original.stem}_v_{args.modified.stem}.docx")
+    view = getattr(args, "view", None)
+    if args.output is None and view is not None:
+        # The shorthand `A B` without -o prints the redline's agent view.
+        from . import _native
+
+        redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+        return _print_view(redline, view, f"{default} (not written; -o keeps it)")
+    output: Path = args.output or default
     if args.output_format == "md":
         _markdown_needs_both(original, modified, args.original, args.modified)
     _ensure_writable(output, args.force)

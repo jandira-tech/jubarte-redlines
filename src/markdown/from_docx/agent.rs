@@ -607,7 +607,8 @@ pub(crate) fn escape_markdown(text: &str) -> String {
 /// Escapes a block-opening mark at the start of one line of a paragraph:
 /// `#` (one to six, then a space or the end), `>`, `|`, a list bullet (`-`
 /// or `+` then a space), an ordered marker (digits then `.` or `)` then a
-/// space or the end), or a line of dashes (a setext underline or a rule).
+/// space or the end), or a line of dashes or of `=` (a setext underline or a
+/// rule).
 /// A leading `*` is already `\*` from `escape_markdown`.
 pub(crate) fn escape_block_start(line: &str) -> String {
     let bytes = line.as_bytes();
@@ -615,7 +616,8 @@ pub(crate) fn escape_block_start(line: &str) -> String {
     let opens = ((1..=6).contains(&hashes) && bytes.get(hashes).is_none_or(|&b| b == b' '))
         || matches!(bytes.first(), Some(b'>' | b'|'))
         || (matches!(bytes.first(), Some(b'-' | b'+')) && bytes.get(1).is_none_or(|&b| b == b' '))
-        || (bytes.first() == Some(&b'-') && line.trim_end().bytes().all(|b| b == b'-'));
+        || (bytes.first() == Some(&b'-') && line.trim_end().bytes().all(|b| b == b'-'))
+        || (bytes.first() == Some(&b'=') && line.trim_end().bytes().all(|b| b == b'='));
     if opens {
         return format!("\\{line}");
     }
