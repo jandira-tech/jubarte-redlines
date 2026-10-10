@@ -165,8 +165,7 @@ Tasks:
   comments      List comments, threads and the text they annotate
   append        Join documents in order, preserving images, styles, lists and notes
   validate      Check or repair Word validity (findings: exit 2; unreadable: exit 1)
-  scrub         Field results written back into the document from jubarte's layout.
-                Remove authors, editing IDs, metadata and comments before sharing
+  scrub         Remove authors, editing IDs, metadata and comments before sharing
   audit         Audit accessibility, style and structure (findings: exit 2)
   help          Print this message or the help of the given subcommand(s)
 
@@ -1387,8 +1386,7 @@ Examples:
 
 ```text
 $ jubarte scrub --help
-Field results written back into the document from jubarte's layout. Remove authors,
-editing IDs, metadata and comments before sharing
+Remove authors, editing IDs, metadata and comments before sharing
 
 Usage: jubarte scrub [OPTIONS] --output <FILE> <FILE>
 

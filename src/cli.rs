@@ -901,7 +901,6 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Field results written back into the document from jubarte's layout.
     /// Remove authors, editing IDs, metadata and comments before sharing.
     #[command(after_help = "Examples:\n  \
         jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \
