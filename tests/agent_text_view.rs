@@ -2690,8 +2690,8 @@ fn a_setext_underline_after_a_hard_break_is_escaped() {
 }
 
 /// An anchor copied across the view's hard break (`\` then a newline)
-/// matches the paragraph's line break; the edit is then refused for crossing
-/// the break (the engine edits within one line), not for a missing anchor.
+/// matches the paragraph's line break, and deleting the range removes the
+/// break with the text around it.
 #[test]
 fn cli_edit_matches_an_anchor_copied_across_a_hard_break() {
     let dir = tempfile::tempdir().unwrap();
@@ -2700,7 +2700,7 @@ fn cli_edit_matches_an_anchor_copied_across_a_hard_break() {
         docx(r#"<w:p><w:r><w:t>Intro</w:t><w:br/><w:t># Not a heading</w:t></w:r></w:p>"#),
     )
     .unwrap();
-    let refused = jubarte(
+    let edited = jubarte(
         &[
             "edit",
             "a.docx",
@@ -2714,12 +2714,13 @@ fn cli_edit_matches_an_anchor_copied_across_a_hard_break() {
         ],
         dir.path(),
     );
-    let stdout = String::from_utf8_lossy(&refused.stdout);
-    assert_eq!(refused.status.code(), Some(3), "{stdout}");
-    assert!(
-        stdout.contains(r#""code":"UNSUPPORTED_STRUCTURE""#) && stdout.contains(r#""matches":1"#),
-        "found, then refused for the break: {stdout}"
-    );
+    let stdout = String::from_utf8_lossy(&edited.stdout);
+    assert_eq!(edited.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains(r#""ok":1"#), "{stdout}");
+    let clean =
+        jubarte::inspect::paragraphs(&std::fs::read(dir.path().join("e/clean.docx")).unwrap())
+            .unwrap();
+    assert_eq!(clean[0].text, " a heading");
 }
 
 fn changed_by(docx: &[u8], by: Option<&str>, comments: bool) -> String {
