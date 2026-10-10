@@ -4,6 +4,7 @@
 
 //! Shared, platform-neutral command declarations and parsing. No runtime I/O.
 
+pub use crate::edit::flags::FlagOp;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -107,6 +108,144 @@ pub enum CommentsArg {
     Inline,
     /// Comments hidden; their ids on the id lines.
     None,
+}
+
+/// Options `edit` and `add` share.
+#[derive(clap::Args, Debug, Serialize)]
+pub struct EditOptions {
+    /// Author of the changes and comments (operation flags; a plan names
+    /// its own).
+    #[arg(long, value_name = "NAME", default_value = "Modified User")]
+    pub author: String,
+    /// Their timestamp (ISO 8601) [default: now, UTC].
+    #[arg(long, value_name = "ISO8601", alias = "date")]
+    pub datetime: Option<String>,
+    /// The edits are tracked changes (the default): redline.docx,
+    /// clean.docx, patch.diff and report.jsonl are written and the view
+    /// shows the marks.
+    #[arg(long, conflicts_with = "editing_mode")]
+    pub suggesting_mode: bool,
+    /// The edits land directly: clean.docx and report.jsonl only; the view
+    /// shows the result with rev tags on the id lines.
+    #[arg(long)]
+    pub editing_mode: bool,
+    /// What to do when FILE already holds tracked changes: auto keeps them
+    /// and tracks the new edits beside them; a clean file goes through the
+    /// comparer.
+    #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
+    pub existing_revisions: ExistingArg,
+    /// Directory to create for the outputs [default: <FILE's
+    /// directory>/<stem>.edit].
+    #[arg(long, value_name = "DIR")]
+    pub out_dir: Option<PathBuf>,
+    /// Replace an existing output directory's files.
+    #[arg(long)]
+    pub force: bool,
+    /// Print nothing on success (the files are still written).
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+}
+
+/// `--existing-revisions` of `edit` and `add`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExistingArg {
+    /// `keep` when the file has tracked changes, else the comparer path.
+    #[default]
+    Auto,
+    /// Keep them; the new edits are tracked beside them.
+    Keep,
+    /// Accept them first.
+    Accept,
+    /// Reject them first.
+    Reject,
+    /// Refuse a file that has them.
+    Refuse,
+}
+
+impl ExistingArg {
+    /// The plan's `existing_revisions`; `None` for `auto`.
+    pub fn plan_value(self) -> Option<crate::edit::ExistingRevisions> {
+        use crate::edit::ExistingRevisions as E;
+        match self {
+            Self::Auto => None,
+            Self::Keep => Some(E::Keep),
+            Self::Accept => Some(E::Accept),
+            Self::Reject => Some(E::Reject),
+            Self::Refuse => Some(E::Refuse),
+        }
+    }
+}
+
+/// Groups the operation flags of an `edit` or `add` invocation by their
+/// `-p`, in command-line order. `matches` is the subcommand's.
+pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String> {
+    let mut tokens: Vec<(usize, &str, Option<String>)> = Vec::new();
+    for name in ["location", "anchor", "content", "style"] {
+        if let (Some(indices), Some(values)) =
+            (matches.indices_of(name), matches.get_many::<String>(name))
+        {
+            tokens.extend(indices.zip(values).map(|(i, v)| (i, name, Some(v.clone()))));
+        }
+    }
+    for name in ["delete", "resolve", "before", "comment"] {
+        // `try_get_many` is `Err` for a flag this command does not declare
+        // (`add` has no --resolve); `indices_of` would panic on it.
+        if matches.try_get_many::<bool>(name).ok().flatten().is_none() {
+            continue;
+        }
+        if let Some(indices) = matches.indices_of(name) {
+            tokens.extend(indices.map(|i| (i, name, None)));
+        }
+    }
+    tokens.sort_by_key(|t| t.0);
+    let mut ops: Vec<FlagOp> = Vec::new();
+    for (_, name, value) in tokens {
+        if name == "location" {
+            ops.push(FlagOp {
+                at: value.unwrap_or_default(),
+                ..FlagOp::default()
+            });
+            continue;
+        }
+        let Some(op) = ops.last_mut() else {
+            return Err(format!("--{name} comes before the first -p/--location"));
+        };
+        let twice = |what: &str| Err(format!("-p {}: --{what} given twice", op.at));
+        match name {
+            "anchor" if op.anchor.is_some() => return twice("anchor"),
+            "anchor" => op.anchor = value,
+            "content" if op.content.is_some() => return twice("content"),
+            "content" => op.content = value,
+            "style" => op.styles.push(value.unwrap_or_default()),
+            "delete" => op.delete = true,
+            "resolve" => op.resolve = true,
+            "before" => op.before = true,
+            "comment" => op.comment = true,
+            _ => {}
+        }
+    }
+    Ok(ops)
+}
+
+/// Groups the flag operations of `edit` and `add` into their `operations`
+/// field; a grouping error is a usage error.
+fn fill_flag_operations(
+    task: &mut Command,
+    matches: &clap::ArgMatches,
+    model: &mut clap::Command,
+) -> Result<(), clap::Error> {
+    let (name, operations) = match task {
+        Command::Edit { operations, .. } => ("edit", operations),
+        Command::Add { operations, .. } => ("add", operations),
+        _ => return Ok(()),
+    };
+    let Some(sub) = matches.subcommand_matches(name) else {
+        return Ok(());
+    };
+    *operations = flag_operations(sub)
+        .map_err(|m| model.error(clap::error::ErrorKind::ArgumentConflict, m))?;
+    Ok(())
 }
 
 /// Inputs and settings shared by explicit and shorthand comparisons.
@@ -460,23 +599,62 @@ pub enum Command {
         #[serde(flatten)]
         args: ReadArgs,
     },
-    /// Apply a JSON edit plan; write clean copy, redline and report (refusal: exit 3).
+    /// Edit a document: -p WHERE with --anchor, --content, --delete,
+    /// --resolve or --style (several -p per command), or a JSON plan. Writes
+    /// clean copy, redline, patch and report, then prints the changed
+    /// paragraphs as the agent view (refusal: exit 3).
+    #[command(after_help = "Examples:\n  \
+        jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
+        jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
+        jubarte edit a.docx -p p7 --anchor \"at its sole discretion\" --delete -p p9 --delete\n  \
+        jubarte edit a.docx -p p3 --content \"The parties agree as follows.\"    rewrite\n  \
+        jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2\n  \
+        jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
+        jubarte edit a.docx --plan plan.json --out-dir review\n\n\
+        WHERE is an id from `jubarte read`: p12, header1, footer2.p1, t0.r1.c2,\n\
+        c5 (a comment), or a long id (body:p:12).")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Edit plan JSON (see `jubarte capabilities --json` for the kinds).
-        #[arg(long, value_name = "PLAN.json")]
-        plan: PathBuf,
-        /// Directory to create for clean.docx, redline.docx, report.jsonl.
-        #[arg(long, value_name = "DIR")]
-        out_dir: PathBuf,
+        /// Edit plan JSON: batches and the other operation kinds (see
+        /// `jubarte capabilities --json`). Excludes the operation flags.
+        #[arg(
+            long,
+            value_name = "PLAN.json",
+            required_unless_present = "location",
+            conflicts_with_all = ["location", "anchor", "content", "delete", "resolve", "style", "author", "datetime", "existing_revisions"]
+        )]
+        plan: Option<PathBuf>,
+        /// Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a comment.
+        /// Each -p starts an operation; the flags after it belong to it.
+        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
+        location: Vec<String>,
+        /// Text inside WHERE the operation applies to (must occur once).
+        #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
+        anchor: Vec<String>,
+        /// New text: replaces the anchor; rewrites the paragraph without
+        /// one; on c5, the comment's new text.
+        #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
+        content: Vec<String>,
+        /// Delete the anchor, or the whole paragraph (or comment) without one.
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        delete: Vec<bool>,
+        /// Resolve comment c5 (with -p c5).
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        resolve: Vec<bool>,
+        /// Formatting for the anchored text: bold, italic, underline, strike,
+        /// caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any
+        /// other value is a paragraph style (Heading2).
+        #[arg(long, value_name = "SPEC", action = clap::ArgAction::Append)]
+        style: Vec<String>,
+        /// Author, date, mode and output options.
+        #[command(flatten)]
+        #[serde(flatten)]
+        options: EditOptions,
         /// Resolve and report only; write nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Replace an existing output directory's files.
-        #[arg(long)]
-        force: bool,
         /// Also write redline.pdf and clean.pdf.
         #[arg(long)]
         pdf: bool,
@@ -492,10 +670,53 @@ pub enum Command {
         /// Marks for --revisions custom (see `convert --help`).
         #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions", help_heading = "Revision marks")]
         revision_palette: Option<String>,
-        /// Print nothing on success (patch.diff and report.jsonl are still
-        /// written).
-        #[arg(short = 'q', long)]
-        quiet: bool,
+        /// The operations the flags describe, grouped by -p (filled after
+        /// parsing).
+        #[arg(skip)]
+        operations: Vec<FlagOp>,
+    },
+    /// Add a paragraph, a comment or a reply: -p WHERE --content TEXT
+    /// (several -p per command). Writes the same files as edit and prints
+    /// the changed paragraphs as the agent view.
+    #[command(after_help = "Examples:\n  \
+        jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
+        jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
+        jubarte add a.docx -p p5 --anchor \"monthly fee\" --content \"Net of taxes?\"   a comment\n  \
+        jubarte add a.docx -p p5 --comment --content \"Whole clause needs a cap.\"\n  \
+        jubarte add a.docx -p c5 --content \"Agreed, will fix.\"           a reply")]
+    Add {
+        /// The source document (.docx). Never modified.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a reply.
+        /// Each -p starts an operation; the flags after it belong to it.
+        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required = true)]
+        location: Vec<String>,
+        /// Text inside WHERE to comment on (must occur once).
+        #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
+        anchor: Vec<String>,
+        /// The paragraph, comment or reply text.
+        #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
+        content: Vec<String>,
+        /// A new paragraph before WHERE instead of after it.
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        before: Vec<bool>,
+        /// A comment on the whole paragraph (with --anchor the comment sits
+        /// on the anchor and this flag is implied).
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        comment: Vec<bool>,
+        /// Formatting for the new paragraph's text (bold, italic, underline,
+        /// highlight=yellow) or its paragraph style (Heading2).
+        #[arg(long, value_name = "SPEC", action = clap::ArgAction::Append)]
+        style: Vec<String>,
+        /// Author, date, mode and output options.
+        #[command(flatten)]
+        #[serde(flatten)]
+        options: EditOptions,
+        /// The operations the flags describe, grouped by -p (filled after
+        /// parsing).
+        #[arg(skip)]
+        operations: Vec<FlagOp>,
     },
     /// What this binary can do, for agents choosing an operation.
     Capabilities {
@@ -1442,7 +1663,11 @@ impl Cli {
         let mut command = Self::command();
         let matches = command.try_get_matches_from_mut(arguments)?;
         validate_matches(&matches, &mut command)?;
-        Self::from_arg_matches(&matches)
+        let mut cli = Self::from_arg_matches(&matches)?;
+        if let Some(task) = cli.command.as_mut() {
+            fill_flag_operations(task, &matches, &mut command)?;
+        }
+        Ok(cli)
     }
 }
 
@@ -1540,7 +1765,8 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         let matches = command.try_get_matches_from_mut(argv)?;
         validate_matches(&matches, &mut command)?;
         if matches.subcommand().is_some() {
-            let task = Command::from_arg_matches(&matches)?;
+            let mut task = Command::from_arg_matches(&matches)?;
+            fill_flag_operations(&mut task, &matches, &mut command)?;
             let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
             if let Command::Compare(compare) = &task {
                 value["args"] = compare_json(compare);

@@ -523,7 +523,9 @@ then Markdown with `<!-- pN -->` id lines and every change and comment
 with its id. Options (JSON, all optional): `trackChanges` (all, accept,
 reject), `comments` (inline, none), `dates`, `pageMarkers` (default
 true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
-`head`, `tail`, `source` (the name printed as `source:`).
+`head`, `tail`, `changed` (only the blocks with marks) with `by` (one
+author's: a handle or a full name), `source` (the name printed as
+`source:`).
 
 Mirrors `jubarte::markdown::read`.
 
@@ -1308,6 +1310,13 @@ Read options:
 
       --tail <N>
           Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
 ```
 
 #### `jubarte-redlines edit`

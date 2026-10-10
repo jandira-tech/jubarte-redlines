@@ -770,11 +770,32 @@ fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// Options for `edit`.
+/// Whether `edit` and `add` track their changes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Tracked changes: redline, clean copy, patch and report.
+    Suggesting,
+    /// The edits land directly: clean copy and report only.
+    Editing,
+}
+
+/// `<dir>/<stem>.edit` next to the source.
+fn default_out_dir(file: &Path) -> PathBuf {
+    let stem = file.file_stem().map_or_else(
+        || "document".to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    match file.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(dir) => dir.join(format!("{stem}.edit")),
+        None => PathBuf::from(format!("{stem}.edit")),
+    }
+}
+
+/// Options for `edit` and `add`.
 struct EditJob<'a> {
     file: &'a Path,
-    plan: &'a Path,
     out_dir: &'a Path,
+    mode: Mode,
     dry_run: bool,
     force: bool,
     pdf: bool,
@@ -788,13 +809,44 @@ struct EditJob<'a> {
 /// per-operation report is on stdout and nothing was written.
 const EXIT_PLAN_REFUSED: u8 = 3;
 
-fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
+/// Exit 2: the operation flags do not describe an operation.
+const EXIT_USAGE: u8 = 2;
+
+/// The plan of an `edit` or `add` invocation and the notes its flags left:
+/// `--plan`'s file, or the plan the operation flags describe.
+fn edit_plan(
+    verb: jubarte::edit::flags::Verb,
+    plan: Option<&Path>,
+    operations: &[FlagOp],
+    options: &EditOptions,
+    source: &[u8],
+) -> Result<(jubarte::edit::EditPlan, Vec<String>), (u8, String)> {
+    if let Some(path) = plan {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| (1, format!("reading {}: {e}", path.display())))?;
+        let plan = jubarte::edit::EditPlan::from_json(&json)
+            .map_err(|e| (EXIT_PLAN_REFUSED, e.to_string()))?;
+        return Ok((plan, Vec::new()));
+    }
+    let built = jubarte::edit::flags::plan_from_flags(
+        verb,
+        operations,
+        &options.author,
+        options.datetime.as_deref(),
+        options.existing_revisions.plan_value(),
+        source,
+    )
+    .map_err(|m| (EXIT_USAGE, m))?;
+    Ok((built.plan, built.notes))
+}
+
+fn run_edit(
+    job: &EditJob<'_>,
+    plan: &jubarte::edit::EditPlan,
+    source: &[u8],
+    notes: &[String],
+) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
-    let source = read_document(job.file).map_err(fail)?;
-    let plan_json = std::fs::read_to_string(job.plan)
-        .map_err(|e| fail(format!("reading {}: {e}", job.plan.display())))?;
-    let plan = jubarte::edit::EditPlan::from_json(&plan_json)
-        .map_err(|e| (EXIT_PLAN_REFUSED, e.to_string()))?;
     if !job.dry_run {
         if job.out_dir.exists() && !job.force {
             return Err(fail(format!(
@@ -814,11 +866,11 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
         }
     }
     if job.dry_run {
-        let report = jubarte::edit::preview_plan(&source, &plan).map_err(|e| refused(&e))?;
+        let report = jubarte::edit::preview_plan(source, plan).map_err(|e| refused(&e))?;
         print!("{}", report.to_jsonl());
         return Ok(());
     }
-    let result = jubarte::edit::apply_plan(&source, &plan).map_err(|e| refused(&e))?;
+    let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
     let mut jsonl = result.report.to_jsonl();
     // Render (one layout pass per document) before creating the directory,
     // so a failed render leaves no partial bundle.
@@ -834,7 +886,11 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     };
     let mut renders = Vec::new();
     if job.pdf || job.png {
-        for (name, bytes) in [("redline", &result.redline), ("clean", &result.clean)] {
+        let docs = match job.mode {
+            Mode::Suggesting => vec![("redline", &result.redline), ("clean", &result.clean)],
+            Mode::Editing => vec![("clean", &result.clean)],
+        };
+        for (name, bytes) in docs {
             let rendered = jubarte::convert::render(bytes, options, request.clone())
                 .map_err(|e| fail(format!("rendering {name}: {e}")))?;
             renders.push((name, rendered));
@@ -894,11 +950,14 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     )
     .map_err(|e| fail(format!("writing the patch: {e}")))?
     .render(jubarte::markdown::DEFAULT_COLUMNS);
-    let mut outputs: Vec<(String, Vec<u8>)> = vec![
-        ("clean.docx".into(), result.clean.clone()),
-        ("redline.docx".into(), result.redline.clone()),
-        ("patch.diff".into(), patch.clone().into_bytes()),
-    ];
+    let mut outputs: Vec<(String, Vec<u8>)> = match job.mode {
+        Mode::Suggesting => vec![
+            ("clean.docx".into(), result.clean.clone()),
+            ("redline.docx".into(), result.redline.clone()),
+            ("patch.diff".into(), patch.into_bytes()),
+        ],
+        Mode::Editing => vec![("clean.docx".into(), result.clean.clone())],
+    };
     for (name, rendered) in renders {
         if let Some(pdf) = rendered.pdf {
             outputs.push((format!("{name}.pdf"), pdf));
@@ -924,12 +983,20 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     }
     let summary = jsonl.lines().last().unwrap_or("").to_string();
     println!("{summary}");
+    let names: Vec<&str> = outputs
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .chain(["report.jsonl"])
+        .collect();
     println!(
-        "wrote {} ({} files: clean.docx, redline.docx, patch.diff, report.jsonl{})",
+        "wrote {} ({} files: {})",
         job.out_dir.display(),
-        outputs.len() + 1,
-        if outputs.len() > 3 { ", …" } else { "" }
+        names.len(),
+        names.join(", ")
     );
+    for note in notes {
+        println!("note: {note}");
+    }
     for outcome in &result.report.operations {
         if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
             println!(
@@ -938,8 +1005,78 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
             );
         }
     }
-    print!("{patch}");
+    // The changed blocks, as the agent view reads them back: the tracked
+    // redline, or in editing mode its accepted text.
+    let shown = match job.mode {
+        Mode::Suggesting => "redline.docx",
+        Mode::Editing => "clean.docx",
+    };
+    let view = jubarte::markdown::changed_view(
+        &result.redline,
+        &result.report.author,
+        job.mode == Mode::Editing,
+        Some(&job.out_dir.join(shown).display().to_string()),
+    )
+    .map_err(|e| fail(format!("reading the redline back: {e}")))?;
+    print!("{view}");
     Ok(())
+}
+
+/// One `edit` or `add` invocation, parsed.
+struct EditFlags<'a> {
+    verb: jubarte::edit::flags::Verb,
+    file: &'a Path,
+    plan: Option<&'a Path>,
+    operations: &'a [FlagOp],
+    options: &'a EditOptions,
+    dry_run: bool,
+    pdf: bool,
+    png: bool,
+    dpi: f32,
+    revisions: jubarte::convert::RevisionStyle,
+}
+
+fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
+    let source = read_document(flags.file).map_err(|m| (1u8, m))?;
+    let (plan, notes) = edit_plan(
+        flags.verb,
+        flags.plan,
+        flags.operations,
+        flags.options,
+        &source,
+    )?;
+    let out_dir = flags
+        .options
+        .out_dir
+        .clone()
+        .unwrap_or_else(|| default_out_dir(flags.file));
+    let job = EditJob {
+        file: flags.file,
+        out_dir: &out_dir,
+        mode: if flags.options.editing_mode {
+            Mode::Editing
+        } else {
+            Mode::Suggesting
+        },
+        dry_run: flags.dry_run,
+        force: flags.options.force,
+        pdf: flags.pdf,
+        png: flags.png,
+        dpi: flags.dpi,
+        revisions: flags.revisions,
+        quiet: flags.options.quiet,
+    };
+    run_edit(&job, &plan, &source, &notes)
+}
+
+fn edit_exit(result: Result<(), (u8, String)>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err((code, message)) => {
+            eprintln!("error: {message}");
+            ExitCode::from(code)
+        }
+    }
 }
 
 /// A refused plan: its report goes to stdout, the error to stderr, exit 3.
@@ -2071,38 +2208,53 @@ fn cli_main() -> ExitCode {
         Some(Command::Edit {
             file,
             plan,
-            out_dir,
+            options,
             dry_run,
-            force,
             pdf,
             png,
             dpi,
             revisions,
             revision_palette,
-            quiet,
+            operations,
+            ..
         }) => {
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
                 Err(e) => return exit_code(Err(e)),
             };
-            return match run_edit(&EditJob {
+            let flags = EditFlags {
+                verb: jubarte::edit::flags::Verb::Edit,
                 file: &file,
-                plan: &plan,
-                out_dir: &out_dir,
+                plan: plan.as_deref(),
+                operations: &operations,
+                options: &options,
                 dry_run,
-                force,
                 pdf,
                 png,
                 dpi,
                 revisions: style,
-                quiet,
-            }) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err((code, message)) => {
-                    eprintln!("error: {message}");
-                    ExitCode::from(code)
-                }
             };
+            return edit_exit(run_flags(&flags));
+        }
+        Some(Command::Add {
+            file,
+            options,
+            operations,
+            ..
+        }) => {
+            let flags = EditFlags {
+                verb: jubarte::edit::flags::Verb::Add,
+                file: &file,
+                plan: None,
+                operations: &operations,
+                options: &options,
+                dry_run: false,
+                pdf: false,
+                png: false,
+                dpi: 96.0,
+                revisions: jubarte::convert::RevisionStyle::Conventional,
+            };
+            return edit_exit(run_flags(&flags));
         }
         Some(Command::Capabilities { .. }) => {
             println!("{}", jubarte::capabilities::capabilities_json("cli"));

@@ -32,6 +32,7 @@ use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod controls;
+pub mod flags;
 mod images;
 mod notes;
 mod rewrite;

@@ -500,6 +500,40 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
     })
 }
 
+/// What `edit` and `add` print after applying: the blocks of `docx` (the
+/// redline, or with `accepted` its accepted text with `rev` tags on the id
+/// lines) that carry `author`'s marks, as the agent view without page
+/// markers. When none does, as after resolving another author's comment,
+/// the blocks changed by anyone.
+pub fn changed_view(
+    docx: &[u8],
+    author: &str,
+    accepted: bool,
+    source: Option<&str>,
+) -> Result<String, MarkdownError> {
+    let options = |by: Option<String>| MarkdownOptions {
+        track_changes: if accepted {
+            TrackChanges::Accept
+        } else {
+            TrackChanges::All
+        },
+        ids: true,
+        source: source.map(str::to_string),
+        page_markers: false,
+        select: Some(Select::Changed { by }),
+        ..MarkdownOptions::default()
+    };
+    let view = docx_to_markdown(docx, &options(Some(author.to_string())))?.markdown;
+    let empty = view
+        .splitn(3, "---\n")
+        .nth(2)
+        .is_none_or(|body| body.trim().is_empty());
+    if empty {
+        return Ok(docx_to_markdown(docx, &options(None))?.markdown);
+    }
+    Ok(view)
+}
+
 /// The text the layout pass paints on each page, with the document's
 /// changes kept, accepted or rejected: what [`paginate`] matches blocks
 /// against for `<!-- page N of M -->` lines.

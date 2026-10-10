@@ -1953,3 +1953,509 @@ fn cli_edit_says_when_an_anchor_was_read_without_its_marks() {
         "{report}"
     );
 }
+
+#[test]
+fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    let out = ok(
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty-five",
+            "-p",
+            "p2",
+            "--anchor",
+            " per month",
+            "--delete",
+            "-p",
+            "p0",
+            "--content",
+            "Fees and Expenses",
+            "--datetime",
+            "2026-10-01T09:00:00Z",
+        ],
+        dir.path(),
+    );
+    for name in ["clean.docx", "redline.docx", "patch.diff", "report.jsonl"] {
+        assert!(
+            dir.path().join("base.edit").join(name).is_file(),
+            "default out dir holds {name}"
+        );
+    }
+    assert!(out.contains("\nsource: base.edit/redline.docx\n"), "{out}");
+    assert!(
+        out.contains("\nrange: changed by @MU (p0, p1, p2) of p0-p2\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("MU: Modified User") && out.contains("# 3 revisions, 2026-10-01T09:00:00Z"),
+        "{out}"
+    );
+    captures(
+        &out,
+        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>#\d+ @MU<<\}\n",
+    );
+    captures(
+        &out,
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @MU<<\} days of receipt\.\n",
+    );
+    captures(
+        &out,
+        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>#\d+ @MU<<\} ?\.\n",
+    );
+    assert!(!out.contains("\n@@ "), "the patch is not printed: {out}");
+    let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
+    assert!(
+        report.contains(r#""op":"replace""#)
+            && report.contains(r#""op":"delete""#)
+            && report.contains(r#""op":"rewrite""#),
+        "{report}"
+    );
+
+    let again = jubarte(
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "sixty",
+        ],
+        dir.path(),
+    );
+    assert!(
+        !again.status.success(),
+        "base.edit exists: --force or --out-dir"
+    );
+    for bad in [
+        &["edit", "base.docx"][..],
+        &[
+            "edit",
+            "base.docx",
+            "--plan",
+            "x.json",
+            "-p",
+            "p1",
+            "--delete",
+        ][..],
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "p1",
+            "--delete",
+            "--content",
+            "x",
+        ][..],
+        &[
+            "edit",
+            "base.docx",
+            "--anchor",
+            "a",
+            "-p",
+            "p1",
+            "--content",
+            "b",
+        ][..],
+        &["edit", "base.docx", "-p", "p1"][..],
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "c0",
+            "--anchor",
+            "a",
+            "--content",
+            "b",
+        ][..],
+        &["edit", "base.docx", "-p", "p1", "--resolve"][..],
+    ] {
+        assert!(!jubarte(bad, dir.path()).status.success(), "{bad:?}");
+    }
+}
+
+#[test]
+fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    let keep = [
+        "--existing-revisions",
+        "keep",
+        "--datetime",
+        "2026-10-01T09:00:00Z",
+    ];
+    let out = ok(
+        &[
+            &[
+                "edit",
+                "base.docx",
+                "-p",
+                "p1",
+                "--anchor",
+                "thirty",
+                "--content",
+                "thirty (30)",
+                "-p",
+                "p2",
+                "--anchor",
+                "Late",
+                "--content",
+                "Note: Late",
+                "--out-dir",
+                "one",
+            ][..],
+            &keep[..],
+        ]
+        .concat(),
+        dir.path(),
+    );
+    captures(
+        &out,
+        r"within thirty\{\+\+ \(30\)\+\+\}\{>>#\d+ @MU<<\} days",
+    );
+    captures(
+        &out,
+        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>#\d+ @MU<<\}Late amounts",
+    );
+    let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
+    assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
+
+    let out = ok(
+        &[
+            "edit",
+            "one/redline.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "receipt",
+            "--content",
+            "the invoice",
+            "--author",
+            "John Doe",
+            "--datetime",
+            "2026-10-02T10:00:00Z",
+            "--out-dir",
+            "two",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.contains("\nrange: changed by @JD (p1) of p0-p2\n"),
+        "{out}"
+    );
+    captures(
+        &out,
+        r"\{\+\+ \(30\)\+\+\}\{>>#\d+ @MU<<\} days of \{~~receipt~>the invoice~~\}\{>>#\d+\+\d+ @JD<<\}\.",
+    );
+    let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
+    assert!(
+        report.contains(r#""existing_revisions":"keep""#),
+        "auto picked keep: {report}"
+    );
+    let refused = jubarte(
+        &[
+            "edit",
+            "one/redline.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "receipt",
+            "--content",
+            "x",
+            "--existing-revisions",
+            "refuse",
+            "--out-dir",
+            "three",
+        ],
+        dir.path(),
+    );
+    assert_eq!(refused.status.code(), Some(3), "refuse is still available");
+}
+
+#[test]
+fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    let out = ok(
+        &[
+            "add",
+            "base.docx",
+            "-p",
+            "p2",
+            "--anchor",
+            "one percent",
+            "--content",
+            "Cap?",
+            "--author",
+            "Ann Counsel",
+            "--datetime",
+            "2026-10-01T09:00:00Z",
+            "--out-dir",
+            "one",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.contains("{==one percent==}{>>#c0 @AC: Cap?<<}"),
+        "{out}"
+    );
+    let out = ok(
+        &[
+            "add",
+            "one/redline.docx",
+            "-p",
+            "c0",
+            "--content",
+            "Yes, in Delaware.",
+            "--author",
+            "Bob Lee",
+            "--datetime",
+            "2026-10-02T10:00:00Z",
+            "--out-dir",
+            "two",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.contains("{>>#c0 @AC: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware.<<}"),
+        "{out}"
+    );
+    let out = ok(
+        &[
+            "edit",
+            "two/redline.docx",
+            "-p",
+            "c1",
+            "--content",
+            "Yes, in Delaware (6 Del. C. 2301).",
+            "-p",
+            "c0",
+            "--resolve",
+            "--author",
+            "Cy Young",
+            "--out-dir",
+            "three",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.contains("\nrange: changed (p2) of p0-p2\n"),
+        "nothing is by Cy Young, so the view falls back to every changed block: {out}"
+    );
+    assert!(
+        out.contains(
+            "{>>#c0 @AC resolved: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware (6 Del. C. 2301).<<}"
+        ),
+        "{out}"
+    );
+    let out = ok(
+        &[
+            "add",
+            "three/redline.docx",
+            "-p",
+            "p0",
+            "--comment",
+            "--content",
+            "Add a fee schedule.",
+            "--out-dir",
+            "four",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.contains("<!-- p0 -->\n{==Fees==}{>>#c2 @MU: Add a fee schedule.<<}\n"),
+        "{out}"
+    );
+    let out = ok(
+        &[
+            "edit",
+            "four/redline.docx",
+            "-p",
+            "c0",
+            "--delete",
+            "--out-dir",
+            "five",
+        ],
+        dir.path(),
+    );
+    assert!(
+        !out.contains("#c0") && !out.contains("#c1"),
+        "the thread is gone: {out}"
+    );
+    assert!(
+        out.contains("\nrange: changed by @MU (p0) of p0-p2\n") && out.contains("#c2 @MU"),
+        "{out}"
+    );
+    for bad in [
+        &["add", "base.docx", "-p", "p1"][..],
+        &[
+            "add",
+            "base.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "x",
+            "--content",
+            "y",
+            "--before",
+        ][..],
+        &["add", "base.docx", "-p", "c0", "--content", "y", "--before"][..],
+        &["add", "base.docx", "-p", "p1", "--content", "y", "--delete"][..],
+    ] {
+        assert!(!jubarte(bad, dir.path()).status.success(), "{bad:?}");
+    }
+}
+
+#[test]
+fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
+    let dir = tempfile::tempdir().unwrap();
+    // `--style Heading2` names a style the document defines; the engine
+    // refuses an undefined one (UNKNOWN_STYLE).
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style></w:styles>"#
+        ),
+    };
+    std::fs::write(
+        dir.path().join("base.docx"),
+        common::docx::docx_with(BASE, &[styles]),
+    )
+    .unwrap();
+    let after = ok(
+        &[
+            "add",
+            "base.docx",
+            "-p",
+            "p1",
+            "--content",
+            "Invoices are due in full.",
+            "--out-dir",
+            "after",
+        ],
+        dir.path(),
+    );
+    assert!(
+        after.contains("range: changed by @MU (") && after.contains("p2"),
+        "{after}"
+    );
+    captures(
+        &after,
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>#\d+ @MU<<\}\n",
+    );
+    let before = ok(
+        &[
+            "add",
+            "base.docx",
+            "-p",
+            "p1",
+            "--content",
+            "Payment",
+            "--before",
+            "--style",
+            "Heading2",
+            "--style",
+            "bold",
+            "--out-dir",
+            "before",
+        ],
+        dir.path(),
+    );
+    captures(
+        &before,
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>#\d+ @MU<<\}\n",
+    );
+    let xml = common::docx::part_string(
+        &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
+        "word/document.xml",
+    )
+    .unwrap();
+    assert!(
+        xml.contains(r#"<w:pStyle w:val="Heading2" />"#)
+            && xml.contains("<w:rPr><w:b />")
+            && xml.contains(">Payment<"),
+        "{xml}"
+    );
+
+    let out = ok(
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty-five",
+            "--editing-mode",
+            "--out-dir",
+            "e",
+        ],
+        dir.path(),
+    );
+    assert!(
+        dir.path().join("e/clean.docx").is_file() && dir.path().join("e/report.jsonl").is_file()
+    );
+    assert!(
+        !dir.path().join("e/redline.docx").exists() && !dir.path().join("e/patch.diff").exists(),
+        "editing mode writes no redline"
+    );
+    assert!(
+        out.contains("\nrange: changed by @MU (p1) of p0-p2\n"),
+        "{out}"
+    );
+    captures(
+        &out,
+        r"<!-- p1 rev #\d+\+\d+ @MU -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
+    );
+
+    let noted = ok(
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "# Fees",
+            "--content",
+            "Fees \\* Costs",
+            "--out-dir",
+            "n",
+        ],
+        dir.path(),
+    );
+    assert!(noted.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted}");
+    captures(
+        &noted,
+        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>#\d+ @MU<<\}\n",
+    );
+    let marks = ok(
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "p0",
+            "--content",
+            "**Fees**",
+            "--out-dir",
+            "m",
+        ],
+        dir.path(),
+    );
+    assert!(
+        marks.contains(
+            "\nnote: op-1: content keeps its Markdown marks as text; use --style for formatting\n"
+        ),
+        "{marks}"
+    );
+}
