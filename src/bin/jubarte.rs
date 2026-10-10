@@ -1179,35 +1179,6 @@ fn insert_before_summary(jsonl: &mut String, line: &str) {
     };
 }
 
-fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = read_document(file)?;
-    let settings = jubarte::comparer::WmlComparerSettings::default();
-    let revs = jubarte::document_comparer::get_revisions(&bytes, &settings).map_err(|e| {
-        refusal("get_revisions", &e).unwrap_or_else(|| format!("get_revisions failed: {e:?}"))
-    })?;
-    if json {
-        // Shared serialization (also the wasm `getRevisions` shape): full JSON
-        // string escaping — backslash, quote, and ALL control chars < 0x20.
-        for r in &revs {
-            outln!("{}", jubarte::document_comparer::revision_to_json(r));
-        }
-    } else {
-        for r in &revs {
-            let text = r.text.as_deref().unwrap_or("");
-            let preview: String = text.chars().take(60).collect();
-            outln!(
-                "{:?}\t{}\t{}\t{:?}",
-                r.revision_type,
-                r.author.as_deref().unwrap_or("-"),
-                r.part_name,
-                preview
-            );
-        }
-        outln!("{} revision(s)", revs.len());
-    }
-    Ok(())
-}
-
 /// A fully-resolved comparison job (positional/named merged, output computed).
 #[derive(Debug, PartialEq)]
 struct Job {
@@ -2078,9 +2049,6 @@ fn cli_main() -> ExitCode {
         Some(Command::Compare(compare)) => {
             return exit_code(run(&resolve_compare(compare, ReadArgs::default(), true)));
         }
-        Some(Command::Revisions { file, json }) => {
-            return exit_code(run_revisions(&file, json));
-        }
         Some(Command::Changes { file, json }) => {
             return exit_code(run_changes(&file, json));
         }
@@ -2803,38 +2771,15 @@ mod tests {
         assert_eq!(missing_val.kind(), ErrorKind::InvalidValue);
     }
 
-    /// D.6 — `redline revisions <file>` parses into `Command::Revisions` with
-    /// `json` defaulting to `false`; the legacy positional/named compare
-    /// fields are left at their defaults (`command` is a plain addition, not
-    /// a replacement of the existing surface).
+    /// `revisions` (Docxodus's GetRevisions listing) left the CLI: `changes`
+    /// is the one listing. The word is a file name again, the legacy
+    /// compare's ORIGINAL.
     #[test]
-    fn revisions_subcommand_parses_with_default_json_false() {
-        let cli = Cli::try_parse_from(["jubarte", "revisions", "file.docx"]).unwrap();
-        match cli.command {
-            Some(Command::Revisions { file, json }) => {
-                assert_eq!(file, PathBuf::from("file.docx"));
-                assert!(!json);
-            }
-            other => panic!("expected revisions subcommand, got {other:?}"),
-        }
-    }
-
-    /// D.6 — `--json` sets the JSON-lines output flag.
-    #[test]
-    fn revisions_subcommand_json_flag_parses() {
-        let cli = Cli::try_parse_from(["jubarte", "revisions", "file.docx", "--json"]).unwrap();
-        match cli.command {
-            Some(Command::Revisions { json, .. }) => assert!(json),
-            other => panic!("expected revisions subcommand, got {other:?}"),
-        }
-    }
-
-    /// D.6 — `revisions` without a FILE argument is a clap usage error.
-    #[test]
-    fn revisions_subcommand_missing_file_is_clap_error() {
-        use clap::error::ErrorKind;
-        let err = Cli::try_parse_from(["jubarte", "revisions"]).unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    fn revisions_is_no_subcommand() {
+        let cli = Cli::try_parse_from(["jubarte", "revisions", "b.docx"]).unwrap();
+        assert!(cli.command.is_none());
+        let job = resolve_compare(cli.compare, cli.read, false);
+        assert_eq!(job.original, PathBuf::from("revisions"));
     }
 
     /// Prior behavior path: a two-positional invocation whose filenames do
@@ -2976,21 +2921,6 @@ mod tests {
         use clap::error::ErrorKind;
         let err = Cli::try_parse_from(["jubarte", "reject", "rl.docx"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
-    }
-
-    /// Documents the one real interaction between the legacy compare surface
-    /// and the new subcommand: a document literally named `revisions` as the
-    /// first positional is parsed as the `revisions` subcommand (clap
-    /// subcommand matching takes priority over positional args), not as the
-    /// legacy ORIGINAL. This is the tradeoff for adding `revisions` as a
-    /// subcommand rather than a flag.
-    #[test]
-    fn positional_named_revisions_is_parsed_as_subcommand() {
-        let cli = Cli::try_parse_from(["jubarte", "revisions", "b.docx"]).unwrap();
-        match cli.command {
-            Some(Command::Revisions { file, .. }) => assert_eq!(file, PathBuf::from("b.docx")),
-            other => panic!("expected revisions subcommand, got {other:?}"),
-        }
     }
 
     #[test]

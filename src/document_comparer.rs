@@ -6242,8 +6242,8 @@ pub fn get_revisions(
     Ok(revs)
 }
 
-/// Serialize one revision to the stable JSON object shape shared by the CLI
-/// (`jubarte revisions --json`) and the wasm `getRevisions` binding. Full
+/// Serialize one revision to the stable JSON object shape of the wasm
+/// `getRevisions` and Python `get_revisions` bindings. Full
 /// string escaping: backslash, quote, and EVERY control char < 0x20 (document
 /// text can carry `\t`, `\r`, vertical tabs, …).
 pub fn revision_to_json(r: &crate::comparer::WmlComparerRevision) -> String {
@@ -8073,8 +8073,8 @@ mod tests {
     }
 
     /// `revision_to_json` / `revisions_to_json` are the single serialization
-    /// shared by the CLI (`jubarte revisions --json`) and the wasm
-    /// `getRevisions` binding: exact CLI object shape, full string escaping —
+    /// of the wasm `getRevisions` and Python `get_revisions` bindings: one
+    /// object shape, full string escaping —
     /// backslash, quote, and EVERY control char < 0x20 (document text can
     /// carry tabs, CRs, vertical tabs).
     #[test]

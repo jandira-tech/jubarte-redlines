@@ -331,8 +331,7 @@ impl std::ops::Deref for Cli {
     }
 }
 
-/// D.6 — `redline revisions <file> [--json]`: list the tracked revisions in
-/// a redline .docx (the `WmlComparer.GetRevisions` facade).
+/// The subcommands; none given is the two-file compare.
 #[derive(clap::Subcommand, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "command", content = "args")]
 pub enum Command {
@@ -342,15 +341,6 @@ pub enum Command {
         after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte compare -b old.docx -m new.docx --author Legal"
     )]
     Compare(CompareArgs),
-    /// List the tracked revisions in a redline .docx.
-    Revisions {
-        /// The redline document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit the list as JSON lines instead of a human summary.
-        #[arg(long)]
-        json: bool,
-    },
     /// List tracked changes with IDs for accept, reject and edit plans.
     Changes {
         /// The document (.docx).
