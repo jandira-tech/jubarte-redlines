@@ -129,8 +129,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
     }
     let handles = if options.ids {
-        let notes: Vec<&Element> = note_roots.iter().map(|(_, root)| root).collect();
-        agent::handles(&document, &notes, comments_root.as_ref())
+        // An author whose only changes sit in a header gets a handle too, so
+        // `--by` takes it.
+        let stories: Vec<&Element> = note_roots
+            .iter()
+            .map(|(_, root)| root)
+            .chain(&story_roots)
+            .collect();
+        agent::handles(&document, &stories, comments_root.as_ref())
     } else {
         agent::Handles::default()
     };
@@ -231,6 +237,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         notes: HashMap::new(),
         referenced: HashSet::new(),
         open_comments: Vec::new(),
+        hidden_ranges: Vec::new(),
         pending_notes: Vec::new(),
         in_comment: false,
         plain: false,
@@ -284,6 +291,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     // Footnotes and endnotes, numbered in reference order. A comment range the
     // body never closed does not run on into them.
     writer.open_comments.clear();
+    writer.hidden_ranges.clear();
     let mut index = 0;
     let mut defs = Vec::new();
     while index < writer.note_refs.len() {
@@ -604,8 +612,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     })
 }
 
-/// A paragraph's line breaks (`w:br`) as Markdown hard breaks, which a
-/// bare newline is not: it reads as a space.
 /// `--by`'s author as `@HH` when it names a known author: a full name as
 /// stored, or a handle with or without its `@`. Anything else stays as given
 /// and matches no block.
@@ -621,6 +627,8 @@ fn resolve_author(by: &str, handles: &agent::Handles) -> String {
         .map_or_else(|| bare.to_string(), |handle| format!("@{handle}"))
 }
 
+/// A paragraph's line breaks (`w:br`) as Markdown hard breaks, which a
+/// bare newline is not: it reads as a space.
 fn hard_breaks(text: &str) -> String {
     text.replace('\n', "\\\n")
 }
@@ -1032,6 +1040,9 @@ struct Writer<'a> {
     referenced: HashSet<String>,
     /// Comment ranges open at this point, in the order they started.
     open_comments: Vec<String>,
+    /// Agent view, comments hidden: the ranges open at this point. They
+    /// highlight nothing; the id lines name them (`in #c5`).
+    hidden_ranges: Vec<String>,
     /// Notes of unreferenced comments whose range ended between paragraphs;
     /// they open the next paragraph.
     pending_notes: Vec<String>,
@@ -1155,6 +1166,16 @@ impl Writer<'_> {
                 self.para_comments.push(id.to_string());
             }
             if !self.comments_inline {
+                // Hidden, the range still runs: every paragraph and table
+                // it covers names it on its id line.
+                let open = self.hidden_ranges.iter().position(|open| open == id);
+                match (range.is("commentRangeStart"), open) {
+                    (true, None) => self.hidden_ranges.push(id.to_string()),
+                    (false, Some(at)) => {
+                        self.hidden_ranges.remove(at);
+                    }
+                    _ => {}
+                }
                 return;
             }
         }
@@ -1211,7 +1232,7 @@ impl Writer<'_> {
             .and_then(num_pr)
             .or_else(|| style.as_deref().and_then(|s| self.styles.num(s)));
 
-        let open_before = self.open_comments.clone();
+        let open_before = self.open_ranges().to_vec();
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
         // Comment threads whose range runs past this paragraph, for its id
@@ -1259,6 +1280,9 @@ impl Writer<'_> {
                 std::mem::take(&mut self.para_comments)
             };
             self.para_comments.clear();
+            // A comment the line lists (`comments #c9`) is not named again
+            // as a range it runs in.
+            spans.retain(|id| !comments.contains(id));
             let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
             let numbered = heading_marker.is_some() || list_marker.is_some();
             if empty
@@ -1409,10 +1433,9 @@ impl Writer<'_> {
         }
     }
 
-    /// The thread roots among `ids`, for an id line's `in #c5` (agent view,
-    /// comments inline).
+    /// The thread roots among `ids`, for an id line's `in #c5` (agent view).
     fn threads_of(&self, ids: &[String]) -> Vec<String> {
-        if !(self.agent && self.comments_inline) {
+        if !self.agent {
             return Vec::new();
         }
         let mut roots: Vec<String> = Vec::new();
@@ -1448,7 +1471,7 @@ impl Writer<'_> {
                 }
             }
         }
-        let mut open = self.open_comments.clone();
+        let mut open = self.open_ranges().to_vec();
         let before = open.clone();
         walk(container, &self.comments, &mut open);
         let mut all = before;
@@ -1462,7 +1485,17 @@ impl Writer<'_> {
 
     /// The comment threads whose range is open here.
     fn open_threads(&self) -> Vec<String> {
-        self.threads_of(&self.open_comments)
+        self.threads_of(self.open_ranges())
+    }
+
+    /// The comment ranges open here: the highlighted ones, or with the agent
+    /// view's comments hidden, the ones only id lines name.
+    fn open_ranges(&self) -> &[String] {
+        if self.agent && !self.comments_inline {
+            &self.hidden_ranges
+        } else {
+            &self.open_comments
+        }
     }
 
     /// The Markdown marker for a numbered paragraph (`1.`) and the label Word
@@ -1801,6 +1834,7 @@ impl Writer<'_> {
         let mut boxes = Vec::new();
         drawing.find_all("txbxContent", &mut boxes);
         let open_comments = std::mem::take(&mut self.open_comments);
+        let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
         for content in boxes {
             let mut blocks = Blocks::new();
             let mut list = ListIndent::default();
@@ -1808,6 +1842,7 @@ impl Writer<'_> {
             extra.push(blocks.finish());
         }
         self.open_comments = open_comments;
+        self.hidden_ranges = hidden_ranges;
         if let Some(doc_pr) = drawing.find("docPr") {
             let alt = doc_pr
                 .attr("descr")
