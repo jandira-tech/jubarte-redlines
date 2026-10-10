@@ -147,10 +147,14 @@ fn revision_style(
     }
 }
 
-/// No-clobber contract shared by every writing subcommand.
-/// Whether two CLI paths name the same file, whether or not it exists yet
-/// (`out.pdf` and `./out.pdf` do; the parent directory is canonicalized).
+/// Whether two CLI paths name the same file. Two existing paths are compared
+/// by identity, which sees through hard links, symlinks and a volume that
+/// ignores case; a path not written yet is keyed by its canonicalized parent
+/// and its name (`out.pdf` and `./out.pdf` match).
 fn same_path(a: &Path, b: &Path) -> bool {
+    if let Ok(same) = same_file::is_same_file(a, b) {
+        return same;
+    }
     fn key(p: &Path) -> Option<PathBuf> {
         let name = p.file_name()?;
         let parent = match p.parent() {
@@ -171,6 +175,7 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// No-clobber contract shared by every writing subcommand.
 fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
     if output.exists() && !force {
         return Err(format!(

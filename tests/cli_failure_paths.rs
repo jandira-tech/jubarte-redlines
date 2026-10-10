@@ -223,6 +223,52 @@ fn convert_update_fields_refuses_a_report_on_the_input_or_the_output() {
 }
 
 #[test]
+fn convert_update_fields_refuses_a_report_that_names_the_input_another_way() {
+    // A hard link, a symlink, and on a volume that ignores case a case
+    // variant all name the input; writing the report through any of them
+    // used to replace the input with JSON.
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(
+        r#"<w:p><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    std::fs::hard_link(dir.path().join("input.docx"), dir.path().join("hard.json")).unwrap();
+    let mut aliases = vec!["hard.json"];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("input.docx", dir.path().join("link.json")).unwrap();
+        aliases.push("link.json");
+    }
+    if dir.path().join("INPUT.DOCX").exists() {
+        aliases.push("INPUT.DOCX");
+    }
+    for alias in aliases {
+        let args = [
+            "convert",
+            "input.docx",
+            "-o",
+            "updated.docx",
+            "--update-fields",
+            "--report",
+            alias,
+            "--force",
+        ];
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(&format!("--report '{alias}' is the same file as the input")),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("input.docx")).unwrap(),
+            original
+        );
+        assert!(!dir.path().join("updated.docx").exists());
+    }
+}
+
+#[test]
 fn debug_diff_disambiguates_duplicate_stems_and_duplicate_paths() {
     let dir = tempfile::tempdir().unwrap();
     for (folder, text) in [("old", "Original clause"), ("new", "Revised clause")] {
