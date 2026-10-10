@@ -10,10 +10,37 @@ Engine defects and unresolved design conflicts.
 
 > **Last full re-check: 2026-10-01, against 0.10.1.** Open items below are the
 > complete set. Findings added since then name the build they were checked on
-> (issue 8: the 0.12.0 release candidate, 2026-10-10); the other items have
-> not been re-checked against 0.12.0.
+> (issues 8 and 9: the 0.12.0 release candidate, 2026-10-10); the other items
+> have not been re-checked against 0.12.0.
 
 ## Open
+
+### 9. WebAssembly PDFs paint no CJK text the document does not embed a font for — **OPEN, fonts**
+
+**Seen:** the 0.12.0 release candidate's CLI, Python and WebAssembly parity
+check (2026-10-10, 15 bench pairs). The Word redlines are byte-identical on
+all three, and so are 13 of the 15 PDFs. The other two differ in WebAssembly
+only:
+
+- **Japanese (a form, `a4ebc0e89c…`):** the WebAssembly PDF paints none of its
+  Japanese text. The heading is three empty boxes, every other run is blank
+  under its revision marks, and full-width ＴＥＬ and ＦＡＸ are gone. Its
+  text layer holds 12 NULs where the native PDF holds the text, and lines
+  break differently without those widths.
+- **Math (`super_editor__font_formatting_runs`):** the OMML letters are
+  painted from the italic text face and read as `a x y z b`, where the native
+  PDF's read `𝑎 𝑥 𝑦 𝑧 𝑏` (Mathematical Alphanumeric Symbols, from Cambria
+  Math). The page looks right; search and copy differ. Carlito standing in
+  for Aptos also moves a PAGE field one page earlier; the page count holds.
+
+**Cause:** WebAssembly has no installed fonts. `docxToPdf` paints with the
+fonts the document embeds and the ones the engine bundles, Carlito and
+Liberation Sans, Serif and Mono: Latin, Greek and Cyrillic, no CJK and no
+math alphabet. The CLI and Python use the machine's installed fonts.
+
+**Options:** let `docxToPdf` take font files from its caller, as
+`JUBARTE_FONT_DIR` lets the CLI; ship a CJK font in an opt-in package; or
+report the text no font covers instead of painting nothing.
 
 ### 8. Word 16.115 crashes opening benchmark redlines — **OPEN, mostly a Word bug**
 
