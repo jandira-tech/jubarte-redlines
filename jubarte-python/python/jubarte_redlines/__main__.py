@@ -88,19 +88,28 @@ def _read_side(path: Path, force_kind: str | None) -> bytes | str:
         raise CliError(f"reading {path}: invalid UTF-8 Markdown: {exc}") from exc
 
 
+def _named_kind(path: Path) -> str | None:
+    """The format a file's name declares, asked of the shared parser; None
+    when only its bytes can tell."""
+    from . import _native
+
+    parsed = json.loads(_native.parse_cli_json(["diff", "--", str(path), str(path)], program="jubarte-redlines", supported=["diff"]))
+    return parsed["args"]["old_format"]
+
+
 def _ensure_writable(path: Path, force: bool) -> None:
     if path.exists() and not force:
         raise CliError(f"output '{path}' already exists (use --force to overwrite)")
 
 
-def _write(path: Path, data: bytes | str) -> None:
+def _write(path: Path, data: bytes | str) -> int:
+    """Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written."""
+    raw = data.encode("utf-8") if isinstance(data, str) else data
     try:
-        if isinstance(data, str):
-            path.write_text(data, encoding="utf-8")
-        else:
-            path.write_bytes(data)
+        path.write_bytes(raw)
     except OSError as exc:
         raise CliError(f"writing {path}: {exc}") from exc
+    return len(raw)
 
 
 def _pdf_options(args: argparse.Namespace) -> PdfOptions:
@@ -211,6 +220,8 @@ _EDITING_KEEPS = (
     "--editing-mode needs a document without tracked changes; it has some, "
     "so pass --existing-revisions accept or reject"
 )
+
+_DOCX_NEEDS_MARKDOWN = "--to docx requires Markdown input in the Python CLI"
 
 
 def _default_out_dir(file: Path) -> Path:
@@ -340,17 +351,13 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
     return EXIT_OK
 
 
-def _from_markdown(args: argparse.Namespace) -> Document:
-    """``args.file`` (Markdown) written as Word, its warnings on stderr."""
+def _from_markdown(args: argparse.Namespace, text: str) -> Document:
+    """``text``, read from ``args.file``, written as Word; its warnings on stderr."""
     import warnings
 
     from .document import from_markdown
 
-    try:
-        text = args.file.read_text(encoding="utf-8")
-        reference = None if args.reference_doc is None else _read(args.reference_doc).to_bytes()
-    except OSError as exc:
-        raise CliError(f"reading {exc.filename}: {exc.strerror}") from exc
+    reference = None if args.reference_doc is None else _read(args.reference_doc).to_bytes()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         doc = from_markdown(
@@ -368,10 +375,12 @@ def _from_markdown(args: argparse.Namespace) -> Document:
 
 
 def cmd_convert(args: argparse.Namespace) -> int:
-    if args.file.suffix.lower() in (".md", ".markdown"):
+    # The native rule: the name's format, else the bytes (a ZIP is Word).
+    source = _read_side(args.file, _named_kind(args.file))
+    if isinstance(source, str):
         if args.update_fields:
             raise CliError("--update-fields needs a Word document in")
-        doc = _from_markdown(args)
+        doc = _from_markdown(args, source)
         # Markdown goes to Word unless a PDF or PNG is asked for.
         wants_render = args.pdf or args.png or (args.to != "docx" and args.output is not None and args.output.suffix.lower() != ".docx")
         if not wants_render:
@@ -380,11 +389,15 @@ def cmd_convert(args: argparse.Namespace) -> int:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
             _ensure_writable(docx_out, args.force)
-            _write(docx_out, doc.to_bytes())
-            print(f"wrote {docx_out} ({len(doc.to_bytes())} bytes)")
+            print(f"wrote {docx_out} ({_write(docx_out, doc.to_bytes())} bytes)")
             return EXIT_OK
     else:
-        doc = _read(args.file)
+        converts_to_docx = args.to == "docx" or (args.to is None and args.output is not None and args.output.suffix.lower() == ".docx")
+        if converts_to_docx and not args.update_fields:
+            # A name that said nothing; its bytes are Word.
+            print(f"error: {_DOCX_NEEDS_MARKDOWN}", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+        doc = Document(source, args.file.name)
         if args.track_changes == "accept":
             doc = doc.accept()
         elif args.track_changes == "reject":
@@ -524,9 +537,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
     redline = (diff(original, modified, format="critic", author=args.author, date=args.date).text
                if args.output_format == "md" else
                _native.redline_documents(original, modified, author=args.author, date=args.date))
-    _write(output, redline)
+    size = _write(output, redline)
     if not args.quiet:
-        print(f"wrote {output} ({len(redline)} bytes)")
+        print(f"wrote {output} ({size} bytes)")
     return EXIT_OK
 
 
@@ -753,9 +766,11 @@ class SharedParser:
             extension = Path(values.get("output") or "").suffix.lower()
             if to == "md" or (to is None and extension in (".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn")):
                 self.error("--to md with page markers is not supported by the Python CLI; `read FILE` prints the agent text view")
-            markdown_in = Path(values["file"]).suffix.lower() in (".md", ".markdown")
-            if (to == "docx" or (to is None and extension == ".docx")) and not markdown_in and not values.get("update_fields"):
-                self.error("--to docx requires Markdown input in the Python CLI")
+            # A Word name fails before any read; a name that says nothing
+            # is sniffed in cmd_convert.
+            word_in = _named_kind(Path(values["file"])) == "docx"
+            if (to == "docx" or (to is None and extension == ".docx")) and word_in and not values.get("update_fields"):
+                self.error(_DOCX_NEEDS_MARKDOWN)
             if to in ("pdf", "png"):
                 values[to] = True
             elif to is None and extension == ".png":

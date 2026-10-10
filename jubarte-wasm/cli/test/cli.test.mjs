@@ -540,6 +540,18 @@ test("convert to Word sniffs inputs whose name does not say Markdown (integratio
   assert.ok(!fs.existsSync(out));
 });
 
+test("compare reports the bytes a Markdown redline takes (integration)", () => {
+  // Codex on #381: the count is UTF-8 bytes on disk, not UTF-16 code units.
+  const a = path.join(tmp, "bytes-a.md"), b = path.join(tmp, "bytes-b.md"), out = path.join(tmp, "bytes-redline.md");
+  fs.writeFileSync(a, "Prazo de 30 días — ok.\n");
+  fs.writeFileSync(b, "Prazo de 45 días — ok.\n");
+  const result = run("compare", a, b, "-o", out);
+  assert.equal(result.code, 0, result.err);
+  const size = fs.statSync(out).size;
+  assert.ok(size > fs.readFileSync(out, "utf8").length);
+  assert.equal(result.out, `wrote ${out} (${size} bytes)\n`);
+});
+
 test("diff, compare and convert follow the native input and output contract (integration)", () => {
   const a = path.join(tmp, "contract-a.md"), b = path.join(tmp, "contract-b.md");
   fs.writeFileSync(a, "Due in 30 days.\n");
