@@ -753,8 +753,7 @@ Compare options:
           Same as --mode powertools
 
   [MODIFIED]
-          The modified document (.docx or Markdown). With ORIGINAL alone, the agent view
-          of that one document is printed (same as `read`)
+          The modified document (.docx or Markdown)
 
   [ORIGINAL]
           The original / base document (.docx or Markdown)
@@ -826,8 +825,7 @@ Arguments:
           The original / base document (.docx or Markdown)
 
   [MODIFIED]
-          The modified document (.docx or Markdown). With ORIGINAL alone, the agent view
-          of that one document is printed (same as `read`)
+          The modified document (.docx or Markdown)
 
 Options:
   -b, --original <FILE>
