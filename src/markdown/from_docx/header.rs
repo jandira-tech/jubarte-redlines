@@ -333,11 +333,15 @@ pub(crate) fn render(f: &Facts) -> String {
             Some(&join(&parts)),
         );
     }
-    let last = f.paragraphs.saturating_sub(1);
+    // `p0-pN`, or nothing to name in a body without paragraphs.
+    let span = f
+        .paragraphs
+        .checked_sub(1)
+        .map_or_else(|| "no paragraphs".to_string(), |last| format!("p0-p{last}"));
     kv(
         &mut out,
         &format!(
-            "body: p0-p{last}, {}, {}",
+            "body: {span}, {}, {}",
             plural(f.tables, "table", "tables"),
             plural(f.pages, "page", "pages")
         ),
@@ -348,7 +352,12 @@ pub(crate) fn render(f: &Facts) -> String {
         }),
     );
     if let Some(range) = &f.range {
-        kv(&mut out, &format!("range: {range} of p0-p{last}"), None);
+        let of = if f.paragraphs == 0 {
+            String::new()
+        } else {
+            format!(" of {span}")
+        };
+        kv(&mut out, &format!("range: {range}{of}"), None);
     }
     part_two(&mut out, f);
     out.push_str("---\n");

@@ -2865,6 +2865,38 @@ fn id_line_gives_one_indent_per_side_when_both_spellings_are_present() {
         r#"<w:p><w:pPr><w:ind w:start="1440" w:end="720"/></w:pPr><w:r><w:t>Strict.</w:t></w:r></w:p>"#,
     ))))
     .to_string();
-    assert!(out.contains("<!-- p0 left 0.5in, right 0.25in -->\nBoth."), "{out}");
-    assert!(out.contains("<!-- p1 left 1in, right 0.5in -->\nStrict."), "{out}");
+    assert!(
+        out.contains("<!-- p0 left 0.5in, right 0.25in -->\nBoth."),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p1 left 1in, right 0.5in -->\nStrict."),
+        "{out}"
+    );
+}
+
+/// pi review av2 F13 / av3 F6: a body with no paragraph names none: no
+/// `p0-p0`, and a paragraph pick is refused instead of printing nothing.
+#[test]
+fn an_empty_body_names_no_paragraph_and_refuses_a_pick() {
+    let empty = docx("");
+    let view = agent(&empty);
+    let lines = header_lines(&view);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("body: no paragraphs, 0 tables, 1 page")),
+        "{lines:?}"
+    );
+    let changed = changed_by(&empty, None, true);
+    assert!(changed.contains("\nrange: changed (none)\n"), "{changed}");
+    let picked = docx_to_markdown(
+        &empty,
+        &MarkdownOptions {
+            select: Some(Select::parse("p0").unwrap()),
+            ..agent_defaults()
+        },
+    );
+    let error = picked.expect_err("p0 does not exist").to_string();
+    assert!(error.contains("the body has no paragraphs"), "{error}");
 }

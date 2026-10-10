@@ -1307,7 +1307,7 @@ fn is_marked(block: &str) -> bool {
 pub(crate) fn select_blocks(
     body: &str,
     select: &Select,
-    last: usize,
+    last: Option<usize>,
     comment_handles: &HashMap<String, String>,
 ) -> Result<(String, String), String> {
     let blocks = blocks_of(body);
@@ -1390,6 +1390,9 @@ pub(crate) fn select_blocks(
             for pick in picks {
                 match pick {
                     Pick::Paragraphs { from, to } => {
+                        let Some(last) = last else {
+                            return Err("the body has no paragraphs".to_string());
+                        };
                         let to = to.unwrap_or(last);
                         for n in [*from, to] {
                             if n > last {

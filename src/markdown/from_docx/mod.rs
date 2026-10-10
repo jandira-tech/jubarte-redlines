@@ -325,7 +325,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let (selected, described) = agent::select_blocks(
             &markdown,
             &select,
-            stamped.0.saturating_sub(1),
+            stamped.0.checked_sub(1),
             &comment_handles,
         )
         .map_err(ooxml::invalid)?;
