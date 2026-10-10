@@ -33,14 +33,30 @@ fn explicit_compare_alias_and_shorthand_preserve_overrides() {
         parse(&["compare", "-b", "a", "-m", "b"], &[])["exit_code"],
         0
     );
-    for args in [
-        &[][..],
-        &["a.docx"][..],
-        &["compare"][..],
-        &["compare", "-b", "a"][..],
-    ] {
+    for args in [&[][..], &["compare"][..], &["compare", "-b", "a"][..]] {
         assert_eq!(parse(args, &[])["exit_code"], 2);
     }
+    // One file is the agent view (`read`); two print their redline's view.
+    let read = parse(&["a.docx"], &[]);
+    assert_eq!(read["exit_code"], 0, "{read}");
+    assert_eq!(read["command"], "read");
+    assert_eq!(read["args"]["file"], "a.docx");
+    assert!(read["args"]["head"].is_null() && read["args"]["changed"] == false);
+    assert_eq!(parse(&["a.docx", "--head", "2"], &[])["args"]["head"], 2);
+    assert_eq!(
+        parse(&["a.docx"], &["compare"])["exit_code"],
+        2,
+        "read not supported"
+    );
+    assert_eq!(parse(&["compare", "a.docx"], &[])["exit_code"], 2);
+    assert_eq!(
+        parse(&["a.docx", "b.docx", "--head", "2"], &[])["args"]["view"]["head"],
+        2
+    );
+    assert_eq!(
+        parse(&["a.docx", "b.docx", "-o", "x.docx", "--head", "2"], &[])["exit_code"],
+        2
+    );
 }
 
 #[test]

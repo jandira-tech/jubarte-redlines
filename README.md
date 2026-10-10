@@ -398,6 +398,11 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 jubarte ORIGINAL MODIFIED [OPTIONS]
 ```
 
+Without `-o`, `jubarte A B` prints the redline as the agent view (the
+`read` options apply) and writes nothing; `-o FILE` writes it, and
+`jubarte compare A B` writes `<A>_v_<B>.docx` as before. `jubarte FILE`
+alone is `jubarte read FILE`.
+
 Common options:
 
 | Option | Purpose |

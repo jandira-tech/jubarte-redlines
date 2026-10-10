@@ -254,10 +254,22 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.equal(patch.code, 0, patch.err);
   assert.match(patch.out, /\[-30-\]\{\+45\+\}/);
   assert.equal(run("diff", a, b, "--format", "critic").out, "Due in {~~30~>45~~} days.\n");
-  const compared = run(a, b, "--quiet");
+  // The shorthand prints the redline's agent view and writes nothing; -o writes it.
+  const word = path.join(tmp, "short-a_v_short-b.docx");
+  const shown = run(a, b);
+  assert.equal(shown.code, 0, shown.err);
+  assert.ok(shown.out.startsWith(`---\nsource: ${word} (not written; -o keeps it)\n`), shown.out);
+  assert.ok(shown.out.includes("{~~30~>45~~}"), shown.out);
+  assert.ok(!fs.existsSync(word));
+  const compared = run(a, b, "-o", word, "--quiet");
   assert.equal(compared.code, 0, compared.err);
   assert.equal(compared.out, "");
-  assert.equal(fs.readFileSync(path.join(tmp, "short-a_v_short-b.docx")).subarray(0, 2).toString(), "PK");
+  assert.equal(fs.readFileSync(word).subarray(0, 2).toString(), "PK");
+  // One file is the agent view (read).
+  const one = run(untracked, "--no-page-markers");
+  assert.equal(one.code, 0, one.err);
+  assert.equal(one.out, run("read", untracked, "--no-page-markers").out);
+  assert.ok(one.out.startsWith("---\nsource: no-tracked-changes.docx\n"), one.out);
   const converted = run("convert", a, "--to", "docx");
   assert.equal(converted.code, 0, converted.err);
   assert.equal(fs.readFileSync(path.join(tmp, "short-a.docx")).subarray(0, 2).toString(), "PK");

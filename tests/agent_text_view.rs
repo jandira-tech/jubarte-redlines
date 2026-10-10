@@ -2459,3 +2459,62 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         "{marks}"
     );
 }
+
+#[test]
+fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    assert_eq!(
+        ok(&["received.docx"], dir.path()),
+        golden("received.tracked.md")
+    );
+    assert_eq!(
+        ok(
+            &["received.docx", "--head", "2", "--no-page-markers"],
+            dir.path()
+        ),
+        ok(
+            &["read", "received.docx", "--head", "2", "--no-page-markers"],
+            dir.path()
+        )
+    );
+
+    std::fs::write(dir.path().join("old.docx"), docx(BASE)).unwrap();
+    std::fs::write(
+        dir.path().join("new.docx"),
+        docx(&BASE.replace("thirty", "forty-five")),
+    )
+    .unwrap();
+    let out = ok(&["old.docx", "new.docx"], dir.path());
+    assert!(
+        out.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"),
+        "{out}"
+    );
+    captures(
+        &out,
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @R<<\} days of receipt\.\n",
+    );
+    assert!(out.contains("R: Redline"), "{out}");
+    assert!(
+        !dir.path().join("old_v_new.docx").exists(),
+        "nothing written without -o"
+    );
+    let written = ok(&["old.docx", "new.docx", "-o", "r.docx"], dir.path());
+    assert!(written.starts_with("wrote r.docx"), "{written}");
+    assert!(dir.path().join("r.docx").is_file());
+    let changed = ok(&["old.docx", "new.docx", "--changed"], dir.path());
+    assert!(
+        changed.contains("\nrange: changed (p1) of p0-p2\n"),
+        "{changed}"
+    );
+    let bad = jubarte(
+        &["old.docx", "new.docx", "-o", "x.docx", "--head", "1"],
+        dir.path(),
+    );
+    assert!(
+        !bad.status.success(),
+        "read options go with the printed view, not with -o"
+    );
+    let bad = jubarte(&["compare", "old.docx"], dir.path());
+    assert!(!bad.status.success(), "compare still needs two documents");
+}

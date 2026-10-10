@@ -294,6 +294,48 @@ anchor is tried first; when it does not occur, the anchor without its marks
 text)`. `read --changed` keeps the blocks with a change or a comment;
 `--by AUTHOR` (a handle or a full name) keeps one author's.
 
+### Commands
+
+```text
+jubarte read FILE                      the view (alias: text); jubarte FILE is the same
+  -p p5,p12-p20,t0   --head N   --tail N   --changed [--by AC]
+  --track-changes accept|reject   --comments none   --dates   --no-page-markers
+jubarte A B                            accept both sides' changes, compare, print the redline's view
+                                       (read options apply; -o FILE writes the file instead)
+jubarte compare A B                    as before: writes <A>_v_<B>.docx
+
+jubarte edit FILE -p WHERE --anchor FIND --content WITH        replace FIND (an insertion when WITH keeps FIND at its start or end)
+jubarte edit FILE -p WHERE --content TEXT                      rewrite the paragraph
+jubarte edit FILE -p WHERE [--anchor FIND] --delete            delete FIND, or the paragraph
+jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or set the paragraph style
+jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment
+jubarte add  FILE -p WHERE --content TEXT [--before]           a new paragraph after (or before) WHERE
+jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND (--comment: on the whole paragraph)
+jubarte add  FILE -p c5 --content TEXT                         a reply
+```
+
+`WHERE` is an id the view prints (`p12`, `header1`, `footer2.p1`,
+`t0.r1.c2`, `c5`); `edit` plans take the same ids. One command carries
+several operations: every `-p` starts one, and the flags after it belong to
+it. `--plan PLAN.json` stays for batches and the other operation kinds, and
+excludes the operation flags.
+
+The options apply to every operation of the command: `--author NAME`
+(default `Modified User`), `--datetime ISO8601` (default now, UTC),
+`--suggesting-mode` (the default: tracked changes; `redline.docx`,
+`clean.docx`, `patch.diff` and `report.jsonl` are written) or
+`--editing-mode` (the edits land directly: `clean.docx` and `report.jsonl`
+only), `--existing-revisions auto|keep|accept|reject|refuse` (default `auto`:
+`keep` when the file already has tracked changes), `--out-dir DIR` (default
+`<stem>.edit` beside the file; refused when it exists unless `--force`).
+`--style` takes `bold`, `italic`, `underline`, `strike`, `caps`,
+`highlight=yellow`, `font=Calibri`, `size=11` and `color=FF0000`; any other
+value is a paragraph style (`Heading2`). After applying, the command prints
+its notes, then the changed blocks: `read redline.docx --changed --by
+<author>`, or every changed block when the author has none (as after
+resolving another author's comment). Anchors match literally first, then
+without their Markdown marks, with a note.
+
 ### Limits of the agent view
 
 - Tracked paragraph marks inside comment bodies are not shown.

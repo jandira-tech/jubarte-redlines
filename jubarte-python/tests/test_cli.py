@@ -42,6 +42,9 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
         assert out.startswith(f"---\nsource: {letter.name}\n"), out
         assert "<!-- p0" in out and "<!-- p1 -->\nThe individual" in out, out
         assert "<!-- page " not in out, out
+    # `FILE` alone is `read FILE`.
+    assert main([str(letter), "--no-page-markers"]) == 0
+    assert capsys.readouterr().out == out
     assert main(["read", str(letter), "-p", "p1"]) == 0
     out = capsys.readouterr().out
     assert "<!-- p1 -->\nThe individual" in out and "<!-- p0" not in out, out

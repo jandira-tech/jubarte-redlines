@@ -14,11 +14,12 @@ touch `word/document.xml`.
 
 | Task | Command |
 |---|---|
-| Read | `jubarte read file.docx` (header + Markdown with `<!-- pN -->` ids; `pN` is `body:p:N`; alias `text`) or `jubarte inspect file.docx --json` |
-| Edit (tracked changes + comments) | `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
+| Read | `jubarte file.docx` (or `jubarte read file.docx`: header + Markdown with `<!-- pN -->` ids; ids are `p12`, `header1`, `footer2.p1`, `t0.r1.c2`, `c5`) or `jubarte inspect file.docx --json` |
+| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; prints the changed paragraphs), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
+| Add a paragraph, comment or reply | `jubarte add file.docx -p p12 --content "New clause."` (`--before`), `-p p5 --anchor "fee" --content "Cap?"` (a comment), `-p c5 --content "Agreed."` (a reply) |
 | Look at pages | `jubarte convert file.docx --png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx --png --report pages.json` |
-| Compare two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
+| Compare two versions | `jubarte a.docx b.docx` prints the redline as the agent view; `-o redline.docx --author "Name"` writes it (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
 | Clean copy of a redline | `jubarte accept redline.docx -o clean.docx` (or `reject`) |
 | Will Word open it, is every edit tracked | `jubarte validate redline.docx --original file.docx --author "Name"` (`--repair fixed.docx` fixes what it can) |
 | What can this build do | `jubarte capabilities --json` |

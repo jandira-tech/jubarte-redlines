@@ -17,6 +17,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte FILE` prints the agent view (`read FILE`); `jubarte A B` prints
+  the agent view of their redline, with the `read` options (`-o FILE` writes
+  it instead; `compare A B` still writes `<A>_v_<B>.docx`). Same on the
+  Python and npm CLIs.
+
 - `jubarte edit FILE -p WHERE --anchor TEXT --content TEXT` (also
   `--delete`, `--resolve`, `--style`) and the new `jubarte add` (a paragraph,
   a comment, or a reply to `c5`) take their operations from flags: each `-p`
@@ -76,6 +81,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   an OpenSSF criterion evidence ledger.
 
 ### Changed
+
+- `jubarte A B` no longer writes a file unless `-o` is given: it prints the
+  redline's agent view. `jubarte compare A B` is unchanged.
+- `edit` prints the redline's changed blocks as the agent view instead of
+  the patch (`patch.diff` is still written); `--plan` and `--out-dir` are
+  optional.
 
 - `jubarte read` (alias `text`) prints the agent view: a YAML header
   (authors with handles and timestamps, owner, page setup, styles,

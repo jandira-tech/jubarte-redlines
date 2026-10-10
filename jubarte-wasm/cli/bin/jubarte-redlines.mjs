@@ -120,8 +120,13 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const COMMANDS = {
   compare: {
     run(name, [original, modified], o) {
-      const output = o.output ?? path.join(path.dirname(original), `${stem(original)}_v_${stem(modified)}.docx`);
+      const fallback = path.join(path.dirname(original), `${stem(original)}_v_${stem(modified)}.docx`);
       const [a, b] = [read(original, o.old_format), read(modified, o.new_format)];
+      // The shorthand `A B` without -o prints the redline's agent view.
+      if (o.output == null && o.view != null) {
+        return void printView(wasm.redlineDocuments(a, b, o.author, o.date), o.view, `${fallback} (not written; -o keeps it)`);
+      }
+      const output = o.output ?? fallback;
       if (o.output_format === "md") markdownNeedsBoth([[original, kindOf(original, a, o.old_format)], [modified, kindOf(modified, b, o.new_format)]]);
       ensureWritable(output, o.force);
       const redline = o.output_format === "md"
@@ -204,14 +209,7 @@ const COMMANDS = {
   reject: resolution(false),
   read: {
     run(_, [file], o) {
-      const view = JSON.parse(wasm.readView(read(file), JSON.stringify({
-        trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
-        pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined,
-        head: o.head ?? undefined, tail: o.tail ?? undefined,
-        changed: o.changed || undefined, by: o.by ?? undefined, source: path.basename(file),
-      })));
-      for (const warning of view.warnings) console.error(`warning: ${warning}`);
-      process.stdout.write(view.markdown);
+      printView(read(file), o, path.basename(file));
     },
   },
   inspect: {
@@ -348,6 +346,18 @@ function runEdit(verb, file, o) {
   }
   const shown = path.join(outDir, editing ? "clean.docx" : "redline.docx");
   process.stdout.write(wasm.changedView(result.redline, report.author, editing, shown));
+}
+
+/** The agent view of `docx` with the read options `o`; `source` is its header name. */
+function printView(docx, o, source) {
+  const view = JSON.parse(wasm.readView(docx, JSON.stringify({
+    trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
+    pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined,
+    head: o.head ?? undefined, tail: o.tail ?? undefined,
+    changed: o.changed || undefined, by: o.by ?? undefined, source,
+  })));
+  for (const warning of view.warnings) console.error(`warning: ${warning}`);
+  process.stdout.write(view.markdown);
 }
 
 function resolution(accept) {
