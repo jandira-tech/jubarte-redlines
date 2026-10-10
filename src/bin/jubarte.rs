@@ -1052,6 +1052,11 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         flags.options,
         &source,
     )?;
+    if flags.options.editing_mode
+        && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan)
+    {
+        return Err((EXIT_USAGE, message.to_string()));
+    }
     let out_dir = flags
         .options
         .out_dir

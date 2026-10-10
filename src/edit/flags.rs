@@ -197,6 +197,9 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     };
     let comment_id = comment_number(at);
     let kind = match (verb, comment_id, &op.anchor, content) {
+        (Verb::Add, _, _, _) if op.delete || op.resolve => {
+            return bad("add takes no --delete or --resolve");
+        }
         // Comments.
         (_, Some(_), Some(_), _) => return bad("a comment takes no --anchor"),
         (_, Some(_), _, _) if !op.styles.is_empty() => return bad("a comment takes no --style"),
@@ -220,8 +223,10 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
             return bad("a comment takes --content, --delete or --resolve");
         }
         // Add.
-        (Verb::Add, None, _, _) if op.delete || op.resolve => {
-            return bad("add takes no --delete or --resolve");
+        (Verb::Add, None, _, Some(_))
+            if (op.anchor.is_some() || op.comment) && !op.styles.is_empty() =>
+        {
+            return bad("a comment takes no --style");
         }
         (Verb::Add, None, Some(anchor), Some(text)) => K::Comment {
             paragraph: paragraph(),
@@ -239,6 +244,17 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
         },
         (Verb::Add, None, None, Some(text)) => {
             let format = run_format.unwrap_or_default();
+            // A new paragraph's runs carry these four; the rest would vanish.
+            if format.strike.is_some()
+                || format.caps.is_some()
+                || format.font.is_some()
+                || format.size_pt.is_some()
+                || format.color.is_some()
+            {
+                return bad(
+                    "a new paragraph takes --style bold, italic, underline, highlight=COLOR or a paragraph style",
+                );
+            }
             K::InsertParagraph {
                 paragraph: paragraph(),
                 position: if op.before { Side::Before } else { Side::After },
@@ -380,6 +396,14 @@ fn inline_edit(
     })
 }
 
+/// Why `--editing-mode` cannot apply `plan`: under `keep` the document's
+/// tracked changes stay, so its "clean" copy would still carry revisions.
+pub fn editing_mode_conflict(plan: &EditPlan) -> Option<&'static str> {
+    (plan.existing_revisions == ExistingRevisions::Keep).then_some(
+        "--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject",
+    )
+}
+
 /// [`plan_from_flags`] over JSON, for the Python and npm CLIs: `verb` is
 /// `edit` or `add`, `operations` the `operations` array their parsed
 /// command carries, `existing` the `--existing-revisions` value (`auto`,
@@ -430,6 +454,34 @@ mod tests {
 
     fn kind(verb: Verb, op: &FlagOp) -> Result<OperationKind, String> {
         flag_operation(verb, op).map(|(k, _)| k)
+    }
+
+    #[test]
+    fn add_refuses_what_it_cannot_write() {
+        let mut new = op("p1");
+        new.content = Some("Pay on time.".into());
+        for style in ["strike", "caps", "font=Calibri", "size=11", "color=FF0000"] {
+            new.styles = vec![style.into()];
+            let e = kind(Verb::Add, &new).unwrap_err();
+            assert!(e.contains("a new paragraph takes --style"), "{style}: {e}");
+        }
+        new.styles = vec!["bold".into(), "highlight=yellow".into(), "Heading2".into()];
+        assert!(kind(Verb::Add, &new).is_ok());
+        let mut comment = op("p1");
+        comment.anchor = Some("Pay".into());
+        comment.content = Some("Why?".into());
+        comment.styles = vec!["bold".into()];
+        assert!(
+            kind(Verb::Add, &comment)
+                .unwrap_err()
+                .contains("a comment takes no --style")
+        );
+        let mut delete = op("c0");
+        delete.delete = true;
+        assert_eq!(
+            kind(Verb::Add, &delete).unwrap_err(),
+            "-p c0: add takes no --delete or --resolve"
+        );
     }
 
     #[test]

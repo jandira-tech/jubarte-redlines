@@ -2518,3 +2518,142 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     let bad = jubarte(&["compare", "old.docx"], dir.path());
     assert!(!bad.status.success(), "compare still needs two documents");
 }
+
+#[test]
+fn editing_mode_refuses_to_keep_other_tracked_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    ok(
+        &[
+            "edit",
+            "base.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "thirty",
+            "--content",
+            "forty-five",
+            "--out-dir",
+            "one",
+        ],
+        dir.path(),
+    );
+    // The redline holds tracked changes: `auto` would keep them, and a
+    // "clean" copy that still carries revisions is not what editing mode
+    // promises.
+    let kept = jubarte(
+        &[
+            "edit",
+            "one/redline.docx",
+            "-p",
+            "p2",
+            "--anchor",
+            "Late",
+            "--content",
+            "Overdue",
+            "--editing-mode",
+            "--out-dir",
+            "two",
+        ],
+        dir.path(),
+    );
+    assert_eq!(
+        kept.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&kept.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&kept.stderr).contains("--existing-revisions accept or reject")
+    );
+    assert!(!dir.path().join("two").exists());
+    // Accepting them first gives a clean copy with no revision left.
+    ok(
+        &[
+            "edit",
+            "one/redline.docx",
+            "-p",
+            "p2",
+            "--anchor",
+            "Late",
+            "--content",
+            "Overdue",
+            "--editing-mode",
+            "--existing-revisions",
+            "accept",
+            "--out-dir",
+            "three",
+        ],
+        dir.path(),
+    );
+    let xml = common::docx::part_string(
+        &std::fs::read(dir.path().join("three/clean.docx")).unwrap(),
+        "word/document.xml",
+    )
+    .unwrap();
+    assert!(
+        !xml.contains("<w:ins ") && !xml.contains("<w:del "),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("forty-five") && xml.contains("Overdue"),
+        "{xml}"
+    );
+}
+
+/// A backslash in a table cell is escaped once, and a pipe stays a pipe.
+#[test]
+fn a_table_cell_escapes_a_backslash_once() {
+    let bytes = docx(
+        r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>a\b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>x|y</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(
+        out.contains(r"| a\\b |") || out.contains(r"|a\\b|"),
+        "{out}"
+    );
+    assert!(!out.contains(r"a\\\\b"), "{out}");
+    assert!(out.contains(r"x\|y"), "{out}");
+}
+
+/// A line of `=` after a line break would underline the line before it.
+#[test]
+fn a_setext_underline_after_a_hard_break_is_escaped() {
+    // `==` pairs are escaped as marks already; a lone `=` needs the block rule.
+    let bytes = docx(r#"<w:p><w:r><w:t>Title</w:t><w:br/><w:t>=</w:t></w:r></w:p>"#);
+    let out = body(&agent(&bytes)).to_string();
+    assert!(out.contains("Title\\\n\\=\n"), "{out}");
+}
+
+/// An anchor copied across the view's hard break (`\` then a newline)
+/// matches the paragraph's line break; the edit is then refused for crossing
+/// the break (the engine edits within one line), not for a missing anchor.
+#[test]
+fn cli_edit_matches_an_anchor_copied_across_a_hard_break() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("a.docx"),
+        docx(r#"<w:p><w:r><w:t>Intro</w:t><w:br/><w:t># Not a heading</w:t></w:r></w:p>"#),
+    )
+    .unwrap();
+    let refused = jubarte(
+        &[
+            "edit",
+            "a.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "Intro\\\n\\# Not",
+            "--delete",
+            "--out-dir",
+            "e",
+        ],
+        dir.path(),
+    );
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    assert_eq!(refused.status.code(), Some(3), "{stdout}");
+    assert!(
+        stdout.contains(r#""code":"UNSUPPORTED_STRUCTURE""#) && stdout.contains(r#""matches":1"#),
+        "found, then refused for the break: {stdout}"
+    );
+}

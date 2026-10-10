@@ -293,6 +293,9 @@ function runEdit(verb, file, o) {
   const docx = read(file);
   const { plan, notes } = editPlan(verb, docx, o);
   const editing = Boolean(o.editing_mode);
+  if (editing && JSON.parse(plan).existing_revisions === "keep") {
+    throw new UsageError("--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject");
+  }
   const outDir = o.out_dir ?? path.join(path.dirname(file), `${stem(file)}.edit`);
   if (!o.dry_run) {
     if (fs.existsSync(outDir) && !o.force) {

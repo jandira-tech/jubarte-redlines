@@ -207,6 +207,12 @@ def cmd_read(args: argparse.Namespace) -> int:
     return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
 
 
+_EDITING_KEEPS = (
+    "--editing-mode needs a document without tracked changes; it has some, "
+    "so pass --existing-revisions accept or reject"
+)
+
+
 def _default_out_dir(file: Path) -> Path:
     """``<dir>/<stem>.edit`` next to the source, as the binary."""
     return file.with_name(f"{file.stem}.edit")
@@ -250,6 +256,9 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
     doc = _read(args.file)
     plan_text, notes = _edit_plan(args, verb, doc.to_bytes())
     editing = bool(args.editing_mode)
+    if editing and json.loads(plan_text).get("existing_revisions") == "keep":
+        print(f"error: {_EDITING_KEEPS}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
     out_dir: Path = args.out_dir if args.out_dir is not None else _default_out_dir(args.file)
