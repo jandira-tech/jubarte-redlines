@@ -532,7 +532,7 @@ pub(crate) fn has_rendered_page_break(p: &Element) -> bool {
 }
 
 /// The paragraphs under `e` in document order, text boxes excluded.
-fn paragraphs(e: &Element) -> Vec<&Element> {
+pub(crate) fn paragraphs(e: &Element) -> Vec<&Element> {
     fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
         for c in e.elements() {
             if c.is("p") {

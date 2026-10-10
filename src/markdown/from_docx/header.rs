@@ -728,28 +728,11 @@ fn part_two(out: &mut String, f: &Facts) {
     }
 }
 
-/// A header/footer part's paragraphs in document order, including those
-/// Word wraps in block-level content controls (its page-number gallery puts
-/// the footer's `PAGE` paragraph inside a `w:sdt`) or custom XML. Tables and
-/// text boxes are not entered.
+/// A header/footer part's paragraphs in document order, numbered as `edit`
+/// numbers a story (`inspect::story_paragraph_nodes`): every `w:p` outside
+/// text boxes, table cells and content controls included.
 pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
-    fn walk<'a>(parent: &'a Element, out: &mut Vec<&'a Element>) {
-        for child in parent.elements() {
-            match child.local() {
-                "p" => out.push(child),
-                "sdt" => {
-                    if let Some(content) = child.child("sdtContent") {
-                        walk(content, out);
-                    }
-                }
-                "customXml" => walk(child, out),
-                _ => {}
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(root, &mut out);
-    out
+    super::agent::paragraphs(root)
 }
 
 /// A header/footer paragraph's text with fields as `{PAGE}`: field codes
@@ -852,12 +835,15 @@ mod tests {
     }
 
     #[test]
-    fn tables_in_a_footer_are_not_entered() {
+    fn paragraphs_number_as_edit_does_tables_in_and_text_boxes_out() {
+        // edit numbers a story's every w:p outside text boxes, table cells
+        // included, so `footer1.p1` here is edit's `footer1:p:1`.
         let root = ftr(
-            "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>body</w:t></w:r></w:p>",
+            r#"<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p><w:r><w:pict><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></w:pict></w:r><w:r><w:t>body</w:t></w:r></w:p>"#,
         );
         let paragraphs = story_paragraphs(&root);
-        assert_eq!(paragraphs.len(), 1);
-        assert_eq!(story_text(paragraphs[0]), "body");
+        assert_eq!(paragraphs.len(), 2);
+        assert_eq!(story_text(paragraphs[0]), "");
+        assert_eq!(story_text(paragraphs[1]), "body");
     }
 }
