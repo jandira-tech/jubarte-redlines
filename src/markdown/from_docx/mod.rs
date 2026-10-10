@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+mod agent;
 mod critic;
 mod media;
 mod ooxml;
@@ -39,6 +40,20 @@ pub(crate) struct Options {
     /// Collect raster pictures and name them under this directory. `None`
     /// writes pictures as their alt text.
     pub(crate) media_dir: Option<String>,
+    /// The agent view (see `agent.rs` and `header.rs`).
+    pub(crate) ids: bool,
+    /// With `ids`: comments inline, or hidden and listed on id lines.
+    pub(crate) comments: bool,
+    /// With `ids`: the `source:` name in the header.
+    pub(crate) source: Option<String>,
+    /// With `ids`: painted page texts for the page markers.
+    pub(crate) pages: Option<Vec<String>>,
+    /// With `ids` and no `pages`: cached-break page lines, or none.
+    pub(crate) page_markers: bool,
+    /// With `ids`: inline timestamps on notes.
+    pub(crate) dates: bool,
+    /// With `ids`: which blocks to print.
+    pub(crate) select: Option<super::Select>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +80,7 @@ pub(crate) struct Converted {
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
     let mut package = Package::open(bytes, "DOCX")?;
     let main = package.main_part("word/document.xml")?;
-    let document = package
+    let mut document = package
         .xml(&main)?
         .ok_or_else(|| ooxml::invalid("DOCX has no word/document.xml part"))?;
     let accept = match options.revisions {
@@ -73,24 +88,68 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         Revisions::Accept => Some(true),
         Revisions::Reject => Some(false),
     };
-    let document = match accept {
-        Some(accept) => revise::resolve(&document, accept),
-        None => document,
-    };
     let rels = package.rels(&main)?;
-
     let part = |kind: &str, fallback: &str| {
         rels.first_of_type(kind)
             .map(|r| r.target.clone())
             .unwrap_or_else(|| fallback.to_string())
     };
+    let comments_root = package
+        .xml(&part("/comments", "word/comments.xml"))
+        .ok()
+        .flatten();
+    let extended = if options.ids {
+        package
+            .xml(&part("/commentsExtended", "word/commentsExtended.xml"))
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let threads = agent::threads(comments_root.as_ref(), extended.as_ref());
+    let handles = if options.ids {
+        agent::handles(&document, comments_root.as_ref())
+    } else {
+        agent::Handles::default()
+    };
+    // Agent view: paragraphs and tables numbered before accept/reject
+    // resolution, so indices match `inspect` and `edit`.
+    if options.ids {
+        if let Some(body) = document.children.iter_mut().find_map(|n| match n {
+            ooxml::Node::Element(e) if e.is("body") => Some(e),
+            _ => None,
+        }) {
+            agent::stamp(body, &handles);
+        }
+    }
+    // Cached-break page lines: only in the agent view, without layout pages,
+    // and only when page lines are wanted at all.
+    let cached_pages =
+        (options.ids && options.pages.is_none() && options.page_markers).then(|| {
+            let body = document.child("body").unwrap_or(&document);
+            let (rendered, hard) = agent::page_counts(body);
+            1 + if rendered > 0 { rendered } else { hard }
+        });
+    let document = match accept {
+        Some(accept) => revise::resolve(&document, accept),
+        None => document,
+    };
+
     // Auxiliary parts are best-effort: a broken styles part should not lose the text.
-    let styles = package
+    let styles_root = package
         .xml(&part("/styles", "word/styles.xml"))
         .ok()
-        .flatten()
-        .map(|e| Styles::parse(&e))
-        .unwrap_or_default();
+        .flatten();
+    let default_style = styles_root.as_ref().and_then(|root| {
+        root.children_named("style")
+            .find(|s| {
+                s.attr("type") == Some("paragraph")
+                    && s.attr("default").is_some_and(|d| d == "1" || d == "true")
+            })
+            .and_then(|s| s.attr("styleId"))
+            .map(str::to_string)
+    });
+    let styles = styles_root.as_ref().map(Styles::parse).unwrap_or_default();
     let numbering = package
         .xml(&part("/numbering", "word/numbering.xml"))
         .ok()
@@ -114,12 +173,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             }
         }
     }
-    // Accepting or rejecting the changes leaves comments out as well.
-    let comments = package
-        .xml(&part("/comments", "word/comments.xml"))
-        .ok()
-        .flatten()
-        .filter(|_| accept.is_none());
+    // Accepting or rejecting the changes leaves comments out as well, except
+    // in the agent view, which keeps them.
+    let comments = comments_root.filter(|_| accept.is_none() || options.ids);
     let media = Media::load(
         &mut package,
         &rels,
@@ -144,6 +200,17 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         pending_notes: Vec::new(),
         in_comment: false,
         plain: false,
+        agent: options.ids,
+        comments_inline: options.comments,
+        resolved: accept.is_some(),
+        dates: options.dates,
+        handles,
+        default_style,
+        pending_empty: Vec::new(),
+        cached_pages,
+        page: 0,
+        para_comments: Vec::new(),
+        threads,
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -169,6 +236,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
     writer.blocks(body, &mut blocks, &mut list);
+    writer.flush_empty(&mut blocks);
     // Notes of ranges that ended after the last paragraph.
     let trailing = writer.take_notes();
     blocks.push(&trailing, false);
@@ -207,6 +275,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
     }
     let mut markdown = blocks.finish();
+    if let Some(pages) = options.pages.as_ref().filter(|_| options.ids) {
+        let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
+        markdown = crate::markdown::paginate(&markdown, &pages);
+    }
     if !defs.is_empty() {
         markdown.push_str("\n\n");
         markdown.push_str(&defs.join("\n"));
@@ -601,6 +673,29 @@ struct Writer<'a> {
     /// No tracked change or comment anywhere: text is written as is, the way
     /// it was before tracked changes were rendered.
     plain: bool,
+    /// Agent view (`Options::ids`).
+    agent: bool,
+    /// Agent view: comments inline, or hidden and listed on id lines.
+    comments_inline: bool,
+    /// Agent view: accept-all or reject-all (revisions already resolved).
+    resolved: bool,
+    /// Agent view: inline timestamps on notes (`Options::dates`).
+    dates: bool,
+    handles: agent::Handles,
+    /// Agent view: the default paragraph style id (`w:default="1"`).
+    default_style: Option<String>,
+    /// Agent view: empty paragraphs not yet written as `<!-- pN empty -->`.
+    pending_empty: Vec<usize>,
+    /// Agent view, cached-break fallback: `Some(total)` makes the writer
+    /// emit `<!-- page N of total -->` itself; `None` leaves markers to
+    /// `paginate`.
+    cached_pages: Option<usize>,
+    /// Agent view: pages announced so far by the writer.
+    page: usize,
+    /// Agent view: comment ids met since the last id line.
+    para_comments: Vec<String>,
+    /// Agent view: comment threads (`commentsExtended.xml`).
+    threads: agent::Threads,
 }
 
 impl Writer<'_> {
@@ -622,6 +717,15 @@ impl Writer<'_> {
                     // first cell; it gets its own block before the table.
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
+                    if self.agent {
+                        if let Some(line) = agent::table_line(child, self.resolved, &self.handles) {
+                            self.flush_empty(blocks);
+                            let mut breaks = Vec::new();
+                            child.find_all("lastRenderedPageBreak", &mut breaks);
+                            self.page_lines(blocks, !breaks.is_empty());
+                            blocks.push_line(&line);
+                        }
+                    }
                     let table = self.table(child);
                     blocks.push(&table, false);
                 }
@@ -631,7 +735,7 @@ impl Writer<'_> {
                     }
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(change_of(child), |w| w.blocks(child, blocks, list));
+                    self.revised(self.change_of(child), |w| w.blocks(child, blocks, list));
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "customXml" | "sdtContent" | "txbxContent" => self.blocks(child, blocks, list),
@@ -651,6 +755,19 @@ impl Writer<'_> {
     /// that spans paragraphs gets one highlight per paragraph, because
     /// CriticMarkup cannot cross a block.
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
+        if self.agent && !self.in_comment {
+            if let Some(id) = range
+                .attr("id")
+                .filter(|id| self.comments.contains_key(*id))
+            {
+                if range.is("commentRangeStart") && !self.para_comments.iter().any(|c| c == id) {
+                    self.para_comments.push(id.to_string());
+                }
+                if !self.comments_inline {
+                    return;
+                }
+            }
+        }
         let Some(id) = range
             .attr("id")
             .filter(|id| !self.in_comment && self.comments.contains_key(*id))
@@ -706,16 +823,66 @@ impl Writer<'_> {
 
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
+        // Computed once, and only for a written paragraph, as the plain
+        // conversion always did, so Word's list counters advance alike.
+        let list_marker: Option<(String, usize)> = if written && heading.is_none() {
+            num.clone()
+                .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)).map(|m| (m, ilvl)))
+        } else {
+            None
+        };
+        let heading_marker: Option<String> = if self.agent && written && heading.is_some() {
+            num.clone()
+                .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)))
+        } else {
+            None
+        };
+        let index = if self.agent {
+            p.attr(agent::INDEX).and_then(|v| v.parse::<usize>().ok())
+        } else {
+            None
+        };
+        if let Some(index) = index {
+            let page_break = agent::has_page_break(p);
+            if !written && extra.is_empty() && !page_break && !agent::has_section_break(p) {
+                self.pending_empty.push(index);
+                self.para_comments.clear();
+                return;
+            }
+            self.flush_empty(blocks);
+            self.page_lines(blocks, agent::has_rendered_page_break(p));
+            let marker = heading_marker
+                .as_deref()
+                .or(list_marker.as_ref().map(|(m, _)| m.as_str()));
+            let comments = if self.comments_inline {
+                Vec::new()
+            } else {
+                std::mem::take(&mut self.para_comments)
+            };
+            self.para_comments.clear();
+            let facts = agent::LineFacts {
+                index,
+                style: style.as_deref(),
+                default_style: self.default_style.as_deref(),
+                heading,
+                marker,
+                page_break,
+                resolved: self.resolved,
+                comments: &comments,
+            };
+            blocks.push_line(&agent::id_line(p, &facts, &self.handles));
+        }
         if written {
             let inline = inline.into_inline();
             let edges = inline.edges();
             if let Some(level) = heading {
                 list.reset();
-                let text = inline.render(false).replace('\n', " ");
+                let mut text = inline.render(false).replace('\n', " ");
+                if let Some(label) = &heading_marker {
+                    text = format!("{label} {text}");
+                }
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
-            } else if let Some(marker) =
-                num.and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)).map(|m| (m, ilvl)))
-            {
+            } else if let Some(marker) = list_marker {
                 let (marker, ilvl) = marker;
                 let item = list.item(ilvl, &marker, &hard_breaks(&inline.render(true)));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
@@ -731,7 +898,34 @@ impl Writer<'_> {
             list.reset();
             blocks.push(&block, false);
         }
-        blocks.set_separator(self.paragraph_mark(p).filter(|_| written && !boxed));
+        blocks.set_separator(if self.agent {
+            None
+        } else {
+            self.paragraph_mark(p).filter(|_| written && !boxed)
+        });
+    }
+
+    /// Agent view: writes the pending `<!-- pN empty -->` lines.
+    fn flush_empty(&mut self, blocks: &mut Blocks) {
+        for line in agent::empty_lines(&std::mem::take(&mut self.pending_empty)) {
+            blocks.push_line(&line);
+        }
+    }
+
+    /// Agent view, cached-break fallback: the page markers due before a
+    /// block, page 1 included. With layout pages, `paginate` writes them.
+    fn page_lines(&mut self, blocks: &mut Blocks, rendered_break: bool) {
+        let Some(total) = self.cached_pages else {
+            return;
+        };
+        if self.page == 0 {
+            self.page = 1;
+            blocks.push_line(&agent::page_marker(1, total));
+        }
+        if rendered_break && self.page < total {
+            self.page += 1;
+            blocks.push_line(&agent::page_marker(self.page, total));
+        }
     }
 
     /// The Markdown marker for a numbered paragraph, advancing Word's counters.
@@ -778,6 +972,9 @@ impl Writer<'_> {
         };
         if self.flattening > 0 {
             inline.set_inline_end();
+        }
+        if self.agent {
+            inline.set_keep_spaces();
         }
         let mut extra = Vec::new();
         let mut fields = Vec::new();
@@ -834,7 +1031,7 @@ impl Writer<'_> {
                     self.inline(child, url.as_deref().or(link), base, fields, out, extra);
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    let (mark, by) = change_of(child);
+                    let (mark, by) = self.change_of(child);
                     out.open(mark, by.as_deref());
                     self.revised((mark, by), |w| {
                         w.inline(child, link, base, fields, out, extra);
@@ -984,7 +1181,18 @@ impl Writer<'_> {
                 }
             }
             "commentReference" if !hidden && !self.in_comment => {
-                if let Some(note) = child.attr("id").and_then(|id| self.note(id)) {
+                let Some(id) = child.attr("id") else {
+                    return;
+                };
+                if self.agent && self.comments.contains_key(id) {
+                    if !self.para_comments.iter().any(|c| c == id) {
+                        self.para_comments.push(id.to_string());
+                    }
+                    if !self.comments_inline {
+                        return;
+                    }
+                }
+                if let Some(note) = self.note(id) {
                     out.comment(&note);
                 }
             }
@@ -1035,7 +1243,10 @@ impl Writer<'_> {
         let mut rows = Vec::new();
         for tr in table_rows(table) {
             let mut row = Vec::new();
-            let row_marks = tr.child("trPr").map(revision_marks).unwrap_or_default();
+            let row_marks = tr
+                .child("trPr")
+                .map(|pr| self.revision_marks(pr))
+                .unwrap_or_default();
             let before = tr
                 .path(&["trPr", "gridBefore"])
                 .and_then(|g| g.attr("val"))
@@ -1077,7 +1288,8 @@ impl Writer<'_> {
         let depth = self.revisions.len();
         self.revisions.extend_from_slice(row_marks);
         if let Some(properties) = cell.child("tcPr") {
-            self.revisions.extend(revision_marks(properties));
+            let marks = self.revision_marks(properties);
+            self.revisions.extend(marks);
         }
         let mut parts = Vec::new();
         self.cell_parts(cell, &mut parts);
@@ -1100,7 +1312,10 @@ impl Writer<'_> {
                     // Nested tables are flattened to text, one row per line.
                     self.flattening += 1;
                     for tr in table_rows(child) {
-                        let row_marks = tr.child("trPr").map(revision_marks).unwrap_or_default();
+                        let row_marks = tr
+                            .child("trPr")
+                            .map(|pr| self.revision_marks(pr))
+                            .unwrap_or_default();
                         let cells: Vec<String> = row_cells(tr)
                             .map(|tc| self.cell_text(&row_marks, tc))
                             .filter(|t| !t.is_empty())
@@ -1110,7 +1325,7 @@ impl Writer<'_> {
                     self.flattening -= 1;
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
-                    self.revised(change_of(child), |w| w.cell_parts(child, parts));
+                    self.revised(self.change_of(child), |w| w.cell_parts(child, parts));
                 }
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, None),
                 "sdt" | "sdtContent" | "customXml" => self.cell_parts(child, parts),
@@ -1121,8 +1336,54 @@ impl Writer<'_> {
 
     /// The tracked change on a paragraph's mark, without its author inside a
     /// comment's own text.
+    /// Agent view: none; paragraph marks are printed on id and table lines.
     fn paragraph_mark(&self, p: &Element) -> Option<Change> {
+        if self.agent {
+            return None;
+        }
         paragraph_mark(p).map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
+    }
+
+    /// The agent tag of a revision element, with its timestamp when
+    /// `--dates` asks for one and the author has several.
+    fn agent_tag(&self, element: &Element) -> String {
+        let mut tagged = format!("{}{}", critic::TAG, agent::tag_of(element, &self.handles));
+        if self.dates && self.handles.needs_date(element.attr("author")) {
+            if let Some(date) = element.attr("date") {
+                tagged.push(' ');
+                tagged.push_str(date);
+            }
+        }
+        tagged
+    }
+
+    /// A tracked change's mark with its attribution: the agent tag, or the
+    /// `Author (date)` note of the plain conversion.
+    fn change_of(&self, element: &Element) -> Change {
+        let (mark, by) = change_of(element);
+        if self.agent {
+            (mark, Some(self.agent_tag(element)))
+        } else {
+            (mark, by)
+        }
+    }
+
+    /// [`revision_marks`] with agent tags when the agent view is on.
+    fn revision_marks(&self, properties: &Element) -> Vec<Change> {
+        if !self.agent {
+            return revision_marks(properties);
+        }
+        properties
+            .elements()
+            .filter_map(|p| {
+                let mark = match p.local() {
+                    "ins" | "moveTo" | "cellIns" => Mark::Insertion,
+                    "del" | "moveFrom" | "cellDel" => Mark::Deletion,
+                    _ => return None,
+                };
+                Some((mark, Some(self.agent_tag(p))))
+            })
+            .collect()
     }
 
     /// A comment's note, rendered the first time it is needed. Its text is
@@ -1148,7 +1409,22 @@ impl Writer<'_> {
         self.revisions = revisions;
         self.open_comments = open_comments;
         let text = critic::join_marked(parts, " ").replace('\n', " ");
-        let note = comment_note(comment.attr("author"), comment.attr("date"), &text);
+        let note = if self.agent {
+            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
+                .then(|| comment.attr("date"))
+                .flatten();
+            let mut inner = agent::comment_head(
+                id,
+                comment.attr("author"),
+                date,
+                &self.handles,
+                &self.threads,
+            );
+            inner.push_str(&text);
+            inner
+        } else {
+            comment_note(comment.attr("author"), comment.attr("date"), &text)
+        };
         self.notes.insert(id.to_string(), note.clone());
         Some(note)
     }
@@ -3074,7 +3350,7 @@ mod markdown_source_owner_boundary_tests {
                 &bytes,
                 &Options {
                     revisions,
-                    media_dir: None,
+                    ..Options::default()
                 },
             )
             .unwrap();

@@ -16,12 +16,12 @@ styles:
   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
   table: TableGrid, all borders 0.5pt
 headers:
-  first: {id: h1, text: DRAFT}     # page 1 only (different first page)
-  default: {id: h0, text: SIGNATURE PAGE, right}
+  first: {id: header2, text: DRAFT}  # page 1 only (different first page)
+  default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: f1, text: "{PAGE}"}
-  even: {id: f0, text: "{PAGE}", inactive}  # defined, but even/odd headers are off
+  default: {id: footer2, text: "{PAGE}"}
+  even: {id: footer1, text: "{PAGE}", inactive}  # defined, but even/odd headers are off
 ---
 
 <!-- page 1 of 2 -->
