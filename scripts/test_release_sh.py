@@ -1042,6 +1042,15 @@ class Checklist(unittest.TestCase):
         self.kw("1 MiB")
         self.kw("Python 3.8")
 
+    def test_stack_proof_names_the_runnable_script_and_all_required_inputs(self) -> None:
+        lines = self.out.stdout.splitlines()
+        stack_line = next(n for n, line in enumerate(lines) if "stack: the release binary" in line)
+        self.assertIn(
+            "python3 scripts/stack1m.py <release binary> <bench root> <out dir> "
+            "release_info/sample_*_<version>_*.csv",
+            lines[stack_line + 1],
+        )
+
     def test_item_5_unused_dependencies(self) -> None:
         self.kw("unused")
 

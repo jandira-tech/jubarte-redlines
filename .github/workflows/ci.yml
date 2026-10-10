@@ -239,6 +239,7 @@ jobs:
           uv run --with coverage coverage report --fail-under=90
       - run: python3 scripts/test_check_release_info.py
       - run: python3 scripts/test_library_readmes.py
+      - run: python3 scripts/test_stack1m.py
       - run: python3 scripts/test_check_release_artifacts.py
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: python3 scripts/test_bump_version.py
