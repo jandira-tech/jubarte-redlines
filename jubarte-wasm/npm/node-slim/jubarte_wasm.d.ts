@@ -271,6 +271,18 @@ export function parseCli(arguments_json: string, program?: string | null, suppor
 export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput;
 
 /**
+ * The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+ * then Markdown with `<!-- pN -->` id lines and every change and comment
+ * with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+ * reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+ * true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+ * `head`, `tail`, `source` (the name printed as `source:`).
+ *
+ * Mirrors `jubarte::markdown::read`.
+ */
+export function readView(docx: Uint8Array, options_json?: string | null): string;
+
+/**
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
  */
 export function redlineDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string): Uint8Array;
