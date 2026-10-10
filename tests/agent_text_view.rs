@@ -204,3 +204,59 @@ fn paginate_holds_comment_lines_at_a_block_start() {
         "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nAlpha text here\n\n<!-- p1 page-break -->\n\n<!-- page 2 of 2 -->\n\n<!-- t0 1x1, cells p2-p2 by row -->\n|Beta text here|\n|-|\n"
     );
 }
+
+#[test]
+fn id_line_shows_direct_alignment_indent_style_and_number() {
+    let numbering = Part {
+        name: "word/numbering.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+        xml: &format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+        ),
+    };
+    let body_xml = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Quote"/><w:jc w:val="both"/><w:ind w:left="720" w:hanging="360"/></w:pPr><w:r><w:t>Quoted.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>First item</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Numbered heading</w:t></w:r></w:p>"#,
+    );
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style></w:styles>"#
+        ),
+    };
+    let bytes = common::docx::docx_with(body_xml, &[numbering, styles]);
+    let out = body(&agent(&bytes)).to_string();
+    assert!(
+        out.contains("<!-- p0 Quote justify, hanging 0.25in, left 0.5in -->\nQuoted."),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p1 num \"1.\" -->\n1. First item"),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p2 num \"2.\" -->\n## 2. Numbered heading"),
+        "{out}"
+    );
+}
+
+#[test]
+fn id_line_names_tracked_paragraph_marks_and_formatting_changes() {
+    let body_xml = concat!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="4" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr><w:r><w:t>Split here</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>Now bold</w:t></w:r></w:p>"#,
+    );
+    let out = body(&agent(&docx(body_xml))).to_string();
+    assert!(
+        out.contains("<!-- p0 break-ins #4 @AC -->\nSplit here"),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p1 fmt #5 @AC -->\n**Now bold**"),
+        "{out}"
+    );
+}
