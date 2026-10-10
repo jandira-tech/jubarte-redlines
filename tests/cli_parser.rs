@@ -471,3 +471,52 @@ fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
         }
     }
 }
+
+/// pi review av4 F11: a revision timestamp is an xsd:dateTime (`w:date`);
+/// clap refuses anything else instead of writing it into the document.
+#[test]
+fn revision_timestamps_must_be_iso_8601() {
+    for bad in [
+        "yesterday",
+        "2026-10-01",
+        "2026-13-01T09:00:00Z",
+        "2026-10-01 09:00",
+    ] {
+        for args in [
+            vec!["compare", "a.docx", "b.docx", "-d", bad],
+            vec![
+                "edit",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--datetime",
+                bad,
+            ],
+        ] {
+            assert_eq!(parse(&args, &[])["exit_code"], 2, "{args:?}");
+        }
+    }
+    for good in [
+        "2026-10-01T09:00:00Z",
+        "2026-10-01T09:00:00",
+        "2026-10-01T09:00:00.125+02:00",
+    ] {
+        for args in [
+            vec!["compare", "a.docx", "b.docx", "-d", good],
+            vec![
+                "edit",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--datetime",
+                good,
+            ],
+        ] {
+            assert_eq!(parse(&args, &[])["exit_code"], 0, "{args:?}");
+        }
+    }
+}
