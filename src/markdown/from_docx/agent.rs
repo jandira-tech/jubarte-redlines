@@ -150,11 +150,30 @@ pub(crate) fn format_tags(tags: &[String]) -> String {
 /// (`7+8@AC`), then a deletion directly followed by an insertion (or the
 /// reverse) pairs as a substitution, greedily left to right. Bookmarks,
 /// proofing marks and comment markers do not break adjacency; a run does.
+/// Revisions inside links, content controls and simple fields count.
 pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
     // One slot per child: a revision, or `None` for anything else that
     // breaks adjacency.
+    // Links, content controls, smart tags, custom XML and simple fields are
+    // transparent: the renderer prints their runs inline, so their
+    // revisions count and neighbour the ones around them.
+    fn flatten<'a>(parent: &'a Element, out: &mut Vec<&'a Element>) {
+        for e in parent.elements() {
+            match e.local() {
+                "hyperlink" | "smartTag" | "customXml" | "fldSimple" => flatten(e, out),
+                "sdt" => {
+                    if let Some(content) = e.child("sdtContent") {
+                        flatten(content, out);
+                    }
+                }
+                _ => out.push(e),
+            }
+        }
+    }
+    let mut children = Vec::new();
+    flatten(p, &mut children);
     let mut slots: Vec<Option<RevTag>> = Vec::new();
-    for e in p.elements() {
+    for e in children {
         if matches!(
             e.local(),
             "bookmarkStart"

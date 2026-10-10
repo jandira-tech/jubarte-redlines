@@ -694,6 +694,22 @@ fn a_paragraph_joined_on_resolution_keeps_both_paragraphs_revisions() {
 }
 
 #[test]
+fn rev_counts_revisions_inside_links_content_controls_and_fields() {
+    let body_xml = format!(
+        r#"<w:p>{}<w:hyperlink w:anchor="x">{}</w:hyperlink><w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt><w:fldSimple w:instr=" REF x ">{}</w:fldSimple></w:p>"#,
+        ins(7, "Ann Counsel", "bold "),
+        ins(8, "Ann Counsel", "linked "),
+        ins(9, "Ann Counsel", "boxed "),
+        ins(10, "Ann Counsel", "field")
+    );
+    let out = agent_with(&docx(&body_xml), TrackChanges::Accept, true);
+    assert!(
+        body(&out).starts_with("<!-- page 1 of 1 -->\n\n<!-- p0 rev #7+8+9+10 @AC -->\n"),
+        "{out}"
+    );
+}
+
+#[test]
 fn accept_all_keeps_comments_in_the_agent_view() {
     let out = body(&agent_with(
         &commented_docx(THREADED),
@@ -1148,3 +1164,4 @@ fn received_docx_other_views_match_their_goldens() {
     assert_eq!(ok(&["read", "received.docx", "--track-changes", "accept"], dir.path()), golden("received.accept.md"));
     assert_eq!(ok(&["read", "received.docx", "--track-changes", "reject"], dir.path()), golden("received.reject.md"));
 }
+
