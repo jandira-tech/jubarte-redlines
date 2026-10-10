@@ -2657,3 +2657,105 @@ fn cli_edit_matches_an_anchor_copied_across_a_hard_break() {
         "found, then refused for the break: {stdout}"
     );
 }
+
+fn changed_by(docx: &[u8], by: Option<&str>, comments: bool) -> String {
+    agent_options(
+        docx,
+        &MarkdownOptions {
+            comments,
+            page_markers: false,
+            select: Some(Select::Changed {
+                by: by.map(str::to_string),
+            }),
+            ..agent_defaults()
+        },
+    )
+}
+
+/// pi review av3 F3: document text that reads like CriticMarkup is escaped in
+/// the view, so neither a reader nor `--changed` takes it for a mark.
+#[test]
+fn literal_critic_markup_in_the_text_is_escaped_and_not_a_change() {
+    let doc = docx(&format!(
+        "{}{}",
+        para("Use {++bold++} and {>>#0 @AC<<} marks"),
+        para("quiet")
+    ));
+    let view = agent(&doc);
+    assert!(
+        view.contains("Use {\\++bold++\\} and {\\>>#0 @AC<<\\} marks"),
+        "{view}"
+    );
+    let changed = changed_by(&doc, None, true);
+    assert!(
+        changed.contains("\nrange: changed (none) of p0-p1\n"),
+        "{changed}"
+    );
+}
+
+/// pi review av3 F2: with comments hidden, `--by` still finds the paragraph
+/// that holds only that author's comment.
+#[test]
+fn changed_by_keeps_a_hidden_comment_of_that_author() {
+    let doc = one_comment_docx(&format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        run("Fee."),
+        reference(9),
+        para("quiet")
+    ));
+    let hidden = changed_by(&doc, Some("AC"), false);
+    assert!(
+        hidden.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{hidden}"
+    );
+    let inline = changed_by(&doc, Some("AC"), true);
+    assert!(
+        inline.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{inline}"
+    );
+}
+
+/// A handle typed in the document's own text is not that author's mark.
+#[test]
+fn changed_by_ignores_a_handle_written_in_the_text() {
+    let doc = docx(&format!(
+        "<w:p>{}{}</w:p><w:p>{}</w:p>",
+        run("Ask @AC first."),
+        ins(1, "Bob Day", " Done."),
+        ins(2, "Ann Counsel", "Agreed.")
+    ));
+    let view = changed_by(&doc, Some("AC"), true);
+    assert!(
+        view.contains("\nrange: changed by @AC (p1) of p0-p1\n"),
+        "{view}"
+    );
+}
+
+/// pi review av3 F4/F7: `--by` is read as a handle first (the handle the
+/// view prints), then as a full name; an empty author is refused.
+#[test]
+fn changed_by_reads_a_handle_before_a_name_and_refuses_an_empty_author() {
+    // "AC" is Ann Counsel's handle; a second author literally named "AC"
+    // gets another handle and must not take `--by AC` from her.
+    let doc = docx(&format!(
+        "<w:p>{}</w:p><w:p>{}</w:p>",
+        ins(1, "Ann Counsel", "Hers."),
+        ins(2, "AC", "Theirs.")
+    ));
+    let by_handle = changed_by(&doc, Some("AC"), true);
+    assert!(
+        by_handle.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{by_handle}"
+    );
+    let by_name = changed_by(&doc, Some("Ann Counsel"), true);
+    assert!(
+        by_name.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
+        "{by_name}"
+    );
+    for empty in ["", "@", " "] {
+        assert!(
+            Select::from_flags(None, None, None, true, Some(empty)).is_err(),
+            "{empty:?}"
+        );
+    }
+}

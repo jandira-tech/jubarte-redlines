@@ -254,7 +254,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .filter_map(|r| r.attr("id"))
         .map(str::to_string)
         .collect();
-    writer.plain = !has_markup(&document, &writer.comments)
+    // The agent view always reads as CriticMarkup: document text that looks
+    // like a mark is escaped even when the document has none.
+    writer.plain = !writer.agent
+        && !has_markup(&document, &writer.comments)
         && !notes
             .values()
             .any(|note| has_markup(note, &writer.comments));
@@ -313,9 +316,19 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             },
             other => other.clone(),
         };
-        let (selected, described) =
-            agent::select_blocks(&markdown, &select, stamped.0.saturating_sub(1))
-                .map_err(ooxml::invalid)?;
+        // Hidden comments print ids only; `--by` reads their authors here.
+        let comment_handles: HashMap<String, String> = writer
+            .comments
+            .iter()
+            .filter_map(|(id, c)| Some((id.clone(), handles.of(c.attr("author"))?.to_string())))
+            .collect();
+        let (selected, described) = agent::select_blocks(
+            &markdown,
+            &select,
+            stamped.0.saturating_sub(1),
+            &comment_handles,
+        )
+        .map_err(ooxml::invalid)?;
         markdown = selected;
         range = Some(described);
     }
@@ -568,10 +581,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
 /// and matches no block.
 fn resolve_author(by: &str, handles: &agent::Handles) -> String {
     let bare = by.strip_prefix('@').unwrap_or(by);
+    // The handle the view prints wins over an author whose name is spelled
+    // like it.
     handles
         .by_author
-        .get(by)
-        .or_else(|| handles.by_author.values().find(|handle| *handle == bare))
+        .values()
+        .find(|handle| *handle == bare)
+        .or_else(|| handles.by_author.get(by))
         .map_or_else(|| bare.to_string(), |handle| format!("@{handle}"))
 }
 

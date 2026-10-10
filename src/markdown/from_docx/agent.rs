@@ -1240,7 +1240,7 @@ fn span_text(a: usize, b: usize) -> String {
 
 /// `@HH` in `text` where the handle ends (the next char is not
 /// alphanumeric).
-fn has_handle(text: &str, handle: &str) -> bool {
+fn names_handle(text: &str, handle: &str) -> bool {
     let key = format!("@{handle}");
     text.match_indices(&key).any(|(at, _)| {
         text[at + key.len()..]
@@ -1248,6 +1248,29 @@ fn has_handle(text: &str, handle: &str) -> bool {
             .next()
             .is_none_or(|c| !c.is_alphanumeric())
     })
+}
+
+/// Whether a block holds a mark of `handle`: on its id or table line, in the
+/// tag of a note (`{>>#4 @AC<<}`, `{>>#c6 @AS re #c5: …<<}`; the comment text
+/// after the colon is the author's words, not a tag), or as the author of a
+/// hidden comment its line names. Document text never counts: the view
+/// escapes any `{>>` in it.
+fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, String>) -> bool {
+    let first = block.lines().next().unwrap_or("");
+    if names_handle(first, handle) {
+        return true;
+    }
+    let hidden = first
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+        .filter_map(|word| word.strip_prefix("#c"))
+        .any(|id| comment_handles.get(id).is_some_and(|h| h == handle));
+    hidden
+        || block.match_indices("{>>").any(|(at, _)| {
+            let note = &block[at + 3..];
+            let end = note.find("<<}").unwrap_or(note.len());
+            let tag = note[..end].split(':').next().unwrap_or("");
+            names_handle(tag, handle)
+        })
 }
 
 /// Whether a block of the agent view carries a tracked change or a comment:
@@ -1273,6 +1296,7 @@ pub(crate) fn select_blocks(
     body: &str,
     select: &Select,
     last: usize,
+    comment_handles: &HashMap<String, String>,
 ) -> Result<(String, String), String> {
     let blocks = blocks_of(body);
     let keep: Vec<bool>;
@@ -1321,7 +1345,7 @@ pub(crate) fn select_blocks(
                     is_marked(&block.text)
                         && match handle {
                             None => true,
-                            Some(Some(handle)) => has_handle(&block.text, handle),
+                            Some(Some(handle)) => has_handle(&block.text, handle, comment_handles),
                             Some(None) => false,
                         }
                 })
