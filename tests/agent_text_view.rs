@@ -4424,3 +4424,32 @@ fn pr392_word_list_labels_keep_start_values_across_number_format_boundaries() {
         );
     }
 }
+
+#[test]
+fn table_cells_preserve_adjacent_backslashes_pipes_and_unicode_in_both_views() {
+    for (text, escaped) in [
+        (r"é\|尾", r"é\\\|尾"),
+        (r"a\\|b", r"a\\\\\|b"),
+        (r"ends\", r"ends\\"),
+        ("a|b|c", r"a\|b\|c"),
+    ] {
+        let bytes = docx(&format!(
+            "<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl><w:p/>",
+            para(text)
+        ));
+        for ids in [false, true] {
+            let out = agent_options(
+                &bytes,
+                &MarkdownOptions {
+                    ids,
+                    ..MarkdownOptions::default()
+                },
+            );
+            let row = format!("|{escaped}|");
+            assert!(
+                out.lines().any(|line| line == row),
+                "ids={ids}, {text:?}: {out}"
+            );
+        }
+    }
+}

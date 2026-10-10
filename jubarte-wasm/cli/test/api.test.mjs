@@ -141,3 +141,95 @@ test("accepting a whole Markdown clause removes its line address", () => {
   assert.equal(wasm.diffDocumentsView(bytes("keep\n"), bytes("keep\n{--clause--}\n"),
     '{"format":"word"}'), "");
 });
+
+// PR #389: pure shared-parser and plan-validation boundaries.
+test("agent shorthand forwards every view option and preserves explicit compare", () => {
+  const parse = (args) => JSON.parse(wasm.parseCli(JSON.stringify(args)));
+  for (const flags of [[], ["--track-changes", "reject"], ["--comments", "none"], ["--dates"], ["--no-page-markers"], ["-p", "p0-p2,t0"], ["--head", "0"], ["--tail", "1"], ["--changed", "--by", "Ann Counsel"]]) {
+    const explicit = parse(["read", "a.docx", ...flags]);
+    const single = parse(["a.docx", ...flags]);
+    assert.equal(single.exit_code, 0, JSON.stringify(single));
+    assert.deepEqual(single, explicit);
+    const pair = parse(["a.docx", "b.docx", ...flags]);
+    assert.equal(pair.exit_code, 0, JSON.stringify(pair));
+    const { file, ...view } = explicit.args;
+    assert.equal(file, "a.docx");
+    assert.deepEqual(pair.args.view, view);
+  }
+  for (const task of ["compare", "redline"]) {
+    const result = parse([task, "-b", "a.docx", "-m", "b.docx"]);
+    assert.equal(result.exit_code, 0, JSON.stringify(result));
+    assert.equal(Object.hasOwn(result.args, "view"), false);
+    assert.equal(parse([task, "-b", "a.docx"]).exit_code, 2);
+  }
+});
+
+test("agent shorthand rejects all read flags with output including explicit defaults", () => {
+  for (const flags of [["--track-changes", "all"], ["--comments", "inline"], ["--dates"], ["--no-page-markers"], ["--paragraphs", "p0"], ["--head", "0"], ["--tail", "0"], ["--changed"], ["--changed", "--by", "AC"]]) {
+    const result = JSON.parse(wasm.parseCli(JSON.stringify(["a.docx", "b.docx", "-o", "out.docx", ...flags])));
+    assert.equal(result.exit_code, 2, flags.join(" "));
+    assert.equal(result.stream, "stderr");
+    assert.match(result.text, /drop -o/);
+  }
+  assert.equal(JSON.parse(wasm.parseCli('["a.docx","b.docx","-o","out.docx"]')).exit_code, 0);
+});
+
+test("agent add rejects destructive comment flags but edit still accepts them", () => {
+  const source = wasm.markdownToDocx("Fees\n");
+  for (const at of ["p0", "c0", "c42"]) {
+    for (const flag of ["delete", "resolve"]) {
+      const operations = JSON.stringify([{ at, [flag]: true }]);
+      assert.throws(() => wasm.flagPlan("add", operations, source), /add takes no --delete or --resolve/);
+      if (at.startsWith("c")) assert.doesNotThrow(() => wasm.flagPlan("edit", operations, source));
+    }
+  }
+});
+
+test("agent add rejects styles on every comment form and unsupported paragraph formats", () => {
+  const source = wasm.markdownToDocx("Fees\n");
+  const plan = (op) => JSON.parse(wasm.flagPlan("add", JSON.stringify([op]), source));
+  for (const target of [{ at: "p0", comment: true }, { at: "p0", anchor: "Fees" }, { at: "c0" }]) {
+    const op = { ...target, content: "Please explain." };
+    assert.doesNotThrow(() => plan(op));
+    for (const style of ["bold", "Heading2"]) {
+      assert.throws(() => plan({ ...op, styles: [style] }), /a comment takes no --style/);
+    }
+  }
+  for (const style of ["strike", "caps", "font=Calibri", "size=0.5", "size=1638", "color=FF0000"]) {
+    assert.throws(() => plan({ at: "p0", content: "Fees", styles: ["bold", style] }), /a new paragraph takes --style/);
+  }
+  const added = JSON.parse(plan({ at: "p0", content: "Fees", styles: ["bold", "italic", "underline", "highlight=yellow", "Heading2"] }).plan);
+  const operation = added.operations[0];
+  assert.equal(operation.kind, "insert_paragraph");
+  assert.equal(operation.style, "Heading2");
+  assert.deepEqual(operation.runs, [{ text: "Fees", bold: true, italic: true, underline: true, highlight: "yellow" }]);
+});
+
+test("agent anchors keep multiplication stars when normalizing emphasis", () => {
+  const source = wasm.markdownToDocx("Fees\n");
+  for (const [anchor, plain] of [["*café* × 2 * 3 * 4", "café × 2 * 3 * 4"], ["*α*\t*\tβ * γ", "α\t*\tβ * γ"], [String.raw`\*literal\* and *italic*`, "*literal* and italic"], ["café\\\n\\# Fees", "café\n# Fees"], ["line\\\\\nnext", "line\\\nnext"]]) {
+    const result = JSON.parse(wasm.flagPlan("edit", JSON.stringify([{ at: "p0", anchor, content: `${plain} extra` }]), source));
+    const operation = JSON.parse(result.plan).operations[0];
+    assert.equal(operation.kind, "insert", anchor);
+    assert.equal(operation.after, anchor);
+    assert.equal(operation.text, " extra");
+  }
+});
+
+test("agent table escaping preserves adjacent slashes pipes and Unicode", () => {
+  for (const cell of [String.raw`é\\\|尾`, String.raw`a\\\\\|b`, String.raw`ends\\`, String.raw`a\|b\|c`]) {
+    const row = `|${cell}|`;
+    const source = wasm.markdownToDocx(`| ${cell} |\n|---|\n`);
+    const view = JSON.parse(wasm.readView(source, '{"pageMarkers":false}'));
+    assert.ok(view.markdown.split("\n").includes(row), view.markdown);
+    assert.ok(wasm.documentMarkdownWithChanges(source, "all").split("\n").includes(row));
+  }
+});
+
+test("agent hard breaks escape setext lines without escaping ordinary equals text", () => {
+  for (const [line, expected] of [[String.raw`\=`, String.raw`\=`], ["= value", "= value"], ["x = y", "x = y"]]) {
+    const source = wasm.markdownToDocx(`Title\\\n${line}\n`);
+    const view = JSON.parse(wasm.readView(source, '{"pageMarkers":false}'));
+    assert.ok(view.markdown.includes(`Title\\\n${expected}\n`), view.markdown);
+  }
+});
