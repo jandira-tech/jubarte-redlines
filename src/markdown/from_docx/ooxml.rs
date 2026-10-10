@@ -469,6 +469,8 @@ pub(crate) struct Span {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
+    /// Agent view only: `<u>…</u>`, innermost.
+    pub underline: bool,
     pub link: Option<String>,
 }
 
@@ -504,13 +506,21 @@ impl Inline {
         (leading, trailing)
     }
 
-    pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
+    /// Appends text with its bold, italic and underline (underline only in
+    /// the agent view), merging into the last span when they all match.
+    pub(crate) fn push_styled(
+        &mut self,
+        text: &str,
+        (bold, italic, underline): (bool, bool, bool),
+        link: Option<&str>,
+    ) {
         if text.is_empty() {
             return;
         }
         if let Some(last) = self.spans.last_mut()
             && last.bold == bold
             && last.italic == italic
+            && last.underline == underline
             && last.link.as_deref() == link
         {
             last.text.push_str(text);
@@ -520,6 +530,7 @@ impl Inline {
             text: text.to_string(),
             bold,
             italic,
+            underline,
             link: link.map(str::to_string),
         });
     }
@@ -562,38 +573,44 @@ impl Inline {
 fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     let mut out = String::new();
     // Merge neighbours with identical emphasis (links already grouped).
-    let mut merged: Vec<(bool, bool, String)> = Vec::new();
+    let mut merged: Vec<(bool, bool, bool, String)> = Vec::new();
     for span in spans {
-        let (bold, italic) = if emphasis {
-            (span.bold, span.italic)
+        let style = if emphasis {
+            (span.bold, span.italic, span.underline)
         } else {
-            (false, false)
+            (false, false, false)
         };
         // Whitespace-only spans inherit the previous formatting so markers do not split.
-        let (bold, italic) = if span.text.trim().is_empty() {
+        let (bold, italic, underline) = if span.text.trim().is_empty() {
             merged
                 .last()
-                .map(|(b, i, _)| (*b, *i))
-                .unwrap_or((bold, italic))
+                .map(|(b, i, u, _)| (*b, *i, *u))
+                .unwrap_or(style)
         } else {
-            (bold, italic)
+            style
         };
         match merged.last_mut() {
-            Some((b, i, text)) if *b == bold && *i == italic => text.push_str(&span.text),
-            _ => merged.push((bold, italic, span.text.clone())),
+            Some((b, i, u, text)) if *b == bold && *i == italic && *u == underline => {
+                text.push_str(&span.text);
+            }
+            _ => merged.push((bold, italic, underline, span.text.clone())),
         }
     }
-    for (bold, italic, text) in merged {
+    for (bold, italic, underline, text) in merged {
         let (lead, core, trail) = split_ws(&text);
-        if core.is_empty() || (!bold && !italic) {
+        if core.is_empty() || (!bold && !italic && !underline) {
             out.push_str(&text);
             continue;
         }
-        let (open, close) = match (bold, italic) {
+        let (emphasis_open, emphasis_close) = match (bold, italic) {
             (true, true) => ("**_", "_**"),
             (true, false) => ("**", "**"),
-            _ => ("_", "_"),
+            (false, true) => ("_", "_"),
+            (false, false) => ("", ""),
         };
+        let (u_open, u_close) = if underline { ("<u>", "</u>") } else { ("", "") };
+        let open = format!("{emphasis_open}{u_open}");
+        let close = format!("{u_close}{emphasis_close}");
         out.push_str(lead);
         // Markers cannot wrap line breaks; apply them per line.
         let lines: Vec<String> = core
@@ -866,6 +883,12 @@ impl ListIndent {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    impl Inline {
+        pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
+            self.push_styled(text, (bold, italic, false), link);
+        }
+    }
 
     #[test]
     fn resolves_relative_targets() {

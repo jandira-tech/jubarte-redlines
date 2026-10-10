@@ -13,6 +13,7 @@
 //! On reject, formatting changes (`w:rPrChange`, `w:pPrChange`...) restore the
 //! earlier properties.
 
+use super::agent::REVS;
 use super::ooxml::{Element, Node};
 
 /// The part with every tracked change accepted (`accept`) or rejected.
@@ -145,6 +146,16 @@ fn join_paragraphs(children: Vec<Node>) -> Vec<Node> {
             Node::Text(_) => None,
         }) {
             Some((at, before)) => {
+                // The joined paragraph keeps both paragraphs' revision tags.
+                if let Some(later) = p.attr(REVS).map(str::to_string) {
+                    match before.attrs.iter_mut().find(|(name, _)| name == REVS) {
+                        Some((_, revs)) => {
+                            revs.push(' ');
+                            revs.push_str(&later);
+                        }
+                        None => before.attrs.push((REVS.to_string(), later)),
+                    }
+                }
                 // The joined paragraph takes the later paragraph's properties.
                 let (properties, rest): (Vec<Node>, Vec<Node>) = p
                     .children

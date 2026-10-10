@@ -34,6 +34,7 @@ export const listComments: (a: number, b: number, c: number, d: number, e: numbe
 export const markdownToDocx: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const parseCli: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
+export const readView: (a: number, b: number, c: number, d: number, e: number) => void;
 export const redlineDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const rejectChanges: (a: number, b: number, c: number, d: number, e: number) => void;
 export const rejectRevisions: (a: number, b: number, c: number) => void;

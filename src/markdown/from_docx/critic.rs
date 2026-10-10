@@ -124,6 +124,8 @@ enum Leaf {
         text: String,
         bold: bool,
         italic: bool,
+        /// Agent view only: `<u>…</u>`.
+        underline: bool,
         link: Option<String>,
     },
     /// Markdown built by the converter (images, math, note references).
@@ -190,11 +192,22 @@ impl Critic {
     }
 
     pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
+        self.push_styled(text, (bold, italic, false), link);
+    }
+
+    /// [`Critic::push`] with underline, which only the agent view sets.
+    pub(crate) fn push_styled(
+        &mut self,
+        text: &str,
+        (bold, italic, underline): (bool, bool, bool),
+        link: Option<&str>,
+    ) {
         if !text.is_empty() {
             self.tokens.push(Token::Leaf(Leaf::Text {
                 text: text.to_string(),
                 bold,
                 italic,
+                underline,
                 link: link.map(str::to_string),
             }));
         }
@@ -286,7 +299,11 @@ impl Critic {
             inline.keep_spaces();
         }
         for piece in pieces {
-            inline.push(&piece.text, piece.bold, piece.italic, piece.link.as_deref());
+            inline.push_styled(
+                &piece.text,
+                (piece.bold, piece.italic, piece.underline),
+                piece.link.as_deref(),
+            );
         }
         inline
     }
@@ -399,15 +416,19 @@ fn join_text(nodes: Vec<Node>) -> Vec<Node> {
                     text: before,
                     bold: b,
                     italic: i,
+                    underline: u,
                     link: l,
                 })),
                 Node::Leaf(Leaf::Text {
                     text,
                     bold,
                     italic,
+                    underline,
                     link,
                 }),
-            ) if *b == bold && *i == italic && *l == link => before.push_str(&text),
+            ) if *b == bold && *i == italic && *u == underline && *l == link => {
+                before.push_str(&text);
+            }
             (_, node) => out.push(node),
         }
     }
@@ -464,6 +485,7 @@ struct Piece {
     text: String,
     bold: bool,
     italic: bool,
+    underline: bool,
     link: Option<String>,
     /// For a marker, the change or comment it belongs to: all of one change's
     /// markers join a link, or none do, so brackets never cross.
@@ -518,6 +540,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                     text,
                     bold,
                     italic,
+                    underline,
                     link,
                 }),
                 _,
@@ -526,6 +549,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                     text: if plain { text.clone() } else { escape(text) },
                     bold: *bold,
                     italic: *italic,
+                    underline: *underline,
                     link: link.clone(),
                     marker: None,
                 });
@@ -538,6 +562,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 },
                 bold: false,
                 italic: false,
+                underline: false,
                 link: None,
                 marker: None,
             }),
@@ -555,6 +580,7 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
         text: text.to_string(),
         bold: false,
         italic: false,
+        underline: false,
         link: None,
         marker: Some(id),
     });
@@ -567,8 +593,15 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
 /// resolve. A change joins only if all its markers do; one that starts inside
 /// the link and ends after it stays outside.
 fn wrap_markers(pieces: &mut [Piece]) {
-    type Format = (bool, bool, Option<String>);
-    let format = |piece: &Piece| -> Format { (piece.bold, piece.italic, piece.link.clone()) };
+    type Format = (bool, bool, bool, Option<String>);
+    let format = |piece: &Piece| -> Format {
+        (
+            piece.bold,
+            piece.italic,
+            piece.underline,
+            piece.link.clone(),
+        )
+    };
     let mut joined: Vec<Option<Format>> = vec![None; pieces.len()];
     let mut start = 0;
     while start < pieces.len() {
@@ -582,7 +615,7 @@ fn wrap_markers(pieces: &mut [Piece]) {
         let before = start.checked_sub(1).map(|at| format(&pieces[at]));
         let after = pieces.get(end).map(format);
         if let Some(around) =
-            before.filter(|f| *f != (false, false, None) && Some(f) == after.as_ref())
+            before.filter(|f| *f != (false, false, false, None) && Some(f) == after.as_ref())
         {
             joined[start..end].fill(Some(around));
         }
@@ -595,11 +628,12 @@ fn wrap_markers(pieces: &mut [Piece]) {
         .filter_map(|(piece, _)| piece.marker)
         .collect();
     for (piece, around) in pieces.iter_mut().zip(joined) {
-        if let Some((bold, italic, link)) =
+        if let Some((bold, italic, underline, link)) =
             around.filter(|_| piece.marker.is_some_and(|id| !refused.contains(&id)))
         {
             piece.bold = bold;
             piece.italic = italic;
+            piece.underline = underline;
             piece.link = link;
         }
     }
@@ -688,7 +722,7 @@ pub(crate) fn splice(
         return;
     };
     let (open, close) = mark.delimiters();
-    let by = by.as_deref().map(note).unwrap_or_default();
+    let by = by.as_deref().map(|b| note(&display(b))).unwrap_or_default();
     let end = format!("{close}{by}");
     match out.strip_suffix(end.as_str()) {
         Some(kept) => out.truncate(kept.len()),

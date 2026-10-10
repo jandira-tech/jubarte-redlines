@@ -1231,6 +1231,49 @@ function previewEditPlan(docx, plan_json) {
 exports.previewEditPlan = previewEditPlan;
 
 /**
+ * The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+ * then Markdown with `<!-- pN -->` id lines and every change and comment
+ * with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+ * reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+ * true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+ * `head`, `tail`, `source` (the name printed as `source:`).
+ *
+ * Mirrors `jubarte::markdown::read`.
+ * @param {Uint8Array} docx
+ * @param {string | null} [options_json]
+ * @returns {string}
+ */
+function readView(docx, options_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.readView(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred4_0, deferred4_1, 1);
+    }
+}
+exports.readView = readView;
+
+/**
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
  * @param {Uint8Array} old
  * @param {Uint8Array} _new

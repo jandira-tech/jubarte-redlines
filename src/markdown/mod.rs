@@ -271,6 +271,21 @@ pub enum Pick {
 }
 
 impl Select {
+    /// The selection of `read`'s `-p`, `--head` and `--tail`, in that order
+    /// of precedence; `None` when none is given.
+    pub fn from_flags(
+        paragraphs: Option<&str>,
+        head: Option<usize>,
+        tail: Option<usize>,
+    ) -> Result<Option<Self>, String> {
+        Ok(match (paragraphs, head, tail) {
+            (Some(spec), _, _) => Some(Self::parse(spec)?),
+            (None, Some(n), _) => Some(Self::Head(n)),
+            (None, None, Some(n)) => Some(Self::Tail(n)),
+            (None, None, None) => None,
+        })
+    }
+
     /// `p2, p5-p7, 12, p17-, -p1, t0`: comma-separated picks; a bare number
     /// is a paragraph.
     pub fn parse(spec: &str) -> Result<Self, String> {
@@ -374,6 +389,124 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
         markdown: converted.markdown,
         media: converted.media.into_iter().collect(),
     })
+}
+
+/// How [`read`] prints the agent view (`jubarte read`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadOptions {
+    /// Keep the changes as CriticMarkup (`All`), or print the document
+    /// after Word's Accept All or Reject All with `rev` clauses.
+    pub track_changes: TrackChanges,
+    /// Comments inline (`true`), or hidden with their ids on the id lines.
+    pub comments: bool,
+    /// Timestamps inline on the notes of an author with several.
+    pub dates: bool,
+    /// `<!-- page N of M -->` lines from the layout pass (`true`), or none.
+    pub page_markers: bool,
+    /// Which blocks of the body to print.
+    pub select: Option<Select>,
+    /// The name printed as `source:` in the header.
+    pub source: Option<String>,
+}
+
+impl Default for ReadOptions {
+    fn default() -> Self {
+        Self {
+            track_changes: TrackChanges::All,
+            comments: true,
+            dates: false,
+            page_markers: true,
+            select: None,
+            source: None,
+        }
+    }
+}
+
+/// The agent view of a document and what it could not show.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReadView {
+    /// The YAML header and the Markdown with id lines.
+    pub markdown: String,
+    /// Why the page markers are missing (the layout pass failed), and the
+    /// like. The view is complete otherwise.
+    pub warnings: Vec<String>,
+}
+
+/// The agent view every surface prints for `read` (alias `text`): a YAML
+/// header, then Markdown with an `<!-- pN -->` id line before every
+/// paragraph, tracked changes and comments with their ids, and page markers
+/// from the layout pass. See `docs/MARKDOWN.md`, "Agent view".
+///
+/// ```
+/// use jubarte::markdown::{DocxOptions, ReadOptions, markdown_to_docx, read};
+///
+/// let docx = markdown_to_docx("Due in {~~30~>45~~} days.", &DocxOptions::default())?.docx;
+/// let view = read(&docx, &ReadOptions { page_markers: false, ..ReadOptions::default() })?;
+/// assert!(view.markdown.contains("<!-- p0 -->\nDue in {~~30~>45~~}{>>#"), "{}", view.markdown);
+/// # Ok::<(), jubarte::markdown::MarkdownError>(())
+/// ```
+pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownError> {
+    let mut warnings = Vec::new();
+    let pages = if options.page_markers {
+        page_texts(
+            docx,
+            options.track_changes,
+            crate::convert::RevisionStyle::default(),
+        )
+        .map_err(|e| warnings.push(format!("no page markers: {e}")))
+        .ok()
+    } else {
+        None
+    };
+    let read = docx_to_markdown(
+        docx,
+        &MarkdownOptions {
+            track_changes: options.track_changes,
+            extract_media: None,
+            ids: true,
+            comments: options.comments,
+            source: options.source.clone(),
+            pages,
+            page_markers: options.page_markers,
+            dates: options.dates,
+            select: options.select.clone(),
+        },
+    )?;
+    Ok(ReadView {
+        markdown: read.markdown,
+        warnings,
+    })
+}
+
+/// The text the layout pass paints on each page, with the document's
+/// changes kept, accepted or rejected: what [`paginate`] matches blocks
+/// against for `<!-- page N of M -->` lines.
+pub fn page_texts(
+    docx: &[u8],
+    track_changes: TrackChanges,
+    revisions: crate::convert::RevisionStyle,
+) -> Result<Vec<String>, String> {
+    let resolved = match track_changes {
+        TrackChanges::All => Ok(std::borrow::Cow::Borrowed(docx)),
+        TrackChanges::Accept => crate::document_comparer::accept_revisions(docx)
+            .map(std::borrow::Cow::Owned)
+            .map_err(|e| format!("accepting the changes failed: {e:?}")),
+        TrackChanges::Reject => crate::document_comparer::reject_revisions(docx)
+            .map(std::borrow::Cow::Owned)
+            .map_err(|e| format!("rejecting the changes failed: {e:?}")),
+    };
+    let rendered = resolved.and_then(|bytes| {
+        crate::convert::render(
+            &bytes,
+            crate::convert::PdfOptions {
+                revisions,
+                ..crate::convert::PdfOptions::default()
+            },
+            crate::convert::RenderRequest::default(),
+        )
+        .map_err(|e| format!("layout failed: {e}"))
+    });
+    rendered.map(|rendered| rendered.report.pages.into_iter().map(|p| p.text).collect())
 }
 
 /// A written document and what could not be written as asked.

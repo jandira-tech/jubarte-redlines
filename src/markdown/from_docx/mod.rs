@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod agent;
 mod critic;
+mod header;
 mod media;
 mod ooxml;
 mod revise;
@@ -107,29 +108,54 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         None
     };
     let threads = agent::threads(comments_root.as_ref(), extended.as_ref());
+    let mut note_roots = Vec::new();
+    for (kind, fallback, name) in [
+        ("/footnotes", "word/footnotes.xml", "footnote"),
+        ("/endnotes", "word/endnotes.xml", "endnote"),
+    ] {
+        if let Ok(Some(root)) = package.xml(&part(kind, fallback)) {
+            note_roots.push((name, root));
+        }
+    }
     let handles = if options.ids {
-        agent::handles(&document, comments_root.as_ref())
+        let notes: Vec<&Element> = note_roots.iter().map(|(_, root)| root).collect();
+        agent::handles(&document, &notes, comments_root.as_ref())
     } else {
         agent::Handles::default()
     };
     // Agent view: paragraphs and tables numbered before accept/reject
     // resolution, so indices match `inspect` and `edit`.
-    if options.ids {
-        if let Some(body) = document.children.iter_mut().find_map(|n| match n {
-            ooxml::Node::Element(e) if e.is("body") => Some(e),
-            _ => None,
-        }) {
-            agent::stamp(body, &handles);
-        }
-    }
+    // (paragraphs, tables) numbered, for the header.
+    let stamped = if options.ids {
+        document
+            .children
+            .iter_mut()
+            .find_map(|n| match n {
+                ooxml::Node::Element(e) if e.is("body") => Some(e),
+                _ => None,
+            })
+            .map(|body| agent::stamp(body, &handles))
+            .unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
+    // The body before resolution, for the header's counts and page facts.
+    let original = options.ids.then(|| document.clone());
     // Cached-break page lines: only in the agent view, without layout pages,
     // and only when page lines are wanted at all.
     let cached_pages =
         (options.ids && options.pages.is_none() && options.page_markers).then(|| {
             let body = document.child("body").unwrap_or(&document);
             let (rendered, hard) = agent::page_counts(body);
-            1 + if rendered > 0 { rendered } else { hard }
+            let total = 1 + if rendered > 0 { rendered } else { hard };
+            // Without cached breaks the writer turns pages on hard breaks.
+            let sections = (rendered == 0).then(|| agent::page_sections(body));
+            (total, sections)
         });
+    let (cached_pages, page_sections) = match cached_pages {
+        Some((total, sections)) => (Some(total), sections),
+        None => (None, None),
+    };
     let document = match accept {
         Some(accept) => revise::resolve(&document, accept),
         None => document,
@@ -157,25 +183,22 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .map(|e| Numbering::parse(&e))
         .unwrap_or_default();
     let mut notes = HashMap::new();
-    for (kind, fallback, name) in [
-        ("/footnotes", "word/footnotes.xml", "footnote"),
-        ("/endnotes", "word/endnotes.xml", "endnote"),
-    ] {
-        if let Ok(Some(root)) = package.xml(&part(kind, fallback)) {
-            for note in root.children_named(name) {
-                if let Some(id) = note.attr("id") {
-                    let note = match accept {
-                        Some(accept) => revise::resolve(note, accept),
-                        None => note.clone(),
-                    };
-                    notes.insert((name == "endnote", id.to_string()), note);
-                }
+    for (name, root) in &note_roots {
+        for note in root.children_named(name) {
+            if let Some(id) = note.attr("id") {
+                let note = match accept {
+                    Some(accept) => revise::resolve(note, accept),
+                    None => note.clone(),
+                };
+                notes.insert((*name == "endnote", id.to_string()), note);
             }
         }
     }
     // Accepting or rejecting the changes leaves comments out as well, except
     // in the agent view, which keeps them.
-    let comments = comments_root.filter(|_| accept.is_none() || options.ids);
+    let comments = comments_root
+        .clone()
+        .filter(|_| accept.is_none() || options.ids);
     let media = Media::load(
         &mut package,
         &rels,
@@ -204,13 +227,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         comments_inline: options.comments,
         resolved: accept.is_some(),
         dates: options.dates,
-        handles,
-        default_style,
+        handles: handles.clone(),
+        default_style: default_style.clone(),
         pending_empty: Vec::new(),
         cached_pages,
+        page_sections,
+        break_due: false,
+        announce: false,
         page: 0,
         para_comments: Vec::new(),
-        threads,
+        threads: threads.clone(),
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -263,7 +289,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 let inline = writer.paragraph_inline(p).0.into_inline();
                 (
                     inline.render(true).replace('\n', " "),
-                    paragraph_mark(p),
+                    writer.note_mark(p),
                     inline.edges(),
                 )
             })
@@ -278,6 +304,244 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     if let Some(pages) = options.pages.as_ref().filter(|_| options.ids) {
         let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
         markdown = crate::markdown::paginate(&markdown, &pages);
+    }
+    let mut range = None;
+    if let Some(select) = options.select.as_ref().filter(|_| options.ids) {
+        let (selected, described) =
+            agent::select_blocks(&markdown, select, stamped.0.saturating_sub(1))
+                .map_err(ooxml::invalid)?;
+        markdown = selected;
+        range = Some(described);
+    }
+    if let Some(original) = &original {
+        let body = original.child("body").unwrap_or(original);
+        let tags = agent::collect_revisions(body, &handles);
+        let (marks, format_changes) = agent::count_marks(body);
+        let (rendered, hard) = agent::page_counts(body);
+        let settings = package.xml("word/settings.xml").ok().flatten();
+        let core = package.xml("docProps/core.xml").ok().flatten();
+        let owner = match &core {
+            None => header::Owner::None,
+            Some(core) => match (
+                core.child("creator")
+                    .map(Element::text)
+                    .filter(|t| !t.trim().is_empty()),
+                core.child("lastModifiedBy")
+                    .map(Element::text)
+                    .filter(|t| !t.trim().is_empty()),
+            ) {
+                (Some(name), _) => header::Owner::Creator(name.trim().to_string()),
+                (None, Some(name)) => header::Owner::LastModifiedBy(name.trim().to_string()),
+                (None, None) => header::Owner::None,
+            },
+        };
+        let comment_facts: Vec<header::CommentFact> = comments_root
+            .as_ref()
+            .map(|root| {
+                root.children_named("comment")
+                    .filter_map(|c| {
+                        let id = c.attr("id")?.to_string();
+                        Some(header::CommentFact {
+                            parent: threads.reply_of.get(&id).cloned(),
+                            author: c.attr("author").map(str::to_string),
+                            id,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (pages, pages_source) = match (&options.pages, rendered) {
+            (Some(pages), _) => (pages.len().max(1), header::PagesSource::Layout),
+            (None, n) if n > 0 => (1 + n, header::PagesSource::Cached),
+            (None, _) => (1 + hard, header::PagesSource::Estimated),
+        };
+        let theme = package.xml("word/theme/theme1.xml").ok().flatten();
+        let mut heading_styles: Vec<(usize, String)> = Vec::new();
+        {
+            let mut ps = Vec::new();
+            body.find_all("p", &mut ps);
+            let mut uses: std::collections::BTreeMap<(usize, String), usize> =
+                std::collections::BTreeMap::new();
+            for p in &ps {
+                let Some(style) = p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) else {
+                    continue;
+                };
+                if let Some(level) = writer.styles.heading_level(style) {
+                    *uses.entry((level, style.to_string())).or_default() += 1;
+                }
+            }
+            for level in 1..=6 {
+                if let Some(((_, style), _)) = uses
+                    .iter()
+                    .filter(|((l, _), _)| *l == level)
+                    .max_by_key(|(_, n)| **n)
+                {
+                    heading_styles.push((level, style.clone()));
+                }
+            }
+        }
+        let mut table_styles: Vec<String> = Vec::new();
+        {
+            let mut tables = Vec::new();
+            body.find_all("tbl", &mut tables);
+            for t in tables {
+                if let Some(s) = t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val"))
+                    && !table_styles.iter().any(|x| x == s)
+                {
+                    table_styles.push(s.to_string());
+                }
+            }
+        }
+        let even_odd = settings
+            .as_ref()
+            .is_some_and(|s| s.child("evenAndOddHeaders").is_some());
+        let sections = {
+            // A section's properties sit at its end: in the last paragraph's
+            // `w:pPr/w:sectPr`, or in `w:body` for the final section.
+            let mut ps = Vec::new();
+            body.find_all("p", &mut ps);
+            let mut ends: Vec<(usize, Element)> = ps
+                .iter()
+                .filter_map(|p| {
+                    let index: usize = p.attr(agent::INDEX)?.parse().ok()?;
+                    Some((index, p.path(&["pPr", "sectPr"])?.clone()))
+                })
+                .collect();
+            if let Some(last) = body.child("sectPr") {
+                ends.push((stamped.0.saturating_sub(1), last.clone()));
+            }
+            let mut sections: Vec<header::SectionFact> = Vec::new();
+            let mut first = 0;
+            for (last, sect) in ends {
+                let title_page = sect.child("titlePg").is_some();
+                let columns = sect
+                    .child("cols")
+                    .and_then(|c| c.attr("num"))
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(1);
+                let mut stories = Vec::new();
+                for reference in sect.elements() {
+                    let kind = match reference.local() {
+                        "headerReference" => "header",
+                        "footerReference" => "footer",
+                        _ => continue,
+                    };
+                    let ty = match reference.attr("type") {
+                        Some("first") => "first",
+                        Some("even") => "even",
+                        _ => "default",
+                    };
+                    let Some(target) = reference
+                        .attr("id")
+                        .and_then(|id| rels.get(id))
+                        .map(|r| r.target.clone())
+                    else {
+                        continue;
+                    };
+                    let path = if target.starts_with("word/") {
+                        target.clone()
+                    } else {
+                        format!("word/{}", target.trim_start_matches('/'))
+                    };
+                    let stem = std::path::Path::new(&target)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let Ok(Some(root)) = package.xml(&path) else {
+                        continue;
+                    };
+                    let paragraphs = header::story_paragraphs(&root);
+                    let (index, text, align) = paragraphs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let align = p
+                                .path(&["pPr", "jc"])
+                                .and_then(|j| j.attr("val"))
+                                .and_then(|v| match v {
+                                    "center" => Some("center"),
+                                    "right" | "end" => Some("right"),
+                                    _ => None,
+                                });
+                            (i, header::story_text(p), align)
+                        })
+                        .find(|(_, text, _)| !text.is_empty())
+                        .unwrap_or((0, String::new(), None));
+                    // The id is the part stem (`header2` for `header2.xml`), Word's
+                    // own numbering; a paragraph other than the first adds `.pN`.
+                    stories.push(header::StoryFact {
+                        kind,
+                        ty,
+                        id: if index == 0 {
+                            stem.to_string()
+                        } else {
+                            format!("{stem}.p{index}")
+                        },
+                        text,
+                        align,
+                        active: match ty {
+                            "first" => title_page,
+                            "even" => even_odd,
+                            _ => true,
+                        },
+                    });
+                }
+                // A type a section does not name is inherited from the one before.
+                if let Some(previous) = sections.last() {
+                    for inherited in &previous.stories {
+                        if !stories
+                            .iter()
+                            .any(|s| s.kind == inherited.kind && s.ty == inherited.ty)
+                        {
+                            let mut s = inherited.clone();
+                            s.active = match s.ty {
+                                "first" => title_page,
+                                "even" => even_odd,
+                                _ => true,
+                            };
+                            stories.push(s);
+                        }
+                    }
+                }
+                sections.push(header::SectionFact {
+                    first,
+                    last,
+                    sect_pr: Some(sect),
+                    stories,
+                    title_page,
+                    columns,
+                });
+                first = last + 1;
+            }
+            sections
+        };
+        let facts = header::Facts {
+            source: options.source.as_deref().unwrap_or("(bytes)"),
+            resolved: accept,
+            comments_inline: options.comments,
+            tracking_on: settings
+                .as_ref()
+                .is_some_and(|s| s.child("trackRevisions").is_some()),
+            tags,
+            marks,
+            format_changes,
+            comments: comment_facts,
+            handles: &handles,
+            done: &threads.done,
+            owner,
+            paragraphs: stamped.0,
+            tables: stamped.1,
+            pages,
+            pages_source,
+            range,
+            styles: styles_root.as_ref(),
+            theme: theme.as_ref(),
+            default_style: default_style.as_deref(),
+            heading_styles,
+            table_styles,
+            sections,
+        };
+        markdown = format!("{}\n{markdown}", header::render(&facts));
     }
     if !defs.is_empty() {
         markdown.push_str("\n\n");
@@ -585,7 +849,11 @@ fn change_of(element: &Element) -> Change {
 /// Who made a tracked change and when: `w:author` and `w:date` exactly as
 /// stored, in the same form as a comment's (`Ana Lima (2026-09-29T14:05:00Z)`).
 fn attribution(element: &Element) -> Option<String> {
-    let by = comment_note(element.attr("author"), element.attr("date"), "");
+    // A leading agent-tag sentinel in a stored author would be read as a tag.
+    let author = element
+        .attr("author")
+        .map(|a| a.trim_start_matches(critic::TAG));
+    let by = comment_note(author, element.attr("date"), "");
     (!by.is_empty()).then_some(by)
 }
 
@@ -690,7 +958,15 @@ struct Writer<'a> {
     /// emit `<!-- page N of total -->` itself; `None` leaves markers to
     /// `paginate`.
     cached_pages: Option<usize>,
-    /// Agent view: pages announced so far by the writer.
+    /// Agent view, cached-break fallback with no `w:lastRenderedPageBreak`
+    /// in the document: the paragraphs whose section break starts a page.
+    /// `Some` makes hard page and section breaks turn the pages.
+    page_sections: Option<std::collections::HashSet<usize>>,
+    /// A hard break ended the last block: the next one opens a page.
+    break_due: bool,
+    /// Pages turned inside the last block, still to be named.
+    announce: bool,
+    /// Agent view: the page the writer is on (0 before the first marker).
     page: usize,
     /// Agent view: comment ids met since the last id line.
     para_comments: Vec<String>,
@@ -717,17 +993,28 @@ impl Writer<'_> {
                     // first cell; it gets its own block before the table.
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
-                    if self.agent {
-                        if let Some(line) = agent::table_line(child, self.resolved, &self.handles) {
-                            self.flush_empty(blocks);
-                            let mut breaks = Vec::new();
-                            child.find_all("lastRenderedPageBreak", &mut breaks);
-                            self.page_lines(blocks, !breaks.is_empty());
-                            blocks.push_line(&line);
-                        }
+                    let mut turned = 0;
+                    if self.agent
+                        && let Some(line) = agent::table_line(
+                            child,
+                            self.resolved,
+                            !self.comments_inline,
+                            &self.handles,
+                        )
+                    {
+                        self.flush_empty(blocks);
+                        let (first, more) =
+                            agent::table_breaks(child, self.page_sections.is_none());
+                        let opens = self.opens_page(first);
+                        self.page_lines(blocks, opens);
+                        blocks.push_line(&line);
+                        turned = more;
                     }
                     let table = self.table(child);
                     blocks.push(&table, false);
+                    self.turn_pages(turned);
+                    // The cells' hidden comments went on the table line.
+                    self.para_comments.clear();
                 }
                 "sdt" => {
                     if let Some(content) = child.child("sdtContent") {
@@ -755,17 +1042,17 @@ impl Writer<'_> {
     /// that spans paragraphs gets one highlight per paragraph, because
     /// CriticMarkup cannot cross a block.
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
-        if self.agent && !self.in_comment {
-            if let Some(id) = range
+        if self.agent
+            && !self.in_comment
+            && let Some(id) = range
                 .attr("id")
                 .filter(|id| self.comments.contains_key(*id))
-            {
-                if range.is("commentRangeStart") && !self.para_comments.iter().any(|c| c == id) {
-                    self.para_comments.push(id.to_string());
-                }
-                if !self.comments_inline {
-                    return;
-                }
+        {
+            if range.is("commentRangeStart") && !self.para_comments.iter().any(|c| c == id) {
+                self.para_comments.push(id.to_string());
+            }
+            if !self.comments_inline {
+                return;
             }
         }
         let Some(id) = range
@@ -844,22 +1131,37 @@ impl Writer<'_> {
         };
         if let Some(index) = index {
             let page_break = agent::has_page_break(p);
-            if !written && extra.is_empty() && !page_break && !agent::has_section_break(p) {
-                self.pending_empty.push(index);
-                self.para_comments.clear();
-                return;
-            }
-            self.flush_empty(blocks);
-            self.page_lines(blocks, agent::has_rendered_page_break(p));
-            let marker = heading_marker
-                .as_deref()
-                .or(list_marker.as_ref().map(|(m, _)| m.as_str()));
             let comments = if self.comments_inline {
                 Vec::new()
             } else {
                 std::mem::take(&mut self.para_comments)
             };
             self.para_comments.clear();
+            let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
+            if empty
+                && comments.is_empty()
+                && !agent::holds_revision_facts(p, self.resolved, &self.handles)
+            {
+                if self.page_sections.is_none() && agent::has_rendered_page_break(p) {
+                    self.flush_empty(blocks);
+                    self.page_lines(blocks, true);
+                }
+                self.pending_empty.push(index);
+                return;
+            }
+            self.flush_empty(blocks);
+            let opens = self.opens_page(agent::has_rendered_page_break(p));
+            self.page_lines(blocks, opens);
+            if self
+                .page_sections
+                .as_ref()
+                .is_some_and(|sections| page_break || sections.contains(&index))
+            {
+                self.break_due = true;
+            }
+            let marker = heading_marker
+                .as_deref()
+                .or(list_marker.as_ref().map(|(m, _)| m.as_str()));
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
@@ -869,6 +1171,7 @@ impl Writer<'_> {
                 page_break,
                 resolved: self.resolved,
                 comments: &comments,
+                empty,
             };
             blocks.push_line(&agent::id_line(p, &facts, &self.handles));
         }
@@ -905,8 +1208,15 @@ impl Writer<'_> {
         });
     }
 
-    /// Agent view: writes the pending `<!-- pN empty -->` lines.
+    /// Agent view: writes the pending `<!-- pN empty -->` lines, after the
+    /// page-1 marker when they open the document.
     fn flush_empty(&mut self, blocks: &mut Blocks) {
+        if self.pending_empty.is_empty() {
+            return;
+        }
+        // Empty paragraphs after a hard break sit on the new page.
+        let opens = self.opens_page(false);
+        self.page_lines(blocks, opens);
         for line in agent::empty_lines(&std::mem::take(&mut self.pending_empty)) {
             blocks.push_line(&line);
         }
@@ -914,17 +1224,43 @@ impl Writer<'_> {
 
     /// Agent view, cached-break fallback: the page markers due before a
     /// block, page 1 included. With layout pages, `paginate` writes them.
-    fn page_lines(&mut self, blocks: &mut Blocks, rendered_break: bool) {
+    fn page_lines(&mut self, blocks: &mut Blocks, opens: bool) {
         let Some(total) = self.cached_pages else {
             return;
         };
         if self.page == 0 {
             self.page = 1;
+            self.announce = false;
             blocks.push_line(&agent::page_marker(1, total));
         }
-        if rendered_break && self.page < total {
+        if opens && self.page < total {
             self.page += 1;
+            self.announce = true;
+        }
+        if std::mem::take(&mut self.announce) {
             blocks.push_line(&agent::page_marker(self.page, total));
+        }
+    }
+
+    /// Whether the next block opens a page: its own cached break, or,
+    /// without cached breaks, the hard break that ended the block before.
+    fn opens_page(&mut self, cached_break: bool) -> bool {
+        if self.page_sections.is_some() {
+            std::mem::take(&mut self.break_due)
+        } else {
+            cached_break
+        }
+    }
+
+    /// Pages turned inside a block, named before the next one.
+    fn turn_pages(&mut self, turned: usize) {
+        let Some(total) = self.cached_pages else {
+            return;
+        };
+        let page = self.page.saturating_add(turned).min(total);
+        if page > self.page {
+            self.page = page;
+            self.announce = true;
         }
     }
 
@@ -1089,6 +1425,11 @@ impl Writer<'_> {
             .and_then(|r| r.toggle("i"))
             .or(style_italic)
             .unwrap_or(base.1);
+        // Agent view only: the plain conversion has no underline.
+        let underline = self.agent
+            && rpr
+                .and_then(|r| r.child("u"))
+                .is_some_and(|u| u.attr("val").is_none_or(|v| v != "none"));
         // A raised or lowered run keeps its tags, which the Markdown
         // reader takes back to w:vertAlign; a note reference is already
         // `[^n]`.
@@ -1110,7 +1451,7 @@ impl Writer<'_> {
         }
         let opened = out.len();
         for child in run.elements() {
-            self.run_child(child, link, (bold, italic), fields, out, extra);
+            self.run_child(child, link, (bold, italic, underline), fields, out, extra);
         }
         if let Some((_, close)) = tags {
             if out.len() == opened {
@@ -1125,7 +1466,7 @@ impl Writer<'_> {
         &mut self,
         child: &Element,
         link: Option<&str>,
-        (bold, italic): (bool, bool),
+        style: (bool, bool, bool),
         fields: &mut Vec<Field>,
         out: &mut Critic,
         extra: &mut Vec<String>,
@@ -1134,14 +1475,14 @@ impl Writer<'_> {
         let field_link = fields.iter().rev().find_map(|f| f.link.clone());
         let link = field_link.as_deref().or(link);
         match child.local() {
-            "t" | "delText" if !hidden => out.push(&child.text(), bold, italic, link),
-            "tab" | "ptab" if !hidden => out.push("\t", bold, italic, link),
+            "t" | "delText" if !hidden => out.push_styled(&child.text(), style, link),
+            "tab" | "ptab" if !hidden => out.push_styled("\t", style, link),
             "br" | "cr" if !hidden => {
                 if child.attr("type") != Some("page") {
                     out.push("\n", false, false, None);
                 }
             }
-            "noBreakHyphen" if !hidden => out.push("-", bold, italic, link),
+            "noBreakHyphen" if !hidden => out.push_styled("-", style, link),
             "instrText" | "delInstrText" => {
                 if let Some(field) = fields.last_mut()
                     && !field.in_result
@@ -1200,7 +1541,7 @@ impl Writer<'_> {
             "AlternateContent" => {
                 if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
                     for inner in choice.elements() {
-                        self.run_child(inner, link, (bold, italic), fields, out, extra);
+                        self.run_child(inner, link, style, fields, out, extra);
                     }
                 }
             }
@@ -1344,15 +1685,30 @@ impl Writer<'_> {
         paragraph_mark(p).map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
     }
 
+    /// The tracked change on a note paragraph's mark. A note has no id
+    /// lines, so the agent view prints it inline with its tag.
+    fn note_mark(&self, p: &Element) -> Option<Change> {
+        if !self.agent {
+            return paragraph_mark(p);
+        }
+        let marks = p
+            .path(&["pPr", "rPr"])
+            .map(|rpr| self.revision_marks(rpr))
+            .unwrap_or_default();
+        let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
+        marks.into_iter().nth(deleted.unwrap_or(0))
+    }
+
     /// The agent tag of a revision element, with its timestamp when
     /// `--dates` asks for one and the author has several.
     fn agent_tag(&self, element: &Element) -> String {
         let mut tagged = format!("{}{}", critic::TAG, agent::tag_of(element, &self.handles));
-        if self.dates && self.handles.needs_date(element.attr("author")) {
-            if let Some(date) = element.attr("date") {
-                tagged.push(' ');
-                tagged.push_str(date);
-            }
+        if self.dates
+            && self.handles.needs_date(element.attr("author"))
+            && let Some(date) = element.attr("date")
+        {
+            tagged.push(' ');
+            tagged.push_str(date);
         }
         tagged
     }

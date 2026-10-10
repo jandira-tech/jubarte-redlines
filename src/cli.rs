@@ -34,6 +34,65 @@ pub struct Cli {
     pub compare: CompareArgs,
 }
 
+/// Options of `read`.
+#[derive(clap::Args, Debug, Default, PartialEq, Serialize)]
+#[group(id = "read_options", multiple = true)]
+pub struct ReadArgs {
+    /// Tracked changes inline (all, the default), or the text with every
+    /// change accepted or rejected; the id lines then list what changed.
+    #[arg(long, value_enum, value_name = "CHOICE", help_heading = "Read options")]
+    pub track_changes: Option<TrackChanges>,
+    /// Comments inline (default) or hidden, with their ids on the id line
+    /// of the paragraph that holds them.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = CommentsArg::Inline,
+        value_name = "MODE",
+        help_heading = "Read options"
+    )]
+    pub comments: CommentsArg,
+    /// Timestamps on the notes of an author whose changes do not all share
+    /// one (the header shows an author's single timestamp).
+    #[arg(long, help_heading = "Read options")]
+    pub dates: bool,
+    /// Skip the layout pass; page count from Word's cached breaks, no
+    /// `<!-- page N of M -->` lines.
+    #[arg(long, help_heading = "Read options")]
+    pub no_page_markers: bool,
+    /// Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated.
+    #[arg(
+        short = 'p',
+        long = "paragraphs",
+        value_name = "SPEC",
+        conflicts_with_all = ["head", "tail"],
+        help_heading = "Read options"
+    )]
+    pub paragraphs: Option<String>,
+    /// Only the first N blocks (a table is one block).
+    #[arg(
+        long,
+        value_name = "N",
+        conflicts_with = "tail",
+        help_heading = "Read options"
+    )]
+    pub head: Option<usize>,
+    /// Only the last N blocks.
+    #[arg(long, value_name = "N", help_heading = "Read options")]
+    pub tail: Option<usize>,
+}
+
+/// `--comments` of `read`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CommentsArg {
+    /// Comments inline, with their ids.
+    #[default]
+    Inline,
+    /// Comments hidden; their ids on the id lines.
+    None,
+}
+
 /// Inputs and settings shared by explicit and shorthand comparisons.
 #[derive(clap::Args, Debug, Serialize)]
 #[group(id = "compare_options", multiple = true)]
@@ -369,16 +428,21 @@ pub enum Command {
         #[arg(long, conflicts_with = "json")]
         tables: bool,
     },
-    /// Read Markdown with edit IDs `[body:p:N]`, or with tracked marks.
-    Text {
+    /// Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
+    ///
+    /// A YAML header, then Markdown with an `<!-- pN -->` id line before every
+    /// paragraph (`pN` is `body:p:N`), tracked changes as CriticMarkup
+    /// followed by their ids (`{++text++}{>>#12 @AC<<}`) and comments with
+    /// theirs (`{>>#c5 @AC: …<<}`).
+    #[command(visible_alias = "text")]
+    Read {
         /// The document (.docx) to read.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Print the document as Markdown with its tracked changes as
-        /// CriticMarkup (all), or with every change accepted or rejected,
-        /// like `convert --to md`. The output then has no `[body:p:N]` ids.
-        #[arg(long, value_enum, value_name = "CHOICE")]
-        track_changes: Option<TrackChanges>,
+        /// The view's options.
+        #[command(flatten)]
+        #[serde(flatten)]
+        args: ReadArgs,
     },
     /// Apply a JSON edit plan; write clean copy, redline and report (refusal: exit 3).
     Edit {

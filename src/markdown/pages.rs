@@ -11,6 +11,17 @@
 //! (jubarte's included) drop, so the Markdown still converts back to the
 //! same document.
 
+/// An agent-view id or table line (`<!-- p3 … -->`, `<!-- p1-p4 empty -->`,
+/// `<!-- t0 … -->`). Other comment-like lines are document text and key
+/// their block like any other.
+fn agent_line(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix("<!-- ")
+        .and_then(|rest| rest.strip_prefix(['p', 't']))
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        && trimmed.ends_with("-->")
+}
+
 /// Characters of a block's opening text that must match the page text.
 const KEY_CHARS: usize = 24;
 
@@ -63,8 +74,7 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         // The agent view's id and table lines open a block as HTML
         // comments. They are held back: the block's key is the text under
         // them, and a marker due for the block goes above them.
-        if block_start && fence.is_none() && trimmed.starts_with("<!--") && trimmed.ends_with("-->")
-        {
+        if block_start && fence.is_none() && agent_line(trimmed) {
             held.push_str(line);
             continue;
         }

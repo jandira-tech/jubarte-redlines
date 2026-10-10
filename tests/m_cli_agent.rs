@@ -64,10 +64,9 @@ fn text_prints_markdown_with_paragraph_ids() {
     let file = write_fixture(dir.path());
     let (code, stdout, _) = run(&["text", file.to_str().unwrap()]);
     assert_eq!(code, 0);
-    assert!(
-        stdout.starts_with("[body:p:0] Heading\n\n[body:p:1] The individual"),
-        "{stdout}"
-    );
+    assert!(stdout.starts_with("---\nsource: "), "{stdout}");
+    assert!(stdout.contains("<!-- p0"), "{stdout}");
+    assert!(stdout.contains("The individual"), "{stdout}");
 }
 
 #[test]

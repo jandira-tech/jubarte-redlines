@@ -112,32 +112,37 @@ fn text_reads_tracked_changes_as_critic_markup_or_resolves_them() {
     std::fs::write(dir.path().join("draft.md"), DRAFT).unwrap();
     ok(&jubarte(&["convert", "draft.md"], dir.path()));
 
-    // Without the flag: the paragraph ids an edit plan uses.
+    // Without the flag: tracked changes inline, with the paragraph ids an
+    // edit plan uses.
     let plain = ok(&jubarte(&["text", "draft.docx"], dir.path()));
-    assert!(plain.contains("[body:p:"), "{plain}");
+    assert!(plain.contains("<!-- p0"), "{plain}");
 
     let all = ok(&jubarte(
         &["text", "draft.docx", "--track-changes", "all"],
         dir.path(),
     ));
-    assert!(!all.contains("[body:p:"), "{all}");
+    assert_eq!(all, plain, "all is the default");
     assert!(all.contains("{~~30~>45~~}"), "{all}");
     assert!(all.contains("Agreed on the call."), "{all}");
 
-    assert_eq!(
-        ok(&jubarte(
-            &["text", "draft.docx", "--track-changes", "accept"],
-            dir.path(),
-        )),
-        "Payment is due in 45 days.\n"
+    let accepted = ok(&jubarte(
+        &["text", "draft.docx", "--track-changes", "accept"],
+        dir.path(),
+    ));
+    assert!(
+        accepted.contains("\nPayment is due in 45 days."),
+        "{accepted}"
     );
-    assert_eq!(
-        ok(&jubarte(
-            &["text", "draft.docx", "--track-changes", "reject"],
-            dir.path(),
-        )),
-        "Payment is due in 30 days.\n"
+    assert!(!accepted.contains("{~~"), "{accepted}");
+    let rejected = ok(&jubarte(
+        &["text", "draft.docx", "--track-changes", "reject"],
+        dir.path(),
+    ));
+    assert!(
+        rejected.contains("\nPayment is due in 30 days."),
+        "{rejected}"
     );
+    assert!(!rejected.contains("{~~"), "{rejected}");
 }
 
 #[test]
@@ -147,5 +152,5 @@ fn help_describes_the_new_flags() {
     assert!(convert.contains("--page"), "{convert}");
     let text = ok(&jubarte(&["text", "--help"], dir.path()));
     assert!(text.contains("--track-changes"), "{text}");
-    assert!(text.contains("[body:p:N]"), "{text}");
+    assert!(text.contains("<!-- pN -->"), "{text}");
 }

@@ -202,9 +202,15 @@ const COMMANDS = {
   },
   accept: resolution(true),
   reject: resolution(false),
-  text: {
+  read: {
     run(_, [file], o) {
-      process.stdout.write(o.track_changes == null ? wasm.documentMarkdown(read(file)) : wasm.documentMarkdownWithChanges(read(file), o.track_changes));
+      const view = JSON.parse(wasm.readView(read(file), JSON.stringify({
+        trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
+        pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined,
+        head: o.head ?? undefined, tail: o.tail ?? undefined, source: path.basename(file),
+      })));
+      for (const warning of view.warnings) console.error(`warning: ${warning}`);
+      process.stdout.write(view.markdown);
     },
   },
   inspect: {
@@ -371,7 +377,7 @@ function validateHost(name, o) {
     }
     const extension = path.extname(o.output ?? "").toLowerCase();
     if (o.to === "md" || (o.to == null && [".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn"].includes(extension))) {
-      throw new UsageError("Markdown output with page markers is not supported by the npm CLI; use text --track-changes");
+      throw new UsageError("Markdown output with page markers is not supported by the npm CLI; use read --track-changes");
     }
     // A Word name fails before any read; a name that says nothing is
     // sniffed like every other input, in `convert`.

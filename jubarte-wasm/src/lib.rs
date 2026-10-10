@@ -279,6 +279,68 @@ pub fn document_markdown_with_changes(docx: &[u8], track_changes: &str) -> Resul
     .map_err(js_err)
 }
 
+/// `readView` options: the `read` command's flags.
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+struct ReadViewOptions {
+    track_changes: Option<String>,
+    comments: Option<String>,
+    dates: bool,
+    page_markers: Option<bool>,
+    paragraphs: Option<String>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    source: Option<String>,
+}
+
+fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: ReadViewOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("readView options: {e}"))?,
+        None => ReadViewOptions::default(),
+    };
+    let track_changes = match options.track_changes.as_deref() {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or("trackChanges must be all, accept or reject")?,
+    };
+    let comments = match options.comments.as_deref() {
+        None | Some("inline") => true,
+        Some("none") => false,
+        Some(other) => return Err(format!("comments must be inline or none, not {other:?}")),
+    };
+    let select = jubarte::markdown::Select::from_flags(
+        options.paragraphs.as_deref(),
+        options.head,
+        options.tail,
+    )?;
+    let view = jubarte::markdown::read(
+        docx,
+        &jubarte::markdown::ReadOptions {
+            track_changes,
+            comments,
+            dates: options.dates,
+            page_markers: options.page_markers.unwrap_or(true),
+            select,
+            source: options.source,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "markdown": view.markdown, "warnings": view.warnings }).to_string())
+}
+
+/// The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+/// then Markdown with `<!-- pN -->` id lines and every change and comment
+/// with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+/// reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+/// true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+/// `head`, `tail`, `source` (the name printed as `source:`).
+///
+/// Mirrors `jubarte::markdown::read`.
+#[wasm_bindgen(js_name = readView)]
+pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
+    read_view_json(docx, options_json.as_deref()).map_err(js_err)
+}
+
 /// What [`applyEditPlan`](apply_edit_plan) and
 /// [`previewEditPlan`](preview_edit_plan) return. A refused plan is data, not
 /// an exception, so every operation's outcome stays readable.

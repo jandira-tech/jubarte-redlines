@@ -740,25 +740,28 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
         .any(|finding| finding.severity == "error" || (strict && finding.severity == "warning")))
 }
 
-fn run_text(file: &Path, track_changes: Option<TrackChanges>) -> Result<(), String> {
+/// `read`: the agent view, with page markers from the layout pass unless
+/// `--no-page-markers` skips it.
+fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
     let bytes = read_document(file)?;
-    let Some(choice) = track_changes else {
-        print!(
-            "{}",
-            jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
-        );
-        return Ok(());
-    };
-    let read = jubarte::markdown::docx_to_markdown(
+    let select =
+        jubarte::markdown::Select::from_flags(args.paragraphs.as_deref(), args.head, args.tail)?;
+    let view = jubarte::markdown::read(
         &bytes,
-        &jubarte::markdown::MarkdownOptions {
-            track_changes: choice.into(),
-            extract_media: None,
-            ..jubarte::markdown::MarkdownOptions::default()
+        &jubarte::markdown::ReadOptions {
+            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+            comments: args.comments == CommentsArg::Inline,
+            dates: args.dates,
+            page_markers: !args.no_page_markers,
+            select,
+            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
         },
     )
     .map_err(|e| e.to_string())?;
-    print!("{}", read.markdown);
+    for warning in &view.warnings {
+        eprintln!("warning: {warning}");
+    }
+    print!("{}", view.markdown);
     Ok(())
 }
 
@@ -1502,34 +1505,9 @@ fn paginated(
     track_changes: TrackChanges,
     revisions: jubarte::convert::RevisionStyle,
 ) -> String {
-    let resolved = match track_changes {
-        TrackChanges::All => Ok(std::borrow::Cow::Borrowed(docx)),
-        TrackChanges::Accept => jubarte::document_comparer::accept_revisions(docx)
-            .map(std::borrow::Cow::Owned)
-            .map_err(|e| format!("accepting the changes failed: {e:?}")),
-        TrackChanges::Reject => jubarte::document_comparer::reject_revisions(docx)
-            .map(std::borrow::Cow::Owned)
-            .map_err(|e| format!("rejecting the changes failed: {e:?}")),
-    };
-    let rendered = resolved.and_then(|bytes| {
-        jubarte::convert::render(
-            &bytes,
-            jubarte::convert::PdfOptions {
-                revisions,
-                ..jubarte::convert::PdfOptions::default()
-            },
-            jubarte::convert::RenderRequest::default(),
-        )
-        .map_err(|e| format!("layout failed: {e}"))
-    });
-    match rendered {
-        Ok(rendered) => {
-            let pages: Vec<&str> = rendered
-                .report
-                .pages
-                .iter()
-                .map(|p| p.text.as_str())
-                .collect();
+    match jubarte::markdown::page_texts(docx, track_changes.into(), revisions) {
+        Ok(pages) => {
+            let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
             jubarte::markdown::paginate(markdown, &pages)
         }
         Err(e) => {
@@ -2076,10 +2054,7 @@ fn cli_main() -> ExitCode {
                 run_inspect(&file, json)
             });
         }
-        Some(Command::Text {
-            file,
-            track_changes,
-        }) => return exit_code(run_text(&file, track_changes)),
+        Some(Command::Read { file, args }) => return exit_code(run_text(&file, &args)),
         Some(Command::Edit {
             file,
             plan,

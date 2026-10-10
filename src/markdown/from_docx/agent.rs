@@ -8,6 +8,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::ooxml::{Element, Node};
+use crate::markdown::{Pick, Select};
 
 // The stamps start with U+E000, which no XML name can hold, so a file
 // cannot forge them.
@@ -16,7 +17,8 @@ pub(crate) const INDEX: &str = "\u{E000}jubarteIndex";
 /// Attribute stamped on every top-level `w:tbl`: its `t{N}` number.
 pub(crate) const TABLE: &str = "\u{E000}jubarteTable";
 /// Attribute stamped on a `w:p` that holds revisions: `kind:tag` entries
-/// separated by spaces (`ins:0@AC sub:1+2@AC`), recorded before resolution.
+/// separated by spaces (`ins:0@AC sub:1+2@AC fmt:3@JD mark-ins:4@AC`),
+/// recorded before resolution.
 pub(crate) const REVS: &str = "\u{E000}jubarteRevs";
 
 /// Author handles, order and timestamps for tags, notes and the header.
@@ -148,11 +150,30 @@ pub(crate) fn format_tags(tags: &[String]) -> String {
 /// (`7+8@AC`), then a deletion directly followed by an insertion (or the
 /// reverse) pairs as a substitution, greedily left to right. Bookmarks,
 /// proofing marks and comment markers do not break adjacency; a run does.
+/// Revisions inside links, content controls and simple fields count.
 pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
     // One slot per child: a revision, or `None` for anything else that
     // breaks adjacency.
+    // Links, content controls, smart tags, custom XML and simple fields are
+    // transparent: the renderer prints their runs inline, so their
+    // revisions count and neighbour the ones around them.
+    fn flatten<'a>(parent: &'a Element, out: &mut Vec<&'a Element>) {
+        for e in parent.elements() {
+            match e.local() {
+                "hyperlink" | "smartTag" | "customXml" | "fldSimple" => flatten(e, out),
+                "sdt" => {
+                    if let Some(content) = e.child("sdtContent") {
+                        flatten(content, out);
+                    }
+                }
+                _ => out.push(e),
+            }
+        }
+    }
+    let mut children = Vec::new();
+    flatten(p, &mut children);
     let mut slots: Vec<Option<RevTag>> = Vec::new();
-    for e in p.elements() {
+    for e in children {
         if matches!(
             e.local(),
             "bookmarkStart"
@@ -279,9 +300,19 @@ pub(crate) fn stamp(body: &mut Element, handles: &Handles) -> (usize, usize) {
 
 fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: bool) {
     if element.is("p") {
+        // Content revisions, then formatting changes, then the paragraph
+        // mark: everything resolution may strip.
+        let (mark_ins, mark_del) = mark_tags(element, handles);
         let revs: Vec<String> = revision_tags(element, handles)
             .into_iter()
             .map(|t| format!("{}:{}", t.kind, t.tag))
+            .chain(
+                format_change_tags(element, handles)
+                    .into_iter()
+                    .map(|t| format!("fmt:{t}")),
+            )
+            .chain(mark_ins.into_iter().map(|t| format!("mark-ins:{t}")))
+            .chain(mark_del.into_iter().map(|t| format!("mark-del:{t}")))
             .collect();
         element.attrs.push((INDEX.to_string(), c.p.to_string()));
         c.p += 1;
@@ -323,17 +354,17 @@ fn walk_revision_authors(
     out: &mut Vec<String>,
     dates: &mut HashMap<String, BTreeSet<String>>,
 ) {
-    if is_revision(e.local()) || e.local().ends_with("PrChange") {
-        if let Some(author) = e.attr("author") {
-            if !out.iter().any(|a| a == author) {
-                out.push(author.to_string());
-            }
-            if let Some(date) = e.attr("date") {
-                dates
-                    .entry(author.to_string())
-                    .or_default()
-                    .insert(date.to_string());
-            }
+    if (is_revision(e.local()) || e.local().ends_with("PrChange"))
+        && let Some(author) = e.attr("author")
+    {
+        if !out.iter().any(|a| a == author) {
+            out.push(author.to_string());
+        }
+        if let Some(date) = e.attr("date") {
+            dates
+                .entry(author.to_string())
+                .or_default()
+                .insert(date.to_string());
         }
     }
     for child in e.elements() {
@@ -341,13 +372,21 @@ fn walk_revision_authors(
     }
 }
 
-/// Authors of revisions (document order) then of comments (comment order),
+/// Authors of revisions (document order, then footnotes and endnotes) then
+/// of comments (comment order),
 /// each with a handle: the comment `w:initials` that author wrote, else the
 /// uppercase initials of the name's words; a collision appends 2, 3, ….
-pub(crate) fn handles(document: &Element, comments: Option<&Element>) -> Handles {
+pub(crate) fn handles(
+    document: &Element,
+    notes: &[&Element],
+    comments: Option<&Element>,
+) -> Handles {
     let mut order = Vec::new();
     let mut dates: HashMap<String, BTreeSet<String>> = HashMap::new();
     walk_revision_authors(document, &mut order, &mut dates);
+    for root in notes {
+        walk_revision_authors(root, &mut order, &mut dates);
+    }
     let mut initials: HashMap<String, String> = HashMap::new();
     if let Some(comments) = comments {
         for c in comments.children_named("comment") {
@@ -372,19 +411,28 @@ pub(crate) fn handles(document: &Element, comments: Option<&Element>) -> Handles
     }
     let mut by_author = HashMap::new();
     let mut taken: HashSet<String> = HashSet::new();
+    // A handle is letters and digits only: it sits inside tags (`1+2@AC`,
+    // `1@AC|2@JD`), space-separated stamps and `{>>…<<}` notes.
+    let clean = |s: &str| -> String { s.chars().filter(|c| c.is_alphanumeric()).collect() };
     for author in &order {
-        let base = initials.get(author).cloned().unwrap_or_else(|| {
-            let letters: String = author
-                .split_whitespace()
-                .filter_map(|w| w.chars().next())
-                .collect::<String>()
-                .to_uppercase();
-            if letters.is_empty() {
-                "??".to_string()
-            } else {
-                letters
-            }
-        });
+        let base = initials
+            .get(author)
+            .map(|i| clean(i))
+            .filter(|i| !i.is_empty())
+            .unwrap_or_else(|| {
+                let letters = clean(
+                    &author
+                        .split_whitespace()
+                        .filter_map(|w| w.chars().find(|c| c.is_alphanumeric()))
+                        .collect::<String>()
+                        .to_uppercase(),
+                );
+                if letters.is_empty() {
+                    "??".to_string()
+                } else {
+                    letters
+                }
+            });
         let mut handle = base.clone();
         let mut n = 2;
         while !taken.insert(handle.clone()) {
@@ -425,6 +473,40 @@ pub(crate) struct LineFacts<'a> {
     pub resolved: bool,
     /// Comment ids to list (comments hidden).
     pub comments: &'a [String],
+    /// The paragraph has no text but keeps its own line for its marks,
+    /// revisions or comments: `<!-- p4 empty, break-ins #3 @AC -->`.
+    pub empty: bool,
+}
+
+/// An empty paragraph that still says something the `pN empty` run would
+/// lose: a tracked mark, a formatting change or, resolved, a revision.
+pub(crate) fn holds_revision_facts(p: &Element, resolved: bool, handles: &Handles) -> bool {
+    let (ins, del) = mark_tags(p, handles);
+    !ins.is_empty()
+        || !del.is_empty()
+        || !format_change_tags(p, handles).is_empty()
+        || (resolved && !stamped_revs(p).is_empty())
+}
+
+/// The comment ids a paragraph's ranges and references name, in document
+/// order, each once.
+pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
+    fn walk(e: &Element, out: &mut Vec<String>) {
+        for child in e.elements() {
+            if child.is("commentRangeStart") || child.is("commentReference") {
+                if let Some(id) = child.attr("id")
+                    && !out.iter().any(|c| c == id)
+                {
+                    out.push(id.to_string());
+                }
+            } else {
+                walk(child, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(p, &mut out);
+    out
 }
 
 /// Twips as inches with up to two decimals: `720` → `0.5in`, `1440` → `1in`.
@@ -434,16 +516,72 @@ pub(crate) fn inches(twips: f64) -> String {
     format!("{value}in")
 }
 
+/// Whether a descendant of `e` outside text boxes matches `hit`: a break
+/// inside a text box turns no page of the body.
+fn holds(e: &Element, hit: &dyn Fn(&Element) -> bool) -> bool {
+    e.elements()
+        .any(|c| !c.is("txbxContent") && (hit(c) || holds(c, hit)))
+}
+
 pub(crate) fn has_page_break(p: &Element) -> bool {
-    let mut breaks = Vec::new();
-    p.find_all("br", &mut breaks);
-    breaks.iter().any(|b| b.attr("type") == Some("page"))
+    holds(p, &|e| e.is("br") && e.attr("type") == Some("page"))
 }
 
 pub(crate) fn has_rendered_page_break(p: &Element) -> bool {
-    let mut found = Vec::new();
-    p.find_all("lastRenderedPageBreak", &mut found);
-    !found.is_empty()
+    holds(p, &|e| e.is("lastRenderedPageBreak"))
+}
+
+/// The paragraphs under `e` in document order, text boxes excluded.
+pub(crate) fn paragraphs(e: &Element) -> Vec<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+        for c in e.elements() {
+            if c.is("p") {
+                out.push(c);
+            }
+            if !c.is("txbxContent") {
+                walk(c, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
+/// Indices of the paragraphs whose section break starts a new page: the
+/// section after them is not `continuous` or `nextColumn` (a section's
+/// `w:type` says how that section starts).
+pub(crate) fn page_sections(body: &Element) -> HashSet<usize> {
+    let ends: Vec<(usize, &Element)> = paragraphs(body)
+        .into_iter()
+        .filter_map(|p| Some((p.attr(INDEX)?.parse().ok()?, p.path(&["pPr", "sectPr"])?)))
+        .collect();
+    let last = body.child("sectPr");
+    ends.iter()
+        .enumerate()
+        .filter(|(k, _)| {
+            let next = ends.get(k + 1).map(|(_, s)| *s).or(last);
+            !next
+                .and_then(|s| s.path(&["type"]))
+                .and_then(|t| t.attr("val"))
+                .is_some_and(|v| v == "continuous" || v == "nextColumn")
+        })
+        .map(|(_, (index, _))| *index)
+        .collect()
+}
+
+/// A table's cached page breaks: whether its first paragraph opens a page,
+/// and how many more pages its other paragraphs turn (named at the next
+/// block, since a marker cannot go inside a table).
+pub(crate) fn table_breaks(tbl: &Element, cached: bool) -> (bool, usize) {
+    let ps = paragraphs(tbl);
+    if cached {
+        let first = ps.first().is_some_and(|p| has_rendered_page_break(p));
+        let all = ps.iter().filter(|p| has_rendered_page_break(p)).count();
+        (first, all - usize::from(first))
+    } else {
+        (false, ps.iter().filter(|p| has_page_break(p)).count())
+    }
 }
 
 pub(crate) fn has_section_break(p: &Element) -> bool {
@@ -474,6 +612,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     let ppr = p.child("pPr");
     let mut clauses: Vec<String> = Vec::new();
+    if f.empty {
+        clauses.push("empty".to_string());
+    }
     if let Some(jc) = ppr
         .and_then(|pr| pr.child("jc"))
         .and_then(|j| j.attr("val"))
@@ -557,28 +698,24 @@ pub(crate) fn page_marker(page: usize, total: usize) -> String {
 }
 
 /// Paragraphs (text boxes excluded) holding `w:lastRenderedPageBreak`, and
-/// hard page and section breaks, for the cached-break page count.
-pub(crate) fn page_counts(e: &Element) -> (usize, usize) {
-    if e.is("txbxContent") {
-        return (0, 0);
-    }
-    let mut rendered = 0;
-    let mut hard = 0;
-    if e.is("p") {
-        rendered += usize::from(has_rendered_page_break(e));
-        hard += usize::from(has_page_break(e)) + usize::from(has_section_break(e));
-    }
-    for child in e.elements() {
-        let (r, h) = page_counts(child);
-        rendered += r;
-        hard += h;
-    }
+/// hard page breaks plus section breaks that start a page, for the
+/// cached-break page count.
+pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
+    let ps = paragraphs(body);
+    let rendered = ps.iter().filter(|p| has_rendered_page_break(p)).count();
+    let hard = ps.iter().filter(|p| has_page_break(p)).count() + page_sections(body).len();
     (rendered, hard)
 }
 
 /// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
-/// `None` for a nested table (not numbered).
-pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Option<String> {
+/// `None` for a nested table (not numbered). With `comments` (comments
+/// hidden) the cells' comment ids print as `comments #c9 in p3`.
+pub(crate) fn table_line(
+    tbl: &Element,
+    resolved: bool,
+    comments: bool,
+    handles: &Handles,
+) -> Option<String> {
     let t = tbl.attr(TABLE)?;
     let rows: Vec<&Element> = tbl.children_named("tr").collect();
     let cols = tbl
@@ -607,6 +744,7 @@ pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Op
     let mut break_ins: Vec<String> = Vec::new();
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
+    let mut held: Vec<String> = Vec::new();
     for tr in &rows {
         let mut range: Option<(usize, usize)> = None;
         for tc in tr.children_named("tc") {
@@ -633,6 +771,11 @@ pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Op
                             .into_iter()
                             .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
                     );
+                }
+                let ids = if comments { comment_ids(p) } else { Vec::new() };
+                if !ids.is_empty() {
+                    let ids: Vec<String> = ids.iter().map(|c| format!("#c{c}")).collect();
+                    held.push(format!("{} in p{i}", ids.join(" ")));
                 }
             }
             if let (Some(&a), Some(&b)) = (idx.first(), idx.last()) {
@@ -681,6 +824,9 @@ pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Op
     }
     if !revs.is_empty() {
         clauses.push(format!("rev {}", revs.join("; ")));
+    }
+    if !held.is_empty() {
+        clauses.push(format!("comments {}", held.join("; ")));
     }
     Some(line(&head, &clauses))
 }
@@ -748,6 +894,297 @@ pub(crate) fn comment_head(
     head
 }
 
+/// Every logical revision in the stamped body: inline tags per paragraph,
+/// tracked paragraph marks, tracked rows and cells.
+pub(crate) fn collect_revisions(body: &Element, handles: &Handles) -> Vec<RevTag> {
+    let mut out = Vec::new();
+    collect_in(body, handles, &mut out);
+    out
+}
+
+fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
+    if e.is("txbxContent") {
+        return;
+    }
+    let attribution = |m: &Element| {
+        (
+            m.attr("author").map(str::to_string),
+            m.attr("date").map(str::to_string),
+        )
+    };
+    if e.is("p") {
+        out.extend(revision_tags(e, handles));
+        if let Some(rpr) = e.path(&["pPr", "rPr"]) {
+            for m in rpr.elements().filter(|m| kind_of(m.local()).is_some()) {
+                let (author, date) = attribution(m);
+                out.push(RevTag {
+                    kind: "mark",
+                    tag: tag_of(m, handles),
+                    author,
+                    date,
+                });
+            }
+        }
+    }
+    if e.is("tr")
+        && let Some(trpr) = e.child("trPr")
+    {
+        for m in trpr.elements().filter(|m| kind_of(m.local()).is_some()) {
+            let (author, date) = attribution(m);
+            out.push(RevTag {
+                kind: "row",
+                tag: tag_of(m, handles),
+                author,
+                date,
+            });
+        }
+    }
+    if e.is("tc")
+        && let Some(tcpr) = e.child("tcPr")
+    {
+        for m in tcpr
+            .elements()
+            .filter(|m| matches!(m.local(), "cellIns" | "cellDel"))
+        {
+            let (author, date) = attribution(m);
+            out.push(RevTag {
+                kind: "cell",
+                tag: tag_of(m, handles),
+                author,
+                date,
+            });
+        }
+    }
+    for child in e.elements() {
+        collect_in(child, handles, out);
+    }
+}
+
+/// Count of revision elements (`w:ins`, `w:del`, moves, cell marks) and of
+/// formatting changes (`*PrChange`) under `body`, text boxes excluded.
+pub(crate) fn count_marks(e: &Element) -> (usize, usize) {
+    if e.is("txbxContent") {
+        return (0, 0);
+    }
+    let mut marks = usize::from(is_revision(e.local()));
+    let mut formats = usize::from(e.local().ends_with("PrChange"));
+    for child in e.elements() {
+        let (m, f) = count_marks(child);
+        marks += m;
+        formats += f;
+    }
+    (marks, formats)
+}
+
+/// One block of the rendered body: its lines, the paragraph span it covers
+/// and, for a table, its number.
+struct Block {
+    text: String,
+    span: Option<(usize, usize)>,
+    table: Option<usize>,
+    /// The `<!-- page N of M -->` line that preceded it, if any.
+    page: Option<String>,
+}
+
+/// Every `pN` in a table or empty-run line, for its span.
+fn numbers_after(line: &str, key: &str) -> Vec<usize> {
+    let Some(at) = line.find(key) else {
+        return Vec::new();
+    };
+    line[at + key.len()..]
+        .split(|c: char| !c.is_ascii_digit() && c != 'p')
+        .filter_map(|piece| piece.strip_prefix('p')?.parse().ok())
+        .collect()
+}
+
+/// Splits a rendered body on blank lines into blocks keyed by their id
+/// lines; a page marker attaches to the block after it; a block with no id
+/// line (notes, footnote definitions) attaches to the block before it.
+fn blocks_of(body: &str) -> Vec<Block> {
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut page: Option<String> = None;
+    for chunk in body.split("\n\n").filter(|c| !c.trim().is_empty()) {
+        let first = chunk.lines().next().unwrap_or("");
+        if first.starts_with("<!-- page ") {
+            page = Some(first.to_string());
+            continue;
+        }
+        let head = first.strip_prefix("<!-- ").unwrap_or("");
+        if let Some(rest) = head.strip_prefix('p') {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(start) = digits.parse::<usize>() {
+                let end = rest
+                    .strip_prefix(&digits)
+                    .and_then(|r| r.strip_prefix("-p"))
+                    .map(|r| {
+                        r.chars()
+                            .take_while(char::is_ascii_digit)
+                            .collect::<String>()
+                    })
+                    .and_then(|d| d.parse::<usize>().ok())
+                    .unwrap_or(start);
+                blocks.push(Block {
+                    text: chunk.to_string(),
+                    span: Some((start, end)),
+                    table: None,
+                    page: page.take(),
+                });
+                continue;
+            }
+        }
+        if let Some(rest) = head.strip_prefix('t') {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(table) = digits.parse::<usize>() {
+                let cells = numbers_after(first, "cells ");
+                let span = match (cells.iter().min(), cells.iter().max()) {
+                    (Some(&a), Some(&b)) => Some((a, b)),
+                    _ => None,
+                };
+                blocks.push(Block {
+                    text: chunk.to_string(),
+                    span,
+                    table: Some(table),
+                    page: page.take(),
+                });
+                continue;
+            }
+        }
+        match blocks.last_mut() {
+            Some(last) => {
+                last.text.push_str("\n\n");
+                last.text.push_str(chunk);
+            }
+            None => blocks.push(Block {
+                text: chunk.to_string(),
+                span: None,
+                table: None,
+                page: page.take(),
+            }),
+        }
+    }
+    blocks
+}
+
+fn span_text(a: usize, b: usize) -> String {
+    if a == b {
+        format!("p{a}")
+    } else {
+        format!("p{a}-p{b}")
+    }
+}
+
+/// The selected blocks of `body` joined back, and the `range:` text.
+pub(crate) fn select_blocks(
+    body: &str,
+    select: &Select,
+    last: usize,
+) -> Result<(String, String), String> {
+    let blocks = blocks_of(body);
+    let keep: Vec<bool>;
+    let range: String;
+    match select {
+        Select::Head(n) | Select::Tail(n) if *n == 0 => {
+            return Err(format!(
+                "{} needs a count above 0",
+                if matches!(select, Select::Head(_)) {
+                    "head"
+                } else {
+                    "tail"
+                }
+            ));
+        }
+        Select::Head(n) => {
+            keep = (0..blocks.len()).map(|i| i < *n).collect();
+            let spans: Vec<(usize, usize)> =
+                blocks.iter().take(*n).filter_map(|b| b.span).collect();
+            range = format!(
+                "head {n} ({})",
+                span_text(
+                    spans.first().map_or(0, |s| s.0),
+                    spans.last().map_or(0, |s| s.1)
+                )
+            );
+        }
+        Select::Tail(n) => {
+            let skip = blocks.len().saturating_sub(*n);
+            keep = (0..blocks.len()).map(|i| i >= skip).collect();
+            let spans: Vec<(usize, usize)> =
+                blocks.iter().skip(skip).filter_map(|b| b.span).collect();
+            range = format!(
+                "tail {n} ({})",
+                span_text(
+                    spans.first().map_or(0, |s| s.0),
+                    spans.last().map_or(0, |s| s.1)
+                )
+            );
+        }
+        Select::Picks(picks) => {
+            let mut wanted: Vec<(usize, usize)> = Vec::new();
+            let mut tables: Vec<usize> = Vec::new();
+            let mut names: Vec<(usize, String)> = Vec::new();
+            for pick in picks {
+                match pick {
+                    Pick::Paragraphs { from, to } => {
+                        let to = to.unwrap_or(last);
+                        for n in [*from, to] {
+                            if n > last {
+                                return Err(format!("p{n} is past the last paragraph p{last}"));
+                            }
+                        }
+                        wanted.push((*from, to));
+                        names.push((*from, span_text(*from, to)));
+                    }
+                    Pick::Table(t) => {
+                        let Some(block) = blocks.iter().find(|b| b.table == Some(*t)) else {
+                            return Err(format!("t{t} is not a table of this document"));
+                        };
+                        tables.push(*t);
+                        names.push((block.span.map_or(0, |s| s.0), format!("t{t}")));
+                    }
+                }
+            }
+            keep = blocks
+                .iter()
+                .map(|b| {
+                    b.table.is_some_and(|t| tables.contains(&t))
+                        || b.span.is_some_and(|(a, z)| {
+                            wanted.iter().any(|&(from, to)| a <= to && from <= z)
+                        })
+                })
+                .collect();
+            names.sort_by_key(|(at, _)| *at);
+            range = names
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>()
+                .join(", ");
+        }
+    }
+    let mut out = String::new();
+    let mut page_due: Option<&str> = None;
+    let mut page_written: Option<&str> = None;
+    for (block, keep) in blocks.iter().zip(&keep) {
+        if let Some(page) = &block.page {
+            page_due = Some(page.as_str());
+        }
+        if !keep {
+            continue;
+        }
+        if let Some(page) = page_due.take()
+            && page_written != Some(page)
+        {
+            out.push_str(page);
+            out.push_str("\n\n");
+            page_written = Some(page);
+        }
+        out.push_str(&block.text);
+        out.push_str("\n\n");
+    }
+    // `convert` ends the Markdown with its newline.
+    out.truncate(out.trim_end_matches('\n').len());
+    Ok((out, range))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,7 +1250,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:bookmarkStart w:id="9" w:name="_b"/><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t> u </w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -827,7 +1264,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>a</w:t></w:r></w:ins><w:r><w:t> </w:t></w:r><w:del w:id="1" w:author="John Doe"><w:r><w:delText>b</w:delText></w:r></w:del></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         assert_eq!(handles.by_author["Ann Counsel"], "AC");
         assert_eq!(handles.by_author["John Doe"], "JD");
         let p = d.child("body").unwrap().child("p").unwrap();
@@ -851,7 +1288,7 @@ mod tests {
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/><w:ins w:id="1" w:author="Al Cooper" w:date="2026-10-02T08:00:00Z"/><w:ins w:id="2" w:author="Al Cooper" w:date="2026-10-03T08:30:00Z"/></w:p>"#,
         );
         let comments = parse_xml(format!(r#"<w:comments {W}><w:comment w:id="5" w:author="Arthur Souza Rodrigues" w:initials="AS" w:date="2026-10-09T16:13:00Z"/><w:comment w:id="6" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:comments>"#).as_bytes()).unwrap();
-        let handles = handles(&d, Some(&comments));
+        let handles = handles(&d, &[], Some(&comments));
         assert_eq!(
             handles.order,
             ["Ann Counsel", "Al Cooper", "Arthur Souza Rodrigues"]
@@ -876,7 +1313,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permStart w:id="30"/><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permEnd w:id="30"/></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -895,7 +1332,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:pPr><w:pPrChange w:id="1" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="2" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
         );
-        let handles = handles(&d, None);
+        let handles = handles(&d, &[], None);
         let p = d.child("body").unwrap().child("p").unwrap();
         assert_eq!(format_change_tags(p, &handles), ["1@AC", "2@AC"]);
     }

@@ -93,8 +93,21 @@ test("changes, revisions, accept and reject by kind", () => {
   assert.equal(run("changes", base).out, "0 change(s)\n");
 });
 
-test("text, inspect, capabilities and convert", () => {
-  assert.match(run("text", untracked).out, /^\[body:p:0[\] ]/);
+test("read (alias text), inspect, capabilities and convert", () => {
+  // `read` prints the agent view, as the binary and the Python CLI do.
+  for (const command of ["read", "text"]) {
+    const view = run(command, untracked, "--no-page-markers");
+    assert.equal(view.code, 0, view.err);
+    assert.match(view.out, new RegExp(`^---\\nsource: ${path.basename(untracked).replaceAll(".", "\\.")}\\n`));
+    assert.match(view.out, /\n<!-- p0[ -]/);
+    assert.doesNotMatch(view.out, /<!-- page /);
+  }
+  const paged = run("read", untracked);
+  assert.equal(paged.code, 0, paged.err);
+  assert.match(paged.out, /\n<!-- page 1 of \d+ -->\n/);
+  const picked = run("read", untracked, "-p", "p0");
+  assert.equal(picked.code, 0, picked.err);
+  assert.doesNotMatch(picked.out, /<!-- p1[ -]/);
   const summary = run("inspect", untracked);
   assert.match(summary.out, /^sha256: [0-9a-f]{64}\nparagraphs: \d+ /);
   assert.match(summary.out, /\nbody:p:0\t\[/);
