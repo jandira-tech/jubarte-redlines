@@ -400,3 +400,129 @@ fn legacy_output_keeps_author_notes() {
         "a {++b++}{>>Ann Counsel (2026-10-01T09:00:00Z)<<}\n"
     );
 }
+
+const COMMENTS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+const COMMENTS_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const EXTENDED_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml";
+const EXTENDED_REL: &str =
+    "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
+const W14: &str = r#"xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
+const W15: &str = r#"xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml""#;
+
+fn comment(id: u32, author: &str, initials: &str, date: &str, para_id: &str, text: &str) -> String {
+    format!(
+        r#"<w:comment w:id="{id}" w:author="{author}" w:initials="{initials}" w:date="{date}"><w:p w14:paraId="{para_id}"><w:r><w:annotationRef/></w:r><w:r><w:t>{text}</w:t></w:r></w:p></w:comment>"#
+    )
+}
+
+fn reference(id: u32) -> String {
+    format!(r#"<w:r><w:commentReference w:id="{id}"/></w:r>"#)
+}
+
+fn commented_docx(extended: &str) -> Vec<u8> {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}{}</w:comments>"#,
+        comment(
+            5,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "11A5D0F2",
+            "Cap in Delaware?"
+        ),
+        comment(
+            6,
+            "Arthur Souza Rodrigues",
+            "AS",
+            "2026-10-09T16:13:00Z",
+            "33767091",
+            "Disagree."
+        ),
+        comment(
+            11,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "214DA01E",
+            "Add survival?"
+        )
+    );
+    let extended_xml =
+        format!(r#"<w15:commentsEx xmlns:w="{W_NS}" {W15}>{extended}</w15:commentsEx>"#);
+    let body_xml = format!(
+        r#"<w:p>{}<w:commentRangeStart w:id="5"/><w:commentRangeStart w:id="6"/>{}<w:commentRangeEnd w:id="5"/>{}<w:commentRangeEnd w:id="6"/>{}</w:p><w:p>{}<w:commentRangeStart w:id="11"/><w:commentRangeEnd w:id="11"/>{}{}</w:p>"#,
+        run("Fee. "),
+        run("Late amounts accrue interest."),
+        reference(5),
+        reference(6),
+        run("Keep it secret"),
+        reference(11),
+        run(".")
+    );
+    common::docx::docx_with(
+        &body_xml,
+        &[
+            Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            },
+            Part {
+                name: "word/commentsExtended.xml",
+                content_type: EXTENDED_CT,
+                rel_type: EXTENDED_REL,
+                xml: &extended_xml,
+            },
+        ],
+    )
+}
+
+const THREADED: &str = r#"<w15:commentEx w15:paraId="11A5D0F2" w15:done="0"/><w15:commentEx w15:paraId="33767091" w15:paraIdParent="11A5D0F2" w15:done="0"/><w15:commentEx w15:paraId="214DA01E" w15:done="0"/>"#;
+
+#[test]
+fn comments_carry_ids_handles_and_thread_parents() {
+    assert_eq!(
+        body(&agent(&commented_docx(THREADED))),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nFee. {==Late amounts accrue interest.==}{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}\n\n<!-- p1 -->\nKeep it secret{>>#c11 @AC: Add survival?<<}.\n"
+    );
+}
+
+#[test]
+fn two_independent_comments_on_one_anchor_are_not_a_thread() {
+    let independent = THREADED.replace(r#" w15:paraIdParent="11A5D0F2""#, "");
+    let out = body(&agent(&commented_docx(&independent))).to_string();
+    assert!(
+        out.contains("{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS: Disagree.<<}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_resolved_thread_says_so_on_its_root() {
+    let resolved = THREADED.replacen(
+        r#"w15:paraId="11A5D0F2" w15:done="0""#,
+        r#"w15:paraId="11A5D0F2" w15:done="1""#,
+        1,
+    );
+    let out = body(&agent(&commented_docx(&resolved))).to_string();
+    assert!(
+        out.contains("{>>#c5 @AC resolved: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn hidden_comments_are_listed_on_the_id_line() {
+    assert_eq!(
+        body(&agent_with(
+            &commented_docx(THREADED),
+            TrackChanges::All,
+            false
+        )),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 comments #c5 #c6 -->\nFee. Late amounts accrue interest.\n\n<!-- p1 comments #c11 -->\nKeep it secret.\n"
+    );
+}

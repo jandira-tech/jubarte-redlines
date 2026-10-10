@@ -98,6 +98,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .xml(&part("/comments", "word/comments.xml"))
         .ok()
         .flatten();
+    let extended = if options.ids {
+        package
+            .xml(&part("/commentsExtended", "word/commentsExtended.xml"))
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let threads = agent::threads(comments_root.as_ref(), extended.as_ref());
     let handles = if options.ids {
         agent::handles(&document, comments_root.as_ref())
     } else {
@@ -201,6 +210,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         cached_pages,
         page: 0,
         para_comments: Vec::new(),
+        threads,
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -684,6 +694,8 @@ struct Writer<'a> {
     page: usize,
     /// Agent view: comment ids met since the last id line.
     para_comments: Vec<String>,
+    /// Agent view: comment threads (`commentsExtended.xml`).
+    threads: agent::Threads,
 }
 
 impl Writer<'_> {
@@ -743,6 +755,19 @@ impl Writer<'_> {
     /// that spans paragraphs gets one highlight per paragraph, because
     /// CriticMarkup cannot cross a block.
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
+        if self.agent && !self.in_comment {
+            if let Some(id) = range
+                .attr("id")
+                .filter(|id| self.comments.contains_key(*id))
+            {
+                if range.is("commentRangeStart") && !self.para_comments.iter().any(|c| c == id) {
+                    self.para_comments.push(id.to_string());
+                }
+                if !self.comments_inline {
+                    return;
+                }
+            }
+        }
         let Some(id) = range
             .attr("id")
             .filter(|id| !self.in_comment && self.comments.contains_key(*id))
@@ -1153,7 +1178,18 @@ impl Writer<'_> {
                 }
             }
             "commentReference" if !hidden && !self.in_comment => {
-                if let Some(note) = child.attr("id").and_then(|id| self.note(id)) {
+                let Some(id) = child.attr("id") else {
+                    return;
+                };
+                if self.agent && self.comments.contains_key(id) {
+                    if !self.para_comments.iter().any(|c| c == id) {
+                        self.para_comments.push(id.to_string());
+                    }
+                    if !self.comments_inline {
+                        return;
+                    }
+                }
+                if let Some(note) = self.note(id) {
                     out.comment(&note);
                 }
             }
@@ -1370,7 +1406,22 @@ impl Writer<'_> {
         self.revisions = revisions;
         self.open_comments = open_comments;
         let text = critic::join_marked(parts, " ").replace('\n', " ");
-        let note = comment_note(comment.attr("author"), comment.attr("date"), &text);
+        let note = if self.agent {
+            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
+                .then(|| comment.attr("date"))
+                .flatten();
+            let mut inner = agent::comment_head(
+                id,
+                comment.attr("author"),
+                date,
+                &self.handles,
+                &self.threads,
+            );
+            inner.push_str(&text);
+            inner
+        } else {
+            comment_note(comment.attr("author"), comment.attr("date"), &text)
+        };
         self.notes.insert(id.to_string(), note.clone());
         Some(note)
     }

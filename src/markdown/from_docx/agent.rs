@@ -654,6 +654,69 @@ pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Op
     Some(line(&head, &clauses))
 }
 
+/// Comment threads from `commentsExtended.xml`.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Threads {
+    /// Reply id → root id (`w15:paraIdParent`; Word threads are flat).
+    pub reply_of: HashMap<String, String>,
+    /// Ids marked `w15:done="1"`.
+    pub done: HashSet<String>,
+}
+
+/// `commentEx` names a comment by the `w14:paraId` of its last paragraph.
+pub(crate) fn threads(comments: Option<&Element>, extended: Option<&Element>) -> Threads {
+    let mut t = Threads::default();
+    let (Some(comments), Some(extended)) = (comments, extended) else {
+        return t;
+    };
+    let by_para: HashMap<String, String> = comments
+        .children_named("comment")
+        .filter_map(|c| {
+            let id = c.attr("id")?;
+            let para = c.children_named("p").last()?.attr("paraId")?;
+            Some((para.to_string(), id.to_string()))
+        })
+        .collect();
+    for ex in extended.children_named("commentEx") {
+        let Some(id) = ex.attr("paraId").and_then(|p| by_para.get(p)) else {
+            continue;
+        };
+        if ex.attr("done").is_some_and(|d| d == "1" || d == "true") {
+            t.done.insert(id.clone());
+        }
+        if let Some(parent) = ex.attr("paraIdParent").and_then(|p| by_para.get(p)) {
+            t.reply_of.insert(id.clone(), parent.clone());
+        }
+    }
+    t
+}
+
+/// `#c5 @AC: `, `#c5 @AC resolved: `, `#c6 @AS re #c5: `, or `#c5: ` with
+/// no author. `date` is the inline timestamp, when wanted.
+pub(crate) fn comment_head(
+    id: &str,
+    author: Option<&str>,
+    date: Option<&str>,
+    handles: &Handles,
+    threads: &Threads,
+) -> String {
+    let mut head = format!("#c{id}");
+    if let Some(handle) = handles.of(author) {
+        head.push_str(&format!(" @{handle}"));
+    }
+    if let Some(date) = date {
+        head.push(' ');
+        head.push_str(date);
+    }
+    if let Some(root) = threads.reply_of.get(id) {
+        head.push_str(&format!(" re #c{root}"));
+    } else if threads.done.contains(id) {
+        head.push_str(" resolved");
+    }
+    head.push_str(": ");
+    head
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
