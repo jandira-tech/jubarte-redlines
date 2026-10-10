@@ -54,10 +54,20 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
     // The last block is a list item (or its indented continuation): a
     // marker before the next item would split the list in two.
     let mut in_list = false;
+    // The agent view's id and table lines held at a block's start.
+    let mut held = String::new();
     for line in markdown.split_inclusive('\n') {
         let line_offset = offset;
         offset = offset.saturating_add(line.len());
         let trimmed = line.trim();
+        // The agent view's id and table lines open a block as HTML
+        // comments. They are held back: the block's key is the text under
+        // them, and a marker due for the block goes above them.
+        if block_start && fence.is_none() && trimmed.starts_with("<!--") && trimmed.ends_with("-->")
+        {
+            held.push_str(line);
+            continue;
+        }
         let fenced = fence.is_some();
         match (fence, fence_run(trimmed)) {
             // A fence opens a block, never mid-paragraph text.
@@ -106,12 +116,15 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
                 out.push_str(&marker(page.saturating_add(1), total));
             }
         }
+        out.push_str(&held);
+        held.clear();
         out.push_str(line);
         if !trimmed.is_empty() {
             in_list = list_item(line) || continues_list;
         }
         block_start = trimmed.is_empty() && fence.is_none();
     }
+    out.push_str(&held);
     out
 }
 

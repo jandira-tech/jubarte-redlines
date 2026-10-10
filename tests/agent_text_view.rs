@@ -135,3 +135,72 @@ fn select_parses_single_paragraphs_ranges_lists_and_tables() {
     );
     assert_eq!(Select::parse(" , ").unwrap_err(), "no paragraphs selected");
 }
+
+#[test]
+fn id_lines_precede_every_paragraph_and_the_header_opens_the_output() {
+    let bytes = docx(&format!(
+        "{}{}",
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:jc w:val="center"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>"#,
+        para("Body text.")
+    ));
+    let out = agent(&bytes);
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 center -->\n# Title\n\n<!-- p1 -->\nBody text.\n"
+    );
+}
+
+#[test]
+fn empty_paragraphs_collapse_and_cached_breaks_number_the_pages() {
+    let bytes = docx(&format!(
+        "{}<w:p/><w:p/><w:p/>{}<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p><w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:lastRenderedPageBreak/><w:t>Second page</w:t></w:r></w:p>",
+        para("One"),
+        para("Five")
+    ));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nOne\n\n<!-- p1-p3 empty -->\n\n<!-- p4 -->\nFive\n\n<!-- p5 page-break -->\n\n<!-- page 2 of 2 -->\n\n<!-- p6 center -->\nSecond page\n"
+    );
+}
+
+#[test]
+fn trailing_empty_paragraphs_are_still_listed() {
+    let bytes = docx(&format!("{}<w:p/>", para("Only")));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nOnly\n\n<!-- p1 empty -->\n"
+    );
+}
+
+#[test]
+fn layout_page_texts_place_the_markers_above_the_id_lines() {
+    let bytes = docx(&format!(
+        "{}{}{}",
+        para("Alpha text here"),
+        para("Beta text here"),
+        para("Gamma text here")
+    ));
+    let out = agent_options(
+        &bytes,
+        MarkdownOptions {
+            pages: Some(vec![
+                "Alpha text here".into(),
+                "Beta text here Gamma text here".into(),
+            ]),
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(
+        body(&out),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nAlpha text here\n\n<!-- page 2 of 2 -->\n\n<!-- p1 -->\nBeta text here\n\n<!-- p2 -->\nGamma text here\n"
+    );
+}
+
+#[test]
+fn paginate_holds_comment_lines_at_a_block_start() {
+    let md = "<!-- p0 -->\nAlpha text here\n\n<!-- p1 page-break -->\n\n<!-- t0 1x1, cells p2-p2 by row -->\n|Beta text here|\n|-|\n";
+    assert_eq!(
+        jubarte::markdown::paginate(md, &["alpha text here", "beta text here"]),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nAlpha text here\n\n<!-- p1 page-break -->\n\n<!-- page 2 of 2 -->\n\n<!-- t0 1x1, cells p2-p2 by row -->\n|Beta text here|\n|-|\n"
+    );
+}

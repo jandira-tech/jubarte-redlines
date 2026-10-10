@@ -738,6 +738,9 @@ pub(crate) struct Blocks {
     separator: Option<Change>,
     /// The last paragraph ended with a space, which rendering trimmed.
     trailing_space: bool,
+    /// The next block follows after one newline: an id line was just
+    /// written (agent view).
+    tight: bool,
 }
 
 impl Blocks {
@@ -747,6 +750,7 @@ impl Blocks {
             last_was_list: false,
             separator: None,
             trailing_space: false,
+            tight: false,
         }
     }
 
@@ -762,6 +766,19 @@ impl Blocks {
     /// item stays valid.
     pub(crate) fn push_prefixed(&mut self, prefix: &str, body: &str, is_list: bool) {
         self.push_paragraph(prefix, body, is_list, (false, false));
+    }
+
+    /// An id, table or page line of the agent view. It opens after a blank
+    /// line, like any block, and the block under it follows directly.
+    pub(crate) fn push_line(&mut self, line: &str) {
+        self.separator = None;
+        if !self.out.is_empty() {
+            self.out.push_str("\n\n");
+        }
+        self.out.push_str(line);
+        self.last_was_list = false;
+        self.trailing_space = false;
+        self.tight = true;
     }
 
     /// A paragraph, with whether its text started and ended with a space before
@@ -783,7 +800,7 @@ impl Blocks {
             self.out.push_str(prefix);
             self.out.push_str(body);
         } else {
-            let separator = if is_list && self.last_was_list {
+            let separator = if self.tight || (is_list && self.last_was_list) {
                 "\n"
             } else {
                 "\n\n"
@@ -798,6 +815,7 @@ impl Blocks {
             );
         }
         self.last_was_list = is_list;
+        self.tight = false;
         self.trailing_space = trailing;
     }
 

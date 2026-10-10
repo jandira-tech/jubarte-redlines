@@ -381,6 +381,170 @@ pub(crate) fn runs(indices: &[usize]) -> Vec<(usize, usize)> {
     out
 }
 
+/// What the id line of a paragraph says beyond its index.
+pub(crate) struct LineFacts<'a> {
+    pub index: usize,
+    pub style: Option<&'a str>,
+    pub default_style: Option<&'a str>,
+    pub heading: Option<usize>,
+    /// The list marker the converter computed (`1.`, `(a)`, `-`).
+    pub marker: Option<&'a str>,
+    pub page_break: bool,
+    /// Accept-all or reject-all view: print the `rev` tags.
+    pub resolved: bool,
+    /// Comment ids to list (comments hidden).
+    pub comments: &'a [String],
+}
+
+/// Twips as inches with up to two decimals: `720` → `0.5in`, `1440` → `1in`.
+pub(crate) fn inches(twips: f64) -> String {
+    let value = format!("{:.2}", twips / 1440.0);
+    let value = value.trim_end_matches('0').trim_end_matches('.');
+    format!("{value}in")
+}
+
+pub(crate) fn has_page_break(p: &Element) -> bool {
+    let mut breaks = Vec::new();
+    p.find_all("br", &mut breaks);
+    breaks.iter().any(|b| b.attr("type") == Some("page"))
+}
+
+pub(crate) fn has_rendered_page_break(p: &Element) -> bool {
+    let mut found = Vec::new();
+    p.find_all("lastRenderedPageBreak", &mut found);
+    !found.is_empty()
+}
+
+pub(crate) fn has_section_break(p: &Element) -> bool {
+    p.path(&["pPr", "sectPr"]).is_some()
+}
+
+/// `<!-- head -->` or `<!-- head clause, clause -->`.
+pub(crate) fn line(head: &str, clauses: &[String]) -> String {
+    if clauses.is_empty() {
+        format!("<!-- {head} -->")
+    } else {
+        format!("<!-- {head} {} -->", clauses.join(", "))
+    }
+}
+
+/// `<!-- p3 justify, first-line 0.5in, comments #c5 -->` (the plan's grammar).
+pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
+    let mut head = format!("p{}", f.index);
+    if let Some(style) = f.style {
+        let implied = match f.heading {
+            Some(level) => style == format!("Heading{level}"),
+            None => Some(style) == f.default_style || style == "Normal",
+        };
+        if !implied {
+            head.push(' ');
+            head.push_str(style);
+        }
+    }
+    let ppr = p.child("pPr");
+    let mut clauses: Vec<String> = Vec::new();
+    if let Some(jc) = ppr
+        .and_then(|pr| pr.child("jc"))
+        .and_then(|j| j.attr("val"))
+    {
+        clauses.push(
+            match jc {
+                "center" => "center",
+                "right" | "end" => "right",
+                "both" | "distribute" => "justify",
+                _ => "left",
+            }
+            .to_string(),
+        );
+    }
+    if let Some(ind) = ppr.and_then(|pr| pr.child("ind")) {
+        for (attr, name) in [
+            ("firstLine", "first-line"),
+            ("hanging", "hanging"),
+            ("left", "left"),
+            ("start", "left"),
+            ("right", "right"),
+            ("end", "right"),
+        ] {
+            if let Some(v) = ind.attr(attr).and_then(|v| v.parse::<f64>().ok()) {
+                clauses.push(format!("{name} {}", inches(v)));
+            }
+        }
+    }
+    match f.marker {
+        Some("-") => clauses.push("bullet".to_string()),
+        Some(label) => clauses.push(format!("num \"{label}\"")),
+        None => {}
+    }
+    if f.page_break {
+        clauses.push("page-break".to_string());
+    }
+    if has_section_break(p) {
+        clauses.push("section-break".to_string());
+    }
+    let (ins, del) = mark_tags(p, handles);
+    if !ins.is_empty() {
+        clauses.push(format!("break-ins {}", format_tags(&ins)));
+    }
+    if !del.is_empty() {
+        clauses.push(format!("break-del {}", format_tags(&del)));
+    }
+    let fmt = format_change_tags(p, handles);
+    if !fmt.is_empty() {
+        clauses.push(format!("fmt {}", format_tags(&fmt)));
+    }
+    if f.resolved {
+        let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();
+        if !tags.is_empty() {
+            clauses.push(format!("rev {}", format_tags(&tags)));
+        }
+    }
+    if !f.comments.is_empty() {
+        let ids: Vec<String> = f.comments.iter().map(|c| format!("#c{c}")).collect();
+        clauses.push(format!("comments {}", ids.join(" ")));
+    }
+    line(&head, &clauses)
+}
+
+/// `<!-- p19 empty -->` / `<!-- p19-p23 empty -->` lines for pending empties.
+pub(crate) fn empty_lines(indices: &[usize]) -> Vec<String> {
+    runs(indices)
+        .into_iter()
+        .map(|(a, b)| {
+            if a == b {
+                format!("<!-- p{a} empty -->")
+            } else {
+                format!("<!-- p{a}-p{b} empty -->")
+            }
+        })
+        .collect()
+}
+
+/// The page marker `paginate` writes, for the cached-break fallback.
+pub(crate) fn page_marker(page: usize, total: usize) -> String {
+    format!("<!-- page {page} of {total} -->")
+}
+
+/// Paragraphs (text boxes excluded) holding `w:lastRenderedPageBreak`, and
+/// hard page and section breaks, for the cached-break page count.
+pub(crate) fn page_counts(e: &Element) -> (usize, usize) {
+    if e.is("txbxContent") {
+        return (0, 0);
+    }
+    let mut rendered = 0;
+    let mut hard = 0;
+    if e.is("p") {
+        rendered += usize::from(has_rendered_page_break(e));
+        hard += usize::from(has_page_break(e)) + usize::from(has_section_break(e));
+    }
+    for child in e.elements() {
+        let (r, h) = page_counts(child);
+        rendered += r;
+        hard += h;
+    }
+    (rendered, hard)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -80,7 +80,7 @@ pub(crate) struct Converted {
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
     let mut package = Package::open(bytes, "DOCX")?;
     let main = package.main_part("word/document.xml")?;
-    let document = package
+    let mut document = package
         .xml(&main)?
         .ok_or_else(|| ooxml::invalid("DOCX has no word/document.xml part"))?;
     let accept = match options.revisions {
@@ -88,24 +88,59 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         Revisions::Accept => Some(true),
         Revisions::Reject => Some(false),
     };
-    let document = match accept {
-        Some(accept) => revise::resolve(&document, accept),
-        None => document,
-    };
     let rels = package.rels(&main)?;
-
     let part = |kind: &str, fallback: &str| {
         rels.first_of_type(kind)
             .map(|r| r.target.clone())
             .unwrap_or_else(|| fallback.to_string())
     };
+    let comments_root = package
+        .xml(&part("/comments", "word/comments.xml"))
+        .ok()
+        .flatten();
+    let handles = if options.ids {
+        agent::handles(&document, comments_root.as_ref())
+    } else {
+        agent::Handles::default()
+    };
+    // Agent view: paragraphs and tables numbered before accept/reject
+    // resolution, so indices match `inspect` and `edit`.
+    if options.ids {
+        if let Some(body) = document.children.iter_mut().find_map(|n| match n {
+            ooxml::Node::Element(e) if e.is("body") => Some(e),
+            _ => None,
+        }) {
+            agent::stamp(body, &handles);
+        }
+    }
+    // Cached-break page lines: only in the agent view, without layout pages,
+    // and only when page lines are wanted at all.
+    let cached_pages =
+        (options.ids && options.pages.is_none() && options.page_markers).then(|| {
+            let body = document.child("body").unwrap_or(&document);
+            let (rendered, hard) = agent::page_counts(body);
+            1 + if rendered > 0 { rendered } else { hard }
+        });
+    let document = match accept {
+        Some(accept) => revise::resolve(&document, accept),
+        None => document,
+    };
+
     // Auxiliary parts are best-effort: a broken styles part should not lose the text.
-    let styles = package
+    let styles_root = package
         .xml(&part("/styles", "word/styles.xml"))
         .ok()
-        .flatten()
-        .map(|e| Styles::parse(&e))
-        .unwrap_or_default();
+        .flatten();
+    let default_style = styles_root.as_ref().and_then(|root| {
+        root.children_named("style")
+            .find(|s| {
+                s.attr("type") == Some("paragraph")
+                    && s.attr("default").is_some_and(|d| d == "1" || d == "true")
+            })
+            .and_then(|s| s.attr("styleId"))
+            .map(str::to_string)
+    });
+    let styles = styles_root.as_ref().map(Styles::parse).unwrap_or_default();
     let numbering = package
         .xml(&part("/numbering", "word/numbering.xml"))
         .ok()
@@ -129,12 +164,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             }
         }
     }
-    // Accepting or rejecting the changes leaves comments out as well.
-    let comments = package
-        .xml(&part("/comments", "word/comments.xml"))
-        .ok()
-        .flatten()
-        .filter(|_| accept.is_none());
+    // Accepting or rejecting the changes leaves comments out as well, except
+    // in the agent view, which keeps them.
+    let comments = comments_root.filter(|_| accept.is_none() || options.ids);
     let media = Media::load(
         &mut package,
         &rels,
@@ -159,6 +191,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         pending_notes: Vec::new(),
         in_comment: false,
         plain: false,
+        agent: options.ids,
+        comments_inline: options.comments,
+        resolved: accept.is_some(),
+        dates: options.dates,
+        handles,
+        default_style,
+        pending_empty: Vec::new(),
+        cached_pages,
+        page: 0,
+        para_comments: Vec::new(),
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -184,6 +226,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
     writer.blocks(body, &mut blocks, &mut list);
+    writer.flush_empty(&mut blocks);
     // Notes of ranges that ended after the last paragraph.
     let trailing = writer.take_notes();
     blocks.push(&trailing, false);
@@ -222,6 +265,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
     }
     let mut markdown = blocks.finish();
+    if let Some(pages) = options.pages.as_ref().filter(|_| options.ids) {
+        let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
+        markdown = crate::markdown::paginate(&markdown, &pages);
+    }
     if !defs.is_empty() {
         markdown.push_str("\n\n");
         markdown.push_str(&defs.join("\n"));
@@ -616,6 +663,27 @@ struct Writer<'a> {
     /// No tracked change or comment anywhere: text is written as is, the way
     /// it was before tracked changes were rendered.
     plain: bool,
+    /// Agent view (`Options::ids`).
+    agent: bool,
+    /// Agent view: comments inline, or hidden and listed on id lines.
+    comments_inline: bool,
+    /// Agent view: accept-all or reject-all (revisions already resolved).
+    resolved: bool,
+    /// Agent view: inline timestamps on notes (`Options::dates`).
+    dates: bool,
+    handles: agent::Handles,
+    /// Agent view: the default paragraph style id (`w:default="1"`).
+    default_style: Option<String>,
+    /// Agent view: empty paragraphs not yet written as `<!-- pN empty -->`.
+    pending_empty: Vec<usize>,
+    /// Agent view, cached-break fallback: `Some(total)` makes the writer
+    /// emit `<!-- page N of total -->` itself; `None` leaves markers to
+    /// `paginate`.
+    cached_pages: Option<usize>,
+    /// Agent view: pages announced so far by the writer.
+    page: usize,
+    /// Agent view: comment ids met since the last id line.
+    para_comments: Vec<String>,
 }
 
 impl Writer<'_> {
@@ -721,16 +789,66 @@ impl Writer<'_> {
 
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
+        // Computed once, and only for a written paragraph, as the plain
+        // conversion always did, so Word's list counters advance alike.
+        let list_marker: Option<(String, usize)> = if written && heading.is_none() {
+            num.clone()
+                .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)).map(|m| (m, ilvl)))
+        } else {
+            None
+        };
+        let heading_marker: Option<String> = if self.agent && written && heading.is_some() {
+            num.clone()
+                .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)))
+        } else {
+            None
+        };
+        let index = if self.agent {
+            p.attr(agent::INDEX).and_then(|v| v.parse::<usize>().ok())
+        } else {
+            None
+        };
+        if let Some(index) = index {
+            let page_break = agent::has_page_break(p);
+            if !written && extra.is_empty() && !page_break && !agent::has_section_break(p) {
+                self.pending_empty.push(index);
+                self.para_comments.clear();
+                return;
+            }
+            self.flush_empty(blocks);
+            self.page_lines(blocks, agent::has_rendered_page_break(p));
+            let marker = heading_marker
+                .as_deref()
+                .or(list_marker.as_ref().map(|(m, _)| m.as_str()));
+            let comments = if self.comments_inline {
+                Vec::new()
+            } else {
+                std::mem::take(&mut self.para_comments)
+            };
+            self.para_comments.clear();
+            let facts = agent::LineFacts {
+                index,
+                style: style.as_deref(),
+                default_style: self.default_style.as_deref(),
+                heading,
+                marker,
+                page_break,
+                resolved: self.resolved,
+                comments: &comments,
+            };
+            blocks.push_line(&agent::id_line(p, &facts, &self.handles));
+        }
         if written {
             let inline = inline.into_inline();
             let edges = inline.edges();
             if let Some(level) = heading {
                 list.reset();
-                let text = inline.render(false).replace('\n', " ");
+                let mut text = inline.render(false).replace('\n', " ");
+                if let Some(label) = &heading_marker {
+                    text = format!("{label} {text}");
+                }
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
-            } else if let Some(marker) =
-                num.and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)).map(|m| (m, ilvl)))
-            {
+            } else if let Some(marker) = list_marker {
                 let (marker, ilvl) = marker;
                 let item = list.item(ilvl, &marker, &hard_breaks(&inline.render(true)));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
@@ -746,7 +864,34 @@ impl Writer<'_> {
             list.reset();
             blocks.push(&block, false);
         }
-        blocks.set_separator(self.paragraph_mark(p).filter(|_| written && !boxed));
+        blocks.set_separator(if self.agent {
+            None
+        } else {
+            self.paragraph_mark(p).filter(|_| written && !boxed)
+        });
+    }
+
+    /// Agent view: writes the pending `<!-- pN empty -->` lines.
+    fn flush_empty(&mut self, blocks: &mut Blocks) {
+        for line in agent::empty_lines(&std::mem::take(&mut self.pending_empty)) {
+            blocks.push_line(&line);
+        }
+    }
+
+    /// Agent view, cached-break fallback: the page markers due before a
+    /// block, page 1 included. With layout pages, `paginate` writes them.
+    fn page_lines(&mut self, blocks: &mut Blocks, rendered_break: bool) {
+        let Some(total) = self.cached_pages else {
+            return;
+        };
+        if self.page == 0 {
+            self.page = 1;
+            blocks.push_line(&agent::page_marker(1, total));
+        }
+        if rendered_break && self.page < total {
+            self.page += 1;
+            blocks.push_line(&agent::page_marker(self.page, total));
+        }
     }
 
     /// The Markdown marker for a numbered paragraph, advancing Word's counters.
