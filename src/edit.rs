@@ -35,6 +35,7 @@ mod controls;
 pub mod flags;
 mod images;
 mod notes;
+mod origin;
 mod rewrite;
 mod runs;
 mod sections;
@@ -96,6 +97,16 @@ pub struct ResolveRevisions {
     /// Changes to reject (after the accepted ones).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reject: Option<ChangeFilter>,
+}
+
+/// Where a source paragraph id went when the plan's revisions were settled.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParagraphMove {
+    /// The id in the source (`body:p:12`).
+    pub from: String,
+    /// The id in the output, or `null` when the paragraph is gone with its
+    /// text. A paragraph merged with others maps to the merged one.
+    pub to: Option<String>,
 }
 
 /// The changes `resolve_revisions` resolved, by id.
@@ -218,7 +229,7 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Text to anchor the comment to; whole paragraph when omitted.
         find: Option<String>,
-        /// Text to insert; `\t` writes a tab, `\n` a line break.
+        /// The comment, plain text; each `\n` starts a new comment paragraph.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Last paragraph of a range from the start of `paragraph` to the
@@ -748,6 +759,12 @@ fn short_number(text: &str, prefix: char) -> Option<usize> {
 /// short forms (`p3`, `header1`, `header1.p1`, `footer2`, `t0.r1.c2`,
 /// `t0.r1.c2.p1`); the report prints the long form. The other forms search
 /// the body unless they carry a `story` (`header1`, `footnotes`, ...).
+///
+/// Ids, short ids and indexes name the source's paragraphs, the ones the
+/// plan's author read, even when `resolve_revisions` or `existing_revisions`
+/// settles changes first; the text forms search the settled text. An edit
+/// anchored on text follows a paragraph into the one it merged with; a
+/// whole-paragraph edit of a merged or vanished paragraph is refused.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
@@ -904,6 +921,12 @@ pub struct EditReport {
     /// Changes `resolve_revisions` accepted and rejected.
     #[serde(default, skip_serializing_if = "ResolvedRevisions::is_empty")]
     pub resolved_revisions: ResolvedRevisions,
+    /// Source paragraph ids that name another paragraph once the plan's
+    /// revisions are settled (`resolve_revisions`, `existing_revisions`
+    /// accept or reject), in source order. Operations still address the
+    /// source's ids; the output documents carry these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paragraph_ids: Vec<ParagraphMove>,
     /// Body paragraph count before and after.
     pub paragraphs: ParagraphDelta,
     /// One outcome per operation, in plan order.
@@ -940,6 +963,12 @@ impl EditReport {
             load.as_object_mut().expect("object").insert(
                 "resolved_revisions".into(),
                 serde_json::to_value(&self.resolved_revisions).expect("serializes"),
+            );
+        }
+        if !self.paragraph_ids.is_empty() {
+            load.as_object_mut().expect("object").insert(
+                "paragraph_ids".into(),
+                serde_json::to_value(&self.paragraph_ids).expect("serializes"),
             );
         }
         push(load);
@@ -1116,6 +1145,120 @@ fn resolve_selected(
         resolved.rejected = reject;
     }
     Ok((Some(bytes), resolved))
+}
+
+/// The document a plan edits once `resolve_revisions` and
+/// `existing_revisions` have settled the tracked changes they select.
+struct Settled {
+    /// The bytes the plan edits and the redline compares against.
+    base: Vec<u8>,
+    opened: Opened,
+    resolved_revisions: ResolvedRevisions,
+    /// Settling rewrote the document: paragraphs may have merged or gone.
+    changed: bool,
+}
+
+/// Settle `source` (opened as `probe`) as `plan` asks: accept and reject
+/// what `resolve_revisions` selects, then apply `existing_revisions` to the
+/// changes left.
+fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, EditError> {
+    let (resolved_source, resolved_revisions) =
+        resolve_selected(source, plan.resolve_revisions.as_ref())?;
+    let (source, probe) = match &resolved_source {
+        Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
+        None => (source, probe),
+    };
+    let story_revisions: usize = probe
+        .story_parts()
+        .iter()
+        .filter_map(|(_, _, part)| crate::inspect::parse_part(&probe.pkg, part).ok())
+        .map(|(dom, _, root)| crate::inspect::revision_count(&dom, root))
+        .sum();
+    let has_revisions =
+        crate::inspect::revision_count(&probe.dom, probe.body) + story_revisions > 0;
+    let (base, opened, flattened) = match (has_revisions, plan.existing_revisions) {
+        (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe, false),
+        (true, ExistingRevisions::Refuse) => {
+            return Err(err(
+                "EXISTING_REVISIONS",
+                None,
+                "the document already holds tracked changes; set existing_revisions to keep, accept or reject",
+            ));
+        }
+        (true, policy) => {
+            let flattened = match policy {
+                ExistingRevisions::Accept => crate::document_comparer::accept_revisions(source),
+                _ => crate::document_comparer::reject_revisions(source),
+            }
+            .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
+            let reopened = Opened::open(&flattened).map_err(open_error)?;
+            (flattened, reopened, true)
+        }
+    };
+    Ok(Settled {
+        base,
+        opened,
+        resolved_revisions,
+        changed: resolved_source.is_some() || flattened,
+    })
+}
+
+/// A document's stories and its addressable paragraphs.
+struct Loaded {
+    /// The body first, then every header, footer and notes part.
+    stories: Vec<StoryPart>,
+    /// The body's paragraphs, then each story's.
+    paragraph_nodes: Vec<NodeId>,
+    /// `(story, index in that story)` per entry of `paragraph_nodes`.
+    paragraph_story: Vec<(usize, usize)>,
+}
+
+/// The body and every header, footer and notes part of `opened`, parsed
+/// into its DOM, with every addressable paragraph.
+fn load_stories(opened: &mut Opened) -> Result<Loaded, EditError> {
+    let mut stories = vec![StoryPart {
+        id: BODY_STORY.to_string(),
+        part: opened.main.clone(),
+        document: opened.document,
+        root: opened.body,
+    }];
+    for (id, _, part) in opened.story_parts() {
+        let invalid = |m: String| err("INVALID_DOCUMENT", None, format!("{part}: {m}"));
+        let xml = opened
+            .pkg
+            .part_string(&part)
+            .ok_or_else(|| invalid("missing part".into()))?;
+        crate::xmllinq::parse::validate_xml(&xml).map_err(|e| invalid(e.to_string()))?;
+        let document = opened.dom.parse_xdocument(&xml);
+        let root = opened
+            .dom
+            .root(document)
+            .ok_or_else(|| invalid("missing XML root".into()))?;
+        stories.push(StoryPart {
+            id,
+            part,
+            document,
+            root,
+        });
+    }
+    let mut paragraph_nodes = Vec::new();
+    let mut paragraph_story = Vec::new();
+    for (index, story) in stories.iter().enumerate() {
+        let nodes = if index == 0 {
+            crate::inspect::body_paragraph_nodes(&opened.dom, story.root)
+        } else {
+            crate::inspect::story_paragraph_nodes(&opened.dom, story.root)
+        };
+        for (local, node) in nodes.into_iter().enumerate() {
+            paragraph_nodes.push(node);
+            paragraph_story.push((index, local));
+        }
+    }
+    Ok(Loaded {
+        stories,
+        paragraph_nodes,
+        paragraph_story,
+    })
 }
 
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {
@@ -1483,7 +1626,7 @@ enum Resolved {
         para: usize,
         start: usize,
         end: usize,
-        /// Text to insert; `\t` writes a tab, `\n` a line break.
+        /// The comment, plain text; each `\n` starts a new comment paragraph.
         text: String,
     },
     DeleteParagraph {
@@ -1635,6 +1778,9 @@ struct Transaction<'p> {
     /// `(story, index in that story)` per entry of `paragraph_nodes`.
     paragraph_story: Vec<(usize, usize)>,
     projections: Vec<Projection>,
+    /// The source's paragraphs and where they went, when settling
+    /// revisions rewrote the document.
+    origin: Option<origin::Origin>,
     outcomes: Vec<EditOutcome>,
     resolved: Vec<(usize, Resolved)>,
     comments: Vec<(u32, String)>,
@@ -1712,78 +1858,32 @@ impl<'p> Transaction<'p> {
                 "signed or macro-bearing package",
             ));
         }
-        let (resolved_source, resolved_revisions) =
-            resolve_selected(source, plan.resolve_revisions.as_ref())?;
-        let (source, probe) = match &resolved_source {
-            Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
-            None => (source, probe),
-        };
-        let story_revisions: usize = probe
-            .story_parts()
-            .iter()
-            .filter_map(|(_, _, part)| crate::inspect::parse_part(&probe.pkg, part).ok())
-            .map(|(dom, _, root)| crate::inspect::revision_count(&dom, root))
-            .sum();
-        let has_revisions =
-            crate::inspect::revision_count(&probe.dom, probe.body) + story_revisions > 0;
-        let (base, mut opened) = match (has_revisions, plan.existing_revisions) {
-            (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe),
-            (true, ExistingRevisions::Refuse) => {
-                return Err(err(
-                    "EXISTING_REVISIONS",
-                    None,
-                    "the document already holds tracked changes; set existing_revisions to keep, accept or reject",
-                ));
-            }
-            (true, policy) => {
-                let flattened = match policy {
-                    ExistingRevisions::Accept => crate::document_comparer::accept_revisions(source),
-                    _ => crate::document_comparer::reject_revisions(source),
-                }
-                .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-                let reopened = Opened::open(&flattened).map_err(open_error)?;
-                (flattened, reopened)
-            }
-        };
+        let source_bytes = source;
+        let Settled {
+            base,
+            mut opened,
+            resolved_revisions,
+            changed,
+        } = settle(source, plan, probe)?;
         let base_sha256 = source_sha256(&base);
-        let mut stories = vec![StoryPart {
-            id: BODY_STORY.to_string(),
-            part: opened.main.clone(),
-            document: opened.document,
-            root: opened.body,
-        }];
-        for (id, _, part) in opened.story_parts() {
-            let invalid = |m: String| err("INVALID_DOCUMENT", None, format!("{part}: {m}"));
-            let xml = opened
-                .pkg
-                .part_string(&part)
-                .ok_or_else(|| invalid("missing part".into()))?;
-            crate::xmllinq::parse::validate_xml(&xml).map_err(|e| invalid(e.to_string()))?;
-            let document = opened.dom.parse_xdocument(&xml);
-            let root = opened
-                .dom
-                .root(document)
-                .ok_or_else(|| invalid("missing XML root".into()))?;
-            stories.push(StoryPart {
-                id,
-                part,
-                document,
-                root,
-            });
-        }
-        let mut paragraph_nodes = Vec::new();
-        let mut paragraph_story = Vec::new();
-        for (index, story) in stories.iter().enumerate() {
-            let nodes = if index == 0 {
-                crate::inspect::body_paragraph_nodes(&opened.dom, story.root)
-            } else {
-                crate::inspect::story_paragraph_nodes(&opened.dom, story.root)
-            };
-            for (local, node) in nodes.into_iter().enumerate() {
-                paragraph_nodes.push(node);
-                paragraph_story.push((index, local));
-            }
-        }
+        let Loaded {
+            stories,
+            paragraph_nodes,
+            paragraph_story,
+        } = load_stories(&mut opened)?;
+        // Settling merged or removed paragraphs: positional ids keep
+        // naming the source's paragraphs through a map.
+        let origin = if changed {
+            let ids: Vec<String> = stories.iter().map(|s| s.id.clone()).collect();
+            Some(origin::Origin::build(
+                source_bytes,
+                plan,
+                &ids,
+                &paragraph_story,
+            )?)
+        } else {
+            None
+        };
         let projections = paragraph_nodes
             .iter()
             .map(|&p| project_paragraph(&opened.dom, p))
@@ -1817,6 +1917,7 @@ impl<'p> Transaction<'p> {
             paragraph_nodes,
             paragraph_story,
             projections,
+            origin,
             outcomes: Vec::new(),
             resolved: Vec::new(),
             comments: Vec::new(),
@@ -1848,6 +1949,11 @@ impl<'p> Transaction<'p> {
             date: self.date.clone(),
             existing_revisions: self.plan.existing_revisions,
             resolved_revisions: self.resolved_revisions.clone(),
+            paragraph_ids: self
+                .origin
+                .as_ref()
+                .map(|o| o.moves(|p| self.paragraph_id(p)))
+                .unwrap_or_default(),
             paragraphs: ParagraphDelta {
                 from: self.body_paragraph_count(),
                 to: self.body_paragraph_count(),
@@ -2080,7 +2186,7 @@ impl<'p> Transaction<'p> {
                 ));
             }
         };
-        let para = match self.select(selector) {
+        let para = match self.select(selector, finds_text(kind)) {
             Ok(p) => p,
             Err((code, msg, matches)) => {
                 outcome.matches = matches;
@@ -2299,7 +2405,7 @@ impl<'p> Transaction<'p> {
                         outcome,
                     ));
                 }
-                let last = match self.select(through) {
+                let last = match self.select(through, false) {
                     Ok(p) => p,
                     Err((code, msg, matches)) => {
                         outcome.matches = matches;
@@ -2523,7 +2629,7 @@ impl<'p> Transaction<'p> {
             } => {
                 outcome.matches = 1;
                 let like = match like {
-                    Some(selector) => self.select(selector).map_err(|(code, msg, _)| {
+                    Some(selector) => self.select(selector, true).map_err(|(code, msg, _)| {
                         fail(&code, format!("like: {msg}"), outcome.clone())
                     })?,
                     None => para,
@@ -2912,7 +3018,7 @@ impl<'p> Transaction<'p> {
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
         };
-        let para = match self.select(paragraph) {
+        let para = match self.select(paragraph, false) {
             Ok(p) => p,
             Err((code, msg, matches)) => {
                 outcome.matches = matches;
@@ -2920,9 +3026,23 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
-        check_run_text(new_text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        // The paragraph's symbols may be copied into the text; they stay.
+        check_run_text(&new_text.replace('\u{FFFC}', ""))
+            .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
         let projection = &self.projections[para];
         let text = &projection.text;
+        let symbols = |s: &str| s.matches('\u{FFFC}').count();
+        if symbols(new_text) > symbols(text) {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!(
+                    "text holds {} U+FFFC symbol placeholders but the paragraph has {} symbols; a symbol cannot be written as text",
+                    symbols(new_text),
+                    symbols(text)
+                ),
+                outcome,
+            ));
+        }
         let edits = rewrite::rewrite_ranges(text, new_text);
         if edits.is_empty() {
             outcome.message = Some(
@@ -2932,14 +3052,20 @@ impl<'p> Transaction<'p> {
         }
         let mut resolved = Vec::with_capacity(edits.len());
         for (start, end, replacement) in edits {
-            // New text joins the run before it, unless a tab, break or
-            // symbol is there.
-            let attach_before = text[..start]
+            // New text joins the run before it (a tab or a break takes it
+            // after itself), else the run after it when a symbol, a link or
+            // a field is before it.
+            let mut attach_before = text[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|c| !matches!(c, '\t' | '\n' | '\r' | '\u{FFFC}'));
+                .is_some_and(|c| c != '\u{FFFC}');
             let checked = if start == end {
                 self.check_insert_position(projection, start, attach_before)
+                    .or_else(|first| {
+                        self.check_insert_position(projection, start, !attach_before)
+                            .map(|()| attach_before = !attach_before)
+                            .map_err(|_| first)
+                    })
             } else {
                 self.check_range(projection, start, end)
             };
@@ -3001,7 +3127,7 @@ impl<'p> Transaction<'p> {
         }
         let mut paras: Vec<usize> = Vec::with_capacity(selectors.len());
         for (i, selector) in selectors.iter().enumerate() {
-            let para = match self.select(selector) {
+            let para = match self.select(selector, false) {
                 Ok(p) => p,
                 Err((code, msg, matches)) => {
                     outcome.matches = matches;
@@ -3160,185 +3286,45 @@ impl<'p> Transaction<'p> {
             .collect()
     }
 
-    /// The long id of a short one, as the agent view prints them: `p3` →
-    /// `body:p:3`; `header1` and `header1.p1` → `header1:p:0` and
-    /// `header1:p:1` (the part stem, Word's own numbering); `footer2`
-    /// likewise; `t0.r1.c2` and `t0.r1.c2.p1` → that cell's first (or K-th)
-    /// paragraph. `None` when `id` is not a short id.
-    fn long_id(&self, id: &str) -> Option<Result<String, String>> {
-        let (head, rest): (&str, Vec<&str>) = match id.split_once('.') {
-            Some((head, rest)) => (head, rest.split('.').collect()),
-            None => (id, Vec::new()),
-        };
-        if let Some(n) = short_number(head, 'p') {
-            return rest.is_empty().then(|| Ok(format!("body:p:{n}")));
+    /// What this plan's own ids resolve against.
+    fn ids(&self) -> origin::Ids<'_> {
+        origin::Ids {
+            dom: &self.opened.dom,
+            body: self.opened.body,
+            story_ids: self.stories.iter().map(|s| s.id.as_str()).collect(),
+            paragraph_nodes: &self.paragraph_nodes,
+            paragraph_story: &self.paragraph_story,
         }
-        if let Some(n) = short_number(head, 't') {
-            return Some(self.table_paragraph(head, n, &rest));
-        }
-        let is_part = ["header", "footer"].iter().any(|kind| {
-            head.strip_prefix(kind)
-                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        });
-        if !is_part {
-            return None;
-        }
-        let index = match rest.as_slice() {
-            [] => 0,
-            [p] => short_number(p, 'p')?,
-            _ => return None,
-        };
-        Some(if self.stories.iter().any(|s| s.id == head) {
-            Ok(format!("{head}:p:{index}"))
-        } else {
-            let known: Vec<&str> = self
-                .stories
-                .iter()
-                .map(|s| s.id.as_str())
-                .filter(|s| s.starts_with("header") || s.starts_with("footer"))
-                .collect();
-            Err(format!(
-                "{head} is not a part of this document (headers and footers: {})",
-                if known.is_empty() {
-                    "none".to_string()
-                } else {
-                    known.join(", ")
-                }
-            ))
-        })
     }
 
-    /// `t{n}.r{R}.c{C}[.p{K}]`: the long id of that cell's K-th own
-    /// paragraph. Tables are the body's top-level `w:tbl` elements outside
-    /// text boxes, in document order (nested tables are not numbered, as in
-    /// the agent view); rows and cells count as they appear in the XML, a
-    /// merged cell once.
-    fn table_paragraph(&self, head: &str, n: usize, rest: &[&str]) -> Result<String, String> {
-        let dom = &self.opened.dom;
-        let (tc, tr, tbl, p, txbx) = (W::tc(), W::name("tr"), W::tbl(), W::p(), W::txbx_content());
-        let nearest = |node: NodeId, name: &crate::xmllinq::XName| {
-            dom.ancestors(node, Some(name)).first().copied()
-        };
-        let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
-        let tables: Vec<NodeId> = dom
-            .descendants(self.opened.body, Some(&tbl))
-            .into_iter()
-            .filter(|&t| nearest(t, &tc).is_none() && nearest(t, &txbx).is_none())
-            .collect();
-        let Some(&table) = tables.get(n) else {
-            return Err(format!(
-                "{head} is not a table of this document ({})",
-                plural(tables.len(), "table")
-            ));
-        };
-        let (row, cell, index) = match rest {
-            [r, c] => (short_number(r, 'r'), short_number(c, 'c'), Some(0)),
-            [r, c, k] => (
-                short_number(r, 'r'),
-                short_number(c, 'c'),
-                short_number(k, 'p'),
-            ),
-            _ => (None, None, None),
-        };
-        let (Some(row), Some(cell), Some(index)) = (row, cell, index) else {
-            return Err(format!(
-                "{head}: a table id needs a row and a cell, as t0.r1.c2"
-            ));
-        };
-        let rows: Vec<NodeId> = dom
-            .descendants(table, Some(&tr))
-            .into_iter()
-            .filter(|&r| nearest(r, &tbl) == Some(table))
-            .collect();
-        let Some(&row_node) = rows.get(row) else {
-            return Err(format!(
-                "{head} has {}, no row {row}",
-                plural(rows.len(), "row")
-            ));
-        };
-        let cells: Vec<NodeId> = dom
-            .descendants(row_node, Some(&tc))
-            .into_iter()
-            .filter(|&c| nearest(c, &tr) == Some(row_node))
-            .collect();
-        let Some(&cell_node) = cells.get(cell) else {
-            return Err(format!(
-                "{head}.r{row} has {}, no cell {cell}",
-                plural(cells.len(), "cell")
-            ));
-        };
-        let own: Vec<NodeId> = dom
-            .descendants(cell_node, Some(&p))
-            .into_iter()
-            // As in the view, a table nested in the cell is part of it and a
-            // text box is not.
-            .filter(|&q| nearest(q, &txbx).is_none())
-            .collect();
-        let Some(&node) = own.get(index) else {
-            return Err(format!(
-                "{head}.r{row}.c{cell} has {}, no p{index}",
-                plural(own.len(), "paragraph")
-            ));
-        };
-        let global = self
-            .paragraph_nodes
-            .iter()
-            .position(|&q| q == node)
-            .ok_or_else(|| {
-                format!("{head}: that paragraph is inside a text box and cannot be edited")
-            })?;
-        let (story, in_story) = self.paragraph_story[global];
-        Ok(format!("{}:p:{in_story}", self.stories[story].id))
-    }
-
-    fn select(&self, selector: &Selector) -> Result<usize, (String, String, usize)> {
-        let not_found = |message: String| Err(("ANCHOR_NOT_FOUND".to_string(), message, 0));
-        let (story, index) = match selector {
-            Selector::Name(id) | Selector::Id { id } => {
-                let long = match self.long_id(id) {
-                    Some(Ok(long)) => long,
-                    Some(Err(message)) => return not_found(message),
-                    None => id.clone(),
-                };
-                match long
-                    .rsplit_once(":p:")
-                    .and_then(|(story, n)| Some((story.to_string(), n.parse::<usize>().ok()?)))
-                {
-                    Some((story, n)) => (story, Some(n)),
-                    None => return not_found(format!("unknown paragraph id {id}")),
+    /// The paragraph `selector` names. Positional ids name the source's
+    /// paragraphs, as its author read them, even when settling revisions
+    /// moved them; a paragraph merged with another is only followed when
+    /// `merged_ok` (an edit that finds its text there). Text selectors read
+    /// the settled text.
+    fn select(&self, selector: &Selector, merged_ok: bool) -> Result<usize, origin::Miss> {
+        let story_index = match &self.origin {
+            Some(origin) => match origin.ids().position(selector)? {
+                Ok(source) => {
+                    return origin.follow(source, merged_ok, |p| self.paragraph_id(p));
                 }
-            }
-            Selector::Index { index, story } => (
-                story.as_deref().unwrap_or(BODY_STORY).to_string(),
-                Some(*index),
-            ),
-            Selector::StartsWith { story, .. } | Selector::Contains { story, .. } => {
-                (story.as_deref().unwrap_or(BODY_STORY).to_string(), None)
-            }
+                // The text selector's story, by name in the settled document.
+                Err(_) => self.ids().position(selector)?,
+            },
+            None => self.ids().position(selector)?,
         };
-        let Some(story_index) = self.stories.iter().position(|s| s.id == story) else {
-            let known: Vec<&str> = self.stories.iter().map(|s| s.id.as_str()).collect();
-            return not_found(format!(
-                "unknown story {story:?}; this document has {}",
-                known.join(", ")
-            ));
+        let story_index = match story_index {
+            Ok(global) => return Ok(global),
+            Err(story_index) => story_index,
         };
+        let story = &self.stories[story_index].id;
         let members: Vec<usize> = (0..self.paragraph_nodes.len())
             .filter(|&g| self.paragraph_story[g].0 == story_index)
             .collect();
-        if let Some(index) = index {
-            return match members.get(index) {
-                Some(&g) => Ok(g),
-                None => not_found(format!(
-                    "paragraph index {index} does not exist in {story} ({} paragraphs)",
-                    members.len()
-                )),
-            };
-        }
         let (wanted, prefix) = match selector {
             Selector::StartsWith { starts_with, .. } => (starts_with, true),
             Selector::Contains { contains, .. } => (contains, false),
-            _ => unreachable!("ids and indexes returned above"),
+            _ => unreachable!("ids and indexes are positional"),
         };
         if wanted.is_empty() {
             return Err((
@@ -3360,7 +3346,11 @@ impl<'p> Transaction<'p> {
             .collect();
         match hits.as_slice() {
             [one] => Ok(*one),
-            [] => not_found(format!("no paragraph matches {wanted:?}")),
+            [] => Err((
+                "ANCHOR_NOT_FOUND".into(),
+                format!("no paragraph of {story} matches {wanted:?}"),
+                0,
+            )),
             many => Err((
                 "AMBIGUOUS_ANCHOR".into(),
                 format!(
@@ -4735,6 +4725,20 @@ fn kind_name(kind: &OperationKind) -> &'static str {
     }
 }
 
+/// The operation edits or comments text it finds in its paragraph, so it
+/// may follow a paragraph into the one it merged with.
+fn finds_text(kind: &OperationKind) -> bool {
+    match kind {
+        OperationKind::Replace { .. }
+        | OperationKind::Delete { .. }
+        | OperationKind::FormatRun { .. }
+        | OperationKind::Redact { .. } => true,
+        OperationKind::Insert { after, before, .. } => after.is_some() || before.is_some(),
+        OperationKind::Comment { find, through, .. } => find.is_some() && through.is_none(),
+        _ => false,
+    }
+}
+
 /// Plain text only: no control characters (tabs and breaks are not run text).
 fn check_text(text: &str) -> Result<(), String> {
     if text
@@ -4747,15 +4751,19 @@ fn check_text(text: &str) -> Result<(), String> {
 }
 
 /// Run text: plain text in which `\t` writes a tab and `\n` a line break,
-/// as the agent view prints them; any other control character is refused
-/// by name.
+/// as the agent view prints them; any other control character, and the
+/// view's symbol placeholder U+FFFC, is refused by name.
 fn check_run_text(text: &str) -> Result<(), String> {
     let bad = text.chars().find(|&c| {
-        (c.is_control() && !matches!(c, '\t' | '\n')) || matches!(c, '\u{fffe}' | '\u{ffff}')
+        (c.is_control() && !matches!(c, '\t' | '\n'))
+            || matches!(c, '\u{fffe}' | '\u{ffff}' | '\u{FFFC}')
     });
     match bad {
         None => Ok(()),
         Some('\r') => Err("text holds U+000D, a carriage return; write a line break as \\n".into()),
+        Some('\u{FFFC}') => Err(
+            "text holds U+FFFC, which stands for a symbol in the view; a symbol cannot be written as text".into(),
+        ),
         Some(c) => Err(format!(
             "text holds U+{:04X}, which a run cannot carry; write a tab as \\t and a line break as \\n",
             u32::from(c)
@@ -4927,7 +4935,8 @@ fn attach_segment(
 
 /// Replace `[start, end)` of the paragraph's projection with `replacement`.
 /// The replacement goes to the first piece of the range; the other pieces
-/// lose their text, and a tab, break or non-breaking hyphen in the range is removed.
+/// lose their text; a tab, a line break or a non-breaking hyphen in the range
+/// is removed. A page or column break is no text and stays.
 fn apply_text_edit(
     dom: &mut Dom,
     projection: &Projection,
@@ -5073,12 +5082,33 @@ fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id
     dom.set_attribute_value(reference, &W::id(), Some(&id_str));
     dom.add(reference_run, reference);
     if wrap_range(dom, paragraph, start, end, range_start, range_end) {
-        dom.add_after_self(range_end, reference_run);
+        place_reference(dom, range_start, range_end, reference_run);
     } else {
         dom.add(paragraph, range_start);
         dom.add(paragraph, range_end);
         dom.add(paragraph, reference_run);
     }
+}
+
+/// Put a comment's reference run right after its end marker, or, when the
+/// range starts outside the tracked insertion holding that marker, after
+/// the insertion: rejecting it would take a reference inside it, and the
+/// comment with it, though only part of the commented text was inserted.
+/// A comment wholly on inserted text keeps its reference inside and goes
+/// with the text, as in Word.
+fn place_reference(dom: &mut Dom, range_start: NodeId, range_end: NodeId, reference_run: NodeId) {
+    let mut after = range_end;
+    for ancestor in dom.ancestors(range_end, None) {
+        if dom.name_is(ancestor, &W::p()) {
+            break;
+        }
+        if (dom.name_is(ancestor, &W::ins()) || dom.name_is(ancestor, &W::name("moveTo")))
+            && !dom.ancestors(range_start, None).contains(&ancestor)
+        {
+            after = ancestor;
+        }
+    }
+    dom.add_after_self(after, reference_run);
 }
 
 fn comment_marker(dom: &mut Dom, local: &str, id: &str) -> NodeId {
@@ -5116,7 +5146,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
     let scratch = dom.new_element(W::name("commentRangeStart"));
     if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end) {
         dom.remove(scratch);
-        dom.add_after_self(range_end, reference_run);
+        place_reference(dom, range_start, range_end, reference_run);
     } else {
         dom.add(last, range_end);
         dom.add(last, reference_run);

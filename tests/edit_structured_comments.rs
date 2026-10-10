@@ -194,3 +194,20 @@ fn a_deleted_paragraph_may_carry_a_comment_whatever_it_holds() {
     assert_word_valid_package(&out.clean);
     assert_word_valid_package(&out.redline);
 }
+
+#[test]
+fn a_comment_ending_inside_their_insertion_survives_rejecting_it() {
+    let out = apply_plan(
+        &source(),
+        &plan(
+            r#"[{"kind":"comment","paragraph":"p6","find":"Payment within 45","text":"Ends inside their insertion."}]"#,
+        ),
+    )
+    .unwrap();
+    check(&out, &["Ends inside their insertion."], 0);
+    // The reference run is no part of their insertion.
+    let body = part_string(&out.redline, "word/document.xml").unwrap();
+    let ins = body.find("<w:ins ").unwrap();
+    let ins_end = ins + body[ins..].find("</w:ins>").unwrap();
+    assert!(!body[ins..ins_end].contains("commentReference"), "{body}");
+}
