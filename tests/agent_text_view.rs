@@ -3179,3 +3179,54 @@ fn id_line_number_is_the_label_word_prints() {
     }
     assert!(out.contains("1. one\n"), "{out}");
 }
+
+/// A comment no story anchors (no range, no reference) is not an open
+/// thread: Word draws no balloon for it. The header counts it apart.
+#[test]
+fn an_unanchored_comment_is_not_an_open_thread() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
+        comment(
+            54,
+            "Eric White",
+            "EW",
+            "2014-10-28T20:22:00Z",
+            "0B0B0B0B",
+            "Old."
+        ),
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Check."
+        )
+    );
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}</w:p>"#,
+        run("Fees"),
+        reference(9)
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let view = agent(&bytes);
+    let line = header_lines(&view)
+        .into_iter()
+        .find(|l| l.starts_with("comments: "))
+        .unwrap_or_default();
+    assert!(
+        line.starts_with("comments: 1 thread open, 1 unanchored ")
+            && line
+                .contains("# 2 comments: c9, c54 (unanchored: in no story, Word shows no balloon)"),
+        "{line}"
+    );
+    assert!(!body(&view).contains("#c54"), "{view}");
+}

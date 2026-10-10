@@ -354,6 +354,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 (None, None) => header::Owner::Unnamed,
             },
         };
+        // Anchors before resolution: a reject view drops a deleted range.
+        let mut anchored = HashSet::new();
+        agent::comment_anchors(original, &mut anchored);
+        for (_, root) in &note_roots {
+            agent::comment_anchors(root, &mut anchored);
+        }
         let comment_facts: Vec<header::CommentFact> = comments_root
             .as_ref()
             .map(|root| {
@@ -363,6 +369,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         Some(header::CommentFact {
                             parent: threads.reply_of.get(&id).cloned(),
                             author: c.attr("author").map(str::to_string),
+                            anchored: anchored.contains(id.as_str()),
                             id,
                         })
                     })

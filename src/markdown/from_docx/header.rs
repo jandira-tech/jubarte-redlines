@@ -59,6 +59,9 @@ pub(crate) struct CommentFact {
     pub id: String,
     pub author: Option<String>,
     pub parent: Option<String>,
+    /// A range or reference to it sits in the body or a note. Without one
+    /// Word draws no balloon, so it is no open thread.
+    pub anchored: bool,
 }
 
 pub(crate) struct Facts<'a> {
@@ -174,7 +177,16 @@ pub(crate) fn render(f: &Facts) -> String {
     } else {
         format!(" by {}", join(&handle_list))
     };
-    let threads: Vec<&CommentFact> = f.comments.iter().filter(|c| c.parent.is_none()).collect();
+    let threads: Vec<&CommentFact> = f
+        .comments
+        .iter()
+        .filter(|c| c.parent.is_none() && c.anchored)
+        .collect();
+    let unanchored: Vec<&CommentFact> = f
+        .comments
+        .iter()
+        .filter(|c| c.parent.is_none() && !c.anchored)
+        .collect();
     match (f.resolved, f.comments_inline) {
         (None, true) => kv(
             &mut out,
@@ -251,7 +263,10 @@ pub(crate) fn render(f: &Facts) -> String {
         if open < threads.len() {
             key.push_str(&format!(", {} resolved", threads.len() - open));
         }
-        let list: Vec<String> = threads
+        if !unanchored.is_empty() {
+            key.push_str(&format!(", {} unanchored", unanchored.len()));
+        }
+        let mut list: Vec<String> = threads
             .iter()
             .map(|t| {
                 let replies: Vec<String> = f
@@ -267,6 +282,11 @@ pub(crate) fn render(f: &Facts) -> String {
                 }
             })
             .collect();
+        list.extend(
+            unanchored
+                .iter()
+                .map(|c| format!("c{} (unanchored: in no story, Word shows no balloon)", c.id)),
+        );
         kv(
             &mut out,
             &key,

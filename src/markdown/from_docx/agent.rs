@@ -371,6 +371,18 @@ pub(crate) fn stamped_revs(element: &Element) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// The comment ids a range or a reference under `e` anchors.
+pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
+    for c in e.elements() {
+        if matches!(c.local(), "commentRangeStart" | "commentReference")
+            && let Some(id) = c.attr("id")
+        {
+            out.insert(id.to_string());
+        }
+        comment_anchors(c, out);
+    }
+}
+
 /// The children of `e` the view renders: of an `mc:AlternateContent`, only
 /// the `mc:Choice` (else the `mc:Fallback`), so a text box Word stores twice
 /// counts once.
