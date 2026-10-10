@@ -386,8 +386,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte comments` | List comments, threads and the text they annotate |
 | `jubarte append` | Join documents in order, preserving images, styles, lists and notes |
 | `jubarte validate` | Check or repair Word validity (findings: exit 2; unreadable: exit 1) |
-| `jubarte fields` | Field results written back into the document from jubarte's layout |
-| `jubarte scrub` | Remove authors, editing IDs, metadata and comments before sharing |
+| `jubarte scrub` | Field results written back into the document from jubarte's layout. Remove authors, editing IDs, metadata and comments before sharing |
 | `jubarte audit` | Audit accessibility, style and structure (findings: exit 2) |
 <!-- gen:cli-summary:end -->
 
@@ -605,13 +604,15 @@ the operation table below).
 ### Fields
 
 ```sh
-jubarte fields update contract.docx -o updated.docx --json
+jubarte convert contract.docx -o updated.docx --update-fields --report fields.json
 ```
 
-Refreshes the cached results of `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and
+`--update-fields` refreshes the cached results of `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and
 `TOC` fields from jubarte's layout; TOCs are rebuilt from the headings. Field
 codes stay, so Word can update them again. Page numbers are jubarte's layout,
-not Word's ([`docs/WORD_DIFFERENCES.md`](docs/WORD_DIFFERENCES.md)).
+not Word's ([`docs/WORD_DIFFERENCES.md`](docs/WORD_DIFFERENCES.md)). It
+runs after `--track-changes accept|reject`; `--report` lists the fields
+written with their old and new results.
 
 ### Compare rendered pages
 

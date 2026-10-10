@@ -283,8 +283,8 @@ Gotchas:
   paragraphs, and every `PAGEREF`, `REF`, `NUMPAGES` and `SEQ` result is
   written, before the redline is compared; the report lists them under
   `fields`. Without it the TOC stays empty until Word updates its fields.
-  On a document you are not editing, `jubarte fields update in.docx -o
-  out.docx --json` does the same. Page numbers are jubarte's layout, which
+  On a document you are not editing, `jubarte convert in.docx -o
+  out.docx --update-fields` does the same. Page numbers are jubarte's layout, which
   matches Word on most documents but is not Word
   (`docs/WORD_DIFFERENCES.md` section 11 in the jubarte repository).
   Field codes stay, so Word's Update Field still works.

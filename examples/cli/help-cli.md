@@ -11,15 +11,15 @@ Do not edit by hand: rerun `JUBARTE=path/to/jubarte bash examples/cli/gen-help.s
 
 - [`jubarte --help`](#jubarte---help)
 - [`jubarte compare --help`](#jubarte-compare---help)
-- [`jubarte revisions --help`](#jubarte-revisions---help)
 - [`jubarte changes --help`](#jubarte-changes---help)
 - [`jubarte accept --help`](#jubarte-accept---help)
 - [`jubarte reject --help`](#jubarte-reject---help)
 - [`jubarte convert --help`](#jubarte-convert---help)
 - [`jubarte diff --help`](#jubarte-diff---help)
 - [`jubarte inspect --help`](#jubarte-inspect---help)
-- [`jubarte text --help`](#jubarte-text---help)
+- [`jubarte read --help`](#jubarte-read---help)
 - [`jubarte edit --help`](#jubarte-edit---help)
+- [`jubarte add --help`](#jubarte-add---help)
 - [`jubarte capabilities --help`](#jubarte-capabilities---help)
 - [`jubarte self-update --help`](#jubarte-self-update---help)
 - [`jubarte debug --help`](#jubarte-debug---help)
@@ -28,8 +28,6 @@ Do not edit by hand: rerun `JUBARTE=path/to/jubarte bash examples/cli/gen-help.s
 - [`jubarte comments --help`](#jubarte-comments---help)
 - [`jubarte append --help`](#jubarte-append---help)
 - [`jubarte validate --help`](#jubarte-validate---help)
-- [`jubarte fields --help`](#jubarte-fields---help)
-  - [`jubarte fields update --help`](#jubarte-fields-update---help)
 - [`jubarte scrub --help`](#jubarte-scrub---help)
 - [`jubarte audit --help`](#jubarte-audit---help)
 
@@ -43,16 +41,21 @@ Usage: jubarte [OPTIONS] [ORIGINAL] [MODIFIED]
 
 Tasks:
   compare       Compare documents and write a Word redline [alias: redline]
-  revisions     List the tracked revisions in a redline .docx
   changes       List tracked changes with IDs for accept, reject and edit plans
   accept        Accept all tracked changes, or select by ID, author or kind
   reject        Reject all tracked changes, or select by ID, author or kind
   convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
   diff          Review differences as GitHub, word, normal, context or side-by-side text
   inspect       Inspect document facts, paragraphs, styles and tables
-  text          Read Markdown with edit IDs `[body:p:N]`, or with tracked marks
-  edit          Apply a JSON edit plan; write clean copy, redline and report (refusal:
-                exit 3)
+  read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
+                comments with ids [alias: text]
+  edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve
+                or --style (several -p per command), or a JSON plan. Writes clean copy,
+                redline, patch and report, then prints the changed paragraphs as the
+                agent view (refusal: exit 3)
+  add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
+                -p per command). Writes the same files as edit and prints the changed
+                paragraphs as the agent view
   capabilities  What this binary can do, for agents choosing an operation
   self-update   Check or install a release from GitHub
   debug         Diagnose a Word package, or compare package structures
@@ -60,8 +63,8 @@ Tasks:
   comments      List comments, threads and the text they annotate
   append        Join documents in order, preserving images, styles, lists and notes
   validate      Check or repair Word validity (findings: exit 2; unreadable: exit 1)
-  fields        Field results written back into the document from jubarte's layout
-  scrub         Remove authors, editing IDs, metadata and comments before sharing
+  scrub         Field results written back into the document from jubarte's layout.
+                Remove authors, editing IDs, metadata and comments before sharing
   audit         Audit accessibility, style and structure (findings: exit 2)
   help          Print this message or the help of the given subcommand(s)
 
@@ -122,9 +125,55 @@ Compare options:
   [ORIGINAL]
           The original / base document (.docx or Markdown)
 
+Read options:
+      --track-changes <CHOICE>
+          Tracked changes inline (all, the default), or the text with every change
+          accepted or rejected; the id lines then list what changed
+
+          Possible values:
+          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
+          - accept: Accept every change
+          - reject: Reject every change
+
+      --comments <MODE>
+          Comments inline (default) or hidden, with their ids on the id line of the
+          paragraph that holds them
+
+          Possible values:
+          - inline: Comments inline, with their ids
+          - none:   Comments hidden; their ids on the id lines
+          
+          [default: inline]
+
+      --dates
+          Timestamps on the notes of an author whose changes do not all share one (the
+          header shows an author's single timestamp)
+
+      --no-page-markers
+          Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
+          M -->` lines
+
+  -p, --paragraphs <SPEC>
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+
+      --head <N>
+          Only the first N blocks (a table is one block)
+
+      --tail <N>
+          Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
+
 Examples:
   jubarte compare old.docx new.docx -o redline.docx
-  jubarte old.docx new.docx                shorthand for compare
+  jubarte contract.docx                    print the agent view (read)
+  jubarte old.docx new.docx                redline printed as the agent view (-o writes
+  it)
   jubarte inspect contract.docx --json
   jubarte diff old.docx new.docx --format github
   jubarte convert contract.docx -o contract.pdf
@@ -196,21 +245,6 @@ Options:
 Examples:
   jubarte compare old.docx new.docx -o redline.docx
   jubarte compare -b old.docx -m new.docx --author Legal
-```
-
-## `jubarte revisions --help`
-
-```text
-List the tracked revisions in a redline .docx
-
-Usage: jubarte revisions [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  The redline document (.docx)
-
-Options:
-      --json  Emit the list as JSON lines instead of a human summary
-  -h, --help  Print help
 ```
 
 ## `jubarte changes --help`
@@ -406,6 +440,13 @@ Options:
           Exit 4 when a requested font was substituted (listed on stderr and in
           --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
           requested font was substituted
+
+      --update-fields
+          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
+          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
+          --track-changes. Field codes stay, so Word can update them again; page numbers
+          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
+          per field; --report writes `{page_count, fields}`
 
       --timeout <SECONDS>
           Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
@@ -645,38 +686,78 @@ Options:
   -h, --help    Print help
 ```
 
-## `jubarte text --help`
+## `jubarte read --help`
 
 ```text
-Read Markdown with edit IDs `[body:p:N]`, or with tracked marks
+Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
-Usage: jubarte text [OPTIONS] <FILE>
+A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
+is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>#12
+@AC<<}`) and comments with theirs (`{>>#c5 @AC: …<<}`).
+
+Usage: jubarte read [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
           The document (.docx) to read
 
 Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Read options:
       --track-changes <CHOICE>
-          Print the document as Markdown with its tracked changes as CriticMarkup (all),
-          or with every change accepted or rejected, like `convert --to md`. The output
-          then has no `[body:p:N]` ids
+          Tracked changes inline (all, the default), or the text with every change
+          accepted or rejected; the id lines then list what changed
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
           - accept: Accept every change
           - reject: Reject every change
 
-  -h, --help
-          Print help (see a summary with '-h')
+      --comments <MODE>
+          Comments inline (default) or hidden, with their ids on the id line of the
+          paragraph that holds them
+
+          Possible values:
+          - inline: Comments inline, with their ids
+          - none:   Comments hidden; their ids on the id lines
+          
+          [default: inline]
+
+      --dates
+          Timestamps on the notes of an author whose changes do not all share one (the
+          header shows an author's single timestamp)
+
+      --no-page-markers
+          Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
+          M -->` lines
+
+  -p, --paragraphs <SPEC>
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+
+      --head <N>
+          Only the first N blocks (a table is one block)
+
+      --tail <N>
+          Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
 ```
 
 ## `jubarte edit --help`
 
 ```text
-Apply a JSON edit plan; write clean copy, redline and report (refusal: exit 3)
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve or --style
+(several -p per command), or a JSON plan. Writes clean copy, redline, patch and report,
+then prints the changed paragraphs as the agent view (refusal: exit 3)
 
-Usage: jubarte edit [OPTIONS] --plan <PLAN.json> --out-dir <DIR> <FILE>
+Usage: jubarte edit [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -684,25 +765,77 @@ Arguments:
 
 Options:
       --plan <PLAN.json>
-          Edit plan JSON (see `jubarte capabilities --json` for the kinds)
+          Edit plan JSON: batches and the other operation kinds (see `jubarte
+          capabilities --json`). Excludes the operation flags
+
+  -p, --location <WHERE>
+          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a comment. Each -p starts
+          an operation; the flags after it belong to it
+
+      --anchor <TEXT>
+          Text inside WHERE the operation applies to (must occur once)
+
+      --content <TEXT>
+          New text: replaces the anchor; rewrites the paragraph without one; on c5, the
+          comment's new text
+
+      --delete
+          Delete the anchor, or the whole paragraph (or comment) without one
+
+      --resolve
+          Resolve comment c5 (with -p c5)
+
+      --style <SPEC>
+          Formatting for the anchored text: bold, italic, underline, strike, caps,
+          highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a
+          paragraph style (Heading2)
+
+      --author <NAME>
+          Author of the changes and comments (operation flags; a plan names its own)
+          
+          [default: "Modified User"]
+
+      --datetime <ISO8601>
+          Their timestamp (ISO 8601) [default: now, UTC]
+
+      --suggesting-mode
+          The edits are tracked changes (the default): redline.docx, clean.docx,
+          patch.diff and report.jsonl are written and the view shows the marks
+
+      --editing-mode
+          The edits land directly: clean.docx and report.jsonl only; the view shows the
+          result with rev tags on the id lines
+
+      --existing-revisions <MODE>
+          What to do when FILE already holds tracked changes: auto keeps them and tracks
+          the new edits beside them; a clean file goes through the comparer
+
+          Possible values:
+          - auto:   `keep` when the file has tracked changes, else the comparer path
+          - keep:   Keep them; the new edits are tracked beside them
+          - accept: Accept them first
+          - reject: Reject them first
+          - refuse: Refuse a file that has them
+          
+          [default: auto]
 
       --out-dir <DIR>
-          Directory to create for clean.docx, redline.docx, report.jsonl
-
-      --dry-run
-          Resolve and report only; write nothing
+          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
 
       --force
           Replace an existing output directory's files
+
+  -q, --quiet
+          Print nothing on success (the files are still written)
+
+      --dry-run
+          Resolve and report only; write nothing
 
       --pdf
           Also write redline.pdf and clean.pdf
 
       --png
           Also write redline-page-NN.png and clean-page-NN.png
-
-  -q, --quiet
-          Print nothing on success (patch.diff and report.jsonl are still written)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -726,6 +859,102 @@ Revision marks:
 
       --revision-palette <SPEC>
           Marks for --revisions custom (see `convert --help`)
+
+Examples:
+  jubarte edit a.docx -p p12 --anchor "thirty days" --content "forty-five days"
+  jubarte edit a.docx -p p12 --anchor thirty --content "thirty (30)"   an insertion
+  jubarte edit a.docx -p p7 --anchor "at its sole discretion" --delete -p p9 --delete
+  jubarte edit a.docx -p p3 --content "The parties agree as follows."    rewrite
+  jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
+  jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
+  jubarte edit a.docx --plan plan.json --out-dir review
+
+WHERE is an id from `jubarte read`: p12, header1, footer2.p1, t0.r1.c2,
+c5 (a comment), or a long id (body:p:12).
+```
+
+## `jubarte add --help`
+
+```text
+Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
+Writes the same files as edit and prints the changed paragraphs as the agent view
+
+Usage: jubarte add [OPTIONS] --location <WHERE> <FILE>
+
+Arguments:
+  <FILE>
+          The source document (.docx). Never modified
+
+Options:
+  -p, --location <WHERE>
+          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a reply. Each -p starts
+          an operation; the flags after it belong to it
+
+      --anchor <TEXT>
+          Text inside WHERE to comment on (must occur once)
+
+      --content <TEXT>
+          The paragraph, comment or reply text
+
+      --before
+          A new paragraph before WHERE instead of after it
+
+      --comment
+          A comment on the whole paragraph (with --anchor the comment sits on the anchor
+          and this flag is implied)
+
+      --style <SPEC>
+          Formatting for the new paragraph's text (bold, italic, underline,
+          highlight=yellow) or its paragraph style (Heading2)
+
+      --author <NAME>
+          Author of the changes and comments (operation flags; a plan names its own)
+          
+          [default: "Modified User"]
+
+      --datetime <ISO8601>
+          Their timestamp (ISO 8601) [default: now, UTC]
+
+      --suggesting-mode
+          The edits are tracked changes (the default): redline.docx, clean.docx,
+          patch.diff and report.jsonl are written and the view shows the marks
+
+      --editing-mode
+          The edits land directly: clean.docx and report.jsonl only; the view shows the
+          result with rev tags on the id lines
+
+      --existing-revisions <MODE>
+          What to do when FILE already holds tracked changes: auto keeps them and tracks
+          the new edits beside them; a clean file goes through the comparer
+
+          Possible values:
+          - auto:   `keep` when the file has tracked changes, else the comparer path
+          - keep:   Keep them; the new edits are tracked beside them
+          - accept: Accept them first
+          - reject: Reject them first
+          - refuse: Refuse a file that has them
+          
+          [default: auto]
+
+      --out-dir <DIR>
+          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
+
+      --force
+          Replace an existing output directory's files
+
+  -q, --quiet
+          Print nothing on success (the files are still written)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Examples:
+  jubarte add a.docx -p p12 --content "Time is of the essence."   new paragraph after
+  p12
+  jubarte add a.docx -p p12 --content Recitals --before --style Heading2
+  jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?"   a comment
+  jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap."
+  jubarte add a.docx -p c5 --content "Agreed, will fix."           a reply
 ```
 
 ## `jubarte capabilities --help`
@@ -1034,51 +1263,11 @@ Examples:
   jubarte validate review/redline.docx --original contract.docx --author Claude
 ```
 
-## `jubarte fields --help`
-
-```text
-Field results written back into the document from jubarte's layout
-
-Usage: jubarte fields <COMMAND>
-
-Commands:
-  update  Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
-          jubarte's layout; TOCs are rebuilt from the headings. Field codes stay, so
-          Word can update them again. Page numbers are jubarte's layout, not Word's
-          (docs/WORD_DIFFERENCES.md)
-  help    Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help  Print help
-```
-
-## `jubarte fields update --help`
-
-```text
-Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from jubarte's
-layout; TOCs are rebuilt from the headings. Field codes stay, so Word can update them
-again. Page numbers are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md)
-
-Usage: jubarte fields update [OPTIONS] --output <FILE> <FILE>
-
-Arguments:
-  <FILE>  The document (.docx)
-
-Options:
-  -o, --output <FILE>  Output path
-      --force          Overwrite the output file if it already exists
-      --json           Print the fields written as JSON
-  -h, --help           Print help
-
-Examples:
-  jubarte fields update in.docx -o out.docx          one line per field written
-  jubarte fields update in.docx -o out.docx --json   {"page_count", "fields": [...]}
-```
-
 ## `jubarte scrub --help`
 
 ```text
-Remove authors, editing IDs, metadata and comments before sharing
+Field results written back into the document from jubarte's layout. Remove authors,
+editing IDs, metadata and comments before sharing
 
 Usage: jubarte scrub [OPTIONS] --output <FILE> <FILE>
 
