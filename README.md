@@ -401,7 +401,8 @@ jubarte ORIGINAL MODIFIED [OPTIONS]
 Without `-o`, `jubarte A B` prints the redline as the agent view (the
 `read` options apply) and writes nothing; `-o FILE` writes it, and
 `jubarte compare A B` writes `<A>_v_<B>.docx` as before. `jubarte FILE`
-alone is `jubarte read FILE`.
+alone is `jubarte read FILE`; a lone name without an extension is taken
+for a mistyped task, so read such a file with `jubarte read FILE`.
 
 Common options:
 
