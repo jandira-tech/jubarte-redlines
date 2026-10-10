@@ -300,7 +300,7 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     assert "body:rev:9" in capsys.readouterr().err
 
 
-def test_edit_writes_and_prints_the_patch_unless_quiet(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     plan = {
         "schema_version": 1,
         "author": "Claude",
@@ -314,7 +314,42 @@ def test_edit_writes_and_prints_the_patch_unless_quiet(letter: Path, tmp_path: P
     assert patch.startswith("--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [body:p:1] @@\n"), patch
     assert "[-his or her-]{+an+}" in patch
     stdout = capsys.readouterr().out
-    assert stdout.endswith(patch) and '"ev":"summary"' in stdout.replace(" ", ""), stdout
+    # stdout carries the changed blocks as the agent view; the patch stays on disk.
+    assert "\n@@ " not in stdout and '"ev":"summary"' in stdout.replace(" ", ""), stdout
+    assert "\nrange: changed by @C (p1) of p0-p2\n" in stdout and "{~~his or her~>an~~}" in stdout, stdout
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "quiet"), "-q"]) == 0
     assert capsys.readouterr().out == ""
     assert (tmp_path / "quiet" / "patch.diff").read_text() == patch
+
+
+def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Operation flags grouped by -p; the default out dir sits beside the file.
+    code = main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an", "-p", "p0", "--delete", "--datetime", "2026-10-01T09:00:00Z"])
+    assert code == 0, capsys.readouterr()
+    out = capsys.readouterr().out
+    bundle = tmp_path / "letter.edit"
+    for name in ("clean.docx", "redline.docx", "patch.diff", "report.jsonl"):
+        assert (bundle / name).is_file(), name
+    assert f"\nsource: {bundle / 'redline.docx'}\n" in out, out
+    assert "\nrange: changed by @MU (p0, p1) of p0-p2\n" in out, out
+    assert "{~~his or her~>an~~}" in out and "{--Heading--}" in out, out
+    # --plan excludes the operation flags; flags without an operation are usage errors.
+    for bad in (["--plan", "x.json", "-p", "p1", "--delete"], ["-p", "p1"], ["--anchor", "a", "-p", "p1", "--content", "b"]):
+        with pytest.raises(SystemExit) as exit_info:
+            main(["edit", str(letter), *bad, "--out-dir", str(tmp_path / "bad")])
+        assert exit_info.value.code == 2, bad
+    capsys.readouterr()
+    # Markdown marks in an anchor and in content leave notes.
+    assert main(["edit", str(letter), "-p", "p0", "--anchor", "# Heading", "--content", "**Title**", "--out-dir", str(tmp_path / "n")]) == 0
+    out = capsys.readouterr().out
+    assert '\nnote: op-1: content keeps its Markdown marks as text; use --style for formatting\n' in out, out
+    assert '\nnote: op-1: anchor "# Heading" read as "Heading" (Markdown marks are not document text)\n' in out, out
+    # add: a comment, then a reply on the redline; editing mode writes no redline.
+    assert main(["add", str(letter), "-p", "p2", "--anchor", "survive", "--content", "Which?", "--author", "Ann Counsel", "--out-dir", str(tmp_path / "c")]) == 0
+    assert "{==survive==}{>>#c0 @AC: Which?<<}" in capsys.readouterr().out
+    assert main(["add", str(tmp_path / "c" / "redline.docx"), "-p", "c0", "--content", "All three.", "--author", "Bob Lee", "--out-dir", str(tmp_path / "r")]) == 0
+    assert "{>>#c1 @BL re #c0: All three.<<}" in capsys.readouterr().out
+    assert main(["add", str(letter), "-p", "p0", "--content", "Recitals", "--editing-mode", "--out-dir", str(tmp_path / "e")]) == 0
+    out = capsys.readouterr().out
+    assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
+    assert "\nRecitals\n" in out and "{++" not in out, out

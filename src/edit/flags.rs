@@ -380,6 +380,43 @@ fn inline_edit(
     })
 }
 
+/// [`plan_from_flags`] over JSON, for the Python and npm CLIs: `verb` is
+/// `edit` or `add`, `operations` the `operations` array their parsed
+/// command carries, `existing` the `--existing-revisions` value (`auto`,
+/// `keep`, `accept`, `reject`, `refuse`). Returns the plan as JSON and the
+/// notes; an error is a usage error.
+pub fn plan_from_flags_json(
+    verb: &str,
+    operations: &str,
+    author: &str,
+    date: Option<&str>,
+    existing: &str,
+    source: &[u8],
+) -> Result<(String, Vec<String>), String> {
+    let verb = match verb {
+        "edit" => Verb::Edit,
+        "add" => Verb::Add,
+        other => return Err(format!("unknown verb {other:?}: edit or add")),
+    };
+    let ops: Vec<FlagOp> =
+        serde_json::from_str(operations).map_err(|e| format!("operations: {e}"))?;
+    let existing = match existing {
+        "auto" => None,
+        "keep" => Some(ExistingRevisions::Keep),
+        "accept" => Some(ExistingRevisions::Accept),
+        "reject" => Some(ExistingRevisions::Reject),
+        "refuse" => Some(ExistingRevisions::Refuse),
+        other => {
+            return Err(format!(
+                "existing revisions {other:?}: auto, keep, accept, reject or refuse"
+            ));
+        }
+    };
+    let built = plan_from_flags(verb, &ops, author, date, existing, source)?;
+    let json = serde_json::to_string(&built.plan).map_err(|e| e.to_string())?;
+    Ok((json, built.notes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +430,32 @@ mod tests {
 
     fn kind(verb: Verb, op: &FlagOp) -> Result<OperationKind, String> {
         flag_operation(verb, op).map(|(k, _)| k)
+    }
+
+    #[test]
+    fn the_json_entry_point_reads_what_the_cli_schema_serializes() {
+        let ops = r#"[{"at":"p0","anchor":null,"content":"**Fees**","delete":false,"resolve":false,"before":false,"comment":false,"styles":[]}]"#;
+        let (plan, notes) = plan_from_flags_json(
+            "edit",
+            ops,
+            "Ann",
+            Some("2026-10-01T09:00:00Z"),
+            "keep",
+            b"",
+        )
+        .unwrap();
+        let plan = EditPlan::from_json(&plan).unwrap();
+        assert_eq!(plan.author, "Ann");
+        assert_eq!(plan.existing_revisions, ExistingRevisions::Keep);
+        assert_eq!(plan.operations.len(), 1);
+        assert_eq!(
+            notes,
+            ["op-1: content keeps its Markdown marks as text; use --style for formatting"]
+        );
+        for (verb, existing) in [("move", "keep"), ("edit", "sometimes")] {
+            assert!(plan_from_flags_json(verb, ops, "Ann", None, existing, b"").is_err());
+        }
+        assert!(plan_from_flags_json("edit", "{", "Ann", None, "keep", b"").is_err());
     }
 
     #[test]

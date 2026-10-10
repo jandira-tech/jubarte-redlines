@@ -17,6 +17,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte edit FILE -p WHERE --anchor TEXT --content TEXT` (also
+  `--delete`, `--resolve`, `--style`) and the new `jubarte add` (a paragraph,
+  a comment, or a reply to `c5`) take their operations from flags: each `-p`
+  starts one, so one command carries several. `--author`, `--datetime`,
+  `--existing-revisions` (default `auto`: keep a file's tracked changes) and
+  `--editing-mode` (clean copy and report only) apply to all of them;
+  `--out-dir` defaults to `<stem>.edit` beside the file. After applying, both
+  print the changed blocks as the agent view (the patch stays in
+  `patch.diff`). Same flags on the Python and npm CLIs; library:
+  `jubarte::edit::flags::plan_from_flags`, `jubarte::markdown::changed_view`,
+  Python `_native.flag_plan`/`changed_view`, WASM `flagPlan`/`changedView`.
+
 - Document text diff views: `github` (`unified`, `text`), `word`, `normal`,
   `context` and `side-by-side`, across Rust, Python and WASM. Line views
   preserve existing CriticMarkup; word diff accepts all changes in both

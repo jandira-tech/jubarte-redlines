@@ -59,8 +59,13 @@ Tasks:
   inspect       Inspect document facts, paragraphs, styles and tables
   read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
                 comments with ids [alias: text]
-  edit          Apply a JSON edit plan; write clean copy, redline and report (refusal:
-                exit 3)
+  edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve
+                or --style (several -p per command), or a JSON plan. Writes clean copy,
+                redline, patch and report, then prints the changed paragraphs as the
+                agent view (refusal: exit 3)
+  add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
+                -p per command). Writes the same files as edit and prints the changed
+                paragraphs as the agent view
   capabilities  What this binary can do, for agents choosing an operation
   diff-render   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
@@ -723,9 +728,11 @@ Read options:
 
 ```text
 $ jubarte-redlines edit --help
-Apply a JSON edit plan; write clean copy, redline and report (refusal: exit 3)
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve or --style
+(several -p per command), or a JSON plan. Writes clean copy, redline, patch and report,
+then prints the changed paragraphs as the agent view (refusal: exit 3)
 
-Usage: jubarte-redlines edit [OPTIONS] --plan <PLAN.json> --out-dir <DIR> <FILE>
+Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
@@ -733,25 +740,77 @@ Arguments:
 
 Options:
       --plan <PLAN.json>
-          Edit plan JSON (see `jubarte capabilities --json` for the kinds)
+          Edit plan JSON: batches and the other operation kinds (see `jubarte
+          capabilities --json`). Excludes the operation flags
+
+  -p, --location <WHERE>
+          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a comment. Each -p starts
+          an operation; the flags after it belong to it
+
+      --anchor <TEXT>
+          Text inside WHERE the operation applies to (must occur once)
+
+      --content <TEXT>
+          New text: replaces the anchor; rewrites the paragraph without one; on c5, the
+          comment's new text
+
+      --delete
+          Delete the anchor, or the whole paragraph (or comment) without one
+
+      --resolve
+          Resolve comment c5 (with -p c5)
+
+      --style <SPEC>
+          Formatting for the anchored text: bold, italic, underline, strike, caps,
+          highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a
+          paragraph style (Heading2)
+
+      --author <NAME>
+          Author of the changes and comments (operation flags; a plan names its own)
+
+          [default: "Modified User"]
+
+      --datetime <ISO8601>
+          Their timestamp (ISO 8601) [default: now, UTC]
+
+      --suggesting-mode
+          The edits are tracked changes (the default): redline.docx, clean.docx,
+          patch.diff and report.jsonl are written and the view shows the marks
+
+      --editing-mode
+          The edits land directly: clean.docx and report.jsonl only; the view shows the
+          result with rev tags on the id lines
+
+      --existing-revisions <MODE>
+          What to do when FILE already holds tracked changes: auto keeps them and tracks
+          the new edits beside them; a clean file goes through the comparer
+
+          Possible values:
+          - auto:   `keep` when the file has tracked changes, else the comparer path
+          - keep:   Keep them; the new edits are tracked beside them
+          - accept: Accept them first
+          - reject: Reject them first
+          - refuse: Refuse a file that has them
+
+          [default: auto]
 
       --out-dir <DIR>
-          Directory to create for clean.docx, redline.docx, report.jsonl
-
-      --dry-run
-          Resolve and report only; write nothing
+          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
 
       --force
           Replace an existing output directory's files
+
+  -q, --quiet
+          Print nothing on success (the files are still written)
+
+      --dry-run
+          Resolve and report only; write nothing
 
       --pdf
           Also write redline.pdf and clean.pdf
 
       --png
           Also write redline-page-NN.png and clean-page-NN.png
-
-  -q, --quiet
-          Print nothing on success (patch.diff and report.jsonl are still written)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -775,6 +834,103 @@ Revision marks:
 
       --revision-palette <SPEC>
           Marks for --revisions custom (see `convert --help`)
+
+Examples:
+  jubarte edit a.docx -p p12 --anchor "thirty days" --content "forty-five days"
+  jubarte edit a.docx -p p12 --anchor thirty --content "thirty (30)"   an insertion
+  jubarte edit a.docx -p p7 --anchor "at its sole discretion" --delete -p p9 --delete
+  jubarte edit a.docx -p p3 --content "The parties agree as follows."    rewrite
+  jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
+  jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
+  jubarte edit a.docx --plan plan.json --out-dir review
+
+WHERE is an id from `jubarte read`: p12, header1, footer2.p1, t0.r1.c2,
+c5 (a comment), or a long id (body:p:12).
+```
+
+#### `jubarte-redlines add`
+
+```text
+$ jubarte-redlines add --help
+Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
+Writes the same files as edit and prints the changed paragraphs as the agent view
+
+Usage: jubarte-redlines add [OPTIONS] --location <WHERE> <FILE>
+
+Arguments:
+  <FILE>
+          The source document (.docx). Never modified
+
+Options:
+  -p, --location <WHERE>
+          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a reply. Each -p starts
+          an operation; the flags after it belong to it
+
+      --anchor <TEXT>
+          Text inside WHERE to comment on (must occur once)
+
+      --content <TEXT>
+          The paragraph, comment or reply text
+
+      --before
+          A new paragraph before WHERE instead of after it
+
+      --comment
+          A comment on the whole paragraph (with --anchor the comment sits on the anchor
+          and this flag is implied)
+
+      --style <SPEC>
+          Formatting for the new paragraph's text (bold, italic, underline,
+          highlight=yellow) or its paragraph style (Heading2)
+
+      --author <NAME>
+          Author of the changes and comments (operation flags; a plan names its own)
+
+          [default: "Modified User"]
+
+      --datetime <ISO8601>
+          Their timestamp (ISO 8601) [default: now, UTC]
+
+      --suggesting-mode
+          The edits are tracked changes (the default): redline.docx, clean.docx,
+          patch.diff and report.jsonl are written and the view shows the marks
+
+      --editing-mode
+          The edits land directly: clean.docx and report.jsonl only; the view shows the
+          result with rev tags on the id lines
+
+      --existing-revisions <MODE>
+          What to do when FILE already holds tracked changes: auto keeps them and tracks
+          the new edits beside them; a clean file goes through the comparer
+
+          Possible values:
+          - auto:   `keep` when the file has tracked changes, else the comparer path
+          - keep:   Keep them; the new edits are tracked beside them
+          - accept: Accept them first
+          - reject: Reject them first
+          - refuse: Refuse a file that has them
+
+          [default: auto]
+
+      --out-dir <DIR>
+          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
+
+      --force
+          Replace an existing output directory's files
+
+  -q, --quiet
+          Print nothing on success (the files are still written)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Examples:
+  jubarte add a.docx -p p12 --content "Time is of the essence."   new paragraph after
+  p12
+  jubarte add a.docx -p p12 --content Recitals --before --style Heading2
+  jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?"   a comment
+  jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap."
+  jubarte add a.docx -p c5 --content "Agreed, will fix."           a reply
 ```
 
 #### `jubarte-redlines capabilities`
@@ -1882,6 +2038,8 @@ EditOutcome(
     comment_id: int | None = None,
     code: str | None = None,
     message: str | None = None,
+    anchor_given: str | None = None,
+    anchor_read_as: str | None = None,
 )
 ```
 

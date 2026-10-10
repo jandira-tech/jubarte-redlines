@@ -347,6 +347,71 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
     read_view_json(docx, options_json.as_deref()).map_err(js_err)
 }
 
+/// Options of [`flagPlan`](flag_plan).
+#[derive(serde::Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct FlagPlanOptions {
+    author: Option<String>,
+    date: Option<String>,
+    existing_revisions: Option<String>,
+}
+
+fn flag_plan_json(
+    verb: &str,
+    operations_json: &str,
+    docx: &[u8],
+    options_json: Option<&str>,
+) -> Result<String, String> {
+    let options: FlagPlanOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("options: {e}"))?,
+        None => FlagPlanOptions::default(),
+    };
+    let (plan, notes) = jubarte::edit::flags::plan_from_flags_json(
+        verb,
+        operations_json,
+        options.author.as_deref().unwrap_or("Modified User"),
+        options.date.as_deref(),
+        options.existing_revisions.as_deref().unwrap_or("auto"),
+        docx,
+    )?;
+    Ok(serde_json::json!({ "plan": plan, "notes": notes }).to_string())
+}
+
+/// The plan the `edit`/`add` operation flags describe, as JSON `{plan,
+/// notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
+/// `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
+/// `operationsJson` the parsed command's `operations` array. Options (JSON,
+/// all optional): `author` (default `Modified User`), `date`,
+/// `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
+/// An error is a usage error.
+///
+/// Mirrors `jubarte::edit::flags::plan_from_flags`.
+#[wasm_bindgen(js_name = flagPlan)]
+pub fn flag_plan(
+    verb: &str,
+    operations_json: &str,
+    docx: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsValue> {
+    flag_plan_json(verb, operations_json, docx, options_json.as_deref()).map_err(js_err)
+}
+
+/// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+/// view `edit` and `add` print (every changed block when none does);
+/// `accepted` reads its accepted text, `source` is the name printed as
+/// `source:`.
+///
+/// Mirrors `jubarte::markdown::changed_view`.
+#[wasm_bindgen(js_name = changedView)]
+pub fn changed_view(
+    docx: &[u8],
+    author: &str,
+    accepted: bool,
+    source: Option<String>,
+) -> Result<String, JsValue> {
+    jubarte::markdown::changed_view(docx, author, accepted, source.as_deref()).map_err(js_err)
+}
+
 /// What [`applyEditPlan`](apply_edit_plan) and
 /// [`previewEditPlan`](preview_edit_plan) return. A refused plan is data, not
 /// an exception, so every operation's outcome stays readable.
@@ -1386,6 +1451,23 @@ mod tests {
              @@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"
         );
         assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
+    }
+
+    #[test]
+    fn flag_plan_builds_the_plan_the_cli_flags_describe() {
+        let source = word(OLD);
+        let ops = r#"[{"at":"p1","anchor":"30","content":"45","delete":false,"resolve":false,"before":false,"comment":false,"styles":[]}]"#;
+        let out: serde_json::Value = serde_json::from_str(
+            &flag_plan_json("edit", ops, &source, Some(r#"{"author":"Ann"}"#)).unwrap(),
+        )
+        .unwrap();
+        let plan = out["plan"].as_str().unwrap();
+        assert!(plan.contains(r#""author":"Ann""#), "{plan}");
+        let edited = jubarte::edit::apply_plan_json(&source, plan).unwrap();
+        let view = jubarte::markdown::changed_view(&edited.redline, "Ann", false, None).unwrap();
+        assert!(view.contains("{~~30~>45~~}"), "{view}");
+        assert!(flag_plan_json("edit", "[]", &source, None).is_err());
+        assert!(flag_plan_json("edit", ops, &source, Some("{")).is_err());
     }
 
     #[test]
