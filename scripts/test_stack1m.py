@@ -50,6 +50,13 @@ class Stack1m(unittest.TestCase):
         (_, convert), = stack1m.jobs(bench, out, self.conversion)
         self.assertEqual(convert[:4], ["convert", "/bench/corpus/c.docx", "-o", "/out/sample_conversion_0.pdf"])
 
+    def test_a_versioned_csv_name_keeps_every_row_s_own_output(self):
+        versioned = self.tmp / "sample_redline_0.12.0_10-10-26_08-23.csv"
+        versioned.write_text("key,base,next\nk,a.docx,b.docx\nl,c.docx,d.docx\n")
+        outputs = [tail[4] for _, tail in stack1m.jobs(Path("/bench"), Path("/out"), versioned)]
+        self.assertEqual(outputs, ["/out/sample_redline_0.12.0_10-10-26_08-23_0.docx",
+                                   "/out/sample_redline_0.12.0_10-10-26_08-23_1.docx"])
+
     def test_the_limit_reaches_the_binary_and_failures_fail_the_run(self):
         printed = io.StringIO()
         with redirect_stdout(printed):

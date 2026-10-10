@@ -25,23 +25,24 @@ from pathlib import Path
 
 def jobs(bench, out, csv_path):
     """(label, argv tail) for each row of one release sample CSV."""
-    with open(csv_path, newline="") as handle:
+    with open(csv_path, encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     for index, row in enumerate(rows):
         label = "{}:{}".format(Path(csv_path).name, index)
-        target = out / "{}_{}".format(Path(csv_path).stem, index)
+        # A versioned CSV stem has dots; with_suffix would cut it at the last.
+        target = "{}/{}_{}".format(out, Path(csv_path).stem, index)
         if "next" in row:
             yield label, ["compare", str(bench / row["base"]), str(bench / row["next"]),
-                          "-o", str(target.with_suffix(".docx")), "--force"]
+                          "-o", target + ".docx", "--force"]
         else:
-            yield label, ["convert", str(bench / row["docx"]), "-o", str(target.with_suffix(".pdf")),
+            yield label, ["convert", str(bench / row["docx"]), "-o", target + ".pdf",
                           "--force"]
 
 
 def run(binary, kib, timeout, label, tail):
     # `ulimit -s` sets the soft limit that sizes the main thread at exec;
     # Python's setrlimit is refused on macOS for any value.
-    argv = ["/bin/sh", "-c", 'ulimit -s "$0" && exec "$@"', str(kib), binary] + tail
+    argv = ["/bin/sh", "-c", 'ulimit -s "$0" && exec "$@"', str(kib), binary, *tail]
     try:
         done = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=timeout)
     except subprocess.TimeoutExpired:
