@@ -9,13 +9,15 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::ooxml::{Element, Node};
 
+// The stamps start with U+E000, which no XML name can hold, so a file
+// cannot forge them.
 /// Attribute stamped on every numbered `w:p`: its `body:p:N` index.
-pub(crate) const INDEX: &str = "jubarteIndex";
+pub(crate) const INDEX: &str = "\u{E000}jubarteIndex";
 /// Attribute stamped on every top-level `w:tbl`: its `t{N}` number.
-pub(crate) const TABLE: &str = "jubarteTable";
+pub(crate) const TABLE: &str = "\u{E000}jubarteTable";
 /// Attribute stamped on a `w:p` that holds revisions: `kind:tag` entries
 /// separated by spaces (`ins:0@AC sub:1+2@AC`), recorded before resolution.
-pub(crate) const REVS: &str = "jubarteRevs";
+pub(crate) const REVS: &str = "\u{E000}jubarteRevs";
 
 /// Author handles, order and timestamps for tags, notes and the header.
 #[derive(Debug, Default, Clone)]
@@ -107,6 +109,9 @@ pub(crate) fn handle_of(tag: &str) -> Option<&str> {
 /// Joins the tags of one logical change: `1@AC` + `2@AC` is `1+2@AC`,
 /// `1@AC` + `2@JD` is `1@AC|2@JD`, `1+2@AC` + `3@AC` is `1+2+3@AC`.
 pub(crate) fn join_tags(parts: &[String]) -> String {
+    if parts.is_empty() {
+        return String::new();
+    }
     let handles: Vec<Option<&str>> = parts.iter().map(|p| handle_of(p)).collect();
     if handles.iter().all(|h| h.is_some() && *h == handles[0]) {
         let ids: Vec<&str> = parts
@@ -150,7 +155,25 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
     for e in p.elements() {
         if matches!(
             e.local(),
-            "bookmarkStart" | "bookmarkEnd" | "proofErr" | "commentRangeStart" | "commentRangeEnd"
+            "bookmarkStart"
+                | "bookmarkEnd"
+                | "proofErr"
+                | "commentRangeStart"
+                | "commentRangeEnd"
+                | "moveFromRangeStart"
+                | "moveFromRangeEnd"
+                | "moveToRangeStart"
+                | "moveToRangeEnd"
+                | "permStart"
+                | "permEnd"
+                | "customXmlInsRangeStart"
+                | "customXmlInsRangeEnd"
+                | "customXmlDelRangeStart"
+                | "customXmlDelRangeEnd"
+                | "customXmlMoveFromRangeStart"
+                | "customXmlMoveFromRangeEnd"
+                | "customXmlMoveToRangeStart"
+                | "customXmlMoveToRangeEnd"
         ) {
             continue;
         }
@@ -226,10 +249,18 @@ pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<Str
 
 /// Tags of the formatting changes recorded in a paragraph.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
+    fn walk(e: &Element, handles: &Handles, out: &mut Vec<String>) {
+        for child in e.elements() {
+            if child.is("rPrChange") || child.is("pPrChange") {
+                out.push(tag_of(child, handles));
+            } else {
+                walk(child, handles, out);
+            }
+        }
+    }
     let mut found = Vec::new();
-    p.find_all("rPrChange", &mut found);
-    p.find_all("pPrChange", &mut found);
-    found.iter().map(|e| tag_of(e, handles)).collect()
+    walk(p, handles, &mut found);
+    found
 }
 
 struct Counter {
@@ -838,6 +869,42 @@ mod tests {
             Some("2026-10-02..2026-10-03".to_string())
         );
         assert_eq!(handles.unique_date("Nobody"), None);
+    }
+
+    #[test]
+    fn range_markers_do_not_break_a_move_or_a_substitution() {
+        let d = doc(
+            r#"<w:p><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permStart w:id="30"/><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permEnd w:id="30"/></w:p>"#,
+        );
+        let handles = handles(&d, None);
+        let p = d.child("body").unwrap().child("p").unwrap();
+        let tags: Vec<String> = revision_tags(p, &handles)
+            .into_iter()
+            .map(|t| format!("{}:{}", t.kind, t.tag))
+            .collect();
+        assert_eq!(tags, ["sub:1+2@AC"]);
+    }
+
+    #[test]
+    fn joining_no_tags_is_empty() {
+        assert_eq!(join_tags(&[]), "");
+    }
+
+    #[test]
+    fn format_changes_list_in_document_order() {
+        let d = doc(
+            r#"<w:p><w:pPr><w:pPrChange w:id="1" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="2" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
+        );
+        let handles = handles(&d, None);
+        let p = d.child("body").unwrap().child("p").unwrap();
+        assert_eq!(format_change_tags(p, &handles), ["1@AC", "2@AC"]);
+    }
+
+    #[test]
+    fn a_stamp_cannot_be_forged_by_the_file() {
+        let mut body = body(r#"<w:p w:jubarteIndex="99"/>"#);
+        stamp(&mut body, &Handles::default());
+        assert_eq!(body.child("p").unwrap().attr(INDEX), Some("0"));
     }
 
     #[test]

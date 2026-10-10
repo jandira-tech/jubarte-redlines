@@ -134,6 +134,10 @@ fn select_parses_single_paragraphs_ranges_lists_and_tables() {
         "x3: expected pN, pN-pM or tN"
     );
     assert_eq!(Select::parse(" , ").unwrap_err(), "no paragraphs selected");
+    assert_eq!(
+        Select::parse("-").unwrap_err(),
+        "-: expected pN, pN-pM or tN"
+    );
 }
 
 #[test]

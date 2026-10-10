@@ -290,6 +290,9 @@ impl Select {
                 picks.push(Pick::Table(n));
                 continue;
             }
+            if !item.contains(|c: char| c.is_ascii_digit()) {
+                return Err(format!("{item}: expected pN, pN-pM or tN"));
+            }
             let (from, to) = match item.split_once('-') {
                 None => {
                     let n = number(item, item)?;
