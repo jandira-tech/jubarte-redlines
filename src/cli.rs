@@ -2007,8 +2007,17 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 );
             }
             let mut args = compare_json(&compare);
-            args["view"] = serde_json::to_value(ReadArgs::from_arg_matches(&matches)?)
-                .expect("UTF-8 CLI arguments");
+            // Without -o the redline is printed as the read view, which an
+            // adapter without read cannot do; with -o it is a plain compare.
+            if accepts("read") {
+                args["view"] = serde_json::to_value(ReadArgs::from_arg_matches(&matches)?)
+                    .expect("UTF-8 CLI arguments");
+            } else if compare.output.is_none() {
+                return Err(command.error(
+                    clap::error::ErrorKind::InvalidSubcommand,
+                    "this task is not supported by this adapter",
+                ));
+            }
             Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}).to_string())
         }
     })();

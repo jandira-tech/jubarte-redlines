@@ -76,6 +76,17 @@ fn explicit_compare_alias_and_shorthand_preserve_overrides() {
         parse(&["a.docx", "b.docx", "-o", "x.docx", "--head", "2"], &[])["exit_code"],
         2
     );
+    // pi review av5 F3: an adapter without read cannot print the A B view,
+    // so the bare shorthand is refused as the one-file form is; with -o it
+    // is a plain compare and carries no view.
+    assert_eq!(
+        parse(&["a.docx", "b.docx"], &["compare"])["exit_code"],
+        2,
+        "read not supported"
+    );
+    let written = parse(&["a.docx", "b.docx", "-o", "x.docx"], &["compare"]);
+    assert_eq!(written["command"], "compare", "{written}");
+    assert!(written["args"].get("view").is_none(), "{written}");
 }
 
 #[test]
