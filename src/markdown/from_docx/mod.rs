@@ -705,6 +705,15 @@ impl Writer<'_> {
                     // first cell; it gets its own block before the table.
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
+                    if self.agent {
+                        if let Some(line) = agent::table_line(child, self.resolved, &self.handles) {
+                            self.flush_empty(blocks);
+                            let mut breaks = Vec::new();
+                            child.find_all("lastRenderedPageBreak", &mut breaks);
+                            self.page_lines(blocks, !breaks.is_empty());
+                            blocks.push_line(&line);
+                        }
+                    }
                     let table = self.table(child);
                     blocks.push(&table, false);
                 }

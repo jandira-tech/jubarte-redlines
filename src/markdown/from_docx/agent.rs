@@ -545,6 +545,115 @@ pub(crate) fn page_counts(e: &Element) -> (usize, usize) {
     (rendered, hard)
 }
 
+/// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
+/// `None` for a nested table (not numbered).
+pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Option<String> {
+    let t = tbl.attr(TABLE)?;
+    let rows: Vec<&Element> = tbl.children_named("tr").collect();
+    let cols = tbl
+        .child("tblGrid")
+        .map(|g| g.children_named("gridCol").count())
+        .filter(|&c| c > 0)
+        .unwrap_or_else(|| {
+            rows.iter()
+                .map(|r| r.children_named("tc").count())
+                .max()
+                .unwrap_or(0)
+        });
+    let mut head = format!("t{t}");
+    if let Some(jc) = tbl.path(&["tblPr", "jc"]).and_then(|j| j.attr("val")) {
+        match jc {
+            "center" => head.push_str(" center"),
+            "right" | "end" => head.push_str(" right"),
+            _ => {}
+        }
+    }
+    // The size opens the clauses: `t0 center 3x3, cells …`.
+    let mut clauses: Vec<String> = vec![format!("{}x{}", rows.len(), cols)];
+    let mut per_row: Vec<(usize, usize)> = Vec::new();
+    let mut uniform = true;
+    let mut merged = false;
+    let mut break_ins: Vec<String> = Vec::new();
+    let mut break_del: Vec<String> = Vec::new();
+    let mut revs: Vec<String> = Vec::new();
+    for tr in &rows {
+        let mut range: Option<(usize, usize)> = None;
+        for tc in tr.children_named("tc") {
+            if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
+                merged = true;
+            }
+            let mut ps = Vec::new();
+            tc.find_all("p", &mut ps);
+            let idx: Vec<usize> = ps
+                .iter()
+                .filter_map(|p| p.attr(INDEX)?.parse().ok())
+                .collect();
+            if idx.len() != 1 {
+                uniform = false;
+            }
+            for p in &ps {
+                let Some(i) = p.attr(INDEX) else { continue };
+                let (ins, del) = mark_tags(p, handles);
+                break_ins.extend(ins.iter().map(|t| format!("{} in p{i}", format_tag(t))));
+                break_del.extend(del.iter().map(|t| format!("{} in p{i}", format_tag(t))));
+                if resolved {
+                    revs.extend(
+                        stamped_revs(p)
+                            .into_iter()
+                            .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
+                    );
+                }
+            }
+            if let (Some(&a), Some(&b)) = (idx.first(), idx.last()) {
+                range = Some(match range {
+                    None => (a, b),
+                    Some((start, _)) => (start, b),
+                });
+            }
+        }
+        if let Some(r) = range {
+            per_row.push(r);
+        }
+    }
+    if uniform {
+        if let (Some(&(a, _)), Some(&(_, b))) = (per_row.first(), per_row.last()) {
+            clauses.push(format!("cells p{a}-p{b} by row"));
+        }
+    } else {
+        let rows: Vec<String> = per_row
+            .iter()
+            .enumerate()
+            .map(|(i, (a, b))| {
+                if a == b {
+                    format!("r{i} p{a}")
+                } else {
+                    format!("r{i} p{a}-p{b}")
+                }
+            })
+            .collect();
+        clauses.push(format!("cells {}", rows.join(" ")));
+    }
+    if rows
+        .first()
+        .is_some_and(|tr| tr.path(&["trPr", "tblHeader"]).is_some())
+    {
+        clauses.push("header row repeats".to_string());
+    }
+    if merged {
+        clauses.push("merged cells".to_string());
+    }
+    if !break_ins.is_empty() {
+        clauses.push(format!("break-ins {}", break_ins.join("; ")));
+    }
+    if !break_del.is_empty() {
+        clauses.push(format!("break-del {}", break_del.join("; ")));
+    }
+    if !revs.is_empty() {
+        clauses.push(format!("rev {}", revs.join("; ")));
+    }
+    Some(line(&head, &clauses))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
