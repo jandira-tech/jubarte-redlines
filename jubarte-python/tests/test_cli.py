@@ -401,3 +401,47 @@ def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(letter: Path, tm
     assert (out_dir / "redline.docx").is_file()
     err = capsys.readouterr().err
     assert "warning: the changed blocks cannot be shown: read back failed" in err
+
+
+@pytest.mark.parametrize("editing,quiet", [(False, False), (True, False), (True, True)])
+def test_pr392_view_failure_preserves_bundle_and_quiet_skips_view(
+    letter: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], editing: bool, quiet: bool,
+) -> None:
+    from jubarte_redlines import _native
+
+    calls: list[tuple[str, bool, str]] = []
+
+    def broken(_docx: bytes, author: str, *, accepted: bool, source: str) -> str:
+        calls.append((author, accepted, source))
+        raise _native.JubarteError("view unavailable")
+
+    monkeypatch.setattr(_native, "changed_view", broken)
+    out_dir = tmp_path / "bundle"
+    args = ["edit", str(letter), "-p", "p0", "--anchor", "Heading", "--content", "Title",
+            "--author", "Ann Counsel", "--datetime", "2026-10-01T09:00:00Z", "--out-dir", str(out_dir)]
+    if editing:
+        args.append("--editing-mode")
+    if quiet:
+        args.append("--quiet")
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    expected = {"clean.docx", "report.jsonl"} if editing else {"clean.docx", "redline.docx", "patch.diff", "report.jsonl"}
+    assert {file.name for file in out_dir.iterdir()} == expected
+    assert (out_dir / "clean.docx").read_bytes().startswith(b"PK")
+    rows = [json.loads(line) for line in (out_dir / "report.jsonl").read_text().splitlines()]
+    saved = next(row for row in rows if row["ev"] == "save")
+    assert {output["f"] for output in saved["outputs"]} == expected - {"report.jsonl"}
+    for output in saved["outputs"]:
+        assert output["bytes"] == (out_dir / output["f"]).stat().st_size
+    assert rows[-1]["ev"] == "summary"
+    assert rows[-1]["status"] == "ok"
+    if quiet:
+        assert calls == []
+        assert captured.out == captured.err == ""
+    else:
+        shown = out_dir / ("clean.docx" if editing else "redline.docx")
+        assert calls == [("Ann Counsel", editing, str(shown))]
+        assert "warning: the changed blocks cannot be shown: view unavailable" in captured.err
+        assert '"ev":"summary"' in captured.out.replace(" ", "")
+        assert "---\nsource:" not in captured.out

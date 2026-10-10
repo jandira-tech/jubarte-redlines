@@ -240,3 +240,73 @@ fn a_closed_stdout_pipe_ends_the_view_without_a_panic() {
         assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn pr392_closed_pipe_is_quiet_for_markdown_conversion_and_text_diff() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let dir = tempfile::tempdir().unwrap();
+    // Exceeds the pipe buffer using plain text, with no layout or corpus I/O.
+    std::fs::write(
+        dir.path().join("large.md"),
+        "An unchanged line of text.\n".repeat(16384),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("small.md"), "Replacement.\n").unwrap();
+    for args in [
+        vec!["convert", "large.md", "-t", "md"],
+        vec!["diff", "large.md", "small.md", "--format", "github"],
+    ] {
+        let mut child = Command::new(BIN)
+            .args(&args)
+            .current_dir(dir.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        stdout.read_exact(&mut [0; 16]).unwrap();
+        drop(stdout);
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn pr392_stdout_errors_other_than_broken_pipe_remain_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("source.md"), "Content.\n").unwrap();
+    // /dev/full deterministically returns ENOSPC on writes.
+    for args in [
+        vec!["convert", "source.md", "-t", "md"],
+        vec!["capabilities"],
+    ] {
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let output = Command::new(BIN)
+            .args(&args)
+            .current_dir(dir.path())
+            .stdout(full)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("writing to stdout"), "{args:?}: {stderr}");
+        assert!(!stderr.contains("panicked"), "{stderr}");
+    }
+}

@@ -607,3 +607,45 @@ test("edit keeps its files when the view cannot be read back", () => {
   assert.ok(fs.existsSync(path.join(dir, "redline.docx")));
   assert.match(r.stderr, /warning: the changed blocks cannot be shown: read back failed/);
 });
+
+test("pr392: editing mode preserves its complete bundle after a view failure", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jubarte-view-failure-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const preload = path.join(dir, "broken-view.cjs");
+  const called = path.join(dir, "called.json");
+  fs.writeFileSync(preload,
+    `const fs = require("node:fs");\n` +
+    `const wasm = require(${JSON.stringify(path.join(cliDir, "node_modules", "jubarte-wasm"))});\n` +
+    `wasm.changedView = (_bytes, author, accepted, source) => {\n` +
+    `  fs.writeFileSync(${JSON.stringify(called)}, JSON.stringify({author, accepted, source}));\n` +
+    `  throw "view unavailable";\n` +
+    `};\n`);
+  // Empty plans are valid and isolate the post-write view from edit semantics.
+  const plan = path.join(dir, "plan.json");
+  fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Ann Counsel", date: "2026-10-01T09:00:00Z", operations: [] }));
+  for (const quiet of [false, true]) {
+    fs.rmSync(called, { force: true });
+    const out = path.join(dir, quiet ? "quiet" : "shown");
+    const r = spawnSync(process.execPath, ["--require", preload, bin, "edit", untracked, "--plan", plan, "--editing-mode", "--out-dir", out, ...(quiet ? ["--quiet"] : [])], { encoding: "utf8", timeout: 10000 });
+    assert.ifError(r.error);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(fs.readdirSync(out).sort(), ["clean.docx", "report.jsonl"]);
+    assert.equal(fs.readFileSync(path.join(out, "clean.docx")).subarray(0, 2).toString(), "PK");
+    const report = fs.readFileSync(path.join(out, "report.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    const saved = report.find((row) => row.ev === "save");
+    assert.deepEqual(saved.outputs.map((output) => output.f), ["clean.docx"]);
+    assert.equal(saved.outputs[0].bytes, fs.statSync(path.join(out, "clean.docx")).size);
+    assert.equal(report.at(-1).ev, "summary");
+    assert.equal(report.at(-1).status, "ok");
+    if (quiet) {
+      assert.equal(r.stdout, "");
+      assert.equal(r.stderr, "");
+      assert.ok(!fs.existsSync(called), "quiet mode must not attempt the view");
+    } else {
+      assert.deepEqual(JSON.parse(fs.readFileSync(called, "utf8")), { author: "Ann Counsel", accepted: true, source: path.join(out, "clean.docx") });
+      assert.match(r.stderr, /warning: the changed blocks cannot be shown: view unavailable/);
+      assert.match(r.stdout, /"ev":"summary"/);
+      assert.doesNotMatch(r.stdout, /---\nsource:/);
+    }
+  }
+});

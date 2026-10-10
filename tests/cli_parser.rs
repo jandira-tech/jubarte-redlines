@@ -537,3 +537,121 @@ fn revision_timestamps_must_be_iso_8601() {
         }
     }
 }
+
+#[test]
+fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
+    for (date, valid) in [
+        ("2000-02-29T23:59:59.123456789+14:00", true),
+        ("2024-02-29T00:00:00-14:00", true),
+        ("0001-01-01T00:00:00", true),
+        ("9999-12-31T23:59:59.0Z", true),
+        ("2026-04-30T12:00:00+13:59", true),
+        ("1900-02-29T00:00:00Z", false),
+        ("2100-02-29T00:00:00Z", false),
+        ("2026-02-29T00:00:00Z", false),
+        ("2026-04-31T00:00:00Z", false),
+        ("2026-01-00T00:00:00Z", false),
+        ("2026-01-01T00:60:00Z", false),
+        ("2026-01-01T00:00:60Z", false),
+        ("2026-01-01T00:00:00.Z", false),
+        ("2026-01-01T00:00:00.éZ", false),
+        ("2026-01-01T00:00:00+14:01", false),
+        ("2026-01-01T00:00:00-14:01", false),
+        ("2026-01-01T00:00:00+00:60", false),
+        ("2026-01-01T00:00:00+0a:00", false),
+        ("2026-01-01T00:00:00Ztrailing", false),
+        ("2026-01-01T00:00:00z", false),
+        ("２０２６-01-01T00:00:00Z", false),
+        ("", false),
+    ] {
+        for args in [
+            vec!["compare", "a.docx", "b.docx", "--date", date],
+            vec!["a.docx", "b.docx", "-d", date],
+            vec![
+                "edit",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--date",
+                date,
+            ],
+            vec![
+                "add",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--datetime",
+                date,
+            ],
+            vec!["convert", "a.md", "-t", "docx", "--date", date],
+            vec!["diff", "a.docx", "b.docx", "-o", "out.docx", "--date", date],
+        ] {
+            let result = parse(&args, &[]);
+            assert_eq!(
+                result["exit_code"],
+                if valid { 0 } else { 2 },
+                "{args:?}: {result}"
+            );
+            if !valid {
+                assert!(
+                    result["text"].as_str().unwrap().contains("ISO 8601"),
+                    "{result}"
+                );
+            }
+        }
+        if valid {
+            assert_eq!(
+                parse(&["compare", "a", "b", "-d", date], &[])["args"]["date"],
+                date
+            );
+        }
+    }
+}
+
+#[test]
+fn pr392_author_filters_share_validation_with_the_library() {
+    use jubarte::markdown::{Select, author};
+
+    for (given, expected) in [
+        (" AC ", "AC"),
+        ("\t@AC\n", "@AC"),
+        ("\u{2003}Ánn Counsel\u{2003}", "Ánn Counsel"),
+        ("Ann  Counsel", "Ann  Counsel"),
+    ] {
+        assert_eq!(author(given).unwrap(), expected);
+        let selected = Select::from_flags(None, None, None, true, Some(given)).unwrap();
+        assert!(matches!(selected, Some(Select::Changed { by: Some(ref by) }) if by == expected));
+        for prefix in [vec!["read", "a.docx"], vec!["a.docx"]] {
+            let args = [prefix, vec!["--changed", "--by", given]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{result}");
+            assert_eq!(result["args"]["by"], expected, "{result}");
+        }
+    }
+    for bad in [
+        "",
+        "\t\n",
+        "\u{2003}",
+        "@",
+        "@@AC",
+        "@ AC",
+        "@\tAC",
+        "@\u{2003}AC",
+    ] {
+        assert!(author(bad).is_err(), "{bad:?}");
+        assert!(
+            Select::from_flags(None, None, None, true, Some(bad)).is_err(),
+            "{bad:?}"
+        );
+        let result = parse(&["read", "a.docx", "--changed", "--by", bad], &[]);
+        assert_eq!(result["exit_code"], 2, "{bad:?}: {result}");
+        assert!(
+            result["text"].as_str().unwrap().contains("needs an author"),
+            "{result}"
+        );
+    }
+}

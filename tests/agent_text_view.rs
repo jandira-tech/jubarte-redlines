@@ -3501,3 +3501,205 @@ fn the_range_line_names_kept_notes_and_points_only_at_changed_headers() {
     assert!(changed_by(&bytes, None, true).contains("[^1]: {++footnote change++}"));
     assert!(!changed_by(&bytes, Some("Zed Zimmer"), true).contains("[^1]:"));
 }
+
+#[test]
+fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
+    let bytes = docx(&para("Body"));
+    for source in [
+        "",
+        "null",
+        "TRUE",
+        "off",
+        "~",
+        "0123",
+        "12:30",
+        "2026-10-01",
+        "-draft",
+        "[draft]",
+        "name: draft",
+        "draft #1",
+        " trailing ",
+        "quoted \"draft\"\\copy",
+        "first\nsecond\tcolumn",
+        "café.docx",
+    ] {
+        let view = agent_options(
+            &bytes,
+            &MarkdownOptions {
+                source: Some(source.into()),
+                ..agent_defaults()
+            },
+        );
+        assert_eq!(
+            header_yaml(&view)["source"].as_str(),
+            Some(source),
+            "{source:?}: {view}"
+        );
+        assert!(body(&view).contains("<!-- p0 -->\nBody"), "{view}");
+    }
+}
+
+#[test]
+fn pr392_alternate_content_uses_only_the_rendered_branch_for_authors_and_counts() {
+    let choice = format!(
+        r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
+        ins(1, "Ann Counsel", "Chosen")
+    );
+    let fallback = format!(
+        r#"<mc:Fallback><w:pict><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:pict></mc:Fallback>"#,
+        ins(2, "Bob Day", "Fallback")
+    );
+    for (branches, kept, absent, handle, author) in [
+        (
+            format!("{choice}{fallback}"),
+            "Chosen",
+            "Fallback",
+            "AC",
+            "Ann Counsel",
+        ),
+        (fallback, "Fallback", "Chosen", "BD", "Bob Day"),
+    ] {
+        let bytes = docx(&format!(
+            r#"<w:p>{}<w:r><mc:AlternateContent>{branches}</mc:AlternateContent></w:r></w:p>"#,
+            run("Host")
+        ));
+        let view = agent(&bytes);
+        assert_eq!(
+            body(&view).matches(&format!("{{++{kept}++}}")).count(),
+            1,
+            "{view}"
+        );
+        assert!(!body(&view).contains(absent), "{view}");
+        let yaml = header_yaml(&view);
+        assert_eq!(yaml["authors"][handle].as_str(), Some(author), "{view}");
+        // The only other author entry is document_owner.
+        assert_eq!(yaml["authors"].as_mapping().unwrap().len(), 2, "{view}");
+        assert!(
+            header_lines(&view)
+                .iter()
+                .any(|line| line.starts_with("revisions: 1 ")),
+            "{view}"
+        );
+    }
+}
+
+#[test]
+fn pr392_changed_filter_does_not_treat_literal_critic_forms_as_revisions() {
+    for literal in [
+        "{++new++}",
+        "{--old--}",
+        "{~~old~>new~~}",
+        "{==highlight==}",
+        "{>>#7 @AC: note<<}",
+    ] {
+        let bytes = docx(&format!(
+            "{}<w:p>{}</w:p>",
+            para(literal),
+            ins(7, "Ann Counsel", "Actual change")
+        ));
+        for by in [None, Some("AC"), Some("@AC"), Some("Ann Counsel")] {
+            let view = changed_by(&bytes, by, true);
+            assert!(
+                view.contains(" (p1) of p0-p1\n"),
+                "{literal}, {by:?}: {view}"
+            );
+            assert!(body(&view).contains("{++Actual change++}"), "{view}");
+            assert!(!body(&view).contains("<!-- p0"), "{view}");
+        }
+    }
+}
+
+#[test]
+fn pr392_footer_change_hint_is_scoped_to_the_selected_author() {
+    let footer = format!(
+        r#"<w:ftr xmlns:w="{W_NS}"><w:p>{}</w:p></w:ftr>"#,
+        ins(1, "Ann Counsel", "New footer")
+    );
+    let bytes = common::docx::docx_with_sect(
+        &format!("<w:p>{}</w:p>", ins(2, "Bob Day", "Body change")),
+        &[Part {
+            name: "word/footer1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+            xml: &footer,
+        }],
+        r#"<w:footerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    for (by, expected_blocks, hint) in [
+        // Header/footer-only authors are selected by full name; this view
+        // assigns handles to body/note revisions and comments.
+        ("Ann Counsel", "(none)", true),
+        ("BD", "(p0)", false),
+        ("Bob Day", "(p0)", false),
+        ("Nobody", "(none)", false),
+    ] {
+        let view = changed_by(&bytes, Some(by), true);
+        let range = header_lines(&view)
+            .into_iter()
+            .find(|line| line.starts_with("range:"))
+            .unwrap();
+        assert!(range.contains(expected_blocks), "{by}: {view}");
+        assert_eq!(range.contains("headers:/footers:"), hint, "{by}: {view}");
+    }
+}
+
+#[test]
+fn pr392_comment_range_ending_in_a_table_does_not_leak_to_the_next_paragraph() {
+    let bytes = one_comment_docx(&format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}</w:p><w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p></w:tc></w:tr></w:tbl>{}"#,
+        run("Start"),
+        run("End"),
+        reference(9),
+        para("Quiet")
+    ));
+    let view = agent(&bytes);
+    assert!(view.contains("<!-- p0 in #c9 -->"), "{view}");
+    assert!(
+        view.contains("<!-- t0 1x1, cells p1-p1 by row, in #c9 -->"),
+        "{view}"
+    );
+    assert!(view.contains("<!-- p2 -->\nQuiet"), "{view}");
+    let selected = changed_by(&bytes, Some("AC"), true);
+    assert!(body(&selected).contains("<!-- t0"), "{selected}");
+    assert!(!body(&selected).contains("Quiet"), "{selected}");
+}
+
+#[test]
+fn pr392_word_list_labels_keep_start_values_across_number_format_boundaries() {
+    for (format, start, labels) in [
+        ("lowerLetter", 26, ["z)", "aa)"]),
+        ("upperLetter", 26, ["Z)", "AA)"]),
+        ("upperRoman", 49, ["XLIX)", "L)"]),
+        ("decimalZero", 9, ["09)", "10)"]),
+    ] {
+        let numbering = format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="{start}"/><w:numFmt w:val="{format}"/><w:lvlText w:val="%1)"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+        );
+        let item = |text| {
+            format!(
+                r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+            )
+        };
+        let bytes = common::docx::docx_with(
+            &format!("{}{}", item("First"), item("Second")),
+            &[Part {
+                name: "word/numbering.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+                xml: &numbering,
+            }],
+        );
+        let view = agent(&bytes);
+        for (index, label) in labels.iter().enumerate() {
+            assert!(
+                view.contains(&format!("<!-- p{index} num \"{label}\" -->")),
+                "{format}: {view}"
+            );
+        }
+        assert!(body(&view).contains(&format!("{start}. First")), "{view}");
+        assert!(
+            body(&view).contains(&format!("{}. Second", start + 1)),
+            "{view}"
+        );
+    }
+}
