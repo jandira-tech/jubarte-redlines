@@ -195,16 +195,6 @@ const COMMANDS = {
       if (!o.json) console.log(`${changes.length} change(s)`);
     },
   },
-  revisions: {
-    run(_, [file], o) {
-      const rows = JSON.parse(wasm.getRevisions(read(file)));
-      if (o.json) return jsonLines(JSON.stringify(rows));
-      for (const row of rows) {
-        console.log(`${row.type}\t${row.author || "-"}\t${row.part}\t${JSON.stringify([...(row.text || "")].slice(0, 60).join(""))}`);
-      }
-      console.log(`${rows.length} revision(s)`);
-    },
-  },
   accept: resolution(true),
   reject: resolution(false),
   read: {
@@ -431,6 +421,7 @@ function validateHost(name, o) {
     }
   }
   if (name === "convert") {
+    if (o.update_fields) reject("update_fields");
     for (const flag of ["dpi", "pages", "report", "font_report"]) {
       if (flag === "dpi" ? o.dpi !== 96 : o[flag] != null) reject(flag);
     }

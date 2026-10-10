@@ -187,8 +187,8 @@ fn reject_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py
     Ok(PyBytes::new(py, &out).unbind())
 }
 
-/// List the tracked revisions in a DOCX as a JSON array string — the same
-/// object shape as the CLI `jubarte revisions --json` lines
+/// List the tracked revisions in a DOCX as a JSON array string, grouped as
+/// Docxodus's `GetRevisions` groups them; each object has
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 /// `input_limits` as in `compare_documents`.
 #[pyfunction]

@@ -74,3 +74,24 @@ def test_a_report_without_fields_decodes_to_an_empty_tuple():
     document = jubarte.Document.from_bytes(docx(para("Alpha")))
     result = document.edit(jubarte.EditPlan(author="Reviewer").replace(0, find="Alpha", replacement="Beta"))
     assert result.report.fields == ()
+
+
+def test_convert_update_fields_writes_the_refreshed_docx_and_its_report(tmp_path, capsys):
+    from jubarte_redlines.__main__ import main
+
+    source = tmp_path / "in.docx"
+    source.write_bytes(docx(para("One") + PAGE_BREAK + NUMPAGES))
+    out, report = tmp_path / "out.docx", tmp_path / "fields.json"
+    assert main(["convert", str(source), "-o", str(out), "--update-fields", "--report", str(report)]) == 0
+    captured = capsys.readouterr()
+    assert 'body:p:2\tNUMPAGES\t"9" -> "2"' in captured.out
+    assert "1 field(s) written; 2 page(s)" in captured.err
+    assert json.loads(report.read_text())["fields"][0]["new"] == "2"
+    assert "2" in texts(jubarte.Document.read(out))
+    # The output is never clobbered without --force; Markdown in is refused.
+    assert main(["convert", str(source), "-o", str(out), "--update-fields"]) == 1
+    note = tmp_path / "note.md"
+    note.write_text("# Note\n")
+    assert main(["convert", str(note), "-o", str(tmp_path / "note.docx"), "--update-fields"]) == 1
+    assert "needs a Word document in" in capsys.readouterr().err
+    assert not (tmp_path / "note.docx").exists()

@@ -18,6 +18,150 @@ fn parse(arguments: &[&str], supported: &[&str]) -> Value {
 }
 
 #[test]
+fn convert_update_fields_requires_a_word_output_format() {
+    for output in [
+        vec![],
+        vec!["-o", "out.pdf"],
+        vec!["-o", "out.png"],
+        vec!["-o", "out.md"],
+        vec!["-o", "out.unknown"],
+        vec!["--to", "pdf"],
+        vec!["--to", "png"],
+        vec!["--to", "md"],
+        vec!["--to", "pdf", "-o", "out.docx"],
+    ] {
+        let args = [vec!["convert", "missing.docx", "--update-fields"], output].concat();
+        let result = parse(&args, &["convert"]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(result["stream"], "stderr");
+        assert!(
+            result["text"]
+                .as_str()
+                .unwrap()
+                .contains("--update-fields writes a .docx"),
+            "{result}"
+        );
+    }
+}
+
+#[test]
+fn convert_update_fields_serializes_reports_resolution_and_format_overrides() {
+    for output in [
+        vec!["-o", "out.docx"],
+        vec!["-o", "out.DOCX"],
+        vec!["--to", "docx"],
+        vec!["--to", "docx", "-o", "out.bin"],
+    ] {
+        for mode in ["all", "accept", "reject"] {
+            let args = [
+                vec![
+                    "convert",
+                    "missing.docx",
+                    "--update-fields",
+                    "--report",
+                    "fields.json",
+                    "--track-changes",
+                    mode,
+                    "--force",
+                ],
+                output.clone(),
+            ]
+            .concat();
+            let result = parse(&args, &["convert"]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(result["command"], "convert");
+            assert_eq!(result["args"]["update_fields"], true);
+            assert_eq!(result["args"]["report"], "fields.json");
+            assert_eq!(result["args"]["track_changes"], mode);
+            assert_eq!(result["args"]["force"], true);
+        }
+    }
+    let ordinary = parse(&["convert", "missing.docx"], &["convert"]);
+    assert_eq!(ordinary["args"]["update_fields"], false);
+    let report_without_refresh = parse(
+        &[
+            "convert",
+            "missing.docx",
+            "-o",
+            "out.docx",
+            "--report",
+            "fields.json",
+        ],
+        &["convert"],
+    );
+    assert_eq!(report_without_refresh["exit_code"], 2);
+    assert!(
+        report_without_refresh["text"]
+            .as_str()
+            .unwrap()
+            .contains("--report applies to PDF or PNG output only")
+    );
+}
+
+#[test]
+fn convert_update_fields_does_not_enable_render_only_options() {
+    for flags in [
+        vec!["--pdf"],
+        vec!["--png"],
+        vec!["--dpi", "96"],
+        vec!["--font-report", "fonts.json"],
+        vec!["--fail-on-substitution"],
+        vec!["--move-comments"],
+        vec!["--changed-only"],
+        vec!["--compress"],
+        vec!["--revisions", "word"],
+    ] {
+        let result = parse(
+            &[
+                vec![
+                    "convert",
+                    "missing.docx",
+                    "-o",
+                    "out.docx",
+                    "--update-fields",
+                    "--report",
+                    "fields.json",
+                ],
+                flags.clone(),
+            ]
+            .concat(),
+            &[],
+        );
+        assert_eq!(result["exit_code"], 2, "{flags:?}: {result}");
+        assert!(
+            result["text"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{} applies to PDF or PNG output only", flags[0])),
+            "{result}"
+        );
+    }
+}
+
+#[test]
+fn removed_commands_leave_help_and_restore_legacy_filename_parsing() {
+    let help = parse(&["--help"], &[]);
+    let text = help["text"].as_str().unwrap();
+    assert!(text.contains("\n  changes "));
+    assert!(!text.contains("\n  revisions ") && !text.contains("\n  fields "));
+    for name in ["revisions", "fields"] {
+        let result = parse(&[name, "other.docx", "-o", "result.docx"], &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["command"], "compare");
+        assert_eq!(result["args"]["original"], name);
+        assert_eq!(result["args"]["modified"], "other.docx");
+    }
+    assert_eq!(
+        parse(&["revisions", "in.docx", "--json"], &[])["exit_code"],
+        2
+    );
+    assert_eq!(
+        parse(&["fields", "update", "in.docx", "-o", "out.docx"], &[])["exit_code"],
+        2
+    );
+}
+
+#[test]
 fn explicit_compare_alias_and_shorthand_preserve_overrides() {
     for prefix in [vec![], vec!["compare"], vec!["redline"]] {
         let args = [prefix, vec!["a.docx", "b.docx", "-b", "real.docx"]].concat();
@@ -221,9 +365,9 @@ fn facade_serializes_native_names_canonical_enums_and_nested_subcommands() {
     );
     assert_eq!(accept["args"]["ids"][0], "body:rev:12");
     assert_eq!(accept["args"]["kinds"][0], "insertion");
-    let fields = parse(&["fields", "update", "a", "-o", "b"], &[]);
-    assert_eq!(fields["args"]["sub"]["command"], "update");
-    assert_eq!(fields["args"]["sub"]["args"]["output"], "b");
+    let fields = parse(&["convert", "a", "-o", "b.docx", "--update-fields"], &[]);
+    assert_eq!(fields["args"]["update_fields"], true);
+    assert_eq!(fields["args"]["output"], "b.docx");
 }
 
 #[test]

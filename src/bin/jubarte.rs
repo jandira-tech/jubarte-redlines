@@ -1179,35 +1179,6 @@ fn insert_before_summary(jsonl: &mut String, line: &str) {
     };
 }
 
-fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = read_document(file)?;
-    let settings = jubarte::comparer::WmlComparerSettings::default();
-    let revs = jubarte::document_comparer::get_revisions(&bytes, &settings).map_err(|e| {
-        refusal("get_revisions", &e).unwrap_or_else(|| format!("get_revisions failed: {e:?}"))
-    })?;
-    if json {
-        // Shared serialization (also the wasm `getRevisions` shape): full JSON
-        // string escaping — backslash, quote, and ALL control chars < 0x20.
-        for r in &revs {
-            outln!("{}", jubarte::document_comparer::revision_to_json(r));
-        }
-    } else {
-        for r in &revs {
-            let text = r.text.as_deref().unwrap_or("");
-            let preview: String = text.chars().take(60).collect();
-            outln!(
-                "{:?}\t{}\t{}\t{:?}",
-                r.revision_type,
-                r.author.as_deref().unwrap_or("-"),
-                r.part_name,
-                preview
-            );
-        }
-        outln!("{} revision(s)", revs.len());
-    }
-    Ok(())
-}
-
 /// A fully-resolved comparison job (positional/named merged, output computed).
 #[derive(Debug, PartialEq)]
 struct Job {
@@ -1724,7 +1695,11 @@ fn paginated(
     }
 }
 
-fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), ConvertFailure> {
+fn run_convert_any(
+    job: &ConvertJob<'_>,
+    markdown: &MarkdownArgs,
+    update_fields: bool,
+) -> Result<(), ConvertFailure> {
     let raw =
         std::fs::read(job.file).map_err(|e| format!("reading {}: {e}", job.file.display()))?;
     // A Word 97-2003 `.doc` is read into a `.docx` first; everything after
@@ -1754,10 +1729,14 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
     if job.pages.is_some() && to != Format::Png && !job.png {
         return Err("--pages selects PNG pages; add --png".into());
     }
+    // clap refused any other output; a Markdown input is the one left.
+    if update_fields && from != Format::Docx {
+        return Err("--update-fields needs a Word document in".into());
+    }
     // Word and Markdown output lay nothing out, so these would be ignored.
     if matches!(to, Format::Docx | Format::Md) {
         for (given, flag) in [
-            (job.report.is_some(), "--report"),
+            (job.report.is_some() && !update_fields, "--report"),
             (job.font_report.is_some(), "--font-report"),
             (job.fail_on_substitution, "--fail-on-substitution"),
             (job.page.move_comments, "--move-comments"),
@@ -1825,35 +1804,38 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
         }
         (Format::Docx, Format::Docx) => {
             let resolve = match markdown.track_changes {
-                TrackChanges::Accept => jubarte::document_comparer::accept_revisions,
-                TrackChanges::Reject => jubarte::document_comparer::reject_revisions,
-                // The `.doc` read as it is.
-                TrackChanges::All if legacy => {
-                    let output = job
-                        .output
-                        .map_or_else(|| job.file.with_extension("docx"), Path::to_path_buf);
-                    ensure_writable(&output, job.force)?;
-                    std::fs::write(&output, &bytes)
-                        .map_err(|e| format!("writing {}: {e}", output.display()))?;
-                    outln!("wrote {} ({} bytes)", output.display(), bytes.len());
-                    return Ok(());
+                TrackChanges::Accept => {
+                    Some(jubarte::document_comparer::accept_revisions as Resolve)
                 }
+                TrackChanges::Reject => {
+                    Some(jubarte::document_comparer::reject_revisions as Resolve)
+                }
+                // The `.doc` read as it is, or the fields refreshed.
+                TrackChanges::All if legacy || update_fields => None,
                 TrackChanges::All => {
                     return Err(format!(
-                        "{} is already Word: give --track-changes accept or reject, or another --to",
+                        "{} is already Word: give --track-changes accept or reject, --update-fields, or another --to",
                         job.file.display()
                     )
                     .into());
                 }
             };
-            let output = job
-                .output
-                .ok_or("--output is required to write Word from Word")?;
-            ensure_writable(output, job.force)?;
-            let out = resolve(&bytes).map_err(|e| {
-                refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-            })?;
-            std::fs::write(output, &out)
+            let output = match job.output {
+                Some(output) => output.to_path_buf(),
+                None if legacy => job.file.with_extension("docx"),
+                None => return Err("--output is required to write Word from Word".into()),
+            };
+            ensure_writable(&output, job.force)?;
+            let mut out = match resolve {
+                Some(resolve) => resolve(&bytes).map_err(|e| {
+                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                })?,
+                None => bytes,
+            };
+            if update_fields {
+                out = refresh_fields(&out, job.report)?;
+            }
+            std::fs::write(&output, &out)
                 .map_err(|e| format!("writing {}: {e}", output.display()))?;
             outln!("wrote {} ({} bytes)", output.display(), out.len());
             Ok(())
@@ -2078,9 +2060,6 @@ fn cli_main() -> ExitCode {
         Some(Command::Compare(compare)) => {
             return exit_code(run(&resolve_compare(compare, ReadArgs::default(), true)));
         }
-        Some(Command::Revisions { file, json }) => {
-            return exit_code(run_revisions(&file, json));
-        }
         Some(Command::Changes { file, json }) => {
             return exit_code(run_changes(&file, json));
         }
@@ -2137,6 +2116,7 @@ fn cli_main() -> ExitCode {
             markdown,
             pages: page_spec,
             fail_on_substitution,
+            update_fields,
             timeout,
             page,
         }) => {
@@ -2168,7 +2148,7 @@ fn cli_main() -> ExitCode {
                 page,
                 status_to_stderr: false,
             };
-            return convert_exit_code(run_convert_any(&job, &markdown));
+            return convert_exit_code(run_convert_any(&job, &markdown, update_fields));
         }
         Some(Command::Diff {
             old,
@@ -2423,15 +2403,6 @@ fn cli_main() -> ExitCode {
                 }
             };
         }
-        Some(Command::Fields {
-            sub:
-                FieldsCommand::Update {
-                    file,
-                    output,
-                    force,
-                    json,
-                },
-        }) => return exit_code(run_fields_update(&file, &output, force, json)),
         Some(Command::Scrub {
             file,
             output,
@@ -2507,20 +2478,14 @@ fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result
 }
 
 /// `jubarte fields update`: refresh, write, then list what was written.
-fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Result<(), String> {
-    ensure_writable(output, force)?;
-    let bytes = read_document(file)?;
-    let updated = jubarte::fields::update_fields(&bytes).map_err(|e| e.to_string())?;
-    std::fs::write(output, &updated.docx)
-        .map_err(|e| format!("writing {}: {e}", output.display()))?;
-    if json {
-        let report = serde_json::json!({
-            "page_count": updated.page_count,
-            "fields": updated.fields,
-        });
-        outln!("{report}");
-        return Ok(());
-    }
+/// `accept_revisions` / `reject_revisions`: a package in, the resolved one out.
+type Resolve = fn(&[u8]) -> Result<Vec<u8>, jubarte::opc::OpcError>;
+
+/// `convert --update-fields`: the package with its field results refreshed
+/// from jubarte's layout, one line per field written on stdout and
+/// `{page_count, fields}` in `report` when given.
+fn refresh_fields(bytes: &[u8], report: Option<&Path>) -> Result<Vec<u8>, String> {
+    let updated = jubarte::fields::update_fields(bytes).map_err(|e| e.to_string())?;
     for field in &updated.fields {
         outln!(
             "{}\t{}\t{:?} -> {:?}",
@@ -2535,7 +2500,15 @@ fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Res
         updated.fields.len(),
         updated.page_count
     );
-    Ok(())
+    if let Some(report) = report {
+        let json = serde_json::json!({
+            "page_count": updated.page_count,
+            "fields": updated.fields,
+        });
+        std::fs::write(report, json.to_string())
+            .map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    Ok(updated.docx)
 }
 
 #[cfg(test)]
@@ -2803,38 +2776,15 @@ mod tests {
         assert_eq!(missing_val.kind(), ErrorKind::InvalidValue);
     }
 
-    /// D.6 — `redline revisions <file>` parses into `Command::Revisions` with
-    /// `json` defaulting to `false`; the legacy positional/named compare
-    /// fields are left at their defaults (`command` is a plain addition, not
-    /// a replacement of the existing surface).
+    /// `revisions` (Docxodus's GetRevisions listing) left the CLI: `changes`
+    /// is the one listing. The word is a file name again, the legacy
+    /// compare's ORIGINAL.
     #[test]
-    fn revisions_subcommand_parses_with_default_json_false() {
-        let cli = Cli::try_parse_from(["jubarte", "revisions", "file.docx"]).unwrap();
-        match cli.command {
-            Some(Command::Revisions { file, json }) => {
-                assert_eq!(file, PathBuf::from("file.docx"));
-                assert!(!json);
-            }
-            other => panic!("expected revisions subcommand, got {other:?}"),
-        }
-    }
-
-    /// D.6 — `--json` sets the JSON-lines output flag.
-    #[test]
-    fn revisions_subcommand_json_flag_parses() {
-        let cli = Cli::try_parse_from(["jubarte", "revisions", "file.docx", "--json"]).unwrap();
-        match cli.command {
-            Some(Command::Revisions { json, .. }) => assert!(json),
-            other => panic!("expected revisions subcommand, got {other:?}"),
-        }
-    }
-
-    /// D.6 — `revisions` without a FILE argument is a clap usage error.
-    #[test]
-    fn revisions_subcommand_missing_file_is_clap_error() {
-        use clap::error::ErrorKind;
-        let err = Cli::try_parse_from(["jubarte", "revisions"]).unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    fn revisions_is_no_subcommand() {
+        let cli = Cli::try_parse_from(["jubarte", "revisions", "b.docx"]).unwrap();
+        assert!(cli.command.is_none());
+        let job = resolve_compare(cli.compare, cli.read, false);
+        assert_eq!(job.original, PathBuf::from("revisions"));
     }
 
     /// Prior behavior path: a two-positional invocation whose filenames do
@@ -2976,21 +2926,6 @@ mod tests {
         use clap::error::ErrorKind;
         let err = Cli::try_parse_from(["jubarte", "reject", "rl.docx"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
-    }
-
-    /// Documents the one real interaction between the legacy compare surface
-    /// and the new subcommand: a document literally named `revisions` as the
-    /// first positional is parsed as the `revisions` subcommand (clap
-    /// subcommand matching takes priority over positional args), not as the
-    /// legacy ORIGINAL. This is the tradeoff for adding `revisions` as a
-    /// subcommand rather than a flag.
-    #[test]
-    fn positional_named_revisions_is_parsed_as_subcommand() {
-        let cli = Cli::try_parse_from(["jubarte", "revisions", "b.docx"]).unwrap();
-        match cli.command {
-            Some(Command::Revisions { file, .. }) => assert_eq!(file, PathBuf::from("b.docx")),
-            other => panic!("expected revisions subcommand, got {other:?}"),
-        }
     }
 
     #[test]
@@ -3607,47 +3542,45 @@ mod tests {
     }
 
     #[test]
-    fn fields_update_parses_its_output_and_flags() {
+    fn convert_takes_update_fields() {
         let cli = Cli::try_parse_from([
-            "jubarte", "fields", "update", "in.docx", "-o", "out.docx", "--force", "--json",
+            "jubarte",
+            "convert",
+            "in.docx",
+            "-o",
+            "out.docx",
+            "--update-fields",
         ])
         .unwrap();
-        match cli.command {
-            Some(Command::Fields {
-                sub:
-                    FieldsCommand::Update {
-                        file,
-                        output,
-                        force,
-                        json,
-                    },
-            }) => {
-                assert_eq!(file, PathBuf::from("in.docx"));
-                assert_eq!(output, PathBuf::from("out.docx"));
-                assert!(force && json);
-            }
-            other => panic!("expected fields update, got {other:?}"),
-        }
-        assert!(Cli::try_parse_from(["jubarte", "fields", "update", "in.docx"]).is_err());
+        let Some(Command::Convert { update_fields, .. }) = cli.command else {
+            panic!("expected convert");
+        };
+        assert!(update_fields);
+        // `fields update` left with the subcommand: three words are no compare.
+        assert!(
+            Cli::try_parse_from(["jubarte", "fields", "update", "in.docx", "-o", "o.docx"])
+                .is_err()
+        );
     }
 
     #[test]
-    fn fields_update_writes_the_refreshed_package_and_refuses_to_clobber() {
+    fn refresh_fields_writes_the_report_and_says_when_it_cannot() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let input = dir.path().join("in.docx");
-        let output = dir.path().join("out.docx");
-        std::fs::write(&input, tiny_docx_bytes("Calibri")).expect("docx");
-        run_fields_update(&input, &output, false, true).expect("update");
-        let written = std::fs::read(&output).expect("output");
+        let report = dir.path().join("fields.json");
+        let written = refresh_fields(&tiny_docx_bytes("Calibri"), Some(&report)).expect("update");
         assert_eq!(
             jubarte::inspect::paragraphs(&written).unwrap()[0].text,
             "HELLO"
         );
-        let err = run_fields_update(&input, &output, false, false).unwrap_err();
-        assert!(err.contains("--force"), "{err}");
-        run_fields_update(&input, &output, true, false).expect("forced");
-        let err =
-            run_fields_update(&dir.path().join("missing.docx"), &output, true, false).unwrap_err();
-        assert!(!err.is_empty());
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+        assert_eq!(json["page_count"], 1);
+        let err = refresh_fields(
+            &tiny_docx_bytes("Calibri"),
+            Some(&dir.path().join("no/such/dir.json")),
+        )
+        .unwrap_err();
+        assert!(err.contains("writing"), "{err}");
+        assert!(refresh_fields(b"not a zip", None).is_err());
     }
 }

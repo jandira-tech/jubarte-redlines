@@ -28,15 +28,31 @@ fn success(out: &Output) -> String {
 }
 
 #[test]
-fn fields_update_reports_the_written_cache_and_refuses_clobbering() {
+fn convert_update_fields_reports_the_written_cache_and_refuses_clobbering() {
     let dir = tempfile::tempdir().unwrap();
     let original = docx(
         r#"<w:p><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
     );
     std::fs::write(dir.path().join("input.docx"), &original).unwrap();
-    let args = ["fields", "update", "input.docx", "-o", "updated.docx"];
-    let out = run(dir.path(), &[args.as_slice(), &["--json"]].concat());
-    let report: serde_json::Value = serde_json::from_str(&success(&out)).unwrap();
+    let args = [
+        "convert",
+        "input.docx",
+        "-o",
+        "updated.docx",
+        "--update-fields",
+    ];
+    let out = run(
+        dir.path(),
+        &[args.as_slice(), &["--report", "fields.json"]].concat(),
+    );
+    let text = success(&out);
+    assert!(
+        text.contains("NUMPAGES") && text.contains("99") && text.contains('1'),
+        "{text}"
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("1 field(s) written; 1 page(s)"));
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("fields.json")).unwrap()).unwrap();
     assert_eq!(report["page_count"], 1);
     assert_eq!(report["fields"].as_array().unwrap().len(), 1);
     assert_eq!(report["fields"][0]["kind"], "NUMPAGES");
@@ -52,10 +68,205 @@ fn fields_update_reports_the_written_cache_and_refuses_clobbering() {
         std::fs::read(dir.path().join("updated.docx")).unwrap(),
         saved
     );
-    let out = run(dir.path(), &[args.as_slice(), &["--force"]].concat());
-    let text = success(&out);
-    assert!(text.contains("NUMPAGES") && text.contains("99") && text.contains('1'));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("1 field(s) written; 1 page(s)"));
+    success(&run(dir.path(), &[args.as_slice(), &["--force"]].concat()));
+    // With --track-changes the document is resolved first.
+    success(&run(
+        dir.path(),
+        &[args.as_slice(), &["--force", "--track-changes", "accept"]].concat(),
+    ));
+    // The fields are written into a .docx; a PDF lays them out anyway.
+    let pdf = run(
+        dir.path(),
+        &["convert", "input.docx", "-o", "out.pdf", "--update-fields"],
+    );
+    assert_eq!(pdf.status.code(), Some(2), "clap refuses it");
+    assert!(
+        String::from_utf8_lossy(&pdf.stderr).contains("--update-fields writes a .docx"),
+        "{}",
+        String::from_utf8_lossy(&pdf.stderr)
+    );
+    std::fs::write(dir.path().join("note.md"), "# Note\n").unwrap();
+    let markdown = run(
+        dir.path(),
+        &["convert", "note.md", "-o", "note.docx", "--update-fields"],
+    );
+    assert_eq!(markdown.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&markdown.stderr).contains("needs a Word document in"),
+        "{}",
+        String::from_utf8_lossy(&markdown.stderr)
+    );
+    assert!(!dir.path().join("note.docx").exists());
+    // `fields update` left the CLI for this flag.
+    assert!(
+        !run(
+            dir.path(),
+            &["fields", "update", "input.docx", "-o", "x.docx"]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("input.docx")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn convert_update_fields_resolves_tracked_page_breaks_before_counting_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(concat!(
+        "<w:p><w:r><w:t>First page</w:t></w:r></w:p>",
+        "<w:p><w:ins w:id=\"1\" w:author=\"Reviewer\" w:date=\"2026-01-01T00:00:00Z\">",
+        "<w:r><w:br w:type=\"page\"/></w:r></w:ins></w:p>",
+        "<w:p><w:fldSimple w:instr=\" NUMPAGES \"><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>",
+    ));
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    for (mode, pages) in [("accept", 2), ("reject", 1)] {
+        let output = format!("{mode}.docx");
+        let report = format!("{mode}.json");
+        success(&run(
+            dir.path(),
+            &[
+                "convert",
+                "input.docx",
+                "-o",
+                &output,
+                "--update-fields",
+                "--track-changes",
+                mode,
+                "--report",
+                &report,
+            ],
+        ));
+        let written = std::fs::read(dir.path().join(&output)).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join(&report)).unwrap()).unwrap();
+        assert_eq!(json["page_count"], pages, "{mode}: {json}");
+        assert_eq!(json["fields"].as_array().unwrap().len(), 1);
+        assert_eq!(json["fields"][0]["old"], "99");
+        assert_eq!(json["fields"][0]["new"], pages.to_string());
+        let xml = part_string(&written, "word/document.xml").unwrap();
+        assert!(!xml.contains("<w:ins"), "{mode}: {xml}");
+        assert!(xml.contains(&format!(">{pages}</w:t>")), "{mode}: {xml}");
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("input.docx")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn convert_update_fields_refuses_an_existing_report_without_force() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("Unchanged"))).unwrap();
+    std::fs::write(dir.path().join("fields.json"), b"keep this report").unwrap();
+    let args = [
+        "convert",
+        "input.docx",
+        "-o",
+        "out.docx",
+        "--update-fields",
+        "--report",
+        "fields.json",
+    ];
+    let refused = run(dir.path(), &args);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("already exists"));
+    assert_eq!(
+        std::fs::read(dir.path().join("fields.json")).unwrap(),
+        b"keep this report"
+    );
+    assert!(!dir.path().join("out.docx").exists());
+}
+
+#[test]
+fn convert_update_fields_force_replaces_both_outputs_for_a_field_free_document() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("Unchanged"))).unwrap();
+    std::fs::write(dir.path().join("out.docx"), b"old document").unwrap();
+    std::fs::write(dir.path().join("fields.json"), b"old report").unwrap();
+    success(&run(
+        dir.path(),
+        &[
+            "convert",
+            "input.docx",
+            "-o",
+            "out.docx",
+            "--update-fields",
+            "--report",
+            "fields.json",
+            "--force",
+        ],
+    ));
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("fields.json")).unwrap()).unwrap();
+    assert_eq!(report, serde_json::json!({"page_count": 1, "fields": []}));
+    let written = std::fs::read(dir.path().join("out.docx")).unwrap();
+    assert_eq!(
+        jubarte::inspect::paragraphs(&written).unwrap()[0].text,
+        "Unchanged"
+    );
+}
+
+#[test]
+fn convert_update_fields_report_write_failure_leaves_no_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(&para("Preserved source"));
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    let out = run(
+        dir.path(),
+        &[
+            "convert",
+            "input.docx",
+            "-o",
+            "out.docx",
+            "--update-fields",
+            "--report",
+            "missing/fields.json",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&out.stderr);
+    assert!(error.contains("writing missing/fields.json"), "{error}");
+    assert!(!dir.path().join("out.docx").exists());
+    assert_eq!(
+        std::fs::read(dir.path().join("input.docx")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn convert_update_fields_without_a_report_preserves_unresolved_revisions() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(concat!(
+        "<w:p><w:ins w:id=\"1\" w:author=\"Reviewer\" w:date=\"2026-01-01T00:00:00Z\">",
+        "<w:r><w:t>Keep the insertion</w:t></w:r></w:ins></w:p>",
+        "<w:p><w:fldSimple w:instr=\" NUMPAGES \"><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>",
+    ));
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    success(&run(
+        dir.path(),
+        &[
+            "convert",
+            "input.docx",
+            "--to",
+            "docx",
+            "-o",
+            "out.bin",
+            "--update-fields",
+        ],
+    ));
+    let written = std::fs::read(dir.path().join("out.bin")).unwrap();
+    let xml = part_string(&written, "word/document.xml").unwrap();
+    assert!(
+        xml.contains("<w:ins ") && xml.contains("Keep the insertion"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("NUMPAGES") && xml.contains(">1</w:t>"),
+        "{xml}"
+    );
     assert_eq!(
         std::fs::read(dir.path().join("input.docx")).unwrap(),
         original
@@ -79,11 +290,13 @@ fn output_directories_produce_write_errors_without_replacing_input() {
             "--force",
         ],
         vec![
-            "fields",
-            "update",
+            "convert",
             "input.docx",
             "-o",
             "destination",
+            "--to",
+            "docx",
+            "--update-fields",
             "--force",
         ],
         vec![

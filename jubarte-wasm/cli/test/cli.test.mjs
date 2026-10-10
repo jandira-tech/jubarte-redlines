@@ -45,6 +45,36 @@ function copy(from, name) {
   return to;
 }
 
+test("field refresh is unsupported before reading or overwriting any file", () => {
+  const out = path.join(tmp, "field-refresh.docx");
+  const report = path.join(tmp, "field-refresh.json");
+  fs.writeFileSync(out, "preserve document");
+  fs.writeFileSync(report, "preserve report");
+  for (const extra of [[], ["--to", "docx"], ["--track-changes", "accept"], ["--track-changes", "reject"], ["--report", report, "--force"]]) {
+    const result = run("convert", "missing.docx", "-o", out, "--update-fields", ...extra);
+    assert.equal(result.code, 2, result.err);
+    assert.match(result.err, /--update-fields.*not supported/);
+    assert.doesNotMatch(result.err, /reading|ENOENT|already exists/);
+    assert.equal(result.out, "");
+    assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
+    assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
+  }
+});
+
+test("removed command help and legacy listing flags are unavailable", () => {
+  const help = run("--help");
+  assert.equal(help.code, 0, help.err);
+  assert.match(help.out, /\n  changes /);
+  assert.doesNotMatch(help.out, /\n  (revisions|fields) /);
+  for (const args of [["revisions", "missing.docx", "--json"], ["fields", "update", "missing.docx", "-o", "unused.docx"]]) {
+    const result = run(...args);
+    assert.equal(result.code, 2, result.err);
+    assert.doesNotMatch(result.err, /reading|ENOENT/);
+    assert.equal(result.out, "");
+    assert.ok(!fs.existsSync(path.join(tmp, "unused.docx")));
+  }
+});
+
 test("redline writes a Word redline and refuses to overwrite it", () => {
   const out = path.join(tmp, "redline.docx");
   const r = run("redline", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out, "--author", "Legal");
@@ -77,13 +107,17 @@ test("a legacy .doc is refused with a save-as hint", () => {
   assert.ok(!fs.existsSync(path.join(tmp, "never.docx")));
 });
 
-test("changes, revisions, accept and reject by kind", () => {
+test("changes, accept and reject by kind", () => {
   const listed = run("changes", tracked);
   assert.equal(listed.code, 0, listed.err);
   assert.match(listed.out, /^body:rev:0\tdeletion\ttext\tBo Chen\t" to people that"/);
   assert.match(listed.out, /\n\d+ change\(s\)\n$/);
-  const revisions = run("revisions", tracked, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
-  assert.equal(revisions[0].type, "Deleted");
+  const rows = run("changes", tracked, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(rows[0].kind, "deletion");
+  // `revisions` left the CLI: `changes` is the one listing.
+  const gone = run("revisions", tracked);
+  assert.notEqual(gone.code, 0);
+  assert.doesNotMatch(gone.out, /revision\(s\)/);
   const kept = path.join(tmp, "kept.docx");
   assert.equal(run("accept", tracked, "-o", kept, "--kind", "deletion").code, 0);
   const left = run("changes", kept, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
@@ -249,7 +283,7 @@ test("format contradictions and unsupported flags fail before I/O (integration)"
     assert.doesNotMatch(result.err, /reading/);
     assert.ok(!fs.existsSync(output));
   }
-  for (const args of [["inspect", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["compare", "a", "b", "--mode", "powertools"]]) {
+  for (const args of [["inspect", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
     const result = run(...args);
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading/);
@@ -426,11 +460,7 @@ test("I/O failures report the operation and leave no output (integration)", () =
   assert.ok(!fs.existsSync(unwritable));
 });
 
-test("legacy revisions and tracked text projections retain their contracts (integration)", () => {
-  const revisions = run("revisions", tracked);
-  assert.equal(revisions.code, 0, revisions.err);
-  assert.match(revisions.out, /Deleted\tBo Chen\t/);
-  assert.match(revisions.out, /\d+ revision\(s\)\n$/);
+test("tracked text projections retain their contracts (integration)", () => {
   for (const mode of ["accept", "reject"]) {
     const text = run("text", tracked, "--track-changes", mode);
     assert.equal(text.code, 0, text.err);

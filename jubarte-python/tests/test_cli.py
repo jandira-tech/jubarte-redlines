@@ -98,8 +98,8 @@ def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     b.write_bytes(docx(para("alpha gamma")))
     assert main(["redline", str(a), str(b)]) == 0
     assert (tmp_path / "a_v_b.docx").is_file()
-    assert main(["revisions", str(tmp_path / "a_v_b.docx"), "--json"]) == 0
-    assert {json.loads(l)["type"] for l in capsys.readouterr().out.splitlines()[1:]} >= {"Inserted", "Deleted"}
+    assert main(["changes", str(tmp_path / "a_v_b.docx"), "--json"]) == 0
+    assert {json.loads(l)["kind"] for l in capsys.readouterr().out.splitlines()[1:]} >= {"insertion", "deletion"}
 
 
 def test_a_legacy_doc_is_refused_with_a_save_as_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -229,12 +229,16 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     assert main(["compare", str(a), str(b), "-o", str(redline), "--author", "Legal"]) == 0
     assert redline.is_file()
     assert "wrote" in capsys.readouterr().out
-    assert main(["revisions", str(redline), "--json"]) == 0
+    assert main(["changes", str(redline), "--json"]) == 0
     rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
-    assert {r["type"] for r in rows} >= {"Inserted", "Deleted"}
+    assert {r["kind"] for r in rows} >= {"insertion", "deletion"}
     assert all(r["author"] == "Legal" for r in rows)
-    assert main(["revisions", str(redline)]) == 0
-    assert "revision(s)" in capsys.readouterr().out
+    assert main(["changes", str(redline)]) == 0
+    assert "change(s)" in capsys.readouterr().out
+    # `revisions` (the Docxodus GetRevisions listing) left the CLI; `changes`
+    # is the one listing. The word is the two-file compare's ORIGINAL again.
+    assert main(["revisions", str(redline)]) == 1
+    assert "reading revisions" in capsys.readouterr().err
     clean = tmp_path / "clean.docx"
     assert main(["accept", str(redline), "-o", str(clean)]) == 0
     assert main(["text", str(clean)]) == 0

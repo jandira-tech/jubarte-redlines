@@ -331,8 +331,7 @@ impl std::ops::Deref for Cli {
     }
 }
 
-/// D.6 — `redline revisions <file> [--json]`: list the tracked revisions in
-/// a redline .docx (the `WmlComparer.GetRevisions` facade).
+/// The subcommands; none given is the two-file compare.
 #[derive(clap::Subcommand, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "command", content = "args")]
 pub enum Command {
@@ -342,15 +341,6 @@ pub enum Command {
         after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte compare -b old.docx -m new.docx --author Legal"
     )]
     Compare(CompareArgs),
-    /// List the tracked revisions in a redline .docx.
-    Revisions {
-        /// The redline document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit the list as JSON lines instead of a human summary.
-        #[arg(long)]
-        json: bool,
-    },
     /// List tracked changes with IDs for accept, reject and edit plans.
     Changes {
         /// The document (.docx).
@@ -467,6 +457,14 @@ pub enum Command {
         /// 0 ok, 1 error, 4 a requested font was substituted.
         #[arg(long)]
         fail_on_substitution: bool,
+        /// Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC
+        /// fields from jubarte's layout (TOCs rebuilt from the headings) in
+        /// the .docx written, after --track-changes. Field codes stay, so
+        /// Word can update them again; page numbers are jubarte's layout, not
+        /// Word's (docs/WORD_DIFFERENCES.md). Prints one line per field;
+        /// --report writes `{page_count, fields}`.
+        #[arg(long)]
+        update_fields: bool,
         /// Give up after this many seconds: exit 124 (as `timeout(1)`) with
         /// nothing more written. An output being written at that moment
         /// may be left partial.
@@ -903,12 +901,6 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Field results written back into the document from jubarte's layout.
-    Fields {
-        /// Field operation to execute.
-        #[command(subcommand)]
-        sub: FieldsCommand,
-    },
     /// Remove authors, editing IDs, metadata and comments before sharing.
     #[command(after_help = "Examples:\n  \
         jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \
@@ -950,33 +942,6 @@ pub enum Command {
         /// Fail (exit 2) on warnings too, not only on errors.
         #[arg(long)]
         strict: bool,
-    },
-}
-
-/// `jubarte fields` subcommands.
-#[derive(clap::Subcommand, Debug, Serialize)]
-#[serde(rename_all = "kebab-case", tag = "command", content = "args")]
-pub enum FieldsCommand {
-    /// Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC
-    /// fields from jubarte's layout; TOCs are rebuilt from the headings.
-    /// Field codes stay, so Word can update them again. Page numbers are
-    /// jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md).
-    #[command(after_help = "Examples:\n  \
-        jubarte fields update in.docx -o out.docx          one line per field written\n  \
-        jubarte fields update in.docx -o out.docx --json   {\"page_count\", \"fields\": [...]}")]
-    Update {
-        /// The document (.docx).
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Output path.
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: PathBuf,
-        /// Overwrite the output file if it already exists.
-        #[arg(long)]
-        force: bool,
-        /// Print the fields written as JSON.
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -1797,6 +1762,13 @@ fn validate_matches(
                 "--pages selects PNG pages; add --png or --to png",
             ));
         }
+        let update_fields = args.get_flag("update_fields");
+        if update_fields && !matches!(to.or(output), Some(Format::Docx)) {
+            return Err(error(
+                &mut task,
+                "--update-fields writes a .docx: give -o FILE.docx or --to docx",
+            ));
+        }
         if matches!(to.or(output), Some(Format::Docx | Format::Md)) {
             for flag in [
                 "pdf",
@@ -1812,6 +1784,10 @@ fn validate_matches(
                 "revisions",
                 "revision_palette",
             ] {
+                // The fields report is the one report a .docx output has.
+                if flag == "report" && update_fields {
+                    continue;
+                }
                 if args.value_source(flag) == Some(ValueSource::CommandLine) {
                     return Err(error(
                         &mut task,

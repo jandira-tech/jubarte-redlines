@@ -241,11 +241,11 @@ The other 3 of the 32 are not differences:
   changed-line bar beside the commented paragraph; three real documents
   with tracking on and live balloons show none, so no bar is drawn.
 
-### 11. Field results jubarte writes (`jubarte fields update`, `update_fields`)
+### 11. Field results jubarte writes (`jubarte convert --update-fields`, `update_fields`)
 
 - **What happens.** Word's Update Field recomputes `PAGEREF`, `REF`,
   `NUMPAGES`, `SEQ` and `TOC` results from Word's own pagination.
-- **What we do.** `jubarte fields update`, an edit plan's
+- **What we do.** `jubarte convert --update-fields`, an edit plan's
   `"update_fields": true`, Python `Document.update_fields()` and WASM
   `updateFields` write those results from jubarte's layout, the one
   `jubarte convert` paints with its default options. The page numbers are
@@ -254,7 +254,7 @@ The other 3 of the 32 are not differences:
   so Word's Update Field in the saved file replaces our numbers with its
   own.
 - **Evidence.** Three corpus documents carry a TOC whose result Word wrote
-  (2026-10-02, `fields update --json` against the cached result):
+  (2026-10-02, the field refresh's report, then `fields update --json`, against the cached result):
   `behavior__pageref_standalone_uppercase_h_7701e07f` (7 entries) and
   `behavior__sd_2447_toc_tab_alignment_8319c14c` (8 entries) match it
   exactly, text and page numbers. In `strict01.docx` Word's cached TOC
