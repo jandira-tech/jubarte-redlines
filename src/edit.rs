@@ -3445,9 +3445,10 @@ impl<'p> Transaction<'p> {
                 continue;
             }
             if !seg.direct {
-                return Err(
-                    "the text sits inside a hyperlink, field, content control or revision".into(),
-                );
+                return Err(format!(
+                    "the text sits inside {}",
+                    self.opaque_structure(run_of(&seg.piece))
+                ));
             }
             if is_symbol(projection, seg) {
                 return Err("the text crosses a symbol".into());
@@ -3463,10 +3464,76 @@ impl<'p> Transaction<'p> {
             .any(|&mark| start < mark && mark < end)
         {
             return Err(
-                "the text sits inside a hyperlink, field, content control or revision".into(),
+                "the text crosses a field; edit the text on either side of it, or comment on it"
+                    .into(),
             );
         }
         Ok(())
+    }
+
+    /// What holds `run`, a run no edit may touch, and the way around it:
+    /// a revision by id and author first (settling it frees the text), else
+    /// the innermost hyperlink, field or content control.
+    fn opaque_structure(&self, run: NodeId) -> String {
+        let dom = &self.opened.dom;
+        let ancestors = dom.ancestors(run, None);
+        let story = self
+            .stories
+            .iter()
+            .find(|s| ancestors.contains(&s.root))
+            .map_or("body", |s| s.id.as_str());
+        let mut inner: Option<String> = None;
+        for &node in &ancestors {
+            if dom.name_is(node, &W::p()) {
+                break;
+            }
+            let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
+            for (local, kind) in [
+                ("ins", "insertion"),
+                ("moveTo", "move"),
+                ("del", "deletion"),
+            ] {
+                if dom.name_is(node, &W::name(local)) {
+                    let id = format!("{story}:rev:{}", attr("id"));
+                    return format!(
+                        "{id}, a tracked {kind} by {:?}; settle it first (\"resolve_revisions\": {{\"accept\": {{\"ids\": [\"{id}\"]}}}}, or reject), or comment on it",
+                        attr("author")
+                    );
+                }
+            }
+            if inner.is_some() {
+                continue;
+            }
+            if dom.name_is(node, &W::name("hyperlink")) {
+                inner = Some(
+                    "a hyperlink; edit the text on either side of it, or comment on it".into(),
+                );
+            } else if dom.name_is(node, &W::name("fldSimple")) {
+                inner = Some(format!(
+                    "the result of the field{}; edit the text on either side of it, or comment on it",
+                    match attr("instr").trim() {
+                        "" => String::new(),
+                        instr => format!(" {instr:?}"),
+                    }
+                ));
+            } else if dom.name_is(node, &W::name("sdt")) {
+                let property = |local: &str| {
+                    dom.element(node, &W::name("sdtPr"))
+                        .and_then(|pr| dom.element(pr, &W::name(local)))
+                        .and_then(|e| dom.attribute(e, &W::val()))
+                        .map(|v| format!(" ({local} {v:?})"))
+                };
+                inner = Some(format!(
+                    "a content control{}; change its text with fill_control, or comment on it",
+                    property("alias")
+                        .or_else(|| property("tag"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+        inner.unwrap_or_else(|| {
+            "the result of a field; edit the text on either side of it, or comment on it".into()
+        })
     }
 
     fn check_insert_position(
@@ -3481,10 +3548,10 @@ impl<'p> Transaction<'p> {
         let seg = attach_segment(projection, pos, attach_before)
             .ok_or_else(|| "no run holds the insertion point".to_string())?;
         if !seg.direct {
-            return Err(
-                "the insertion point sits inside a hyperlink, field, content control or revision"
-                    .into(),
-            );
+            return Err(format!(
+                "the insertion point sits inside {}",
+                self.opaque_structure(run_of(&seg.piece))
+            ));
         }
         if is_symbol(projection, seg) {
             return Err("the insertion point touches a symbol".into());
@@ -6274,7 +6341,10 @@ mod deeper_boundary_tests {
         projection.field_marks = vec![1];
         assert_eq!(
             tx.check_range(&projection, 0, 3),
-            Err("the text sits inside a hyperlink, field, content control or revision".into())
+            Err(
+                "the text crosses a field; edit the text on either side of it, or comment on it"
+                    .into()
+            )
         );
         // Text may go beside a tab, never beside a symbol.
         let (d, root) = dom(
