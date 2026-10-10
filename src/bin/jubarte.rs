@@ -1695,7 +1695,11 @@ fn paginated(
     }
 }
 
-fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), ConvertFailure> {
+fn run_convert_any(
+    job: &ConvertJob<'_>,
+    markdown: &MarkdownArgs,
+    update_fields: bool,
+) -> Result<(), ConvertFailure> {
     let raw =
         std::fs::read(job.file).map_err(|e| format!("reading {}: {e}", job.file.display()))?;
     // A Word 97-2003 `.doc` is read into a `.docx` first; everything after
@@ -1725,10 +1729,14 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
     if job.pages.is_some() && to != Format::Png && !job.png {
         return Err("--pages selects PNG pages; add --png".into());
     }
+    // clap refused any other output; a Markdown input is the one left.
+    if update_fields && from != Format::Docx {
+        return Err("--update-fields needs a Word document in".into());
+    }
     // Word and Markdown output lay nothing out, so these would be ignored.
     if matches!(to, Format::Docx | Format::Md) {
         for (given, flag) in [
-            (job.report.is_some(), "--report"),
+            (job.report.is_some() && !update_fields, "--report"),
             (job.font_report.is_some(), "--font-report"),
             (job.fail_on_substitution, "--fail-on-substitution"),
             (job.page.move_comments, "--move-comments"),
@@ -1796,35 +1804,38 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
         }
         (Format::Docx, Format::Docx) => {
             let resolve = match markdown.track_changes {
-                TrackChanges::Accept => jubarte::document_comparer::accept_revisions,
-                TrackChanges::Reject => jubarte::document_comparer::reject_revisions,
-                // The `.doc` read as it is.
-                TrackChanges::All if legacy => {
-                    let output = job
-                        .output
-                        .map_or_else(|| job.file.with_extension("docx"), Path::to_path_buf);
-                    ensure_writable(&output, job.force)?;
-                    std::fs::write(&output, &bytes)
-                        .map_err(|e| format!("writing {}: {e}", output.display()))?;
-                    outln!("wrote {} ({} bytes)", output.display(), bytes.len());
-                    return Ok(());
+                TrackChanges::Accept => {
+                    Some(jubarte::document_comparer::accept_revisions as Resolve)
                 }
+                TrackChanges::Reject => {
+                    Some(jubarte::document_comparer::reject_revisions as Resolve)
+                }
+                // The `.doc` read as it is, or the fields refreshed.
+                TrackChanges::All if legacy || update_fields => None,
                 TrackChanges::All => {
                     return Err(format!(
-                        "{} is already Word: give --track-changes accept or reject, or another --to",
+                        "{} is already Word: give --track-changes accept or reject, --update-fields, or another --to",
                         job.file.display()
                     )
                     .into());
                 }
             };
-            let output = job
-                .output
-                .ok_or("--output is required to write Word from Word")?;
-            ensure_writable(output, job.force)?;
-            let out = resolve(&bytes).map_err(|e| {
-                refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-            })?;
-            std::fs::write(output, &out)
+            let output = match job.output {
+                Some(output) => output.to_path_buf(),
+                None if legacy => job.file.with_extension("docx"),
+                None => return Err("--output is required to write Word from Word".into()),
+            };
+            ensure_writable(&output, job.force)?;
+            let mut out = match resolve {
+                Some(resolve) => resolve(&bytes).map_err(|e| {
+                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                })?,
+                None => bytes,
+            };
+            if update_fields {
+                out = refresh_fields(&out, job.report)?;
+            }
+            std::fs::write(&output, &out)
                 .map_err(|e| format!("writing {}: {e}", output.display()))?;
             outln!("wrote {} ({} bytes)", output.display(), out.len());
             Ok(())
@@ -2105,6 +2116,7 @@ fn cli_main() -> ExitCode {
             markdown,
             pages: page_spec,
             fail_on_substitution,
+            update_fields,
             timeout,
             page,
         }) => {
@@ -2136,7 +2148,7 @@ fn cli_main() -> ExitCode {
                 page,
                 status_to_stderr: false,
             };
-            return convert_exit_code(run_convert_any(&job, &markdown));
+            return convert_exit_code(run_convert_any(&job, &markdown, update_fields));
         }
         Some(Command::Diff {
             old,
@@ -2391,15 +2403,6 @@ fn cli_main() -> ExitCode {
                 }
             };
         }
-        Some(Command::Fields {
-            sub:
-                FieldsCommand::Update {
-                    file,
-                    output,
-                    force,
-                    json,
-                },
-        }) => return exit_code(run_fields_update(&file, &output, force, json)),
         Some(Command::Scrub {
             file,
             output,
@@ -2475,20 +2478,14 @@ fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result
 }
 
 /// `jubarte fields update`: refresh, write, then list what was written.
-fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Result<(), String> {
-    ensure_writable(output, force)?;
-    let bytes = read_document(file)?;
-    let updated = jubarte::fields::update_fields(&bytes).map_err(|e| e.to_string())?;
-    std::fs::write(output, &updated.docx)
-        .map_err(|e| format!("writing {}: {e}", output.display()))?;
-    if json {
-        let report = serde_json::json!({
-            "page_count": updated.page_count,
-            "fields": updated.fields,
-        });
-        outln!("{report}");
-        return Ok(());
-    }
+/// `accept_revisions` / `reject_revisions`: a package in, the resolved one out.
+type Resolve = fn(&[u8]) -> Result<Vec<u8>, jubarte::opc::OpcError>;
+
+/// `convert --update-fields`: the package with its field results refreshed
+/// from jubarte's layout, one line per field written on stdout and
+/// `{page_count, fields}` in `report` when given.
+fn refresh_fields(bytes: &[u8], report: Option<&Path>) -> Result<Vec<u8>, String> {
+    let updated = jubarte::fields::update_fields(bytes).map_err(|e| e.to_string())?;
     for field in &updated.fields {
         outln!(
             "{}\t{}\t{:?} -> {:?}",
@@ -2503,7 +2500,15 @@ fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Res
         updated.fields.len(),
         updated.page_count
     );
-    Ok(())
+    if let Some(report) = report {
+        let json = serde_json::json!({
+            "page_count": updated.page_count,
+            "fields": updated.fields,
+        });
+        std::fs::write(report, json.to_string())
+            .map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    Ok(updated.docx)
 }
 
 #[cfg(test)]
@@ -3537,47 +3542,45 @@ mod tests {
     }
 
     #[test]
-    fn fields_update_parses_its_output_and_flags() {
+    fn convert_takes_update_fields() {
         let cli = Cli::try_parse_from([
-            "jubarte", "fields", "update", "in.docx", "-o", "out.docx", "--force", "--json",
+            "jubarte",
+            "convert",
+            "in.docx",
+            "-o",
+            "out.docx",
+            "--update-fields",
         ])
         .unwrap();
-        match cli.command {
-            Some(Command::Fields {
-                sub:
-                    FieldsCommand::Update {
-                        file,
-                        output,
-                        force,
-                        json,
-                    },
-            }) => {
-                assert_eq!(file, PathBuf::from("in.docx"));
-                assert_eq!(output, PathBuf::from("out.docx"));
-                assert!(force && json);
-            }
-            other => panic!("expected fields update, got {other:?}"),
-        }
-        assert!(Cli::try_parse_from(["jubarte", "fields", "update", "in.docx"]).is_err());
+        let Some(Command::Convert { update_fields, .. }) = cli.command else {
+            panic!("expected convert");
+        };
+        assert!(update_fields);
+        // `fields update` left with the subcommand: three words are no compare.
+        assert!(
+            Cli::try_parse_from(["jubarte", "fields", "update", "in.docx", "-o", "o.docx"])
+                .is_err()
+        );
     }
 
     #[test]
-    fn fields_update_writes_the_refreshed_package_and_refuses_to_clobber() {
+    fn refresh_fields_writes_the_report_and_says_when_it_cannot() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let input = dir.path().join("in.docx");
-        let output = dir.path().join("out.docx");
-        std::fs::write(&input, tiny_docx_bytes("Calibri")).expect("docx");
-        run_fields_update(&input, &output, false, true).expect("update");
-        let written = std::fs::read(&output).expect("output");
+        let report = dir.path().join("fields.json");
+        let written = refresh_fields(&tiny_docx_bytes("Calibri"), Some(&report)).expect("update");
         assert_eq!(
             jubarte::inspect::paragraphs(&written).unwrap()[0].text,
             "HELLO"
         );
-        let err = run_fields_update(&input, &output, false, false).unwrap_err();
-        assert!(err.contains("--force"), "{err}");
-        run_fields_update(&input, &output, true, false).expect("forced");
-        let err =
-            run_fields_update(&dir.path().join("missing.docx"), &output, true, false).unwrap_err();
-        assert!(!err.is_empty());
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+        assert_eq!(json["page_count"], 1);
+        let err = refresh_fields(
+            &tiny_docx_bytes("Calibri"),
+            Some(&dir.path().join("no/such/dir.json")),
+        )
+        .unwrap_err();
+        assert!(err.contains("writing"), "{err}");
+        assert!(refresh_fields(b"not a zip", None).is_err());
     }
 }

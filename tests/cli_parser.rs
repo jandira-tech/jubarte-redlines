@@ -221,9 +221,9 @@ fn facade_serializes_native_names_canonical_enums_and_nested_subcommands() {
     );
     assert_eq!(accept["args"]["ids"][0], "body:rev:12");
     assert_eq!(accept["args"]["kinds"][0], "insertion");
-    let fields = parse(&["fields", "update", "a", "-o", "b"], &[]);
-    assert_eq!(fields["args"]["sub"]["command"], "update");
-    assert_eq!(fields["args"]["sub"]["args"]["output"], "b");
+    let fields = parse(&["convert", "a", "-o", "b.docx", "--update-fields"], &[]);
+    assert_eq!(fields["args"]["update_fields"], true);
+    assert_eq!(fields["args"]["output"], "b.docx");
 }
 
 #[test]
