@@ -499,16 +499,72 @@ pub(crate) fn inches(twips: f64) -> String {
     format!("{value}in")
 }
 
+/// Whether a descendant of `e` outside text boxes matches `hit`: a break
+/// inside a text box turns no page of the body.
+fn holds(e: &Element, hit: &dyn Fn(&Element) -> bool) -> bool {
+    e.elements()
+        .any(|c| !c.is("txbxContent") && (hit(c) || holds(c, hit)))
+}
+
 pub(crate) fn has_page_break(p: &Element) -> bool {
-    let mut breaks = Vec::new();
-    p.find_all("br", &mut breaks);
-    breaks.iter().any(|b| b.attr("type") == Some("page"))
+    holds(p, &|e| e.is("br") && e.attr("type") == Some("page"))
 }
 
 pub(crate) fn has_rendered_page_break(p: &Element) -> bool {
-    let mut found = Vec::new();
-    p.find_all("lastRenderedPageBreak", &mut found);
-    !found.is_empty()
+    holds(p, &|e| e.is("lastRenderedPageBreak"))
+}
+
+/// The paragraphs under `e` in document order, text boxes excluded.
+fn paragraphs(e: &Element) -> Vec<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+        for c in e.elements() {
+            if c.is("p") {
+                out.push(c);
+            }
+            if !c.is("txbxContent") {
+                walk(c, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
+/// Indices of the paragraphs whose section break starts a new page: the
+/// section after them is not `continuous` or `nextColumn` (a section's
+/// `w:type` says how that section starts).
+pub(crate) fn page_sections(body: &Element) -> HashSet<usize> {
+    let ends: Vec<(usize, &Element)> = paragraphs(body)
+        .into_iter()
+        .filter_map(|p| Some((p.attr(INDEX)?.parse().ok()?, p.path(&["pPr", "sectPr"])?)))
+        .collect();
+    let last = body.child("sectPr");
+    ends.iter()
+        .enumerate()
+        .filter(|(k, _)| {
+            let next = ends.get(k + 1).map(|(_, s)| *s).or(last);
+            !next
+                .and_then(|s| s.path(&["type"]))
+                .and_then(|t| t.attr("val"))
+                .is_some_and(|v| v == "continuous" || v == "nextColumn")
+        })
+        .map(|(_, (index, _))| *index)
+        .collect()
+}
+
+/// A table's cached page breaks: whether its first paragraph opens a page,
+/// and how many more pages its other paragraphs turn (named at the next
+/// block, since a marker cannot go inside a table).
+pub(crate) fn table_breaks(tbl: &Element, cached: bool) -> (bool, usize) {
+    let ps = paragraphs(tbl);
+    if cached {
+        let first = ps.first().is_some_and(|p| has_rendered_page_break(p));
+        let all = ps.iter().filter(|p| has_rendered_page_break(p)).count();
+        (first, all - usize::from(first))
+    } else {
+        (false, ps.iter().filter(|p| has_page_break(p)).count())
+    }
 }
 
 pub(crate) fn has_section_break(p: &Element) -> bool {
@@ -625,22 +681,12 @@ pub(crate) fn page_marker(page: usize, total: usize) -> String {
 }
 
 /// Paragraphs (text boxes excluded) holding `w:lastRenderedPageBreak`, and
-/// hard page and section breaks, for the cached-break page count.
-pub(crate) fn page_counts(e: &Element) -> (usize, usize) {
-    if e.is("txbxContent") {
-        return (0, 0);
-    }
-    let mut rendered = 0;
-    let mut hard = 0;
-    if e.is("p") {
-        rendered += usize::from(has_rendered_page_break(e));
-        hard += usize::from(has_page_break(e)) + usize::from(has_section_break(e));
-    }
-    for child in e.elements() {
-        let (r, h) = page_counts(child);
-        rendered += r;
-        hard += h;
-    }
+/// hard page breaks plus section breaks that start a page, for the
+/// cached-break page count.
+pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
+    let ps = paragraphs(body);
+    let rendered = ps.iter().filter(|p| has_rendered_page_break(p)).count();
+    let hard = ps.iter().filter(|p| has_page_break(p)).count() + page_sections(body).len();
     (rendered, hard)
 }
 

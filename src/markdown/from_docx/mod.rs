@@ -137,8 +137,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         (options.ids && options.pages.is_none() && options.page_markers).then(|| {
             let body = document.child("body").unwrap_or(&document);
             let (rendered, hard) = agent::page_counts(body);
-            1 + if rendered > 0 { rendered } else { hard }
+            let total = 1 + if rendered > 0 { rendered } else { hard };
+            // Without cached breaks the writer turns pages on hard breaks.
+            let sections = (rendered == 0).then(|| agent::page_sections(body));
+            (total, sections)
         });
+    let (cached_pages, page_sections) = match cached_pages {
+        Some((total, sections)) => (Some(total), sections),
+        None => (None, None),
+    };
     let document = match accept {
         Some(accept) => revise::resolve(&document, accept),
         None => document,
@@ -219,6 +226,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         default_style: default_style.clone(),
         pending_empty: Vec::new(),
         cached_pages,
+        page_sections,
+        break_due: false,
+        announce: false,
         page: 0,
         para_comments: Vec::new(),
         threads: threads.clone(),
@@ -939,7 +949,15 @@ struct Writer<'a> {
     /// emit `<!-- page N of total -->` itself; `None` leaves markers to
     /// `paginate`.
     cached_pages: Option<usize>,
-    /// Agent view: pages announced so far by the writer.
+    /// Agent view, cached-break fallback with no `w:lastRenderedPageBreak`
+    /// in the document: the paragraphs whose section break starts a page.
+    /// `Some` makes hard page and section breaks turn the pages.
+    page_sections: Option<std::collections::HashSet<usize>>,
+    /// A hard break ended the last block: the next one opens a page.
+    break_due: bool,
+    /// Pages turned inside the last block, still to be named.
+    announce: bool,
+    /// Agent view: the page the writer is on (0 before the first marker).
     page: usize,
     /// Agent view: comment ids met since the last id line.
     para_comments: Vec<String>,
@@ -966,6 +984,7 @@ impl Writer<'_> {
                     // first cell; it gets its own block before the table.
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
+                    let mut turned = 0;
                     if self.agent {
                         if let Some(line) = agent::table_line(
                             child,
@@ -974,14 +993,17 @@ impl Writer<'_> {
                             &self.handles,
                         ) {
                             self.flush_empty(blocks);
-                            let mut breaks = Vec::new();
-                            child.find_all("lastRenderedPageBreak", &mut breaks);
-                            self.page_lines(blocks, !breaks.is_empty());
+                            let (first, more) =
+                                agent::table_breaks(child, self.page_sections.is_none());
+                            let opens = self.opens_page(first);
+                            self.page_lines(blocks, opens);
                             blocks.push_line(&line);
+                            turned = more;
                         }
                     }
                     let table = self.table(child);
                     blocks.push(&table, false);
+                    self.turn_pages(turned);
                     // The cells' hidden comments went on the table line.
                     self.para_comments.clear();
                 }
@@ -1112,11 +1134,23 @@ impl Writer<'_> {
                 && comments.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
             {
+                if self.page_sections.is_none() && agent::has_rendered_page_break(p) {
+                    self.flush_empty(blocks);
+                    self.page_lines(blocks, true);
+                }
                 self.pending_empty.push(index);
                 return;
             }
             self.flush_empty(blocks);
-            self.page_lines(blocks, agent::has_rendered_page_break(p));
+            let opens = self.opens_page(agent::has_rendered_page_break(p));
+            self.page_lines(blocks, opens);
+            if self
+                .page_sections
+                .as_ref()
+                .is_some_and(|sections| page_break || sections.contains(&index))
+            {
+                self.break_due = true;
+            }
             let marker = heading_marker
                 .as_deref()
                 .or(list_marker.as_ref().map(|(m, _)| m.as_str()));
@@ -1172,7 +1206,9 @@ impl Writer<'_> {
         if self.pending_empty.is_empty() {
             return;
         }
-        self.page_lines(blocks, false);
+        // Empty paragraphs after a hard break sit on the new page.
+        let opens = self.opens_page(false);
+        self.page_lines(blocks, opens);
         for line in agent::empty_lines(&std::mem::take(&mut self.pending_empty)) {
             blocks.push_line(&line);
         }
@@ -1180,17 +1216,43 @@ impl Writer<'_> {
 
     /// Agent view, cached-break fallback: the page markers due before a
     /// block, page 1 included. With layout pages, `paginate` writes them.
-    fn page_lines(&mut self, blocks: &mut Blocks, rendered_break: bool) {
+    fn page_lines(&mut self, blocks: &mut Blocks, opens: bool) {
         let Some(total) = self.cached_pages else {
             return;
         };
         if self.page == 0 {
             self.page = 1;
+            self.announce = false;
             blocks.push_line(&agent::page_marker(1, total));
         }
-        if rendered_break && self.page < total {
+        if opens && self.page < total {
             self.page += 1;
+            self.announce = true;
+        }
+        if std::mem::take(&mut self.announce) {
             blocks.push_line(&agent::page_marker(self.page, total));
+        }
+    }
+
+    /// Whether the next block opens a page: its own cached break, or,
+    /// without cached breaks, the hard break that ended the block before.
+    fn opens_page(&mut self, cached_break: bool) -> bool {
+        if self.page_sections.is_some() {
+            std::mem::take(&mut self.break_due)
+        } else {
+            cached_break
+        }
+    }
+
+    /// Pages turned inside a block, named before the next one.
+    fn turn_pages(&mut self, turned: usize) {
+        let Some(total) = self.cached_pages else {
+            return;
+        };
+        let page = self.page.saturating_add(turned).min(total);
+        if page > self.page {
+            self.page = page;
+            self.announce = true;
         }
     }
 

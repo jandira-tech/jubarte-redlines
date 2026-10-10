@@ -199,6 +199,70 @@ fn a_document_of_empty_paragraphs_still_opens_page_one() {
     );
 }
 
+const LETTER: &str = r#"<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#;
+
+#[test]
+fn without_cached_breaks_hard_page_breaks_number_the_pages() {
+    let bytes = docx(&format!(
+        r#"{}<w:p><w:r><w:br w:type="page"/></w:r></w:p>{}"#,
+        para("One"),
+        para("Two")
+    ));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 -->\nOne\n\n<!-- p1 page-break -->\n\n<!-- page 2 of 2 -->\n\n<!-- p2 -->\nTwo\n"
+    );
+}
+
+#[test]
+fn a_section_break_opens_a_page_unless_the_next_section_is_continuous() {
+    let body_xml = format!(
+        r#"<w:p><w:pPr><w:sectPr>{LETTER}</w:sectPr></w:pPr><w:r><w:t>One</w:t></w:r></w:p>{}"#,
+        para("Two")
+    );
+    let continuous = common::docx::docx_with_sect_pr(
+        &body_xml,
+        &[],
+        &format!(r#"<w:sectPr><w:type w:val="continuous"/>{LETTER}</w:sectPr>"#),
+    );
+    assert_eq!(
+        body(&agent(&continuous)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 section-break -->\nOne\n\n<!-- p1 -->\nTwo\n"
+    );
+    assert_eq!(
+        body(&agent(&docx(&body_xml))),
+        "<!-- page 1 of 2 -->\n\n<!-- p0 section-break -->\nOne\n\n<!-- page 2 of 2 -->\n\n<!-- p1 -->\nTwo\n"
+    );
+}
+
+#[test]
+fn a_page_break_inside_a_text_box_turns_no_page() {
+    let boxed = r#"<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:br w:type="page"/><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#;
+    let out = agent(&docx(&format!("{boxed}{}", para("After"))));
+    assert!(body(&out).starts_with("<!-- page 1 of 1 -->\n"), "{out}");
+    assert!(!out.contains("of 2"), "{out}");
+}
+
+#[test]
+fn cached_breaks_inside_a_table_are_named_at_the_next_block() {
+    let cell = |inner: &str| format!("<w:tr><w:tc><w:p>{inner}</w:p></w:tc></w:tr>");
+    let table = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{}{}{}</w:tbl>"#,
+        cell("<w:r><w:t>A</w:t></w:r>"),
+        cell("<w:r><w:lastRenderedPageBreak/><w:t>B</w:t></w:r>"),
+        cell("<w:r><w:lastRenderedPageBreak/><w:t>C</w:t></w:r>")
+    );
+    let out = agent(&docx(&format!("{}{table}{}", para("Before"), para("After"))));
+    assert!(
+        body(&out).starts_with("<!-- page 1 of 3 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 3x1, cells p1-p3 by row -->\n"),
+        "{out}"
+    );
+    assert!(
+        body(&out).ends_with("\n\n<!-- page 3 of 3 -->\n\n<!-- p4 -->\nAfter\n"),
+        "{out}"
+    );
+}
+
 #[test]
 fn layout_page_texts_place_the_markers_above_the_id_lines() {
     let bytes = docx(&format!(
