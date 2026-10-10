@@ -101,3 +101,6 @@ Claude outputs/
 # Microsoft Office owner (lock) files, e.g. ~$ceived.docx while Word has
 # received.docx open. No slash, so the pattern matches in every folder.
 ~$*.docx
+.empryo
+.dirac-cache/
+report.json
