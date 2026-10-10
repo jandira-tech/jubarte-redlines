@@ -354,7 +354,16 @@ fn inline_edit(
     use OperationKind as K;
     let plain = crate::markdown::plain_anchor(anchor);
     if text == anchor || text == plain {
-        return Err("--content equals the anchor; nothing to change".into());
+        // Same words with a style: "make the anchor bold".
+        return match format {
+            Some(format) => Ok(K::FormatRun {
+                paragraph,
+                find: anchor.to_string(),
+                format,
+                occurrence: None,
+            }),
+            None => Err("--content equals the anchor; nothing to change".into()),
+        };
     }
     let after = text.strip_prefix(anchor).or_else(|| {
         text.strip_prefix(plain.as_str())
@@ -569,6 +578,29 @@ mod tests {
             matches!(k, OperationKind::Replace { ref replacement, .. } if replacement == "sixty")
         );
         assert!(inline_edit(Selector::Name("p1".into()), "# x", "x".into(), None).is_err());
+    }
+
+    /// pi review av4 F8: "make thirty bold" written as `--anchor thirty
+    /// --content thirty --style bold` formats the run instead of refusing.
+    #[test]
+    fn content_equal_to_the_anchor_with_a_style_formats_the_run() {
+        let bold = RunFormat {
+            bold: Some(true),
+            ..RunFormat::default()
+        };
+        for content in ["thirty", "**thirty**"] {
+            let k = inline_edit(
+                Selector::Name("p1".into()),
+                "**thirty**",
+                content.into(),
+                Some(bold.clone()),
+            )
+            .unwrap();
+            assert!(
+                matches!(k, OperationKind::FormatRun { ref find, ref format, .. } if find == "**thirty**" && format.bold == Some(true)),
+                "{content}"
+            );
+        }
     }
 
     #[test]
