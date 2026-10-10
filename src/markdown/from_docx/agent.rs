@@ -629,7 +629,9 @@ pub(crate) fn escape_markdown(text: &str) -> String {
 /// A leading `*` is already `\*` from `escape_markdown`.
 pub(crate) fn escape_block_start(line: &str) -> String {
     let bytes = line.as_bytes();
-    // A block opener may sit after up to three spaces; four make plain text.
+    // A block opener may sit after up to three spaces; four open an indented
+    // code block, whose text shows as written. Paragraph lines arrive trimmed
+    // (`tidy_inline`), so this guards callers that keep their indent.
     let indent = bytes.iter().take_while(|&&b| b == b' ').count();
     if (1..=3).contains(&indent) {
         let (spaces, rest) = line.split_at(indent);
