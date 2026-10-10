@@ -2972,3 +2972,27 @@ fn a_bidi_wrapper_does_not_split_a_substitution() {
     let accepted = agent_with(&doc, TrackChanges::Accept, true);
     assert!(accepted.contains("<!-- p0 rev #1+2 @AC -->"), "{accepted}");
 }
+
+/// pi review av2 F19: `read --dates` reaches the view through the CLI; an
+/// author with two timestamps gets them inline only with the flag.
+#[test]
+fn the_dates_flag_reaches_the_cli_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = format!(
+        "<w:p>{}{}{}</w:p>",
+        ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "b"),
+        run(" c "),
+        ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "d")
+    );
+    std::fs::write(dir.path().join("dated.docx"), docx(&p)).unwrap();
+    let plain = ok(&["read", "dated.docx", "--no-page-markers"], dir.path());
+    assert!(plain.contains("{++b++}{>>#1 @AC<<}"), "{plain}");
+    let dated = ok(
+        &["read", "dated.docx", "--no-page-markers", "--dates"],
+        dir.path(),
+    );
+    assert!(
+        dated.contains("{++b++}{>>#1 @AC 2026-10-01T09:00:00Z<<}"),
+        "{dated}"
+    );
+}
