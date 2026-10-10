@@ -1631,3 +1631,104 @@ fn cli_read_changed_prints_only_the_changed_blocks() {
     let bad = jubarte(&["read", "received.docx", "--by", "AS"], dir.path());
     assert!(!bad.status.success(), "--by needs --changed");
 }
+
+/// PR #385 review: every cached or hard break counts, not every paragraph
+/// holding one.
+#[test]
+fn a_paragraph_spanning_three_pages_counts_every_break() {
+    let cached = docx(&format!(
+        r#"{}<w:p><w:r><w:t>Long</w:t></w:r><w:r><w:lastRenderedPageBreak/><w:t>more</w:t></w:r><w:r><w:lastRenderedPageBreak/><w:t>most</w:t></w:r></w:p>{}"#,
+        para("One"),
+        para("Tail")
+    ));
+    assert_eq!(
+        body(&agent(&cached)),
+        "<!-- page 1 of 3 -->\n\n<!-- p0 -->\nOne\n\n<!-- page 2 of 3 -->\n\n<!-- p1 -->\nLongmoremost\n\n<!-- page 3 of 3 -->\n\n<!-- p2 -->\nTail\n"
+    );
+    let hard = docx(&format!(
+        r#"<w:p><w:r><w:t>A</w:t><w:br w:type="page"/><w:t>B</w:t><w:br w:type="page"/><w:t>C</w:t></w:r></w:p>{}"#,
+        para("D")
+    ));
+    let out = body(&agent(&hard)).to_string();
+    assert!(
+        out.starts_with("<!-- page 1 of 3 -->\n\n<!-- p0 page-break -->\n"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("\n<!-- page 3 of 3 -->\n\n<!-- p1 -->\nD\n"),
+        "{out}"
+    );
+}
+
+/// PR #385 review: Word shows an empty numbered paragraph's label and spends
+/// its number; the agent view keeps that paragraph's line with its label.
+/// The plain conversion still counts written paragraphs only (see
+/// `Writer::paragraph`).
+#[test]
+fn an_empty_numbered_paragraph_spends_its_number() {
+    let numbering = Part {
+        name: "word/numbering.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+        xml: &format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+        ),
+    };
+    let item = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>{}</w:p>"#,
+            if text.is_empty() {
+                String::new()
+            } else {
+                format!("<w:r><w:t>{text}</w:t></w:r>")
+            }
+        )
+    };
+    let bytes = common::docx::docx_with(
+        &format!("{}{}{}", item("First"), item(""), item("Third")),
+        &[numbering],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(out.contains("<!-- p1 empty, num \"2.\" -->\n"), "{out}");
+    assert!(out.contains("<!-- p2 num \"3.\" -->\n3. Third"), "{out}");
+    let plain = docx_to_markdown(&bytes, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert!(plain.contains("2. Third"), "{plain}");
+}
+
+/// PR #385 review: rows and cells inside content controls count on the
+/// table line, as the pipe table below it prints them.
+#[test]
+fn table_line_counts_rows_inside_content_controls() {
+    let row = |a: &str, b: &str| {
+        format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>{a}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{b}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let tbl = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt></w:tbl>"#,
+        row("a", "b"),
+        row("c", "d")
+    );
+    let out = body(&agent(&docx(&tbl))).to_string();
+    assert!(
+        out.contains("<!-- t0 2x2, cells p0-p3 by row -->\n"),
+        "{out}"
+    );
+}
+
+/// PR #385 review: an inserted row's revision survives into the resolved
+/// views' table line; rejecting it removes the row.
+#[test]
+fn a_row_revision_shows_on_the_table_line_after_resolution() {
+    let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:ins w:id="7" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>c</w:t></w:r></w:ins></w:p></w:tc><w:tc><w:p><w:ins w:id="9" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl>"#;
+    let bytes = docx(tbl);
+    let accepted = body(&agent_with(&bytes, TrackChanges::Accept, true)).to_string();
+    assert!(accepted.contains(" rev #7 @AC in r1"), "{accepted}");
+    let rejected = body(&agent_with(&bytes, TrackChanges::Reject, true)).to_string();
+    assert!(
+        rejected.contains("<!-- t0 1x2, cells p0-p1 by row -->"),
+        "{rejected}"
+    );
+}

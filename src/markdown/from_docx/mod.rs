@@ -1128,15 +1128,19 @@ impl Writer<'_> {
 
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
-        // Computed once, and only for a written paragraph, as the plain
-        // conversion always did, so Word's list counters advance alike.
-        let list_marker: Option<(String, usize)> = if written && heading.is_none() {
+        // Computed once. The agent view counts empty paragraphs too, as Word
+        // does (it shows an empty numbered paragraph's label and spends its
+        // number). The plain conversion counts written paragraphs only: its
+        // labels are text, so a tracked change that merges an empty numbered
+        // paragraph away would leave the resolved markup a number off
+        // (Word's own markup shows both, `4.3.`).
+        let list_marker: Option<(String, usize)> = if (written || self.agent) && heading.is_none() {
             num.clone()
                 .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)).map(|m| (m, ilvl)))
         } else {
             None
         };
-        let heading_marker: Option<String> = if self.agent && written && heading.is_some() {
+        let heading_marker: Option<String> = if self.agent && heading.is_some() {
             num.clone()
                 .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)))
         } else {
@@ -1156,13 +1160,16 @@ impl Writer<'_> {
             };
             self.para_comments.clear();
             let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
+            let numbered = heading_marker.is_some() || list_marker.is_some();
             if empty
+                && !numbered
                 && comments.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
             {
                 if self.page_sections.is_none() && agent::has_rendered_page_break(p) {
                     self.flush_empty(blocks);
                     self.page_lines(blocks, true);
+                    self.turn_pages(agent::rendered_page_breaks(p) - 1);
                 }
                 self.pending_empty.push(index);
                 return;
@@ -1170,6 +1177,12 @@ impl Writer<'_> {
             self.flush_empty(blocks);
             let opens = self.opens_page(agent::has_rendered_page_break(p));
             self.page_lines(blocks, opens);
+            // The pages a paragraph turns past the one it opens or ends.
+            self.turn_pages(if self.page_sections.is_none() {
+                agent::rendered_page_breaks(p).saturating_sub(1)
+            } else {
+                agent::page_breaks(p).saturating_sub(1)
+            });
             if self
                 .page_sections
                 .as_ref()

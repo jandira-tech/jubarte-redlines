@@ -320,6 +320,23 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
             element.attrs.push((REVS.to_string(), revs.join(" ")));
         }
     }
+    // Row and cell revisions, which resolution strips with the `trPr` and
+    // `tcPr` markers: the table line names them by row and cell.
+    let held = match element.local() {
+        "tr" => element.child("trPr").map(|pr| ("row", pr)),
+        "tc" => element.child("tcPr").map(|pr| ("cell", pr)),
+        _ => None,
+    };
+    if let Some((kind, pr)) = held {
+        let revs: Vec<String> = pr
+            .elements()
+            .filter(|m| matches!(m.local(), "ins" | "del" | "cellIns" | "cellDel"))
+            .map(|m| format!("{kind}:{}", tag_of(m, handles)))
+            .collect();
+        if !revs.is_empty() {
+            element.attrs.push((REVS.to_string(), revs.join(" ")));
+        }
+    }
     if element.is("tbl") && !in_cell {
         element.attrs.push((TABLE.to_string(), c.t.to_string()));
         c.t += 1;
@@ -335,9 +352,11 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
     }
 }
 
-/// The `kind:tag` entries stamped on a paragraph, as (kind, tag).
-pub(crate) fn stamped_revs(p: &Element) -> Vec<(String, String)> {
-    p.attr(REVS)
+/// The `kind:tag` entries stamped on a paragraph, row or cell, as (kind,
+/// tag).
+pub(crate) fn stamped_revs(element: &Element) -> Vec<(String, String)> {
+    element
+        .attr(REVS)
         .map(|revs| {
             revs.split(' ')
                 .filter_map(|r| {
@@ -523,12 +542,35 @@ fn holds(e: &Element, hit: &dyn Fn(&Element) -> bool) -> bool {
         .any(|c| !c.is("txbxContent") && (hit(c) || holds(c, hit)))
 }
 
+/// How many elements under `e` (text boxes excluded) `hit` matches.
+fn count(e: &Element, hit: &dyn Fn(&Element) -> bool) -> usize {
+    e.elements()
+        .filter(|c| !c.is("txbxContent"))
+        .map(|c| usize::from(hit(c)) + count(c, hit))
+        .sum()
+}
+
+fn is_page_break(e: &Element) -> bool {
+    e.is("br") && e.attr("type") == Some("page")
+}
+
 pub(crate) fn has_page_break(p: &Element) -> bool {
-    holds(p, &|e| e.is("br") && e.attr("type") == Some("page"))
+    holds(p, &is_page_break)
 }
 
 pub(crate) fn has_rendered_page_break(p: &Element) -> bool {
     holds(p, &|e| e.is("lastRenderedPageBreak"))
+}
+
+/// The hard page breaks in `p`: a paragraph can hold several.
+pub(crate) fn page_breaks(p: &Element) -> usize {
+    count(p, &is_page_break)
+}
+
+/// The cached page breaks in `p`: a paragraph that runs over three pages
+/// holds two.
+pub(crate) fn rendered_page_breaks(p: &Element) -> usize {
+    count(p, &|e| e.is("lastRenderedPageBreak"))
 }
 
 /// The paragraphs under `e` in document order, text boxes excluded.
@@ -577,10 +619,10 @@ pub(crate) fn table_breaks(tbl: &Element, cached: bool) -> (bool, usize) {
     let ps = paragraphs(tbl);
     if cached {
         let first = ps.first().is_some_and(|p| has_rendered_page_break(p));
-        let all = ps.iter().filter(|p| has_rendered_page_break(p)).count();
+        let all: usize = ps.iter().map(|p| rendered_page_breaks(p)).sum();
         (first, all - usize::from(first))
     } else {
-        (false, ps.iter().filter(|p| has_page_break(p)).count())
+        (false, ps.iter().map(|p| page_breaks(p)).sum())
     }
 }
 
@@ -702,8 +744,8 @@ pub(crate) fn page_marker(page: usize, total: usize) -> String {
 /// cached-break page count.
 pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
     let ps = paragraphs(body);
-    let rendered = ps.iter().filter(|p| has_rendered_page_break(p)).count();
-    let hard = ps.iter().filter(|p| has_page_break(p)).count() + page_sections(body).len();
+    let rendered = ps.iter().map(|p| rendered_page_breaks(p)).sum();
+    let hard = ps.iter().map(|p| page_breaks(p)).sum::<usize>() + page_sections(body).len();
     (rendered, hard)
 }
 
@@ -717,14 +759,14 @@ pub(crate) fn table_line(
     handles: &Handles,
 ) -> Option<String> {
     let t = tbl.attr(TABLE)?;
-    let rows: Vec<&Element> = tbl.children_named("tr").collect();
+    let rows: Vec<&Element> = super::table_rows(tbl);
     let cols = tbl
         .child("tblGrid")
         .map(|g| g.children_named("gridCol").count())
         .filter(|&c| c > 0)
         .unwrap_or_else(|| {
             rows.iter()
-                .map(|r| r.children_named("tc").count())
+                .map(|r| super::row_cells(r).count())
                 .max()
                 .unwrap_or(0)
         });
@@ -745,9 +787,23 @@ pub(crate) fn table_line(
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
     let mut held: Vec<String> = Vec::new();
-    for tr in &rows {
+    for (r, tr) in rows.iter().enumerate() {
         let mut range: Option<(usize, usize)> = None;
-        for tc in tr.children_named("tc") {
+        if resolved {
+            revs.extend(
+                stamped_revs(tr)
+                    .into_iter()
+                    .map(|(_, tag)| format!("{} in r{r}", format_tag(&tag))),
+            );
+        }
+        for (c, tc) in super::row_cells(tr).enumerate() {
+            if resolved {
+                revs.extend(
+                    stamped_revs(tc)
+                        .into_iter()
+                        .map(|(_, tag)| format!("{} in r{r}.c{c}", format_tag(&tag))),
+                );
+            }
             if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
                 merged = true;
             }
