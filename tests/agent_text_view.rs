@@ -1847,3 +1847,145 @@ fn underline_from_a_character_style_shows() {
     let out = body(&agent(&bytes)).to_string();
     assert!(out.contains("<u>styled</u> plain"), "{out}");
 }
+
+#[test]
+fn changed_author_handles_match_whole_handles_including_collision_suffixes() {
+    let bytes = docx(&format!(
+        "<w:p>{}</w:p><w:p>{}</w:p>{}",
+        ins(0, "Ann Counsel", "First author"),
+        ins(1, "Alice Cooper", "Second author"),
+        para("Quiet")
+    ));
+    // Both authors have the same initials; matching @AC must not match @AC2.
+    for (by, kept, excluded) in [
+        ("Ann Counsel", "First author", "Second author"),
+        ("Alice Cooper", "Second author", "First author"),
+    ] {
+        let out = agent_options(&bytes, &changed(Some(by)));
+        assert!(body(&out).contains(kept), "{out}");
+        assert!(!body(&out).contains(excluded), "{out}");
+        assert!(!body(&out).contains("Quiet"), "{out}");
+    }
+    for unknown in ["@missing", "@", "", "ann counsel", "AC999"] {
+        let out = agent_options(&bytes, &changed(Some(unknown)));
+        assert!(body(&out).trim().is_empty(), "{unknown}: {out}");
+    }
+}
+
+#[test]
+fn changed_keeps_comment_only_blocks_and_ignores_orphan_references() {
+    let bytes = one_comment_docx(&format!(
+        "{}<w:p>{}{}</w:p><w:p>{}{}</w:p>",
+        para("Quiet"),
+        run("Reviewed"),
+        reference(9),
+        run("Orphan"),
+        reference(99)
+    ));
+    for comments in [true, false] {
+        let out = agent_options(
+            &bytes,
+            &MarkdownOptions {
+                comments,
+                ..changed(None)
+            },
+        );
+        assert!(out.contains("range: changed (p1) of p0-p2"), "{out}");
+        assert!(body(&out).contains("Reviewed"), "{out}");
+        assert!(
+            !body(&out).contains("Quiet") && !body(&out).contains("Orphan"),
+            "{out}"
+        );
+    }
+    let by_author = agent_options(&bytes, &changed(Some("Ann Counsel")));
+    assert!(body(&by_author).contains("Reviewed"), "{by_author}");
+    assert!(!body(&by_author).contains("Orphan"), "{by_author}");
+}
+
+#[test]
+fn changed_selects_whole_tables_for_hidden_comments() {
+    let bytes = one_comment_docx(&format!(
+        "<w:tbl><w:tr><w:tc>{}</w:tc><w:tc><w:p>{}{}</w:p></w:tc></w:tr></w:tbl>{}",
+        para("Context cell"),
+        run("Reviewed cell"),
+        reference(9),
+        para("Quiet")
+    ));
+    let out = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            comments: false,
+            ..changed(None)
+        },
+    );
+    assert!(out.contains("range: changed (t0) of p0-p2"), "{out}");
+    assert!(
+        body(&out).contains("Context cell") && body(&out).contains("Reviewed cell"),
+        "{out}"
+    );
+    assert!(!body(&out).contains("Quiet"), "{out}");
+}
+
+#[test]
+fn changed_finds_formatting_and_break_marks_without_inline_revisions() {
+    let bytes = docx(&format!(
+        r#"{}<w:p><w:pPr><w:rPr><w:ins w:id="4" w:author="Ann Counsel"/></w:rPr></w:pPr>{}</w:p><w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Bob Lee"><w:rPr/></w:rPrChange></w:rPr><w:t>Formatted</w:t></w:r></w:p>"#,
+        para("Quiet"),
+        run("Split")
+    ));
+    let all = agent_options(&bytes, &changed(None));
+    assert!(all.contains("range: changed (p1, p2) of p0-p2"), "{all}");
+    for (by, kept, excluded) in [("AC", "Split", "Formatted"), ("BL", "Formatted", "Split")] {
+        let out = agent_options(&bytes, &changed(Some(by)));
+        assert!(body(&out).contains(kept), "{out}");
+        assert!(
+            !body(&out).contains(excluded) && !body(&out).contains("Quiet"),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn changed_in_reject_view_keeps_the_deleted_authors_block() {
+    let out = agent_options(
+        &marked_docx(),
+        &MarkdownOptions {
+            track_changes: TrackChanges::Reject,
+            ..changed(Some("Bob Lee"))
+        },
+    );
+    assert!(out.contains("range: changed by @BL (p3) of p0-p3"), "{out}");
+    assert!(body(&out).contains("Fee: waived"), "{out}");
+    assert!(
+        !body(&out).contains("Pay in") && !body(&out).contains("Quiet"),
+        "{out}"
+    );
+    assert!(!body(&out).contains("{--"), "{out}");
+}
+
+#[test]
+fn changed_flags_reject_even_zero_length_or_empty_conflicting_selections() {
+    for (paragraphs, head, tail) in [
+        (Some(""), None, None),
+        (None, Some(0), None),
+        (None, None, Some(0)),
+    ] {
+        assert_eq!(
+            Select::from_flags(paragraphs, head, tail, true, None),
+            Err("changed excludes paragraphs, head and tail".into())
+        );
+    }
+    assert_eq!(
+        Select::from_flags(None, None, None, false, Some("")),
+        Err("by needs changed".into())
+    );
+    assert_eq!(Select::from_flags(None, None, None, false, None), Ok(None));
+    assert_eq!(
+        Select::from_flags(None, None, None, true, None),
+        Ok(Some(Select::Changed { by: None }))
+    );
+    assert_eq!(
+        Select::from_flags(None, None, Some(0), false, None),
+        Ok(Some(Select::Tail(0)))
+    );
+}
