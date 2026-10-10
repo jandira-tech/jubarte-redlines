@@ -165,8 +165,8 @@ Tasks:
   comments      List comments, threads and the text they annotate
   append        Join documents in order, preserving images, styles, lists and notes
   validate      Check or repair Word validity (findings: exit 2; unreadable: exit 1)
-  fields        Field results written back into the document from jubarte's layout
-  scrub         Remove authors, editing IDs, metadata and comments before sharing
+  scrub         Field results written back into the document from jubarte's layout.
+                Remove authors, editing IDs, metadata and comments before sharing
   audit         Audit accessibility, style and structure (findings: exit 2)
   help          Print this message or the help of the given subcommand(s)
 
@@ -547,6 +547,13 @@ Options:
           Exit 4 when a requested font was substituted (listed on stderr and in
           --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
           requested font was substituted
+
+      --update-fields
+          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
+          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
+          --track-changes. Field codes stay, so Word can update them again; page numbers
+          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
+          per field; --report writes `{page_count, fields}`
 
       --timeout <SECONDS>
           Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
@@ -1376,54 +1383,12 @@ Examples:
   jubarte validate review/redline.docx --original contract.docx --author Claude
 ```
 
-#### `jubarte fields`
-
-```text
-$ jubarte fields --help
-Field results written back into the document from jubarte's layout
-
-Usage: jubarte fields <COMMAND>
-
-Commands:
-  update  Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
-          jubarte's layout; TOCs are rebuilt from the headings. Field codes stay, so
-          Word can update them again. Page numbers are jubarte's layout, not Word's
-          (docs/WORD_DIFFERENCES.md)
-  help    Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help  Print help
-```
-
-#### `jubarte fields update`
-
-```text
-$ jubarte fields update --help
-Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from jubarte's
-layout; TOCs are rebuilt from the headings. Field codes stay, so Word can update them
-again. Page numbers are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md)
-
-Usage: jubarte fields update [OPTIONS] --output <FILE> <FILE>
-
-Arguments:
-  <FILE>  The document (.docx)
-
-Options:
-  -o, --output <FILE>  Output path
-      --force          Overwrite the output file if it already exists
-      --json           Print the fields written as JSON
-  -h, --help           Print help
-
-Examples:
-  jubarte fields update in.docx -o out.docx          one line per field written
-  jubarte fields update in.docx -o out.docx --json   {"page_count", "fields": [...]}
-```
-
 #### `jubarte scrub`
 
 ```text
 $ jubarte scrub --help
-Remove authors, editing IDs, metadata and comments before sharing
+Field results written back into the document from jubarte's layout. Remove authors,
+editing IDs, metadata and comments before sharing
 
 Usage: jubarte scrub [OPTIONS] --output <FILE> <FILE>
 
