@@ -1242,6 +1242,10 @@ class EditOutcome:
     comment_id: int | None = None
     code: str | None = None
     message: str | None = None
+    #: The anchor as given, when it matched only without its Markdown marks.
+    anchor_given: str | None = None
+    #: The plain text it was read as.
+    anchor_read_as: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1310,6 +1314,8 @@ class _EditOutcomeRow(TypedDict):
     comment_id: NotRequired[int]
     code: NotRequired[str]
     message: NotRequired[str]
+    anchor_given: NotRequired[str]
+    anchor_read_as: NotRequired[str]
 
 
 def _decode_outcomes(rows: list[_EditOutcomeRow]) -> tuple[EditOutcome, ...]:

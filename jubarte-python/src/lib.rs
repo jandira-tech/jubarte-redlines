@@ -746,6 +746,41 @@ fn read_view(
     Ok((view.markdown, view.warnings))
 }
 
+/// The plan the `edit`/`add` operation flags describe → `(plan_json,
+/// notes)`; `operations` is the parsed command's `operations` array as JSON.
+/// A `ValueError` is a usage error.
+#[pyfunction]
+#[pyo3(signature = (verb, operations, docx, *, author, date = None, existing = "auto"))]
+fn flag_plan(
+    py: Python<'_>,
+    verb: &str,
+    operations: &str,
+    docx: &[u8],
+    author: &str,
+    date: Option<&str>,
+    existing: &str,
+) -> PyResult<(String, Vec<String>)> {
+    py.detach(|| {
+        jubarte::edit::flags::plan_from_flags_json(verb, operations, author, date, existing, docx)
+    })
+    .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+/// view `edit` and `add` print; `accepted` reads its accepted text.
+#[pyfunction]
+#[pyo3(signature = (docx, author, *, accepted = false, source = None))]
+fn changed_view(
+    py: Python<'_>,
+    docx: &[u8],
+    author: &str,
+    accepted: bool,
+    source: Option<&str>,
+) -> PyResult<String> {
+    py.detach(|| jubarte::markdown::changed_view(docx, author, accepted, source))
+        .map_err(err)
+}
+
 /// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
 ///
 /// On success `json` is the report; on refusal it is the structured error
@@ -976,6 +1011,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("JubarteError", m.py().get_type::<JubarteError>())?;
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
+    m.add_function(wrap_pyfunction!(flag_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(changed_view, m)?)?;
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(get_revisions_json, m)?)?;

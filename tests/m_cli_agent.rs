@@ -398,7 +398,7 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
 }
 
 #[test]
-fn edit_writes_and_prints_the_patch_of_the_redline_unless_quiet() {
+fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_fixture(dir.path());
     let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
@@ -448,7 +448,17 @@ fn edit_writes_and_prints_the_patch_of_the_redline_unless_quiet() {
         )
         .replace(['{', '}', '+', '='], "");
     assert!(accepted.contains("1(g), 2(c), 2(e), 3"), "{accepted}");
-    assert!(stdout.contains(&patch), "{stdout}");
+    // stdout carries the redline's changed blocks as the agent view, not
+    // the patch (which stays on disk).
+    assert!(!stdout.contains("\n@@ "), "{stdout}");
+    assert!(
+        stdout.contains("\nrange: changed by @C (p1, p2) of p0-p2\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("{~~his or her~>an~~}") && stdout.contains("#c0 @C: post-disclosure duty"),
+        "{stdout}"
+    );
     assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");
     // Quiet: the same files, nothing printed.
     let (stdout, quiet_patch) = edit("quiet", true);

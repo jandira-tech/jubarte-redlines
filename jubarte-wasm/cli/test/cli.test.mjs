@@ -176,6 +176,31 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
   assert.ok(!fs.existsSync(path.join(tmp, "refused")));
 });
 
+test("edit and add by flags print the changed blocks, as the binary does", () => {
+  const para = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const word = para.text.split(" ")[0];
+  const dir = path.join(tmp, "flags");
+  const r = run("edit", untracked, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed", "--author", "Ann Counsel", "--out-dir", dir);
+  assert.equal(r.code, 0, r.err);
+  for (const name of ["clean.docx", "redline.docx", "patch.diff", "report.jsonl"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
+  assert.match(r.out, new RegExp(`\\nrange: changed by @AC \\(p${para.index}\\) of p0-`));
+  assert.ok(r.out.includes(`{~~${word}~>Changed~~}`), r.out);
+  assert.doesNotMatch(r.out, /\n@@ /);
+  // --plan excludes the flags; a flag before any -p and a bare -p are usage errors.
+  for (const bad of [["--plan", "x.json", "-p", "p1", "--delete"], ["--anchor", "a", "-p", "p1", "--content", "b"], ["-p", "p1"]]) {
+    assert.equal(run("edit", untracked, ...bad, "--out-dir", path.join(tmp, "flags-bad")).code, 2, bad.join(" "));
+  }
+  const comment = run("add", untracked, "-p", `p${para.index}`, "--anchor", word, "--content", "Why?", "--author", "Ann Counsel", "--out-dir", path.join(tmp, "flags-comment"));
+  assert.equal(comment.code, 0, comment.err);
+  assert.ok(comment.out.includes(`{==${word}==}{>>#c0 @AC: Why?<<}`), comment.out);
+  const editing = run("add", untracked, "-p", `p${para.index}`, "--content", "Recitals", "--editing-mode", "--out-dir", path.join(tmp, "flags-editing"));
+  assert.equal(editing.code, 0, editing.err);
+  assert.ok(!fs.existsSync(path.join(tmp, "flags-editing", "redline.docx")));
+  // The new paragraph after a heading keeps the heading's style here (`# Recitals`).
+  assert.match(editing.out, /\n(# )?Recitals\n/);
+  assert.ok(!editing.out.includes("{++"), editing.out);
+});
+
 test("help, version and usage errors", () => {
   const help = run("--help");
   assert.equal(help.code, 0);

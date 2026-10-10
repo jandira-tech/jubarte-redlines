@@ -13,6 +13,7 @@ export const applyEditPlan: (a: number, b: number, c: number, d: number, e: numb
 export const auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
 export const auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const capabilities: (a: number) => void;
+export const changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
 export const diffDocumentsCritic: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
@@ -26,6 +27,7 @@ export const editoutput_json: (a: number, b: number) => void;
 export const editoutput_ok: (a: number) => number;
 export const editoutput_patch: (a: number, b: number) => void;
 export const editoutput_redline: (a: number, b: number) => void;
+export const flagPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const getRevisions: (a: number, b: number, c: number, d: number, e: number) => void;
 export const initPanicHook: () => void;
 export const inspectDocument: (a: number, b: number, c: number) => void;

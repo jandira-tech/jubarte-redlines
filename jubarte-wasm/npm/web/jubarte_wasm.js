@@ -539,6 +539,50 @@ export function capabilities() {
 }
 
 /**
+ * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+ * view `edit` and `add` print (every changed block when none does);
+ * `accepted` reads its accepted text, `source` is the name printed as
+ * `source:`.
+ *
+ * Mirrors `jubarte::markdown::changed_view`.
+ * @param {Uint8Array} docx
+ * @param {string} author
+ * @param {boolean} accepted
+ * @param {string | null} [source]
+ * @returns {string}
+ */
+export function changedView(docx, author, accepted, source) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.changedView(retptr, ptr0, len0, ptr1, len1, accepted, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
  *
  * Mirrors `jubarte::document_comparer::compare_documents`.
@@ -914,6 +958,55 @@ export function editReportJsonl(report_json) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The plan the `edit`/`add` operation flags describe, as JSON `{plan,
+ * notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
+ * `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
+ * `operationsJson` the parsed command's `operations` array. Options (JSON,
+ * all optional): `author` (default `Modified User`), `date`,
+ * `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
+ * An error is a usage error.
+ *
+ * Mirrors `jubarte::edit::flags::plan_from_flags`.
+ * @param {string} verb
+ * @param {string} operations_json
+ * @param {Uint8Array} docx
+ * @param {string | null} [options_json]
+ * @returns {string}
+ */
+export function flagPlan(verb, operations_json, docx, options_json) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(operations_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.flagPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred6_0, deferred6_1, 1);
     }
 }
 

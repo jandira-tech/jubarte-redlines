@@ -42,6 +42,7 @@ from .models import Finding, PdfOptions, RevisionStyle
 
 EXIT_OK = 0
 EXIT_ERROR = 1
+EXIT_USAGE = 2
 EXIT_PLAN_REFUSED = 3
 EXIT_PAGES_DIFFER = 5
 EXIT_FINDINGS = 2
@@ -201,20 +202,59 @@ def cmd_read(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_edit(args: argparse.Namespace) -> int:
-    doc = _read(args.file)
+def _default_out_dir(file: Path) -> Path:
+    """``<dir>/<stem>.edit`` next to the source, as the binary."""
+    return file.with_name(f"{file.stem}.edit")
+
+
+def _edit_plan(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str, list[str]]:
+    """``--plan``'s text, or the plan the operation flags describe, and its notes."""
+    from . import _native
+
+    if getattr(args, "plan", None) is not None:
+        try:
+            return Path(args.plan).read_text(encoding="utf-8"), []
+        except OSError as exc:
+            raise CliError(f"reading {args.plan}: {exc}") from exc
     try:
-        plan_text = Path(args.plan).read_text(encoding="utf-8")
-    except OSError as exc:
-        raise CliError(f"reading {args.plan}: {exc}") from exc
-    out_dir: Path = args.out_dir
-    if not args.dry_run:
+        plan, notes = _native.flag_plan(
+            verb,
+            json.dumps(args.operations, ensure_ascii=False),
+            source,
+            author=args.author,
+            date=args.datetime,
+            existing=args.existing_revisions,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE) from exc
+    return plan, list(notes)
+
+
+def cmd_edit(args: argparse.Namespace) -> int:
+    return _run_edit(args, "edit")
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    return _run_edit(args, "add")
+
+
+def _run_edit(args: argparse.Namespace, verb: str) -> int:
+    from . import _native
+
+    doc = _read(args.file)
+    plan_text, notes = _edit_plan(args, verb, doc.to_bytes())
+    editing = bool(args.editing_mode)
+    dry_run = bool(getattr(args, "dry_run", False))
+    pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
+    out_dir: Path = args.out_dir if args.out_dir is not None else _default_out_dir(args.file)
+    if not dry_run:
         if out_dir.exists() and not args.force:
             raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
         if out_dir.resolve() == args.file.resolve().parent:
             raise CliError("--out-dir must not be the input's own directory")
     try:
-        if args.dry_run:
+        if dry_run:
             sys.stdout.write(doc.preview(plan_text).to_jsonl())
             return EXIT_OK
         result = doc.edit(plan_text)
@@ -230,25 +270,26 @@ def cmd_edit(args: argparse.Namespace) -> int:
         return EXIT_PLAN_REFUSED
     lines = result.report.to_jsonl().splitlines()
     summary = lines.pop()
-    outputs: list[tuple[str, bytes]] = [
-        ("clean.docx", result.clean.to_bytes()),
-        ("redline.docx", result.redline.to_bytes()),
-        ("patch.diff", result.diff.text.encode("utf-8")),
-    ]
-    if args.pdf or args.png:
+    outputs: list[tuple[str, bytes]] = [("clean.docx", result.clean.to_bytes())]
+    if not editing:
+        outputs += [
+            ("redline.docx", result.redline.to_bytes()),
+            ("patch.diff", result.diff.text.encode("utf-8")),
+        ]
+    if pdf or png:
         options = PdfOptions(compress=True, revisions=args.revisions, revision_palette=args.revision_palette)
         pages: dict[str, int] = {}
         starts: dict[str, list[str]] = {}
-        for name, document in (("redline", result.redline), ("clean", result.clean)):
-            rendered = document.render(pdf=args.pdf, png_dpi=args.dpi if args.png else None, options=options)
+        rendered_docs = (("clean", result.clean),) if editing else (("redline", result.redline), ("clean", result.clean))
+        for name, document in rendered_docs:
+            rendered = document.render(pdf=pdf, png_dpi=args.dpi if png else None, options=options)
             pages[name] = rendered.report.page_count
             starts[name] = [(p.text.splitlines() or [""])[0][:60] for p in rendered.report.pages]
             if rendered.pdf is not None:
                 outputs.append((f"{name}.pdf", rendered.pdf))
-            for i, png in enumerate(rendered.pngs):
-                outputs.append((_png_name(name, i, len(rendered.pngs)), png))
+            for i, image in enumerate(rendered.pngs):
+                outputs.append((_png_name(name, i, len(rendered.pngs)), image))
         lines.append(json.dumps({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts}, ensure_ascii=False))
-    from . import _native
 
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
@@ -261,8 +302,17 @@ def cmd_edit(args: argparse.Namespace) -> int:
     if args.quiet:
         return EXIT_OK
     print(summary)
-    print(f"wrote {out_dir} ({len(outputs) + 1} files: clean.docx, redline.docx, patch.diff, report.jsonl{', …' if len(outputs) > 3 else ''})")
-    sys.stdout.write(result.diff.text)
+    names = [name for name, _ in outputs] + ["report.jsonl"]
+    print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})")
+    for note in notes:
+        print(f"note: {note}")
+    for outcome in result.report.operations:
+        if outcome.anchor_given is not None and outcome.anchor_read_as is not None:
+            given, read_as = json.dumps(outcome.anchor_given, ensure_ascii=False), json.dumps(outcome.anchor_read_as, ensure_ascii=False)
+            print(f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)")
+    shown = out_dir / ("clean.docx" if editing else "redline.docx")
+    view = _native.changed_view(result.redline.to_bytes(), result.report.author, accepted=editing, source=str(shown))
+    sys.stdout.write(view)
     return EXIT_OK
 
 
@@ -599,7 +649,7 @@ def cmd_capabilities(_args: argparse.Namespace) -> int:
 
 # Handlers own host I/O. Rust clap owns the grammar, defaults and help.
 _HANDLERS = {
-    "inspect": cmd_inspect, "read": cmd_read, "edit": cmd_edit,
+    "inspect": cmd_inspect, "read": cmd_read, "edit": cmd_edit, "add": cmd_add,
     "convert": cmd_convert, "compare": cmd_compare, "diff": cmd_diff,
     "revisions": cmd_revisions, "changes": cmd_changes, "comments": cmd_comments,
     "accept": cmd_accept, "reject": cmd_reject, "diff-render": cmd_diff_render,

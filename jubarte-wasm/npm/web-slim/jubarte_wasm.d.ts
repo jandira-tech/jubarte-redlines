@@ -139,6 +139,16 @@ export function auditTracked(original: Uint8Array, edited: Uint8Array, author: s
 export function capabilities(): string;
 
 /**
+ * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+ * view `edit` and `add` print (every changed block when none does);
+ * `accepted` reads its accepted text, `source` is the name printed as
+ * `source:`.
+ *
+ * Mirrors `jubarte::markdown::changed_view`.
+ */
+export function changedView(docx: Uint8Array, author: string, accepted: boolean, source?: string | null): string;
+
+/**
  * Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
  *
  * Mirrors `jubarte::document_comparer::compare_documents`.
@@ -198,6 +208,19 @@ export function documentMarkdownWithChanges(docx: Uint8Array, track_changes: str
  * `summary`), for agent logs.
  */
 export function editReportJsonl(report_json: string): string;
+
+/**
+ * The plan the `edit`/`add` operation flags describe, as JSON `{plan,
+ * notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
+ * `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
+ * `operationsJson` the parsed command's `operations` array. Options (JSON,
+ * all optional): `author` (default `Modified User`), `date`,
+ * `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
+ * An error is a usage error.
+ *
+ * Mirrors `jubarte::edit::flags::plan_from_flags`.
+ */
+export function flagPlan(verb: string, operations_json: string, docx: Uint8Array, options_json?: string | null): string;
 
 /**
  * List the tracked revisions in a DOCX as a JSON array string — the same
@@ -355,6 +378,7 @@ export interface InitOutput {
     readonly auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly capabilities: (a: number) => void;
+    readonly changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
     readonly diffDocumentsCritic: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
@@ -368,6 +392,7 @@ export interface InitOutput {
     readonly editoutput_ok: (a: number) => number;
     readonly editoutput_patch: (a: number, b: number) => void;
     readonly editoutput_redline: (a: number, b: number) => void;
+    readonly flagPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly getRevisions: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly initPanicHook: () => void;
     readonly inspectDocument: (a: number, b: number, c: number) => void;

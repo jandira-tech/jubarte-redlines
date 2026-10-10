@@ -265,64 +265,90 @@ const COMMANDS = {
       console.log(`wrote ${output} (${pdf.length} bytes, ${plural(wasm.pdfPageCount(pdf), "page")})`);
     },
   },
-  edit: {
-    run(name, [file], o) {
-      const docx = read(file);
-      let plan;
-      try {
-        plan = fs.readFileSync(o.plan, "utf8");
-      } catch (e) {
-        throw new CliError(`reading ${o.plan}: ${e.message}`);
-      }
-      const outDir = o.out_dir;
-      if (!o.dry_run) {
-        if (fs.existsSync(outDir) && !o.force) {
-          throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
-        }
-        if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
-          throw new CliError("--out-dir must not be the input's own directory");
-        }
-      }
-      const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan);
-      if (!result.ok) {
-        const error = JSON.parse(result.json);
-        (error.outcomes ?? []).forEach((outcome, i) => {
-          const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
-          for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
-            if (outcome[field] != null) row[key] = outcome[field];
-          }
-          console.log(JSON.stringify(row));
-        });
-        console.log(JSON.stringify({ ev: "summary", status: "failed", code: error.code, operation: error.operation, message: error.message }));
-        console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
-        return EXIT_PLAN_REFUSED;
-      }
-      const jsonl = wasm.editReportJsonl(result.json);
-      if (o.dry_run) return void process.stdout.write(jsonl);
-      const lines = jsonl.trimEnd().split("\n");
-      const summary = lines.pop();
-      // jubarte-wasm 0.10.1 has no patch; later builds carry it.
-      const outputs = [["clean.docx", result.clean], ["redline.docx", result.redline]];
-      if (typeof result.patch === "string") outputs.push(["patch.diff", Buffer.from(result.patch, "utf8")]);
-      fs.mkdirSync(outDir, { recursive: true });
-      const saved = outputs.map(([name, data]) => {
-        write(path.join(outDir, name), data);
-        return { f: name, bytes: data.length, sha256: wasm.sourceSha256(data) };
-      });
-      lines.push(JSON.stringify({ ev: "save", dir: outDir, outputs: saved }), summary);
-      write(path.join(outDir, "report.jsonl"), `${lines.join("\n")}\n`);
-      if (o.quiet) return;
-      console.log(summary);
-      console.log(`wrote ${outDir} (${outputs.length + 1} files: ${[...outputs.map(([n]) => n), "report.jsonl"].join(", ")})`);
-      if (typeof result.patch === "string") process.stdout.write(result.patch);
-    },
-  },
+  edit: { run: (name, [file], o) => runEdit("edit", file, o) },
+  add: { run: (name, [file], o) => runEdit("add", file, o) },
   capabilities: {
     run() {
       console.log(JSON.stringify(JSON.parse(wasm.capabilities()), null, 2));
     },
   },
 };
+
+/** `--plan`'s text, or the plan the operation flags describe, and its notes. */
+function editPlan(verb, docx, o) {
+  if (o.plan != null) {
+    try {
+      return { plan: fs.readFileSync(o.plan, "utf8"), notes: [] };
+    } catch (e) {
+      throw new CliError(`reading ${o.plan}: ${e.message}`);
+    }
+  }
+  try {
+    const options = { author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions };
+    return JSON.parse(wasm.flagPlan(verb, JSON.stringify(o.operations ?? []), docx, JSON.stringify(options)));
+  } catch (e) {
+    throw new UsageError(String(e?.message ?? e).replace(/^jubarte-wasm: /, ""));
+  }
+}
+
+function runEdit(verb, file, o) {
+  const docx = read(file);
+  const { plan, notes } = editPlan(verb, docx, o);
+  const editing = Boolean(o.editing_mode);
+  const outDir = o.out_dir ?? path.join(path.dirname(file), `${stem(file)}.edit`);
+  if (!o.dry_run) {
+    if (fs.existsSync(outDir) && !o.force) {
+      throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
+    }
+    if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
+      throw new CliError("--out-dir must not be the input's own directory");
+    }
+  }
+  const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan);
+  if (!result.ok) {
+    const error = JSON.parse(result.json);
+    (error.outcomes ?? []).forEach((outcome, i) => {
+      const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
+      for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
+        if (outcome[field] != null) row[key] = outcome[field];
+      }
+      console.log(JSON.stringify(row));
+    });
+    console.log(JSON.stringify({ ev: "summary", status: "failed", code: error.code, operation: error.operation, message: error.message }));
+    console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
+    return EXIT_PLAN_REFUSED;
+  }
+  const jsonl = wasm.editReportJsonl(result.json);
+  if (o.dry_run) return void process.stdout.write(jsonl);
+  const lines = jsonl.trimEnd().split("\n");
+  const summary = lines.pop();
+  const outputs = [["clean.docx", result.clean]];
+  if (!editing) {
+    outputs.push(["redline.docx", result.redline]);
+    // jubarte-wasm 0.10.1 has no patch; later builds carry it.
+    if (typeof result.patch === "string") outputs.push(["patch.diff", Buffer.from(result.patch, "utf8")]);
+  }
+  fs.mkdirSync(outDir, { recursive: true });
+  const saved = outputs.map(([name, data]) => {
+    write(path.join(outDir, name), data);
+    return { f: name, bytes: data.length, sha256: wasm.sourceSha256(data) };
+  });
+  lines.push(JSON.stringify({ ev: "save", dir: outDir, outputs: saved }), summary);
+  write(path.join(outDir, "report.jsonl"), `${lines.join("\n")}\n`);
+  if (o.quiet) return;
+  console.log(summary);
+  const names = [...outputs.map(([n]) => n), "report.jsonl"];
+  console.log(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
+  for (const note of notes) console.log(`note: ${note}`);
+  const report = JSON.parse(result.json);
+  for (const outcome of report.operations ?? []) {
+    if (outcome.anchor_given != null && outcome.anchor_read_as != null) {
+      console.log(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
+    }
+  }
+  const shown = path.join(outDir, editing ? "clean.docx" : "redline.docx");
+  process.stdout.write(wasm.changedView(result.redline, report.author, editing, shown));
+}
 
 function resolution(accept) {
   return {
