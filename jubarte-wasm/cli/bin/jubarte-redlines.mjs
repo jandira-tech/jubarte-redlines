@@ -427,7 +427,7 @@ function validateHost(name, o) {
     }
     const extension = path.extname(o.output ?? "").toLowerCase();
     if (o.to === "md" || (o.to == null && [".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn"].includes(extension))) {
-      throw new UsageError("Markdown output with page markers is not supported by the npm CLI; use read --track-changes");
+      throw new UsageError("Markdown output with page markers is not supported by the npm CLI; `read FILE` prints the agent text view");
     }
     // A Word name fails before any read; a name that says nothing is
     // sniffed like every other input, in `convert`.

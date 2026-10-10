@@ -367,3 +367,13 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
     assert "\nRecitals\n" in out and "{++" not in out, out
+
+
+def test_convert_to_md_points_at_a_read_that_works(letter, capsys):
+    # pi review av2 F16: `read FILE --track-changes` with no value is a usage error.
+    with pytest.raises(SystemExit) as exit:
+        main(["convert", str(letter), "-t", "md"])
+    assert exit.value.code == 2
+    err = capsys.readouterr().err
+    assert "read FILE" in err
+    assert "--track-changes" not in err

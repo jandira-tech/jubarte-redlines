@@ -738,7 +738,7 @@ class SharedParser:
             to = values.get("to")
             extension = Path(values.get("output") or "").suffix.lower()
             if to == "md" or (to is None and extension in (".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn")):
-                self.error("--to md with page markers is not supported by the Python CLI; use read --track-changes")
+                self.error("--to md with page markers is not supported by the Python CLI; `read FILE` prints the agent text view")
             if (to == "docx" or (to is None and extension == ".docx")) and Path(values["file"]).suffix.lower() not in (".md", ".markdown"):
                 self.error("--to docx requires Markdown input in the Python CLI")
             if to in ("pdf", "png"):

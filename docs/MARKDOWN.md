@@ -255,7 +255,8 @@ timestamp, or the day range when the author has several.
 
 ### Reading back
 
-An agent view is CriticMarkup plus id lines, so it reads back as follows. A
+An agent view is CriticMarkup plus id lines. The Markdown-to-Word applier
+does not read it back yet; this is the contract it will honour. A
 change followed by a tagged note (`{>>#12 @AC<<}`) is the document's revision
 `body:rev:12` (`footnotes:rev:12` under a footnote id line): kept as it is
 when unchanged, accepted or rejected when the agent removed its text. A
@@ -269,8 +270,8 @@ Defaults when the Markdown is incomplete, in order: `source:` names a base
 document, and everything not stated comes from it by id; a note's own
 `@handle` and timestamp; the handle's single timestamp from `authors:`; if
 `authors:` lists exactly one non-owner author, that author; else the author
-`Modified User`; a missing date is the header's `date:` line, else the
-conversion time in UTC, with a warning; `document_owner` missing is
+`Modified User`; a missing date is the conversion time in UTC, with a
+warning; `document_owner` missing is
 `Original User`; with no header at all, Letter portrait, one-inch margins,
 Normal Calibri 11pt and the writer's other defaults. A header without
 `source:` is honoured for `page:`, the `styles:` lines it names, and

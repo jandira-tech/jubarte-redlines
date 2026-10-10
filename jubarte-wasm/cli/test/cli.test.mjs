@@ -490,6 +490,11 @@ test("unsupported host options are rejected before input I/O (integration)", () 
     const result = run("convert", "missing.docx", ...flags);
     assert.equal(result.code, 2, `${flags}: ${result.err}`);
     assert.doesNotMatch(result.err, /reading/);
+    // pi review av2 F16: the advice names a read that runs as written.
+    if (flags.includes("md") || flags.includes("output.md")) {
+      assert.match(result.err, /read FILE/);
+      assert.doesNotMatch(result.err, /--track-changes/);
+    }
   }
   for (const flags of [["--pdf"], ["--png"], ["--dpi", "120"], ["--revisions", "word"]]) {
     const result = run("edit", "missing.docx", "--plan", "missing.json", "--out-dir", "missing-dir", ...flags);
