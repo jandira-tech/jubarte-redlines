@@ -93,12 +93,13 @@ fn without_block_mark(text: &str) -> &str {
     text
 }
 
-/// The text with its emphasis marks dropped: `**`, `__`, `~~`, `==`, `<u>`
-/// and `</u>` always; single `*` and word-edge `_` only when they pair up
-/// (`*x*`, `_x_`), so `2 * 3` and `snake_case` keep theirs.
+/// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>` and
+/// `</u>` always; single `*` and word-edge `_` runs only when they pair up
+/// (`*x*`, `_x_`, `__x__`), so `2 * 3`, `snake_case` and `snake__case` keep
+/// theirs.
 fn without_emphasis(text: &str) -> String {
     let mut text = text.to_string();
-    for mark in ["**", "__", "~~", "==", "<u>", "</u>"] {
+    for mark in ["**", "~~", "==", "<u>", "</u>"] {
         text = text.replace(mark, "");
     }
     // A `*` with spaces on both sides (`2 * 3`) is text; the rest are marks
@@ -119,12 +120,22 @@ fn without_emphasis(text: &str) -> String {
             .collect();
     }
     let chars: Vec<char> = text.chars().collect();
-    let inner = |i: usize| {
-        i > 0
-            && chars[i - 1].is_alphanumeric()
-            && chars.get(i + 1).is_some_and(|c| c.is_alphanumeric())
-    };
-    let edge = |i: usize| chars[i] == '_' && !inner(i);
+    // An `_` run with a letter or digit on both sides sits inside a word.
+    let mut inner = vec![false; chars.len()];
+    let mut i = 0;
+    while i < chars.len() {
+        let end = i + chars[i..].iter().take_while(|&&c| c == '_').count();
+        if end > i {
+            let flanked = i > 0
+                && chars[i - 1].is_alphanumeric()
+                && chars.get(end).is_some_and(|c| c.is_alphanumeric());
+            inner[i..end].fill(flanked);
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    let edge = |i: usize| chars[i] == '_' && !inner[i];
     if (0..chars.len())
         .filter(|&i| edge(i))
         .count()
@@ -198,6 +209,12 @@ mod tests {
             ("Intro\\\n\\# Not", "Intro\n# Not"),
             ("\\\\*", "\\*"),
             ("snake_case and _x_", "snake_case and x"),
+            // pi review av4 F7: CommonMark keeps an underscore run inside a
+            // word, so `snake__case` is text; `__init__` is bold `init`.
+            ("snake__case", "snake__case"),
+            ("a__b__c", "a__b__c"),
+            ("__init__", "init"),
+            ("__bold__ and snake__case", "bold and snake__case"),
             ("unclosed {++ insert", "unclosed {++ insert"),
             ("\\# 1", "# 1"),
         ] {
