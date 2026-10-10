@@ -245,6 +245,13 @@ pub(super) struct Origin {
 }
 
 impl Origin {
+    /// Whether the source had comment `id`: settling the plan's revisions
+    /// removes a comment whose anchor was text they took away.
+    pub(super) fn had_comment(&self, id: u32) -> bool {
+        crate::comments::CommentFamily::load(&self.opened.pkg, &self.opened.main)
+            .is_ok_and(|family| family.contains(id))
+    }
+
     /// Map the paragraphs of `source` onto those of the document settling
     /// it by `plan` gives, whose stories are `settled_ids` and whose
     /// paragraphs are `settled_story`.

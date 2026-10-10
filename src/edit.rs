@@ -2920,11 +2920,14 @@ impl<'p> Transaction<'p> {
         let target = op.target();
         let family = self.family.as_ref().expect("loaded in start");
         if !family.contains(target) {
-            return Err(fail(
-                "UNKNOWN_COMMENT",
-                format!("no comment {target} in the document (jubarte comments lists them)"),
-                outcome,
-            ));
+            let message = if self.origin.as_ref().is_some_and(|o| o.had_comment(target)) {
+                format!(
+                    "comment {target} is gone once the plan's revisions are settled: its anchor was text they removed; settle fewer revisions, or act on the comment in a plan of its own first"
+                )
+            } else {
+                format!("no comment {target} in the document (jubarte comments lists them)")
+            };
+            return Err(fail("UNKNOWN_COMMENT", message, outcome));
         }
         if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
             check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;

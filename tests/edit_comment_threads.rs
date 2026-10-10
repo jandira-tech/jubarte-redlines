@@ -492,3 +492,43 @@ fn undated_plans_date_everything_they_write_now() {
         Some("2026-01-02T03:04:05Z")
     );
 }
+
+#[test]
+fn a_comment_the_plans_settling_removes_is_refused_with_the_reason() {
+    // Ann deletes a paragraph and says why: her comment sits on the deleted
+    // text of the redline.
+    let deleted = apply_plan(
+        &docx(&(para("Drop this.") + &para("Kept."))),
+        &plan(
+            r#"{"schema_version":1,"author":"Ann","operations":[
+        {"kind":"delete_paragraph","paragraph":"body:p:0","comment":"Not needed"}]}"#,
+        ),
+    )
+    .unwrap();
+    let id = list_comments(&deleted.redline).unwrap()[0].id;
+    let reply = |settle: &str, id: u32| {
+        apply_plan(
+            &deleted.redline,
+            &plan(&format!(
+                r#"{{"schema_version":1,"author":"Bob"{settle},"operations":[
+        {{"kind":"reply_comment","comment_id":{id},"text":"Agreed"}}]}}"#
+            )),
+        )
+    };
+    // Accepting the deletion first takes the comment with it, so a reply
+    // cannot land; the refusal says why rather than "no comment".
+    let e = reply(r#","existing_revisions":"accept""#, id).unwrap_err();
+    assert_eq!(e.code, "UNKNOWN_COMMENT");
+    assert!(
+        e.message
+            .contains("gone once the plan's revisions are settled"),
+        "{e}"
+    );
+    // Kept, the reply lands.
+    let replied = reply(r#","existing_revisions":"keep""#, id).unwrap();
+    assert_word_valid_package(&replied.redline);
+    assert_eq!(list_comments(&replied.redline).unwrap().len(), 2);
+    // A comment that never existed keeps the plain refusal.
+    let e = reply(r#","existing_revisions":"accept""#, 99).unwrap_err();
+    assert!(e.message.starts_with("no comment 99"), "{e}");
+}
