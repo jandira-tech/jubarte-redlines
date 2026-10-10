@@ -13820,6 +13820,26 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let mut pending: Option<NodeId> = None; // open revision collecting plain children
     for child in children {
         dom.remove(child);
+        if dom.name_is(child, &W::name("fldSimple")) && dom.elements(child, None).is_empty() {
+            // An empty field has no result to carry the revision: hoisted
+            // bare it stays live, and Word 16.115 hangs on it in a deleted
+            // paragraph (b15, 0.12.0 sample). Word's redline spells it as a
+            // complex field inside the revision.
+            let runs = complex_field_runs(dom, child, rev_name == W::del());
+            let target = match pending {
+                Some(p) => p,
+                None => {
+                    let p = like_rev(dom, next_id);
+                    dom.add_before_self(rev, p);
+                    pending = Some(p);
+                    p
+                }
+            };
+            for run in runs {
+                dom.add(target, run);
+            }
+            continue;
+        }
         if dom.name(child).is_some_and(|n| wrappers.contains(&n)) {
             pending = None;
             // The hyperlink keeps its place; the revision moves inside it, wrapping
@@ -13848,6 +13868,39 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
         dom.add(target, child);
     }
     dom.remove(rev);
+}
+
+/// An empty `w:fldSimple` as the runs of its complex form: `begin` (with the
+/// field's `w:dirty` / `w:fldLock`), the code (`w:delInstrText` when
+/// `deleted`), `separate` and `end`.
+fn complex_field_runs(dom: &mut Dom, field: NodeId, deleted: bool) -> Vec<NodeId> {
+    let char_run = |dom: &mut Dom, kind: &str| {
+        let run = dom.new_element(W::r());
+        let fld_char = dom.new_element(W::name("fldChar"));
+        dom.set_attribute_value(fld_char, &W::name("fldCharType"), Some(kind));
+        dom.add(run, fld_char);
+        (run, fld_char)
+    };
+    let (begin, begin_char) = char_run(dom, "begin");
+    for flag in ["dirty", "fldLock"] {
+        if let Some(value) = dom.attribute(field, &W::name(flag)).map(str::to_string) {
+            dom.set_attribute_value(begin_char, &W::name(flag), Some(&value));
+        }
+    }
+    let code_run = dom.new_element(W::r());
+    let code = dom.new_element(W::name(if deleted { "delInstrText" } else { "instrText" }));
+    let instr = dom
+        .attribute(field, &W::name("instr"))
+        .unwrap_or("")
+        .to_string();
+    if instr.trim() != instr {
+        dom.set_attribute_value(code, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(code, &instr);
+    dom.add(code_run, code);
+    let (separate, _) = char_run(dom, "separate");
+    let (end, _) = char_run(dom, "end");
+    vec![begin, code_run, separate, end]
 }
 
 /// Repair invalidity we did not create but would otherwise ship.
@@ -23496,6 +23549,38 @@ mod coverage_final_batch_finalize_tests {
                             let expected = visible(&dom, root);
                             hoist_hyperlinks_out_of_revisions(&mut dom, root);
                             assert_eq!(visible(&dom, root), expected);
+                            if wrapper == "fldSimple" && empty {
+                                // No result to carry the revision: the field
+                                // becomes Word's complex form inside it (b15).
+                                assert!(dom.descendants(root, Some(&W::name(wrapper))).is_empty());
+                                let instr = if revision == "del" {
+                                    "delInstrText"
+                                } else {
+                                    "instrText"
+                                };
+                                let code = dom.descendants(root, Some(&W::name(instr)));
+                                assert_eq!(code.len(), 1);
+                                assert_eq!(dom.value(code[0]), "DATE");
+                                let kinds: Vec<_> = dom
+                                    .descendants(root, Some(&W::name("fldChar")))
+                                    .into_iter()
+                                    .map(|c| {
+                                        dom.attribute(c, &W::name("fldCharType"))
+                                            .unwrap()
+                                            .to_string()
+                                    })
+                                    .collect();
+                                assert_eq!(kinds, ["begin", "separate", "end"]);
+                                let revisions = dom.descendants(root, Some(&W::name(revision)));
+                                assert_eq!(revisions.len(), 1, "one revision holds the field");
+                                for r in dom.descendants(root, Some(&W::r())) {
+                                    assert_eq!(dom.parent(r), Some(revisions[0]));
+                                }
+                                let once = dom.serialize_element(root);
+                                hoist_hyperlinks_out_of_revisions(&mut dom, root);
+                                assert_eq!(dom.serialize_element(root), once);
+                                continue;
+                            }
                             let wrapper_node = dom.descendants(root, Some(&W::name(wrapper)))[0];
                             assert!(dom.name_is(dom.parent(wrapper_node).unwrap(), &W::p()));
                             assert_eq!(
@@ -23522,6 +23607,23 @@ mod coverage_final_batch_finalize_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn empty_field_in_a_revision_keeps_its_flags_and_padded_code() {
+        let (mut dom, root) = xml(
+            "<w:p><w:del w:id=\"4\" w:author=\"A\" w:date=\"D\"><w:fldSimple w:instr=\" PAGE \" w:dirty=\"true\" w:fldLock=\"1\"/></w:del></w:p>",
+        );
+        hoist_hyperlinks_out_of_revisions(&mut dom, root);
+        let begin = dom.descendants(root, Some(&W::name("fldChar")))[0];
+        assert_eq!(dom.attribute(begin, &W::name("dirty")), Some("true"));
+        assert_eq!(dom.attribute(begin, &W::name("fldLock")), Some("1"));
+        let code = dom.descendants(root, Some(&W::name("delInstrText")))[0];
+        assert_eq!(dom.value(code), " PAGE ");
+        assert_eq!(
+            dom.attribute(code, &XNamespace::xml().name("space")),
+            Some("preserve")
+        );
     }
 
     #[test]
