@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+mod agent;
 mod critic;
 mod media;
 mod ooxml;
@@ -3088,7 +3089,7 @@ mod markdown_source_owner_boundary_tests {
                 &bytes,
                 &Options {
                     revisions,
-                    media_dir: None,
+                    ..Options::default()
                 },
             )
             .unwrap();
