@@ -634,7 +634,7 @@ fn diff_and_compare_take_word_against_markdown() {
         "{stderr}"
     );
     // The positional compare takes Markdown too.
-    ok(&jubarte(&["old.md", "new.md"], dir.path()));
+    ok(&jubarte(&["compare", "old.md", "new.md"], dir.path()));
     assert_word_valid_package(&std::fs::read(dir.path().join("old_v_new.docx")).unwrap());
     ok(&jubarte(
         &["old.md", "new.md", "-o", "changes.md"],

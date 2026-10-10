@@ -51,6 +51,17 @@ fn explicit_compare_alias_and_shorthand_preserve_overrides() {
         "{typo}"
     );
     assert_eq!(parse(&["read", "frobnicate"], &[])["exit_code"], 0);
+    // -o has nothing to write for one document; read options before a task
+    // would be silently dropped.
+    let one = parse(&["a.docx", "-o", "out.docx"], &[]);
+    assert_eq!(one["exit_code"], 2, "{one}");
+    assert!(one["text"].as_str().unwrap().contains("-o"), "{one}");
+    for args in [
+        &["--head", "2", "compare", "a.docx", "b.docx"][..],
+        &["--changed", "read", "a.docx"][..],
+    ] {
+        assert_eq!(parse(args, &[])["exit_code"], 2, "{args:?}");
+    }
     assert_eq!(
         parse(&["a.docx"], &["compare"])["exit_code"],
         2,

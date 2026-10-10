@@ -314,6 +314,11 @@ jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND
 jubarte add  FILE -p c5 --content TEXT                         a reply
 ```
 
+The printed view is the output of `jubarte FILE` and `jubarte A B`, so `-q`
+does not hide it (it silences the `wrote …` line of `-o`). Options go after
+the task: `jubarte --head 2 read a.docx` is refused, since the parser would
+take `read` for a document.
+
 `WHERE` is an id the view prints (`p12`, `header1`, `footer2.p1`,
 `t0.r1.c2`, `c5`); `edit` plans take the same ids. One command carries
 several operations: every `-p` starts one, and the flags after it belong to

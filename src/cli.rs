@@ -1508,6 +1508,19 @@ fn serialize_timeout<S: serde::Serializer>(
 
 /// Cross-option constraints whose meaning depends on an enum value or output
 /// extension. These are usage errors, checked before any runtime I/O.
+/// The ids of [`ReadArgs`], as the top-level shorthand declares them.
+const READ_OPTION_IDS: [&str; 9] = [
+    "track_changes",
+    "comments",
+    "dates",
+    "no_page_markers",
+    "paragraphs",
+    "head",
+    "tail",
+    "changed",
+    "by",
+];
+
 fn validate_matches(
     matches: &clap::ArgMatches,
     command: &mut clap::Command,
@@ -1516,19 +1529,7 @@ fn validate_matches(
     let Some((name, args)) = matches.subcommand() else {
         // The shorthand: read options go with the printed view, which -o
         // replaces by a file.
-        let read_option = [
-            "track_changes",
-            "comments",
-            "dates",
-            "no_page_markers",
-            "paragraphs",
-            "head",
-            "tail",
-            "changed",
-            "by",
-        ]
-        .into_iter()
-        .any(|id| {
+        let read_option = READ_OPTION_IDS.into_iter().any(|id| {
             matches.try_contains_id(id).unwrap_or(false)
                 && matches.value_source(id) == Some(ValueSource::CommandLine)
         });
@@ -1539,6 +1540,34 @@ fn validate_matches(
             return Err(command.error(
                 ErrorKind::ArgumentConflict,
                 "read options apply to the printed view; drop -o to print it",
+            ));
+        }
+        let given = |id: &str| {
+            matches.try_contains_id(id).unwrap_or(false)
+                && matches.value_source(id) == Some(ValueSource::CommandLine)
+        };
+        if given("output") && !given("modified_pos") && !given("modified") {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                "-o writes a redline of two documents; one document alone prints its view",
+            ));
+        }
+        // `jubarte --head 2 read a.docx`: options before a task make clap read
+        // the task's name as ORIGINAL.
+        if let Some(task) = matches
+            .try_get_one::<PathBuf>("original_pos")
+            .ok()
+            .flatten()
+            .and_then(|p| p.to_str())
+            .and_then(|name| command.find_subcommand(name))
+            .map(|task| task.get_name().to_string())
+        {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                format!(
+                    "options go after the task: `{} {task} … [OPTIONS]`",
+                    command.get_name()
+                ),
             ));
         }
         // One bare word is more likely a mistyped task than a document.
@@ -1573,7 +1602,7 @@ fn validate_matches(
         task.set_bin_name(format!("{} {name}", command.get_name()));
         return Err(task.error(
             ErrorKind::MissingRequiredArgument,
-            "compare needs MODIFIED (or -m FILE)",
+            "compare needs <MODIFIED> (or -m FILE)",
         ));
     }
     let mut task = command.find_subcommand(name).expect("parsed task").clone();
