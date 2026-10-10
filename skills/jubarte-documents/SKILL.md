@@ -377,7 +377,7 @@ Gotchas:
 jubarte original.docx revised.docx -o redline.docx --author "Legal"
 # Python CLI: compare is a subcommand there
 python -m jubarte_redlines compare original.docx revised.docx -o redline.docx --author "Legal"
-jubarte revisions redline.docx --json
+jubarte changes redline.docx --json
 jubarte accept redline.docx -o clean.docx
 jubarte reject redline.docx -o base.docx
 ```

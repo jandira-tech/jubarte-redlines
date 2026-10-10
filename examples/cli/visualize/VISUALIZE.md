@@ -1123,7 +1123,7 @@ three years after this Agreement ends+}{>>Ann Counsel
 |---|---|---|
 | Edit view with IDs | `text FILE` | `--track-changes all\|accept\|reject` (CriticMarkup, no IDs) |
 | Markdown with pages | `convert FILE -t md` | `--no-page-markers`, `--track-changes all\|accept\|reject`, `-o FILE` |
-| Tracked changes | `changes FILE`, `revisions FILE` | `--json` |
+| Tracked changes | `changes FILE` | `--json` |
 | Comments | `comments FILE` | `--json`, `--author NAME`, `--latest` |
 | Structure | `inspect FILE` | `--json`, `--tables` |
 | Render triage | `debug FILE --check render` | `--check text\|runs\|xml\|changes\|…`, two files print only differences |

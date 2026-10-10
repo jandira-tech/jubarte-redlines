@@ -370,7 +370,6 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 |---|---|
 | `jubarte ORIGINAL MODIFIED` | Read, edit, compare and render Word documents |
 | `jubarte compare` | Compare documents and write a Word redline [alias: redline] |
-| `jubarte revisions` | List the tracked revisions in a redline .docx |
 | `jubarte changes` | List tracked changes with IDs for accept, reject and edit plans |
 | `jubarte accept` | Accept all tracked changes, or select by ID, author or kind |
 | `jubarte reject` | Reject all tracked changes, or select by ID, author or kind |
@@ -421,12 +420,9 @@ Common options:
 The default comparison date is deterministic rather than “now”, making
 identical inputs reproducible unless a date is explicitly supplied.
 
-### Inspect revisions
+### List tracked changes
 
 ```sh
-jubarte revisions FILE.docx
-jubarte revisions FILE.docx --json
-
 jubarte changes FILE.docx
 jubarte changes FILE.docx --json
 ```
