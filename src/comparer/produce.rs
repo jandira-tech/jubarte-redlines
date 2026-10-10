@@ -1084,6 +1084,20 @@ pub fn coalesce_recurse(
             continue;
         }
 
+        // Empty w:fldSimple — its own atom (atomize), so clone + status like
+        // a drawing. Reconstructed as a container it had no child to carry
+        // the status and came out live (b15, 0.12.0 release sample).
+        if aname == W::name("fldSimple") && dom.elements(ancestor, None).is_empty() {
+            for (_key, gc) in &groupedchildren {
+                for gcc in gc {
+                    let d = dom.clone_subtree(gcc.content_element);
+                    tag_status(dom, d, gcc.correlation_status, gcc);
+                    out.push(d);
+                }
+            }
+            continue;
+        }
+
         // w:pict (VML image) and w:object (embedded OLE picture) — clone
         // full subtree + status. Must not fall through to
         // reconstruct_element / empty Allowable shell: attribute-only

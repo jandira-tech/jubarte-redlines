@@ -5357,8 +5357,8 @@ fn mark_adopted_hf_content_as_inserted(
     let Some(root) = dom.root(doc) else {
         return;
     };
-    // Root is w:hdr or w:ftr.
-    let mut next_id: u32 = 1;
+    // Root is w:hdr or w:ftr. New marks number above the story's own.
+    let mut next_id = next_free_revision_id(&dom, root);
     let author = settings.author_for_revisions.as_str();
     let date = settings.date_time_for_revisions.as_str();
     let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
@@ -5386,6 +5386,7 @@ fn mark_adopted_hf_content_as_inserted(
                 || n == W::hyperlink()
                 || n == W::name("sdt")
                 || n == W::name("drawing")
+                || n == W::name("fldSimple")
                 || n.local_name() == "AlternateContent"
         });
         if !has_content {
@@ -5446,6 +5447,14 @@ fn mark_adopted_hf_content_as_inserted(
             }
         }
     }
+    mark_story_rows(&mut dom, root, |d| {
+        let mark = d.new_element(W::ins());
+        d.set_attribute_value(mark, &W::author(), Some(author));
+        d.set_attribute_value(mark, &W::date(), Some(date));
+        d.set_attribute_value(mark, &W::id(), Some(&next_id.to_string()));
+        next_id += 1;
+        mark
+    });
     out.set_part(part, dom.serialize_element(root).into_bytes());
 }
 
@@ -5558,7 +5567,7 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
     let Some(root) = dom.root(doc) else {
         return;
     };
-    let mut next_id: u32 = 1;
+    let mut next_id = next_free_revision_id(&dom, root);
     let author = settings.author_for_revisions.as_str();
     let date = settings.date_time_for_revisions.as_str();
     let mut revision = |dom: &mut Dom, name: XName| -> NodeId {
@@ -5595,6 +5604,7 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
                 || n == W::hyperlink()
                 || n == W::name("sdt")
                 || n == W::name("drawing")
+                || n == W::name("fldSimple")
                 || n.local_name() == "AlternateContent"
         });
         if has_content {
@@ -5628,7 +5638,24 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
             }
         }
     }
+    mark_story_rows(&mut dom, root, |d| revision(d, W::del()));
     out.set_part(part, dom.serialize_element(root).into_bytes());
+}
+
+/// Mark every table row of a one-sided header/footer story with the
+/// story's revision (`w:del` dropped, `w:ins` adopted), as Word's redline
+/// does. Word 16.115 hangs on a story table whose cells are all deleted
+/// while its rows are unmarked (b09, 0.12.0 release sample). Rows already
+/// carrying a mark keep it.
+fn mark_story_rows(dom: &mut Dom, story: NodeId, mut mark: impl FnMut(&mut Dom) -> NodeId) {
+    for tr in dom.descendants(story, Some(&W::name("tr"))) {
+        let trpr = crate::comparer::lcs_table::row_properties(dom, tr);
+        if dom.element(trpr, &W::ins()).is_some() || dom.element(trpr, &W::del()).is_some() {
+            continue;
+        }
+        let rev = mark(dom);
+        crate::comparer::lcs_table::add_row_mark(dom, trpr, rev);
+    }
 }
 
 /// Reset the story's last paragraph to the blank one Word's redline keeps:
@@ -9094,14 +9121,14 @@ mod coverage_boundary_tests {
         let ppr = child(&dom, paras[0], "pPr");
         assert_eq!(children(&dom, ppr), ["jc", "rPr", "pPrChange"]);
         let content = child(&dom, paras[0], "ins");
-        assert_revision(&dom, content, "1");
+        assert_revision(&dom, content, "100");
         assert_eq!(children(&dom, content), ["r", "hyperlink"]);
         assert_eq!(dom.value(content), "Page link");
-        assert_revision(&dom, child(&dom, child(&dom, ppr, "rPr"), "ins"), "2");
-        assert_revision(&dom, child(&dom, paras[1], "ins"), "3");
+        assert_revision(&dom, child(&dom, child(&dom, ppr, "rPr"), "ins"), "101");
+        assert_revision(&dom, child(&dom, paras[1], "ins"), "102");
         let mark = child(&dom, child(&dom, paras[1], "pPr"), "rPr");
         assert_eq!(children(&dom, mark), ["ins", "rStyle"]);
-        assert_revision(&dom, child(&dom, mark, "ins"), "4");
+        assert_revision(&dom, child(&dom, mark, "ins"), "103");
         assert_eq!(children(&dom, paras[2]), ["bookmarkStart"]);
         assert!(children(&dom, paras[3]).is_empty());
         assert_eq!(children(&dom, paras[4]), ["del"]);
@@ -9156,6 +9183,104 @@ mod coverage_boundary_tests {
             dom.element(rpr, &W::del()).is_none(),
             "story closing mark stays live"
         );
+    }
+
+    /// Word 16.115 hangs opening a redline whose footer table has every
+    /// cell deleted but no row marked (b09, release 0.12.0 sample); Word's
+    /// own redline of the pair deletes the row too.
+    #[test]
+    fn one_sided_header_footer_tables_mark_every_row() {
+        let rows = "<w:tbl><w:tr><w:tblPrEx><w:tblBorders/></w:tblPrEx><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:trHeight w:val=\"575\"/><w:trPrChange w:id=\"70\"><w:trPr/></w:trPrChange></w:trPr><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:id=\"71\"/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>";
+        for (deleted, mark) in [(true, "del"), (false, "ins")] {
+            let mut pkg = package("<w:body/>");
+            pkg.set_part("word/footer.xml", xml("ftr", rows).into_bytes());
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            let (dom, r) = part_root(&pkg, "word/footer.xml");
+            let trs = dom.descendants(r, Some(&W::name("tr")));
+            assert_eq!(children(&dom, trs[0]), ["tblPrEx", "trPr", "tc"], "{mark}");
+            assert_eq!(children(&dom, child(&dom, trs[0], "trPr")), [mark]);
+            let marked = child(&dom, child(&dom, trs[0], "trPr"), mark);
+            assert_eq!(dom.attribute(marked, &W::author()), Some("Boundary author"));
+            assert_eq!(
+                children(&dom, child(&dom, trs[1], "trPr")),
+                ["trHeight", mark, "trPrChange"]
+            );
+            assert_eq!(
+                children(&dom, child(&dom, trs[2], "trPr")),
+                ["del"],
+                "a row already marked keeps its own mark"
+            );
+            let before = pkg.part_string("word/footer.xml").unwrap();
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            assert_eq!(pkg.part_string("word/footer.xml").unwrap(), before);
+        }
+    }
+
+    /// A one-sided story's new marks take ids above the ones it already
+    /// carries, so a kept revision never shares its id with a new one.
+    #[test]
+    fn one_sided_story_marks_take_ids_above_the_story_s_own() {
+        let story = "<w:p><w:ins w:id=\"1\"><w:r><w:t>kept</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>new</w:t></w:r></w:p><w:tbl><w:tr><w:trPr><w:del w:id=\"2\"/></w:trPr><w:tc><w:p/></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>";
+        for deleted in [true, false] {
+            let mut pkg = package("<w:body/>");
+            pkg.set_part("word/footer.xml", xml("ftr", story).into_bytes());
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            let (dom, r) = part_root(&pkg, "word/footer.xml");
+            let mut ids: Vec<&str> = ["ins", "del"]
+                .iter()
+                .flat_map(|m| dom.descendants(r, Some(&W::name(m))))
+                .filter_map(|n| dom.attribute(n, &W::id()))
+                .collect();
+            let all = ids.len();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(ids.len(), all, "deleted={deleted}: duplicate ids {ids:?}");
+            assert!(all > 2, "deleted={deleted}: the story gained marks");
+        }
+    }
+
+    /// A paragraph whose only content is a field (`fldSimple`, empty or
+    /// with a result) is content: left out, a dropped footer's NUMPAGES
+    /// stayed live, the b15 shape Word 16.115 hung on.
+    #[test]
+    fn one_sided_story_fields_join_the_story_revision() {
+        let story = "<w:p><w:pPr><w:pStyle w:val=\"Footer\"/></w:pPr><w:fldSimple w:instr=\"NUMPAGES\"/></w:p><w:p><w:fldSimple w:instr=\"PAGE\"><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p><w:p/>";
+        for (deleted, code) in [(true, "delInstrText"), (false, "instrText")] {
+            let mut pkg = package("<w:body/>");
+            pkg.set_part("word/footer.xml", xml("ftr", story).into_bytes());
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            let (mut dom, r) = part_root(&pkg, "word/footer.xml");
+            crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut dom, r);
+            let rev = if deleted { W::del() } else { W::ins() };
+            let paras = dom.elements(r, Some(&W::p()));
+            let empty = dom.descendants(paras[0], Some(&W::name(code)));
+            assert_eq!(
+                empty.len(),
+                1,
+                "deleted={deleted}: {}",
+                dom.serialize_element(r)
+            );
+            assert!(!dom.ancestors(empty[0], Some(&rev)).is_empty());
+            let cached = dom.descendants(paras[1], Some(&W::name("fldSimple")));
+            assert_eq!(cached.len(), 1);
+            assert_eq!(children(&dom, cached[0]), [rev.local_name()]);
+        }
     }
 
     #[test]

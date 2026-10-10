@@ -117,6 +117,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Compare: a deleted or inserted field with no shown result
+  (`<w:fldSimple w:instr="PAGE"/>`) stayed live in the redline, so
+  rejecting or accepting kept the wrong page numbers, and Word 16.115 hung
+  on such a footer. It is now tracked the way Word's own redline does.
+- Compare: a header or footer that only one document has now marks its
+  table rows deleted or inserted along with their text; Word 16.115 hung
+  on a footer table whose cells were deleted but whose rows were not.
+
 - A comment anchored in a justified line lost its balloon: the stretched
   line repaints its words as new runs, which dropped the run's comments.
 

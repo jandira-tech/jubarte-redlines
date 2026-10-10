@@ -8,11 +8,14 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 Engine defects and unresolved design conflicts.
 
-> **Re-checked 2026-10-01 against 0.10.1.** Open items below are the complete set.
+> **Last full re-check: 2026-10-01, against 0.10.1.** Open items below are the
+> complete set. Findings added since then name the build they were checked on
+> (issue 8: the 0.12.0 release candidate, 2026-10-10); the other items have
+> not been re-checked against 0.12.0.
 
 ## Open
 
-### 8. Word 16.115 crashes opening 23 benchmark redlines — **OPEN, cause unknown**
+### 8. Word 16.115 crashes opening benchmark redlines — **OPEN, mostly a Word bug**
 
 **Seen:** the 0.11.3 release evidence (2026-10-06). Word 16.115, installed on
 the bench on 2026-10-05, dies ("Connection is invalid (-609)") opening 23 of
@@ -28,8 +31,19 @@ Word. docx-validate, the OpenXML validator and `jubarte validate` find
 nothing in 10 of them; the findings in the rest come from their originals,
 and the same findings sit in redlines that open.
 
-**Action:** reduce one crasher (file_176 vs file_177) against a redline that
-opens, each variant alone in Word, then fix the writer with a test.
+**0.12.0 candidate (2026-10-10):** 25 of the 0.12.0 sample's 600 redlines
+crash Word alone, under fresh names. Word's own redline of the same pair
+crashes Word 16.115 too for 20 of them: a Word bug its own output hits.
+One reduced case: an inserted anchored text box in the paragraph right
+before a table whose rows are deleted. Of the 5 pairs whose Word redline
+opens, two were jubarte bugs, now fixed and opened in Word: a header or
+footer present on one side only left its table rows unmarked, and a
+deleted or inserted empty `w:fldSimple` stayed live. The other three
+(two documents and a table-style case) crash only with a combination of
+content that no single element explains, the same class as the 20.
+
+**Action:** rerun the 25 on the next Word update; reduce one of the three
+layout cases further only if a Word update does not clear it.
 
 ### 6. Dependabot: glib 0.18.5 in the desktop app (RUSTSEC-2024-0429) — **OPEN, blocked upstream**
 

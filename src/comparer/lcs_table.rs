@@ -568,14 +568,7 @@ pub fn mark_rows_as_deleted_or_inserted(
                 if !marked.insert(tr) {
                     continue;
                 }
-                let trpr = match dom.element(tr, &W::name("trPr")) {
-                    Some(p) => p,
-                    None => {
-                        let p = dom.new_element(W::name("trPr"));
-                        dom.add_first(tr, p);
-                        p
-                    }
-                };
+                let trpr = row_properties(dom, tr);
                 let rev = dom.new_element(rev_name.clone());
                 dom.set_attribute_value(rev, &W::author(), Some(&settings.author_for_revisions));
                 dom.set_attribute_value(rev, &W::id(), Some(&next_id.to_string()));
@@ -585,6 +578,20 @@ pub fn mark_rows_as_deleted_or_inserted(
             }
         }
     }
+}
+
+/// The row's `w:trPr`, created when absent after a `w:tblPrEx` (CT_Row
+/// order), else as the row's first child.
+pub(crate) fn row_properties(dom: &mut Dom, tr: NodeId) -> NodeId {
+    if let Some(p) = dom.element(tr, &W::name("trPr")) {
+        return p;
+    }
+    let p = dom.new_element(W::name("trPr"));
+    match dom.element(tr, &W::name("tblPrEx")) {
+        Some(ex) => dom.add_after_self(ex, p),
+        None => dom.add_first(tr, p),
+    }
+    p
 }
 
 /// Add a row's `w:ins` / `w:del` to its `w:trPr`: CT_TrPr keeps them ahead

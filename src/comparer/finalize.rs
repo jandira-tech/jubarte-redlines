@@ -171,6 +171,62 @@ pub fn mark_content_transform(
     }
     let name = dom.name(node).unwrap();
 
+    // An empty field is a whole atom with no run to carry the status: Word's
+    // redline spells it as a complex field inside the revision (b15).
+    if name == W::name("fldSimple") && dom.elements(node, None).is_empty() {
+        let status = dom.attribute(node, &PT::status()).map(str::to_string);
+        if let Some(moved @ ("MovedSource" | "MovedDestination")) = status.as_deref() {
+            // As moved runs: range markers around a moveFrom / moveTo whose
+            // code stays w:instrText (moved text stays w:t).
+            let (start, kind, end) = if moved == "MovedSource" {
+                ("moveFromRangeStart", "moveFrom", W::move_from_range_end())
+            } else {
+                ("moveToRangeStart", "moveTo", W::move_to_range_end())
+            };
+            let move_name = dom
+                .attribute(node, &PT::name("MoveName"))
+                .unwrap_or("move1")
+                .to_string();
+            let range_id = id_gen.to_string();
+            *id_gen += 1;
+            let range_start = dom.new_element(W::name(start));
+            dom.set_attribute_value(range_start, &W::id(), Some(&range_id));
+            dom.set_attribute_value(range_start, &W::name("name"), Some(&move_name));
+            dom.set_attribute_value(
+                range_start,
+                &W::author(),
+                Some(&settings.author_for_revisions),
+            );
+            dom.set_attribute_value(
+                range_start,
+                &W::date(),
+                Some(&settings.date_time_for_revisions),
+            );
+            let wrap = rev_el(dom, W::name(kind), settings, id_gen);
+            for run in complex_field_runs(dom, node, false) {
+                dom.add(wrap, run);
+            }
+            let range_end = dom.new_element(end);
+            dom.set_attribute_value(range_end, &W::id(), Some(&range_id));
+            return vec![range_start, wrap, range_end];
+        }
+        let deleted = match status.as_deref() {
+            Some("Deleted") => true,
+            Some("Inserted") => false,
+            _ => return vec![dom.clone_subtree(node)],
+        };
+        let wrap = rev_el(
+            dom,
+            if deleted { W::del() } else { W::ins() },
+            settings,
+            id_gen,
+        );
+        for run in complex_field_runs(dom, node, deleted) {
+            dom.add(wrap, run);
+        }
+        return vec![wrap];
+    }
+
     if name == W::r() {
         let txbx = W::name("txbxContent");
         let carriers: Vec<NodeId> = descendants_trimmed(dom, node, &txbx)
@@ -13820,6 +13876,26 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let mut pending: Option<NodeId> = None; // open revision collecting plain children
     for child in children {
         dom.remove(child);
+        if dom.name_is(child, &W::name("fldSimple")) && dom.elements(child, None).is_empty() {
+            // An empty field has no result to carry the revision: hoisted
+            // bare it stays live, and Word 16.115 hangs on it in a deleted
+            // paragraph (b15, 0.12.0 sample). Word's redline spells it as a
+            // complex field inside the revision.
+            let runs = complex_field_runs(dom, child, rev_name == W::del());
+            let target = match pending {
+                Some(p) => p,
+                None => {
+                    let p = like_rev(dom, next_id);
+                    dom.add_before_self(rev, p);
+                    pending = Some(p);
+                    p
+                }
+            };
+            for run in runs {
+                dom.add(target, run);
+            }
+            continue;
+        }
         if dom.name(child).is_some_and(|n| wrappers.contains(&n)) {
             pending = None;
             // The hyperlink keeps its place; the revision moves inside it, wrapping
@@ -13848,6 +13924,39 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
         dom.add(target, child);
     }
     dom.remove(rev);
+}
+
+/// An empty `w:fldSimple` as the runs of its complex form: `begin` (with the
+/// field's `w:dirty` / `w:fldLock`), the code (`w:delInstrText` when
+/// `deleted`), `separate` and `end`.
+fn complex_field_runs(dom: &mut Dom, field: NodeId, deleted: bool) -> Vec<NodeId> {
+    let char_run = |dom: &mut Dom, kind: &str| {
+        let run = dom.new_element(W::r());
+        let fld_char = dom.new_element(W::name("fldChar"));
+        dom.set_attribute_value(fld_char, &W::name("fldCharType"), Some(kind));
+        dom.add(run, fld_char);
+        (run, fld_char)
+    };
+    let (begin, begin_char) = char_run(dom, "begin");
+    for flag in ["dirty", "fldLock"] {
+        if let Some(value) = dom.attribute(field, &W::name(flag)).map(str::to_string) {
+            dom.set_attribute_value(begin_char, &W::name(flag), Some(&value));
+        }
+    }
+    let code_run = dom.new_element(W::r());
+    let code = dom.new_element(W::name(if deleted { "delInstrText" } else { "instrText" }));
+    let instr = dom
+        .attribute(field, &W::name("instr"))
+        .unwrap_or("")
+        .to_string();
+    if instr.trim() != instr {
+        dom.set_attribute_value(code, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(code, &instr);
+    dom.add(code_run, code);
+    let (separate, _) = char_run(dom, "separate");
+    let (end, _) = char_run(dom, "end");
+    vec![begin, code_run, separate, end]
 }
 
 /// Repair invalidity we did not create but would otherwise ship.
@@ -19227,6 +19336,84 @@ mod coverage_round_next_tests {
         }
     }
 
+    /// An empty field is a whole atom (no run), so the run-level status
+    /// pass never wrapped it: a deleted `PAGE` stayed live in its deleted
+    /// paragraph and Word 16.115 hung on the footer (b15, 0.12.0 sample).
+    /// A moved empty field travels as the moved runs do: range markers
+    /// around a `w:moveFrom` / `w:moveTo` holding the complex field (its
+    /// code stays `w:instrText`, as moved text stays `w:t`). Left live, the
+    /// field survived at both ends of every accept and reject.
+    #[test]
+    fn moved_empty_field_becomes_a_complex_field_in_the_move() {
+        for (status, kind) in [("MovedSource", "moveFrom"), ("MovedDestination", "moveTo")] {
+            let (mut dom, root, _) = document(&format!(
+                "<w:p><w:fldSimple pt:Status=\"{status}\" pt:MoveName=\"move7\" w:instr=\"PAGE\"/></w:p>"
+            ));
+            let mut id = 1;
+            let result = mark_content_as_deleted_or_inserted(&mut dom, root, &settings(), &mut id);
+            let p = dom.descendants(result, Some(&W::p()))[0];
+            let kids: Vec<String> = dom
+                .elements(p, None)
+                .into_iter()
+                .map(|k| dom.name(k).unwrap().local_name().to_string())
+                .collect();
+            assert_eq!(
+                kids,
+                [
+                    format!("{kind}RangeStart"),
+                    kind.to_string(),
+                    format!("{kind}RangeEnd")
+                ],
+                "{status}"
+            );
+            let start = dom.elements(p, None)[0];
+            assert_eq!(dom.attribute(start, &W::name("name")), Some("move7"));
+            let moved = dom.elements(p, None)[1];
+            assert_eq!(dom.elements(moved, Some(&W::r())).len(), 4);
+            assert_eq!(
+                dom.value(dom.descendants(moved, Some(&W::name("instrText")))[0]),
+                "PAGE"
+            );
+            assert!(
+                dom.descendants(p, None)
+                    .iter()
+                    .all(|&n| dom.attribute(n, &PT::status()).is_none())
+            );
+        }
+    }
+
+    #[test]
+    fn deleted_or_inserted_empty_field_becomes_a_complex_field_in_the_revision() {
+        for (status, wrap, code) in [
+            ("Deleted", "del", "delInstrText"),
+            ("Inserted", "ins", "instrText"),
+        ] {
+            let (mut dom, root, _) = document(&format!(
+                "<w:p><w:fldSimple pt:Status=\"{status}\" w:instr=\"NUMPAGES\"/></w:p>"
+            ));
+            let mut id = 1;
+            let result = mark_content_as_deleted_or_inserted(&mut dom, root, &settings(), &mut id);
+            assert!(
+                dom.descendants(result, Some(&W::name("fldSimple")))
+                    .is_empty()
+            );
+            let p = dom.descendants(result, Some(&W::p()))[0];
+            let kids = dom.elements(p, None);
+            assert_eq!(kids.len(), 1, "{status}");
+            assert!(dom.name_is(kids[0], &W::name(wrap)));
+            assert_eq!(dom.elements(kids[0], Some(&W::r())).len(), 4);
+            assert_eq!(
+                dom.value(dom.descendants(p, Some(&W::name(code)))[0]),
+                "NUMPAGES"
+            );
+            assert!(
+                dom.descendants(p, None)
+                    .iter()
+                    .all(|&n| dom.attribute(n, &PT::status()).is_none())
+            );
+        }
+    }
+
     #[test]
     fn default_spacing_strips_only_the_selected_source_default_and_exact_shape() {
         for kind in ["ins", "del"] {
@@ -23496,6 +23683,38 @@ mod coverage_final_batch_finalize_tests {
                             let expected = visible(&dom, root);
                             hoist_hyperlinks_out_of_revisions(&mut dom, root);
                             assert_eq!(visible(&dom, root), expected);
+                            if wrapper == "fldSimple" && empty {
+                                // No result to carry the revision: the field
+                                // becomes Word's complex form inside it (b15).
+                                assert!(dom.descendants(root, Some(&W::name(wrapper))).is_empty());
+                                let instr = if revision == "del" {
+                                    "delInstrText"
+                                } else {
+                                    "instrText"
+                                };
+                                let code = dom.descendants(root, Some(&W::name(instr)));
+                                assert_eq!(code.len(), 1);
+                                assert_eq!(dom.value(code[0]), "DATE");
+                                let kinds: Vec<_> = dom
+                                    .descendants(root, Some(&W::name("fldChar")))
+                                    .into_iter()
+                                    .map(|c| {
+                                        dom.attribute(c, &W::name("fldCharType"))
+                                            .unwrap()
+                                            .to_string()
+                                    })
+                                    .collect();
+                                assert_eq!(kinds, ["begin", "separate", "end"]);
+                                let revisions = dom.descendants(root, Some(&W::name(revision)));
+                                assert_eq!(revisions.len(), 1, "one revision holds the field");
+                                for r in dom.descendants(root, Some(&W::r())) {
+                                    assert_eq!(dom.parent(r), Some(revisions[0]));
+                                }
+                                let once = dom.serialize_element(root);
+                                hoist_hyperlinks_out_of_revisions(&mut dom, root);
+                                assert_eq!(dom.serialize_element(root), once);
+                                continue;
+                            }
                             let wrapper_node = dom.descendants(root, Some(&W::name(wrapper)))[0];
                             assert!(dom.name_is(dom.parent(wrapper_node).unwrap(), &W::p()));
                             assert_eq!(
@@ -23522,6 +23741,23 @@ mod coverage_final_batch_finalize_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn empty_field_in_a_revision_keeps_its_flags_and_padded_code() {
+        let (mut dom, root) = xml(
+            "<w:p><w:del w:id=\"4\" w:author=\"A\" w:date=\"D\"><w:fldSimple w:instr=\" PAGE \" w:dirty=\"true\" w:fldLock=\"1\"/></w:del></w:p>",
+        );
+        hoist_hyperlinks_out_of_revisions(&mut dom, root);
+        let begin = dom.descendants(root, Some(&W::name("fldChar")))[0];
+        assert_eq!(dom.attribute(begin, &W::name("dirty")), Some("true"));
+        assert_eq!(dom.attribute(begin, &W::name("fldLock")), Some("1"));
+        let code = dom.descendants(root, Some(&W::name("delInstrText")))[0];
+        assert_eq!(dom.value(code), " PAGE ");
+        assert_eq!(
+            dom.attribute(code, &XNamespace::xml().name("space")),
+            Some("preserve")
+        );
     }
 
     #[test]

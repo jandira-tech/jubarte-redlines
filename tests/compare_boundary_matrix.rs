@@ -2188,3 +2188,52 @@ fn reordered_retained_controls_keep_both_ids_when_equal_content_inherits_b_metad
         }
     }
 }
+
+/// An empty `w:fldSimple` (no cached result) deleted or inserted with its
+/// paragraph stayed live in the redline: Word 16.115 hung on such a footer
+/// (b15, 0.12.0 release sample), and reject/accept kept the wrong field.
+#[test]
+fn empty_simple_field_follows_its_paragraph_into_the_revision() {
+    let field = docx(&format!(
+        "{}<w:p><w:r><w:t xml:space=\"preserve\">Page </w:t></w:r><w:fldSimple w:instr=\"NUMPAGES\"/><w:r><w:t>Downloaded</w:t></w:r></w:p>",
+        para("Keep")
+    ));
+    let plain = docx(&para("Keep"));
+    let fields = |bytes: &[u8]| {
+        part_string(bytes, "word/document.xml")
+            .unwrap()
+            .matches("NUMPAGES")
+            .count()
+    };
+    for (mode, settings) in [
+        ("Word", WmlComparerSettings::default()),
+        ("PowerTools", WmlComparerSettings::powertools_faithful()),
+    ] {
+        for (left, right, deleted) in [(&field, &plain, true), (&plain, &field, false)] {
+            let label = format!("{mode} deleted={deleted}");
+            let compared = compare_documents_with_settings(left, right, &settings).unwrap();
+            assert_word_valid_package(&compared);
+            let xml = part_string(&compared, "word/document.xml").unwrap();
+            assert!(
+                !xml.contains("<w:fldSimple"),
+                "{label}: live field in {xml}"
+            );
+            let code = if deleted {
+                "<w:delInstrText>NUMPAGES"
+            } else {
+                "<w:instrText>NUMPAGES"
+            };
+            assert!(xml.contains(code), "{label}: {xml}");
+            assert_eq!(
+                fields(&accept_revisions(&compared).unwrap()),
+                fields(right),
+                "accept {label}"
+            );
+            assert_eq!(
+                fields(&reject_revisions(&compared).unwrap()),
+                fields(left),
+                "reject {label}"
+            );
+        }
+    }
+}
