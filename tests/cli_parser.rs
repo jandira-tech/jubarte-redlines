@@ -481,6 +481,11 @@ fn revision_timestamps_must_be_iso_8601() {
         "2026-10-01",
         "2026-13-01T09:00:00Z",
         "2026-10-01 09:00",
+        // pi review r392 F4/F5: offsets stop at 14:00, there is no year 0,
+        // and Word's subset has no 24:00:00.
+        "2026-10-01T09:00:00+14:59",
+        "0000-01-01T00:00:00Z",
+        "2026-10-01T24:00:00Z",
     ] {
         for args in [
             vec!["compare", "a.docx", "b.docx", "-d", bad],
@@ -502,6 +507,7 @@ fn revision_timestamps_must_be_iso_8601() {
         "2026-10-01T09:00:00Z",
         "2026-10-01T09:00:00",
         "2026-10-01T09:00:00.125+02:00",
+        "2026-10-01T09:00:00-14:00",
     ] {
         for args in [
             vec!["compare", "a.docx", "b.docx", "-d", good],

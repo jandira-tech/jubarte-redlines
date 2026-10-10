@@ -1428,8 +1428,9 @@ fn styles() -> clap::builder::Styles {
         .placeholder(AnsiColor::Yellow.on_default())
 }
 
-/// A revision timestamp: an xsd:dateTime, as `w:date` holds it
-/// (`2026-10-01T09:00:00Z`, optional fraction and offset).
+/// A revision timestamp: an xsd:dateTime as Word writes `w:date`
+/// (`2026-10-01T09:00:00Z`, optional fraction and offset of at most 14:00).
+/// xsd's `24:00:00` and leap second `:60` are refused: Word writes neither.
 fn parse_datetime(value: &str) -> Result<String, String> {
     let bad = || "expected an ISO 8601 date and time such as 2026-10-01T09:00:00Z".to_string();
     let b = value.as_bytes();
@@ -1475,13 +1476,22 @@ fn parse_datetime(value: &str) -> Result<String, String> {
     let zone = match rest.as_bytes() {
         [] | [b'Z'] => true,
         [b'+' | b'-', h1, h2, b':', m1, m2] => {
+            let hours = u32::from(h1.wrapping_sub(b'0')) * 10 + u32::from(h2.wrapping_sub(b'0'));
+            let minutes = u32::from(m1.wrapping_sub(b'0')) * 10 + u32::from(m2.wrapping_sub(b'0'));
             [h1, h2, m1, m2].iter().all(|c| c.is_ascii_digit())
-                && (h1 - b'0') * 10 + (h2 - b'0') <= 14
-                && (m1 - b'0') * 10 + (m2 - b'0') <= 59
+                && minutes <= 59
+                && hours * 60 + minutes <= 14 * 60
         }
         _ => false,
     };
-    if shape && (1..=days).contains(&day) && hour <= 23 && minute <= 59 && second <= 59 && zone {
+    if shape
+        && year >= 1
+        && (1..=days).contains(&day)
+        && hour <= 23
+        && minute <= 59
+        && second <= 59
+        && zone
+    {
         Ok(value.to_string())
     } else {
         Err(bad())
