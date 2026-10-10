@@ -264,6 +264,26 @@ fn cached_breaks_inside_a_table_are_named_at_the_next_block() {
 }
 
 #[test]
+fn page_markers_off_leaves_no_page_lines_and_keeps_the_rest() {
+    let bytes = docx(&format!(
+        r#"{}<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p/>{}"#,
+        para("One"),
+        para("Two")
+    ));
+    let out = agent_options(
+        &bytes,
+        MarkdownOptions {
+            page_markers: false,
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(
+        body(&out),
+        "<!-- p0 -->\nOne\n\n<!-- p1 page-break -->\n\n<!-- p2 empty -->\n\n<!-- p3 -->\nTwo\n"
+    );
+}
+
+#[test]
 fn layout_page_texts_place_the_markers_above_the_id_lines() {
     let bytes = docx(&format!(
         "{}{}{}",
