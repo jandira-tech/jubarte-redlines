@@ -368,6 +368,20 @@ pub(crate) fn stamped_revs(element: &Element) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// The children of `e` the view renders: of an `mc:AlternateContent`, only
+/// the `mc:Choice` (else the `mc:Fallback`), so a text box Word stores twice
+/// counts once.
+fn shown_children(e: &Element) -> Vec<&Element> {
+    if e.is("AlternateContent") {
+        e.child("Choice")
+            .or_else(|| e.child("Fallback"))
+            .into_iter()
+            .collect()
+    } else {
+        e.elements().collect()
+    }
+}
+
 fn walk_revision_authors(
     e: &Element,
     out: &mut Vec<String>,
@@ -386,7 +400,7 @@ fn walk_revision_authors(
                 .insert(date.to_string());
         }
     }
-    for child in e.elements() {
+    for child in shown_children(e) {
         walk_revision_authors(child, out, dates);
     }
 }
@@ -1068,9 +1082,6 @@ pub(crate) fn collect_revisions(body: &Element, handles: &Handles) -> Vec<RevTag
 }
 
 fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
-    if e.is("txbxContent") {
-        return;
-    }
     let attribution = |m: &Element| {
         (
             m.attr("author").map(str::to_string),
@@ -1120,20 +1131,17 @@ fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
             });
         }
     }
-    for child in e.elements() {
+    for child in shown_children(e) {
         collect_in(child, handles, out);
     }
 }
 
 /// Count of revision elements (`w:ins`, `w:del`, moves, cell marks) and of
-/// formatting changes (`*PrChange`) under `body`, text boxes excluded.
+/// formatting changes (`*PrChange`) under `body`, text boxes included once.
 pub(crate) fn count_marks(e: &Element) -> (usize, usize) {
-    if e.is("txbxContent") {
-        return (0, 0);
-    }
     let mut marks = usize::from(is_revision(e.local()));
     let mut formats = usize::from(e.local().ends_with("PrChange"));
-    for child in e.elements() {
+    for child in shown_children(e) {
         let (m, f) = count_marks(child);
         marks += m;
         formats += f;

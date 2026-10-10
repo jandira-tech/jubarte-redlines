@@ -2831,3 +2831,26 @@ fn the_golden_headers_parse_as_yaml() {
         assert!(yaml["source"].as_str().is_some(), "{name}");
     }
 }
+
+/// pi review av2 F2: a revision in a text box counts once in the header, as
+/// the body shows it once: the `mc:Choice` shape, not its VML fallback copy.
+#[test]
+fn header_counts_a_text_box_revision_once() {
+    let story = ins(7, "Ann Counsel", "boxed");
+    let boxed = format!(
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p>{story}</w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{story}</w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#
+    );
+    let view = agent(&docx(&boxed));
+    assert_eq!(view.matches("{++boxed++}").count(), 1, "{view}");
+    let lines = header_lines(&view);
+    assert!(
+        lines.iter().any(|l| l.starts_with("revisions: 1 ")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("# 1 revision")),
+        "{lines:?}"
+    );
+}
