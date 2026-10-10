@@ -181,6 +181,26 @@ fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// A side file (`--report`, `--font-report`) is written apart from the
+/// output, after the input is read, so sharing a path with either would
+/// silently replace one with the other; `--force` never allows that.
+fn check_side_file(
+    side: &Path,
+    flag: &str,
+    others: [(&Path, &str); 2],
+    force: bool,
+) -> Result<(), String> {
+    for (other, name) in others {
+        if same_path(side, other) {
+            return Err(format!(
+                "{flag} '{}' is the same file as the {name}",
+                side.display()
+            ));
+        }
+    }
+    ensure_writable(side, force)
+}
+
 /// Shared body for `accept` / `reject`: read the redline, apply the package-wide
 /// resolution, and write the result under the compare path's no-clobber
 /// contract. Generic over the resolver's error so neither `OpcError`'s path nor
@@ -344,20 +364,10 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     if job.pages.is_some() && !job.png {
         return Err("--pages selects PNG pages; add --png".into());
     }
-    for (side, what) in [(job.font_report, "--font-report"), (job.report, "--report")] {
+    for (side, flag) in [(job.font_report, "--font-report"), (job.report, "--report")] {
         if let Some(side) = side {
-            // Side files are written after the PDF (or the input is read
-            // first), so a shared path would silently replace one with the other.
-            for (other, name) in [(output.as_path(), "PDF output"), (job.file, "input")] {
-                if same_path(side, other) {
-                    return Err(format!(
-                        "{what} '{}' is the same file as the {name}",
-                        side.display()
-                    )
-                    .into());
-                }
-            }
-            ensure_writable(side, job.force)?;
+            let others = [(output.as_path(), "PDF output"), (job.file, "input")];
+            check_side_file(side, flag, others, job.force)?;
         }
     }
     if want_pdf {
@@ -1825,6 +1835,10 @@ fn run_convert_any(
                 None if legacy => job.file.with_extension("docx"),
                 None => return Err("--output is required to write Word from Word".into()),
             };
+            if let Some(report) = job.report {
+                let others = [(output.as_path(), "Word output"), (job.file, "input")];
+                check_side_file(report, "--report", others, job.force)?;
+            }
             ensure_writable(&output, job.force)?;
             let mut out = match resolve {
                 Some(resolve) => resolve(&bytes).map_err(|e| {

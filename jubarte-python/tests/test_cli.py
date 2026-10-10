@@ -274,7 +274,9 @@ def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path
     original = letter.read_bytes()
     side = letter if target == "input" else output
     assert main(["convert", str(letter), "-o", str(output), flag, str(side), "--force"]) == 1
-    assert "same file" in capsys.readouterr().err
+    # Native's wording: the one file the side file would replace.
+    name = "input" if target == "input" else "PDF output"
+    assert f"error: {flag} '{side}' is the same file as the {name}" in capsys.readouterr().err.splitlines()
     assert letter.read_bytes() == original
     assert not output.exists()
 
