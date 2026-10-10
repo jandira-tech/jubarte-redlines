@@ -40,7 +40,7 @@ impl Transaction<'_> {
                 "footnotes can be inserted in the body only".into(),
             ));
         }
-        let (_, end) = self.find_range_at(projection, after, occurrence, outcome)?;
+        let (_, end) = self.find_range(projection, after, occurrence, outcome)?;
         self.check_insert_position(projection, end, true)
             .map_err(|m| ("UNSUPPORTED_STRUCTURE".to_string(), m))?;
         Ok(end)

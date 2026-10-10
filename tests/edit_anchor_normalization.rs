@@ -116,3 +116,20 @@ fn a_lone_star_or_underscore_is_text_not_a_mark() {
         assert_eq!(jubarte::markdown::plain_anchor(find), plain, "{find}");
     }
 }
+
+/// pi review r392b tests F1: `format_run` and `insert_footnote` read a marked
+/// anchor as the other kinds do, so `--anchor '**secret**' --style bold`
+/// works on text the view shows bold.
+#[test]
+fn format_run_and_insert_footnote_drop_marks_too() {
+    for op in [
+        r#"{"kind":"format_run","paragraph":"p1","find":"**secret**","format":{"bold":true}}"#,
+        r#"{"kind":"insert_footnote","paragraph":"p1","after":"**secret**","text":"Why."}"#,
+    ] {
+        let out = apply_plan(&source(), &plan(&format!("[{op}]")))
+            .unwrap_or_else(|e| panic!("{op}: {e}"));
+        let report = &out.report.operations[0];
+        assert_eq!(report.anchor_given.as_deref(), Some("**secret**"), "{op}");
+        assert_eq!(report.anchor_read_as.as_deref(), Some("secret"), "{op}");
+    }
+}
