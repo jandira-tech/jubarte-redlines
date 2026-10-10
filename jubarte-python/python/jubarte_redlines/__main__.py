@@ -442,6 +442,12 @@ def cmd_convert(args: argparse.Namespace) -> int:
 def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
     """`convert --update-fields`: the .docx with refreshed field results."""
     output: Path = args.output
+    if args.report is not None:
+        # The report is written apart from the .docx, so a shared path would
+        # silently replace one with the other.
+        for other, name in ((output, "Word output"), (args.file, "input")):
+            if args.report.resolve() == other.resolve():
+                raise CliError(f"--report '{args.report}' is the same file as the {name}")
     _ensure_writable(output, args.force)
     if args.report is not None:
         _ensure_writable(args.report, args.force)
