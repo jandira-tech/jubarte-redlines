@@ -369,6 +369,8 @@ def _from_markdown(args: argparse.Namespace) -> Document:
 
 def cmd_convert(args: argparse.Namespace) -> int:
     if args.file.suffix.lower() in (".md", ".markdown"):
+        if args.update_fields:
+            raise CliError("--update-fields needs a Word document in")
         doc = _from_markdown(args)
         # Markdown goes to Word unless a PDF or PNG is asked for.
         wants_render = args.pdf or args.png or (args.to != "docx" and args.output is not None and args.output.suffix.lower() != ".docx")
@@ -387,6 +389,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
             doc = doc.accept()
         elif args.track_changes == "reject":
             doc = doc.reject()
+        if args.update_fields:
+            return _write_updated_fields(args, doc)
     output: Path = args.output or args.file.with_suffix(".pdf")
     want_pdf = args.pdf or not args.png
     for side, what in ((args.font_report, "--font-report"), (args.report, "--report")):
@@ -419,6 +423,24 @@ def cmd_convert(args: argparse.Namespace) -> int:
     if args.report is not None:
         report = {"page_count": pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
         _write(args.report, json.dumps(report, ensure_ascii=False))
+    return EXIT_OK
+
+
+def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
+    """`convert --update-fields`: the .docx with refreshed field results."""
+    output: Path = args.output
+    _ensure_writable(output, args.force)
+    if args.report is not None:
+        _ensure_writable(args.report, args.force)
+    updated = doc.update_fields()
+    for field in updated.fields:
+        print(f"{field.paragraph}\t{field.kind}\t{json.dumps(field.old, ensure_ascii=False)} -> {json.dumps(field.new, ensure_ascii=False)}")
+    print(f"{len(updated.fields)} field(s) written; {updated.page_count} page(s)", file=sys.stderr)
+    if args.report is not None:
+        _write(args.report, json.dumps({"page_count": updated.page_count, "fields": [asdict(f) for f in updated.fields]}, ensure_ascii=False))
+    data = updated.document.to_bytes()
+    _write(output, data)
+    print(f"wrote {output} ({len(data)} bytes)")
     return EXIT_OK
 
 
@@ -731,7 +753,8 @@ class SharedParser:
             extension = Path(values.get("output") or "").suffix.lower()
             if to == "md" or (to is None and extension in (".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn")):
                 self.error("--to md with page markers is not supported by the Python CLI; `read FILE` prints the agent text view")
-            if (to == "docx" or (to is None and extension == ".docx")) and Path(values["file"]).suffix.lower() not in (".md", ".markdown"):
+            markdown_in = Path(values["file"]).suffix.lower() in (".md", ".markdown")
+            if (to == "docx" or (to is None and extension == ".docx")) and not markdown_in and not values.get("update_fields"):
                 self.error("--to docx requires Markdown input in the Python CLI")
             if to in ("pdf", "png"):
                 values[to] = True

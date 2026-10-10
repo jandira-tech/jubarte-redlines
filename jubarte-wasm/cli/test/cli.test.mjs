@@ -253,7 +253,7 @@ test("format contradictions and unsupported flags fail before I/O (integration)"
     assert.doesNotMatch(result.err, /reading/);
     assert.ok(!fs.existsSync(output));
   }
-  for (const args of [["inspect", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["compare", "a", "b", "--mode", "powertools"]]) {
+  for (const args of [["inspect", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
     const result = run(...args);
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading/);

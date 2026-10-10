@@ -421,6 +421,7 @@ function validateHost(name, o) {
     }
   }
   if (name === "convert") {
+    if (o.update_fields) reject("update_fields");
     for (const flag of ["dpi", "pages", "report", "font_report"]) {
       if (flag === "dpi" ? o.dpi !== 96 : o[flag] != null) reject(flag);
     }
