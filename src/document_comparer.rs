@@ -5357,8 +5357,8 @@ fn mark_adopted_hf_content_as_inserted(
     let Some(root) = dom.root(doc) else {
         return;
     };
-    // Root is w:hdr or w:ftr.
-    let mut next_id: u32 = 1;
+    // Root is w:hdr or w:ftr. New marks number above the story's own.
+    let mut next_id = next_free_revision_id(&dom, root);
     let author = settings.author_for_revisions.as_str();
     let date = settings.date_time_for_revisions.as_str();
     let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
@@ -5567,7 +5567,7 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
     let Some(root) = dom.root(doc) else {
         return;
     };
-    let mut next_id: u32 = 1;
+    let mut next_id = next_free_revision_id(&dom, root);
     let author = settings.author_for_revisions.as_str();
     let date = settings.date_time_for_revisions.as_str();
     let mut revision = |dom: &mut Dom, name: XName| -> NodeId {
@@ -9121,14 +9121,14 @@ mod coverage_boundary_tests {
         let ppr = child(&dom, paras[0], "pPr");
         assert_eq!(children(&dom, ppr), ["jc", "rPr", "pPrChange"]);
         let content = child(&dom, paras[0], "ins");
-        assert_revision(&dom, content, "1");
+        assert_revision(&dom, content, "100");
         assert_eq!(children(&dom, content), ["r", "hyperlink"]);
         assert_eq!(dom.value(content), "Page link");
-        assert_revision(&dom, child(&dom, child(&dom, ppr, "rPr"), "ins"), "2");
-        assert_revision(&dom, child(&dom, paras[1], "ins"), "3");
+        assert_revision(&dom, child(&dom, child(&dom, ppr, "rPr"), "ins"), "101");
+        assert_revision(&dom, child(&dom, paras[1], "ins"), "102");
         let mark = child(&dom, child(&dom, paras[1], "pPr"), "rPr");
         assert_eq!(children(&dom, mark), ["ins", "rStyle"]);
-        assert_revision(&dom, child(&dom, mark, "ins"), "4");
+        assert_revision(&dom, child(&dom, mark, "ins"), "103");
         assert_eq!(children(&dom, paras[2]), ["bookmarkStart"]);
         assert!(children(&dom, paras[3]).is_empty());
         assert_eq!(children(&dom, paras[4]), ["del"]);
@@ -9221,6 +9221,33 @@ mod coverage_boundary_tests {
                 mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
             }
             assert_eq!(pkg.part_string("word/footer.xml").unwrap(), before);
+        }
+    }
+
+    /// A one-sided story's new marks take ids above the ones it already
+    /// carries, so a kept revision never shares its id with a new one.
+    #[test]
+    fn one_sided_story_marks_take_ids_above_the_story_s_own() {
+        let story = "<w:p><w:ins w:id=\"1\"><w:r><w:t>kept</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>new</w:t></w:r></w:p><w:tbl><w:tr><w:trPr><w:del w:id=\"2\"/></w:trPr><w:tc><w:p/></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>";
+        for deleted in [true, false] {
+            let mut pkg = package("<w:body/>");
+            pkg.set_part("word/footer.xml", xml("ftr", story).into_bytes());
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            let (dom, r) = part_root(&pkg, "word/footer.xml");
+            let mut ids: Vec<&str> = ["ins", "del"]
+                .iter()
+                .flat_map(|m| dom.descendants(r, Some(&W::name(m))))
+                .filter_map(|n| dom.attribute(n, &W::id()))
+                .collect();
+            let all = ids.len();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(ids.len(), all, "deleted={deleted}: duplicate ids {ids:?}");
+            assert!(all > 2, "deleted={deleted}: the story gained marks");
         }
     }
 
