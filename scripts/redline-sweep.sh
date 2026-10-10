@@ -122,7 +122,7 @@ if [ "$VALIDATE" = "--validate" ]; then
         echo "error: validity baseline missing: $BASELINE" | tee -a "$OUT/validate.log" >&2
         validate_fail=1
       else
-        awk -F'\t' 'NF>=2 {print $1"\t"$2}' "$BASELINE" | sort -u >"$OUT/.baseline_keys"
+        awk -F'\t' '!/^#/ && NF>=2 {print $1"\t"$2}' "$BASELINE" | sort -u >"$OUT/.baseline_keys"
         awk -F'\t' 'NF>=2 {print $1"\t"$2}' "$OUT/validate_findings.tsv" | sort -u >"$OUT/.current_keys"
         NEW=$(comm -13 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
         FIXED=$(comm -23 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
