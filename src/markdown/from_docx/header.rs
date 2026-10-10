@@ -368,7 +368,18 @@ pub(crate) fn render(f: &Facts) -> String {
         } else {
             format!(" of {span}")
         };
-        kv(&mut out, &format!("range: {range}{of}"), None);
+        // A change only a header, footer or story holds shows on the
+        // headers:/footers: lines, not as a body block.
+        let none = range.starts_with("changed")
+            && range.ends_with("(none)")
+            && f.sections.iter().any(|s| !s.stories.is_empty());
+        kv(
+            &mut out,
+            &format!("range: {range}{of}"),
+            none.then_some(
+                "no body block; header and footer text is on the headers:/footers: lines",
+            ),
+        );
     }
     part_two(&mut out, f);
     out.push_str("---\n");

@@ -3043,3 +3043,36 @@ fn header_counts_a_text_box_formatting_change_once() {
     assert!(view.contains("fmt #31 @AC"), "{view}");
     assert!(!view.contains("#32"), "{view}");
 }
+
+/// pi review av4 F10: a change only in a header leaves no body block to
+/// show; the range line says where the change is to be read instead of
+/// printing a bare empty view.
+#[test]
+fn a_header_only_change_points_at_the_headers_line() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        ins(5, "Ann Counsel", "NEW HEADER")
+    );
+    let sect = r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let bytes = common::docx::docx_with_sect_pr(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        sect,
+    );
+    let view = jubarte::markdown::changed_view(&bytes, "Ann Counsel", false, None).unwrap();
+    let range = header_lines(&view)
+        .into_iter()
+        .find(|l| l.starts_with("range: "))
+        .unwrap_or_default();
+    assert!(range.contains("(none)"), "{view}");
+    assert!(
+        range.contains("# no body block; header and footer text is on the headers:/footers: lines"),
+        "{view}"
+    );
+    assert!(view.contains("text: NEW HEADER"), "{view}");
+}

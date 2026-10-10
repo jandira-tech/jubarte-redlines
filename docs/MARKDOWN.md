@@ -347,6 +347,9 @@ without their Markdown marks, with a note.
 ### Limits of the agent view
 
 - Tracked paragraph marks inside comment bodies are not shown.
+- Headers and footers are header lines (`headers:`, `footers:`), not body
+  blocks: a change only they hold leaves `--changed` and the view `edit`
+  prints with no block, and the `range:` line says to read those lines.
 - Page markers need the layout pass; `--no-page-markers` skips it.
 - A table is one block for `-p`, `--head` and `--tail`.
 - With comments inline, a comment range between two changes by one author
