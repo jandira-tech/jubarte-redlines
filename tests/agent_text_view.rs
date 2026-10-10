@@ -2918,3 +2918,41 @@ fn an_owner_less_core_part_is_not_called_missing() {
         "{view}"
     );
 }
+
+/// pi review av2 F5: when layout fails the view still marks pages, from the
+/// document's own breaks; the warning says so instead of "no page markers".
+#[test]
+fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
+    let bytes = common::docx::docx_with(
+        &para("Hello"),
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &format!(r#"<w:styles xmlns:w="{W_NS}"><w:style"#),
+        }],
+    );
+    let view = jubarte::markdown::read(
+        &bytes,
+        &jubarte::markdown::ReadOptions {
+            track_changes: TrackChanges::All,
+            comments: true,
+            dates: false,
+            page_markers: true,
+            select: None,
+            source: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        view.markdown.contains("<!-- page 1 of 1 -->"),
+        "{}",
+        view.markdown
+    );
+    assert_eq!(view.warnings.len(), 1, "{:?}", view.warnings);
+    let warning = &view.warnings[0];
+    assert!(
+        warning.starts_with("layout failed, page markers come from the document's breaks: "),
+        "{warning}"
+    );
+}

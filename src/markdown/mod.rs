@@ -475,7 +475,14 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
             options.track_changes,
             crate::convert::RevisionStyle::default(),
         )
-        .map_err(|e| warnings.push(format!("no page markers: {e}")))
+        // The converter still marks pages, from the document's own breaks.
+        .map_err(|e| {
+            let e = e.to_string();
+            warnings.push(format!(
+                "layout failed, page markers come from the document's breaks: {}",
+                e.strip_prefix("layout failed: ").unwrap_or(&e)
+            ));
+        })
         .ok()
     } else {
         None
