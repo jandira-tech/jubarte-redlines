@@ -8,6 +8,7 @@ exit codes as the ``jubarte`` binary, driven in-process."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -277,6 +278,30 @@ def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path
     # Native's wording: the one file the side file would replace.
     name = "input" if target == "input" else "PDF output"
     assert f"error: {flag} '{side}' is the same file as the {name}" in capsys.readouterr().err.splitlines()
+    assert letter.read_bytes() == original
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("flag", ["--report", "--font-report"])
+@pytest.mark.parametrize("alias", ["hard link", "symlink", "case variant"])
+def test_convert_refuses_a_side_file_that_names_the_input_another_way(letter, tmp_path, capsys, flag, alias):
+    # Writing the side file through any of these used to replace the input.
+    output = tmp_path / "result.pdf"
+    original = letter.read_bytes()
+    side = tmp_path / "side.json"
+    if alias == "hard link":
+        os.link(letter, side)
+    elif alias == "symlink":
+        try:
+            side.symlink_to(letter.name)
+        except OSError:
+            pytest.skip("this account cannot create symlinks")
+    else:
+        side = letter.with_name(letter.name.upper())
+        if not side.exists():
+            pytest.skip("this volume tells case apart")
+    assert main(["convert", str(letter), "-o", str(output), flag, str(side), "--force"]) == 1
+    assert f"error: {flag} '{side}' is the same file as the input" in capsys.readouterr().err.splitlines()
     assert letter.read_bytes() == original
     assert not output.exists()
 

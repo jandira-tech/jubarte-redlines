@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 from collections.abc import Sequence
@@ -102,12 +103,22 @@ def _ensure_writable(path: Path, force: bool) -> None:
         raise CliError(f"output '{path}' already exists (use --force to overwrite)")
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two CLI paths name the same file. Two existing paths are
+    compared by identity, which sees through hard links, symlinks and a
+    volume that ignores case; a path not written yet by its resolved form."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return a.resolve() == b.resolve()
+
+
 def _check_side_file(side: Path, flag: str, others: tuple[tuple[Path, str], ...], force: bool) -> None:
     """A side file (``--report``, ``--font-report``) is written apart from the
     output, after the input is read, so sharing a path with either would
     silently replace one with the other; ``--force`` never allows that."""
     for other, name in others:
-        if side.resolve() == other.resolve():
+        if _same_file(side, other):
             raise CliError(f"{flag} '{side}' is the same file as the {name}")
     _ensure_writable(side, force)
 
