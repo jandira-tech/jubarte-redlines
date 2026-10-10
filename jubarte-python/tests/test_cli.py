@@ -35,16 +35,25 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert main(["inspect", str(letter)]) == 0
     out = capsys.readouterr().out
     assert "paragraphs: 3" in out and "body:p:2" in out
-    assert main(["text", str(letter)]) == 0
-    assert capsys.readouterr().out.startswith("[body:p:0] Heading\n\n[body:p:1] The individual")
+    # `read` (alias `text`) prints the agent view, as the binary does.
+    for command in ("read", "text"):
+        assert main([command, str(letter), "--no-page-markers"]) == 0
+        out = capsys.readouterr().out
+        assert out.startswith(f"---\nsource: {letter.name}\n"), out
+        assert "<!-- p0" in out and "<!-- p1 -->\nThe individual" in out, out
+        assert "<!-- page " not in out, out
+    assert main(["read", str(letter), "-p", "p1"]) == 0
+    out = capsys.readouterr().out
+    assert "<!-- p1 -->\nThe individual" in out and "<!-- p0" not in out, out
 
 
 def test_the_module_runs_as_a_program(letter: Path) -> None:
     # The tests above call main() in-process; this runs the __main__ guard
     # itself, the way `python -m jubarte_redlines` is used (PR #253).
-    run = subprocess.run([sys.executable, "-m", "jubarte_redlines", "text", str(letter)], capture_output=True, text=True)
+    run = subprocess.run([sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
-    assert run.stdout.startswith("[body:p:0] Heading\n")
+    assert run.stdout.startswith("---\nsource: "), run.stdout
+    assert "<!-- page 1 of 1 -->" in run.stdout, run.stdout
 
 
 def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:

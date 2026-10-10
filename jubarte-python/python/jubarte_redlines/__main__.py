@@ -8,7 +8,7 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
 
     uvx jubarte-redlines redline a.docx b.docx -o redline.docx
     python -m jubarte_redlines inspect letter.docx --json
-    python -m jubarte_redlines text letter.docx
+    python -m jubarte_redlines read letter.docx
     python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
     python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
     python -m jubarte_redlines convert letter.docx --png --pages 3-5
@@ -179,10 +179,23 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_text(args: argparse.Namespace) -> int:
+def cmd_read(args: argparse.Namespace) -> int:
     from . import _native
 
-    sys.stdout.write(_native.markdown(_read(args.file).to_bytes(), args.track_changes))
+    markdown, warnings = _native.read_view(
+        _read(args.file).to_bytes(),
+        track_changes=args.track_changes,
+        comments=args.comments == "inline",
+        dates=args.dates,
+        page_markers=not args.no_page_markers,
+        paragraphs=args.paragraphs,
+        head=args.head,
+        tail=args.tail,
+        source=args.file.name,
+    )
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    sys.stdout.write(markdown)
     return EXIT_OK
 
 
@@ -584,7 +597,7 @@ def cmd_capabilities(_args: argparse.Namespace) -> int:
 
 # Handlers own host I/O. Rust clap owns the grammar, defaults and help.
 _HANDLERS = {
-    "inspect": cmd_inspect, "text": cmd_text, "edit": cmd_edit,
+    "inspect": cmd_inspect, "read": cmd_read, "edit": cmd_edit,
     "convert": cmd_convert, "compare": cmd_compare, "diff": cmd_diff,
     "revisions": cmd_revisions, "changes": cmd_changes, "comments": cmd_comments,
     "accept": cmd_accept, "reject": cmd_reject, "diff-render": cmd_diff_render,
@@ -647,7 +660,7 @@ class SharedParser:
             to = values.get("to")
             extension = Path(values.get("output") or "").suffix.lower()
             if to == "md" or (to is None and extension in (".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn")):
-                self.error("--to md with page markers is not supported by the Python CLI; use text --track-changes")
+                self.error("--to md with page markers is not supported by the Python CLI; use read --track-changes")
             if (to == "docx" or (to is None and extension == ".docx")) and Path(values["file"]).suffix.lower() not in (".md", ".markdown"):
                 self.error("--to docx requires Markdown input in the Python CLI")
             if to in ("pdf", "png"):

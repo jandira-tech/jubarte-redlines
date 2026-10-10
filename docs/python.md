@@ -57,7 +57,6 @@ Tasks:
   convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
   diff          Review differences as GitHub, word, normal, context or side-by-side text
   inspect       Inspect document facts, paragraphs, styles and tables
-  text          Read Markdown with edit IDs `[body:p:N]`, or with tracked marks
   edit          Apply a JSON edit plan; write clean copy, redline and report (refusal:
                 exit 3)
   capabilities  What this binary can do, for agents choosing an operation
@@ -651,33 +650,6 @@ Options:
                 ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
                 tab-separated `ids=text` cells
   -h, --help    Print help
-```
-
-#### `jubarte-redlines text`
-
-```text
-$ jubarte-redlines text --help
-Read Markdown with edit IDs `[body:p:N]`, or with tracked marks
-
-Usage: jubarte-redlines text [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>
-          The document (.docx) to read
-
-Options:
-      --track-changes <CHOICE>
-          Print the document as Markdown with its tracked changes as CriticMarkup (all),
-          or with every change accepted or rejected, like `convert --to md`. The output
-          then has no `[body:p:N]` ids
-
-          Possible values:
-          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
-          - accept: Accept every change
-          - reject: Reject every change
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 #### `jubarte-redlines edit`

@@ -687,6 +687,58 @@ fn markdown(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResul
     .map_err(err)
 }
 
+/// The agent view (`read`) → `(markdown, warnings)`: a YAML header, then
+/// Markdown with `<!-- pN -->` id lines and every change and comment with
+/// its id. `paragraphs` (`"p3,p10-p20,t0"`), `head` and `tail` select blocks.
+#[pyfunction]
+#[pyo3(signature = (
+    docx,
+    *,
+    track_changes = None,
+    comments = true,
+    dates = false,
+    page_markers = true,
+    paragraphs = None,
+    head = None,
+    tail = None,
+    source = None,
+))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
+)]
+fn read_view(
+    py: Python<'_>,
+    docx: &[u8],
+    track_changes: Option<&str>,
+    comments: bool,
+    dates: bool,
+    page_markers: bool,
+    paragraphs: Option<&str>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    source: Option<String>,
+) -> PyResult<(String, Vec<String>)> {
+    let track_changes = match track_changes {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or_else(|| err("track_changes must be all, accept or reject"))?,
+    };
+    let select = jubarte::markdown::Select::from_flags(paragraphs, head, tail).map_err(err)?;
+    let options = jubarte::markdown::ReadOptions {
+        track_changes,
+        comments,
+        dates,
+        page_markers,
+        select,
+        source,
+    };
+    let view = py
+        .detach(|| jubarte::markdown::read(docx, &options))
+        .map_err(err)?;
+    Ok((view.markdown, view.warnings))
+}
+
 /// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
 ///
 /// On success `json` is the report; on refusal it is the structured error
@@ -916,6 +968,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("JubarteError", m.py().get_type::<JubarteError>())?;
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
+    m.add_function(wrap_pyfunction!(read_view, m)?)?;
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(get_revisions_json, m)?)?;

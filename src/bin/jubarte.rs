@@ -744,40 +744,24 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
 /// `--no-page-markers` skips it.
 fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
     let bytes = read_document(file)?;
-    let select = match (args.paragraphs.as_deref(), args.head, args.tail) {
-        (Some(spec), _, _) => Some(jubarte::markdown::Select::parse(spec)?),
-        (None, Some(n), _) => Some(jubarte::markdown::Select::Head(n)),
-        (None, None, Some(n)) => Some(jubarte::markdown::Select::Tail(n)),
-        (None, None, None) => None,
-    };
-    let track_changes = args.track_changes.unwrap_or(TrackChanges::All);
-    let pages = if args.no_page_markers {
-        None
-    } else {
-        page_texts(
-            &bytes,
-            track_changes,
-            jubarte::convert::RevisionStyle::default(),
-        )
-        .map_err(|e| eprintln!("warning: no page markers: {e}"))
-        .ok()
-    };
-    let read = jubarte::markdown::docx_to_markdown(
+    let select =
+        jubarte::markdown::Select::from_flags(args.paragraphs.as_deref(), args.head, args.tail)?;
+    let view = jubarte::markdown::read(
         &bytes,
-        &jubarte::markdown::MarkdownOptions {
-            track_changes: track_changes.into(),
-            extract_media: None,
-            ids: true,
+        &jubarte::markdown::ReadOptions {
+            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
             comments: args.comments == CommentsArg::Inline,
-            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
-            pages,
-            page_markers: !args.no_page_markers,
             dates: args.dates,
+            page_markers: !args.no_page_markers,
             select,
+            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
         },
     )
     .map_err(|e| e.to_string())?;
-    print!("{}", read.markdown);
+    for warning in &view.warnings {
+        eprintln!("warning: {warning}");
+    }
+    print!("{}", view.markdown);
     Ok(())
 }
 
@@ -1521,7 +1505,7 @@ fn paginated(
     track_changes: TrackChanges,
     revisions: jubarte::convert::RevisionStyle,
 ) -> String {
-    match page_texts(docx, track_changes, revisions) {
+    match jubarte::markdown::page_texts(docx, track_changes.into(), revisions) {
         Ok(pages) => {
             let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
             jubarte::markdown::paginate(markdown, &pages)
@@ -1531,36 +1515,6 @@ fn paginated(
             markdown.to_string()
         }
     }
-}
-
-/// The text the layout pass paints on each page, with the document's changes
-/// kept, accepted or rejected, for `<!-- page N of M -->` lines.
-fn page_texts(
-    docx: &[u8],
-    track_changes: TrackChanges,
-    revisions: jubarte::convert::RevisionStyle,
-) -> Result<Vec<String>, String> {
-    let resolved = match track_changes {
-        TrackChanges::All => Ok(std::borrow::Cow::Borrowed(docx)),
-        TrackChanges::Accept => jubarte::document_comparer::accept_revisions(docx)
-            .map(std::borrow::Cow::Owned)
-            .map_err(|e| format!("accepting the changes failed: {e:?}")),
-        TrackChanges::Reject => jubarte::document_comparer::reject_revisions(docx)
-            .map(std::borrow::Cow::Owned)
-            .map_err(|e| format!("rejecting the changes failed: {e:?}")),
-    };
-    let rendered = resolved.and_then(|bytes| {
-        jubarte::convert::render(
-            &bytes,
-            jubarte::convert::PdfOptions {
-                revisions,
-                ..jubarte::convert::PdfOptions::default()
-            },
-            jubarte::convert::RenderRequest::default(),
-        )
-        .map_err(|e| format!("layout failed: {e}"))
-    });
-    rendered.map(|rendered| rendered.report.pages.into_iter().map(|p| p.text).collect())
 }
 
 fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), ConvertFailure> {
