@@ -3277,8 +3277,9 @@ impl<'p> Transaction<'p> {
         let own: Vec<NodeId> = dom
             .descendants(cell_node, Some(&p))
             .into_iter()
-            // A text box in the cell is not one of its paragraphs, as in the view.
-            .filter(|&q| nearest(q, &tc) == Some(cell_node) && nearest(q, &txbx).is_none())
+            // As in the view, a table nested in the cell is part of it and a
+            // text box is not.
+            .filter(|&q| nearest(q, &txbx).is_none())
             .collect();
         let Some(&node) = own.get(index) else {
             return Err(format!(

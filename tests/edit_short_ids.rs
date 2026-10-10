@@ -137,6 +137,45 @@ fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
     assert!(message.contains("has 3 paragraphs, no p3"), "{message}");
 }
 
+/// pi review r392b F5: a table nested in a cell is part of the cell in the
+/// view (`cells r0 p2-p4`), so `tN.rR.cC.pK` counts its paragraphs too.
+#[test]
+fn a_cell_paragraph_id_counts_the_nested_table_as_the_view_does() {
+    let inner = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>"#,
+        para("INNER")
+    );
+    let table = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}{inner}{}</w:tc></w:tr></w:tbl>"#,
+        para("HEAD"),
+        para("TAIL")
+    );
+    let source = docx_with_sect(&format!("{}{table}{}", para("Zero"), para("Six")), &[], "");
+    let view = jubarte::markdown::docx_to_markdown(
+        &source,
+        &jubarte::markdown::MarkdownOptions {
+            ids: true,
+            page_markers: false,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(view.contains("cells r0 p1-p3"), "{view}");
+    let out = apply_plan(
+        &source,
+        &plan(
+            r#"[
+        {"kind":"replace","paragraph":"t0.r0.c0.p1","find":"INNER","replacement":"Inner"},
+        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"TAIL","replacement":"Tail"}]"#,
+        ),
+    )
+    .unwrap();
+    assert!(out.report.ok, "{:?}", out.report.operations);
+    assert_eq!(at(&out, 0), "body:p:2");
+    assert_eq!(at(&out, 1), "body:p:3");
+}
+
 /// pi review av4 F14: the CLI's `-p` takes the same cell and story ids as a
 /// plan, one group per operation.
 #[test]
