@@ -2956,3 +2956,19 @@ fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
         "{warning}"
     );
 }
+
+/// pi review av2 F10: `w:bdo`/`w:dir` are transparent to revisions as they
+/// are to the text: a deletion then an insertion across one pairs as the
+/// substitution the tracked view shows, and the resolved `rev` agrees.
+#[test]
+fn a_bidi_wrapper_does_not_split_a_substitution() {
+    let doc = docx(&format!(
+        r#"<w:p>{}<w:bdo w:val="rtl">{}</w:bdo></w:p>"#,
+        del(1, "Ann Counsel", "a"),
+        ins(2, "Ann Counsel", "b")
+    ));
+    let tracked = agent(&doc);
+    assert!(tracked.contains("{~~a~>b~~}{>>#1+2 @AC<<}"), "{tracked}");
+    let accepted = agent_with(&doc, TrackChanges::Accept, true);
+    assert!(accepted.contains("<!-- p0 rev #1+2 @AC -->"), "{accepted}");
+}

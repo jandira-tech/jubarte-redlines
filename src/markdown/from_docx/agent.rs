@@ -160,7 +160,9 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
     fn flatten<'a>(parent: &'a Element, out: &mut Vec<&'a Element>) {
         for e in parent.elements() {
             match e.local() {
-                "hyperlink" | "smartTag" | "customXml" | "fldSimple" => flatten(e, out),
+                "hyperlink" | "smartTag" | "customXml" | "fldSimple" | "bdo" | "dir" => {
+                    flatten(e, out);
+                }
                 "sdt" => {
                     if let Some(content) = e.child("sdtContent") {
                         flatten(content, out);
