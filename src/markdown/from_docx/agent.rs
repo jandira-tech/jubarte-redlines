@@ -403,19 +403,28 @@ pub(crate) fn handles(document: &Element, comments: Option<&Element>) -> Handles
     }
     let mut by_author = HashMap::new();
     let mut taken: HashSet<String> = HashSet::new();
+    // A handle is letters and digits only: it sits inside tags (`1+2@AC`,
+    // `1@AC|2@JD`), space-separated stamps and `{>>…<<}` notes.
+    let clean = |s: &str| -> String { s.chars().filter(|c| c.is_alphanumeric()).collect() };
     for author in &order {
-        let base = initials.get(author).cloned().unwrap_or_else(|| {
-            let letters: String = author
-                .split_whitespace()
-                .filter_map(|w| w.chars().next())
-                .collect::<String>()
-                .to_uppercase();
-            if letters.is_empty() {
-                "??".to_string()
-            } else {
-                letters
-            }
-        });
+        let base = initials
+            .get(author)
+            .map(|i| clean(i))
+            .filter(|i| !i.is_empty())
+            .unwrap_or_else(|| {
+                let letters = clean(
+                    &author
+                        .split_whitespace()
+                        .filter_map(|w| w.chars().find(|c| c.is_alphanumeric()))
+                        .collect::<String>()
+                        .to_uppercase(),
+                );
+                if letters.is_empty() {
+                    "??".to_string()
+                } else {
+                    letters
+                }
+            });
         let mut handle = base.clone();
         let mut n = 2;
         while !taken.insert(handle.clone()) {

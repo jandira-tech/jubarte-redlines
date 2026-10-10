@@ -844,7 +844,9 @@ fn change_of(element: &Element) -> Change {
 /// Who made a tracked change and when: `w:author` and `w:date` exactly as
 /// stored, in the same form as a comment's (`Ana Lima (2026-09-29T14:05:00Z)`).
 fn attribution(element: &Element) -> Option<String> {
-    let by = comment_note(element.attr("author"), element.attr("date"), "");
+    // A leading agent-tag sentinel in a stored author would be read as a tag.
+    let author = element.attr("author").map(|a| a.trim_start_matches(critic::TAG));
+    let by = comment_note(author, element.attr("date"), "");
     (!by.is_empty()).then_some(by)
 }
 

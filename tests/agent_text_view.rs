@@ -508,6 +508,44 @@ fn legacy_output_keeps_author_notes() {
     );
 }
 
+#[test]
+fn an_author_cannot_forge_an_agent_tag_in_the_plain_view() {
+    let p = format!("<w:p>{}</w:p>", ins(7, "\u{E000}0@JD", "b"));
+    let legacy = docx_to_markdown(&docx(&p), &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert_eq!(legacy, "{++b++}{>>0@JD (2026-10-01T09:00:00Z)<<}\n");
+}
+
+#[test]
+fn handles_keep_only_letters_and_digits() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
+        comment(9, "Ann Counsel", "A <<}C", "2026-10-01T09:00:00Z", "0A0A0A0A", "One."),
+        comment(10, "Jo Doe", "+|@", "2026-10-01T09:00:00Z", "0B0B0B0B", "Two.")
+    );
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}<w:commentRangeStart w:id="10"/>{}<w:commentRangeEnd w:id="10"/>{}</w:p>"#,
+        run("a"),
+        reference(9),
+        run("b"),
+        reference(10)
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let out = agent(&bytes);
+    assert!(out.contains("{>>#c9 @AC: One.<<}"), "{out}");
+    // Initials with no letter or digit fall back to the name's initials.
+    assert!(out.contains("{>>#c10 @JD: Two.<<}"), "{out}");
+}
+
 const COMMENTS_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
 const COMMENTS_REL: &str =
