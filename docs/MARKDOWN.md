@@ -350,7 +350,11 @@ without their Markdown marks, with a note.
 - Headers and footers are header lines (`headers:`, `footers:`), not body
   blocks: a change only they hold leaves `--changed` and the view `edit`
   prints with no block, and the `range:` line says to read those lines.
-- Page markers need the layout pass; `--no-page-markers` skips it.
+- Page markers need the layout pass; `--no-page-markers` skips it. When
+  the layout fails, the markers come from Word's cached page breaks, else
+  from hard breaks and section starts. That fallback does not mix the two
+  (a page break added after Word last saved turns no page) and does not
+  add the blank page an odd- or even-page section start can need.
 - A table is one block for `-p`, `--head` and `--tail`.
 - With comments inline, a comment range between two changes by one author
   splits their note (`{>>#7 @AC<<}` … `{>>#8 @AC<<}`): CriticMarkup cannot
