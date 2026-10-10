@@ -367,3 +367,51 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
     assert "\nRecitals\n" in out and "{++" not in out, out
+
+
+@pytest.mark.parametrize("mode,kept,removed", [("accept", "45", "30"), ("reject", "30", "45")])
+def test_shorthand_view_preserves_existing_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, kept: str, removed: str,
+) -> None:
+    old, new = tmp_path / "old.md", tmp_path / "new.md"
+    old.write_text("Unchanged intro.\n\nDue in 30 days.\n", encoding="utf-8")
+    new.write_text("Unchanged intro.\n\nDue in 45 days.\n", encoding="utf-8")
+    output = tmp_path / "old_v_new.docx"
+    sentinel = b"existing output must survive"
+    output.write_bytes(sentinel)
+
+    assert main([
+        str(old), str(new), "--track-changes", mode, "--changed", "--by", "Legal",
+        "--author", "Legal", "--no-page-markers",
+    ]) == 0
+    shown = capsys.readouterr().out
+    assert shown.startswith(f"---\nsource: {output} (not written; -o keeps it)\n")
+    assert f"Due in {kept} days." in shown
+    assert f"Due in {removed} days." not in shown
+    assert "Unchanged intro" not in shown
+    assert "<!-- page " not in shown
+    assert output.read_bytes() == sentinel
+
+    assert main(["compare", str(old), str(new)]) == 1
+    assert "already exists" in capsys.readouterr().err
+    assert output.read_bytes() == sentinel
+
+
+@pytest.mark.parametrize("task,dry_run", [("edit", False), ("edit", True), ("add", False)])
+def test_editing_mode_keep_is_usage_error_before_output(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], task: str, dry_run: bool,
+) -> None:
+    output = tmp_path / "never-created"
+    args = [
+        task, str(letter), "-p", "p0", "--content", "Replacement",
+        "--existing-revisions", "keep", "--editing-mode", "--out-dir", str(output),
+    ]
+    if dry_run:
+        args.append("--dry-run")
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2
+    captured = capsys.readouterr()
+    assert "--existing-revisions accept or reject" in captured.err
+    assert captured.out == ""
+    assert not output.exists()

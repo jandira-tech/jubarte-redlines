@@ -471,3 +471,72 @@ fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
         }
     }
 }
+
+#[test]
+fn shorthand_forwards_each_read_option_like_the_explicit_read_task() {
+    for flags in [
+        vec![],
+        vec!["--track-changes", "reject"],
+        vec!["--comments", "none"],
+        vec!["--dates"],
+        vec!["--no-page-markers"],
+        vec!["-p", "p0-p2,t0"],
+        vec!["--head", "0"],
+        vec!["--tail", "1"],
+        vec!["--changed", "--by", "Ann Counsel"],
+    ] {
+        let explicit = parse(&[vec!["read", "a.docx"], flags.clone()].concat(), &[]);
+        let single = parse(&[vec!["a.docx"], flags.clone()].concat(), &[]);
+        assert_eq!(single["exit_code"], 0, "{flags:?}: {single}");
+        assert_eq!(single, explicit, "{flags:?}");
+        let pair = parse(&[vec!["a.docx", "b.docx"], flags].concat(), &[]);
+        assert_eq!(pair["exit_code"], 0, "{pair}");
+        let mut expected = explicit["args"].clone();
+        expected.as_object_mut().unwrap().remove("file");
+        assert_eq!(pair["args"]["view"], expected);
+    }
+}
+
+#[test]
+fn every_explicit_read_option_conflicts_with_writing_even_at_its_default() {
+    for flags in [
+        vec!["--track-changes", "all"],
+        vec!["--comments", "inline"],
+        vec!["--dates"],
+        vec!["--no-page-markers"],
+        vec!["--paragraphs", "p0"],
+        vec!["--head", "0"],
+        vec!["--tail", "0"],
+        vec!["--changed"],
+        vec!["--changed", "--by", "AC"],
+    ] {
+        let args = [vec!["missing-a.docx", "missing-b.docx", "-o", "out.docx"], flags].concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(result["stream"], "stderr");
+        assert!(result["text"].as_str().unwrap().contains("drop -o"));
+        assert_eq!(
+            Cli::try_parse_from([vec!["jubarte"], args].concat())
+                .unwrap_err()
+                .kind(),
+            clap::error::ErrorKind::ArgumentConflict
+        );
+    }
+    assert_eq!(
+        parse(&["a.docx", "b.docx", "-o", "out.docx"], &[])["exit_code"],
+        0
+    );
+}
+
+#[test]
+fn explicit_compare_and_alias_do_not_request_a_printed_view() {
+    for task in ["compare", "redline"] {
+        let result = parse(&[task, "-b", "a.docx", "-m", "b.docx"], &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert!(result["args"].get("view").is_none(), "{result}");
+        assert_eq!(parse(&[task, "-b", "a.docx"], &[])["exit_code"], 2);
+    }
+    let read = parse(&["placeholder.docx", "--original", "actual.docx"], &[]);
+    assert_eq!(read["exit_code"], 0, "{read}");
+    assert_eq!(read["args"]["file"], "actual.docx");
+}

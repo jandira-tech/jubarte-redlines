@@ -567,3 +567,38 @@ test("diff, compare and convert follow the native input and output contract (int
   assert.match(refused.err, /Markdown must be UTF-8/);
   assert.ok(!fs.existsSync(path.join(tmp, "broken.pdf")));
 });
+
+test("agent shorthand reads an in-memory redline without touching an existing default output", () => {
+  const a = path.join(tmp, "sentinel-old.md"), b = path.join(tmp, "sentinel-new.md");
+  fs.writeFileSync(a, "Unchanged intro.\n\nDue in 30 days.\n");
+  fs.writeFileSync(b, "Unchanged intro.\n\nDue in 45 days.\n");
+  const fallback = path.join(tmp, "sentinel-old_v_sentinel-new.docx");
+  const sentinel = Buffer.from("existing output must survive");
+  fs.writeFileSync(fallback, sentinel);
+  for (const [mode, kept, removed] of [["accept", "45", "30"], ["reject", "30", "45"]]) {
+    const result = run(a, b, "--track-changes", mode, "--changed", "--by", "Legal", "--author", "Legal", "--no-page-markers");
+    assert.equal(result.code, 0, result.err);
+    assert.ok(result.out.startsWith(`---\nsource: ${fallback} (not written; -o keeps it)\n`));
+    assert.ok(result.out.includes(`Due in ${kept} days.`), result.out);
+    assert.ok(!result.out.includes(`Due in ${removed} days.`), result.out);
+    assert.doesNotMatch(result.out, /Unchanged intro|<!-- page /);
+    assert.deepEqual(fs.readFileSync(fallback), sentinel);
+  }
+  const explicit = run("compare", a, b);
+  assert.equal(explicit.code, 1);
+  assert.match(explicit.err, /already exists/);
+  assert.deepEqual(fs.readFileSync(fallback), sentinel);
+});
+
+test("agent editing mode rejects keep before creating output even in dry run", () => {
+  for (const task of ["edit", "add"]) {
+    for (const dryRun of task === "edit" ? [false, true] : [false]) {
+      const out = path.join(tmp, `keep-${task}-${dryRun}`);
+      const result = run(task, tracked, "-p", "p0", "--content", "Replacement", "--existing-revisions", "keep", "--editing-mode", "--out-dir", out, ...(dryRun ? ["--dry-run"] : []));
+      assert.equal(result.code, 2, result.err);
+      assert.match(result.err, /--existing-revisions accept or reject/);
+      assert.equal(result.out, "");
+      assert.equal(fs.existsSync(out), false);
+    }
+  }
+});
