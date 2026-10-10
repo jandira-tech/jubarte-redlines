@@ -182,6 +182,24 @@ fn trailing_empty_paragraphs_are_still_listed() {
 }
 
 #[test]
+fn leading_empty_paragraphs_follow_the_first_page_marker() {
+    let bytes = docx(&format!("<w:p/><w:p/>{}", para("Text")));
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0-p1 empty -->\n\n<!-- p2 -->\nText\n"
+    );
+}
+
+#[test]
+fn a_document_of_empty_paragraphs_still_opens_page_one() {
+    let bytes = docx("<w:p/><w:p/>");
+    assert_eq!(
+        body(&agent(&bytes)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0-p1 empty -->\n"
+    );
+}
+
+#[test]
 fn layout_page_texts_place_the_markers_above_the_id_lines() {
     let bytes = docx(&format!(
         "{}{}{}",
@@ -537,6 +555,74 @@ fn hidden_comments_are_listed_on_the_id_line() {
             false
         )),
         "<!-- page 1 of 1 -->\n\n<!-- p0 comments #c5 #c6 -->\nFee. Late amounts accrue interest.\n\n<!-- p1 comments #c11 -->\nKeep it secret.\n"
+    );
+}
+
+/// One comment, #9 by Ann Counsel, around `body_xml`.
+fn one_comment_docx(body_xml: &str) -> Vec<u8> {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            9,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Check."
+        )
+    );
+    common::docx::docx_with(
+        body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    )
+}
+
+#[test]
+fn hidden_comments_in_a_cell_go_on_the_table_line_not_the_next_paragraph() {
+    let body_xml = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>{}</w:p></w:tc><w:tc><w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}</w:p></w:tc></w:tr></w:tbl>{}"#,
+        run("a"),
+        run("b"),
+        reference(9),
+        para("After")
+    );
+    let out = agent_with(&one_comment_docx(&body_xml), TrackChanges::All, false);
+    assert!(
+        body(&out).starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, comments #c9 in p1 -->\n"),
+        "{out}"
+    );
+    assert!(body(&out).ends_with("<!-- p2 -->\nAfter\n"), "{out}");
+}
+
+#[test]
+fn an_empty_paragraph_keeps_its_line_for_a_hidden_comment() {
+    let body_xml = format!(
+        r#"{}<w:p><w:commentRangeStart w:id="9"/><w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        para("Before"),
+        reference(9),
+        para("After")
+    );
+    assert_eq!(
+        body(&agent_with(&one_comment_docx(&body_xml), TrackChanges::All, false)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, comments #c9 -->\n\n<!-- p2 -->\nAfter\n"
+    );
+}
+
+#[test]
+fn an_inserted_empty_paragraph_keeps_its_line_for_the_mark() {
+    let body_xml = format!(
+        r#"{}<w:p><w:pPr><w:rPr><w:ins w:id="3" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr></w:p><w:p/>{}"#,
+        para("Before"),
+        para("After")
+    );
+    assert_eq!(
+        body(&agent(&docx(&body_xml))),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, break-ins #3 @AC -->\n\n<!-- p2 empty -->\n\n<!-- p3 -->\nAfter\n"
     );
 }
 

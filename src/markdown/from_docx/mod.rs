@@ -967,7 +967,12 @@ impl Writer<'_> {
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
                     if self.agent {
-                        if let Some(line) = agent::table_line(child, self.resolved, &self.handles) {
+                        if let Some(line) = agent::table_line(
+                            child,
+                            self.resolved,
+                            !self.comments_inline,
+                            &self.handles,
+                        ) {
                             self.flush_empty(blocks);
                             let mut breaks = Vec::new();
                             child.find_all("lastRenderedPageBreak", &mut breaks);
@@ -977,6 +982,8 @@ impl Writer<'_> {
                     }
                     let table = self.table(child);
                     blocks.push(&table, false);
+                    // The cells' hidden comments went on the table line.
+                    self.para_comments.clear();
                 }
                 "sdt" => {
                     if let Some(content) = child.child("sdtContent") {
@@ -1093,9 +1100,19 @@ impl Writer<'_> {
         };
         if let Some(index) = index {
             let page_break = agent::has_page_break(p);
-            if !written && extra.is_empty() && !page_break && !agent::has_section_break(p) {
+            let comments = if self.comments_inline {
+                Vec::new()
+            } else {
+                std::mem::take(&mut self.para_comments)
+            };
+            self.para_comments.clear();
+            let empty =
+                !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
+            if empty
+                && comments.is_empty()
+                && !agent::holds_revision_facts(p, self.resolved, &self.handles)
+            {
                 self.pending_empty.push(index);
-                self.para_comments.clear();
                 return;
             }
             self.flush_empty(blocks);
@@ -1103,12 +1120,6 @@ impl Writer<'_> {
             let marker = heading_marker
                 .as_deref()
                 .or(list_marker.as_ref().map(|(m, _)| m.as_str()));
-            let comments = if self.comments_inline {
-                Vec::new()
-            } else {
-                std::mem::take(&mut self.para_comments)
-            };
-            self.para_comments.clear();
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
@@ -1118,6 +1129,7 @@ impl Writer<'_> {
                 page_break,
                 resolved: self.resolved,
                 comments: &comments,
+                empty,
             };
             blocks.push_line(&agent::id_line(p, &facts, &self.handles));
         }
@@ -1154,8 +1166,13 @@ impl Writer<'_> {
         });
     }
 
-    /// Agent view: writes the pending `<!-- pN empty -->` lines.
+    /// Agent view: writes the pending `<!-- pN empty -->` lines, after the
+    /// page-1 marker when they open the document.
     fn flush_empty(&mut self, blocks: &mut Blocks) {
+        if self.pending_empty.is_empty() {
+            return;
+        }
+        self.page_lines(blocks, false);
         for line in agent::empty_lines(&std::mem::take(&mut self.pending_empty)) {
             blocks.push_line(&line);
         }

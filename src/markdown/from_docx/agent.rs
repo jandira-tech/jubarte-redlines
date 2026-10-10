@@ -426,6 +426,40 @@ pub(crate) struct LineFacts<'a> {
     pub resolved: bool,
     /// Comment ids to list (comments hidden).
     pub comments: &'a [String],
+    /// The paragraph has no text but keeps its own line for its marks,
+    /// revisions or comments: `<!-- p4 empty, break-ins #3 @AC -->`.
+    pub empty: bool,
+}
+
+/// An empty paragraph that still says something the `pN empty` run would
+/// lose: a tracked mark, a formatting change or, resolved, a revision.
+pub(crate) fn holds_revision_facts(p: &Element, resolved: bool, handles: &Handles) -> bool {
+    let (ins, del) = mark_tags(p, handles);
+    !ins.is_empty()
+        || !del.is_empty()
+        || !format_change_tags(p, handles).is_empty()
+        || (resolved && !stamped_revs(p).is_empty())
+}
+
+/// The comment ids a paragraph's ranges and references name, in document
+/// order, each once.
+pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
+    fn walk(e: &Element, out: &mut Vec<String>) {
+        for child in e.elements() {
+            if child.is("commentRangeStart") || child.is("commentReference") {
+                if let Some(id) = child.attr("id") {
+                    if !out.iter().any(|c| c == id) {
+                        out.push(id.to_string());
+                    }
+                }
+            } else {
+                walk(child, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(p, &mut out);
+    out
 }
 
 /// Twips as inches with up to two decimals: `720` → `0.5in`, `1440` → `1in`.
@@ -475,6 +509,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     let ppr = p.child("pPr");
     let mut clauses: Vec<String> = Vec::new();
+    if f.empty {
+        clauses.push("empty".to_string());
+    }
     if let Some(jc) = ppr
         .and_then(|pr| pr.child("jc"))
         .and_then(|j| j.attr("val"))
@@ -578,8 +615,14 @@ pub(crate) fn page_counts(e: &Element) -> (usize, usize) {
 }
 
 /// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
-/// `None` for a nested table (not numbered).
-pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Option<String> {
+/// `None` for a nested table (not numbered). With `comments` (comments
+/// hidden) the cells' comment ids print as `comments #c9 in p3`.
+pub(crate) fn table_line(
+    tbl: &Element,
+    resolved: bool,
+    comments: bool,
+    handles: &Handles,
+) -> Option<String> {
     let t = tbl.attr(TABLE)?;
     let rows: Vec<&Element> = tbl.children_named("tr").collect();
     let cols = tbl
@@ -608,6 +651,7 @@ pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Op
     let mut break_ins: Vec<String> = Vec::new();
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
+    let mut held: Vec<String> = Vec::new();
     for tr in &rows {
         let mut range: Option<(usize, usize)> = None;
         for tc in tr.children_named("tc") {
@@ -634,6 +678,11 @@ pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Op
                             .into_iter()
                             .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
                     );
+                }
+                let ids = if comments { comment_ids(p) } else { Vec::new() };
+                if !ids.is_empty() {
+                    let ids: Vec<String> = ids.iter().map(|c| format!("#c{c}")).collect();
+                    held.push(format!("{} in p{i}", ids.join(" ")));
                 }
             }
             if let (Some(&a), Some(&b)) = (idx.first(), idx.last()) {
@@ -682,6 +731,9 @@ pub(crate) fn table_line(tbl: &Element, resolved: bool, handles: &Handles) -> Op
     }
     if !revs.is_empty() {
         clauses.push(format!("rev {}", revs.join("; ")));
+    }
+    if !held.is_empty() {
+        clauses.push(format!("comments {}", held.join("; ")));
     }
     Some(line(&head, &clauses))
 }
