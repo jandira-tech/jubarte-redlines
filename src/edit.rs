@@ -5082,12 +5082,33 @@ fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id
     dom.set_attribute_value(reference, &W::id(), Some(&id_str));
     dom.add(reference_run, reference);
     if wrap_range(dom, paragraph, start, end, range_start, range_end) {
-        dom.add_after_self(range_end, reference_run);
+        place_reference(dom, range_start, range_end, reference_run);
     } else {
         dom.add(paragraph, range_start);
         dom.add(paragraph, range_end);
         dom.add(paragraph, reference_run);
     }
+}
+
+/// Put a comment's reference run right after its end marker, or, when the
+/// range starts outside the tracked insertion holding that marker, after
+/// the insertion: rejecting it would take a reference inside it, and the
+/// comment with it, though only part of the commented text was inserted.
+/// A comment wholly on inserted text keeps its reference inside and goes
+/// with the text, as in Word.
+fn place_reference(dom: &mut Dom, range_start: NodeId, range_end: NodeId, reference_run: NodeId) {
+    let mut after = range_end;
+    for ancestor in dom.ancestors(range_end, None) {
+        if dom.name_is(ancestor, &W::p()) {
+            break;
+        }
+        if (dom.name_is(ancestor, &W::ins()) || dom.name_is(ancestor, &W::name("moveTo")))
+            && !dom.ancestors(range_start, None).contains(&ancestor)
+        {
+            after = ancestor;
+        }
+    }
+    dom.add_after_self(after, reference_run);
 }
 
 fn comment_marker(dom: &mut Dom, local: &str, id: &str) -> NodeId {
@@ -5125,7 +5146,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
     let scratch = dom.new_element(W::name("commentRangeStart"));
     if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end) {
         dom.remove(scratch);
-        dom.add_after_self(range_end, reference_run);
+        place_reference(dom, range_start, range_end, reference_run);
     } else {
         dom.add(last, range_end);
         dom.add(last, reference_run);
