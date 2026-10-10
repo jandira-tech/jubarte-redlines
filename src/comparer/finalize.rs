@@ -171,6 +171,26 @@ pub fn mark_content_transform(
     }
     let name = dom.name(node).unwrap();
 
+    // An empty field is a whole atom with no run to carry the status: Word's
+    // redline spells it as a complex field inside the revision (b15).
+    if name == W::name("fldSimple") && dom.elements(node, None).is_empty() {
+        let deleted = match dom.attribute(node, &PT::status()) {
+            Some("Deleted") => true,
+            Some("Inserted") => false,
+            _ => return vec![dom.clone_subtree(node)],
+        };
+        let wrap = rev_el(
+            dom,
+            if deleted { W::del() } else { W::ins() },
+            settings,
+            id_gen,
+        );
+        for run in complex_field_runs(dom, node, deleted) {
+            dom.add(wrap, run);
+        }
+        return vec![wrap];
+    }
+
     if name == W::r() {
         let txbx = W::name("txbxContent");
         let carriers: Vec<NodeId> = descendants_trimmed(dom, node, &txbx)
@@ -19277,6 +19297,41 @@ mod coverage_round_next_tests {
                     &format!("<w:p w:rsidR=\"123\">{props}{text}</w:p>"),
                 );
             }
+        }
+    }
+
+    /// An empty field is a whole atom (no run), so the run-level status
+    /// pass never wrapped it: a deleted `PAGE` stayed live in its deleted
+    /// paragraph and Word 16.115 hung on the footer (b15, 0.12.0 sample).
+    #[test]
+    fn deleted_or_inserted_empty_field_becomes_a_complex_field_in_the_revision() {
+        for (status, wrap, code) in [
+            ("Deleted", "del", "delInstrText"),
+            ("Inserted", "ins", "instrText"),
+        ] {
+            let (mut dom, root, _) = document(&format!(
+                "<w:p><w:fldSimple pt:Status=\"{status}\" w:instr=\"NUMPAGES\"/></w:p>"
+            ));
+            let mut id = 1;
+            let result = mark_content_as_deleted_or_inserted(&mut dom, root, &settings(), &mut id);
+            assert!(
+                dom.descendants(result, Some(&W::name("fldSimple")))
+                    .is_empty()
+            );
+            let p = dom.descendants(result, Some(&W::p()))[0];
+            let kids = dom.elements(p, None);
+            assert_eq!(kids.len(), 1, "{status}");
+            assert!(dom.name_is(kids[0], &W::name(wrap)));
+            assert_eq!(dom.elements(kids[0], Some(&W::r())).len(), 4);
+            assert_eq!(
+                dom.value(dom.descendants(p, Some(&W::name(code)))[0]),
+                "NUMPAGES"
+            );
+            assert!(
+                dom.descendants(p, None)
+                    .iter()
+                    .all(|&n| dom.attribute(n, &PT::status()).is_none())
+            );
         }
     }
 
