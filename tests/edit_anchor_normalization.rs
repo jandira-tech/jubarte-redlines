@@ -133,3 +133,65 @@ fn format_run_and_insert_footnote_drop_marks_too() {
         assert_eq!(report.anchor_read_as.as_deref(), Some("secret"), "{op}");
     }
 }
+
+/// R2/R3 of the RedlineBench fix plan: the paragraph has a non-breaking
+/// space, curly quotes and non-breaking hyphens an agent types as their
+/// plain lookalikes.
+fn lookalikes() -> Vec<u8> {
+    docx(&para(
+        "\u{201C}Officer\u{201D} shall mean (1)\u{A0}any officer\u{2019}s attorney\u{2011}in\u{2011}fact.",
+    ))
+}
+
+#[test]
+fn an_anchor_typed_with_plain_lookalikes_is_found_and_the_report_says_how_it_read() {
+    let out = apply_plan(
+        &lookalikes(),
+        &plan(
+            r#"[{"kind":"replace","paragraph":"p0","find":"\"Officer\" shall mean (1) any officer's attorney-in-fact","replacement":"\"Officer\" means any officer's agent"}]"#,
+        ),
+    )
+    .unwrap();
+    let op = &out.report.operations[0];
+    assert_eq!(op.status, "ok", "{op:?}");
+    assert_eq!(
+        op.anchor_read_as.as_deref(),
+        Some(
+            "\u{201C}Officer\u{201D} shall mean (1)\u{A0}any officer\u{2019}s attorney\u{2011}in\u{2011}fact"
+        )
+    );
+    let text = &jubarte::inspect::paragraphs(&out.clean).unwrap()[0].text;
+    assert_eq!(text, "\"Officer\" means any officer's agent.");
+}
+
+#[test]
+fn an_anchor_that_reads_twice_is_ambiguous_and_one_that_misses_is_echoed_escaped() {
+    let source = docx(&para("Party\u{A0}A and Party A agree."));
+    let e = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"delete","paragraph":"p0","find":"Party A and party"}]"#),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "ANCHOR_NOT_FOUND", "{e}");
+    assert!(
+        e.message
+            .contains(r#""Party\u{a0}A and party" does not occur"#),
+        "{e}"
+    );
+    // The exact text matches once and wins over what reads the same.
+    let out = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"delete","paragraph":"p0","find":"Party A "}]"#),
+    )
+    .unwrap();
+    assert!(out.report.operations[0].anchor_read_as.is_none());
+    // Two hits that only read alike are ambiguous.
+    let source = docx(&para("Party\u{A0}A and Party\u{202F}A agree."));
+    let e = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"delete","paragraph":"p0","find":"Party A"}]"#),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "AMBIGUOUS_ANCHOR", "{e}");
+    assert!(e.message.contains("occurs 2 times"), "{e}");
+}

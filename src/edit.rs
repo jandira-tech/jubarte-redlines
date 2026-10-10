@@ -31,6 +31,7 @@ use crate::inspect::{
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
+mod anchor;
 mod controls;
 pub mod flags;
 mod images;
@@ -859,10 +860,12 @@ pub struct EditOutcome {
     pub comment_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The anchor as the plan wrote it, when it matched only without its
-    /// Markdown marks.
+    /// Markdown marks, or only as it reads: a space for a non-breaking
+    /// one, straight quotes for curly ones, `-` for a non-breaking hyphen,
+    /// zero-width characters left out.
     pub anchor_given: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// The text actually matched in that case.
+    /// The paragraph's text actually matched in that case.
     pub anchor_read_as: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Error code when failed.
@@ -4923,29 +4926,45 @@ fn locate(
             .filter(|&i| text[i..].starts_with(needle))
             .collect()
     };
-    let mut needle = find.to_string();
-    let mut hits = hits_of(find);
+    let exact = |needle: &str| -> Vec<(usize, usize)> {
+        hits_of(needle)
+            .into_iter()
+            .map(|i| (i, i + needle.len()))
+            .collect()
+    };
+    let mut hits = exact(find);
     // An anchor copied out of the agent view can carry Markdown marks
-    // (`# `, `**`, CriticMarkup notes) that are not document text: the
-    // literal is tried first, then the text without them.
+    // (`# `, `**`, CriticMarkup notes) that are not document text, and
+    // one typed by hand a space where the paragraph has a non-breaking
+    // one, or a straight quote for a curly one: the literal is tried
+    // first, then the text without marks, then each as it reads.
     if hits.is_empty() {
         let plain = crate::markdown::plain_anchor(find);
-        if !plain.is_empty() && plain != find {
-            let plain_hits = hits_of(&plain);
-            if !plain_hits.is_empty() {
+        let plain = (!plain.is_empty() && plain != find).then_some(plain);
+        let mut tries = Vec::new();
+        if let Some(plain) = &plain {
+            tries.push(exact(plain));
+        }
+        tries.push(anchor::reading_hits(text, find));
+        if let Some(plain) = &plain {
+            tries.push(anchor::reading_hits(text, plain));
+        }
+        if let Some(found) = tries.into_iter().find(|t| !t.is_empty()) {
+            let read_as: String = text[found[0].0..found[0].1].to_string();
+            if read_as != find {
                 outcome.anchor_given = Some(find.to_string());
-                outcome.anchor_read_as = Some(plain.clone());
-                needle = plain;
-                hits = plain_hits;
+                outcome.anchor_read_as = Some(read_as);
             }
+            hits = found;
         }
     }
     outcome.matches = hits.len();
-    let start = match (hits.as_slice(), occurrence) {
+    let shown = anchor::shown(find);
+    let (start, end) = match (hits.as_slice(), occurrence) {
         ([], _) => {
             return Err((
                 "ANCHOR_NOT_FOUND".into(),
-                format!("{find:?} does not occur in the paragraph"),
+                format!("{shown} does not occur in the paragraph"),
             ));
         }
         (_, Some(0)) => {
@@ -4956,9 +4975,7 @@ fn locate(
             let n = many.len();
             return Err((
                 "AMBIGUOUS_ANCHOR".into(),
-                format!(
-                    "{find:?} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"
-                ),
+                format!("{shown} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"),
             ));
         }
         (many, Some(k)) if k <= many.len() => many[k - 1],
@@ -4967,12 +4984,12 @@ fn locate(
             return Err((
                 "AMBIGUOUS_ANCHOR".into(),
                 format!(
-                    "{find:?} occurs {n} times in the paragraph; occurrence {k} is outside occurrence 1..={n}"
+                    "{shown} occurs {n} times in the paragraph; occurrence {k} is outside occurrence 1..={n}"
                 ),
             ));
         }
     };
-    Ok((start, start + needle.len()))
+    Ok((start, end))
 }
 
 /// `seg` is a `w:sym`, projected as U+FFFC.

@@ -1055,8 +1055,13 @@ fn run_edit(
     }
     for outcome in &result.report.operations {
         if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
+            let why = if jubarte::markdown::plain_anchor(given) == *read_as {
+                "Markdown marks are not document text"
+            } else {
+                "matched as it reads: spaces, quotes and hyphens as the paragraph has them"
+            };
             outln!(
-                "note: {}: anchor {given:?} read as {read_as:?} (Markdown marks are not document text)",
+                "note: {}: anchor {given:?} read as {read_as:?} ({why})",
                 outcome.id
             );
         }
