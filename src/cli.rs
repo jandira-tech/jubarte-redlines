@@ -1227,8 +1227,13 @@ fn validate_matches(
                 .and_then(|path| Format::of_path(path))
         });
         if !matches!(output_format, Some(Format::Pdf | Format::Png)) {
-            for flag in ["move_comments", "changed_only"] {
-                if args.get_flag(flag) {
+            for flag in [
+                "move_comments",
+                "changed_only",
+                "revisions",
+                "revision_palette",
+            ] {
+                if args.value_source(flag) == Some(ValueSource::CommandLine) {
                     return Err(error(
                         &mut task,
                         &format!(

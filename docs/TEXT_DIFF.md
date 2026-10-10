@@ -43,7 +43,9 @@ complete. Full extraction happens before display clipping; there is no hunk cap.
 
 In the `word` view the window counts text, never the marks' delimiters. A
 mark it reaches keeps its delimiters and loses only text, so every mark a line
-opens, it closes: `{++ c d e …++}`, never `{++ c d…`. In `side-by-side` the
+opens, it closes: `{++ c d e …++}`, never `{++ c d…`. A blank line inserted
+or deleted has no word to mark, so it shows as an empty mark, `{++++}` or
+`{----}`, never as a bare newline. In `side-by-side` the
 old column is padded to its widest cell, so every `|`, `<` and `>` and every
 new cell start in the same column. With `--full-lines` the padding stops at
 72 columns, a default window and its two `…`; a longer old cell pushes only

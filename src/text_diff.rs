@@ -596,7 +596,14 @@ fn rows_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize
                     Row::Insert(j) => ("", new[j]),
                 };
                 if word {
-                    let _ = writeln!(out, "{}", critic_line(&word_pieces(a, b), options.window));
+                    // A blank line has no word to mark: an empty mark keeps
+                    // its direction.
+                    let line = match row {
+                        Row::Delete(_) if a.is_empty() => "{----}".to_string(),
+                        Row::Insert(_) if b.is_empty() => "{++++}".to_string(),
+                        _ => critic_line(&word_pieces(a, b), options.window),
+                    };
+                    let _ = writeln!(out, "{line}");
                     continue;
                 }
                 side.push(match row {
@@ -749,6 +756,16 @@ mod tests {
             }
         }
         !["++}", "--}", "~~}", "~>"].iter().any(|c| rest.contains(c))
+    }
+
+    #[test]
+    fn a_blank_line_change_keeps_its_direction_in_the_word_view() {
+        for window in [Some(70), None] {
+            assert_eq!(word_view("a\nb\n", "a\n\nb\n", window), "{++++}\n");
+            assert_eq!(word_view("a\n\nb\n", "a\nb\n", window), "{----}\n");
+            // A blank line replacing text is still the text's deletion.
+            assert_eq!(word_view("a\nx\nb\n", "a\n\nb\n", window), "{--x--}\n");
+        }
     }
 
     #[test]

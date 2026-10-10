@@ -194,16 +194,21 @@ fn layout_only_flags_refuse_word_and_markdown_before_any_output_write() {
             assert!(!dir.path().join("pages.json").exists());
             assert!(!dir.path().join("fonts.json").exists());
         }
-        for flag in ["--move-comments", "--changed-only"] {
+        for extra in [
+            &["--move-comments"][..],
+            &["--changed-only"],
+            &["--revisions", "word"],
+            &[
+                "--revisions",
+                "custom",
+                "--revision-palette",
+                "inserted=#0000FF",
+            ],
+        ] {
+            let flag = extra[0];
             let destination = format!("compared.{extension}");
-            let args = [
-                "diff",
-                "original.docx",
-                "revised.docx",
-                "-o",
-                &destination,
-                flag,
-            ];
+            let mut args = vec!["diff", "original.docx", "revised.docx", "-o", &destination];
+            args.extend(extra);
             let out = run(dir.path(), &args);
             assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
             assert!(

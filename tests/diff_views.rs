@@ -185,7 +185,9 @@ fn word_window_starts_near_first_fresh_token() {
     );
     assert!(out.starts_with('…') && out.ends_with("…\n"), "{out}");
     assert!(out.contains("{~~old~>new~~}"), "{out}");
-    assert_eq!(out.trim_end().chars().count(), 72);
+    // The window counts text, never the mark's delimiters: 72 visible
+    // characters plus the eight of `{~~`, `~>` and `~~}`.
+    assert_eq!(out.trim_end().chars().count(), 72 + 8);
 }
 
 #[test]

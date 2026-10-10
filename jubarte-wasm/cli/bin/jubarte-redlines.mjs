@@ -70,11 +70,19 @@ function ensureWritable(file, force) {
 
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
+/** The format a file's name declares, or null when only its bytes tell. */
+function namedKind(file) {
+  return JSON.parse(wasm.parseCli(JSON.stringify(["diff", "--", file, file]))).args.old_format;
+}
+
 /** The input's kind: the declared or named format, else a ZIP is Word. */
 function kindOf(file, bytes, declared) {
-  const named = declared ?? JSON.parse(wasm.parseCli(JSON.stringify(["diff", "--", file, file]))).args.old_format;
-  return named ?? (bytes.subarray(0, 4).equals(ZIP_MAGIC) ? "docx" : "md");
+  return declared ?? namedKind(file) ?? (bytes.subarray(0, 4).equals(ZIP_MAGIC) ? "docx" : "md");
 }
+
+/** Word output from convert is a Markdown conversion. */
+const convertsToDocx = (o) => o.to === "docx" || (o.to == null && path.extname(o.output ?? "").toLowerCase() === ".docx");
+const docxNeedsMarkdown = () => new UsageError("--to docx requires Markdown input in the npm CLI");
 
 /** Markdown bytes as text; malformed UTF-8 is refused, never replaced. */
 function markdownText(file, bytes) {
@@ -235,6 +243,9 @@ const COMMANDS = {
           console.log(`wrote ${output} (${docx.length} bytes)`);
           return;
         }
+      } else if (convertsToDocx(o)) {
+        // A name that said nothing; its bytes are Word.
+        throw docxNeedsMarkdown();
       } else if (o.track_changes === "accept") {
         docx = wasm.acceptRevisions(docx);
       } else if (o.track_changes === "reject") {
@@ -328,10 +339,6 @@ function stem(file) {
   return path.basename(file, path.extname(file));
 }
 
-function isMarkdown(file) {
-  return [".md", ".markdown"].includes(path.extname(file).toLowerCase());
-}
-
 function defaultAuthor() {
   try {
     return execFileSync("git", ["config", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || "Redline";
@@ -366,9 +373,9 @@ function validateHost(name, o) {
     if (o.to === "md" || (o.to == null && [".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn"].includes(extension))) {
       throw new UsageError("Markdown output with page markers is not supported by the npm CLI; use text --track-changes");
     }
-    if ((o.to === "docx" || (o.to == null && extension === ".docx")) && !isMarkdown(o.file)) {
-      throw new UsageError("--to docx requires Markdown input in the npm CLI");
-    }
+    // A Word name fails before any read; a name that says nothing is
+    // sniffed like every other input, in `convert`.
+    if (convertsToDocx(o) && namedKind(o.file) === "docx") throw docxNeedsMarkdown();
   }
   if (name === "edit") {
     for (const flag of ["pdf", "png"]) if (o[flag]) reject(flag);

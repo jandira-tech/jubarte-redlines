@@ -428,6 +428,22 @@ test("unsupported host options are rejected before input I/O (integration)", () 
   }
 });
 
+test("convert to Word sniffs inputs whose name does not say Markdown (integration)", () => {
+  for (const name of ["sniff-draft.txt", "sniff-notes.mkd", "SNIFF"]) {
+    const file = path.join(tmp, name), out = path.join(tmp, `${name}.docx`);
+    fs.writeFileSync(file, "# Notes\n\nDue in 30 days.\n");
+    const result = run("convert", file, "-o", out);
+    assert.equal(result.code, 0, `${name}: ${result.err}`);
+    assert.equal(fs.readFileSync(out).subarray(0, 2).toString(), "PK");
+  }
+  // A Word file under a name that says nothing is still refused, unwritten.
+  const zip = copy(untracked, "SNIFF-WORD"), out = path.join(tmp, "sniff-word.docx");
+  const refused = run("convert", zip, "-o", out);
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /--to docx requires Markdown input/);
+  assert.ok(!fs.existsSync(out));
+});
+
 test("diff, compare and convert follow the native input and output contract (integration)", () => {
   const a = path.join(tmp, "contract-a.md"), b = path.join(tmp, "contract-b.md");
   fs.writeFileSync(a, "Due in 30 days.\n");

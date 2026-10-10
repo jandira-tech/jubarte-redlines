@@ -7718,11 +7718,15 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
     if listed.is_empty() {
         return;
     }
+    // The last horizontal page's paper; else a vertical page's, which is
+    // stored turned a quarter.
     let (width, height) = pages
         .iter()
         .rev()
         .find(|p| !p.vertical)
-        .map_or((612.0, 792.0), |p| (p.width, p.height));
+        .map(|p| (p.width, p.height))
+        .or_else(|| pages.last().map(|p| (p.height, p.width)))
+        .unwrap_or((612.0, 792.0));
     let mut regular = sheet.defaults.run.clone();
     regular.size = SIZE;
     regular.bold = false;
@@ -7772,7 +7776,9 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
             (line_width - INDENT).max(1.0),
         );
         // Keep the entire heading and first content line together when
-        // that group fits a page; very long headings can span pages.
+        // that group fits a page; very long headings can span pages. From
+        // the first heading's baseline, `needed` reaches the first content
+        // line's.
         let needed = headings.len() as f32 * pitch;
         let fresh_y = height - MARGIN - fonts.get(bold_face).ascent_pt(SIZE);
         if y - needed < MARGIN && fresh_y - needed >= MARGIN {
@@ -46024,6 +46030,53 @@ mod comment_listing_review_tests {
         assert!(all.contains("First content"));
         assert!(all.contains(author));
         assert!(all.contains("page 1"));
+    }
+
+    #[test]
+    fn a_comment_attribution_never_ends_a_page_without_its_first_line() {
+        let fonts = fonts();
+        // Every height puts some comment's end at a different place on the
+        // page, so one of them leaves room for the attribution alone.
+        for height in 200..300 {
+            let mut pages = vec![Page::new(400.0, height as f32)];
+            pages[0].number = 1;
+            for i in 0..6 {
+                pages[0]
+                    .comments
+                    .push(note(&format!("A{i}"), &format!("Body{i}")));
+            }
+            list_comments_at_end(&fonts, &sheet(), &mut pages);
+            let page_of = |needle: &str| {
+                pages.iter().position(|page| {
+                    page.ops
+                        .iter()
+                        .any(|op| matches!(op, Op::Text { text, .. } if text.contains(needle)))
+                })
+            };
+            for i in 0..6 {
+                let by = page_of(&format!("A{i},")).expect("attribution painted");
+                let body = page_of(&format!("Body{i}")).expect("contents painted");
+                assert_eq!(
+                    by, body,
+                    "height {height}: comment {i} split from its first line"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_listing_after_vertical_pages_takes_their_paper_size() {
+        let fonts = fonts();
+        // A4 laid out turned a quarter: the page stores its height as width.
+        let mut page = Page::new(841.9, 595.3);
+        page.vertical = true;
+        page.number = 1;
+        page.comments.push(note("Jane", "縦書き"));
+        let mut pages = vec![page];
+        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        let listing = &pages[1];
+        assert_eq!((listing.width, listing.height), (595.3, 841.9));
+        assert!(!listing.vertical);
     }
 }
 

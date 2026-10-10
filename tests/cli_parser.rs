@@ -233,6 +233,46 @@ fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
 }
 
 #[test]
+fn diff_revision_marks_apply_to_rendered_output_only() {
+    let palette = [
+        "--revisions",
+        "custom",
+        "--revision-palette",
+        "deleted=#000000",
+    ];
+    for output in [
+        &[][..],
+        &["-o", "r.docx"],
+        &["--to", "docx"],
+        &["-o", "r.md"],
+    ] {
+        for marks in [&["--revisions", "word"][..], &palette] {
+            let result = parse(
+                &[&["diff", "a.md", "b.md"][..], output, marks].concat(),
+                &[],
+            );
+            assert_eq!(result["exit_code"], 2, "{output:?} {marks:?}: {result}");
+            assert!(
+                result["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("--revisions applies to PDF or PNG output only"),
+                "{result}"
+            );
+        }
+    }
+    for output in [["-o", "r.pdf"], ["-o", "r.png"], ["--to", "pdf"]] {
+        for marks in [&["--revisions", "word"][..], &palette] {
+            let result = parse(
+                &[&["diff", "a.md", "b.md"][..], &output, marks].concat(),
+                &[],
+            );
+            assert_eq!(result["exit_code"], 0, "{output:?} {marks:?}: {result}");
+        }
+    }
+}
+
+#[test]
 fn help_explains_tasks_and_critic_markup() {
     let help = parse(&["--help"], &[]);
     let text = help["text"].as_str().unwrap();
