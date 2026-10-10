@@ -153,7 +153,7 @@ pub enum OperationKind {
         paragraph: Selector,
         /// Exact text to locate; must occur exactly once.
         find: String,
-        /// Plain replacement text (may be empty).
+        /// Replacement text (may be empty); `\t` writes a tab, `\n` a line break.
         replacement: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Formatting of the replacement on top of the replaced run's.
@@ -185,7 +185,7 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Insert at the paragraph start or end.
         position: Option<Edge>,
-        /// Plain text to insert.
+        /// Text to insert; `\t` writes a tab, `\n` a line break.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Formatting of the new text on top of the neighbouring run's.
@@ -216,7 +216,7 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Text to anchor the comment to; whole paragraph when omitted.
         find: Option<String>,
-        /// Plain text to insert.
+        /// Text to insert; `\t` writes a tab, `\n` a line break.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Last paragraph of a range from the start of `paragraph` to the
@@ -243,7 +243,6 @@ pub enum OperationKind {
         /// copies instead of the anchor's: a plain paragraph inserted after a
         /// list item, for one.
         like: Option<Selector>,
-        /// Paragraph style id to set instead of the anchor's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Paragraph style id to set instead of the anchor's.
         style: Option<String>,
@@ -284,9 +283,10 @@ pub enum OperationKind {
     },
     /// Make the paragraph read as `text`: the engine applies the smallest
     /// word-level edits, so unchanged words keep their runs and formatting,
-    /// and new words take the formatting of the run before them. Tabs, line
-    /// breaks and symbols stay where they are; `text` may write a tab or a
-    /// break as a space and leave a symbol out.
+    /// and new words take the formatting of the run before them. A tab or a
+    /// line break the paragraph has may be written as a space and stays; a
+    /// `\t` or `\n` in `text` writes one. Symbols stay where they are and
+    /// may be left out of `text`.
     Rewrite {
         /// Paragraph to rewrite; must match exactly one.
         paragraph: Selector,
@@ -1468,7 +1468,7 @@ enum Resolved {
         para: usize,
         start: usize,
         end: usize,
-        /// Plain replacement text (may be empty).
+        /// Replacement text (may be empty); `\t` writes a tab, `\n` a line break.
         replacement: String,
         /// Comment text anchored to the changed text.
         comment: Option<String>,
@@ -1481,7 +1481,7 @@ enum Resolved {
         para: usize,
         start: usize,
         end: usize,
-        /// Plain text to insert.
+        /// Text to insert; `\t` writes a tab, `\n` a line break.
         text: String,
     },
     DeleteParagraph {
@@ -2133,7 +2133,8 @@ impl<'p> Transaction<'p> {
                 occurrence,
                 ..
             } => {
-                check_text(replacement).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                check_run_text(replacement)
+                    .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 if let Some(format) = format {
                     check_format(format, replacement)
                         .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
@@ -2221,7 +2222,7 @@ impl<'p> Transaction<'p> {
                 occurrence,
                 ..
             } => {
-                check_text(new).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                check_run_text(new).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 if let Some(format) = format {
                     check_format(format, new)
                         .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
@@ -2536,7 +2537,8 @@ impl<'p> Transaction<'p> {
                     return Err(fail("INVALID_EDIT", "runs must carry text".into(), outcome));
                 }
                 for r in runs {
-                    check_text(&r.text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                    check_run_text(&r.text)
+                        .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                     check_format(&r.format(), &r.text)
                         .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
@@ -2923,20 +2925,16 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
-        let new_text: String = new_text
-            .chars()
-            .map(|c| {
-                if matches!(c, '\t' | '\n' | '\r') {
-                    ' '
-                } else {
-                    c
-                }
-            })
-            .collect();
-        check_text(&new_text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        check_run_text(new_text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
         let projection = &self.projections[para];
         let text = &projection.text;
-        let edits = rewrite::rewrite_ranges(text, &new_text);
+        let edits = rewrite::rewrite_ranges(text, new_text);
+        if edits.is_empty() {
+            outcome.message = Some(
+                "nothing changed: the paragraph already reads as the text (a tab or a break written as a space stays)"
+                    .into(),
+            );
+        }
         let mut resolved = Vec::with_capacity(edits.len());
         for (start, end, replacement) in edits {
             // New text joins the run before it, unless a tab, break or
@@ -2962,7 +2960,7 @@ impl<'p> Transaction<'p> {
             });
         }
         outcome.matches = 1;
-        outcome.context = Some(format!("{{≡ {}}}", excerpt(&new_text, 60)));
+        outcome.context = Some(format!("{{≡ {}}}", excerpt(new_text, 60)));
         Ok((resolved, outcome))
     }
 
@@ -3511,7 +3509,9 @@ impl<'p> Transaction<'p> {
         Ok((start, end))
     }
 
-    /// Every byte of `[start, end)` must come from a `w:t` of a direct run.
+    /// Every byte of `[start, end)` must come from a direct run: its text,
+    /// or a tab, break or non-breaking hyphen, which an edit over it
+    /// removes. A symbol is never edited: its run's font would draw the text.
     fn check_range(&self, projection: &Projection, start: usize, end: usize) -> Result<(), String> {
         let mut covered = start;
         for seg in &projection.segments {
@@ -3523,8 +3523,8 @@ impl<'p> Transaction<'p> {
                     "the text sits inside a hyperlink, field, content control or revision".into(),
                 );
             }
-            if !matches!(seg.piece, Piece::Text { .. }) {
-                return Err("the text crosses a tab, break or symbol".into());
+            if is_symbol(projection, seg) {
+                return Err("the text crosses a symbol".into());
             }
             covered = covered.max(seg.end);
         }
@@ -3560,8 +3560,8 @@ impl<'p> Transaction<'p> {
                     .into(),
             );
         }
-        if !matches!(seg.piece, Piece::Text { .. }) {
-            return Err("the insertion point touches a tab, break or symbol".into());
+        if is_symbol(projection, seg) {
+            return Err("the insertion point touches a symbol".into());
         }
         Ok(())
     }
@@ -4810,6 +4810,23 @@ fn check_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Run text: plain text in which `\t` writes a tab and `\n` a line break,
+/// as the agent view prints them; any other control character is refused
+/// by name.
+fn check_run_text(text: &str) -> Result<(), String> {
+    let bad = text.chars().find(|&c| {
+        (c.is_control() && !matches!(c, '\t' | '\n')) || matches!(c, '\u{fffe}' | '\u{ffff}')
+    });
+    match bad {
+        None => Ok(()),
+        Some('\r') => Err("text holds U+000D, a carriage return; write a line break as \\n".into()),
+        Some(c) => Err(format!(
+            "text holds U+{:04X}, which a run cannot carry; write a tab as \\t and a line break as \\n",
+            u32::from(c)
+        )),
+    }
+}
+
 /// Comment text: nonempty, and each line (`\n` starts a new comment
 /// paragraph) plain text that `comments.xml` can carry.
 fn check_comment(text: &str) -> Result<(), String> {
@@ -4876,6 +4893,11 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
     (pos as i64 + delta).max(0) as usize
 }
 
+/// `seg` is a `w:sym`, projected as U+FFFC.
+fn is_symbol(projection: &Projection, seg: &crate::inspect::Segment) -> bool {
+    matches!(seg.piece, Piece::Glyph { .. }) && projection.text[seg.start..seg.end] == *"\u{FFFC}"
+}
+
 /// The segment an insertion at `pos` attaches to.
 fn attach_segment(
     projection: &Projection,
@@ -4897,6 +4919,8 @@ fn attach_segment(
 }
 
 /// Replace `[start, end)` of the paragraph's projection with `replacement`.
+/// The replacement goes to the first piece of the range; the other pieces
+/// lose their text, and a tab, break or non-breaking hyphen in the range is removed.
 fn apply_text_edit(
     dom: &mut Dom,
     projection: &Projection,
@@ -4907,39 +4931,88 @@ fn apply_text_edit(
 ) {
     if start == end {
         let seg = attach_segment(projection, start, attach_before).expect("checked at resolution");
-        if let Piece::Text { t, .. } = seg.piece {
-            let value = dom.value(t);
-            let at = start - seg.start;
-            let updated = format!("{}{}{}", &value[..at], replacement, &value[at..]);
-            set_text(dom, t, &updated);
+        match seg.piece {
+            Piece::Text { t, .. } => {
+                let value = dom.value(t);
+                let at = start - seg.start;
+                let updated = format!("{}{}{}", &value[..at], replacement, &value[at..]);
+                write_text(dom, t, &updated);
+            }
+            // Beside a tab or a break: new text of the glyph's run, after it
+            // when it holds the char before the point.
+            Piece::Glyph { element, .. } => {
+                let t = dom.new_element(W::t());
+                if seg.end == start {
+                    dom.add_after_self(element, t);
+                } else {
+                    dom.add_before_self(element, t);
+                }
+                write_text(dom, t, replacement);
+            }
         }
         return;
     }
-    let mut inserted = false;
+    let mut pending = Some(replacement);
     for seg in &projection.segments {
         if seg.end <= start || seg.start >= end {
             continue;
         }
-        let Piece::Text { t, .. } = seg.piece else {
-            continue;
-        };
-        let value = dom.value(t);
-        let from = start.saturating_sub(seg.start).min(value.len());
-        let to = end.saturating_sub(seg.start).min(value.len());
-        let middle = if inserted {
-            ""
-        } else {
-            inserted = true;
-            replacement
-        };
-        let updated = format!("{}{}{}", &value[..from], middle, &value[to..]);
-        set_text(dom, t, &updated);
+        match seg.piece {
+            Piece::Text { t, .. } => {
+                let value = dom.value(t);
+                let from = start.saturating_sub(seg.start).min(value.len());
+                let to = end.saturating_sub(seg.start).min(value.len());
+                let middle = pending.take().unwrap_or_default();
+                let updated = format!("{}{}{}", &value[..from], middle, &value[to..]);
+                write_text(dom, t, &updated);
+            }
+            // One char, so inside the range it is covered whole.
+            Piece::Glyph { element, .. } => {
+                if let Some(text) = pending.take().filter(|text| !text.is_empty()) {
+                    let t = dom.new_element(W::t());
+                    dom.add_before_self(element, t);
+                    write_text(dom, t, text);
+                }
+                dom.remove(element);
+            }
+        }
     }
 }
 
 fn set_text(dom: &mut Dom, t: NodeId, value: &str) {
     dom.set_value(t, value);
     dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+}
+
+/// Set the text of `t`, a `w:t` in a run, writing each `\t` as a `w:tab`
+/// and each `\n` as a `w:br` of that run, with the text between them in
+/// `w:t`s of its own; `t` itself goes when no text is left for it.
+fn write_text(dom: &mut Dom, t: NodeId, value: &str) {
+    let mut pieces = value.split(['\t', '\n']);
+    let head = pieces.next().unwrap_or_default();
+    set_text(dom, t, head);
+    let mut last = t;
+    let mut at = head.len();
+    for piece in pieces {
+        let glyph = if value.as_bytes()[at] == b'\t' {
+            "tab"
+        } else {
+            "br"
+        };
+        let element = dom.new_element(W::name(glyph));
+        dom.add_after_self(last, element);
+        last = element;
+        if !piece.is_empty() {
+            let next = dom.new_element(W::t());
+            dom.add_after_self(last, next);
+            set_text(dom, next, piece);
+            last = next;
+        }
+        at += 1 + piece.len();
+    }
+    if head.is_empty() && last != t {
+        dom.remove(t);
+    }
 }
 
 /// Split the run owning `seg` so that a run boundary falls at projection byte
@@ -5493,9 +5566,8 @@ fn build_paragraph(dom: &mut Dom, anchor: NodeId, runs: &[RunSpec], style: Optio
             dom.add(r, rpr);
         }
         let t = dom.new_element(W::t());
-        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
-        dom.add_text(t, &spec.text);
         dom.add(r, t);
+        write_text(dom, t, &spec.text);
         dom.add(p, r);
     }
     p
@@ -6167,17 +6239,24 @@ mod deeper_boundary_tests {
             tx.check_range(&projection, 0, 3),
             Err("the text sits inside a hyperlink, field, content control or revision".into())
         );
-        let (d, root) = dom("<w:p><w:r><w:tab/></w:r></w:p>");
+        // Text may go beside a tab, never beside a symbol.
+        let (d, root) = dom(
+            r#"<w:p><w:r><w:tab/></w:r><w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r></w:p>"#,
+        );
         let paragraph = d.element(root, &W::p()).unwrap();
-        let glyph = project_paragraph(&d, paragraph);
+        let glyphs = project_paragraph(&d, paragraph);
         for before in [false, true] {
-            for at in [0, 1] {
-                assert_eq!(
-                    tx.check_insert_position(&glyph, at, before),
-                    Err("the insertion point touches a tab, break or symbol".into())
-                );
-            }
+            assert_eq!(tx.check_insert_position(&glyphs, 0, before), Ok(()));
+            assert_eq!(
+                tx.check_insert_position(&glyphs, 4, before),
+                Err("the insertion point touches a symbol".into())
+            );
         }
+        assert_eq!(tx.check_range(&glyphs, 0, 1), Ok(()));
+        assert_eq!(
+            tx.check_range(&glyphs, 0, 4),
+            Err("the text crosses a symbol".into())
+        );
         assert_eq!(
             tx.check_insert_position(&projection, 4, false),
             Err("no run holds the insertion point".into())
@@ -6708,17 +6787,31 @@ mod deeper_boundary_tests {
             );
         }
         assert_eq!(attach_segment(&projection, 6, false), None);
-        apply_text_edit(&mut d, &projection, 2, 2, "ignored", false);
-        assert_eq!(project_paragraph(&d, p).text, "ab\tcd");
-        apply_text_edit(&mut d, &projection, 1, 4, "X", false);
-        assert_eq!(project_paragraph(&d, p).text, "aX\td");
-        assert_eq!(d.descendants(p, Some(&W::name("tab"))).len(), 1);
+        // Beside a glyph, new text joins its run: before it, or after it
+        // when the glyph holds the char before the point.
+        apply_text_edit(&mut d, &projection, 2, 2, "+", false);
+        assert_eq!(project_paragraph(&d, p).text, "ab+\tcd");
+        let projection = project_paragraph(&d, p);
+        apply_text_edit(&mut d, &projection, 4, 4, "-", true);
+        assert_eq!(project_paragraph(&d, p).text, "ab+\t-cd");
+        // A range over the glyph removes it.
+        let projection = project_paragraph(&d, p);
+        apply_text_edit(&mut d, &projection, 1, 5, "X", false);
+        assert_eq!(project_paragraph(&d, p).text, "aXcd");
+        assert!(d.descendants(p, Some(&W::name("tab"))).is_empty());
         let texts: Vec<String> = d
             .descendants(p, Some(&W::t()))
             .iter()
             .map(|&t| d.value(t))
+            .filter(|text| !text.is_empty())
             .collect();
-        assert_eq!(texts, ["aX", "d"]);
+        assert_eq!(texts, ["aX", "cd"]);
+        // A tab or a break in new text is one of the run.
+        let projection = project_paragraph(&d, p);
+        apply_text_edit(&mut d, &projection, 2, 2, "\tY\n", true);
+        assert_eq!(project_paragraph(&d, p).text, "aX\tY\ncd");
+        assert_eq!(d.descendants(p, Some(&W::name("tab"))).len(), 1);
+        assert_eq!(d.descendants(p, Some(&W::name("br"))).len(), 1);
     }
 
     // 4751, 4754, 4771, 4776: both edges, a glyph, and children on either side of t.

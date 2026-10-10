@@ -58,11 +58,17 @@ fn units(text: &str) -> Vec<Unit> {
     out
 }
 
+/// The tabs and line breaks of some whitespace, in order.
+fn breaks(whitespace: &str) -> impl Iterator<Item = char> + '_ {
+    whitespace.chars().filter(|c| matches!(c, '\t' | '\n'))
+}
+
 /// Byte ranges of `old` and their replacements that make it read as `new`,
-/// in order and without overlaps, word by word. Tabs and line breaks may be
-/// written as spaces in `new`, and symbols (U+FFFC) left out: those stay
-/// where they are, and whitespace differs only in kind is left alone.
-/// Edits never cover a tab, a line break or a symbol.
+/// in order and without overlaps, word by word. A tab or a line break of
+/// `old` may be written as a space in `new` and stays; a `\t` or `\n` that
+/// `new` writes where `old` has none is written. Symbols (U+FFFC) may be
+/// left out of `new`: they stay where they are, and no edit covers one.
+/// Words an edit replaces take the tabs and breaks between them along.
 pub(super) fn rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)> {
     let olds = units(old);
     let news = units(new);
@@ -72,13 +78,21 @@ pub(super) fn rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)
     for op in capture_diff_slices(Algorithm::Myers, &old_keys, &new_keys) {
         let (tag, old_range, new_range) = op.as_tag_tuple();
         if tag == DiffTag::Equal {
+            for (o, n) in olds[old_range].iter().zip(&news[new_range]) {
+                let wanted = &new[n.start..n.end];
+                if o.key == " "
+                    && breaks(wanted).next().is_some()
+                    && !breaks(wanted).eq(breaks(&old[o.start..o.end]))
+                {
+                    edits.extend(split_around_kept(old, o.start, o.end, wanted.to_string()));
+                }
+            }
             continue;
         }
         let replacement: String = news[new_range]
             .iter()
             .map(|u| &new[u.start..u.end])
             .collect::<String>()
-            .replace(['\t', '\n', '\r'], " ")
             .replace('\u{FFFC}', "");
         let (start, end) = match (olds.get(old_range.start), old_range.is_empty()) {
             (Some(first), false) => (first.start, olds[old_range.end - 1].end),
@@ -98,8 +112,8 @@ pub(super) fn rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)
 }
 
 /// `[start, end)` of `old` with `replacement`, split so that no piece covers
-/// a tab, a line break or a symbol: the replacement goes to the first piece,
-/// the other pieces are deleted.
+/// a symbol: the replacement goes to the first piece, the other pieces are
+/// deleted.
 fn split_around_kept(
     old: &str,
     start: usize,
@@ -109,7 +123,7 @@ fn split_around_kept(
     let mut pieces: Vec<(usize, usize)> = Vec::new();
     let mut piece_start = start;
     for (offset, c) in old[start..end].char_indices() {
-        if kept(c) || matches!(c, '\t' | '\n' | '\r') {
+        if kept(c) {
             let at = start + offset;
             if piece_start < at {
                 pieces.push((piece_start, at));
@@ -188,20 +202,27 @@ mod tests {
         let edits = rewrite_ranges(old, "x z");
         assert_eq!(apply(old, &edits), "x \u{FFFC} z");
 
-        // A deletion across a tab keeps the tab.
+        // Words deleted take the tab between them along; a symbol stays.
         let old = "a\tb c";
-        let edits = rewrite_ranges(old, "c");
-        assert!(
-            edits.iter().all(|(s, e, _)| !old[*s..*e].contains('\t')),
-            "{edits:?}"
-        );
-        assert_eq!(apply(old, &edits).replace('\t', " ").trim(), "c");
+        assert_eq!(apply(old, &rewrite_ranges(old, "c")), "c");
+        let old = "a \u{FFFC} b c";
+        assert_eq!(apply(old, &rewrite_ranges(old, "c")), "\u{FFFC}c");
     }
 
     #[test]
-    fn new_text_is_written_without_control_characters() {
-        let edits = rewrite_ranges("a", "a\tb");
-        assert_eq!(apply("a", &edits), "a b");
+    fn new_text_writes_its_tabs_and_breaks() {
+        let edits = rewrite_ranges("a", "a\tb\nc");
+        assert_eq!(apply("a", &edits), "a\tb\nc");
+        // Whitespace the old text has as spaces becomes the tab or the
+        // break asked for; a tab asked for where one is needs nothing.
+        assert_eq!(rewrite_ranges("a b", "a\tb"), [(1, 2, "\t".to_string())]);
+        assert_eq!(rewrite_ranges("a\tb", "a\nb"), [(1, 2, "\n".to_string())]);
+        assert_eq!(
+            rewrite_ranges("a \tb", "a\t\tb"),
+            [(1, 3, "\t\t".to_string())]
+        );
+        assert!(rewrite_ranges("a\tb", "a\tb").is_empty());
+        assert!(rewrite_ranges("a \t b", "a\tb").is_empty());
     }
 
     #[test]
