@@ -199,8 +199,9 @@ fn compare_with_an_orphan_footnote_reference_returns_err() {
     assert!(format!("{err}").contains("77"), "{err}");
 }
 
-/// A reader that stops early (`jubarte FILE | head`) closes the pipe while the
-/// agent view is still being written: the CLI stops quietly, as `cat` does.
+/// A reader that stops early (`jubarte FILE | head`) closes the pipe while a
+/// view, a Markdown conversion or a diff is still being written: the CLI
+/// stops quietly, as `cat` does.
 #[cfg(unix)]
 #[test]
 fn a_closed_stdout_pipe_ends_the_view_without_a_panic() {
@@ -211,7 +212,16 @@ fn a_closed_stdout_pipe_ends_the_view_without_a_panic() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/corpus/broken_ones_two/sources/file_22.docx"
     );
-    for args in [&["read", "--no-page-markers", big][..], &[big][..]] {
+    let other = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/corpus/broken_ones_two/sources/file_196.docx"
+    );
+    for args in [
+        &["read", "--no-page-markers", big][..],
+        &[big][..],
+        &["convert", big, "-t", "md"][..],
+        &["diff", "--format", "github", big, other][..],
+    ] {
         let mut child = Command::new(BIN)
             .args(args)
             .stdout(Stdio::piped())

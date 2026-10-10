@@ -773,15 +773,16 @@ fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Re
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
-    print_view(&view.markdown)
+    write_stdout(&view.markdown)
 }
 
-/// Writes a view to stdout. A reader that stops early (`jubarte FILE | head`)
-/// closes the pipe; the view then ends quietly, as `cat`'s output does.
-fn print_view(text: &str) -> Result<(), String> {
+/// Writes a view, a conversion or a diff to stdout. A reader that stops early
+/// (`jubarte FILE | head`) closes the pipe; the output then ends quietly, as
+/// `cat`'s does.
+fn write_stdout(text: impl AsRef<[u8]>) -> Result<(), String> {
     use std::io::Write;
     let mut out = std::io::stdout().lock();
-    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+    match out.write_all(text.as_ref()).and_then(|()| out.flush()) {
         Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
             Err(format!("writing to stdout: {e}"))
         }
@@ -886,8 +887,7 @@ fn run_edit(
     }
     if job.dry_run {
         let report = jubarte::edit::preview_plan(source, plan).map_err(|e| refused(&e))?;
-        print!("{}", report.to_jsonl());
-        return Ok(());
+        return write_stdout(report.to_jsonl()).map_err(fail);
     }
     let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
     let mut jsonl = result.report.to_jsonl();
@@ -1037,7 +1037,7 @@ fn run_edit(
         Some(&job.out_dir.join(shown).display().to_string()),
     )
     .map_err(|e| fail(format!("reading the redline back: {e}")))?;
-    print_view(&view).map_err(fail)
+    write_stdout(&view).map_err(fail)
 }
 
 /// One `edit` or `add` invocation, parsed.
@@ -1528,10 +1528,7 @@ fn run_text_diff(
         eprintln!("wrote {} ({} bytes)", path.display(), patch.len());
         Ok(())
     } else {
-        use std::io::Write as _;
-        std::io::stdout()
-            .write_all(patch.as_bytes())
-            .map_err(|e| format!("writing to stdout: {e}"))
+        write_stdout(&patch)
     }
 }
 
@@ -1624,14 +1621,13 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         None => None,
     };
     if let (Some(patch), None) = (&patch, &output) {
-        print!("{patch}");
-        return Ok(());
+        return write_stdout(patch);
     }
     write_diff_output(job, to, output, &out, patch.is_some())?;
-    if let Some(patch) = patch {
-        print!("{patch}");
+    match patch {
+        Some(patch) => write_stdout(&patch),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// Write `diff`'s Markdown, Word, PDF or PNG output. With a patch on
@@ -1644,12 +1640,7 @@ fn write_diff_output(
     patch_on_stdout: bool,
 ) -> Result<(), String> {
     match (to, output) {
-        (Format::Md, None) => {
-            use std::io::Write as _;
-            std::io::stdout()
-                .write_all(out)
-                .map_err(|e| format!("writing to stdout: {e}"))
-        }
+        (Format::Md, None) => write_stdout(out),
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
             std::fs::write(&path, out).map_err(|e| format!("writing {}: {e}", path.display()))?;
@@ -1801,10 +1792,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                     println!("wrote {} ({} bytes)", output.display(), text.len());
                     Ok(())
                 }
-                None => {
-                    print!("{text}");
-                    Ok(())
-                }
+                None => write_stdout(&text).map_err(ConvertFailure::from),
             }
         }
         (Format::Docx, Format::Docx) => {
@@ -1855,10 +1843,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                     std::fs::write(output, &out)
                         .map_err(|e| format!("writing {}: {e}", output.display()).into())
                 }
-                None => {
-                    print!("{out}");
-                    Ok(())
-                }
+                None => write_stdout(&out).map_err(ConvertFailure::from),
             }
         }
         (Format::Md, Format::Docx | Format::Pdf | Format::Png) => {
@@ -1929,8 +1914,7 @@ fn run_debug(
     } else {
         jubarte::debug::report(&a, b.as_deref(), &opts)?
     };
-    print!("{out}");
-    Ok(())
+    write_stdout(&out)
 }
 
 /// One `jubarte validate` run.
@@ -2038,8 +2022,7 @@ fn run_debug_diff(
         .map(String::as_str)
         .zip(bytes.iter().map(Vec::as_slice))
         .collect();
-    print!("{}", jubarte::debug::diff::diff(&pairs, opts)?);
-    Ok(())
+    write_stdout(&jubarte::debug::diff::diff(&pairs, opts)?)
 }
 
 /// The stack the CLI runs on: what Linux and macOS give a main thread.
