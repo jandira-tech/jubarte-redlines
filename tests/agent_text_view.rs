@@ -2613,6 +2613,54 @@ fn editing_mode_refuses_to_keep_other_tracked_changes() {
         xml.contains("forty-five") && xml.contains("Overdue"),
         "{xml}"
     );
+    // pi review av4 F14: rejecting them restores the base text, and a second
+    // run into the same folder needs --force with flag operations too.
+    let reject = |force: bool| {
+        let mut args = vec![
+            "edit",
+            "one/redline.docx",
+            "-p",
+            "p2",
+            "--anchor",
+            "Late",
+            "--content",
+            "Overdue",
+            "--editing-mode",
+            "--existing-revisions",
+            "reject",
+            "--out-dir",
+            "four",
+        ];
+        if force {
+            args.push("--force");
+        }
+        jubarte(&args, dir.path())
+    };
+    let first = reject(false);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let xml = common::docx::part_string(
+        &std::fs::read(dir.path().join("four/clean.docx")).unwrap(),
+        "word/document.xml",
+    )
+    .unwrap();
+    assert!(
+        xml.contains("thirty") && !xml.contains("forty-five") && xml.contains("Overdue"),
+        "{xml}"
+    );
+    assert!(
+        !reject(false).status.success(),
+        "an existing folder needs --force"
+    );
+    let forced = reject(true);
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
 }
 
 /// A backslash in a table cell is escaped once, and a pipe stays a pipe.

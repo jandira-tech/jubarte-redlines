@@ -281,6 +281,15 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.equal(compared.code, 0, compared.err);
   assert.equal(compared.out, "");
   assert.equal(fs.readFileSync(word).subarray(0, 2).toString(), "PK");
+  // --changed --by keeps the author's block, by handle or by name (pi
+  // review av3 F8: only the (none) path was tested).
+  const signed = path.join(tmp, "signed.docx");
+  assert.equal(run(a, b, "-o", signed, "--author", "Ann Counsel", "--quiet").code, 0);
+  for (const by of ["AC", "Ann Counsel"]) {
+    const mine = run("read", signed, "--changed", "--by", by, "--no-page-markers");
+    assert.equal(mine.code, 0, mine.err);
+    assert.ok(mine.out.includes("\nrange: changed by @AC (p0) of p0") && mine.out.includes("{~~30~>45~~}"), mine.out);
+  }
   // One file is the agent view (read).
   const one = run(untracked, "--no-page-markers");
   assert.equal(one.code, 0, one.err);

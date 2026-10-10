@@ -136,3 +136,49 @@ fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
     };
     assert!(message.contains("has 3 paragraphs, no p3"), "{message}");
 }
+
+/// pi review av4 F14: the CLI's `-p` takes the same cell and story ids as a
+/// plan, one group per operation.
+#[test]
+fn the_cli_p_flag_takes_cell_and_story_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("src.docx"), source()).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args([
+            "edit",
+            "src.docx",
+            "-p",
+            "t0.r1.c1.p1",
+            "--anchor",
+            "later",
+            "--content",
+            "earlier",
+            "-p",
+            "header1",
+            "--anchor",
+            "DRAFT",
+            "--content",
+            "FINAL",
+            "--out-dir",
+            "out",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let redline = std::fs::read(dir.path().join("out/redline.docx")).unwrap();
+    let body = common::docx::part_string(&redline, "word/document.xml").unwrap();
+    assert!(
+        body.contains(">earlier<") && body.contains(">later<"),
+        "{body}"
+    );
+    let header = common::docx::part_string(&redline, "word/header1.xml").unwrap();
+    assert!(
+        header.contains(">FINAL<") && header.contains(">DRAFT<"),
+        "{header}"
+    );
+}

@@ -105,6 +105,15 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert capsys.readouterr().out == ""
     assert main(["compare", str(a), str(b), "--quiet", "--force"]) == 0
     assert word.read_bytes().startswith(b"PK")
+    # --changed --by keeps the author's block, by handle or by name (pi
+    # review av3 F8: only the (none) path was tested).
+    signed = tmp_path / "signed.docx"
+    assert main([str(a), str(b), "-o", str(signed), "--author", "Ann Counsel", "--quiet"]) == 0
+    capsys.readouterr()
+    for by in ("AC", "Ann Counsel"):
+        assert main(["read", str(signed), "--changed", "--by", by, "--no-page-markers"]) == 0
+        out = capsys.readouterr().out
+        assert "\nrange: changed by @AC (p0) of p0" in out and "{~~30~>45~~}" in out, out
     assert main(["diff", str(word), str(word)]) == 0
     assert (tmp_path / "before_v_after_v_before_v_after.docx").read_bytes().startswith(b"PK")
 
