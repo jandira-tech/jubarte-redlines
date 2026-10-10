@@ -790,6 +790,8 @@ fn num_pr(numpr: &Element) -> Option<(String, usize)> {
 struct Level {
     format: String,
     start: u32,
+    /// `w:lvlText`: `%1)`, `%1.%2`.
+    text: Option<String>,
 }
 
 #[derive(Default)]
@@ -853,6 +855,7 @@ impl Numbering {
             .unwrap_or(Level {
                 format: "bullet".into(),
                 start: 1,
+                text: None,
             });
         Some((abs.as_str(), level))
     }
@@ -870,6 +873,10 @@ fn level_of(lvl: &Element) -> Level {
             .and_then(|s| s.attr("val"))
             .and_then(|v| v.parse().ok())
             .unwrap_or(1),
+        text: lvl
+            .child("lvlText")
+            .and_then(|t| t.attr("val"))
+            .map(str::to_string),
     }
 }
 
@@ -1180,15 +1187,21 @@ impl Writer<'_> {
         // labels are text, so a tracked change that merges an empty numbered
         // paragraph away would leave the resolved markup a number off
         // (Word's own markup shows both, `4.3.`).
-        let list_marker: Option<(String, usize)> = if (written || self.agent) && heading.is_none() {
-            num.clone()
-                .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)).map(|m| (m, ilvl)))
-        } else {
-            None
-        };
+        // (Markdown marker, Word's label, level)
+        let list_marker: Option<(String, String, usize)> =
+            if (written || self.agent) && heading.is_none() {
+                num.clone().and_then(|(id, ilvl)| {
+                    self.list_marker(&id, ilvl.min(8))
+                        .map(|(m, label)| (m, label, ilvl))
+                })
+            } else {
+                None
+            };
+        // A heading's number is text, so it reads as Word prints it.
         let heading_marker: Option<String> = if self.agent && heading.is_some() {
             num.clone()
                 .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)))
+                .map(|(_, label)| label)
         } else {
             None
         };
@@ -1238,7 +1251,7 @@ impl Writer<'_> {
             }
             let marker = heading_marker
                 .as_deref()
-                .or(list_marker.as_ref().map(|(m, _)| m.as_str()));
+                .or(list_marker.as_ref().map(|(_, label, _)| label.as_str()));
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
@@ -1263,7 +1276,7 @@ impl Writer<'_> {
                 }
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
             } else if let Some(marker) = list_marker {
-                let (marker, ilvl) = marker;
+                let (marker, _, ilvl) = marker;
                 let text = self.block_text(inline.render(true));
                 let item = list.item(ilvl, &marker, &hard_breaks(&text));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
@@ -1354,8 +1367,9 @@ impl Writer<'_> {
         }
     }
 
-    /// The Markdown marker for a numbered paragraph, advancing Word's counters.
-    fn list_marker(&mut self, num_id: &str, ilvl: usize) -> Option<String> {
+    /// The Markdown marker for a numbered paragraph (`1.`) and the label Word
+    /// prints for it (`a)`, `1.2`), advancing Word's counters.
+    fn list_marker(&mut self, num_id: &str, ilvl: usize) -> Option<(String, String)> {
         if num_id == "0" {
             return None;
         }
@@ -1363,7 +1377,7 @@ impl Writer<'_> {
         let abs = abs.to_string();
         match level.format.as_str() {
             "none" => return None,
-            "bullet" => return Some("-".into()),
+            "bullet" => return Some(("-".into(), "-".into())),
             _ => {}
         }
         let first_use = !self.started_nums.iter().any(|n| n == num_id);
@@ -1384,7 +1398,33 @@ impl Writer<'_> {
         for deeper in counters.iter_mut().skip(ilvl + 1) {
             *deeper = None;
         }
-        Some(format!("{value}."))
+        let counters = *counters;
+        // `%k` is level k's counter in level k's format; a level not used
+        // yet stands at its start.
+        let text = level.text.unwrap_or_else(|| format!("%{}.", ilvl + 1));
+        let mut label = String::new();
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            let Some(k) = (c == '%')
+                .then(|| chars.peek().and_then(|d| d.to_digit(10)))
+                .flatten()
+                .filter(|k| (1..=9).contains(k))
+            else {
+                label.push(c);
+                continue;
+            };
+            chars.next();
+            let k = k as usize - 1;
+            let Some((_, at)) = self.numbering.level(num_id, k) else {
+                continue;
+            };
+            let n = counters[k].unwrap_or(i64::from(at.start));
+            label.push_str(&crate::convert::list_number(
+                &at.format,
+                u32::try_from(n.max(0)).unwrap_or(u32::MAX),
+            ));
+        }
+        Some((format!("{value}."), label))
     }
 
     /// Inline content of a paragraph plus any text-box blocks found inside it.

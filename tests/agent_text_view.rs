@@ -3124,3 +3124,58 @@ fn a_header_only_change_points_at_the_headers_line() {
     );
     assert!(view.contains("text: NEW HEADER"), "{view}");
 }
+
+/// The id line names a list paragraph by the label Word prints: its level's
+/// `lvlText` with each `%k` in that level's number format (`1)`, `a)`,
+/// `i)`, `1.a`), while the body keeps a Markdown list marker.
+#[test]
+fn id_line_number_is_the_label_word_prints() {
+    let lvl = |i: u8, fmt: &str, text: &str| {
+        format!(
+            r#"<w:lvl w:ilvl="{i}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/></w:lvl>"#
+        )
+    };
+    let numbering = Part {
+        name: "word/numbering.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+        xml: &format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="0">{}{}{}{}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#,
+            lvl(0, "decimal", "%1)"),
+            lvl(1, "lowerLetter", "%2)"),
+            lvl(2, "lowerRoman", "%3)"),
+            lvl(3, "upperLetter", "%1.%4")
+        ),
+    };
+    let item = |ilvl: u8, text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body_xml = [
+        item(0, "one"),
+        item(1, "one a"),
+        item(1, "one b"),
+        item(0, "two"),
+        item(1, "two a"),
+        item(2, "two a i"),
+        item(3, "deep"),
+    ]
+    .concat();
+    let out = body(&agent(&common::docx::docx_with(&body_xml, &[numbering]))).to_string();
+    for (p, label) in [
+        (0, "1)"),
+        (1, "a)"),
+        (2, "b)"),
+        (3, "2)"),
+        (4, "a)"),
+        (5, "i)"),
+        (6, "2.A"),
+    ] {
+        assert!(
+            out.contains(&format!("<!-- p{p} num \"{label}\" -->")),
+            "p{p} {label}:\n{out}"
+        );
+    }
+    assert!(out.contains("1. one\n"), "{out}");
+}

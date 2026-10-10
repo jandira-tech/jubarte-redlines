@@ -5624,6 +5624,12 @@ fn parse_num_fmt(val: &str) -> NumFmt {
     }
 }
 
+/// A list counter in a `w:numFmt` (`lowerLetter`, `upperRoman`, …), as the
+/// layout prints it; for the agent view's id lines.
+pub(crate) fn list_number(num_fmt: &str, n: u32) -> String {
+    format_num(parse_num_fmt(num_fmt), n)
+}
+
 fn format_num(fmt: NumFmt, n: u32) -> String {
     match fmt {
         NumFmt::Decimal => n.to_string(),
