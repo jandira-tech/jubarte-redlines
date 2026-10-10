@@ -377,3 +377,27 @@ def test_convert_to_md_points_at_a_read_that_works(letter, capsys):
     err = capsys.readouterr().err
     assert "read FILE" in err
     assert "--track-changes" not in err
+
+
+def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(letter: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """pi review r392b tests F6: the files are written and the report says
+    so; a view that cannot be read back is a warning and exit 0."""
+    from jubarte_redlines import _native
+
+    def broken(*_args: object, **_kwargs: object) -> str:
+        raise _native.JubarteError("read back failed")
+
+    monkeypatch.setattr(_native, "changed_view", broken)
+    plan = {
+        "schema_version": 1,
+        "author": "Claude",
+        "date": "2026-09-25T12:00:00Z",
+        "operations": [{"kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"}],
+    }
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    out_dir = tmp_path / "review"
+    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)]) == 0
+    assert (out_dir / "redline.docx").is_file()
+    err = capsys.readouterr().err
+    assert "warning: the changed blocks cannot be shown: read back failed" in err

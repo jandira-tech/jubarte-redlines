@@ -587,3 +587,23 @@ test("diff, compare and convert follow the native input and output contract (int
   assert.match(refused.err, /Markdown must be UTF-8/);
   assert.ok(!fs.existsSync(path.join(tmp, "broken.pdf")));
 });
+
+test("edit keeps its files when the view cannot be read back", () => {
+  // pi review r392b tests F6: a preload makes changedView throw; the edit is
+  // written, so the failure is a warning and the exit code stays 0.
+  const preload = path.join(tmp, "broken-view.cjs");
+  fs.writeFileSync(
+    preload,
+    `const wasm = require(${JSON.stringify(path.join(cliDir, "node_modules", "jubarte-wasm"))});\n` +
+      `wasm.changedView = () => { throw new Error("read back failed"); };\n`,
+  );
+  const first = run("inspect", untracked, "--json");
+  const para = JSON.parse(first.out).paragraphs.find((p) => p.text.length > 3);
+  const plan = path.join(tmp, "plan-broken-view.json");
+  fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Claude", date: "2026-09-25T12:00:00Z", operations: [{ kind: "replace", paragraph: { index: para.index }, find: para.text.split(" ")[0], replacement: "Changed" }] }));
+  const dir = path.join(tmp, "review-broken-view");
+  const r = spawnSync(process.execPath, ["--require", preload, bin, "edit", untracked, "--plan", plan, "--out-dir", dir], { encoding: "utf8", cwd: tmp });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, "redline.docx")));
+  assert.match(r.stderr, /warning: the changed blocks cannot be shown: read back failed/);
+});
