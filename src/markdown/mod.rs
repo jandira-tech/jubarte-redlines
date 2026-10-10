@@ -294,9 +294,6 @@ impl Select {
         if by.is_some() && !changed {
             return Err("by needs changed".to_string());
         }
-        if by.is_some_and(|by| by.trim().trim_start_matches('@').is_empty()) {
-            return Err("by needs an author: a handle such as AC, or the full name".to_string());
-        }
         if changed && (paragraphs.is_some() || head.is_some() || tail.is_some()) {
             return Err("changed excludes paragraphs, head and tail".to_string());
         }

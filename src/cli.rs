@@ -100,6 +100,7 @@ pub struct ReadArgs {
         long,
         value_name = "AUTHOR",
         requires = "changed",
+        value_parser = parse_author,
         help_heading = "Read options"
     )]
     pub by: Option<String>,
@@ -1422,6 +1423,15 @@ fn styles() -> clap::builder::Styles {
         .usage(AnsiColor::Cyan.on_default() | Effects::BOLD)
         .literal(AnsiColor::Green.on_default())
         .placeholder(AnsiColor::Yellow.on_default())
+}
+
+/// `--by`: a handle (`AC`, `@AC`) or a full name, never blank.
+fn parse_author(value: &str) -> Result<String, String> {
+    if value.trim().trim_start_matches('@').is_empty() {
+        Err("needs an author: a handle such as AC, or the full name".into())
+    } else {
+        Ok(value.to_string())
+    }
 }
 
 fn parse_dpi(value: &str) -> Result<f32, String> {

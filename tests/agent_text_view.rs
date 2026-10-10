@@ -2752,10 +2752,15 @@ fn changed_by_reads_a_handle_before_a_name_and_refuses_an_empty_author() {
         by_name.contains("\nrange: changed by @AC (p0) of p0-p1\n"),
         "{by_name}"
     );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
     for empty in ["", "@", " "] {
-        assert!(
-            Select::from_flags(None, None, None, true, Some(empty)).is_err(),
-            "{empty:?}"
+        let out = jubarte(
+            &["read", "received.docx", "--changed", "--by", empty],
+            dir.path(),
         );
+        assert_eq!(out.status.code(), Some(2), "{empty:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("needs an author"), "{empty:?}: {stderr}");
     }
 }

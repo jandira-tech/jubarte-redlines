@@ -285,6 +285,9 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
             inline_edit(paragraph(), anchor, text, run_format)
                 .map_err(|m| format!("-p {at}: {m}"))?
         }
+        (Verb::Edit, None, Some(_), None) if op.delete && !op.styles.is_empty() => {
+            return bad("--delete takes no --style");
+        }
         (Verb::Edit, None, Some(anchor), None) if op.delete => K::Delete {
             paragraph: paragraph(),
             find: anchor.clone(),
@@ -454,6 +457,25 @@ mod tests {
 
     fn kind(verb: Verb, op: &FlagOp) -> Result<OperationKind, String> {
         flag_operation(verb, op).map(|(k, _)| k)
+    }
+
+    /// pi review av4 F5: deleting an anchor has nothing to format, with or
+    /// without the anchor.
+    #[test]
+    fn delete_refuses_a_style_with_an_anchor_too() {
+        let mut delete = op("p4");
+        delete.anchor = Some("Fees".into());
+        delete.delete = true;
+        delete.styles = vec!["bold".into()];
+        assert_eq!(
+            kind(Verb::Edit, &delete).unwrap_err(),
+            "-p p4: --delete takes no --style"
+        );
+        delete.styles = vec!["Heading2".into()];
+        assert_eq!(
+            kind(Verb::Edit, &delete).unwrap_err(),
+            "-p p4: --delete takes no --style"
+        );
     }
 
     #[test]
