@@ -5079,7 +5079,7 @@ fn apply_text_edit(
                 let value = dom.value(t);
                 let at = start - seg.start;
                 let updated = format!("{}{}{}", &value[..at], replacement, &value[at..]);
-                write_text(dom, t, &updated);
+                write_text_new_in(dom, t, &updated, at..at + replacement.len());
             }
             // Beside a tab or a break: new text of the glyph's run, after it
             // when it holds the char before the point.
@@ -5108,7 +5108,7 @@ fn apply_text_edit(
                 let to = end.saturating_sub(seg.start).min(value.len());
                 let middle = pending.take().unwrap_or_default();
                 let updated = format!("{}{}{}", &value[..from], middle, &value[to..]);
-                write_text(dom, t, &updated);
+                write_text_new_in(dom, t, &updated, from..from + middle.len());
             }
             // One char, so inside the range it is covered whole.
             Piece::Glyph { element, .. } => {
@@ -5183,13 +5183,25 @@ fn set_text(dom: &mut Dom, t: NodeId, value: &str) {
 /// and each `\n` as a `w:br` of that run, with the text between them in
 /// `w:t`s of its own; `t` itself goes when no text is left for it.
 fn write_text(dom: &mut Dom, t: NodeId, value: &str) {
-    let mut pieces = value.split(['\t', '\n']);
-    let head = pieces.next().unwrap_or_default();
-    set_text(dom, t, head);
+    write_text_new_in(dom, t, value, 0..value.len());
+}
+
+/// [`write_text`] for `value` whose new text is `new` alone: the text kept
+/// around it stays as the source wrote it, a tab typed in `w:t` included,
+/// so an edit never restates what it did not touch.
+fn write_text_new_in(dom: &mut Dom, t: NodeId, value: &str, new: std::ops::Range<usize>) {
+    let cuts: Vec<usize> = value[new.clone()]
+        .match_indices(['\t', '\n'])
+        .map(|(at, _)| new.start + at)
+        .collect();
+    let Some(&first) = cuts.first() else {
+        set_text(dom, t, value);
+        return;
+    };
+    set_text(dom, t, &value[..first]);
     let mut last = t;
-    let mut at = head.len();
-    for piece in pieces {
-        let glyph = if value.as_bytes()[at] == b'\t' {
+    for (i, &cut) in cuts.iter().enumerate() {
+        let glyph = if value.as_bytes()[cut] == b'\t' {
             "tab"
         } else {
             "br"
@@ -5197,15 +5209,15 @@ fn write_text(dom: &mut Dom, t: NodeId, value: &str) {
         let element = dom.new_element(W::name(glyph));
         dom.add_after_self(last, element);
         last = element;
+        let piece = &value[cut + 1..cuts.get(i + 1).copied().unwrap_or(value.len())];
         if !piece.is_empty() {
             let next = dom.new_element(W::t());
             dom.add_after_self(last, next);
             set_text(dom, next, piece);
             last = next;
         }
-        at += 1 + piece.len();
     }
-    if head.is_empty() && last != t {
+    if first == 0 {
         dom.remove(t);
     }
 }

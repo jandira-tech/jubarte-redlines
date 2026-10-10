@@ -240,3 +240,35 @@ fn a_page_break_in_a_replaced_range_stays() {
     check(&source, &out, &["X d"]);
     assert!(body(&out.clean).contains(r#"w:type="page""#));
 }
+
+/// A tab typed inside `w:t` (as converters write "2.\tDelivery") that the
+/// edit does not touch stays as the source wrote it: the redline carries
+/// the real edit alone, not a deleted and re-inserted tab.
+#[test]
+fn a_tab_typed_in_text_outside_the_edit_stays_as_written() {
+    let source = docx(&para("2.\tDelivery is within thirty days."));
+    for op in [
+        r#"{"kind":"replace","paragraph":"p0","find":"thirty","replacement":"forty-five"}"#,
+        r#"{"kind":"rewrite","paragraph":"p0","text":"2.\tDelivery is within forty-five days."}"#,
+        r#"{"kind":"insert","paragraph":"p0","after":"within","text":" about"}"#,
+    ] {
+        let out = apply_plan(&source, &plan(&format!("[{op}]"))).unwrap();
+        assert!(
+            body(&out.clean).contains("2.\tDelivery is within"),
+            "{op}: {}",
+            body(&out.clean)
+        );
+        assert!(!body(&out.clean).contains("<w:tab"), "{op}");
+        let changed = jubarte::changes::list_changes(&out.redline).unwrap();
+        assert!(
+            changed.iter().all(|c| !c.text.contains("Delivery")),
+            "{op}: {changed:?}"
+        );
+        let want = texts(&out.clean);
+        check(
+            &source,
+            &out,
+            &want.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+    }
+}
