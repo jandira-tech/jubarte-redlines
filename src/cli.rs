@@ -1541,6 +1541,27 @@ fn validate_matches(
                 "read options apply to the printed view; drop -o to print it",
             ));
         }
+        // One bare word is more likely a mistyped task than a document.
+        let lone = |id: &str| {
+            matches
+                .try_get_one::<PathBuf>(id)
+                .ok()
+                .flatten()
+                .filter(|_| matches.value_source(id) == Some(ValueSource::CommandLine))
+        };
+        if lone("modified_pos").is_none()
+            && lone("modified").is_none()
+            && let Some(file) = lone("original_pos")
+            && file.extension().is_none()
+        {
+            return Err(command.error(
+                ErrorKind::InvalidSubcommand,
+                format!(
+                    "'{}' is not a task; to read a file without an extension, use `read FILE`",
+                    file.display()
+                ),
+            ));
+        }
         return Ok(());
     };
     if name == "compare"

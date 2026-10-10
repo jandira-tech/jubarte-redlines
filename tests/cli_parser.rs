@@ -43,6 +43,14 @@ fn explicit_compare_alias_and_shorthand_preserve_overrides() {
     assert_eq!(read["args"]["file"], "a.docx");
     assert!(read["args"]["head"].is_null() && read["args"]["changed"] == false);
     assert_eq!(parse(&["a.docx", "--head", "2"], &[])["args"]["head"], 2);
+    // A bare word is a mistyped task, not a document.
+    let typo = parse(&["frobnicate"], &[]);
+    assert_eq!(typo["exit_code"], 2, "{typo}");
+    assert!(
+        typo["text"].as_str().unwrap().contains("read FILE"),
+        "{typo}"
+    );
+    assert_eq!(parse(&["read", "frobnicate"], &[])["exit_code"], 0);
     assert_eq!(
         parse(&["a.docx"], &["compare"])["exit_code"],
         2,
