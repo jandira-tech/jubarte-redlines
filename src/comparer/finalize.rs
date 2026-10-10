@@ -174,7 +174,43 @@ pub fn mark_content_transform(
     // An empty field is a whole atom with no run to carry the status: Word's
     // redline spells it as a complex field inside the revision (b15).
     if name == W::name("fldSimple") && dom.elements(node, None).is_empty() {
-        let deleted = match dom.attribute(node, &PT::status()) {
+        let status = dom.attribute(node, &PT::status()).map(str::to_string);
+        if let Some(moved @ ("MovedSource" | "MovedDestination")) = status.as_deref() {
+            // As moved runs: range markers around a moveFrom / moveTo whose
+            // code stays w:instrText (moved text stays w:t).
+            let (start, kind, end) = if moved == "MovedSource" {
+                ("moveFromRangeStart", "moveFrom", W::move_from_range_end())
+            } else {
+                ("moveToRangeStart", "moveTo", W::move_to_range_end())
+            };
+            let move_name = dom
+                .attribute(node, &PT::name("MoveName"))
+                .unwrap_or("move1")
+                .to_string();
+            let range_id = id_gen.to_string();
+            *id_gen += 1;
+            let range_start = dom.new_element(W::name(start));
+            dom.set_attribute_value(range_start, &W::id(), Some(&range_id));
+            dom.set_attribute_value(range_start, &W::name("name"), Some(&move_name));
+            dom.set_attribute_value(
+                range_start,
+                &W::author(),
+                Some(&settings.author_for_revisions),
+            );
+            dom.set_attribute_value(
+                range_start,
+                &W::date(),
+                Some(&settings.date_time_for_revisions),
+            );
+            let wrap = rev_el(dom, W::name(kind), settings, id_gen);
+            for run in complex_field_runs(dom, node, false) {
+                dom.add(wrap, run);
+            }
+            let range_end = dom.new_element(end);
+            dom.set_attribute_value(range_end, &W::id(), Some(&range_id));
+            return vec![range_start, wrap, range_end];
+        }
+        let deleted = match status.as_deref() {
             Some("Deleted") => true,
             Some("Inserted") => false,
             _ => return vec![dom.clone_subtree(node)],
@@ -19303,6 +19339,49 @@ mod coverage_round_next_tests {
     /// An empty field is a whole atom (no run), so the run-level status
     /// pass never wrapped it: a deleted `PAGE` stayed live in its deleted
     /// paragraph and Word 16.115 hung on the footer (b15, 0.12.0 sample).
+    /// A moved empty field travels as the moved runs do: range markers
+    /// around a `w:moveFrom` / `w:moveTo` holding the complex field (its
+    /// code stays `w:instrText`, as moved text stays `w:t`). Left live, the
+    /// field survived at both ends of every accept and reject.
+    #[test]
+    fn moved_empty_field_becomes_a_complex_field_in_the_move() {
+        for (status, kind) in [("MovedSource", "moveFrom"), ("MovedDestination", "moveTo")] {
+            let (mut dom, root, _) = document(&format!(
+                "<w:p><w:fldSimple pt:Status=\"{status}\" pt:MoveName=\"move7\" w:instr=\"PAGE\"/></w:p>"
+            ));
+            let mut id = 1;
+            let result = mark_content_as_deleted_or_inserted(&mut dom, root, &settings(), &mut id);
+            let p = dom.descendants(result, Some(&W::p()))[0];
+            let kids: Vec<String> = dom
+                .elements(p, None)
+                .into_iter()
+                .map(|k| dom.name(k).unwrap().local_name().to_string())
+                .collect();
+            assert_eq!(
+                kids,
+                [
+                    format!("{kind}RangeStart"),
+                    kind.to_string(),
+                    format!("{kind}RangeEnd")
+                ],
+                "{status}"
+            );
+            let start = dom.elements(p, None)[0];
+            assert_eq!(dom.attribute(start, &W::name("name")), Some("move7"));
+            let moved = dom.elements(p, None)[1];
+            assert_eq!(dom.elements(moved, Some(&W::r())).len(), 4);
+            assert_eq!(
+                dom.value(dom.descendants(moved, Some(&W::name("instrText")))[0]),
+                "PAGE"
+            );
+            assert!(
+                dom.descendants(p, None)
+                    .iter()
+                    .all(|&n| dom.attribute(n, &PT::status()).is_none())
+            );
+        }
+    }
+
     #[test]
     fn deleted_or_inserted_empty_field_becomes_a_complex_field_in_the_revision() {
         for (status, wrap, code) in [

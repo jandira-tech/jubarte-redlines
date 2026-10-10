@@ -5386,6 +5386,7 @@ fn mark_adopted_hf_content_as_inserted(
                 || n == W::hyperlink()
                 || n == W::name("sdt")
                 || n == W::name("drawing")
+                || n == W::name("fldSimple")
                 || n.local_name() == "AlternateContent"
         });
         if !has_content {
@@ -5603,6 +5604,7 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
                 || n == W::hyperlink()
                 || n == W::name("sdt")
                 || n == W::name("drawing")
+                || n == W::name("fldSimple")
                 || n.local_name() == "AlternateContent"
         });
         if has_content {
@@ -9219,6 +9221,38 @@ mod coverage_boundary_tests {
                 mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
             }
             assert_eq!(pkg.part_string("word/footer.xml").unwrap(), before);
+        }
+    }
+
+    /// A paragraph whose only content is a field (`fldSimple`, empty or
+    /// with a result) is content: left out, a dropped footer's NUMPAGES
+    /// stayed live, the b15 shape Word 16.115 hung on.
+    #[test]
+    fn one_sided_story_fields_join_the_story_revision() {
+        let story = "<w:p><w:pPr><w:pStyle w:val=\"Footer\"/></w:pPr><w:fldSimple w:instr=\"NUMPAGES\"/></w:p><w:p><w:fldSimple w:instr=\"PAGE\"><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p><w:p/>";
+        for (deleted, code) in [(true, "delInstrText"), (false, "instrText")] {
+            let mut pkg = package("<w:body/>");
+            pkg.set_part("word/footer.xml", xml("ftr", story).into_bytes());
+            if deleted {
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+            } else {
+                mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
+            }
+            let (mut dom, r) = part_root(&pkg, "word/footer.xml");
+            crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut dom, r);
+            let rev = if deleted { W::del() } else { W::ins() };
+            let paras = dom.elements(r, Some(&W::p()));
+            let empty = dom.descendants(paras[0], Some(&W::name(code)));
+            assert_eq!(
+                empty.len(),
+                1,
+                "deleted={deleted}: {}",
+                dom.serialize_element(r)
+            );
+            assert!(!dom.ancestors(empty[0], Some(&rev)).is_empty());
+            let cached = dom.descendants(paras[1], Some(&W::name("fldSimple")));
+            assert_eq!(cached.len(), 1);
+            assert_eq!(children(&dom, cached[0]), [rev.local_name()]);
         }
     }
 
