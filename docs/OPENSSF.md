@@ -98,8 +98,8 @@ in this review; a CPE is optional, and none is invented.
 | static_analysis_common_vulnerabilities | Evidence: Clippy correctness/suspicious and targeted indexing/arithmetic lints; cargo-deny RustSec vulnerability checks. Dependency analysis supplements source analysis. |
 | static_analysis_fixed | Fixed triage policy: confirmed medium/higher exploitable findings block release. Exceptions documented in deny.toml/SECURITY, not represented as fixed upstream. |
 | static_analysis_often | Evidence: Clippy every push/PR; security checks daily and every main push/PR. |
-| dynamic_analysis | Evidence: four libFuzzer targets, executed candidate runs, and pre-major-release checklist requirement; see OPENSSF_VERIFICATION.md. |
-| dynamic_analysis_unsafe | Review: own Rust library forbids unsafe code, but CLI ships the C mimalloc allocator. Do not claim blanket N/A; validate sanitizer coverage of shipped native dependencies or document the safe-only build under assessment. |
+| dynamic_analysis | Evidence: four libFuzzer targets, all run on the 2026-10-10 candidate under the system allocator and `compare`/`relationships` under the shipped mimalloc (OPENSSF_VERIFICATION.md); CI `fuzz-smoke` on every pull request and main push; pre-release checklist requirement. |
+| dynamic_analysis_unsafe | Evidence: own Rust library forbids unsafe code; the CLI's C mimalloc is fuzzed by `scripts/fuzz-native.sh`, built at the CLI's locked versions with C AddressSanitizer and `MI_TRACK_ASAN`, in CI and on the 2026-10-10 candidate. Not claimed: CLI argument parsing and the network updater. |
 | dynamic_analysis_enable_assertions | Evidence: debug Rust tests; cargo-fuzz targets use sanitizers/debug assertions. |
 | dynamic_analysis_fixed | Fixed triage policy: retain reproducers and fix confirmed medium/higher exploitable findings before release. Review crash artifacts for each candidate. |
 
@@ -127,7 +127,9 @@ repository settings were not edited.
   documented exceptions. Reachable-history and publishable-file secret scans
   find no leaks. REUSE lint, workflow YAML parsing, Bash syntax and whitespace
   checks pass.
-- Hosted CI and release-candidate fuzzing are not claimed as executed locally.
+- The CI `fuzz-smoke` sequence ran locally on 2026-10-10 (all four targets,
+  then the two native-allocator targets); see OPENSSF_VERIFICATION.md. Hosted
+  CI runs are not claimed.
 
 ## Interactive maintainer attestations
 
@@ -167,12 +169,20 @@ verification. They have not been submitted to the badge site. The earlier
 criterion review remains the technical evidence and limitations for evaluating
 these answers.
 
-## Follow-up verification on 2026-10-07
+## Follow-up verification on 2026-10-08
 
 [OPENSSF_VERIFICATION.md](OPENSSF_VERIFICATION.md) records source and dependency
-inspection, authenticated advisory queries and an executed hosted fuzz run.
-Its recommendations supersede the earlier provisional crypto/dynamic-analysis
-labels above. It identifies an unresolved affected public XML API and separates
-that blocker from guarded document-opening paths. Original maintainer answers
-remain unchanged; private-report history and full native allocator analysis
-still require evidence.
+inspection, authenticated advisory queries and executed fuzz runs. Its
+recommendations supersede the earlier provisional crypto/dynamic-analysis
+labels above. Original maintainer answers remain unchanged.
+
+- Resolved: the public XML API finding of the 2026-10-07 snapshot is now
+  historical. rdocx-opc 0.2 with patched quick-xml 0.41 is in every graph.
+- Resolved: report history. On 2026-10-08 the maintainer confirmed no
+  reports or findings outside GitHub, and the authenticated advisory queries
+  were empty.
+- Done on 2026-10-10: native allocator analysis. The candidate ran all four
+  fuzz targets, then `compare` and `relationships` under the shipped
+  mimalloc with C AddressSanitizer.
+- Pending: a published release with the fixed parser, before
+  `vulnerabilities_fixed_60_days` is attested for released results.
