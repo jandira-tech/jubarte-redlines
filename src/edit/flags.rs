@@ -148,12 +148,11 @@ fn styles(tokens: &[String]) -> Result<(Option<RunFormat>, Option<String>), Stri
 }
 
 /// `--content` as document text: Markdown escapes resolved (`\#` → `#`); a
-/// note when emphasis marks remain, since they are written as text.
+/// note when the view would read marks in it (emphasis, CriticMarkup, a
+/// block mark), since they are written as text.
 fn content_text(content: &str) -> (String, Option<&'static str>) {
     let text = crate::markdown::unescape_markdown(content);
-    let marks = ["**", "__", "~~", "==", "<u>", "</u>"]
-        .iter()
-        .any(|m| text.contains(m));
+    let marks = crate::markdown::plain_anchor(content) != text;
     (
         text,
         marks.then_some("content keeps its Markdown marks as text; use --style for formatting"),
@@ -578,6 +577,37 @@ mod tests {
             matches!(k, OperationKind::Replace { ref replacement, .. } if replacement == "sixty")
         );
         assert!(inline_edit(Selector::Name("p1".into()), "# x", "x".into(), None).is_err());
+    }
+
+    /// pi review av4 F12: the note fires whenever the content reads
+    /// differently as Markdown, CriticMarkup and block marks included, and
+    /// not for escaped marks or a lone `*`.
+    #[test]
+    fn content_notes_every_mark_the_view_would_read() {
+        for noted in [
+            "**bold**",
+            "{++x++}",
+            "{~~a~>b~~}",
+            "# Title",
+            "_x_",
+            "<u>u</u>",
+        ] {
+            assert!(content_text(noted).1.is_some(), "{noted}");
+        }
+        for plain in [
+            "\\*\\*x\\*\\*",
+            "*italics?",
+            "2 * 3",
+            "snake__case",
+            "plain",
+            " lead",
+            "trail ",
+            "two\nlines",
+            "a = b",
+            "x - y",
+        ] {
+            assert!(content_text(plain).1.is_none(), "{plain}");
+        }
     }
 
     /// pi review av4 F8: "make thirty bold" written as `--anchor thirty
