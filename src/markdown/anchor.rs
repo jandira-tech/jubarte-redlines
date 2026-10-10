@@ -122,10 +122,13 @@ fn without_emphasis(text: &str) -> String {
     // `_` runs pair as CommonMark pairs them: a run opens only with no
     // letter or digit before it and text after it, closes only with text
     // before it and no letter or digit after it, and closes the nearest
-    // open run of its length. `snake__case` and `foo__bar__` stay text.
+    // open run it may. Runs of unequal length use what they share and keep
+    // the rest as text (`_foo__` is `foo_`). `snake__case` and `foo__bar__`
+    // stay text.
     let chars: Vec<char> = text.chars().collect();
     let mut drop = vec![false; chars.len()];
-    let mut open: Vec<(usize, usize)> = Vec::new();
+    // (first, end of the unused delimiters, run length, can also close)
+    let mut open: Vec<(usize, usize, usize, bool)> = Vec::new();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] != '_' {
@@ -133,22 +136,42 @@ fn without_emphasis(text: &str) -> String {
             continue;
         }
         let end = i + chars[i..].iter().take_while(|&&c| c == '_').count();
+        let len = end - i;
         let before = i.checked_sub(1).map(|b| chars[b]);
         let after = chars.get(end).copied();
         let closes =
             before.is_some_and(|c| !c.is_whitespace()) && !after.is_some_and(char::is_alphanumeric);
         let opens =
             after.is_some_and(|c| !c.is_whitespace()) && !before.is_some_and(char::is_alphanumeric);
-        let opener = closes
-            .then(|| open.iter().rposition(|&(a, z)| z - a == end - i))
-            .flatten();
-        if let Some(at) = opener {
-            let (a, z) = open[at];
-            drop[a..z].fill(true);
-            drop[i..end].fill(true);
-            open.truncate(at);
-        } else if opens {
-            open.push((i, end));
+        // The first delimiter of this run not yet paired.
+        let mut from = i;
+        while closes && from < end {
+            // CommonMark's rule of 3: when either run can both open and
+            // close, their lengths may not sum to a multiple of 3 unless
+            // both are multiples of 3.
+            let Some(at) = open.iter().rposition(|&(_, _, opener, both)| {
+                !((both || opens)
+                    && (opener + len).is_multiple_of(3)
+                    && !(opener.is_multiple_of(3) && len.is_multiple_of(3)))
+            }) else {
+                break;
+            };
+            let (a, z, opener, both) = open[at];
+            // Both runs have two left: strong emphasis uses two each.
+            let used = if z - a >= 2 && end - from >= 2 { 2 } else { 1 };
+            drop[z - used..z].fill(true);
+            drop[from..from + used].fill(true);
+            from += used;
+            // The runs between the pair stay text.
+            open.truncate(at + 1);
+            if z - used == a {
+                open.pop();
+            } else {
+                open[at] = (a, z - used, opener, both);
+            }
+        }
+        if opens && from < end {
+            open.push((from, end, len, closes));
         }
         i = end;
     }
@@ -235,6 +258,12 @@ mod tests {
             ("__x__y", "__x__y"),
             ("a _b_ c", "a b c"),
             ("_a_ and foo__bar__", "a and foo__bar__"),
+            // CodeRabbit #392 (2): runs of unequal length pair what they can
+            // and keep the rest as text, as CommonMark does.
+            ("_foo__", "foo_"),
+            ("__foo_", "_foo"),
+            ("___foo___", "foo"),
+            ("_foo___", "foo__"),
             ("unclosed {++ insert", "unclosed {++ insert"),
             ("\\# 1", "# 1"),
         ] {
