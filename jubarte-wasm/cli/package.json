@@ -25,7 +25,10 @@
     "diff",
     "cli",
     "pdf",
-    "docx-to-pdf"
+    "docx-to-pdf",
+    "markdown",
+    "criticmarkup",
+    "ai-agents"
   ],
   "type": "module",
   "bin": {
