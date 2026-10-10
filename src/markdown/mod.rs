@@ -281,10 +281,12 @@ pub enum Pick {
 }
 
 /// The author `--changed --by` names, its padding cut: a handle such as `AC`
-/// or `@AC`, or the full name. The CLI and the bindings both check it here.
+/// or `@AC` (one `@`, the handle right after it), or the full name. The CLI
+/// and the bindings both check it here.
 pub fn author(by: &str) -> Result<&str, String> {
     let by = by.trim();
-    if by.trim_start_matches('@').trim().is_empty() {
+    let name = by.strip_prefix('@').unwrap_or(by);
+    if name.is_empty() || name.starts_with('@') || name.starts_with(char::is_whitespace) {
         Err("needs an author: a handle such as AC, or the full name".into())
     } else {
         Ok(by)

@@ -1588,7 +1588,9 @@ fn select_from_flags_refuses_by_without_changed_and_changed_with_picks() {
     assert!(Select::from_flags(None, Some(2), None, true, None).is_err());
     // pi review r392 F3: the Python and WASM APIs call from_flags directly, so
     // a blank author is refused here as well as by clap, and padding is cut.
-    for blank in ["", "  ", "@", " @ "] {
+    // pi review r392b F6: one `@` marks a handle; `@@AC` and `@ AC` name
+    // nobody.
+    for blank in ["", "  ", "@", " @ ", "@@AC", "@ AC"] {
         assert!(
             Select::from_flags(None, None, None, true, Some(blank)).is_err(),
             "{blank:?}"
