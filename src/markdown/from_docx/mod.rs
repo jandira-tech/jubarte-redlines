@@ -364,8 +364,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let theme = package.xml("word/theme/theme1.xml").ok().flatten();
         let mut heading_styles: Vec<(usize, String)> = Vec::new();
         {
-            let mut ps = Vec::new();
-            body.find_all("p", &mut ps);
+            let ps = agent::paragraphs(body);
             let mut uses: std::collections::BTreeMap<(usize, String), usize> =
                 std::collections::BTreeMap::new();
             for p in &ps {
@@ -388,9 +387,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
         let mut table_styles: Vec<String> = Vec::new();
         {
-            let mut tables = Vec::new();
-            body.find_all("tbl", &mut tables);
-            for t in tables {
+            for t in agent::tables(body) {
                 if let Some(s) = t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val"))
                     && !table_styles.iter().any(|x| x == s)
                 {
@@ -531,6 +528,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             tags,
             marks,
             format_changes,
+            format_authors: agent::format_change_authors(body),
             comments: comment_facts,
             handles: &handles,
             done: &threads.done,
@@ -627,6 +625,7 @@ struct Style {
     num: Option<(String, usize)>,
     bold: Option<bool>,
     italic: Option<bool>,
+    underline: Option<bool>,
 }
 
 #[derive(Default)]
@@ -662,6 +661,7 @@ impl Styles {
                     num: ppr.and_then(|p| p.child("numPr")).and_then(num_pr),
                     bold: rpr.and_then(|r| r.toggle("b")),
                     italic: rpr.and_then(|r| r.toggle("i")),
+                    underline: rpr.and_then(|r| r.child("u")).map(is_underlined),
                 },
             );
         }
@@ -725,6 +725,16 @@ impl Styles {
             chain.iter().find_map(|s| s.italic),
         )
     }
+
+    /// Whether the style chain underlines, nearest style first.
+    fn underline(&self, id: &str) -> Option<bool> {
+        self.chain(id).iter().find_map(|s| s.underline)
+    }
+}
+
+/// `w:u` underlines unless its value is `none`.
+fn is_underlined(u: &Element) -> bool {
+    u.attr("val").is_none_or(|v| v != "none")
 }
 
 fn num_pr(numpr: &Element) -> Option<(String, usize)> {
@@ -1016,7 +1026,7 @@ impl Writer<'_> {
                         && let Some(line) = agent::table_line(
                             child,
                             self.resolved,
-                            !self.comments_inline,
+                            (!self.comments_inline).then_some(&self.comments),
                             &self.handles,
                         )
                     {
@@ -1460,7 +1470,13 @@ impl Writer<'_> {
         let underline = self.agent
             && rpr
                 .and_then(|r| r.child("u"))
-                .is_some_and(|u| u.attr("val").is_none_or(|v| v != "none"));
+                .map(is_underlined)
+                .or_else(|| {
+                    rpr.and_then(|r| r.child("rStyle"))
+                        .and_then(|s| s.attr("val"))
+                        .and_then(|s| self.styles.underline(s))
+                })
+                .unwrap_or(false);
         // A raised or lowered run keeps its tags, which the Markdown
         // reader takes back to w:vertAlign; a note reference is already
         // `[^n]`.

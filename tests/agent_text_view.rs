@@ -1732,3 +1732,118 @@ fn a_row_revision_shows_on_the_table_line_after_resolution() {
         "{rejected}"
     );
 }
+
+/// Review t09-15: a pick that accepting or rejecting merged into its
+/// neighbour is named, not silently dropped.
+#[test]
+fn a_pick_merged_away_by_resolution_names_the_paragraph_that_holds_it() {
+    let body_xml = format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="10" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr>{}</w:p><w:p>{}{}</w:p>"#,
+        run("Split "),
+        run("kept "),
+        ins(11, "Ann Counsel", "added")
+    );
+    let bytes = docx(&body_xml);
+    let pick = || Some(Select::parse("p1").unwrap());
+    let err = docx_to_markdown(
+        &bytes,
+        &MarkdownOptions {
+            track_changes: TrackChanges::Reject,
+            select: pick(),
+            ..agent_defaults()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("p1 is part of p0 in this view"), "{err}");
+    let tracked = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            select: pick(),
+            ..agent_defaults()
+        },
+    );
+    assert!(tracked.contains("\n<!-- p1"), "{tracked}");
+}
+
+/// Review t09-15: a selection that starts mid-page still names its page.
+#[test]
+fn a_selection_starting_mid_page_names_its_page() {
+    let bytes = docx(&format!(
+        r#"{}<w:p><w:r><w:lastRenderedPageBreak/><w:t>Two</w:t></w:r></w:p>{}{}"#,
+        para("One"),
+        para("Three"),
+        para("Four")
+    ));
+    let out = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            select: Some(Select::parse("p3").unwrap()),
+            ..agent_defaults()
+        },
+    );
+    assert_eq!(body(&out), "<!-- page 2 of 2 -->\n\n<!-- p3 -->\nFour\n");
+}
+
+/// Review t09-15: formatting-only changes are counted in the header, by
+/// author too.
+#[test]
+fn header_counts_formatting_only_changes() {
+    let bytes = docx(
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("revisions: 0 ") && l.ends_with("# 1 formatting change")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  AC: Ann Counsel ") && l.ends_with("# 1 formatting change")),
+        "{out}"
+    );
+}
+
+/// Review t09-15: a comment reference with no comment behind it is listed
+/// nowhere, in a cell as in a paragraph.
+#[test]
+fn an_orphan_comment_reference_in_a_cell_is_not_listed() {
+    let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r><w:r><w:commentReference w:id="9"/></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let out = agent_with(&docx(tbl), TrackChanges::All, false);
+    assert!(!out.contains("#c9"), "{out}");
+}
+
+/// Review t09-15: the header's style facts skip text boxes, as every other
+/// count does.
+#[test]
+fn header_table_styles_skip_tables_in_text_boxes() {
+    let boxed = r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:tbl><w:tblPr><w:tblStyle w:val="PlainTable"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>in box</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#;
+    let top = r#"<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>top</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let out = agent(&docx(&format!("{top}{boxed}")));
+    assert!(!out.contains("PlainTable"), "{out}");
+    assert!(out.contains("TableGrid"), "{out}");
+}
+
+/// Review t09-15: underline from a character style shows as `<u>`, as bold
+/// and italic from a style do.
+#[test]
+fn underline_from_a_character_style_shows() {
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="character" w:styleId="Under"><w:name w:val="Under"/><w:rPr><w:u w:val="single"/></w:rPr></w:style><w:style w:type="character" w:styleId="Plain"><w:name w:val="Plain"/><w:basedOn w:val="Under"/><w:rPr><w:u w:val="none"/></w:rPr></w:style></w:styles>"#
+        ),
+    };
+    let bytes = common::docx::docx_with(
+        r#"<w:p><w:r><w:rPr><w:rStyle w:val="Under"/></w:rPr><w:t>styled</w:t></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:rStyle w:val="Plain"/></w:rPr><w:t>plain</w:t></w:r></w:p>"#,
+        &[styles],
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(out.contains("<u>styled</u> plain"), "{out}");
+}

@@ -573,6 +573,37 @@ pub(crate) fn rendered_page_breaks(p: &Element) -> usize {
     count(p, &|e| e.is("lastRenderedPageBreak"))
 }
 
+/// The authors of the formatting changes (`*PrChange`) under `e`, text
+/// boxes excluded, in document order.
+pub(crate) fn format_change_authors(e: &Element) -> Vec<Option<String>> {
+    fn walk(e: &Element, out: &mut Vec<Option<String>>) {
+        for c in e.elements().filter(|c| !c.is("txbxContent")) {
+            if c.local().ends_with("PrChange") {
+                out.push(c.attr("author").map(str::to_string));
+            }
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
+/// The tables under `e` in document order, text boxes excluded.
+pub(crate) fn tables(e: &Element) -> Vec<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+        for c in e.elements().filter(|c| !c.is("txbxContent")) {
+            if c.is("tbl") {
+                out.push(c);
+            }
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
 /// The paragraphs under `e` in document order, text boxes excluded.
 pub(crate) fn paragraphs(e: &Element) -> Vec<&Element> {
     fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
@@ -755,7 +786,7 @@ pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
 pub(crate) fn table_line(
     tbl: &Element,
     resolved: bool,
-    comments: bool,
+    comments: Option<&HashMap<String, Element>>,
     handles: &Handles,
 ) -> Option<String> {
     let t = tbl.attr(TABLE)?;
@@ -828,7 +859,12 @@ pub(crate) fn table_line(
                             .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
                     );
                 }
-                let ids = if comments { comment_ids(p) } else { Vec::new() };
+                let ids: Vec<String> = comments.map_or_else(Vec::new, |known| {
+                    comment_ids(p)
+                        .into_iter()
+                        .filter(|id| known.contains_key(id))
+                        .collect()
+                });
                 if !ids.is_empty() {
                     let ids: Vec<String> = ids.iter().map(|c| format!("#c{c}")).collect();
                     held.push(format!("{} in p{i}", ids.join(" ")));
@@ -1261,6 +1297,24 @@ pub(crate) fn select_blocks(
                         tables.push(*t);
                         names.push((block.span.map_or(0, |s| s.0), format!("t{t}")));
                     }
+                }
+            }
+            // Accepting or rejecting can join a paragraph into the one
+            // before it, which then holds its index.
+            for &(from, to) in &wanted {
+                let found = blocks
+                    .iter()
+                    .any(|b| b.span.is_some_and(|(a, z)| a <= to && from <= z));
+                if !found
+                    && let Some((a, _)) = blocks
+                        .iter()
+                        .filter_map(|b| b.span)
+                        .filter(|&(a, _)| a < from)
+                        .max_by_key(|&(a, _)| a)
+                {
+                    return Err(format!(
+                        "p{from} is part of p{a} in this view (accepting or rejecting joined them); pick p{a}, or read the tracked view"
+                    ));
                 }
             }
             keep = blocks
