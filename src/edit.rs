@@ -229,7 +229,7 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Text to anchor the comment to; whole paragraph when omitted.
         find: Option<String>,
-        /// Text to insert; `\t` writes a tab, `\n` a line break.
+        /// The comment, plain text; each `\n` starts a new comment paragraph.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Last paragraph of a range from the start of `paragraph` to the
@@ -1626,7 +1626,7 @@ enum Resolved {
         para: usize,
         start: usize,
         end: usize,
-        /// Text to insert; `\t` writes a tab, `\n` a line break.
+        /// The comment, plain text; each `\n` starts a new comment paragraph.
         text: String,
     },
     DeleteParagraph {
@@ -3026,9 +3026,23 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
-        check_run_text(new_text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        // The paragraph's symbols may be copied into the text; they stay.
+        check_run_text(&new_text.replace('\u{FFFC}', ""))
+            .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
         let projection = &self.projections[para];
         let text = &projection.text;
+        let symbols = |s: &str| s.matches('\u{FFFC}').count();
+        if symbols(new_text) > symbols(text) {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!(
+                    "text holds {} U+FFFC symbol placeholders but the paragraph has {} symbols; a symbol cannot be written as text",
+                    symbols(new_text),
+                    symbols(text)
+                ),
+                outcome,
+            ));
+        }
         let edits = rewrite::rewrite_ranges(text, new_text);
         if edits.is_empty() {
             outcome.message = Some(
@@ -3038,14 +3052,20 @@ impl<'p> Transaction<'p> {
         }
         let mut resolved = Vec::with_capacity(edits.len());
         for (start, end, replacement) in edits {
-            // New text joins the run before it, unless a tab, break or
-            // symbol is there.
-            let attach_before = text[..start]
+            // New text joins the run before it (a tab or a break takes it
+            // after itself), else the run after it when a symbol, a link or
+            // a field is before it.
+            let mut attach_before = text[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|c| !matches!(c, '\t' | '\n' | '\r' | '\u{FFFC}'));
+                .is_some_and(|c| c != '\u{FFFC}');
             let checked = if start == end {
                 self.check_insert_position(projection, start, attach_before)
+                    .or_else(|first| {
+                        self.check_insert_position(projection, start, !attach_before)
+                            .map(|()| attach_before = !attach_before)
+                            .map_err(|_| first)
+                    })
             } else {
                 self.check_range(projection, start, end)
             };
@@ -4731,15 +4751,19 @@ fn check_text(text: &str) -> Result<(), String> {
 }
 
 /// Run text: plain text in which `\t` writes a tab and `\n` a line break,
-/// as the agent view prints them; any other control character is refused
-/// by name.
+/// as the agent view prints them; any other control character, and the
+/// view's symbol placeholder U+FFFC, is refused by name.
 fn check_run_text(text: &str) -> Result<(), String> {
     let bad = text.chars().find(|&c| {
-        (c.is_control() && !matches!(c, '\t' | '\n')) || matches!(c, '\u{fffe}' | '\u{ffff}')
+        (c.is_control() && !matches!(c, '\t' | '\n'))
+            || matches!(c, '\u{fffe}' | '\u{ffff}' | '\u{FFFC}')
     });
     match bad {
         None => Ok(()),
         Some('\r') => Err("text holds U+000D, a carriage return; write a line break as \\n".into()),
+        Some('\u{FFFC}') => Err(
+            "text holds U+FFFC, which stands for a symbol in the view; a symbol cannot be written as text".into(),
+        ),
         Some(c) => Err(format!(
             "text holds U+{:04X}, which a run cannot carry; write a tab as \\t and a line break as \\n",
             u32::from(c)
@@ -4911,7 +4935,8 @@ fn attach_segment(
 
 /// Replace `[start, end)` of the paragraph's projection with `replacement`.
 /// The replacement goes to the first piece of the range; the other pieces
-/// lose their text, and a tab, break or non-breaking hyphen in the range is removed.
+/// lose their text; a tab, a line break or a non-breaking hyphen in the range
+/// is removed. A page or column break is no text and stays.
 fn apply_text_edit(
     dom: &mut Dom,
     projection: &Projection,

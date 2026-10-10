@@ -137,13 +137,14 @@ pub struct Limits {
     /// their owner paragraph carries the `text_box_omitted` limitation.
     pub stories: Vec<String>,
     /// Inserted run text is plain: false since a `\t` or a `\n` in edit
-    /// text writes a tab or a line break; other control characters are
-    /// refused.
+    /// text writes a tab or a line break; other control characters and the
+    /// symbol placeholder U+FFFC are refused.
     pub plain_text_runs: bool,
     /// Edits refuse ranges crossing fields, hyperlinks, content controls,
     /// revisions and symbols. A range over a tab, a line break or a
-    /// non-breaking hyphen removes it. A comment edits nothing and may
-    /// cover any of them.
+    /// non-breaking hyphen removes it; a page or column break stays. A
+    /// comment edits nothing and may cover any of them; its anchor text is
+    /// the paragraph as it reads, so it cannot start or end in deleted text.
     pub refuses_opaque_ranges: bool,
     /// Legacy `.doc` input is not read: an OLE compound file (a Word
     /// 97-2003 `.doc`, or an encrypted document of any Word version) is

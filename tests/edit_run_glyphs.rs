@@ -175,3 +175,68 @@ fn a_carriage_return_or_another_control_character_is_refused_by_name() {
         }
     }
 }
+
+const SYM: &str = r#"<w:sym w:font="Wingdings" w:char="F0FC"/>"#;
+
+#[test]
+fn rewrite_puts_new_tabs_beside_a_symbol_and_never_writes_the_symbol_as_text() {
+    for (runs, text) in [
+        (
+            format!(r#"<w:r><w:t>a </w:t>{SYM}<w:t xml:space="preserve"> b</w:t></w:r>"#),
+            "a\t\u{FFFC} b",
+        ),
+        (
+            format!(
+                r#"<w:r><w:t>a </w:t>{SYM}<w:t xml:space="preserve"> </w:t>{SYM}<w:t xml:space="preserve"> b</w:t></w:r>"#
+            ),
+            "a\t\u{FFFC}\t\u{FFFC}\tb",
+        ),
+        // Text after a tab, before a symbol.
+        (
+            format!(r#"<w:r><w:t>a</w:t><w:tab/>{SYM}<w:t>b</w:t></w:r>"#),
+            "a\tQ\u{FFFC}b",
+        ),
+    ] {
+        let source = docx(&format!("<w:p>{runs}</w:p>"));
+        let ops = format!(
+            r#"[{{"kind":"rewrite","paragraph":"p0","text":{}}}]"#,
+            serde_json::to_string(text).unwrap()
+        );
+        let out = apply_plan(&source, &plan(&ops)).unwrap();
+        check(&source, &out, &[text]);
+        let clean = body(&out.clean);
+        assert!(!clean.contains('\u{FFFC}'), "{text:?}: {clean}");
+        assert_eq!(
+            clean.matches("<w:sym ").count(),
+            text.matches('\u{FFFC}').count(),
+            "{text:?}: {clean}"
+        );
+    }
+}
+
+#[test]
+fn the_symbol_placeholder_is_refused_as_new_text() {
+    let source = docx(&para("Fees apply."));
+    for op in [
+        r#"{"kind":"replace","paragraph":"p0","find":"Fees","replacement":"x￼y"}"#,
+        r#"{"kind":"insert","paragraph":"p0","after":"Fees","text":"￼"}"#,
+        r#"{"kind":"insert_paragraph","paragraph":"p0","position":"after","runs":[{"text":"a￼"}]}"#,
+        r#"{"kind":"rewrite","paragraph":"p0","text":"Fees ￼ apply."}"#,
+    ] {
+        let e = apply_plan(&source, &plan(&format!("[{op}]"))).unwrap_err();
+        assert_eq!(e.code, "INVALID_EDIT", "{op}: {e}");
+        assert!(e.message.contains("U+FFFC"), "{op}: {e}");
+    }
+}
+
+#[test]
+fn a_page_break_in_a_replaced_range_stays() {
+    let source = docx(r#"<w:p><w:r><w:t>ab</w:t><w:br w:type="page"/><w:t>c d</w:t></w:r></w:p>"#);
+    let out = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"replace","paragraph":"p0","find":"abc","replacement":"X"}]"#),
+    )
+    .unwrap();
+    check(&source, &out, &["X d"]);
+    assert!(body(&out.clean).contains(r#"w:type="page""#));
+}

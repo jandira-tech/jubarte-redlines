@@ -84,7 +84,7 @@ pub(super) fn rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)
                     && breaks(wanted).next().is_some()
                     && !breaks(wanted).eq(breaks(&old[o.start..o.end]))
                 {
-                    edits.extend(split_around_kept(old, o.start, o.end, wanted.to_string()));
+                    edits.extend(split_around_kept(old, o.start, o.end, wanted));
                 }
             }
             continue;
@@ -92,8 +92,7 @@ pub(super) fn rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)
         let replacement: String = news[new_range]
             .iter()
             .map(|u| &new[u.start..u.end])
-            .collect::<String>()
-            .replace('\u{FFFC}', "");
+            .collect::<String>();
         let (start, end) = match (olds.get(old_range.start), old_range.is_empty()) {
             (Some(first), false) => (first.start, olds[old_range.end - 1].end),
             _ => {
@@ -106,33 +105,46 @@ pub(super) fn rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)
                 (at, at)
             }
         };
-        edits.extend(split_around_kept(old, start, end, replacement));
+        edits.extend(split_around_kept(old, start, end, &replacement));
     }
     edits
 }
 
 /// `[start, end)` of `old` with `replacement`, split so that no piece covers
-/// a symbol: the replacement goes to the first piece, the other pieces are
-/// deleted.
+/// a symbol. A replacement holding as many symbols as the range puts the
+/// text between them in the matching gaps; any other goes, without its
+/// symbols, to the first piece, and the other pieces are deleted.
 fn split_around_kept(
     old: &str,
     start: usize,
     end: usize,
-    replacement: String,
+    replacement: &str,
 ) -> Vec<(usize, usize, String)> {
-    let mut pieces: Vec<(usize, usize)> = Vec::new();
-    let mut piece_start = start;
+    // The gaps between the kept chars of the range, empty ones too.
+    let mut gaps: Vec<(usize, usize)> = Vec::new();
+    let mut gap_start = start;
     for (offset, c) in old[start..end].char_indices() {
         if kept(c) {
             let at = start + offset;
-            if piece_start < at {
-                pieces.push((piece_start, at));
-            }
-            piece_start = at + c.len_utf8();
+            gaps.push((gap_start, at));
+            gap_start = at + c.len_utf8();
         }
     }
-    if piece_start < end || pieces.is_empty() {
-        pieces.push((piece_start.min(end), end));
+    gaps.push((gap_start, end));
+    // The symbols themselves are never text.
+    let parts: Vec<&str> = replacement.split(kept).collect();
+    if parts.len() == gaps.len() {
+        return gaps
+            .into_iter()
+            .zip(parts)
+            .filter(|&((s, e), text)| old[s..e] != *text)
+            .map(|((s, e), text)| (s, e, text.to_string()))
+            .collect();
+    }
+    let replacement: String = parts.concat();
+    let mut pieces: Vec<(usize, usize)> = gaps.into_iter().filter(|(s, e)| s < e).collect();
+    if pieces.is_empty() {
+        pieces.push((end, end));
     }
     let mut replacement = Some(replacement);
     pieces
