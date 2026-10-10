@@ -167,8 +167,8 @@ pub fn reject_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue
     jubarte::changes::reject_changes(docx, &change_filter(filter_json)?).map_err(js_err)
 }
 
-/// List the tracked revisions in a DOCX as a JSON array string — the same
-/// object shape as the CLI `jubarte revisions --json` lines
+/// List the tracked revisions in a DOCX as a JSON array string, grouped as
+/// Docxodus's `GetRevisions` groups them; each object has
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 ///
 /// Mirrors `jubarte::document_comparer::get_revisions` with default settings,

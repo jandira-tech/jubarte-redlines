@@ -77,13 +77,17 @@ test("a legacy .doc is refused with a save-as hint", () => {
   assert.ok(!fs.existsSync(path.join(tmp, "never.docx")));
 });
 
-test("changes, revisions, accept and reject by kind", () => {
+test("changes, accept and reject by kind", () => {
   const listed = run("changes", tracked);
   assert.equal(listed.code, 0, listed.err);
   assert.match(listed.out, /^body:rev:0\tdeletion\ttext\tBo Chen\t" to people that"/);
   assert.match(listed.out, /\n\d+ change\(s\)\n$/);
-  const revisions = run("revisions", tracked, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
-  assert.equal(revisions[0].type, "Deleted");
+  const rows = run("changes", tracked, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(rows[0].kind, "deletion");
+  // `revisions` left the CLI: `changes` is the one listing.
+  const gone = run("revisions", tracked);
+  assert.notEqual(gone.code, 0);
+  assert.doesNotMatch(gone.out, /revision\(s\)/);
   const kept = path.join(tmp, "kept.docx");
   assert.equal(run("accept", tracked, "-o", kept, "--kind", "deletion").code, 0);
   const left = run("changes", kept, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
@@ -426,11 +430,7 @@ test("I/O failures report the operation and leave no output (integration)", () =
   assert.ok(!fs.existsSync(unwritable));
 });
 
-test("legacy revisions and tracked text projections retain their contracts (integration)", () => {
-  const revisions = run("revisions", tracked);
-  assert.equal(revisions.code, 0, revisions.err);
-  assert.match(revisions.out, /Deleted\tBo Chen\t/);
-  assert.match(revisions.out, /\d+ revision\(s\)\n$/);
+test("tracked text projections retain their contracts (integration)", () => {
   for (const mode of ["accept", "reject"]) {
     const text = run("text", tracked, "--track-changes", mode);
     assert.equal(text.code, 0, text.err);

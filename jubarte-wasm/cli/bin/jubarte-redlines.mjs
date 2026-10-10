@@ -195,16 +195,6 @@ const COMMANDS = {
       if (!o.json) console.log(`${changes.length} change(s)`);
     },
   },
-  revisions: {
-    run(_, [file], o) {
-      const rows = JSON.parse(wasm.getRevisions(read(file)));
-      if (o.json) return jsonLines(JSON.stringify(rows));
-      for (const row of rows) {
-        console.log(`${row.type}\t${row.author || "-"}\t${row.part}\t${JSON.stringify([...(row.text || "")].slice(0, 60).join(""))}`);
-      }
-      console.log(`${rows.length} revision(s)`);
-    },
-  },
   accept: resolution(true),
   reject: resolution(false),
   read: {
