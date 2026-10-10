@@ -354,17 +354,17 @@ fn walk_revision_authors(
     out: &mut Vec<String>,
     dates: &mut HashMap<String, BTreeSet<String>>,
 ) {
-    if is_revision(e.local()) || e.local().ends_with("PrChange") {
-        if let Some(author) = e.attr("author") {
-            if !out.iter().any(|a| a == author) {
-                out.push(author.to_string());
-            }
-            if let Some(date) = e.attr("date") {
-                dates
-                    .entry(author.to_string())
-                    .or_default()
-                    .insert(date.to_string());
-            }
+    if (is_revision(e.local()) || e.local().ends_with("PrChange"))
+        && let Some(author) = e.attr("author")
+    {
+        if !out.iter().any(|a| a == author) {
+            out.push(author.to_string());
+        }
+        if let Some(date) = e.attr("date") {
+            dates
+                .entry(author.to_string())
+                .or_default()
+                .insert(date.to_string());
         }
     }
     for child in e.elements() {
@@ -494,10 +494,10 @@ pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
     fn walk(e: &Element, out: &mut Vec<String>) {
         for child in e.elements() {
             if child.is("commentRangeStart") || child.is("commentReference") {
-                if let Some(id) = child.attr("id") {
-                    if !out.iter().any(|c| c == id) {
-                        out.push(id.to_string());
-                    }
+                if let Some(id) = child.attr("id")
+                    && !out.iter().any(|c| c == id)
+                {
+                    out.push(id.to_string());
                 }
             } else {
                 walk(child, out);
@@ -926,33 +926,33 @@ fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
             }
         }
     }
-    if e.is("tr") {
-        if let Some(trpr) = e.child("trPr") {
-            for m in trpr.elements().filter(|m| kind_of(m.local()).is_some()) {
-                let (author, date) = attribution(m);
-                out.push(RevTag {
-                    kind: "row",
-                    tag: tag_of(m, handles),
-                    author,
-                    date,
-                });
-            }
+    if e.is("tr")
+        && let Some(trpr) = e.child("trPr")
+    {
+        for m in trpr.elements().filter(|m| kind_of(m.local()).is_some()) {
+            let (author, date) = attribution(m);
+            out.push(RevTag {
+                kind: "row",
+                tag: tag_of(m, handles),
+                author,
+                date,
+            });
         }
     }
-    if e.is("tc") {
-        if let Some(tcpr) = e.child("tcPr") {
-            for m in tcpr
-                .elements()
-                .filter(|m| matches!(m.local(), "cellIns" | "cellDel"))
-            {
-                let (author, date) = attribution(m);
-                out.push(RevTag {
-                    kind: "cell",
-                    tag: tag_of(m, handles),
-                    author,
-                    date,
-                });
-            }
+    if e.is("tc")
+        && let Some(tcpr) = e.child("tcPr")
+    {
+        for m in tcpr
+            .elements()
+            .filter(|m| matches!(m.local(), "cellIns" | "cellDel"))
+        {
+            let (author, date) = attribution(m);
+            out.push(RevTag {
+                kind: "cell",
+                tag: tag_of(m, handles),
+                author,
+                date,
+            });
         }
     }
     for child in e.elements() {
@@ -1170,12 +1170,12 @@ pub(crate) fn select_blocks(
         if !keep {
             continue;
         }
-        if let Some(page) = page_due.take() {
-            if page_written != Some(page) {
-                out.push_str(page);
-                out.push_str("\n\n");
-                page_written = Some(page);
-            }
+        if let Some(page) = page_due.take()
+            && page_written != Some(page)
+        {
+            out.push_str(page);
+            out.push_str("\n\n");
+            page_written = Some(page);
         }
         out.push_str(&block.text);
         out.push_str("\n\n");

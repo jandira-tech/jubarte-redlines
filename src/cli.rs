@@ -428,10 +428,12 @@ pub enum Command {
         #[arg(long, conflicts_with = "json")]
         tables: bool,
     },
-    /// Read a document as the agent view: a YAML header, then Markdown with
-    /// an `<!-- pN -->` id line before every paragraph, tracked changes as
-    /// CriticMarkup followed by their ids (`{++text++}{>>#12 @AC<<}`) and
-    /// comments with theirs (`{>>#c5 @AC: …<<}`).
+    /// Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
+    ///
+    /// A YAML header, then Markdown with an `<!-- pN -->` id line before every
+    /// paragraph (`pN` is `body:p:N`), tracked changes as CriticMarkup
+    /// followed by their ids (`{++text++}{>>#12 @AC<<}`) and comments with
+    /// theirs (`{>>#c5 @AC: …<<}`).
     #[command(visible_alias = "text")]
     Read {
         /// The document (.docx) to read.

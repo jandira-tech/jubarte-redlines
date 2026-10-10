@@ -27,7 +27,7 @@ fn agent(docx: &[u8]) -> String {
 fn agent_with(docx: &[u8], track_changes: TrackChanges, comments: bool) -> String {
     agent_options(
         docx,
-        MarkdownOptions {
+        &MarkdownOptions {
             track_changes,
             comments,
             ..agent_defaults()
@@ -44,8 +44,8 @@ fn agent_defaults() -> MarkdownOptions {
     }
 }
 
-fn agent_options(docx: &[u8], options: MarkdownOptions) -> String {
-    docx_to_markdown(docx, &options).unwrap().markdown
+fn agent_options(docx: &[u8], options: &MarkdownOptions) -> String {
+    docx_to_markdown(docx, options).unwrap().markdown
 }
 
 /// The body of an agent view: what follows the YAML header and the blank
@@ -59,12 +59,7 @@ fn body(markdown: &str) -> &str {
 
 /// The header's lines, without the `---` fences.
 fn header_lines(markdown: &str) -> Vec<&str> {
-    markdown
-        .splitn(3, "---\n")
-        .nth(1)
-        .unwrap()
-        .lines()
-        .collect()
+    markdown.split("---\n").nth(1).unwrap().lines().collect()
 }
 
 fn jubarte(args: &[&str], dir: &Path) -> Output {
@@ -252,9 +247,15 @@ fn cached_breaks_inside_a_table_are_named_at_the_next_block() {
         cell("<w:r><w:lastRenderedPageBreak/><w:t>B</w:t></w:r>"),
         cell("<w:r><w:lastRenderedPageBreak/><w:t>C</w:t></w:r>")
     );
-    let out = agent(&docx(&format!("{}{table}{}", para("Before"), para("After"))));
+    let out = agent(&docx(&format!(
+        "{}{table}{}",
+        para("Before"),
+        para("After")
+    )));
     assert!(
-        body(&out).starts_with("<!-- page 1 of 3 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 3x1, cells p1-p3 by row -->\n"),
+        body(&out).starts_with(
+            "<!-- page 1 of 3 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 3x1, cells p1-p3 by row -->\n"
+        ),
         "{out}"
     );
     assert!(
@@ -272,7 +273,7 @@ fn page_markers_off_leaves_no_page_lines_and_keeps_the_rest() {
     ));
     let out = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             page_markers: false,
             ..agent_defaults()
         },
@@ -293,7 +294,7 @@ fn layout_page_texts_place_the_markers_above_the_id_lines() {
     ));
     let out = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             pages: Some(vec![
                 "Alpha text here".into(),
                 "Beta text here Gamma text here".into(),
@@ -490,7 +491,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
     );
     let dated = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             dates: true,
             ..agent_defaults()
         },
@@ -508,7 +509,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
     ));
     let dated = agent_options(
         &single,
-        MarkdownOptions {
+        &MarkdownOptions {
             dates: true,
             ..agent_defaults()
         },
@@ -560,8 +561,22 @@ fn a_tracked_mark_inside_a_footnote_carries_its_agent_tag() {
 fn handles_keep_only_letters_and_digits() {
     let comments = format!(
         r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
-        comment(9, "Ann Counsel", "A <<}C", "2026-10-01T09:00:00Z", "0A0A0A0A", "One."),
-        comment(10, "Jo Doe", "+|@", "2026-10-01T09:00:00Z", "0B0B0B0B", "Two.")
+        comment(
+            9,
+            "Ann Counsel",
+            "A <<}C",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "One."
+        ),
+        comment(
+            10,
+            "Jo Doe",
+            "+|@",
+            "2026-10-01T09:00:00Z",
+            "0B0B0B0B",
+            "Two."
+        )
     );
     let body_xml = format!(
         r#"<w:p><w:commentRangeStart w:id="9"/>{}<w:commentRangeEnd w:id="9"/>{}<w:commentRangeStart w:id="10"/>{}<w:commentRangeEnd w:id="10"/>{}</w:p>"#,
@@ -746,7 +761,9 @@ fn hidden_comments_in_a_cell_go_on_the_table_line_not_the_next_paragraph() {
     );
     let out = agent_with(&one_comment_docx(&body_xml), TrackChanges::All, false);
     assert!(
-        body(&out).starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, comments #c9 in p1 -->\n"),
+        body(&out).starts_with(
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, comments #c9 in p1 -->\n"
+        ),
         "{out}"
     );
     assert!(body(&out).ends_with("<!-- p2 -->\nAfter\n"), "{out}");
@@ -761,7 +778,11 @@ fn an_empty_paragraph_keeps_its_line_for_a_hidden_comment() {
         para("After")
     );
     assert_eq!(
-        body(&agent_with(&one_comment_docx(&body_xml), TrackChanges::All, false)),
+        body(&agent_with(
+            &one_comment_docx(&body_xml),
+            TrackChanges::All,
+            false
+        )),
         "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, comments #c9 -->\n\n<!-- p2 -->\nAfter\n"
     );
 }
@@ -1071,7 +1092,7 @@ fn header_describes_page_setup_styles_headers_and_footers() {
         sect,
     );
     let out = agent(&bytes);
-    let header = out.splitn(3, "---\n").nth(1).unwrap();
+    let header = out.split("---\n").nth(1).unwrap();
     let expected = "\
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
@@ -1129,7 +1150,7 @@ fn later_sections_list_their_range_and_what_differs_from_the_first() {
         &sect,
     );
     let out = agent(&bytes);
-    let header = out.splitn(3, "---\n").nth(1).unwrap();
+    let header = out.split("---\n").nth(1).unwrap();
     assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, headers: {default: {id: header2, text: SCHEDULE A}}, columns: 2}\n"), "header:\n{header}");
     assert!(
         body(&out).contains("<!-- p1 section-break -->\nEnd of part one\n"),
@@ -1150,7 +1171,7 @@ fn four_paragraphs_and_a_table() -> Vec<u8> {
 fn selected(select: Select) -> String {
     agent_options(
         &four_paragraphs_and_a_table(),
-        MarkdownOptions {
+        &MarkdownOptions {
             select: Some(select),
             ..agent_defaults()
         },
@@ -1227,7 +1248,7 @@ fn a_selection_keeps_the_page_marker_of_a_later_page() {
     ));
     let out = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             select: Some(Select::parse("p3").unwrap()),
             ..agent_defaults()
         },
@@ -1294,15 +1315,184 @@ fn cli_read_prints_the_agent_view_with_flags() {
 fn received_docx_tracked_view_matches_the_golden() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
-    assert_eq!(ok(&["read", "received.docx"], dir.path()), golden("received.tracked.md"));
+    assert_eq!(
+        ok(&["read", "received.docx"], dir.path()),
+        golden("received.tracked.md")
+    );
 }
 
 #[test]
 fn received_docx_other_views_match_their_goldens() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
-    assert_eq!(ok(&["read", "received.docx", "--comments", "none"], dir.path()), golden("received.no-comments.md"));
-    assert_eq!(ok(&["read", "received.docx", "--track-changes", "accept"], dir.path()), golden("received.accept.md"));
-    assert_eq!(ok(&["read", "received.docx", "--track-changes", "reject"], dir.path()), golden("received.reject.md"));
+    assert_eq!(
+        ok(&["read", "received.docx", "--comments", "none"], dir.path()),
+        golden("received.no-comments.md")
+    );
+    assert_eq!(
+        ok(
+            &["read", "received.docx", "--track-changes", "accept"],
+            dir.path()
+        ),
+        golden("received.accept.md")
+    );
+    assert_eq!(
+        ok(
+            &["read", "received.docx", "--track-changes", "reject"],
+            dir.path()
+        ),
+        golden("received.reject.md")
+    );
 }
 
+const BASE: &str = r#"<w:p><w:r><w:t>Fees</w:t></w:r></w:p><w:p><w:r><w:t>Client shall pay each invoice within thirty days of receipt.</w:t></w:r></w:p><w:p><w:r><w:t>Late amounts accrue interest at one percent per month.</w:t></w:r></w:p>"#;
+
+fn edited(dir: &Path, plan: &str, out: &str) -> String {
+    std::fs::write(dir.join("plan.json"), plan).unwrap();
+    ok(
+        &["edit", "base.docx", "--plan", "plan.json", "--out-dir", out],
+        dir,
+    );
+    ok(
+        &["read", &format!("{out}/redline.docx"), "--no-page-markers"],
+        dir,
+    )
+}
+
+fn captures<'a>(text: &'a str, pattern: &str) -> Vec<&'a str> {
+    let re = regex::Regex::new(pattern).unwrap();
+    let caps = re
+        .captures(text)
+        .unwrap_or_else(|| panic!("no match for {pattern} in:\n{text}"));
+    (1..caps.len())
+        .map(|i| caps.get(i).unwrap().as_str())
+        .collect()
+}
+
+#[test]
+fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    let plan = r#"{"schema_version":1,"author":"Ann Counsel","date":"2026-10-01T09:00:00Z","operations":[
+        {"kind":"replace","paragraph":{"index":1},"find":"thirty","replacement":"forty-five"},
+        {"kind":"comment","paragraph":{"index":2},"find":"one percent","text":"Is one percent the statutory cap?"}]}"#;
+    let text = edited(dir.path(), plan, "review");
+    let ids = captures(
+        &text,
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#(\d+)\+(\d+) @AC<<\} days of receipt\.\n",
+    );
+    let (del_id, ins_id) = (ids[0], ids[1]);
+    assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>#c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
+    assert!(
+        text.contains("revisions: 1                       # 1 substitution (2 Word marks)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("comments: 1 thread open            # 1 comment: c0"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "  AC: Ann Counsel                  # 1 revision, 1 comment, 2026-10-01T09:00:00Z"
+        ),
+        "{text}"
+    );
+
+    let changes = ok(&["changes", "review/redline.docx", "--json"], dir.path());
+    let rows: Vec<serde_json::Value> = changes
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let by_id = |id: &str| {
+        rows.iter()
+            .find(|r| r["id"] == format!("body:rev:{id}"))
+            .unwrap_or_else(|| panic!("no change body:rev:{id} in {changes}"))
+    };
+    assert_eq!(by_id(del_id)["kind"], "deletion");
+    assert_eq!(by_id(del_id)["text"], "thirty");
+    assert_eq!(by_id(ins_id)["kind"], "insertion");
+    assert_eq!(by_id(ins_id)["text"], "forty-five");
+
+    ok(
+        &[
+            "reject",
+            "review/redline.docx",
+            "-o",
+            "rejected.docx",
+            "--id",
+            &format!("body:rev:{del_id}"),
+            "--id",
+            &format!("body:rev:{ins_id}"),
+        ],
+        dir.path(),
+    );
+    let rejected = ok(&["read", "rejected.docx", "--no-page-markers"], dir.path());
+    assert!(
+        rejected.contains(
+            "<!-- p1 -->\nClient shall pay each invoice within thirty days of receipt.\n"
+        ),
+        "{rejected}"
+    );
+    assert!(rejected.contains("\nrevisions: 0\n"), "{rejected}");
+    assert!(
+        rejected.contains("{>>#c0 @AC: Is one percent the statutory cap?<<}"),
+        "{rejected}"
+    );
+}
+
+#[test]
+fn a_reply_and_a_resolution_by_a_second_author_thread_under_the_root() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    let first = r#"{"schema_version":1,"author":"Ann Counsel","date":"2026-10-01T09:00:00Z","operations":[
+        {"kind":"comment","paragraph":{"index":2},"find":"one percent","text":"Cap?"}]}"#;
+    edited(dir.path(), first, "one");
+    std::fs::copy(
+        dir.path().join("one/redline.docx"),
+        dir.path().join("base.docx"),
+    )
+    .unwrap();
+    let second = r#"{"schema_version":1,"author":"Bob Lee","date":"2026-10-02T10:00:00Z","operations":[
+        {"kind":"reply_comment","comment_id":0,"text":"Yes, in Delaware."},
+        {"kind":"resolve_comment","comment_id":0,"done":true}]}"#;
+    let text = edited(dir.path(), second, "two");
+    assert!(
+        text.contains(
+            "{==one percent==}{>>#c0 @AC resolved: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware.<<}"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("comments: 0 threads open, 1 resolved  # 2 comments: c0 (+ reply c1)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  BL: Bob Lee                      # 1 comment, 2026-10-02T10:00:00Z"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_second_author_editing_a_redline_gets_their_own_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    let first = r#"{"schema_version":1,"author":"Ann Counsel","date":"2026-10-01T09:00:00Z","operations":[
+        {"kind":"replace","paragraph":{"index":1},"find":"thirty","replacement":"forty-five"}]}"#;
+    edited(dir.path(), first, "one");
+    std::fs::copy(
+        dir.path().join("one/redline.docx"),
+        dir.path().join("base.docx"),
+    )
+    .unwrap();
+    let second = r#"{"schema_version":1,"author":"John Doe","date":"2026-10-02T10:00:00Z","existing_revisions":"keep","operations":[
+        {"kind":"replace","paragraph":{"index":1},"find":"receipt","replacement":"the invoice"}]}"#;
+    let text = edited(dir.path(), second, "two");
+    captures(
+        &text,
+        r"\{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>#\d+\+\d+ @JD<<\}\.",
+    );
+    assert!(
+        text.contains("revisions: 2                       # 2 substitutions (4 Word marks)"),
+        "{text}"
+    );
+}

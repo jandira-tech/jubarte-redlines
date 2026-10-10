@@ -428,10 +428,10 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             if r.after.is_none() {
                 r.after = twips(sp, "after");
             }
-            if r.line.is_none() {
-                if let Some(line) = twips(sp, "line") {
-                    r.line = Some((line, sp.attr("lineRule").unwrap_or("auto").to_string()));
-                }
+            if r.line.is_none()
+                && let Some(line) = twips(sp, "line")
+            {
+                r.line = Some((line, sp.attr("lineRule").unwrap_or("auto").to_string()));
             }
         }
         r.keep_next |= ppr.child("keepNext").is_some();
@@ -510,27 +510,27 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
         "{font} {}pt",
         size.trim_end_matches('0').trim_end_matches('.')
     ));
-    if differs(|x| format!("{:?}", x.before)) {
-        if let Some(b) = r.before.filter(|&b| b > 0.0) {
-            parts.push(format!("before {}pt", points(b)));
-        }
+    if differs(|x| format!("{:?}", x.before))
+        && let Some(b) = r.before.filter(|&b| b > 0.0)
+    {
+        parts.push(format!("before {}pt", points(b)));
     }
-    if differs(|x| format!("{:?}", x.after)) {
-        if let Some(a) = r.after.filter(|&a| a > 0.0) {
-            parts.push(format!("after {}pt", points(a)));
-        }
+    if differs(|x| format!("{:?}", x.after))
+        && let Some(a) = r.after.filter(|&a| a > 0.0)
+    {
+        parts.push(format!("after {}pt", points(a)));
     }
-    if differs(|x| format!("{:?}", x.line)) {
-        if let Some((line, rule)) = &r.line {
-            if rule == "auto" {
-                let ratio = format!("{:.2}", line / 240.0);
-                let ratio = ratio.trim_end_matches('0').trim_end_matches('.');
-                if ratio != "1" {
-                    parts.push(format!("line {ratio}"));
-                }
-            } else {
-                parts.push(format!("line {}pt {rule}", points(*line)));
+    if differs(|x| format!("{:?}", x.line))
+        && let Some((line, rule)) = &r.line
+    {
+        if rule == "auto" {
+            let ratio = format!("{:.2}", line / 240.0);
+            let ratio = ratio.trim_end_matches('0').trim_end_matches('.');
+            if ratio != "1" {
+                parts.push(format!("line {ratio}"));
             }
+        } else {
+            parts.push(format!("line {}pt {rule}", points(*line)));
         }
     }
     if r.keep_next && differs(|x| x.keep_next.to_string()) {
@@ -649,10 +649,10 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
 fn section_entry(section: &SectionFact, previous: &SectionFact, first: &SectionFact) -> String {
     let mut parts = vec![format!("p{}-p{}", section.first, section.last)];
     let setup = |s: &SectionFact| s.sect_pr.as_ref().map(page_setup);
-    if setup(section) != setup(first) {
-        if let Some(page) = setup(section) {
-            parts.push(format!("page: {page}"));
-        }
+    if setup(section) != setup(first)
+        && let Some(page) = setup(section)
+    {
+        parts.push(format!("page: {page}"));
     }
     for kind in ["header", "footer"] {
         let changed: Vec<String> = section
@@ -800,7 +800,7 @@ pub(crate) fn story_text(p: &Element) -> String {
                                 }
                             }
                             "t" if s.instr.is_none() && !s.in_result => {
-                                s.out.push_str(&child.text())
+                                s.out.push_str(&child.text());
                             }
                             "tab" => s.out.push('\t'),
                             _ => {}
@@ -845,12 +845,17 @@ mod tests {
         let root = ftr(&format!(
             r#"<w:p><w:hyperlink><w:r><w:t>Page </w:t></w:r></w:hyperlink><w:sdt><w:sdtContent>{PAGE_RUNS}</w:sdtContent></w:sdt><w:ins><w:r><w:t> of </w:t></w:r></w:ins><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:fldSimple w:instr=" numpages "><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p>"#
         ));
-        assert_eq!(story_text(story_paragraphs(&root)[0]), "Page {PAGE} of {NUMPAGES}");
+        assert_eq!(
+            story_text(story_paragraphs(&root)[0]),
+            "Page {PAGE} of {NUMPAGES}"
+        );
     }
 
     #[test]
     fn tables_in_a_footer_are_not_entered() {
-        let root = ftr("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>body</w:t></w:r></w:p>");
+        let root = ftr(
+            "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>body</w:t></w:r></w:p>",
+        );
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 1);
         assert_eq!(story_text(paragraphs[0]), "body");

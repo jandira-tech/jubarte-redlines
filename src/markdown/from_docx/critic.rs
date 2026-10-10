@@ -722,10 +722,7 @@ pub(crate) fn splice(
         return;
     };
     let (open, close) = mark.delimiters();
-    let by = by
-        .as_deref()
-        .map(|b| note(&display(b)))
-        .unwrap_or_default();
+    let by = by.as_deref().map(|b| note(&display(b))).unwrap_or_default();
     let end = format!("{close}{by}");
     match out.strip_suffix(end.as_str()) {
         Some(kept) => out.truncate(kept.len()),

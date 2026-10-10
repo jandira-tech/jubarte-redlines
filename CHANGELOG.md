@@ -65,6 +65,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- `jubarte read` (alias `text`) prints the agent view: a YAML header
+  (authors with handles and timestamps, owner, page setup, styles,
+  headers, footers, sections), an `<!-- pN -->` id line before every
+  paragraph (same numbering as `edit`), tracked changes as CriticMarkup
+  followed by a note with their `w:id` and author handle, comments with
+  their ids and thread parents, page markers from the layout pass, and
+  `-p` / `--head` / `--tail` / `--comments none` / `--dates` /
+  `--no-page-markers`. The previous `[body:p:N]` projection remains
+  available as `inspect::markdown` in the library bindings.
 - CLI commands, help, aliases, defaults and usage validation now share a
   clap-derived schema across native, Python and WASM. `compare` (alias
   `redline`) is discoverable alongside the existing two-file shorthand.

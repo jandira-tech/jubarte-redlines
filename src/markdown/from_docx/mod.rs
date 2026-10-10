@@ -385,10 +385,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let mut tables = Vec::new();
             body.find_all("tbl", &mut tables);
             for t in tables {
-                if let Some(s) = t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
-                    if !table_styles.iter().any(|x| x == s) {
-                        table_styles.push(s.to_string());
-                    }
+                if let Some(s) = t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val"))
+                    && !table_styles.iter().any(|x| x == s)
+                {
+                    table_styles.push(s.to_string());
                 }
             }
         }
@@ -850,7 +850,9 @@ fn change_of(element: &Element) -> Change {
 /// stored, in the same form as a comment's (`Ana Lima (2026-09-29T14:05:00Z)`).
 fn attribution(element: &Element) -> Option<String> {
     // A leading agent-tag sentinel in a stored author would be read as a tag.
-    let author = element.attr("author").map(|a| a.trim_start_matches(critic::TAG));
+    let author = element
+        .attr("author")
+        .map(|a| a.trim_start_matches(critic::TAG));
     let by = comment_note(author, element.attr("date"), "");
     (!by.is_empty()).then_some(by)
 }
@@ -992,21 +994,21 @@ impl Writer<'_> {
                     let notes = self.take_notes();
                     blocks.push_prefixed("", &notes, false);
                     let mut turned = 0;
-                    if self.agent {
-                        if let Some(line) = agent::table_line(
+                    if self.agent
+                        && let Some(line) = agent::table_line(
                             child,
                             self.resolved,
                             !self.comments_inline,
                             &self.handles,
-                        ) {
-                            self.flush_empty(blocks);
-                            let (first, more) =
-                                agent::table_breaks(child, self.page_sections.is_none());
-                            let opens = self.opens_page(first);
-                            self.page_lines(blocks, opens);
-                            blocks.push_line(&line);
-                            turned = more;
-                        }
+                        )
+                    {
+                        self.flush_empty(blocks);
+                        let (first, more) =
+                            agent::table_breaks(child, self.page_sections.is_none());
+                        let opens = self.opens_page(first);
+                        self.page_lines(blocks, opens);
+                        blocks.push_line(&line);
+                        turned = more;
                     }
                     let table = self.table(child);
                     blocks.push(&table, false);
@@ -1040,17 +1042,17 @@ impl Writer<'_> {
     /// that spans paragraphs gets one highlight per paragraph, because
     /// CriticMarkup cannot cross a block.
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
-        if self.agent && !self.in_comment {
-            if let Some(id) = range
+        if self.agent
+            && !self.in_comment
+            && let Some(id) = range
                 .attr("id")
                 .filter(|id| self.comments.contains_key(*id))
-            {
-                if range.is("commentRangeStart") && !self.para_comments.iter().any(|c| c == id) {
-                    self.para_comments.push(id.to_string());
-                }
-                if !self.comments_inline {
-                    return;
-                }
+        {
+            if range.is("commentRangeStart") && !self.para_comments.iter().any(|c| c == id) {
+                self.para_comments.push(id.to_string());
+            }
+            if !self.comments_inline {
+                return;
             }
         }
         let Some(id) = range
@@ -1135,8 +1137,7 @@ impl Writer<'_> {
                 std::mem::take(&mut self.para_comments)
             };
             self.para_comments.clear();
-            let empty =
-                !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
+            let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
             if empty
                 && comments.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
@@ -1702,11 +1703,12 @@ impl Writer<'_> {
     /// `--dates` asks for one and the author has several.
     fn agent_tag(&self, element: &Element) -> String {
         let mut tagged = format!("{}{}", critic::TAG, agent::tag_of(element, &self.handles));
-        if self.dates && self.handles.needs_date(element.attr("author")) {
-            if let Some(date) = element.attr("date") {
-                tagged.push(' ');
-                tagged.push_str(date);
-            }
+        if self.dates
+            && self.handles.needs_date(element.attr("author"))
+            && let Some(date) = element.attr("date")
+        {
+            tagged.push(' ');
+            tagged.push_str(date);
         }
         tagged
     }

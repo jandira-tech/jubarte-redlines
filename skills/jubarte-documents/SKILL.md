@@ -14,7 +14,7 @@ touch `word/document.xml`.
 
 | Task | Command |
 |---|---|
-| Read | `jubarte text file.docx` (Markdown with `[body:p:N]` ids) or `jubarte inspect file.docx --json` |
+| Read | `jubarte read file.docx` (header + Markdown with `<!-- pN -->` ids; `pN` is `body:p:N`; alias `text`) or `jubarte inspect file.docx --json` |
 | Edit (tracked changes + comments) | `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
 | Look at pages | `jubarte convert file.docx --png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx --png --report pages.json` |
@@ -31,18 +31,34 @@ then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
 ## 1. Read before you edit
 
 ```bash
-jubarte text contract.docx
+jubarte read contract.docx                 # whole document
+jubarte read contract.docx -p p12,p40-p48  # just those paragraphs (t0 = a table)
+jubarte read contract.docx --head 20       # or --tail 20
 ```
 
-Every paragraph prints as `[body:p:12] (a) **Confidentiality.** You will ...`.
-The id is the coordinate an edit uses. `**bold**`, `*italic*` and
-`==highlight==` are the document's direct run formatting, so you can see where
-a bold heading run ends. `jubarte inspect contract.docx --json` gives the same
-paragraphs as data (`text`, `style`, `numbered`, `in_table`, `runs` with char
-offsets, `limitations`) plus `summary` (tables, comments, revisions, headers,
-footnotes) and `source_sha256`. After the body, `jubarte text` prints each
-header, footer and notes part as its own story (`[header1:p:0] ...`,
-`[footnotes:p:0] ...`), and `inspect` lists them under `stories`.
+`read` prints a YAML header (revision and comment counts, authors with their
+handles, page setup, styles, headers and footers), then every paragraph under
+an id line:
+
+```text
+<!-- p12 num "(a)", comments #c5 -->
+**Confidentiality.** You will {~~thirty~>forty-five~~}{>>#3+4 @AC<<} days ...
+```
+
+`p12` is `body:p:12`, the coordinate an edit uses. A tracked change carries
+its ids: `{++…++}{>>#12 @AC<<}` is `body:rev:12` for `accept --id` and
+`reject --id`, and `#3+4` is two Word marks of one change. A comment reads
+`{==anchor==}{>>#c5 @AC: text<<}`, which is `comment_id: 5` in a plan; a reply
+names its root (`re #c5`). `**bold**`, `*italic*` and `<u>underline</u>` are
+the document's direct run formatting, so you can see where a bold heading run
+ends. `--track-changes accept|reject` shows the text with every change
+resolved, `--comments none` moves the comment ids onto the id lines, and
+`--no-page-markers` skips the layout pass that numbers the pages.
+`jubarte inspect contract.docx --json` gives the same paragraphs as data
+(`text`, `style`, `numbered`, `in_table`, `runs` with char offsets,
+`limitations`) plus `summary` (tables, comments, revisions, headers,
+footnotes), `stories` (each header, footer and notes part) and
+`source_sha256`.
 `jubarte comments FILE --json` lists every comment with its thread
 (`parent`, `done`) and the anchored text with its surroundings
 (`anchor_text`, `before`, `after`, `paragraph`); `--author NAME` keeps one
