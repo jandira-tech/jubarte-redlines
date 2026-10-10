@@ -3501,3 +3501,129 @@ fn the_range_line_names_kept_notes_and_points_only_at_changed_headers() {
     assert!(changed_by(&bytes, None, true).contains("[^1]: {++footnote change++}"));
     assert!(!changed_by(&bytes, Some("Zed Zimmer"), true).contains("[^1]:"));
 }
+
+/// CodeRabbit #392: a comment hidden with `--comments none` still names
+/// every paragraph its range runs through (`in #c9`), so `--changed` keeps
+/// the middle paragraph the way the inline view does.
+#[test]
+fn a_hidden_comment_names_every_paragraph_its_range_covers() {
+    let body_xml = format!(
+        r#"{}<w:p><w:commentRangeStart w:id="9"/>{}</w:p>{}<w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p>{}"#,
+        para("Zero"),
+        run("one"),
+        para("two"),
+        run("three"),
+        reference(9),
+        para("Quiet")
+    );
+    let bytes = one_comment_docx(&body_xml);
+    assert_eq!(
+        body(&agent_with(&bytes, TrackChanges::All, false)),
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nZero\n\n<!-- p1 comments #c9 -->\none\n\n<!-- p2 in #c9 -->\ntwo\n\n<!-- p3 comments #c9 -->\nthree\n\n<!-- p4 -->\nQuiet\n"
+    );
+    assert_eq!(
+        body(&changed_by(&bytes, None, false)),
+        "<!-- p1 comments #c9 -->\none\n\n<!-- p2 in #c9 -->\ntwo\n\n<!-- p3 comments #c9 -->\nthree\n"
+    );
+}
+
+/// CodeRabbit #392: a hidden comment whose range runs through a table names
+/// it on the table line, as the inline view does.
+#[test]
+fn a_hidden_comment_running_through_a_table_names_it_on_the_table_line() {
+    let body_xml = format!(
+        r#"<w:p><w:commentRangeStart w:id="9"/>{}</w:p><w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl><w:p>{}<w:commentRangeEnd w:id="9"/>{}</w:p>"#,
+        run("before"),
+        para("cell"),
+        run("after"),
+        reference(9)
+    );
+    let bytes = one_comment_docx(&body_xml);
+    for comments in [true, false] {
+        let out = agent_with(&bytes, TrackChanges::All, comments);
+        let table = body(&out)
+            .lines()
+            .find(|l| l.starts_with("<!-- t0 "))
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            table.ends_with(", in #c9 -->"),
+            "comments inline {comments}: {out}"
+        );
+    }
+}
+
+/// CodeRabbit #392: a note inserted with its reference carries its label
+/// inside the mark (`{++[^1]: …++}`); a selection that keeps the citing
+/// paragraph keeps the definition, and `--changed` names it.
+#[test]
+fn a_selection_keeps_the_definition_of_an_inserted_note() {
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1"><w:p>{}</w:p></w:footnote></w:footnotes>"#,
+        run("Added note")
+    );
+    let bytes = common::docx::docx_with(
+        &format!(
+            r#"<w:p>{}<w:ins w:id="5" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:r><w:footnoteReference w:id="1"/></w:r></w:ins></w:p>{}"#,
+            run("Text"),
+            para("Quiet")
+        ),
+        &[Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+            xml: &footnotes,
+        }],
+    );
+    let definition = "{++[^1]: Added note++}{>>#5 @AC<<}";
+    let full = agent(&bytes);
+    assert!(full.contains(definition), "{full}");
+    let picked = agent_options(
+        &bytes,
+        &MarkdownOptions {
+            select: Some(Select::parse("p0").unwrap()),
+            ..agent_defaults()
+        },
+    );
+    assert!(picked.contains(definition), "{picked}");
+    let changed = changed_by(&bytes, None, true);
+    assert!(changed.contains(definition), "{changed}");
+    assert!(
+        changed.contains("\nrange: changed (p0, [^1]) of p0-p1"),
+        "{changed}"
+    );
+}
+
+/// CodeRabbit #392: an author whose only changes sit in a header has a
+/// handle like any other, so `--by` takes the handle as well as the name.
+#[test]
+fn an_author_who_changed_only_a_header_has_a_handle() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        ins(7, "Hedda Gabler", "Draft")
+    );
+    let bytes = common::docx::docx_with_sect(
+        &para("Body"),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let full = agent(&bytes);
+    assert!(full.contains("\n  HG: Hedda Gabler"), "{full}");
+    for by in ["HG", "@HG", "Hedda Gabler"] {
+        let out = changed_by(&bytes, Some(by), true);
+        let range = header_lines(&out)
+            .into_iter()
+            .find(|l| l.starts_with("range: "))
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            range.contains("header and footer text is on the headers:/footers: lines"),
+            "--by {by}: {range}"
+        );
+    }
+}

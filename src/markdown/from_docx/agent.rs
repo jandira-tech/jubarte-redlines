@@ -439,19 +439,19 @@ fn walk_revision_authors(
     }
 }
 
-/// Authors of revisions (document order, then footnotes and endnotes) then
-/// of comments (comment order),
+/// Authors of revisions (document order, then the other stories: footnotes,
+/// endnotes, headers and footers) then of comments (comment order),
 /// each with a handle: the comment `w:initials` that author wrote, else the
 /// uppercase initials of the name's words; a collision appends 2, 3, ….
 pub(crate) fn handles(
     document: &Element,
-    notes: &[&Element],
+    stories: &[&Element],
     comments: Option<&Element>,
 ) -> Handles {
     let mut order = Vec::new();
     let mut dates: HashMap<String, BTreeSet<String>> = HashMap::new();
     walk_revision_authors(document, &mut order, &mut dates);
-    for root in notes {
+    for root in stories {
         walk_revision_authors(root, &mut order, &mut dates);
     }
     let mut initials: HashMap<String, String> = HashMap::new();
@@ -540,8 +540,8 @@ pub(crate) struct LineFacts<'a> {
     pub resolved: bool,
     /// Comment ids to list (comments hidden).
     pub comments: &'a [String],
-    /// Comment threads whose range runs on past this paragraph (comments
-    /// inline): `in #c5`.
+    /// Comment threads whose range runs on past this paragraph, inline or
+    /// hidden: `in #c5`.
     pub spans: &'a [String],
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 empty, break-ins #3 @AC -->`.
@@ -958,6 +958,7 @@ pub(crate) fn table_line(
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
     let mut held: Vec<String> = Vec::new();
+    let mut held_ids: Vec<String> = Vec::new();
     for (r, tr) in rows.iter().enumerate() {
         let mut range: Option<(usize, usize)> = None;
         if resolved {
@@ -1006,6 +1007,7 @@ pub(crate) fn table_line(
                         .collect()
                 });
                 if !ids.is_empty() {
+                    held_ids.extend(ids.iter().cloned());
                     let ids: Vec<String> = ids.iter().map(|c| format!("#c{c}")).collect();
                     held.push(format!("{} in p{i}", ids.join(" ")));
                 }
@@ -1060,8 +1062,13 @@ pub(crate) fn table_line(
     if !held.is_empty() {
         clauses.push(format!("comments {}", held.join("; ")));
     }
-    if !spans.is_empty() {
-        let ids: Vec<String> = spans.iter().map(|c| format!("#c{c}")).collect();
+    // A comment a cell holds is named once, where it is held.
+    let ids: Vec<String> = spans
+        .iter()
+        .filter(|c| !held_ids.contains(c))
+        .map(|c| format!("#c{c}"))
+        .collect();
+    if !ids.is_empty() {
         clauses.push(format!("in {}", ids.join(" ")));
     }
     Some(line(&head, &clauses))
@@ -1540,8 +1547,14 @@ pub(crate) fn select_blocks(
     Ok((out, range))
 }
 
-/// The label of a note definition, `1` for `[^1]: …`.
+/// The label of a note definition, `1` for `[^1]: …`. A note inserted or
+/// deleted with its reference carries its label inside the mark
+/// (`{++[^1]: …++}`).
 fn note_label(note: &str) -> Option<&str> {
+    let note = ["{++", "{--"]
+        .into_iter()
+        .find_map(|mark| note.strip_prefix(mark))
+        .unwrap_or(note);
     note.strip_prefix("[^")?
         .split_once("]:")
         .map(|(label, _)| label)
@@ -1551,6 +1564,16 @@ fn note_label(note: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
+
+    /// CodeRabbit #392: a note inserted or deleted with its reference
+    /// carries its label inside the mark.
+    #[test]
+    fn note_label_reads_through_the_mark_around_an_inserted_or_deleted_note() {
+        assert_eq!(note_label("[^1]: text"), Some("1"));
+        assert_eq!(note_label("{++[^2]: added++}{>>#5 @AC<<}"), Some("2"));
+        assert_eq!(note_label("{--[^3]: gone--}{>>#6 @AC<<}"), Some("3"));
+        assert_eq!(note_label("text [^4]: not a definition"), None);
+    }
 
     #[test]
     fn escape_markdown_escapes_only_what_commonmark_acts_on() {
