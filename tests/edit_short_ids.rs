@@ -101,3 +101,38 @@ fn a_short_id_that_points_nowhere_is_refused_and_named() {
         assert!(e.to_string().contains(message), "{short}: {e}");
     }
 }
+
+/// A text box inside a cell is not one of the cell's paragraphs: the view
+/// numbers the cell `host, ALPHA, BETA` (the box's own paragraph has no id),
+/// and `tN.rR.cC.pK` counts the same way.
+#[test]
+fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
+    let host = r#"<w:p><w:r><w:pict><w:shape><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></w:shape></w:pict></w:r></w:p>"#;
+    let table = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{host}{}{}</w:tc></w:tr></w:tbl>"#,
+        para("ALPHA"),
+        para("BETA")
+    );
+    let source = docx_with_sect(&format!("{}{table}{}", para("Zero"), para("Six")), &[], "");
+    let out = apply_plan(
+        &source,
+        &plan(
+            r#"[
+        {"kind":"replace","paragraph":"t0.r0.c0.p1","find":"ALPHA","replacement":"Alpha"},
+        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"BETA","replacement":"Beta"}]"#,
+        ),
+    )
+    .unwrap();
+    assert!(out.report.ok, "{:?}", out.report.operations);
+    assert_eq!(at(&out, 0), "body:p:2");
+    assert_eq!(at(&out, 1), "body:p:3");
+    let refused = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"replace","paragraph":"t0.r0.c0.p3","find":"x","replacement":"y"}]"#),
+    );
+    let message = match refused {
+        Ok(result) => format!("{:?}", result.report.operations),
+        Err(e) => e.to_string(),
+    };
+    assert!(message.contains("has 3 paragraphs, no p3"), "{message}");
+}
