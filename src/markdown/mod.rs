@@ -29,6 +29,7 @@
 //! document made by Word or by pandoc styles the output
 //! ([`DocxOptions::reference`]).
 
+mod anchor;
 mod critic;
 mod diff;
 mod from_docx;
@@ -40,6 +41,7 @@ mod unified;
 mod write;
 pub(crate) mod xml;
 
+pub use anchor::{plain_anchor, unescape_markdown};
 pub use diff::diff_markdown;
 pub use pages::paginate;
 pub use patch::{Patched, apply_markdown};

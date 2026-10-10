@@ -573,6 +573,71 @@ pub(crate) fn rendered_page_breaks(p: &Element) -> usize {
     count(p, &|e| e.is("lastRenderedPageBreak"))
 }
 
+/// Backslash-escapes the characters CommonMark would act on inside a run of
+/// document text, so literal `*`, `` ` ``, `~~`, `==`, `\`, `[^` and
+/// tag-like `<` read back as themselves. `_` is escaped only at a word edge
+/// (`a_b` stays; `_x_` becomes `\_x\_`); `~` and `=` only beside their
+/// twin. CriticMarkup delimiters are `critic::escape`'s job, after this.
+pub(crate) fn escape_markdown(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let at = |i: usize| chars.get(i).copied();
+    let before = |i: usize| i.checked_sub(1).and_then(at);
+    let mut out = String::with_capacity(text.len() + 8);
+    for (i, &c) in chars.iter().enumerate() {
+        let next = at(i + 1);
+        let escape = match c {
+            '\\' | '*' | '`' => true,
+            '_' => {
+                !(before(i).is_some_and(char::is_alphanumeric)
+                    && next.is_some_and(char::is_alphanumeric))
+            }
+            '~' | '=' => before(i) == Some(c) || next == Some(c),
+            '<' => next.is_some_and(|n| n.is_ascii_alphabetic() || n == '/' || n == '!'),
+            '[' => next == Some('^'),
+            _ => false,
+        };
+        if escape {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Escapes a block-opening mark at the start of one line of a paragraph:
+/// `#` (one to six, then a space or the end), `>`, `|`, a list bullet (`-`
+/// or `+` then a space), an ordered marker (digits then `.` or `)` then a
+/// space or the end), or a line of dashes (a setext underline or a rule).
+/// A leading `*` is already `\*` from `escape_markdown`.
+pub(crate) fn escape_block_start(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let hashes = bytes.iter().take_while(|&&b| b == b'#').count();
+    let opens = ((1..=6).contains(&hashes) && bytes.get(hashes).is_none_or(|&b| b == b' '))
+        || matches!(bytes.first(), Some(b'>' | b'|'))
+        || (matches!(bytes.first(), Some(b'-' | b'+')) && bytes.get(1).is_none_or(|&b| b == b' '))
+        || (bytes.first() == Some(&b'-') && line.trim_end().bytes().all(|b| b == b'-'));
+    if opens {
+        return format!("\\{line}");
+    }
+    let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+    if (1..=9).contains(&digits)
+        && matches!(bytes.get(digits), Some(b'.' | b')'))
+        && bytes.get(digits + 1).is_none_or(|&b| b == b' ')
+    {
+        return format!("{}\\{}", &line[..digits], &line[digits..]);
+    }
+    line.to_string()
+}
+
+/// `escape_block_start` on every line: after a hard break an ATX heading or
+/// a list item can interrupt a paragraph.
+pub(crate) fn escape_line_starts(text: &str) -> String {
+    text.split('\n')
+        .map(escape_block_start)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The authors of the formatting changes (`*PrChange`) under `e`, text
 /// boxes excluded, in document order.
 pub(crate) fn format_change_authors(e: &Element) -> Vec<Option<String>> {
@@ -1363,6 +1428,45 @@ pub(crate) fn select_blocks(
 mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
+
+    #[test]
+    fn escape_markdown_escapes_only_what_commonmark_acts_on() {
+        for (text, escaped) in [
+            ("a_b snake_case", "a_b snake_case"),
+            ("_x_", "\\_x\\_"),
+            ("x < y <br> </u> <!--", "x < y \\<br> \\</u> \\<!--"),
+            ("2*3 `t` \\", "2\\*3 \\`t\\` \\\\"),
+            ("~~a~~ ~x == y = z", "\\~\\~a\\~\\~ ~x \\=\\= y = z"),
+            ("[^1] [x]", "\\[^1] [x]"),
+        ] {
+            assert_eq!(escape_markdown(text), escaped, "{text}");
+        }
+    }
+
+    #[test]
+    fn escape_block_start_escapes_block_openers_only() {
+        for (line, escaped) in [
+            ("# x", "\\# x"),
+            ("###### x", "\\###### x"),
+            ("####### x", "####### x"),
+            ("#tag", "#tag"),
+            ("> q", "\\> q"),
+            ("| a |", "\\| a |"),
+            ("- x", "\\- x"),
+            ("+ x", "\\+ x"),
+            ("-x", "-x"),
+            ("---", "\\---"),
+            ("-", "\\-"),
+            ("1. one", "1\\. one"),
+            ("10) ten", "10\\) ten"),
+            ("1.5 litres", "1.5 litres"),
+            ("1.", "1\\."),
+            ("plain", "plain"),
+        ] {
+            assert_eq!(escape_block_start(line), escaped, "{line}");
+        }
+        assert_eq!(escape_line_starts("a  \n# b"), "a  \n\\# b");
+    }
 
     const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
 

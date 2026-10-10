@@ -1847,3 +1847,109 @@ fn underline_from_a_character_style_shows() {
     let out = body(&agent(&bytes)).to_string();
     assert!(out.contains("<u>styled</u> plain"), "{out}");
 }
+
+/// Task 18: literal Markdown marks in document text read back as text.
+#[test]
+fn literal_markdown_marks_are_escaped_in_the_agent_view_only() {
+    let bytes = docx(&format!(
+        "{}{}{}{}{}{}{}",
+        para("# Not a heading"),
+        para("**stars** and a_b and snake_case"),
+        para("1. one and 2) two"),
+        para("x < y, <u>tag</u>, a*b"),
+        para("- dash and `tick`"),
+        para("~~gone~~ ==hi== [^1] ok \\ done"),
+        para("1.5 litres and _x_"),
+    ));
+    let out = agent(&bytes);
+    let out = body(&out);
+    assert!(out.contains("<!-- p0 -->\n\\# Not a heading\n"), "{out}");
+    assert!(
+        out.contains("<!-- p1 -->\n\\*\\*stars\\*\\* and a_b and snake_case\n"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p2 -->\n1\\. one and 2) two\n"), "{out}");
+    assert!(
+        out.contains("<!-- p3 -->\nx < y, \\<u>tag\\</u>, a\\*b\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p4 -->\n\\- dash and \\`tick\\`\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p5 -->\n\\~\\~gone\\~\\~ \\=\\=hi\\=\\= \\[^1] ok \\\\ done\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("<!-- p6 -->\n1.5 litres and \\_x\\_\n"),
+        "{out}"
+    );
+    let legacy = docx_to_markdown(&bytes, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert!(
+        legacy.contains("# Not a heading\n") && legacy.contains("**stars** and a_b"),
+        "unchanged: {legacy}"
+    );
+}
+
+/// Task 18: a line after a hard break that starts like a block is escaped
+/// too (an ATX heading or a list can interrupt a paragraph).
+#[test]
+fn a_block_mark_after_a_hard_break_is_escaped() {
+    let bytes = docx(
+        r#"<w:p><w:r><w:t>Intro</w:t><w:br/><w:t># Not a heading</w:t><w:br/><w:t>- nor a list</w:t></w:r></w:p>"#,
+    );
+    let out = body(&agent(&bytes)).to_string();
+    assert!(out.contains("\n\\# Not a heading"), "{out}");
+    assert!(out.contains("\n\\- nor a list"), "{out}");
+}
+
+/// Task 18: the escaped view converts back to the same document text.
+#[test]
+fn escaped_text_reads_back_as_the_characters() {
+    let bytes = docx(&format!(
+        "{}{}",
+        para("# Not a heading"),
+        para("**stars** and `tick` ~~gone~~")
+    ));
+    let view = agent(&bytes);
+    let written = jubarte::markdown::markdown_to_docx(
+        body(&view),
+        &jubarte::markdown::DocxOptions::default(),
+    )
+    .unwrap()
+    .docx;
+    let text = docx_to_markdown(&written, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert!(text.contains("# Not a heading"), "{text}");
+    assert!(text.contains("**stars** and `tick` ~~gone~~"), "{text}");
+    let xml = common::docx::part_string(&written, "word/document.xml").unwrap();
+    assert!(!xml.contains("Heading"), "no heading style: {xml}");
+}
+
+#[test]
+fn cli_edit_says_when_an_anchor_was_read_without_its_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
+    let plan = r##"{"schema_version":1,"author":"Ann Counsel","operations":[
+        {"kind":"replace","paragraph":"p0","find":"# Fees","replacement":"Fees and Expenses"}]}"##;
+    std::fs::write(dir.path().join("plan.json"), plan).unwrap();
+    let out = ok(
+        &["edit", "base.docx", "--plan", "plan.json", "--out-dir", "r"],
+        dir.path(),
+    );
+    assert!(
+        out.contains(
+            "\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"
+        ),
+        "{out}"
+    );
+    let report = std::fs::read_to_string(dir.path().join("r/report.jsonl")).unwrap();
+    assert!(
+        report.contains(r##""anchor_given":"# Fees","anchor_read_as":"Fees""##),
+        "{report}"
+    );
+}

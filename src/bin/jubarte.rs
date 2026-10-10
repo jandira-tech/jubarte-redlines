@@ -930,6 +930,14 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
         outputs.len() + 1,
         if outputs.len() > 3 { ", …" } else { "" }
     );
+    for outcome in &result.report.operations {
+        if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
+            println!(
+                "note: {}: anchor {given:?} read as {read_as:?} (Markdown marks are not document text)",
+                outcome.id
+            );
+        }
+    }
     print!("{patch}");
     Ok(())
 }

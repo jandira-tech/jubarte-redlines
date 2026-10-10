@@ -277,6 +277,23 @@ Normal Calibri 11pt and the writer's other defaults. A header without
 `headers:`/`footers:` text, alignment and `{PAGE}`/`{NUMPAGES}`/`{DATE}`
 fields.
 
+### Literal marks and anchors
+
+Document text that CommonMark would read as markup is escaped in the agent
+view: a paragraph that starts with `# `, `- `, `> ` or `1. ` (also after a
+line break), and `*`, `` ` ``, `\`, `~~`, `==`, `[^`, a tag-like `<` and a
+word-edge `_` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes
+read back as the characters. `convert -t md` (ids off) does not escape.
+
+An `edit` anchor copied out of the view may carry marks that are not
+document text (`# Fees`, `**secret**`, a CriticMarkup note). The literal
+anchor is tried first; when it does not occur, the anchor without its marks
+(escapes resolved) is tried, and the report's `op` line records
+`anchor_given` and `anchor_read_as`. The CLI prints
+`note: op-1: anchor "# Fees" read as "Fees" (Markdown marks are not document
+text)`. `read --changed` keeps the blocks with a change or a comment;
+`--by AUTHOR` (a handle or a full name) keeps one author's.
+
 ### Limits of the agent view
 
 - Tracked paragraph marks inside comment bodies are not shown.

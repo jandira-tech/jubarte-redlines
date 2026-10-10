@@ -838,6 +838,13 @@ pub struct EditOutcome {
     /// Comment id written for this operation.
     pub comment_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The anchor as the plan wrote it, when it matched only without its
+    /// Markdown marks.
+    pub anchor_given: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The text actually matched in that case.
+    pub anchor_read_as: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Error code when failed.
     pub code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -951,6 +958,12 @@ impl EditReport {
             }
             if let Some(c) = op.comment_id {
                 map.insert("comment_id".into(), c.into());
+            }
+            if let Some(given) = &op.anchor_given {
+                map.insert("anchor_given".into(), given.clone().into());
+            }
+            if let Some(read_as) = &op.anchor_read_as {
+                map.insert("anchor_read_as".into(), read_as.clone().into());
             }
             if let Some(c) = &op.code {
                 map.insert("code".into(), c.clone().into());
@@ -1878,6 +1891,8 @@ impl<'p> Transaction<'p> {
                         comment_id: None,
                         code: None,
                         message: None,
+                        anchor_given: None,
+                        anchor_read_as: None,
                     };
                     match self.resolve_page_setup(
                         *section,
@@ -1994,6 +2009,8 @@ impl<'p> Transaction<'p> {
             comment_id: None,
             code: None,
             message: None,
+            anchor_given: None,
+            anchor_read_as: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -2765,6 +2782,8 @@ impl<'p> Transaction<'p> {
             comment_id: None,
             code: None,
             message: None,
+            anchor_given: None,
+            anchor_read_as: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -2889,6 +2908,8 @@ impl<'p> Transaction<'p> {
             comment_id: None,
             code: None,
             message: None,
+            anchor_given: None,
+            anchor_read_as: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -2964,6 +2985,8 @@ impl<'p> Transaction<'p> {
             comment_id: None,
             code: None,
             message: None,
+            anchor_given: None,
+            anchor_read_as: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -3424,11 +3447,29 @@ impl<'p> Transaction<'p> {
             return Err(("INVALID_EDIT".into(), "find must be nonempty".into()));
         }
         let text = &projection.text;
-        let hits: Vec<usize> = text
-            .char_indices()
-            .map(|(i, _)| i)
-            .filter(|&i| text[i..].starts_with(find))
-            .collect();
+        let hits_of = |needle: &str| -> Vec<usize> {
+            text.char_indices()
+                .map(|(i, _)| i)
+                .filter(|&i| text[i..].starts_with(needle))
+                .collect()
+        };
+        let mut needle = find.to_string();
+        let mut hits = hits_of(find);
+        // An anchor copied out of the agent view can carry Markdown marks
+        // (`# `, `**`, CriticMarkup notes) that are not document text: the
+        // literal is tried first, then the text without them.
+        if hits.is_empty() {
+            let plain = crate::markdown::plain_anchor(find);
+            if !plain.is_empty() && plain != find {
+                let plain_hits = hits_of(&plain);
+                if !plain_hits.is_empty() {
+                    outcome.anchor_given = Some(find.to_string());
+                    outcome.anchor_read_as = Some(plain.clone());
+                    needle = plain;
+                    hits = plain_hits;
+                }
+            }
+        }
         outcome.matches = hits.len();
         let start = match (hits.as_slice(), occurrence) {
             ([], _) => {
@@ -3461,7 +3502,7 @@ impl<'p> Transaction<'p> {
                 ));
             }
         };
-        let end = start + find.len();
+        let end = start + needle.len();
         self.check_range(projection, start, end)
             .map_err(|m| ("UNSUPPORTED_STRUCTURE".to_string(), m))?;
         Ok((start, end))
@@ -3886,6 +3927,8 @@ impl<'p> Transaction<'p> {
             comment_id: None,
             code: None,
             message: None,
+            anchor_given: None,
+            anchor_read_as: None,
         };
         let fail = |code: &str, msg: &str, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -5810,6 +5853,8 @@ mod deeper_boundary_tests {
             comment_id: None,
             code: None,
             message: None,
+            anchor_given: None,
+            anchor_read_as: None,
         }
     }
 

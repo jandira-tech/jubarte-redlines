@@ -1228,12 +1228,14 @@ impl Writer<'_> {
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
             } else if let Some(marker) = list_marker {
                 let (marker, ilvl) = marker;
-                let item = list.item(ilvl, &marker, &hard_breaks(&inline.render(true)));
+                let text = self.block_text(inline.render(true));
+                let item = list.item(ilvl, &marker, &hard_breaks(&text));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
             } else {
                 list.reset();
-                blocks.push_paragraph("", &hard_breaks(&inline.render(true)), false, edges);
+                let text = self.block_text(inline.render(true));
+                blocks.push_paragraph("", &hard_breaks(&text), false, edges);
             }
         }
         // A text box between this paragraph and the next one takes the break.
@@ -1247,6 +1249,17 @@ impl Writer<'_> {
         } else {
             self.paragraph_mark(p).filter(|_| written && !boxed)
         });
+    }
+
+    /// A paragraph's rendered text as its block holds it: in the agent view
+    /// a line that would open a Markdown block (`# `, `- `, `1. `) is
+    /// escaped, so it reads back as text.
+    fn block_text(&self, rendered: String) -> String {
+        if self.agent {
+            agent::escape_line_starts(&rendered)
+        } else {
+            rendered
+        }
     }
 
     /// Agent view: writes the pending `<!-- pN empty -->` lines, after the
@@ -1522,7 +1535,13 @@ impl Writer<'_> {
         let field_link = fields.iter().rev().find_map(|f| f.link.clone());
         let link = field_link.as_deref().or(link);
         match child.local() {
-            "t" | "delText" if !hidden => out.push_styled(&child.text(), style, link),
+            "t" | "delText" if !hidden => {
+                if self.agent {
+                    out.push_styled(&agent::escape_markdown(&child.text()), style, link);
+                } else {
+                    out.push_styled(&child.text(), style, link);
+                }
+            }
             "tab" | "ptab" if !hidden => out.push_styled("\t", style, link),
             "br" | "cr" if !hidden => {
                 if child.attr("type") != Some("page") {
