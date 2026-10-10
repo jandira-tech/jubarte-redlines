@@ -50,7 +50,6 @@ Usage: jubarte-redlines [OPTIONS] [ORIGINAL] [MODIFIED]
 
 Tasks:
   compare       Compare documents and write a Word redline [alias: redline]
-  revisions     List the tracked revisions in a redline .docx
   changes       List tracked changes with IDs for accept, reject and edit plans
   accept        Accept all tracked changes, or select by ID, author or kind
   reject        Reject all tracked changes, or select by ID, author or kind
@@ -248,22 +247,6 @@ Options:
 Examples:
   jubarte compare old.docx new.docx -o redline.docx
   jubarte compare -b old.docx -m new.docx --author Legal
-```
-
-#### `jubarte-redlines revisions`
-
-```text
-$ jubarte-redlines revisions --help
-List the tracked revisions in a redline .docx
-
-Usage: jubarte-redlines revisions [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  The redline document (.docx)
-
-Options:
-      --json  Emit the list as JSON lines instead of a human summary
-  -h, --help  Print help
 ```
 
 #### `jubarte-redlines changes`
@@ -1216,7 +1199,7 @@ get_revisions(docx: 'bytes') -> 'list[dict[str, Any]]'
 
 List the tracked revisions in a DOCX as parsed objects.
 
-Each item has the same shape as the CLI ``jubarte revisions --json`` lines
+Grouped as Docxodus's ``GetRevisions`` groups them; each item has
 (``type``/``author``/``date``/``part``/``moveGroupId``/``isMoveSource``/
 ``formatChange``/``text``).
 
@@ -1226,8 +1209,8 @@ Each item has the same shape as the CLI ``jubarte revisions --json`` lines
 get_revisions_json(docx, *, input_limits=None)
 ```
 
-List the tracked revisions in a DOCX as a JSON array string — the same
-object shape as the CLI `jubarte revisions --json` lines
+List the tracked revisions in a DOCX as a JSON array string, grouped as
+Docxodus's `GetRevisions` groups them; each object has
 (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 `input_limits` as in `compare_documents`.
 

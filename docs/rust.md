@@ -143,7 +143,6 @@ Usage: jubarte [OPTIONS] [ORIGINAL] [MODIFIED]
 
 Tasks:
   compare       Compare documents and write a Word redline [alias: redline]
-  revisions     List the tracked revisions in a redline .docx
   changes       List tracked changes with IDs for accept, reject and edit plans
   accept        Accept all tracked changes, or select by ID, author or kind
   reject        Reject all tracked changes, or select by ID, author or kind
@@ -349,22 +348,6 @@ Options:
 Examples:
   jubarte compare old.docx new.docx -o redline.docx
   jubarte compare -b old.docx -m new.docx --author Legal
-```
-
-#### `jubarte revisions`
-
-```text
-$ jubarte revisions --help
-List the tracked revisions in a redline .docx
-
-Usage: jubarte revisions [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  The redline document (.docx)
-
-Options:
-      --json  Emit the list as JSON lines instead of a human summary
-  -h, --help  Print help
 ```
 
 #### `jubarte changes`
