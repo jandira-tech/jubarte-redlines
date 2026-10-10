@@ -358,7 +358,16 @@ function runEdit(verb, file, o) {
     }
   }
   const shown = path.join(outDir, editing ? "clean.docx" : "redline.docx");
-  process.stdout.write(wasm.changedView(result.redline, report.author, editing, shown));
+  // The files are written and report.jsonl says so: a view that cannot be
+  // read back is a warning, not a failed edit.
+  let view;
+  try {
+    view = wasm.changedView(result.redline, report.author, editing, shown);
+  } catch (error) {
+    console.error(`warning: the changed blocks cannot be shown: ${error.message ?? error}`);
+    return;
+  }
+  process.stdout.write(view);
 }
 
 /** The agent view of `docx` with the read options `o`; `source` is its header name. */

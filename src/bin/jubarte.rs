@@ -1052,14 +1052,20 @@ fn run_edit(
         Mode::Suggesting => "redline.docx",
         Mode::Editing => "clean.docx",
     };
-    let view = jubarte::markdown::changed_view(
+    // The files are written and report.jsonl says so: a view that cannot be
+    // read back is a warning, not a failed edit.
+    match jubarte::markdown::changed_view(
         &result.redline,
         &result.report.author,
         job.mode == Mode::Editing,
         Some(&job.out_dir.join(shown).display().to_string()),
-    )
-    .map_err(|e| fail(format!("reading the redline back: {e}")))?;
-    write_stdout(&view).map_err(fail)
+    ) {
+        Ok(view) => write_stdout(&view).map_err(fail),
+        Err(e) => {
+            eprintln!("warning: the changed blocks cannot be shown: {e}");
+            Ok(())
+        }
+    }
 }
 
 /// One `edit` or `add` invocation, parsed.
