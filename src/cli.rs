@@ -1490,11 +1490,7 @@ fn parse_datetime(value: &str) -> Result<String, String> {
 
 /// `--by`: a handle (`AC`, `@AC`) or a full name, never blank.
 fn parse_author(value: &str) -> Result<String, String> {
-    if value.trim().trim_start_matches('@').is_empty() {
-        Err("needs an author: a handle such as AC, or the full name".into())
-    } else {
-        Ok(value.to_string())
-    }
+    crate::markdown::author(value).map(str::to_string)
 }
 
 fn parse_dpi(value: &str) -> Result<f32, String> {

@@ -280,6 +280,17 @@ pub enum Pick {
     Table(usize),
 }
 
+/// The author `--changed --by` names, its padding cut: a handle such as `AC`
+/// or `@AC`, or the full name. The CLI and the bindings both check it here.
+pub fn author(by: &str) -> Result<&str, String> {
+    let by = by.trim();
+    if by.trim_start_matches('@').trim().is_empty() {
+        Err("needs an author: a handle such as AC, or the full name".into())
+    } else {
+        Ok(by)
+    }
+}
+
 impl Select {
     /// The selection of `read`'s `-p`, `--head` and `--tail` (in that order
     /// of precedence), or of `--changed` with its `--by`; `None` when none is
@@ -297,6 +308,7 @@ impl Select {
         if changed && (paragraphs.is_some() || head.is_some() || tail.is_some()) {
             return Err("changed excludes paragraphs, head and tail".to_string());
         }
+        let by = by.map(author).transpose()?;
         Ok(match (paragraphs, head, tail) {
             _ if changed => Some(Self::Changed {
                 by: by.map(str::to_string),
