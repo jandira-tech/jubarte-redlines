@@ -237,6 +237,18 @@ fn paginate_holds_comment_lines_at_a_block_start() {
 }
 
 #[test]
+fn paginate_reads_plain_comment_text_as_the_block_it_opens() {
+    // Document text that reads as an HTML comment opens its block in the
+    // plain view: the text under it is mid-block, so its page is named at
+    // the next block, exactly as before the agent view existed.
+    let md = "Intro\n\n<!-- drafted by AC -->\nBeta text here\n\nGamma\n";
+    assert_eq!(
+        jubarte::markdown::paginate(md, &["intro", "beta text here", "gamma"]),
+        "<!-- page 1 of 3 -->\n\nIntro\n\n<!-- drafted by AC -->\nBeta text here\n\n<!-- page 3 of 3 -->\n\nGamma\n"
+    );
+}
+
+#[test]
 fn id_line_shows_direct_alignment_indent_style_and_number() {
     let numbering = Part {
         name: "word/numbering.xml",
