@@ -197,7 +197,11 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         Ok(Location::Changes(ids)) => Some(ids),
         _ => None,
     };
-    if verb == Verb::Add && (ids.is_some() || op.accept || op.reject) {
+    // A `--reply` group is an operation: off a comment it says so.
+    if op.reply.is_some() {
+        return Ok(None);
+    }
+    if verb == Verb::Add && ids.is_some() {
         return bad("add resolves no revision; use edit -p r12 --accept or --reject");
     }
     let others = op.anchor.is_some()
@@ -1038,7 +1042,7 @@ mod tests {
             ),
             (
                 with("r1", |o| o.reply = Some("x".into())),
-                "-p r1: a revision takes --accept or --reject",
+                "-p r1: --reply is for a comment (-p c5)",
             ),
             (
                 with("c5", |o| {
@@ -1078,7 +1082,6 @@ mod tests {
         for o in [
             with("r1", |o| o.accept = true),
             with("r1", |o| o.content = Some("x".into())),
-            with("p1", |o| o.reject = true),
         ] {
             assert_eq!(
                 refusal(Verb::Add, o.clone()),
@@ -1088,5 +1091,13 @@ mod tests {
                 )
             );
         }
+        assert_eq!(
+            refusal(Verb::Add, with("r1", |o| o.reply = Some("x".into()))),
+            "-p r1: --reply is for a comment (-p c5)"
+        );
+        assert_eq!(
+            refusal(Verb::Add, with("c5", |o| o.accept = true)),
+            "-p c5: --accept and --reject take a revision (-p r12)"
+        );
     }
 }

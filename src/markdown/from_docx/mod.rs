@@ -575,7 +575,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 .as_ref()
                 .is_some_and(|s| s.child("trackRevisions").is_some()),
             tags,
-            changes: crate::changes::list_changes(bytes).unwrap_or_default(),
+            changes: crate::changes::list_changes_tolerant(bytes).map_err(ooxml::invalid)?,
             comments: comment_facts,
             handles: &handles,
             done: &threads.done,

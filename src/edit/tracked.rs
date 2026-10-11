@@ -181,8 +181,8 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
     Ok(redline)
 }
 
-/// Counts of the redline's changes by `author` on `date`: the source's
-/// own changes stay out.
+/// Counts of the redline's changes stamped with `author` and `date`: the
+/// edit's own. A source change carrying the very same stamp counts too.
 fn revision_counts(redline: &[u8], author: &str, date: &str) -> RevisionCounts {
     let changes = list_changes(redline).unwrap_or_default();
     RevisionCounts::from_changes(

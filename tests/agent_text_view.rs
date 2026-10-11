@@ -4326,12 +4326,17 @@ fn pr392_alternate_content_uses_only_the_rendered_branch_for_authors_and_counts(
         assert!(!body(&view).contains(absent), "{view}");
         let yaml = header_yaml(&view);
         assert_eq!(yaml["authors"][handle].as_str(), Some(author), "{view}");
-        // The only other author entry is document_owner.
+        // A Fallback change that is no twin of the Choice's (another text)
+        // is still a change of the file: listed and counted (D8), though
+        // the view shows the Choice only.
+        let listed = jubarte::changes::list_changes(&bytes).unwrap().len();
+        // Handles name the authors the view shows: the only other entry is
+        // document_owner.
         assert_eq!(yaml["authors"].as_mapping().unwrap().len(), 2, "{view}");
         assert!(
             header_lines(&view)
                 .iter()
-                .any(|line| line.starts_with("revisions: 1 ")),
+                .any(|line| line.starts_with(&format!("revisions: {listed} "))),
             "{view}"
         );
     }
