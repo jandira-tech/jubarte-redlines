@@ -264,6 +264,7 @@ fn confirm(from: &str, to: &str) -> Result<bool, String> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

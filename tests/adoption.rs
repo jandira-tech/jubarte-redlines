@@ -45,6 +45,12 @@ fn jubarte(args: &[&str], dir: &Path) -> Output {
         .expect("run jubarte")
 }
 
+/// The body of a `text` output: what follows the YAML header, which names
+/// the file and so differs between two copies of the same text.
+fn body(text: &str) -> String {
+    text.splitn(3, "---\n").nth(2).unwrap_or(text).to_string()
+}
+
 #[track_caller]
 fn ok(args: &[&str], dir: &Path) -> String {
     let out = jubarte(args, dir);
@@ -128,7 +134,7 @@ fn pdf_pages_reads_page_objects_however_they_are_spaced() {
 fn read_text_has_paragraph_ids_and_inspect_has_the_source_hash() {
     let (_dir, dir) = workspace();
     let text = ok(&["text", "input.docx"], &dir);
-    assert!(text.contains("[body:p:0"), "{text}");
+    assert!(text.contains("<!-- p0"), "{text}");
     assert!(text.contains("Services Agreement"), "{text}");
     let inspect = ok(&["inspect", "input.docx", "--json"], &dir);
     assert!(inspect.contains("source_sha256"), "{inspect}");
@@ -280,8 +286,8 @@ fn an_edit_plan_writes_four_outputs_and_every_edit_is_tracked() {
     assert_word_valid_package(&std::fs::read(dir.join("review/redline.docx")).unwrap());
     ok(&["accept", "review/redline.docx", "-o", "check.docx"], &dir);
     assert_eq!(
-        ok(&["text", "check.docx"], &dir),
-        ok(&["text", "review/clean.docx"], &dir)
+        body(&ok(&["text", "check.docx"], &dir)),
+        body(&ok(&["text", "review/clean.docx"], &dir))
     );
 }
 
@@ -599,7 +605,7 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
     let docx = std::fs::read(dir.path().join("old.docx")).unwrap();
     assert_word_valid_package(&docx);
     let text = ok(&["text", "old.docx"], dir.path());
-    assert!(text.contains("Heading1] Services Agreement"), "{text}");
+    assert!(text.contains("# Services Agreement"), "{text}");
     let markdown = ok(&["convert", "old.doc", "-t", "md"], dir.path());
     assert!(markdown.contains("|Setup|500|one-off|"), "{markdown}");
     ok(&["convert", "old.doc", "-o", "old.pdf"], dir.path());
@@ -638,10 +644,14 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
         ]
         .concat();
         let out = jubarte(&args, dir.path());
-        // Exit 1, as the sibling `--pages` without `--png` refusal.
-        assert_eq!(out.status.code(), Some(1), "{flag:?}: {out:?}");
+        // The shared clap parser rejects this option/output mismatch as
+        // a usage error before reading the document or writing output.
+        assert_eq!(out.status.code(), Some(2), "{flag:?}: {out:?}");
+        assert!(out.stdout.is_empty());
+        assert!(!dir.path().join("again.docx").exists());
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("applies to PDF or PNG output"), "{stderr}");
+        assert!(stderr.contains("Usage:"), "{stderr}");
     }
 }
 
@@ -681,8 +691,8 @@ fn markdown_page_markers_count_the_pdf_pages() {
     std::fs::write(dir.path().join("back.md"), &markdown).unwrap();
     ok(&["convert", "back.md", "-o", "back.docx"], dir.path());
     assert_eq!(
-        ok(&["text", "back.docx"], dir.path()),
-        ok(&["text", "long.docx"], dir.path())
+        body(&ok(&["text", "back.docx"], dir.path())),
+        body(&ok(&["text", "long.docx"], dir.path()))
     );
     let plain = ok(
         &["convert", "long.docx", "-t", "md", "--no-page-markers"],

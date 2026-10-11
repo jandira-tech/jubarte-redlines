@@ -16,11 +16,10 @@
 //! the accept/reject round trip and the compare agree with Word end-to-end.
 
 use jubarte::document_comparer::compare_documents;
+use jubarte::namespaces::W;
 use jubarte::opc::PartFs;
 use jubarte::revision_processor::{accept_revisions_document, reject_revisions_document};
 use jubarte::xmllinq::Dom;
-use quick_xml::Reader;
-use quick_xml::events::Event;
 
 /// Word's f-1 redline (the source of both derived inputs).
 const WORD_REDLINE: &[u8] = include_bytes!("fixtures/f1/word-redline.docx");
@@ -47,50 +46,32 @@ fn derive(docx: &[u8], accept: bool) -> Vec<u8> {
     pkg.to_zip().unwrap()
 }
 
-/// `(original_text, modified_text)` reconstructed from a redline (see m9):
-/// `delText`→original, `w:t` under `w:ins`→modified, other `w:t`→both.
-fn reconstruct(docx: &[u8]) -> (String, String) {
-    // Resolve the main part via the package instead of hard-coding the path.
+/// Visible text of a resolved package. A resolved story has ordinary `w:t`
+/// leaves regardless of whether its source ownership came from run revisions,
+/// native moves, or whole-row lifetime markers.
+fn resolved_text(docx: &[u8]) -> String {
     let pkg = PartFs::open(docx).unwrap();
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
     let xml = pkg.part_string(&main).unwrap();
-    let mut r = Reader::from_str(&xml);
-    r.config_mut().trim_text(false);
-    let (mut ins, mut dt, mut t) = (0i32, 0i32, 0i32);
-    let (mut o, mut m) = (String::new(), String::new());
-    loop {
-        match r.read_event() {
-            Ok(Event::Start(e)) => match e.name().as_ref() {
-                "w:ins" => ins += 1,
-                "w:delText" => dt += 1,
-                "w:t" => t += 1,
-                _ => {}
-            },
-            Ok(Event::End(e)) => match e.name().as_ref() {
-                "w:ins" => ins -= 1,
-                "w:delText" => dt -= 1,
-                "w:t" => t -= 1,
-                _ => {}
-            },
-            Ok(Event::Text(x)) => {
-                let s = x.into_inner().into_owned();
-                if dt > 0 {
-                    o.push_str(&s);
-                } else if t > 0 && ins > 0 {
-                    m.push_str(&s);
-                } else if t > 0 {
-                    o.push_str(&s);
-                    m.push_str(&s);
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => panic!("XML parse error: {e}"),
-            _ => {}
-        }
-    }
-    (o, m)
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::t()))
+        .into_iter()
+        .map(|node| dom.value(node))
+        .collect()
+}
+
+/// Resolve both projections using the same public revision semantics as Word
+/// round trips. Counting only `w:ins` ancestors misclassified `moveTo` text in
+/// inserted rows as shared content, duplicating it in the original projection.
+fn reconstruct(docx: &[u8]) -> (String, String) {
+    (
+        resolved_text(&derive(docx, false)),
+        resolved_text(&derive(docx, true)),
+    )
 }
 
 #[test]
@@ -129,4 +110,21 @@ fn derived_inputs_are_loadable() {
         .unwrap_or_else(|e| panic!("derived (accept={accept}) docx must load: {e:?}"));
         assert!(doc.main_document_part().is_ok());
     }
+}
+
+#[test]
+fn reconstruction_respects_native_moves_and_whole_row_lifetimes() {
+    let mut pkg = PartFs::open(WORD_REDLINE).unwrap();
+    let main = pkg.main_document_part().unwrap();
+    pkg.set_part(&main, format!(
+        "<w:document xmlns:w='{}'><w:body><w:p><w:r><w:t>Base</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w='1000'/></w:tblGrid><w:tr><w:trPr><w:del w:id='1' w:author='Author' w:date='2001-02-03T04:05:06Z'/></w:trPr><w:tc><w:tcPr><w:tcW w:w='1000' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Old row</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:ins w:id='2' w:author='Author' w:date='2001-02-03T04:05:06Z'/></w:trPr><w:tc><w:tcPr><w:tcW w:w='1000' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>New row</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:moveFromRangeStart w:id='3'/><w:moveFrom w:id='4' w:author='Author' w:date='2001-02-03T04:05:06Z'><w:r><w:delText>Old move</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id='3'/><w:moveToRangeStart w:id='5'/><w:moveTo w:id='6' w:author='Author' w:date='2001-02-03T04:05:06Z'><w:r><w:t>New move</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id='5'/><w:r><w:t>Tail</w:t></w:r></w:p><w:sectPr/></w:body></w:document>", W::URI
+    ).into_bytes());
+    let input = pkg.to_zip().unwrap();
+    assert_eq!(
+        reconstruct(&input),
+        (
+            "BaseOld rowOld moveTail".to_string(),
+            "BaseNew rowNew moveTail".to_string()
+        )
+    );
 }

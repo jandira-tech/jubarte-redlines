@@ -248,10 +248,10 @@ enum ZipEntry<'a> {
     Part(&'a [u8]),
 }
 
-// RUSTSEC-2026-0194: rdocx-opc still uses quick-xml 0.37, whose
-// duplicate-attribute check is quadratic. Scan with our fixed parser first,
-// without duplicate checks, and bound the list before the upstream parser.
-// 256 also matches quick-xml's default namespace declaration limit.
+// Retain the OPC metadata budget independently of the parser upgrade that
+// fixed RUSTSEC-2026-0194/0195. Direct Relationships::from_xml callers use
+// patched quick-xml through rdocx-opc 0.2; package admission also bounds the
+// attribute count. 256 matches quick-xml's default namespace declaration limit.
 fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     loop {
@@ -302,6 +302,22 @@ pub struct PartFs {
     /// `(part, Id)` of each relationship the source repeated identically and
     /// [`PartFs::open`] kept once (`""` is the package's own relationships).
     repaired_duplicate_ids: Vec<(String, String)>,
+}
+
+/// Canonical target resolution shared by package APIs and text story labels.
+pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String {
+    let joined = OpcPackage::resolve_rel_target(&norm(source_part), rel_target);
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    segments.join("/")
 }
 
 impl PartFs {
@@ -468,21 +484,10 @@ impl PartFs {
     /// absolute target ("/word/footer1.xml") was later re-prefixed into a
     /// "//word/…" relationship, and "word/../customXml/item1.xml" named no part.
     pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {
-        // The relationships reader keeps the Target attribute as written, so
-        // "image1.jpg&amp;ehk=…" names the part "image1.jpg&ehk=…".
+        // PartFs receives raw relationship attributes; DOM consumers already
+        // decoded XML entities and call the pure resolver directly.
         let target = crate::xmllinq::parse::unescape_xml_text(rel_target);
-        let joined = OpcPackage::resolve_rel_target(&norm(source_part), &target);
-        let mut segments: Vec<&str> = Vec::new();
-        for seg in joined.split('/') {
-            match seg {
-                "" | "." => {}
-                ".." => {
-                    segments.pop();
-                }
-                s => segments.push(s),
-            }
-        }
-        segments.join("/")
+        resolve_rel_target(source_part, &target)
     }
 
     /// `contentTypeFor(part)`.
@@ -680,6 +685,7 @@ impl PartFs {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

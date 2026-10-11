@@ -682,26 +682,27 @@ fn comments_on_source_text_and_on_inserted_text_survive_compare() {
 }
 
 #[test]
-fn edits_crossing_tabs_hyperlinks_or_fields_are_unsupported_structure() {
-    let body = r#"<w:p><w:r><w:t>Name:</w:t><w:tab/><w:t>Arthur</w:t></w:r></w:p><w:p><w:hyperlink r:id="rId9"><w:r><w:t>arthur.law</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> site</w:t></w:r></w:p>"#;
+fn edits_inside_hyperlinks_or_across_symbols_are_unsupported_structure() {
+    let body = r#"<w:p><w:r><w:t>Name:</w:t><w:tab/><w:t>Arthur</w:t></w:r></w:p><w:p><w:hyperlink r:id="rId9"><w:r><w:t>arthur.law</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> site</w:t></w:r></w:p><w:p><w:r><w:t>Box</w:t><w:sym w:font="Wingdings" w:char="F0FC"/><w:t>ticked</w:t></w:r></w:p>"#;
     let source = docx(body);
     for ops in [
-        r#"[{"kind":"replace","paragraph":{"index":0},"find":"Name:\tArthur","replacement":"x"}]"#,
         r#"[{"kind":"replace","paragraph":{"index":1},"find":"arthur.law","replacement":"x"}]"#,
+        r#"[{"kind":"replace","paragraph":{"index":2},"find":"Box￼ticked","replacement":"x"}]"#,
     ] {
         let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
         assert_eq!(err.code, "UNSUPPORTED_STRUCTURE", "{ops}");
     }
-    // Editing beside the tab is fine.
-    let result = apply_plan(
-        &source,
-        &plan(
-            &source,
-            r#"[{"kind":"replace","paragraph":{"index":0},"find":"Arthur","replacement":"Souza"}]"#,
-        ),
-    )
-    .unwrap();
-    assert_eq!(texts(&result.clean)[0], "Name:\tSouza");
+    // A tab is no obstacle: an edit over it removes it, one beside it keeps it.
+    for (find, replacement, want) in [
+        ("Name:\\tArthur", "x", "x"),
+        ("Arthur", "Souza", "Name:\tSouza"),
+    ] {
+        let ops = format!(
+            r#"[{{"kind":"replace","paragraph":{{"index":0}},"find":"{find}","replacement":"{replacement}"}}]"#
+        );
+        let result = apply_plan(&source, &plan(&source, &ops)).unwrap();
+        assert_eq!(texts(&result.clean)[0], want);
+    }
 }
 
 #[test]
@@ -950,8 +951,8 @@ fn insertion_requires_one_position_and_nonempty_plain_text() {
         serde_json::json!({"after":"anchor","before":"anchor","text":"x"}),
         serde_json::json!({"position":"start","after":"anchor","text":"x"}),
         serde_json::json!({"position":"end","text":""}),
-        serde_json::json!({"position":"end","text":"a\nb"}),
-        serde_json::json!({"position":"end","text":"a\tb"}),
+        serde_json::json!({"position":"end","text":"a\rb"}),
+        serde_json::json!({"position":"end","text":"a\u{0}b"}),
     ] {
         let mut op = extra;
         op["kind"] = serde_json::json!("insert");

@@ -70,6 +70,12 @@ signatures and doc comments the package ships.
 <!-- gen:wasm-api:start -->
 Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the slim entry points drop `docxToPdf` and `pdfPageCount`).
 
+### `diffDocumentsUnified`
+
+```typescript
+diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string
+```
+
 ### `AppendOutput`
 
 ```typescript
@@ -296,6 +302,19 @@ refresh only in the full build, PNG never.
 
 Mirrors `jubarte::capabilities::capabilities`.
 
+### `changedView`
+
+```typescript
+changedView(docx: Uint8Array, author: string, accepted: boolean, source?: string | null): string
+```
+
+The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+view `edit` and `add` print (every changed block when none does);
+`accepted` reads its accepted text, `source` is the name printed as
+`source:`.
+
+Mirrors `jubarte::markdown::changed_view`.
+
 ### `compareDocuments`
 
 ```typescript
@@ -315,10 +334,10 @@ holds, so browser hosts should lower it.
 ### `diffDocuments`
 
 ```typescript
-diffDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string
+diffDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string
 ```
 
-The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 with `[-old-]{+new+}` changes and CriticMarkup comments, at its
 `body:p:N` id in a Word document or `line:N` in Markdown.
@@ -329,6 +348,26 @@ the changes; `columns` wraps the lines (72 by default, 0 does not);
 the names default to `old.docx`/`old.md` and `new.docx`/`new.md`.
 
 Mirrors `jubarte::markdown::patch_documents`.
+
+### `diffDocumentsCritic`
+
+```typescript
+diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: string | null, date?: string | null): string
+```
+
+The complete document as CriticMarkup; existing paragraph patches stay separate.
+
+### `diffDocumentsView`
+
+```typescript
+diffDocumentsView(old: Uint8Array, next: Uint8Array, options_json?: string | null): string
+```
+
+Document review view. `optionsJson` is a strict camelCase object with
+`format` (github, word, normal, context, side-by-side), `oldName`,
+`newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+and `newFormat` (docx/md). Defaults use the core display window; Word
+always accepts both inputs' revisions before creating new CriticMarkup.
 
 ### `documentMarkdown`
 
@@ -341,10 +380,18 @@ coordinates an edit plan uses.
 
 Mirrors `jubarte::inspect::markdown`.
 
+### `documentMarkdownWithChanges`
+
+```typescript
+documentMarkdownWithChanges(docx: Uint8Array, track_changes: string): string
+```
+
+Markdown without paragraph ids, with tracked changes kept or resolved.
+
 ### `docxToPdf`
 
 ```typescript
-docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null): Uint8Array
+docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array
 ```
 
 Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -358,6 +405,10 @@ never layout metrics.
 `revisions` (optional, default `"conventional"`) paints tracked changes:
 `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
 `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+`moveComments` (optional, default `false`) lists the comments after the
+last page instead of in balloons beside the text; `changedOnly`
+(optional, default `false`) keeps only the pages a tracked change
+touches (a document without changes keeps its first page).
 
 ### `editReportJsonl`
 
@@ -368,14 +419,30 @@ editReportJsonl(report_json: string): string
 The JSON-lines form of a report (`load`, one `op` per operation,
 `summary`), for agent logs.
 
+### `flagPlan`
+
+```typescript
+flagPlan(verb: string, operations_json: string, docx: Uint8Array, options_json?: string | null): string
+```
+
+The plan the `edit`/`add` operation flags describe, as JSON `{plan,
+notes}`: `plan` is the plan's JSON for `applyEditPlan`,
+`notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
+`operationsJson` the parsed command's `operations` array. Options (JSON,
+all optional): `author` (default `Modified User`), `date`,
+`existingRevisions` (auto, keep, accept, reject, refuse; default auto).
+An error is a usage error.
+
+Mirrors `jubarte::edit::flags::plan_from_flags`.
+
 ### `getRevisions`
 
 ```typescript
 getRevisions(docx: Uint8Array, input_limits_json?: string | null): string
 ```
 
-List the tracked revisions in a DOCX as a JSON array string — the same
-object shape as the CLI `jubarte revisions --json` lines
+List the tracked revisions in a DOCX as a JSON array string, grouped as
+Docxodus's `GetRevisions` groups them; each object has
 (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 
 Mirrors `jubarte::document_comparer::get_revisions` with default settings,
@@ -445,6 +512,14 @@ changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
 Images are written as their alt text, and the engine's warnings are not
 returned.
 
+### `parseCli`
+
+```typescript
+parseCli(arguments_json: string, program?: string | null, supported_json?: string | null): string
+```
+
+Shared clap parsing, with no filesystem, clock or process access.
+
 ### `pdfPageCount`
 
 ```typescript
@@ -465,6 +540,31 @@ previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput
 Resolve every operation of an edit plan without producing documents.
 
 Mirrors `jubarte::edit::preview_plan`.
+
+### `readView`
+
+```typescript
+readView(docx: Uint8Array, options_json?: string | null): string
+```
+
+The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+then Markdown with `<!-- pN -->` id lines and every change and comment
+with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+`head`, `tail`, `changed` (only the blocks with marks) with `by` (one
+author's: a handle or a full name), `source` (the name printed as
+`source:`).
+
+Mirrors `jubarte::markdown::read`.
+
+### `redlineDocuments`
+
+```typescript
+redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array
+```
+
+DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
 
 ### `rejectChanges`
 
@@ -575,165 +675,939 @@ Generated from the real `--help` output of `jubarte-redlines.mjs`.
 
 ```text
 $ jubarte-redlines --help
-usage: jubarte-redlines <command> [options]
+Read, edit, compare and render Word documents
 
-DOCX compare, tracked editing, inspection and rendering (the jubarte engine, WebAssembly build).
+Usage: jubarte-redlines [OPTIONS] [ORIGINAL] [MODIFIED]
+       jubarte-redlines <COMMAND>
 
-commands:
-  redline, compare  two documents into a Word tracked-changes document
-  changes           list each tracked change with the id accept/reject --id and edit plans take
-  revisions         list tracked revisions
-  accept            accept tracked changes (all, or the ones selected)
-  reject            reject tracked changes (all, or the ones selected)
-  text              Markdown with [body:p:N] ids, the coordinates an edit plan uses
-  inspect           paragraph ids, formatting spans, limitations and package facts
-  convert           DOCX to PDF
-  edit              apply an edit plan: clean.docx, redline.docx, patch.diff, report.jsonl
-  capabilities      what this build can do
+Tasks:
+  compare       Compare documents and write a Word redline [alias: redline]
+  changes       List tracked changes with IDs for accept, reject and edit plans
+  accept        Accept all tracked changes, or select by ID, author or kind
+  reject        Reject all tracked changes, or select by ID, author or kind
+  convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
+  diff          Review differences as GitHub, word, normal, context or side-by-side text
+  inspect       Inspect document facts, paragraphs, styles and tables
+  read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
+                comments with ids [alias: text]
+  edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve
+                or --style (several -p per command), or a JSON plan. Writes clean copy,
+                redline, patch and report, then prints the changed paragraphs as the
+                agent view (refusal: exit 3)
+  add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
+                -p per command). Writes the same files as edit and prints the changed
+                paragraphs as the agent view
+  capabilities  What this binary can do, for agents choosing an operation
+  help          Print this message or the help of the given subcommand(s)
 
-  jubarte-redlines <command> --help    a command's options
-  jubarte-redlines --version
-```
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-#### `jubarte-redlines redline`
+  -V, --version
+          Print version
 
-```text
-$ jubarte-redlines redline --help
-usage: jubarte-redlines redline ORIGINAL MODIFIED [options]
+Compare options:
+  -b, --original <FILE>
+          Original/base document (overrides the positional ORIGINAL)
 
-two documents into a Word tracked-changes document
+  -m, --modified <FILE>
+          Modified document (overrides the positional MODIFIED)
 
-  -o, --output OUTPUT  [default: <original>_v_<modified>.docx]
-      --author AUTHOR  who the revisions are by [default: jubarte]
-      --force          overwrite an existing output
+  -o, --output <FILE>
+          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md`
+          output writes the changes as CriticMarkup (both documents Markdown)
+
+  -a, --author <NAME>
+          Author name recorded on the revisions
+
+          [default: Redline]
+
+  -d, --date <ISO8601>
+          Revision timestamp (ISO 8601); pinned for reproducible output
+
+          [default: 1970-01-01T00:00:00Z]
+
+      --force
+          Overwrite the output file if it already exists
+
+  -q, --quiet
+          Do not print the success message
+
+      --detail-threshold <RATIO>
+          Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
+
+      --mode <MODE>
+          Compare like Microsoft Word or Open-Xml-PowerTools
+
+          Possible values:
+          - word:       Microsoft Word Compare's layout: word-level detail, replaced
+            paragraphs merged, Word's alignment passes
+          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
+            no Word alignment passes
+
+          [default: word]
+
+      --powertools-faithful
+          Same as --mode powertools
+
+  [MODIFIED]
+          The modified document (.docx or Markdown)
+
+  [ORIGINAL]
+          The original / base document (.docx or Markdown)
+
+Read options:
+      --track-changes <CHOICE>
+          Tracked changes inline (all, the default), or the text with every change
+          accepted or rejected; the id lines then list what changed
+
+          Possible values:
+          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
+          - accept: Accept every change
+          - reject: Reject every change
+
+      --comments <MODE>
+          Comments inline (default) or hidden, with their ids on the id line of the
+          paragraph that holds them
+
+          Possible values:
+          - inline: Comments inline, with their ids
+          - none:   Comments hidden; their ids on the id lines
+
+          [default: inline]
+
+      --dates
+          Timestamps on the notes of an author whose changes do not all share one (the
+          header shows an author's single timestamp)
+
+      --no-page-markers
+          Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
+          M -->` lines
+
+  -p, --paragraphs <SPEC>
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+
+      --head <N>
+          Only the first N blocks (a table is one block)
+
+      --tail <N>
+          Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
+
+Examples:
+  jubarte-redlines compare old.docx new.docx -o redline.docx
+  jubarte-redlines contract.docx
+  jubarte-redlines inspect contract.docx --json
+  jubarte-redlines diff old.docx new.docx --format github
+  jubarte-redlines convert contract.docx -o contract.pdf
+
+Run jubarte-redlines <task> --help for task options.
 ```
 
 #### `jubarte-redlines compare`
 
 ```text
 $ jubarte-redlines compare --help
-usage: jubarte-redlines compare ORIGINAL MODIFIED [options]
+Compare documents and write a Word redline
 
-two documents into a Word tracked-changes document
+Usage: jubarte-redlines compare [OPTIONS] [ORIGINAL] [MODIFIED]
 
-  -o, --output OUTPUT  [default: <original>_v_<modified>.docx]
-      --author AUTHOR  who the revisions are by [default: jubarte]
-      --force          overwrite an existing output
+Arguments:
+  [ORIGINAL]
+          The original / base document (.docx or Markdown)
+
+  [MODIFIED]
+          The modified document (.docx or Markdown)
+
+Options:
+  -b, --original <FILE>
+          Original/base document (overrides the positional ORIGINAL)
+
+  -m, --modified <FILE>
+          Modified document (overrides the positional MODIFIED)
+
+  -o, --output <FILE>
+          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md`
+          output writes the changes as CriticMarkup (both documents Markdown)
+
+  -a, --author <NAME>
+          Author name recorded on the revisions
+
+          [default: Redline]
+
+  -d, --date <ISO8601>
+          Revision timestamp (ISO 8601); pinned for reproducible output
+
+          [default: 1970-01-01T00:00:00Z]
+
+      --force
+          Overwrite the output file if it already exists
+
+  -q, --quiet
+          Do not print the success message
+
+      --detail-threshold <RATIO>
+          Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
+
+      --mode <MODE>
+          Compare like Microsoft Word or Open-Xml-PowerTools
+
+          Possible values:
+          - word:       Microsoft Word Compare's layout: word-level detail, replaced
+            paragraphs merged, Word's alignment passes
+          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
+            no Word alignment passes
+
+          [default: word]
+
+      --powertools-faithful
+          Same as --mode powertools
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Examples:
+  jubarte compare old.docx new.docx -o redline.docx
+  jubarte compare -b old.docx -m new.docx --author Legal
 ```
 
 #### `jubarte-redlines changes`
 
 ```text
 $ jubarte-redlines changes --help
-usage: jubarte-redlines changes FILE [options]
+List tracked changes with IDs for accept, reject and edit plans
 
-list each tracked change with the id accept/reject --id and edit plans take
+Usage: jubarte-redlines changes [OPTIONS] <FILE>
 
-      --json  one JSON object per line
-```
+Arguments:
+  <FILE>  The document (.docx)
 
-#### `jubarte-redlines revisions`
-
-```text
-$ jubarte-redlines revisions --help
-usage: jubarte-redlines revisions FILE [options]
-
-list tracked revisions
-
-      --json  one JSON object per line
+Options:
+      --json  Emit one JSON object per line
+  -h, --help  Print help
 ```
 
 #### `jubarte-redlines accept`
 
 ```text
 $ jubarte-redlines accept --help
-usage: jubarte-redlines accept FILE [options]
+Accept all tracked changes, or select by ID, author or kind
 
-accept tracked changes (all, or the ones selected)
+Usage: jubarte-redlines accept [OPTIONS] --output <FILE> <FILE>
 
-  -o, --output OUTPUT  output path (required)
-      --force          overwrite an existing output
-      --id ID          only this change (body:rev:12); repeatable
-      --author AUTHOR  only changes by this author; repeatable
-      --kind KIND      only changes of this kind (insertion, deletion, move, formatting); repeatable
+Arguments:
+  <FILE>
+          The document (.docx) whose revisions to accept
+
+Options:
+  -o, --output <FILE>
+          Output path
+
+      --force
+          Overwrite the output file if it already exists
+
+      --id <ID>
+          Only this change (`body:rev:12`, as `jubarte changes` lists it). Repeatable
+
+      --author <NAME>
+          Only changes by this author. Repeatable
+
+      --kind <KIND>
+          Only changes of this kind. Repeatable
+
+          Possible values:
+          - insertion:  Inserted text or structural elements
+          - deletion:   Deleted text or structural elements
+          - move:       Content moved between document locations
+          - formatting: Changes to text or paragraph formatting
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 #### `jubarte-redlines reject`
 
 ```text
 $ jubarte-redlines reject --help
-usage: jubarte-redlines reject FILE [options]
+Reject all tracked changes, or select by ID, author or kind
 
-reject tracked changes (all, or the ones selected)
+Usage: jubarte-redlines reject [OPTIONS] --output <FILE> <FILE>
 
-  -o, --output OUTPUT  output path (required)
-      --force          overwrite an existing output
-      --id ID          only this change (body:rev:12); repeatable
-      --author AUTHOR  only changes by this author; repeatable
-      --kind KIND      only changes of this kind (insertion, deletion, move, formatting); repeatable
-```
+Arguments:
+  <FILE>
+          The document (.docx) whose revisions to reject
 
-#### `jubarte-redlines text`
+Options:
+  -o, --output <FILE>
+          Output path
 
-```text
-$ jubarte-redlines text --help
-usage: jubarte-redlines text FILE [options]
+      --force
+          Overwrite the output file if it already exists
 
-Markdown with [body:p:N] ids, the coordinates an edit plan uses
-```
+      --id <ID>
+          Only this change (`body:rev:12`, as `jubarte changes` lists it). Repeatable
 
-#### `jubarte-redlines inspect`
+      --author <NAME>
+          Only changes by this author. Repeatable
 
-```text
-$ jubarte-redlines inspect --help
-usage: jubarte-redlines inspect FILE [options]
+      --kind <KIND>
+          Only changes of this kind. Repeatable
 
-paragraph ids, formatting spans, limitations and package facts
+          Possible values:
+          - insertion:  Inserted text or structural elements
+          - deletion:   Deleted text or structural elements
+          - move:       Content moved between document locations
+          - formatting: Changes to text or paragraph formatting
 
-      --json  emit the JSON snapshot
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 #### `jubarte-redlines convert`
 
 ```text
 $ jubarte-redlines convert --help
-usage: jubarte-redlines convert FILE [options]
+Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 
-DOCX to PDF
+Usage: jubarte-redlines convert [OPTIONS] <FILE>
 
-  -o, --output OUTPUT                      PDF path [default: <stem>.pdf beside the input]
-      --force                              overwrite an existing output
-      --pdf                                write the PDF (the default)
-      --png                                not in this build: use uvx jubarte-redlines or the jubarte binary
-      --compress                           deflate PDF streams
-      --revisions REVISIONS                how tracked changes are painted: conventional, word or custom [default: conventional]
-      --revision-palette REVISION_PALETTE  marks for --revisions custom, e.g. deleted=#AA0000:strike,...
+Arguments:
+  <FILE>
+          The document to convert: .docx, Markdown (.md, .markdown), or a Word 97-2003
+          .doc (read into a .docx first)
+
+Options:
+  -o, --output <FILE>
+          Output path [default: <stem>.pdf next to a .docx, <stem>.docx next to
+          Markdown; Markdown output goes to stdout]. PNG pages are named
+          <stem>-page-NN.png beside it
+
+      --force
+          Overwrite the output file if it already exists
+
+      --pdf
+          Write the PDF (the default when neither --pdf nor --png is given)
+
+      --png
+          Rasterize every page to PNG (<stem>-page-NN.png)
+
+      --report <FILE>
+          Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`)
+
+      --compress
+          Deflate the PDF's streams (`/FlateDecode`). Much smaller output; the trade is
+          that the page content is no longer plain text, so it cannot be read with
+          `strings` or `grep`
+
+      --font-report <FILE>
+          Write a JSON font-resolution report (`[{requested, step, physical, bold,
+          italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out
+          first, so page numbers stay the document's; a document without changes keeps
+          its first page. --pages counts the kept pages
+
+      --track-changes <CHOICE>
+          Keep tracked changes (all), or write the document with every change accepted
+          or rejected (pandoc's flag): CriticMarkup in Markdown, Word's revisions in a
+          .docx. With --to md, the Markdown itself is resolved
+
+          Possible values:
+          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
+          - accept: Accept every change
+          - reject: Reject every change
+
+          [default: all]
+
+      --no-critic
+          Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text
+
+      --reference-doc <FILE>
+          Markdown to Word: take styles, numbering, page setup, headers and footers from
+          this .docx (pandoc's --reference-doc)
+
+      --resource-path <DIR>
+          Markdown to Word: where images are found [default: the Markdown file's
+          directory]
+
+  -a, --author <NAME>
+          Markdown to Word: author of the tracked changes and comments
+
+          [default: Redline]
+
+  -d, --date <ISO8601>
+          Markdown to Word: their date (ISO 8601); pinned for reproducible output
+
+          [default: 1970-01-01T00:00:00Z]
+
+      --page <SIZE>
+          Markdown to Word: the page size when there is no --reference-doc (one-inch
+          margins either way); a reference's page setup wins
+
+          Possible values:
+          - letter: US Letter, 8.5 by 11 inches
+          - a4:     ISO A4, 210 by 297 mm
+
+          [default: letter]
+
+      --no-page-markers
+          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
+          pass that places them
+
+      --pages <SPEC>
+          Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs
+          over the whole document. Needs PNG output
+
+      --fail-on-substitution
+          Exit 4 when a requested font was substituted (listed on stderr and in
+          --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
+          requested font was substituted
+
+      --update-fields
+          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
+          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
+          --track-changes. Field codes stay, so Word can update them again; page numbers
+          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
+          per field; --report writes `{page_count, fields}`
+
+      --timeout <SECONDS>
+          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
+          written. An output being written at that moment may be left partial
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Rendering:
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+Revision marks:
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+Formats:
+  -f, --from <FORMAT>
+          Input format [default: from the file: .md and .markdown are Markdown, a zip is
+          Word]
+
+          Possible values:
+          - docx: Word (.docx)
+          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
+            CriticMarkup
+          - pdf:  PDF, laid out as Word does
+          - png:  PNG pages
+
+  -t, --to <FORMAT>
+          Output format [default: from --output, else pdf for Word and docx for
+          Markdown]
+
+          Possible values:
+          - docx: Word (.docx)
+          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
+            CriticMarkup
+          - pdf:  PDF, laid out as Word does
+          - png:  PNG pages
+
+Examples:
+  jubarte convert contract.docx                   PDF, Word-style layout
+  jubarte convert draft.md                        draft.docx, CriticMarkup as tracked
+  changes
+  jubarte convert draft.md -o draft.pdf           the changes painted in a PDF
+  jubarte convert draft.md --reference-doc house.docx -o draft.docx
+  jubarte convert draft.md -t md --track-changes accept   the text with every change
+  accepted
+  jubarte convert contract.docx -t md             Markdown with <!-- page N of M -->
+  lines
+  jubarte convert old.doc                         old.docx (text, headings, lists,
+  tables)
+  jubarte convert notes.md --no-critic            {++ and the other delimiters as text
+```
+
+#### `jubarte-redlines diff`
+
+```text
+$ jubarte-redlines diff --help
+Review differences as GitHub, word, normal, context or side-by-side text
+
+Usage: jubarte-redlines diff [OPTIONS] <OLD> <NEW>
+
+Arguments:
+  <OLD>
+          The old document: .docx or Markdown
+
+  <NEW>
+          The new document: .docx or Markdown
+
+Options:
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out
+          first, so page numbers stay the document's; a document without changes keeps
+          its first page. --pages counts the kept pages
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Review:
+  -o, --output <FILE>
+          Write to FILE. Text views default to stdout and write only text. Patch/critic
+          infer Word, Markdown, PDF or PNG from the extension
+
+      --format <FORMAT>
+          Choose the review view; word accepts ALL input changes first
+
+          Possible values:
+          - patch:        The changed paragraphs, as `git diff --word-diff` with
+            CriticMarkup comments and highlights
+          - critic:       CriticMarkup: current document text with tracked marks
+          - github:       Git/GitHub unified text; preserves each document's tracked
+            marks
+          - word:         Fresh word-level CriticMarkup after accepting ALL changes in
+            both inputs
+          - normal:       Normal diff with line addresses and no context (a/d/c, < and
+            >)
+          - context:      Context diff with old/new ranges and !, + and - prefixes
+          - side-by-side: Old and new lines in parallel columns, with |, < and > markers
+
+          [default: patch]
+
+  -U, --context <LINES>
+          Unchanged lines around GitHub or context hunks; -U0 shows changes only
+
+          [default: 3]
+
+      --accept-changes
+          Accept both documents' changes before comparing. Word format always does this
+
+      --full-lines
+          Show complete lines instead of a 70-character window around changes
+
+      --force
+          Overwrite the output file if it already exists
+
+Paragraph patch:
+      --columns <N>
+          Wrap the patch's lines at this many columns; 0 does not wrap
+
+          [default: 72]
+
+Formats:
+  -t, --to <FORMAT>
+          Output format, when --output does not say
+
+          Possible values:
+          - docx: Word (.docx)
+          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
+            CriticMarkup
+          - pdf:  PDF, laid out as Word does
+          - png:  PNG pages
+
+  -f, --from <FORMAT>
+          Input format of both documents [default: from each file]
+
+          [possible values: docx, md, markdown]
+
+Word redline:
+  -a, --author <NAME>
+          Who made the changes: the patch's owner and the revisions' author [default:
+          `git config user.name`, else Redline]
+
+  -d, --date <ISO8601>
+          When (ISO 8601) [default: now]; pin it for reproducible output
+
+      --mode <MODE>
+          Whose redline to reproduce (see `jubarte --help`)
+
+          Possible values:
+          - word:       Microsoft Word Compare's layout: word-level detail, replaced
+            paragraphs merged, Word's alignment passes
+          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
+            no Word alignment passes
+
+          [default: word]
+
+      --detail-threshold <RATIO>
+          LCS detail threshold (see `jubarte --help`)
+
+      --reference-doc <FILE>
+          Two Markdown documents written as Word take styles, page setup, headers and
+          footers from this .docx
+
+      --critic
+          Read CriticMarkup in the Markdown documents as tracked changes (Word output).
+          By default a document compared is text
+
+      --resource-path <DIR>
+          Where images named by the Markdown are found [default: each Markdown file's
+          directory]
+
+Revision marks:
+      --revisions <REVISIONS>
+          How tracked changes are painted in PDF or PNG output (see `convert --help`)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom (see `convert --help`)
+
+Examples:
+  jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout
+  jubarte diff old.md new.md                       the patch on stdout
+  jubarte diff old.md new.md --format critic       CriticMarkup on stdout, as pandiff
+  jubarte diff old.md new.md -o changes.docx       Word tracked changes
+  jubarte diff old.md new.md -o changes.pdf        the changes painted in a PDF
+  jubarte diff contract.docx edited.md -o redline.docx
+      the Markdown's edits as tracked changes on the Word document
+
+GIT:
+  git config --global difftool.jubarte.cmd 'jubarte diff "$LOCAL" "$REMOTE"'
+  git difftool -t jubarte -y -- '*.md'
+```
+
+#### `jubarte-redlines inspect`
+
+```text
+$ jubarte-redlines inspect --help
+Inspect document facts, paragraphs, styles and tables
+
+Usage: jubarte-redlines inspect [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  The document (.docx) to read
+
+Options:
+      --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
+                `paragraphs`, `stories`, `tables`) instead of a human summary
+      --tables  Print each body table as a grid instead of the paragraphs: a `table N:
+                ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
+                tab-separated `ids=text` cells
+  -h, --help    Print help
+```
+
+#### `jubarte-redlines read`
+
+```text
+$ jubarte-redlines read --help
+Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
+
+A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
+is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>#12
+@AC<<}`) and comments with theirs (`{>>#c5 @AC: …<<}`).
+
+Usage: jubarte-redlines read [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>
+          The document (.docx) to read
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Read options:
+      --track-changes <CHOICE>
+          Tracked changes inline (all, the default), or the text with every change
+          accepted or rejected; the id lines then list what changed
+
+          Possible values:
+          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
+          - accept: Accept every change
+          - reject: Reject every change
+
+      --comments <MODE>
+          Comments inline (default) or hidden, with their ids on the id line of the
+          paragraph that holds them
+
+          Possible values:
+          - inline: Comments inline, with their ids
+          - none:   Comments hidden; their ids on the id lines
+
+          [default: inline]
+
+      --dates
+          Timestamps on the notes of an author whose changes do not all share one (the
+          header shows an author's single timestamp)
+
+      --no-page-markers
+          Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
+          M -->` lines
+
+  -p, --paragraphs <SPEC>
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+
+      --head <N>
+          Only the first N blocks (a table is one block)
+
+      --tail <N>
+          Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
 ```
 
 #### `jubarte-redlines edit`
 
 ```text
 $ jubarte-redlines edit --help
-usage: jubarte-redlines edit FILE [options]
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve or --style
+(several -p per command), or a JSON plan. Writes clean copy, redline, patch and report,
+then prints the changed paragraphs as the agent view (refusal: exit 3)
 
-apply an edit plan: clean.docx, redline.docx, patch.diff, report.jsonl
+Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
-      --plan PLAN        PLAN.json (required)
-      --out-dir OUT_DIR  DIR (required)
-      --dry-run          resolve and report only; write nothing
-      --force            replace an existing output directory's files
-  -q, --quiet            print nothing on success
+Arguments:
+  <FILE>
+          The source document (.docx). Never modified
+
+Options:
+      --plan <PLAN.json>
+          Edit plan JSON: batches and the other operation kinds (see `jubarte
+          capabilities --json`). Excludes the operation flags
+
+  -p, --location <WHERE>
+          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a comment. Each -p starts
+          an operation; the flags after it belong to it
+
+      --anchor <TEXT>
+          Text inside WHERE the operation applies to (must occur once)
+
+      --content <TEXT>
+          New text: replaces the anchor; rewrites the paragraph without one; on c5, the
+          comment's new text
+
+      --delete
+          Delete the anchor, or the whole paragraph (or comment) without one
+
+      --resolve
+          Resolve comment c5 (with -p c5)
+
+      --style <SPEC>
+          Formatting for the anchored text: bold, italic, underline, strike, caps,
+          highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a
+          paragraph style (Heading2)
+
+      --author <NAME>
+          Author of the changes and comments (operation flags; a plan names its own)
+
+          [default: "Modified User"]
+
+      --datetime <ISO8601>
+          Their timestamp (ISO 8601) [default: now, UTC]
+
+      --suggesting-mode
+          The edits are tracked changes (the default): redline.docx, clean.docx,
+          patch.diff and report.jsonl are written and the view shows the marks
+
+      --editing-mode
+          The edits land directly: clean.docx and report.jsonl only; the view shows the
+          result with rev tags on the id lines
+
+      --existing-revisions <MODE>
+          What to do when FILE already holds tracked changes: auto keeps them and tracks
+          the new edits beside them; a clean file goes through the comparer
+
+          Possible values:
+          - auto:   `keep` when the file has tracked changes, else the comparer path
+          - keep:   Keep them; the new edits are tracked beside them
+          - accept: Accept them first
+          - reject: Reject them first
+          - refuse: Refuse a file that has them
+
+          [default: auto]
+
+      --out-dir <DIR>
+          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
+
+      --force
+          Replace an existing output directory's files
+
+  -q, --quiet
+          Print nothing on success (the files are still written)
+
+      --dry-run
+          Resolve and report only; write nothing
+
+      --pdf
+          Also write redline.pdf and clean.pdf
+
+      --png
+          Also write redline-page-NN.png and clean-page-NN.png
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Rendering:
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+Revision marks:
+      --revisions <REVISIONS>
+          How tracked changes are painted in the redline PDF/PNG
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom (see `convert --help`)
+
+Examples:
+  jubarte edit a.docx -p p12 --anchor "thirty days" --content "forty-five days"
+  jubarte edit a.docx -p p12 --anchor thirty --content "thirty (30)"   an insertion
+  jubarte edit a.docx -p p7 --anchor "at its sole discretion" --delete -p p9 --delete
+  jubarte edit a.docx -p p3 --content "The parties agree as follows."    rewrite
+  jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
+  jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
+  jubarte edit a.docx --plan plan.json --out-dir review
+
+WHERE is an id from `jubarte read`: p12, header1, footer2.p1, t0.r1.c2,
+c5 (a comment), or a long id (body:p:12).
+```
+
+#### `jubarte-redlines add`
+
+```text
+$ jubarte-redlines add --help
+Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
+Writes the same files as edit and prints the changed paragraphs as the agent view
+
+Usage: jubarte-redlines add [OPTIONS] --location <WHERE> <FILE>
+
+Arguments:
+  <FILE>
+          The source document (.docx). Never modified
+
+Options:
+  -p, --location <WHERE>
+          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a reply. Each -p starts
+          an operation; the flags after it belong to it
+
+      --anchor <TEXT>
+          Text inside WHERE to comment on (must occur once)
+
+      --content <TEXT>
+          The paragraph, comment or reply text
+
+      --before
+          A new paragraph before WHERE instead of after it
+
+      --comment
+          A comment on the whole paragraph (with --anchor the comment sits on the anchor
+          and this flag is implied)
+
+      --style <SPEC>
+          Formatting for the new paragraph's text (bold, italic, underline,
+          highlight=yellow) or its paragraph style (Heading2)
+
+      --author <NAME>
+          Author of the changes and comments (operation flags; a plan names its own)
+
+          [default: "Modified User"]
+
+      --datetime <ISO8601>
+          Their timestamp (ISO 8601) [default: now, UTC]
+
+      --suggesting-mode
+          The edits are tracked changes (the default): redline.docx, clean.docx,
+          patch.diff and report.jsonl are written and the view shows the marks
+
+      --editing-mode
+          The edits land directly: clean.docx and report.jsonl only; the view shows the
+          result with rev tags on the id lines
+
+      --existing-revisions <MODE>
+          What to do when FILE already holds tracked changes: auto keeps them and tracks
+          the new edits beside them; a clean file goes through the comparer
+
+          Possible values:
+          - auto:   `keep` when the file has tracked changes, else the comparer path
+          - keep:   Keep them; the new edits are tracked beside them
+          - accept: Accept them first
+          - reject: Reject them first
+          - refuse: Refuse a file that has them
+
+          [default: auto]
+
+      --out-dir <DIR>
+          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
+
+      --force
+          Replace an existing output directory's files
+
+  -q, --quiet
+          Print nothing on success (the files are still written)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Examples:
+  jubarte add a.docx -p p12 --content "Time is of the essence."   new paragraph after
+  p12
+  jubarte add a.docx -p p12 --content Recitals --before --style Heading2
+  jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?"   a comment
+  jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap."
+  jubarte add a.docx -p c5 --content "Agreed, will fix."           a reply
 ```
 
 #### `jubarte-redlines capabilities`
 
 ```text
 $ jubarte-redlines capabilities --help
-usage: jubarte-redlines capabilities [options]
+What this binary can do, for agents choosing an operation
 
-what this build can do
+Usage: jubarte-redlines capabilities [OPTIONS]
 
-      --json  (the output is JSON either way)
+Options:
+      --json  Emit JSON (the default output is JSON too; the flag documents intent)
+  -h, --help  Print help
 ```
 <!-- gen:cli-npm:end -->
 

@@ -175,3 +175,91 @@ fn missing_relationship_wrong_type_and_missing_target_leave_destination_untouche
         assert!(dest.read_rels_for("word/z.xml").is_none());
     }
 }
+
+#[test]
+fn carrying_images_outside_word_media_deduplicates_bytes_without_overwriting_collisions() {
+    use image::ImageEncoder as _;
+    let mut owned = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut owned)
+        .write_image(&[17, 31, 47], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    let mut collision = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut collision)
+        .write_image(&[61, 79, 97], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    let digest = jubarte::inspect::source_sha256(&owned);
+    let canonical = format!("word/media/P{digest}.png");
+    for source_part in ["story.xml", "word/a.xml", "word/stories/a.xml"] {
+        for target in [
+            "picture.PNG",
+            "assets/picture.png",
+            "word/assets/picture.PnG",
+        ] {
+            for collide in [false, true] {
+                let mut src = package();
+                src.set_part(source_part, b"<source/>".to_vec());
+                src.set_part(target, owned.clone());
+                src.add_content_type_override(target, "image/png");
+                let relative = jubarte::opc::relative_rel_target(source_part, target);
+                let rid = src.add_document_relationship(source_part, IMAGE, &relative);
+                let source_before = src.to_zip().unwrap();
+                let mut dest = package();
+                if collide {
+                    dest.set_part(&canonical, collision.clone());
+                }
+                let destination_part = "word/stories/destination.xml";
+                dest.set_part(destination_part, b"<destination/>".to_vec());
+                let carried = carry_relationship(
+                    &mut dest,
+                    destination_part,
+                    &src,
+                    source_part,
+                    &rid,
+                    |kind| kind == IMAGE,
+                )
+                .unwrap();
+                let resolved = if collide {
+                    format!("word/media/P{digest}_1.png")
+                } else {
+                    canonical.clone()
+                };
+                let rels = dest.read_rels_for(destination_part).unwrap();
+                let row = rels.items.iter().find(|row| row.id == carried).unwrap();
+                assert_eq!(row.rel_type, IMAGE);
+                assert_eq!(row.target_mode, None);
+                assert_eq!(row.target, format!("/{resolved}"));
+                assert_eq!(
+                    dest.resolve_rel_target(destination_part, &row.target),
+                    resolved
+                );
+                assert_eq!(dest.part_bytes(&resolved), Some(owned.as_slice()));
+                assert_eq!(
+                    dest.content_type_for(&resolved).as_deref(),
+                    Some("image/png")
+                );
+                if collide {
+                    assert_eq!(dest.part_bytes(&canonical), Some(collision.as_slice()));
+                }
+                let parts_before_second = dest.parts();
+                let second = carry_relationship(
+                    &mut dest,
+                    destination_part,
+                    &src,
+                    source_part,
+                    &rid,
+                    |kind| kind == IMAGE,
+                )
+                .unwrap();
+                assert_eq!(second, carried);
+                assert_eq!(dest.parts(), parts_before_second);
+                assert_eq!(src.to_zip().unwrap(), source_before);
+                let reopened = PartFs::open(&dest.to_zip().unwrap()).unwrap();
+                assert_eq!(reopened.part_bytes(&resolved), Some(owned.as_slice()));
+                assert_eq!(
+                    reopened.part_bytes(destination_part),
+                    Some(b"<destination/>".as_slice())
+                );
+            }
+        }
+    }
+}

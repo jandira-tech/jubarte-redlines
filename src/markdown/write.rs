@@ -1348,6 +1348,7 @@ pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1405,5 +1406,248 @@ mod tests {
         );
         assert_eq!(attribution("Bo (2026-01-02T03:04:05Z): why"), None);
         assert_eq!(attribution("Bo"), None);
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod markdown_authored_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_iso_components_cannot_become_revision_attributions() {
+        let invalid = [
+            "2026-10T12:34",
+            "2026-10-09-01T12:34",
+            "xxxx-10-09T12:34",
+            "2026-xx-09T12:34",
+            "2026-10-xxT12:34",
+            "2026-10-09T12:34:ab",
+            "2026-10-09T12:34:01.ab",
+            "2026-10-09T12:34+01x30",
+            "2026-10-09T12:34+ab:30",
+            "2026-10-09T12:34+01:ab",
+            "2026-10-09T12:34+",
+            "2026-10-09T12:34:01:02",
+            "2026-10-09T12:34:01.",
+            "2026-10-09Txx:34",
+            "2026-10-09T12:xx",
+        ];
+        for date in invalid {
+            assert!(!is_date(date), "{date}");
+            assert_eq!(
+                named(&format!("Ada ({date}): owned comment")),
+                None,
+                "{date}"
+            );
+            assert_eq!(attribution(&format!("Ada ({date})")), None, "{date}");
+        }
+        for date in [
+            "2026-10-09T12:34",
+            "2026-10-09T12:34:00.5-03:30",
+            "2026-10-09T12:34+00:00",
+        ] {
+            assert!(is_date(date), "{date}");
+            let input = format!("Ada ({date}): owned comment");
+            assert_eq!(
+                named(&input),
+                Some((Some("Ada".to_string()), date, ": owned comment"))
+            );
+            assert_eq!(attribution(&input), None);
+        }
+        let date = "2026-10-09T12:34Z";
+        for author in ["Ad)a ", "Ada", " ", "\t"] {
+            assert_eq!(named(&format!("{author}({date})")), None, "{author:?}");
+        }
+    }
+
+    #[test]
+    fn front_matter_quote_variants_preserve_decoded_authored_metadata() {
+        for (title, author) in [
+            ("'Agreement'", "'Ada'"),
+            ("\"Agreement\"", "\"Ada\""),
+            ("Agreement", "Ada"),
+        ] {
+            let source = format!(
+                "---\ntitle: {title}\nauthor: {author}\nignored: extra\nempty: ''\n---\n\nBody"
+            );
+            let document = read(&source, &DocxOptions::default());
+            assert_eq!(document.title.as_deref(), Some("Agreement"));
+            assert_eq!(document.author.as_deref(), Some("Ada"));
+            assert_eq!(
+                document.body,
+                vec![
+                    Item::Paragraph(Paragraph::default()),
+                    Item::Run(Run {
+                        content: Content::Text("Body".to_string()),
+                        format: RunFormat::default(),
+                        change: None,
+                        highlight: None
+                    }),
+                    Item::ParagraphEnd,
+                ]
+            );
+            assert!(document.comments.is_empty());
+            assert!(document.warnings.is_empty());
+        }
+    }
+
+    #[test]
+    fn comment_links_and_non_attribution_suffixes_keep_the_complete_comment() {
+        let date = "2026-10-09T12:34Z";
+        for (source, expected, by) in [
+            (
+                "Body{>>[owned](https://example.invalid) tail<<}".to_string(),
+                "owned tail".to_string(),
+                None,
+            ),
+            (
+                format!("Body{{>>Ada ({date}) suffix<<}}"),
+                format!("Ada ({date}) suffix"),
+                None,
+            ),
+            (
+                format!("Body{{>>Ada ({date}): owned text<<}}"),
+                "owned text".to_string(),
+                Some(("Ada".to_string(), date.to_string())),
+            ),
+            (
+                "Body{>>one<br>two<<}".to_string(),
+                "one\ntwo".to_string(),
+                None,
+            ),
+        ] {
+            let document = read(&source, &DocxOptions::default());
+            assert_eq!(document.comments.len(), 1, "{source}");
+            let comment = &document.comments[0];
+            assert_eq!(comment.id, 0);
+            assert_eq!(comment.paragraphs.join("\n"), expected, "{source}");
+            assert_eq!(comment.by, by, "{source}");
+            assert_eq!(
+                document
+                    .body
+                    .iter()
+                    .filter_map(|item| match item {
+                        Item::Run(run) => Some(&run.content),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                vec![&Content::Text("Body".to_string())]
+            );
+            assert_eq!(
+                document
+                    .body
+                    .iter()
+                    .filter(|item| matches!(item, Item::CommentReference(0)))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                document
+                    .body
+                    .iter()
+                    .filter(|item| matches!(item, Item::LinkStart(_) | Item::LinkEnd))
+                    .count(),
+                0
+            );
+            assert!(document.attributions.is_empty());
+            assert!(document.warnings.is_empty());
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod memory_picture_import_contract_tests {
+    use super::*;
+
+    fn encoded(format: image::ImageFormat, width: u32, height: u32) -> Vec<u8> {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            width,
+            height,
+            image::Rgb([31, 97, 163]),
+        ));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, format).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn memory_picture_formats_keep_exact_payload_alt_and_capped_aspect_ratio() {
+        for (format, extension, mime) in [
+            (image::ImageFormat::Png, "png", "image/png"),
+            (image::ImageFormat::Jpeg, "jpeg", "image/jpeg"),
+            (image::ImageFormat::Gif, "gif", "image/gif"),
+            (image::ImageFormat::Bmp, "bmp", "image/bmp"),
+            (image::ImageFormat::Tiff, "tiff", "image/tiff"),
+        ] {
+            for (width, height, cx, cy) in [
+                (1, 2, 9525, 19050),
+                (624, 1, 5_943_600, 9525),
+                (625, 2, 5_943_600, 19019),
+            ] {
+                let bytes = encoded(format, width, height);
+                let got = read_picture(bytes.clone(), "owned Ω alt").unwrap();
+                assert_eq!(got.bytes, bytes);
+                assert_eq!(got.extension, extension);
+                assert_eq!(got.content_type, mime);
+                assert_eq!((got.width, got.height), (cx, cy));
+                assert_eq!(got.alt, "owned Ω alt");
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_memory_images_preserve_alt_text_and_report_only_requested_load_failures() {
+        for bytes in [
+            Vec::new(),
+            b"not an image".to_vec(),
+            b"\x89PNG\r\n\x1a\n".to_vec(),
+            b"RIFF\x04\0\0\0WEBP".to_vec(),
+        ] {
+            assert!(read_picture(bytes.clone(), "owned").is_none());
+            let load = |url: &str| {
+                assert_eq!(url, "owned.png");
+                Some(bytes.clone())
+            };
+            let options = DocxOptions {
+                images: Some(&load),
+                ..DocxOptions::default()
+            };
+            let doc = read("before ![owned Ω](owned.png) after", &options);
+            assert!(doc.pictures.is_empty());
+            assert_eq!(
+                doc.warnings,
+                ["image 'owned.png' was written as its alt text"]
+            );
+            let text: String = doc
+                .body
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Run(Run {
+                        content: Content::Text(text),
+                        ..
+                    }) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(text, "before owned Ω after");
+        }
+        let no_load = read("![owned Ω](owned.png)", &DocxOptions::default());
+        assert!(no_load.warnings.is_empty());
+        assert!(no_load.pictures.is_empty());
+        assert!(no_load.body.iter().any(|item| matches!(item, Item::Run(Run { content: Content::Text(text), .. }) if text == "owned Ω")));
+        let load = |_: &str| None;
+        let missing = read(
+            "![owned Ω](owned.png)",
+            &DocxOptions {
+                images: Some(&load),
+                ..DocxOptions::default()
+            },
+        );
+        assert_eq!(
+            missing.warnings,
+            ["image 'owned.png' was written as its alt text"]
+        );
+        assert!(missing.pictures.is_empty());
     }
 }

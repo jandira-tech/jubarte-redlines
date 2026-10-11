@@ -14,11 +14,12 @@ touch `word/document.xml`.
 
 | Task | Command |
 |---|---|
-| Read | `jubarte text file.docx` (Markdown with `[body:p:N]` ids) or `jubarte inspect file.docx --json` |
-| Edit (tracked changes + comments) | `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
+| Read | `jubarte file.docx` (or `jubarte read file.docx`: header + Markdown with `<!-- pN -->` ids; ids are `p12`, `header1`, `footer2.p1`, `t0.r1.c2`, `c5`) or `jubarte inspect file.docx --json` |
+| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; prints the changed paragraphs), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
+| Add a paragraph, comment or reply | `jubarte add file.docx -p p12 --content "New clause."` (`--before`), `-p p5 --anchor "fee" --content "Cap?"` (a comment), `-p c5 --content "Agreed."` (a reply) |
 | Look at pages | `jubarte convert file.docx --png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx --png --report pages.json` |
-| Compare two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
+| Compare two versions | `jubarte a.docx b.docx` prints the redline as the agent view; `-o redline.docx --author "Name"` writes it (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
 | Clean copy of a redline | `jubarte accept redline.docx -o clean.docx` (or `reject`) |
 | Will Word open it, is every edit tracked | `jubarte validate redline.docx --original file.docx --author "Name"` (`--repair fixed.docx` fixes what it can) |
 | What can this build do | `jubarte capabilities --json` |
@@ -31,18 +32,34 @@ then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
 ## 1. Read before you edit
 
 ```bash
-jubarte text contract.docx
+jubarte read contract.docx                 # whole document
+jubarte read contract.docx -p p12,p40-p48  # just those paragraphs (t0 = a table)
+jubarte read contract.docx --head 20       # or --tail 20
 ```
 
-Every paragraph prints as `[body:p:12] (a) **Confidentiality.** You will ...`.
-The id is the coordinate an edit uses. `**bold**`, `*italic*` and
-`==highlight==` are the document's direct run formatting, so you can see where
-a bold heading run ends. `jubarte inspect contract.docx --json` gives the same
-paragraphs as data (`text`, `style`, `numbered`, `in_table`, `runs` with char
-offsets, `limitations`) plus `summary` (tables, comments, revisions, headers,
-footnotes) and `source_sha256`. After the body, `jubarte text` prints each
-header, footer and notes part as its own story (`[header1:p:0] ...`,
-`[footnotes:p:0] ...`), and `inspect` lists them under `stories`.
+`read` prints a YAML header (revision and comment counts, authors with their
+handles, page setup, styles, headers and footers), then every paragraph under
+an id line:
+
+```text
+<!-- p12 num "(a)", comments #c5 -->
+**Confidentiality.** You will {~~thirty~>forty-five~~}{>>#3+4 @AC<<} days ...
+```
+
+`p12` is `body:p:12`, the coordinate an edit uses. A tracked change carries
+its ids: `{++…++}{>>#12 @AC<<}` is `body:rev:12` for `accept --id` and
+`reject --id`, and `#3+4` is two Word marks of one change. A comment reads
+`{==anchor==}{>>#c5 @AC: text<<}`, which is `comment_id: 5` in a plan; a reply
+names its root (`re #c5`). `**bold**`, `*italic*` and `<u>underline</u>` are
+the document's direct run formatting, so you can see where a bold heading run
+ends. `--track-changes accept|reject` shows the text with every change
+resolved, `--comments none` moves the comment ids onto the id lines, and
+`--no-page-markers` skips the layout pass that numbers the pages.
+`jubarte inspect contract.docx --json` gives the same paragraphs as data
+(`text`, `style`, `numbered`, `in_table`, `runs` with char offsets,
+`limitations`) plus `summary` (tables, comments, revisions, headers,
+footnotes), `stories` (each header, footer and notes part) and
+`source_sha256`.
 `jubarte comments FILE --json` lists every comment with its thread
 (`parent`, `done`) and the anchored text with its surroundings
 (`anchor_text`, `before`, `after`, `paragraph`); `--author NAME` keeps one
@@ -266,8 +283,8 @@ Gotchas:
   paragraphs, and every `PAGEREF`, `REF`, `NUMPAGES` and `SEQ` result is
   written, before the redline is compared; the report lists them under
   `fields`. Without it the TOC stays empty until Word updates its fields.
-  On a document you are not editing, `jubarte fields update in.docx -o
-  out.docx --json` does the same. Page numbers are jubarte's layout, which
+  On a document you are not editing, `jubarte convert in.docx -o
+  out.docx --update-fields` does the same. Page numbers are jubarte's layout, which
   matches Word on most documents but is not Word
   (`docs/WORD_DIFFERENCES.md` section 11 in the jubarte repository).
   Field codes stay, so Word's Update Field still works.
@@ -360,7 +377,7 @@ Gotchas:
 jubarte original.docx revised.docx -o redline.docx --author "Legal"
 # Python CLI: compare is a subcommand there
 python -m jubarte_redlines compare original.docx revised.docx -o redline.docx --author "Legal"
-jubarte revisions redline.docx --json
+jubarte changes redline.docx --json
 jubarte accept redline.docx -o clean.docx
 jubarte reject redline.docx -o base.docx
 ```

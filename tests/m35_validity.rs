@@ -497,15 +497,27 @@ fn t15_simple_fields_hoisted_out_of_revisions() {
     );
     hoist_hyperlinks_out_of_revisions(&mut dom, root);
     let p = dom.descendants(root, Some(&W::p()))[0];
+    // The empty PAGE field has no result to carry the revision: it stays
+    // inside the w:ins as the complex field Word's redline writes (a bare
+    // empty field there hung Word 16.115, b15 of the 0.12.0 sample).
     assert_eq!(
         child_locals(&dom, p),
-        vec!["ins", "fldSimple", "ins", "fldSimple"],
+        vec!["ins", "fldSimple"],
         "{}",
         dom.serialize_element(root)
     );
-    let last = dom.elements(p, Some(&W::name("fldSimple")))[1];
+    let ins = dom.elements(p, Some(&W::ins()))[0];
+    let code = dom.descendants(ins, Some(&W::name("instrText")));
+    assert_eq!(code.len(), 1);
+    assert_eq!(dom.value(code[0]), "PAGE");
+    let last = dom.elements(p, Some(&W::name("fldSimple")))[0];
     assert_eq!(child_locals(&dom, last), vec!["ins"]);
-    assert_eq!(dom.value(root), "Page  of 9");
+    let shown: String = dom
+        .descendants(root, Some(&W::t()))
+        .into_iter()
+        .map(|t| dom.value(t))
+        .collect();
+    assert_eq!(shown, "Page  of 9");
 }
 
 #[test]

@@ -234,6 +234,25 @@ pub fn promote_skip_ahead_equals(
     seqs: &mut Vec<super::atoms::CorrelatedSequence>,
     settings: &WmlComparerSettings,
 ) {
+    promote_skip_ahead_equals_inner(None, seqs, settings);
+}
+
+/// Word producer variant: token-level Equal/Deleted sequences still carry
+/// complete original paragraph ownership in their atom ancestry. Use those
+/// immutable source owners for repeated-anchor disambiguation.
+pub(crate) fn promote_skip_ahead_equals_with_source(
+    dom: &Dom,
+    seqs: &mut Vec<super::atoms::CorrelatedSequence>,
+    settings: &WmlComparerSettings,
+) {
+    promote_skip_ahead_equals_inner(Some(dom), seqs, settings);
+}
+
+fn promote_skip_ahead_equals_inner(
+    dom: Option<&Dom>,
+    seqs: &mut Vec<super::atoms::CorrelatedSequence>,
+    settings: &WmlComparerSettings,
+) {
     use super::ComparisonUnitGroupType;
     use super::atoms::{ComparisonUnit, CorrelatedSequence};
     if !settings.merge_replaced_paragraphs || !settings.detect_moves {
@@ -306,7 +325,75 @@ pub fn promote_skip_ahead_equals(
                 }
                 // Only promote when the run includes a table (heading-only moves
                 // orphan the table and regress page layout).
-                if saw_table && eq_end > eq_start {
+                // A source paragraph repeated across this gap and an Equal run is
+                // an ambiguous alignment anchor, not evidence the following
+                // unchanged table moved. Promoting it lets table coalescing
+                // pull the original row ahead of its deleted prefix (repeated
+                // cover titles and wrapped identical paragraphs). Keep the
+                // already source-ordered LCS region in this case; independent
+                // skip-ahead heading/table moves still use the Word path.
+                let repeated_original_prefix = saw_table
+                    && if let Some(dom) = dom {
+                        let source_paragraphs = |unit: &ComparisonUnit| {
+                            unit.descendant_atoms()
+                                .into_iter()
+                                .filter_map(|atom| {
+                                    atom.ancestor_elements
+                                        .iter()
+                                        .rev()
+                                        .copied()
+                                        .find(|&ancestor| dom.name_is(ancestor, &W::p()))
+                                })
+                                .filter(|&paragraph| {
+                                    dom.ancestors(paragraph, Some(&W::tbl())).is_empty()
+                                })
+                                .collect::<HashSet<_>>()
+                        };
+                        let mut prior_owners: std::collections::HashMap<
+                            &str,
+                            HashSet<crate::xmllinq::NodeId>,
+                        > = std::collections::HashMap::new();
+                        for unit in seqs[..del_start]
+                            .iter()
+                            .chain(seqs[eq_start..eq_end].iter())
+                            .filter(|sequence| {
+                                sequence.correlation_status == CorrelationStatus::Equal
+                            })
+                            .flat_map(|sequence| {
+                                sequence.com_units_1.as_deref().unwrap_or_default()
+                            })
+                        {
+                            for paragraph in source_paragraphs(unit) {
+                                if let Some(hash) =
+                                    dom.attribute(paragraph, &crate::namespaces::PT::sha1_hash())
+                                {
+                                    prior_owners.entry(hash).or_default().insert(paragraph);
+                                }
+                            }
+                        }
+                        gap.iter()
+                            .flat_map(|sequence| {
+                                sequence.com_units_1.as_deref().unwrap_or_default()
+                            })
+                            .flat_map(source_paragraphs)
+                            .any(|deleted| {
+                                dom.attribute(deleted, &crate::namespaces::PT::sha1_hash())
+                                    .and_then(|hash| prior_owners.get(hash))
+                                    .is_some_and(|owners| {
+                                        owners.iter().any(|&prior| prior != deleted)
+                                    })
+                            })
+                    } else {
+                        let prior_paragraphs: HashSet<&str> = seqs[..del_start].iter().chain(seqs[eq_start..eq_end].iter())
+                        .filter(|sequence| sequence.correlation_status == CorrelationStatus::Equal)
+                        .flat_map(|sequence| sequence.com_units_1.as_deref().unwrap_or_default())
+                        .filter(|unit| matches!(unit, ComparisonUnit::Group(group) if group.group_type == ComparisonUnitGroupType::Paragraph))
+                        .map(ComparisonUnit::sha1).collect();
+                        gap.iter().flat_map(|sequence| sequence.com_units_1.as_deref().unwrap_or_default())
+                        .filter(|unit| matches!(unit, ComparisonUnit::Group(group) if group.group_type == ComparisonUnitGroupType::Paragraph))
+                        .any(|deleted| prior_paragraphs.contains(deleted.sha1()))
+                    };
+                if saw_table && eq_end > eq_start && !repeated_original_prefix {
                     let mut u1_all = Vec::new();
                     let mut u2_all = Vec::new();
                     for s in &seqs[eq_start..eq_end] {
@@ -575,6 +662,7 @@ fn detect_moves_memoized(
 /// (`memoized_matches_reference`); not compiled into release builds now that
 /// production dispatches to the memoized path (PR3 Phase D).
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn detect_moves_reference(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -731,6 +819,7 @@ fn detect_moves_reference(
 /// obvious-move case and thousands of seeded-random sequences under several
 /// settings profiles.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod memoized_moves_tests {
     use super::*;
     use crate::xmllinq::NodeId;
@@ -984,5 +1073,472 @@ mod memoized_moves_tests {
              memoized={memo_ms:.1}ms speedup={:.1}x",
             ref_ms / memo_ms.max(0.0001)
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod repeated_source_anchor_promotion_tests {
+    use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
+    use super::*;
+
+    fn authored_units(
+        dom: &mut Dom,
+        gap: Option<&str>,
+        settings: &WmlComparerSettings,
+    ) -> Vec<ComparisonUnit> {
+        let gap = gap
+            .map(|text| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"))
+            .unwrap_or_default();
+        let document = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:r><w:t>Existing agreed prefix</w:t></w:r></w:p>{gap}<w:p><w:r><w:t>Capability matrix heading</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Table source payload</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>",W::URI));
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        super::super::preprocess::add_sha1_hash_to_block_level_content(
+            dom,
+            body,
+            settings,
+            &super::super::preprocess::null_rel_resolver,
+        );
+        let atoms = super::super::atomize::create_comparison_unit_atom_list(dom, body, settings);
+        super::super::units::get_comparison_unit_list(dom, &atoms, settings)
+    }
+
+    #[test]
+    fn table_skip_ahead_requires_an_unambiguous_original_paragraph_anchor() {
+        for repeated in [false, true] {
+            let mut dom = Dom::new();
+            let settings = WmlComparerSettings::default();
+            let original = authored_units(
+                &mut dom,
+                Some(if repeated {
+                    "Existing agreed prefix"
+                } else {
+                    "Deleted independent source clause"
+                }),
+                &settings,
+            );
+            let revised = authored_units(&mut dom, None, &settings);
+            assert_eq!(original.len(), 4);
+            assert_eq!(revised.len(), 3);
+            let equal = |old: ComparisonUnit, new: ComparisonUnit| CorrelatedSequence {
+                correlation_status: CorrelationStatus::Equal,
+                com_units_1: Some(vec![old]),
+                com_units_2: Some(vec![new]),
+            };
+            let mut sequences = vec![
+                equal(original[0].clone(), revised[0].clone()),
+                CorrelatedSequence::deleted(vec![original[1].clone()]),
+                equal(original[2].clone(), revised[1].clone()),
+                equal(original[3].clone(), revised[2].clone()),
+            ];
+            let expected_original = original
+                .iter()
+                .map(|unit| unit.sha1().to_string())
+                .collect::<Vec<_>>();
+            let expected_revised = revised
+                .iter()
+                .map(|unit| unit.sha1().to_string())
+                .collect::<Vec<_>>();
+            promote_skip_ahead_equals(&mut sequences, &settings);
+            assert_eq!(
+                sequences
+                    .iter()
+                    .map(|sequence| sequence.correlation_status)
+                    .collect::<Vec<_>>(),
+                if repeated {
+                    vec![
+                        CorrelationStatus::Equal,
+                        CorrelationStatus::Deleted,
+                        CorrelationStatus::Equal,
+                        CorrelationStatus::Equal,
+                    ]
+                } else {
+                    vec![
+                        CorrelationStatus::Equal,
+                        CorrelationStatus::Inserted,
+                        CorrelationStatus::Deleted,
+                        CorrelationStatus::Deleted,
+                    ]
+                },
+                "repeated={repeated}; independent heading/table moves retain the existing Word route"
+            );
+            for (revised, expected) in [(false, expected_original), (true, expected_revised)] {
+                let actual = sequences
+                    .iter()
+                    .flat_map(|sequence| {
+                        if revised {
+                            sequence.com_units_2.as_deref().unwrap_or_default()
+                        } else {
+                            sequence.com_units_1.as_deref().unwrap_or_default()
+                        }
+                    })
+                    .map(|unit| unit.sha1().to_string())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    actual, expected,
+                    "all original/revised units and their ordering survive"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod source_paragraph_promotion_boundary_tests {
+    use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
+    use super::*;
+    use crate::namespaces::PT;
+    use crate::xmllinq::NodeId;
+
+    fn paragraph(text: &str) -> String {
+        format!("<w:p><w:r><w:t xml:space='preserve'>{text}</w:t></w:r></w:p>")
+    }
+
+    fn table(text: &str) -> String {
+        format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>",
+            paragraph(text)
+        )
+    }
+
+    fn source(
+        dom: &mut Dom,
+        blocks: &str,
+        settings: &WmlComparerSettings,
+    ) -> (NodeId, Vec<ComparisonUnit>) {
+        let document = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}'><w:body>{blocks}</w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        super::super::preprocess::add_sha1_hash_to_block_level_content(
+            dom,
+            body,
+            settings,
+            &super::super::preprocess::null_rel_resolver,
+        );
+        let atoms = super::super::atomize::create_comparison_unit_atom_list(dom, body, settings);
+        (
+            root,
+            super::super::units::get_comparison_unit_list(dom, &atoms, settings),
+        )
+    }
+
+    fn words(unit: &ComparisonUnit) -> Vec<ComparisonUnit> {
+        let ComparisonUnit::Group(group) = unit else {
+            panic!("authored paragraph must be grouped")
+        };
+        assert_eq!(
+            group.group_type,
+            super::super::ComparisonUnitGroupType::Paragraph
+        );
+        assert!(
+            group
+                .contents
+                .iter()
+                .all(|unit| matches!(unit, ComparisonUnit::Word(_)))
+        );
+        group.contents.clone()
+    }
+
+    fn owner(dom: &Dom, unit: &ComparisonUnit) -> NodeId {
+        unit.descendant_atoms()[0]
+            .ancestor_elements
+            .iter()
+            .rev()
+            .copied()
+            .find(|&node| dom.name_is(node, &W::p()))
+            .unwrap()
+    }
+
+    fn equal(a: Vec<ComparisonUnit>, b: Vec<ComparisonUnit>) -> CorrelatedSequence {
+        CorrelatedSequence {
+            correlation_status: CorrelationStatus::Equal,
+            com_units_1: Some(a),
+            com_units_2: Some(b),
+        }
+    }
+
+    fn payload(dom: &Dom, units: &[ComparisonUnit]) -> Vec<(NodeId, Vec<NodeId>, String)> {
+        units
+            .iter()
+            .flat_map(ComparisonUnit::descendant_atoms)
+            .map(|atom| {
+                (
+                    atom.content_element,
+                    atom.ancestor_elements.to_vec(),
+                    dom.serialize_element(atom.content_element),
+                )
+            })
+            .collect()
+    }
+
+    fn check(
+        dom: &Dom,
+        roots: [NodeId; 2],
+        a: &[ComparisonUnit],
+        b: &[ComparisonUnit],
+        mut sequences: Vec<CorrelatedSequence>,
+        promote: bool,
+        settings: &WmlComparerSettings,
+    ) {
+        let before = roots.map(|root| dom.serialize_element(root));
+        let expected = [payload(dom, a), payload(dom, b)];
+        let original_statuses = sequences
+            .iter()
+            .map(|sequence| sequence.correlation_status)
+            .collect::<Vec<_>>();
+        promote_skip_ahead_equals_with_source(dom, &mut sequences, settings);
+        let statuses = sequences
+            .iter()
+            .map(|sequence| sequence.correlation_status)
+            .collect::<Vec<_>>();
+        if promote {
+            assert_eq!(
+                statuses,
+                vec![
+                    CorrelationStatus::Equal,
+                    CorrelationStatus::Inserted,
+                    CorrelationStatus::Deleted,
+                    CorrelationStatus::Deleted
+                ]
+            );
+        } else {
+            assert_eq!(statuses, original_statuses);
+        }
+        for side in 0..2 {
+            let actual_units = sequences
+                .iter()
+                .flat_map(|sequence| {
+                    if side == 0 {
+                        sequence.com_units_1.as_deref().unwrap_or_default()
+                    } else {
+                        sequence.com_units_2.as_deref().unwrap_or_default()
+                    }
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(
+                payload(dom, &actual_units),
+                expected[side],
+                "complete side {side} atoms, ancestry, payload and source order survive"
+            );
+            assert_eq!(
+                dom.serialize_element(roots[side]),
+                before[side],
+                "source package and cached hashes remain immutable"
+            );
+        }
+    }
+
+    #[test]
+    fn cached_distinct_paragraph_owners_disambiguate_group_and_word_gaps() {
+        // Removing a hash is an explicit metadata boundary, not replacing the
+        // production hash algorithm with a test-computed approximation.
+        for token_level in [false, true] {
+            for missing in [None, Some(0usize), Some(1usize)] {
+                for repeated in [false, true] {
+                    let mut dom = Dom::new();
+                    let settings = WmlComparerSettings::default();
+                    let prefix = "Existing agreed prefix";
+                    let gap = if repeated {
+                        prefix
+                    } else {
+                        "Independent removed provision"
+                    };
+                    let heading = paragraph("Capability matrix heading");
+                    let tail = table("Table source payload");
+                    let (aroot, a) = source(
+                        &mut dom,
+                        &format!("{}{}{heading}{tail}", paragraph(prefix), paragraph(gap)),
+                        &settings,
+                    );
+                    let (broot, b) = source(
+                        &mut dom,
+                        &format!("{}{heading}{tail}", paragraph(prefix)),
+                        &settings,
+                    );
+                    assert_eq!(a.len(), 4);
+                    assert_eq!(b.len(), 3);
+                    assert_ne!(owner(&dom, &a[0]), owner(&dom, &a[1]));
+                    let a_hash = dom.attribute(owner(&dom, &a[0]), &PT::sha1_hash()).unwrap();
+                    let gap_hash = dom.attribute(owner(&dom, &a[1]), &PT::sha1_hash()).unwrap();
+                    assert_eq!(a_hash == gap_hash, repeated);
+                    if let Some(index) = missing {
+                        let paragraph = owner(&dom, &a[index]);
+                        dom.set_attribute_value(paragraph, &PT::sha1_hash(), None);
+                    }
+                    let units = |unit: &ComparisonUnit| {
+                        if token_level {
+                            words(unit)
+                        } else {
+                            vec![unit.clone()]
+                        }
+                    };
+                    let sequences = vec![
+                        equal(units(&a[0]), units(&b[0])),
+                        CorrelatedSequence::deleted(units(&a[1])),
+                        equal(vec![a[2].clone()], vec![b[1].clone()]),
+                        equal(vec![a[3].clone()], vec![b[2].clone()]),
+                    ];
+                    check(
+                        &dom,
+                        [aroot, broot],
+                        &a,
+                        &b,
+                        sequences,
+                        !repeated || missing.is_some(),
+                        &settings,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn partial_word_gap_in_one_owner_retains_the_unique_table_promotion() {
+        let mut dom = Dom::new();
+        let settings = WmlComparerSettings::default();
+        let suffix = format!(
+            "{}{}",
+            paragraph("Capability matrix heading"),
+            table("Table source payload")
+        );
+        let (aroot, a) = source(
+            &mut dom,
+            &format!(
+                "{}{suffix}",
+                paragraph("Existing agreed prefix removed clause")
+            ),
+            &settings,
+        );
+        let (broot, b) = source(
+            &mut dom,
+            &format!("{}{suffix}", paragraph("Existing agreed prefix ")),
+            &settings,
+        );
+        let awords = words(&a[0]);
+        let bwords = words(&b[0]);
+        let prefix = bwords.len() - 1;
+        assert!(awords.len() > bwords.len());
+        assert_eq!(
+            awords[..prefix]
+                .iter()
+                .map(ComparisonUnit::sha1)
+                .collect::<Vec<_>>(),
+            bwords[..prefix]
+                .iter()
+                .map(ComparisonUnit::sha1)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(owner(&dom, &awords[0]), owner(&dom, &awords[prefix]));
+        let sequences = vec![
+            equal(awords[..prefix].to_vec(), bwords[..prefix].to_vec()),
+            CorrelatedSequence::deleted(awords[prefix..awords.len() - 1].to_vec()),
+            equal(
+                vec![awords.last().unwrap().clone()],
+                vec![bwords.last().unwrap().clone()],
+            ),
+            equal(vec![a[1].clone()], vec![b[1].clone()]),
+            equal(vec![a[2].clone()], vec![b[2].clone()]),
+        ];
+        check(&dom, [aroot, broot], &a, &b, sequences, true, &settings);
+    }
+
+    #[test]
+    fn equal_cell_paragraph_does_not_disambiguate_an_independent_story_gap() {
+        let mut dom = Dom::new();
+        let settings = WmlComparerSettings::default();
+        let heading = paragraph("Capability matrix heading");
+        let ending = table("Final table payload");
+        let leading = table("Repeated clause");
+        let (aroot, a) = source(
+            &mut dom,
+            &format!("{leading}{}{heading}{ending}", paragraph("Repeated clause")),
+            &settings,
+        );
+        let (broot, b) = source(&mut dom, &format!("{leading}{heading}{ending}"), &settings);
+        let cell = owner(&dom, &a[0]);
+        let story = owner(&dom, &a[1]);
+        assert!(!dom.ancestors(cell, Some(&W::tbl())).is_empty());
+        assert!(dom.ancestors(story, Some(&W::tbl())).is_empty());
+        assert_eq!(
+            dom.attribute(cell, &PT::sha1_hash()).unwrap(),
+            dom.attribute(story, &PT::sha1_hash()).unwrap()
+        );
+        let sequences = vec![
+            equal(vec![a[0].clone()], vec![b[0].clone()]),
+            CorrelatedSequence::deleted(vec![a[1].clone()]),
+            equal(vec![a[2].clone()], vec![b[1].clone()]),
+            equal(vec![a[3].clone()], vec![b[2].clone()]),
+        ];
+        check(&dom, [aroot, broot], &a, &b, sequences, true, &settings);
+    }
+
+    #[test]
+    fn repeated_deleted_prefix_matches_following_distinct_source_owners() {
+        // SDT tokenization legitimately selects A's later repeated paragraphs
+        // as Equals. A leading D(P,S), EQ(P,S,table) still has an ambiguous
+        // original anchor even though there is no earlier Equal sequence.
+        for token_level in [false, true] {
+            let mut dom = Dom::new();
+            let settings = WmlComparerSettings::default();
+            let p = paragraph("Prepared for client January 2040");
+            let s = paragraph("Shared contractual obligation agreement");
+            let tail = table("Unchanged cell");
+            let (aroot, a) = source(&mut dom, &format!("{p}{s}{p}{s}{tail}"), &settings);
+            let (broot, b) = source(&mut dom, &format!("{p}{s}{tail}"), &settings);
+            let units = |unit: &ComparisonUnit| {
+                if token_level {
+                    words(unit)
+                } else {
+                    vec![unit.clone()]
+                }
+            };
+            let gap = units(&a[0]).into_iter().chain(units(&a[1])).collect();
+            let sequences = vec![
+                CorrelatedSequence::deleted(gap),
+                equal(units(&a[2]), units(&b[0])),
+                equal(units(&a[3]), units(&b[1])),
+                equal(vec![a[4].clone()], vec![b[2].clone()]),
+            ];
+            check(&dom, [aroot, broot], &a, &b, sequences, false, &settings);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_lexical_empty_move_boundary_tests {
+    use super::*;
+    #[test]
+    fn public_jaccard_handles_empty_and_separator_only_sources_without_nonfinite_scores() {
+        for insensitive in [false, true] {
+            let settings = WmlComparerSettings {
+                case_insensitive: insensitive,
+                ..Default::default()
+            };
+            for (left, right, expected) in [
+                ("", "", 0.0),
+                (" \t\n", "clause", 0.0),
+                ("clause", " \t\n", 0.0),
+                ("-;", "clause", 0.0),
+                ("clause", "-;", 0.0),
+                ("-;", ";-", 0.0),
+                ("clause report", "clause report", 1.0),
+                ("CLAUSE", "clause", if insensitive { 1.0 } else { 0.0 }),
+                ("Straße", "STRASSE", if insensitive { 1.0 } else { 0.0 }),
+            ] {
+                let score = jaccard(left, right, &settings);
+                assert!(score.is_finite());
+                assert_eq!(
+                    score, expected,
+                    "left={left:?} right={right:?} insensitive={insensitive}"
+                );
+                assert_eq!(score, jaccard(right, left, &settings));
+            }
+        }
     }
 }

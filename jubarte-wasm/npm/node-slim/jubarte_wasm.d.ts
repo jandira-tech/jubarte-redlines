@@ -1,6 +1,10 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+
+
+
 /**
  * What [`appendDocuments`](append_documents) returns.
  */
@@ -135,6 +139,16 @@ export function auditTracked(original: Uint8Array, edited: Uint8Array, author: s
 export function capabilities(): string;
 
 /**
+ * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+ * view `edit` and `add` print (every changed block when none does);
+ * `accepted` reads its accepted text, `source` is the name printed as
+ * `source:`.
+ *
+ * Mirrors `jubarte::markdown::changed_view`.
+ */
+export function changedView(docx: Uint8Array, author: string, accepted: boolean, source?: string | null): string;
+
+/**
  * Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
  *
  * Mirrors `jubarte::document_comparer::compare_documents`.
@@ -148,7 +162,7 @@ export function capabilities(): string;
 export function compareDocuments(original: Uint8Array, modified: Uint8Array, author: string, input_limits_json?: string | null): Uint8Array;
 
 /**
- * The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+ * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
  * `body:p:N` id in a Word document or `line:N` in Markdown.
@@ -160,7 +174,21 @@ export function compareDocuments(original: Uint8Array, modified: Uint8Array, aut
  *
  * Mirrors `jubarte::markdown::patch_documents`.
  */
-export function diffDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string;
+export function diffDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string;
+
+/**
+ * The complete document as CriticMarkup; existing paragraph patches stay separate.
+ */
+export function diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: string | null, date?: string | null): string;
+
+/**
+ * Document review view. `optionsJson` is a strict camelCase object with
+ * `format` (github, word, normal, context, side-by-side), `oldName`,
+ * `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+ * and `newFormat` (docx/md). Defaults use the core display window; Word
+ * always accepts both inputs' revisions before creating new CriticMarkup.
+ */
+export function diffDocumentsView(old: Uint8Array, next: Uint8Array, options_json?: string | null): string;
 
 /**
  * Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
@@ -171,14 +199,32 @@ export function diffDocuments(old: Uint8Array, _new: Uint8Array, author: string,
 export function documentMarkdown(docx: Uint8Array): string;
 
 /**
+ * Markdown without paragraph ids, with tracked changes kept or resolved.
+ */
+export function documentMarkdownWithChanges(docx: Uint8Array, track_changes: string): string;
+
+/**
  * The JSON-lines form of a report (`load`, one `op` per operation,
  * `summary`), for agent logs.
  */
 export function editReportJsonl(report_json: string): string;
 
 /**
- * List the tracked revisions in a DOCX as a JSON array string — the same
- * object shape as the CLI `jubarte revisions --json` lines
+ * The plan the `edit`/`add` operation flags describe, as JSON `{plan,
+ * notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
+ * `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
+ * `operationsJson` the parsed command's `operations` array. Options (JSON,
+ * all optional): `author` (default `Modified User`), `date`,
+ * `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
+ * An error is a usage error.
+ *
+ * Mirrors `jubarte::edit::flags::plan_from_flags`.
+ */
+export function flagPlan(verb: string, operations_json: string, docx: Uint8Array, options_json?: string | null): string;
+
+/**
+ * List the tracked revisions in a DOCX as a JSON array string, grouped as
+ * Docxodus's `GetRevisions` groups them; each object has
  * (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
  *
  * Mirrors `jubarte::document_comparer::get_revisions` with default settings,
@@ -236,11 +282,35 @@ export function listComments(docx: Uint8Array, author?: string | null, latest?: 
 export function markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | null): Uint8Array;
 
 /**
+ * Shared clap parsing, with no filesystem, clock or process access.
+ */
+export function parseCli(arguments_json: string, program?: string | null, supported_json?: string | null): string;
+
+/**
  * Resolve every operation of an edit plan without producing documents.
  *
  * Mirrors `jubarte::edit::preview_plan`.
  */
 export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput;
+
+/**
+ * The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+ * then Markdown with `<!-- pN -->` id lines and every change and comment
+ * with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+ * reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+ * true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+ * `head`, `tail`, `changed` (only the blocks with marks) with `by` (one
+ * author's: a handle or a full name), `source` (the name printed as
+ * `source:`).
+ *
+ * Mirrors `jubarte::markdown::read`.
+ */
+export function readView(docx: Uint8Array, options_json?: string | null): string;
+
+/**
+ * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
+ */
+export function redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array;
 
 /**
  * Reject the changes `filterJson` selects and keep the rest tracked

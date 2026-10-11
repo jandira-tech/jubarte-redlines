@@ -761,3 +761,156 @@ fn d5_detect_moves_picks_best_similarity_match() {
     );
     assert_eq!(revs[0].move_group_id, revs[2].move_group_id);
 }
+
+#[test]
+fn opaque_math_revisions_report_source_owner_and_provenance_without_text() {
+    use jubarte::namespaces::M;
+    for (container, payload) in [
+        (
+            "oMath",
+            "<m:oMath><m:r><m:rPr><m:sty m:val=\"b\"/></m:rPr><m:t>x</m:t></m:r></m:oMath>",
+        ),
+        (
+            "oMathPara",
+            "<m:oMathPara><m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>x</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara>",
+        ),
+    ] {
+        for (tag, kind) in [
+            ("ins", WmlComparerRevisionType::Inserted),
+            ("del", WmlComparerRevisionType::Deleted),
+        ] {
+            let xml = format!(
+                "<w:document xmlns:w=\"{}\" xmlns:m=\"{}\"><w:body><w:p><w:pPr/><w:r><w:t>Owned prefix</w:t></w:r><w:{tag} w:id=\"23\" w:author=\"Math owner\" w:date=\"{DATE}\">{payload}</w:{tag}><w:r><w:t>Owned suffix</w:t></w:r></w:p></w:body></w:document>",
+                W::URI,
+                M::URI
+            );
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(&xml);
+            let root = dom.root(document).unwrap();
+            let body = dom.element(root, &W::body()).unwrap();
+            let revision_owner = dom
+                .descendants(body, Some(&W::name(tag)))
+                .into_iter()
+                .next()
+                .unwrap();
+            let content_owner = dom
+                .descendants(revision_owner, Some(&M::name(container)))
+                .into_iter()
+                .next()
+                .unwrap();
+            // Atomization stamps source ownership IDs; freeze the prepared
+            // source before asking the revision API to group those atoms.
+            create_comparison_unit_atom_list(&mut dom, body, &WmlComparerSettings::default());
+            let before = dom.serialize_element(root);
+            let revisions = get_revisions_from_body(
+                &mut dom,
+                body,
+                "word/document.xml",
+                &WmlComparerSettings::default(),
+            );
+            assert_eq!(revisions.len(), 1, "{container}/{tag}: {revisions:?}");
+            let revision = &revisions[0];
+            assert_eq!(revision.revision_type, kind);
+            assert_eq!(revision.text, None);
+            assert_eq!(revision.author.as_deref(), Some("Math owner"));
+            assert_eq!(revision.date.as_deref(), Some(DATE));
+            assert_eq!(revision.part_name, "word/document.xml");
+            assert_eq!(revision.content_element, Some(content_owner));
+            assert_eq!(revision.revision_element, Some(revision_owner));
+            assert_eq!(revision.move_group_id, None);
+            assert_eq!(revision.is_move_source, None);
+            assert_eq!(
+                dom.serialize_element(root),
+                before,
+                "{container}/{tag} altered source XML"
+            );
+        }
+    }
+}
+
+#[test]
+fn paragraph_mark_format_histories_keep_nested_fill_owners_and_empty_text() {
+    use jubarte::comparer::revisions::get_format_change_revisions;
+    let w14 = "http://schemas.microsoft.com/office/word/2010/wordml";
+    for run_mark in [false, true] {
+        for (old_color, new_color) in [("112233", "112233"), ("112233", "445566")] {
+            for attributed in [false, true] {
+                let owner = if attributed {
+                    format!(" w:author=\"Format owner\" w:date=\"{DATE}\"")
+                } else {
+                    String::new()
+                };
+                let fill = |color| {
+                    format!(
+                        "<w14:textFill><w14:solidFill><w14:srgbClr w14:val=\"{color}\"/></w14:solidFill></w14:textFill>"
+                    )
+                };
+                let properties = format!(
+                    "<w:rPr><w:b/>{}<w:rPrChange w:id=\"71\"{owner}><w:rPr><w:b/>{}</w:rPr></w:rPrChange></w:rPr>",
+                    fill(new_color),
+                    fill(old_color)
+                );
+                let paragraph = if run_mark {
+                    format!(
+                        "<w:p><w:pPr/><w:r>{properties}<w:t>Owned</w:t><w:tab/><w:t>run</w:t></w:r></w:p>"
+                    )
+                } else {
+                    format!(
+                        "<w:p><w:pPr>{properties}</w:pPr><w:r><w:t>Owned paragraph</w:t></w:r></w:p>"
+                    )
+                };
+                let xml = format!(
+                    "<w:document xmlns:w=\"{}\" xmlns:w14=\"{w14}\"><w:body>{paragraph}</w:body></w:document>",
+                    W::URI
+                );
+                let mut dom = Dom::new();
+                let document = dom.parse_xdocument(&xml);
+                let root = dom.root(document).unwrap();
+                let change = dom
+                    .descendants(root, Some(&W::name("rPrChange")))
+                    .into_iter()
+                    .next()
+                    .unwrap();
+                let old = dom.element(change, &W::r_pr()).unwrap();
+                let new = dom.parent(change).unwrap();
+                let before = dom.serialize_element(root);
+                let revisions =
+                    get_format_change_revisions(&mut dom, &[(root, "word/document.xml")]);
+                assert_eq!(revisions.len(), 1);
+                let revision = &revisions[0];
+                assert_eq!(
+                    revision.revision_type,
+                    WmlComparerRevisionType::FormatChanged
+                );
+                assert_eq!(
+                    revision.text.as_deref(),
+                    Some(if run_mark { "Ownedrun" } else { "" })
+                );
+                assert_eq!(
+                    revision.author.as_deref(),
+                    Some(if attributed { "Format owner" } else { "" })
+                );
+                assert_eq!(
+                    revision.date.as_deref(),
+                    Some(if attributed { DATE } else { "" })
+                );
+                assert_eq!(revision.revision_element, Some(change));
+                assert_eq!(revision.content_element, None);
+                assert_eq!(revision.part_name, "word/document.xml");
+                let details = revision.format_change.as_ref().unwrap();
+                assert_eq!(details.old_run_properties, Some(old));
+                assert_eq!(details.new_run_properties, Some(new));
+                assert_eq!(details.old_para_properties, None);
+                assert_eq!(
+                    details.changed_properties,
+                    if old_color == new_color {
+                        Vec::<String>::new()
+                    } else {
+                        vec!["textFill".to_string()]
+                    }
+                );
+                assert_eq!(dom.serialize_element(root), before);
+            }
+        }
+    }
+}

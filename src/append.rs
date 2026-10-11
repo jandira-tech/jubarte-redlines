@@ -1341,6 +1341,7 @@ fn set_section_type(dom: &mut Dom, sect: NodeId, section_break: SectionBreak) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1435,5 +1436,365 @@ mod tests {
         crate::markdown::markdown_to_docx("x", &Default::default())
             .unwrap()
             .docx
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_memory_append_owner_boundary_tests {
+    use super::*;
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    fn document(body: &str) -> String {
+        format!(
+            "<w:document xmlns:w='{}' xmlns:w14='{}' xmlns:mc='{}' mc:Ignorable='w14'><w:body>{body}</w:body></w:document>",
+            W::URI,
+            W14::URI,
+            crate::namespaces::MC::URI
+        )
+    }
+    fn package(body: &str) -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml", document(body).into_bytes());
+        pkg.set_part(
+            "customXml/source-owned.bin",
+            b"Independent source ownership bytes".to_vec(),
+        );
+        pkg.add_content_type_override("/customXml/source-owned.bin", "application/octet-stream");
+        pkg
+    }
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+    fn view(xml: &str) -> String {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).unwrap();
+        semantic(&dom, dom.element(root, &W::body()).unwrap())
+    }
+    #[test]
+    fn public_append_keeps_source_property_history_and_fresh_annotation_owners_at_every_join_boundary()
+     {
+        let a = "<w:p w14:paraId='10000001' w14:textId='20000001'><w:pPr><w:pStyle w:val='Normal'/><w:spacing w:after='120'/></w:pPr><w:bookmarkStart w:id='3' w:name='OriginalBookmark'/><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>Original source payload</w:t></w:r><w:bookmarkEnd w:id='3'/></w:p>";
+        let a_sect = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='720' w:right='900' w:bottom='720' w:left='900'/></w:sectPr>";
+        let b_sect = "<w:sectPr><w:footnotePr><w:pos w:val='beneathText'/></w:footnotePr><w:pgSz w:w='14400' w:h='18000'/><w:pgMar w:top='900' w:right='720' w:bottom='900' w:left='720'/></w:sectPr>";
+        for collision in [false, true] {
+            for keep_sections in [false, true] {
+                for section_break in [
+                    SectionBreak::NextPage,
+                    SectionBreak::Continuous,
+                    SectionBreak::None,
+                ] {
+                    let para_id = if collision { "10000001" } else { "10000002" };
+                    let b = format!(
+                        "<w:p w14:paraId='{para_id}' w14:textId='20000002'><w:pPr><w:pStyle w:val='Normal'/><w:spacing w:after='240'/><w:pPrChange w:id='2' w:author='Earlier format owner' w:date='2025-02-03T04:05:06Z'><w:pPr><w:spacing w:after='60'/></w:pPr></w:pPrChange></w:pPr><w:bookmarkStart w:id='0' w:name='RevisedBookmark'/><w:ins w:id='1' w:author='Pending source owner' w:date='2025-03-04T05:06:07Z'><w:r><w:rPr><w:i/><w:color w:val='654321'/></w:rPr><w:t>Revised source payload</w:t></w:r></w:ins><w:bookmarkEnd w:id='0'/></w:p>"
+                    );
+                    let ap = package(&(a.to_string() + a_sect));
+                    let bp = package(&(b.clone() + b_sect));
+                    let a_snapshot = snapshot(&ap);
+                    let b_snapshot = snapshot(&bp);
+                    let a_bytes = ap.to_zip().unwrap();
+                    let b_bytes = bp.to_zip().unwrap();
+                    let options = AppendOptions {
+                        section_break,
+                        keep_sections,
+                        comments: AppendComments::Carry,
+                    };
+                    let out = append_documents(&a_bytes, &b_bytes, &options).unwrap();
+                    assert!(out.warnings.is_empty());
+                    let result = PartFs::open(&out.docx).unwrap();
+                    let mut copied_b = b
+                        .replace("w:id='2'", "w:id='6'")
+                        .replace("w:id='1'", "w:id='5'")
+                        .replace("w:id='0'", "w:id='4'");
+                    if collision {
+                        copied_b = copied_b
+                            .replace(" w14:paraId='10000001'", "")
+                            .replace(" w14:textId='20000002'", "");
+                    }
+                    let join = if keep_sections {
+                        format!("<w:p><w:pPr>{a_sect}</w:pPr></w:p>")
+                    } else if section_break == SectionBreak::NextPage {
+                        "<w:p><w:r><w:br w:type='page'/></w:r></w:p>".into()
+                    } else {
+                        String::new()
+                    };
+                    let final_sect = if keep_sections && section_break != SectionBreak::NextPage {
+                        b_sect.replace(
+                            "</w:footnotePr>",
+                            "</w:footnotePr><w:type w:val='continuous'/>",
+                        )
+                    } else if keep_sections {
+                        b_sect.to_string()
+                    } else {
+                        a_sect.to_string()
+                    };
+                    assert_eq!(
+                        view(&result.part_string("word/document.xml").unwrap()),
+                        view(&document(&format!("{a}{join}{copied_b}{final_sect}"))),
+                        "collision={collision}, keep={keep_sections}, boundary={section_break:?}: all source properties and owner metadata"
+                    );
+                    assert_eq!(
+                        result.part_bytes("customXml/source-owned.bin"),
+                        Some(b"Independent source ownership bytes".as_slice())
+                    );
+                    assert_eq!(
+                        result.part_bytes("word/_rels/document.xml.rels"),
+                        ap.part_bytes("word/_rels/document.xml.rels"),
+                        "no unrelated relationships may be invented or lost"
+                    );
+                    let repeated = append_documents(&a_bytes, &b_bytes, &options).unwrap();
+                    let again = PartFs::open(&repeated.docx).unwrap();
+                    assert_eq!(
+                        view(&again.part_string("word/document.xml").unwrap()),
+                        view(&result.part_string("word/document.xml").unwrap())
+                    );
+                    assert_eq!(snapshot(&PartFs::open(&a_bytes).unwrap()), a_snapshot);
+                    assert_eq!(snapshot(&PartFs::open(&b_bytes).unwrap()), b_snapshot);
+                }
+            }
+        }
+    }
+    #[test]
+    fn append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations()
+    {
+        let paragraph = |style: &str, text: &str| {
+            format!(
+                "<w:p><w:pPr><w:pStyle w:val='{style}'/><w:spacing w:before='120' w:after='80'/></w:pPr><w:r><w:rPr><w:rStyle w:val='RunB'/><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/></w:rPr><w:t>{text}</w:t><w:tab/><w:br w:type='column'/></w:r></w:p>"
+            )
+        };
+        let original = "<w:p><w:pPr><w:pStyle w:val='Shared'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial' w:hAnsi='Arial'/><w:b/></w:rPr><w:t>Original independently owned body</w:t></w:r></w:p>";
+        let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='720' w:right='900' w:bottom='720' w:left='900'/></w:sectPr>";
+        let base = "<w:style w:type='paragraph' w:styleId='BaseB'><w:name w:val='Revised inherited base'/><w:pPr><w:spacing w:after='240'/></w:pPr><w:rPr><w:i/></w:rPr></w:style>";
+        let run = "<w:style w:type='character' w:styleId='RunB'><w:name w:val='Revised run owner'/><w:rPr><w:color w:val='654321'/><w:i/></w:rPr></w:style>";
+        let styles_root =
+            |children: &str| format!("<w:styles xmlns:w='{}'>{children}</w:styles>", W::URI);
+        let canonical_xml = |xml: &str| {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(xml);
+            semantic(&dom, dom.root(doc).unwrap())
+        };
+        for alternate_prefix in [false, true] {
+            for disabled_list in [false, true] {
+                for second_collision in [false, true] {
+                    for collision_nsid in [false, true] {
+                        let num_id = if disabled_list { "0" } else { "1" };
+                        let b_style = format!(
+                            "<w:style w:type='paragraph' w:default='1' w:styleId='Shared'><w:name w:val='Revised paragraph owner'/><w:basedOn w:val='BaseB'/><w:next w:val='BaseB'/><w:pPr><w:numPr><w:ilvl w:val='0'/><w:numId w:val='{num_id}'/></w:numPr><w:ind w:left='360'/></w:pPr><w:rPr><w:color w:val='ABCDEF'/></w:rPr></w:style>"
+                        );
+                        let a_styles = format!(
+                            "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii='Arial' w:hAnsi='Arial'/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type='paragraph' w:default='1' w:styleId='Shared'><w:name w:val='Original paragraph owner'/><w:pPr><w:keepNext/></w:pPr></w:style>{}",
+                            if second_collision {
+                                "<w:style w:type='paragraph' w:styleId='SharedB'><w:name w:val='Independent reserved style id'/><w:rPr><w:u w:val='single'/></w:rPr></w:style>"
+                            } else {
+                                ""
+                            }
+                        );
+                        let a_numbering = format!(
+                            "<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='3'><w:nsid w:val='FFFFFFFF'/><w:multiLevelType w:val='singleLevel'/><w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%1.'/></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId='4'><w:nsid w:val='00000000'/><w:multiLevelType w:val='singleLevel'/><w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='lowerLetter'/><w:lvlText w:val='%1.'/></w:lvl></w:abstractNum><w:num w:numId='5'><w:abstractNumId w:val='3'/><w:lvlOverride w:ilvl='0'><w:startOverride w:val='4'/></w:lvlOverride></w:num></w:numbering>",
+                            W::URI
+                        );
+                        let nsid = if collision_nsid {
+                            "FFFFFFFF"
+                        } else {
+                            "12345678"
+                        };
+                        let b_numbering = format!(
+                            "<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='1'><w:nsid w:val='{nsid}'/><w:multiLevelType w:val='singleLevel'/><w:lvl w:ilvl='0'><w:start w:val='3'/><w:numFmt w:val='upperRoman'/><w:pStyle w:val='BaseB'/><w:lvlText w:val='%1.'/><w:lvlJc w:val='right'/><w:pPr><w:tabs><w:tab w:val='num' w:pos='720'/></w:tabs><w:ind w:left='720' w:hanging='360'/></w:pPr><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/></w:rPr></w:lvl></w:abstractNum><w:num w:numId='1'><w:abstractNumId w:val='1'/><w:lvlOverride w:ilvl='0'><w:startOverride w:val='7'/></w:lvlOverride></w:num></w:numbering>",
+                            W::URI
+                        );
+                        let mut a = package(&format!("{original}{section}"));
+                        let mut b = package(&format!(
+                            "{}{section}",
+                            paragraph("Shared", "Revised source keeps inherited list formatting")
+                        ));
+                        a.set_part("word/styles.xml", styles_root(&a_styles).into_bytes());
+                        b.set_part(
+                            "word/styles.xml",
+                            styles_root(&format!("{b_style}{base}{run}")).into_bytes(),
+                        );
+                        let actual_a_numbering = if alternate_prefix {
+                            a_numbering
+                                .replace("w:", "n:")
+                                .replace("xmlns:w=", "xmlns:n=")
+                        } else {
+                            a_numbering.clone()
+                        };
+                        a.set_part(
+                            "word/numbering.xml",
+                            actual_a_numbering.replace('\'', "\"").into_bytes(),
+                        );
+                        b.set_part("word/numbering.xml", b_numbering.clone().into_bytes());
+                        for pkg in [&mut a, &mut b] {
+                            pkg.add_content_type_override("/word/numbering.xml","application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml");
+                            if !pkg.read_rels_for("word/document.xml").is_some_and(|rels| {
+                                rels.items
+                                    .iter()
+                                    .any(|r| r.rel_type.ends_with("/numbering"))
+                            }) {
+                                pkg.add_document_relationship(
+                                    "word/document.xml",
+                                    &format!("{RELS}/numbering"),
+                                    "numbering.xml",
+                                );
+                            }
+                        }
+                        let a_bytes = a.to_zip().unwrap();
+                        let b_bytes = b.to_zip().unwrap();
+                        let output = append_documents(
+                            &a_bytes,
+                            &b_bytes,
+                            &AppendOptions {
+                                section_break: SectionBreak::None,
+                                keep_sections: false,
+                                comments: AppendComments::Drop,
+                            },
+                        )
+                        .unwrap();
+                        assert!(output.warnings.is_empty());
+                        let out = PartFs::open(&output.docx).unwrap();
+                        let renamed = if second_collision {
+                            "SharedB2"
+                        } else {
+                            "SharedB"
+                        };
+                        assert_eq!(
+                            view(&out.part_string("word/document.xml").unwrap()),
+                            view(&document(&format!(
+                                "{original}{}{section}",
+                                paragraph(
+                                    renamed,
+                                    "Revised source keeps inherited list formatting"
+                                )
+                            )))
+                        );
+                        let mut dom = Dom::new();
+                        let doc = dom.parse_xdocument(&out.part_string("word/styles.xml").unwrap());
+                        let root = dom.root(doc).unwrap();
+                        let by_id = |id: &str| {
+                            dom.elements(root, Some(&W::name("style")))
+                                .into_iter()
+                                .find(|&style| {
+                                    dom.attribute(style, &W::name("styleId")) == Some(id)
+                                })
+                                .unwrap()
+                        };
+                        let expected_style = b_style
+                            .replace(" w:default='1'", "")
+                            .replace("w:styleId='Shared'", &format!("w:styleId='{renamed}'"))
+                            .replace("w:numId w:val='1'", "w:numId w:val='6'");
+                        let mut expected_dom = Dom::new();
+                        let expected_doc = expected_dom.parse_xdocument(&styles_root(&format!(
+                            "{a_styles}{expected_style}{base}{run}"
+                        )));
+                        let expected_root = expected_dom.root(expected_doc).unwrap();
+                        for style in dom.elements(root, Some(&W::name("style"))) {
+                            let id = dom.attribute(style, &W::name("styleId")).unwrap();
+                            let expected = expected_dom
+                                .elements(expected_root, Some(&W::name("style")))
+                                .into_iter()
+                                .find(|&s| {
+                                    expected_dom.attribute(s, &W::name("styleId")) == Some(id)
+                                })
+                                .unwrap();
+                            assert_eq!(
+                                semantic(&dom, style),
+                                semantic(&expected_dom, expected),
+                                "entire style owner {id}"
+                            );
+                        }
+                        assert_eq!(
+                            dom.elements(root, Some(&W::name("style"))).len(),
+                            expected_dom
+                                .elements(expected_root, Some(&W::name("style")))
+                                .len()
+                        );
+                        assert_eq!(dom.attribute(by_id(renamed), &W::name("default")), None);
+                        assert_eq!(
+                            semantic(&dom, dom.element(root, &W::name("docDefaults")).unwrap()),
+                            semantic(
+                                &expected_dom,
+                                expected_dom
+                                    .element(expected_root, &W::name("docDefaults"))
+                                    .unwrap()
+                            )
+                        );
+                        let numbering = out.part_string("word/numbering.xml").unwrap();
+                        if disabled_list {
+                            assert_eq!(canonical_xml(&numbering), canonical_xml(&a_numbering));
+                        } else {
+                            let copied = b_numbering
+                                .replace("w:abstractNumId='1'", "w:abstractNumId='5'")
+                                .replace("w:numId='1'", "w:numId='6'")
+                                .replace("w:abstractNumId w:val='1'", "w:abstractNumId w:val='5'")
+                                .replace(
+                                    &format!("w:val='{nsid}'"),
+                                    &format!(
+                                        "w:val='{}'",
+                                        if collision_nsid { "00000001" } else { nsid }
+                                    ),
+                                );
+                            let copied_inner = copied
+                                .split_once('>')
+                                .unwrap()
+                                .1
+                                .strip_suffix("</w:numbering>")
+                                .unwrap();
+                            let a_abstract_end = a_numbering.find("<w:num ").unwrap();
+                            let a_close = a_numbering.find("</w:numbering>").unwrap();
+                            let copied_num_start = copied_inner.find("<w:num ").unwrap();
+                            let expected = format!(
+                                "{}{}{}{}{}",
+                                &a_numbering[..a_abstract_end],
+                                &copied_inner[..copied_num_start],
+                                &a_numbering[a_abstract_end..a_close],
+                                &copied_inner[copied_num_start..],
+                                "</w:numbering>"
+                            );
+                            assert_eq!(
+                                canonical_xml(&numbering),
+                                canonical_xml(&expected),
+                                "all A/B abstract and concrete properties, prefix={alternate_prefix} collision={collision_nsid}"
+                            );
+                        }
+                        assert_eq!(snapshot(&PartFs::open(&a_bytes).unwrap()), snapshot(&a));
+                        assert_eq!(snapshot(&PartFs::open(&b_bytes).unwrap()), snapshot(&b));
+                    }
+                }
+            }
+        }
     }
 }

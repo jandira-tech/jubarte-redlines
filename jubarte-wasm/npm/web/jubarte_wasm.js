@@ -539,6 +539,50 @@ export function capabilities() {
 }
 
 /**
+ * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+ * view `edit` and `add` print (every changed block when none does);
+ * `accepted` reads its accepted text, `source` is the name printed as
+ * `source:`.
+ *
+ * Mirrors `jubarte::markdown::changed_view`.
+ * @param {Uint8Array} docx
+ * @param {string} author
+ * @param {boolean} accepted
+ * @param {string | null} [source]
+ * @returns {string}
+ */
+export function changedView(docx, author, accepted, source) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.changedView(retptr, ptr0, len0, ptr1, len1, accepted, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
  *
  * Mirrors `jubarte::document_comparer::compare_documents`.
@@ -582,7 +626,7 @@ export function compareDocuments(original, modified, author, input_limits_json) 
 }
 
 /**
- * The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+ * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
  * `body:p:N` id in a Word document or `line:N` in Markdown.
@@ -594,7 +638,7 @@ export function compareDocuments(original, modified, author, input_limits_json) 
  *
  * Mirrors `jubarte::markdown::patch_documents`.
  * @param {Uint8Array} old
- * @param {Uint8Array} _new
+ * @param {Uint8Array} next
  * @param {string} author
  * @param {string} date
  * @param {number | null} [columns]
@@ -602,14 +646,14 @@ export function compareDocuments(original, modified, author, input_limits_json) 
  * @param {string | null} [new_name]
  * @returns {string}
  */
-export function diffDocuments(old, _new, author, date, columns, old_name, new_name) {
+export function diffDocuments(old, next, author, date, columns, old_name, new_name) {
     let deferred8_0;
     let deferred8_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(_new, wasm.__wbindgen_export2);
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len2 = WASM_VECTOR_LEN;
@@ -636,6 +680,132 @@ export function diffDocuments(old, _new, author, date, columns, old_name, new_na
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export(deferred8_0, deferred8_1, 1);
+    }
+}
+
+/**
+ * The complete document as CriticMarkup; existing paragraph patches stay separate.
+ * @param {Uint8Array} old
+ * @param {Uint8Array} next
+ * @param {string | null} [author]
+ * @param {string | null} [date]
+ * @returns {string}
+ */
+export function diffDocumentsCritic(old, next, author, date) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(date) ? 0 : passStringToWasm0(date, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.diffDocumentsCritic(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * Complete, unwrapped document snapshots as a Git text patch. `context`
+ * is validated before wasm-bindgen can coerce booleans or wrap u32 values.
+ * @param {Uint8Array} old
+ * @param {Uint8Array} next
+ * @param {string | null | undefined} old_name
+ * @param {string | null | undefined} new_name
+ * @param {any} context
+ * @returns {string}
+ */
+export function diffDocumentsUnified(old, next, old_name, new_name, context) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(old_name) ? 0 : passStringToWasm0(old_name, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(new_name) ? 0 : passStringToWasm0(new_name, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.diffDocumentsUnified(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, addHeapObject(context));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * Document review view. `optionsJson` is a strict camelCase object with
+ * `format` (github, word, normal, context, side-by-side), `oldName`,
+ * `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+ * and `newFormat` (docx/md). Defaults use the core display window; Word
+ * always accepts both inputs' revisions before creating new CriticMarkup.
+ * @param {Uint8Array} old
+ * @param {Uint8Array} next
+ * @param {string | null} [options_json]
+ * @returns {string}
+ */
+export function diffDocumentsView(old, next, options_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.diffDocumentsView(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred5_0, deferred5_1, 1);
     }
 }
 
@@ -675,6 +845,41 @@ export function documentMarkdown(docx) {
 }
 
 /**
+ * Markdown without paragraph ids, with tracked changes kept or resolved.
+ * @param {Uint8Array} docx
+ * @param {string} track_changes
+ * @returns {string}
+ */
+export function documentMarkdownWithChanges(docx, track_changes) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(track_changes, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.documentMarkdownWithChanges(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Render a DOCX package (bytes) → PDF bytes (Word-style layout).
  *
  * Mirrors `jubarte::convert::docx_to_pdf`. Fonts come from the embedded
@@ -686,13 +891,19 @@ export function documentMarkdown(docx) {
  * `revisions` (optional, default `"conventional"`) paints tracked changes:
  * `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
  * `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+ * `moveComments` (optional, default `false`) lists the comments after the
+ * last page instead of in balloons beside the text; `changedOnly`
+ * (optional, default `false`) keeps only the pages a tracked change
+ * touches (a document without changes keeps its first page).
  * @param {Uint8Array} docx
  * @param {boolean | null} [compress]
  * @param {string | null} [revisions]
  * @param {string | null} [revision_palette]
+ * @param {boolean | null} [move_comments]
+ * @param {boolean | null} [changed_only]
  * @returns {Uint8Array}
  */
-export function docxToPdf(docx, compress, revisions, revision_palette) {
+export function docxToPdf(docx, compress, revisions, revision_palette, move_comments, changed_only) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
@@ -701,7 +912,7 @@ export function docxToPdf(docx, compress, revisions, revision_palette) {
         var len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         var len2 = WASM_VECTOR_LEN;
-        wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0, ptr1, len1, ptr2, len2);
+        wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0, ptr1, len1, ptr2, len2, isLikeNone(move_comments) ? 0xFFFFFF : move_comments ? 1 : 0, isLikeNone(changed_only) ? 0xFFFFFF : changed_only ? 1 : 0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -751,8 +962,57 @@ export function editReportJsonl(report_json) {
 }
 
 /**
- * List the tracked revisions in a DOCX as a JSON array string — the same
- * object shape as the CLI `jubarte revisions --json` lines
+ * The plan the `edit`/`add` operation flags describe, as JSON `{plan,
+ * notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
+ * `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
+ * `operationsJson` the parsed command's `operations` array. Options (JSON,
+ * all optional): `author` (default `Modified User`), `date`,
+ * `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
+ * An error is a usage error.
+ *
+ * Mirrors `jubarte::edit::flags::plan_from_flags`.
+ * @param {string} verb
+ * @param {string} operations_json
+ * @param {Uint8Array} docx
+ * @param {string | null} [options_json]
+ * @returns {string}
+ */
+export function flagPlan(verb, operations_json, docx, options_json) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(operations_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.flagPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * List the tracked revisions in a DOCX as a JSON array string, grouped as
+ * Docxodus's `GetRevisions` groups them; each object has
  * (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
  *
  * Mirrors `jubarte::document_comparer::get_revisions` with default settings,
@@ -954,6 +1214,44 @@ export function markdownToDocx(text, options_json, reference) {
 }
 
 /**
+ * Shared clap parsing, with no filesystem, clock or process access.
+ * @param {string} arguments_json
+ * @param {string | null} [program]
+ * @param {string | null} [supported_json]
+ * @returns {string}
+ */
+export function parseCli(arguments_json, program, supported_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(arguments_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(program) ? 0 : passStringToWasm0(program, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(supported_json) ? 0 : passStringToWasm0(supported_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.parseCli(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
  * readable PDF).
  *
@@ -991,6 +1289,85 @@ export function previewEditPlan(docx, plan_json) {
             throw takeObject(r1);
         }
         return EditOutput.__wrap(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+ * then Markdown with `<!-- pN -->` id lines and every change and comment
+ * with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+ * reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+ * true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+ * `head`, `tail`, `changed` (only the blocks with marks) with `by` (one
+ * author's: a handle or a full name), `source` (the name printed as
+ * `source:`).
+ *
+ * Mirrors `jubarte::markdown::read`.
+ * @param {Uint8Array} docx
+ * @param {string | null} [options_json]
+ * @returns {string}
+ */
+export function readView(docx, options_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.readView(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
+ * @param {Uint8Array} old
+ * @param {Uint8Array} next
+ * @param {string} author
+ * @param {string} date
+ * @returns {Uint8Array}
+ */
+export function redlineDocuments(old, next, author, date) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(date, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.redlineDocuments(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export(r0, r1 * 1, 1);
+        return v5;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -1208,6 +1585,16 @@ export function validateDocument(docx) {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_is_undefined_8865fb403f8fe9d8: function(arg0) {
+            const ret = getObject(arg0) === undefined;
+            return ret;
+        },
+        __wbg___wbindgen_number_get_2e0e7dee9f701a71: function(arg0, arg1) {
+            const obj = getObject(arg1);
+            const ret = typeof(obj) === 'number' ? obj : undefined;
+            getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+        },
         __wbg___wbindgen_throw_41e9ee4f547fc59a: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
@@ -1221,6 +1608,34 @@ function __wbg_get_imports() {
             } finally {
                 wasm.__wbindgen_export(deferred0_0, deferred0_1, 1);
             }
+        },
+        __wbg_getUTCDate_3a2d5b5ab12ed75b: function(arg0) {
+            const ret = getObject(arg0).getUTCDate();
+            return ret;
+        },
+        __wbg_getUTCFullYear_73494f858b1a97cf: function(arg0) {
+            const ret = getObject(arg0).getUTCFullYear();
+            return ret;
+        },
+        __wbg_getUTCHours_674184914a683e3f: function(arg0) {
+            const ret = getObject(arg0).getUTCHours();
+            return ret;
+        },
+        __wbg_getUTCMinutes_2cbcb785a0d2e614: function(arg0) {
+            const ret = getObject(arg0).getUTCMinutes();
+            return ret;
+        },
+        __wbg_getUTCMonth_441e536ac640bfab: function(arg0) {
+            const ret = getObject(arg0).getUTCMonth();
+            return ret;
+        },
+        __wbg_getUTCSeconds_4e4f4b1e03334a24: function(arg0) {
+            const ret = getObject(arg0).getUTCSeconds();
+            return ret;
+        },
+        __wbg_new_0_72d020f0c63443d4: function() {
+            const ret = new Date();
+            return addHeapObject(ret);
         },
         __wbg_new_227d7c05414eb861: function() {
             const ret = new Error();

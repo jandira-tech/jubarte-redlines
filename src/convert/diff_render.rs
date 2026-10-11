@@ -216,6 +216,7 @@ fn draw_box(img: &mut RgbaImage, [x0, y0, x1, y1]: [u32; 4]) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use image::codecs::png::{CompressionType, FilterType, PngEncoder};
     use image::{ImageEncoder, Rgba, RgbaImage};

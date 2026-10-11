@@ -1714,6 +1714,7 @@ fn flush_table(out: &mut Vec<Block>, rows: &mut Vec<(Vec<String>, bool)>, row: &
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -2658,5 +2659,386 @@ mod tests {
         let started = std::time::Instant::now();
         let _ = CompoundFile::open(&bytes);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod legacy_byte_source_boundary_tests {
+    use super::*;
+    const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");
+
+    #[test]
+    fn fib_classification_refuses_old_identifiers_and_both_password_flags() {
+        let file = CompoundFile::open(FIXTURE).unwrap();
+        let word = file.stream("WordDocument").unwrap();
+        let frozen = word.clone();
+        let baseline = Fib::parse(&word).unwrap();
+        for (at, value, expected) in [
+            (0, 0u16, "LEGACY_DOC: not a Word document (wIdent)"),
+            (
+                2,
+                NFIB_WORD97 - 1,
+                "LEGACY_DOC: a Word 6 or Word 95 document; open it in Word and save it as .docx",
+            ),
+            (
+                0x0A,
+                u16_at(&word, 0x0A).unwrap() | 0x0100,
+                "LEGACY_DOC: an encrypted Word 97-2003 document; open it in Word and save it as .docx without a password",
+            ),
+            (
+                0x0A,
+                (u16_at(&word, 0x0A).unwrap() & !0x0100) | 0x8000,
+                "LEGACY_DOC: an encrypted Word 97-2003 document; open it in Word and save it as .docx without a password",
+            ),
+        ] {
+            let mut variant = word.clone();
+            variant[at..at + 2].copy_from_slice(&value.to_le_bytes());
+            assert_eq!(Fib::parse(&variant).err().unwrap().to_string(), expected);
+            assert_eq!(word, frozen);
+        }
+        let mut alternate = word.clone();
+        alternate[0x0A..0x0C]
+            .copy_from_slice(&(u16_at(&word, 0x0A).unwrap() ^ 0x0200).to_le_bytes());
+        let changed = Fib::parse(&alternate).unwrap();
+        assert_eq!(changed.table_one, !baseline.table_one);
+        assert_eq!(
+            (
+                changed.ccp_text,
+                changed.fc_clx,
+                changed.lcb_clx,
+                changed.fc_stshf,
+                changed.lcb_stshf,
+                changed.plcf_sed
+            ),
+            (
+                baseline.ccp_text,
+                baseline.fc_clx,
+                baseline.lcb_clx,
+                baseline.fc_stshf,
+                baseline.lcb_stshf,
+                baseline.plcf_sed
+            )
+        );
+        assert_eq!(word, frozen);
+    }
+
+    #[test]
+    fn corrupt_compound_header_and_directory_cycles_are_bounded_without_touching_fixture_bytes() {
+        let frozen = FIXTURE.to_vec();
+        for shift in [0u16, 5, 7, 15] {
+            let mut bytes = frozen.clone();
+            bytes[0x20..0x22].copy_from_slice(&shift.to_le_bytes());
+            assert_eq!(
+                CompoundFile::open(&bytes).err().unwrap().to_string(),
+                "LEGACY_DOC: not a readable OLE compound file"
+            );
+        }
+        let sector_size = 1usize << u16_at(FIXTURE, 0x1E).unwrap();
+        let root_at = (u32_at(FIXTURE, 0x30).unwrap() as usize + 1) * sector_size;
+        let mut wrong_root = frozen.clone();
+        wrong_root[root_at + 66] = 2;
+        assert_eq!(
+            CompoundFile::open(&wrong_root).err().unwrap().to_string(),
+            "LEGACY_DOC: not a readable OLE compound file"
+        );
+        let mut cycle = frozen.clone();
+        cycle[root_at + 68..root_at + 72].copy_from_slice(&0u32.to_le_bytes());
+        cycle[root_at + 76..root_at + 80].copy_from_slice(&0u32.to_le_bytes());
+        let file = CompoundFile::open(&cycle).unwrap();
+        assert!(file.stream("WordDocument").is_none());
+        assert!(file.stream("absent").is_none());
+        assert_eq!(FIXTURE, frozen.as_slice());
+        assert!(read(FIXTURE).is_ok());
+    }
+
+    #[test]
+    fn main_story_stops_at_its_own_cp_boundary_before_unicode_later_story_pieces() {
+        let word = [b'A', 0xb2, 0x03];
+        let pieces = [
+            Piece {
+                cp_start: 0,
+                cp_end: 0,
+                fc: 0,
+                compressed: true,
+                modifier: CharModifier::default(),
+            },
+            Piece {
+                cp_start: 0,
+                cp_end: 1,
+                fc: 0,
+                compressed: true,
+                modifier: CharModifier {
+                    bold: Some(true),
+                    italic: Some(false),
+                },
+            },
+            Piece {
+                cp_start: 1,
+                cp_end: 2,
+                fc: 1,
+                compressed: false,
+                modifier: CharModifier::default(),
+            },
+        ];
+        for length in [0, 1] {
+            let chars = main_text(&word, &pieces, length).unwrap();
+            assert_eq!(chars.len(), length as usize);
+            if length == 1 {
+                assert_eq!((chars[0].ch, chars[0].cp, chars[0].fc), ('A', 0, 0));
+                assert_eq!(
+                    chars[0].modifier,
+                    CharModifier {
+                        bold: Some(true),
+                        italic: Some(false)
+                    }
+                );
+            }
+        }
+        let chars = main_text(&word, &pieces, 2).unwrap();
+        assert_eq!(chars.iter().map(|s| s.ch).collect::<String>(), "Aβ");
+        assert_eq!(
+            chars.iter().map(|s| (s.cp, s.fc)).collect::<Vec<_>>(),
+            vec![(0, 0), (1, 1)]
+        );
+        let error = piece_modifier(1, &[&[0x35, 0x08, 0x03, 0x36, 0x08, 0x01]])
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "LEGACY_DOC: a text piece's property modifier has a bold or italic toggle that is missing or invalid"
+        );
+        assert_eq!(word, [b'A', 0xb2, 0x03]);
+    }
+
+    #[test]
+    fn unterminated_story_tail_and_whitespace_spans_keep_all_authored_characters() {
+        let papx = FkpIndex { runs: Vec::new() };
+        let chpx = FkpIndex { runs: Vec::new() };
+        let lists = Lists::default();
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        let chars = "owned tail"
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| StoryChar {
+                ch,
+                cp: i as u32,
+                fc: i as u32,
+                modifier: CharModifier::default(),
+            })
+            .collect::<Vec<_>>();
+        let expected = vec![Block::Paragraph(Paragraph {
+            spans: vec![Span {
+                text: "owned tail".to_string(),
+                ..Span::default()
+            }],
+            ..Paragraph::default()
+        })];
+        assert_eq!(story.blocks(&chars), expected);
+        let spans = vec![
+            Span {
+                text: "owned".to_string(),
+                bold: true,
+                italic: false,
+            },
+            Span {
+                text: " \n ".to_string(),
+                ..Span::default()
+            },
+            Span {
+                text: "tail".to_string(),
+                bold: false,
+                italic: true,
+            },
+        ];
+        let frozen = spans.clone();
+        assert_eq!(render_spans(&spans), "**owned** \\\n *tail*");
+        assert_eq!(spans, frozen);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod legacy_regular_sector_source_owners {
+    use super::*;
+    const SOURCE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");
+
+    // Repackage actual source streams under the two MS-CFB sector formats.
+    // Both streams exceed the 4096-byte mini-stream cutoff, so the root owns
+    // no mini stream and there is no mini FAT. All stream bytes stay literal.
+    fn regular_stream_package(word: &[u8], table: &[u8], version: u16, table_one: bool) -> Vec<u8> {
+        assert!(word.len() >= 4096 && table.len() >= 4096);
+        let sector_size = if version == 4 { 4096usize } else { 512usize };
+        let per_fat = sector_size / 4;
+        let word_count = word.len().div_ceil(sector_size);
+        let table_count = table.len().div_ceil(sector_size);
+        let data_count = 1 + word_count + table_count;
+        let mut fat_count = 1;
+        while (data_count + fat_count).div_ceil(per_fat) != fat_count {
+            fat_count = (data_count + fat_count).div_ceil(per_fat);
+        }
+        assert!(fat_count <= 109);
+        let mut bytes = vec![0u8; (1 + data_count + fat_count) * sector_size];
+        let put16 = |bytes: &mut [u8], at: usize, value: u16| {
+            bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
+        };
+        let put32 = |bytes: &mut [u8], at: usize, value: u32| {
+            bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        };
+        bytes[..8].copy_from_slice(OLE_MAGIC);
+        put16(&mut bytes, 0x18, 0x003e);
+        put16(&mut bytes, 0x1a, version);
+        put16(&mut bytes, 0x1c, 0xfffe);
+        put16(&mut bytes, 0x1e, if version == 4 { 12 } else { 9 });
+        put16(&mut bytes, 0x20, 6);
+        put32(&mut bytes, 0x28, u32::from(version == 4));
+        put32(&mut bytes, 0x2c, u32::try_from(fat_count).unwrap());
+        put32(&mut bytes, 0x30, 0);
+        put32(&mut bytes, 0x38, 4096);
+        put32(&mut bytes, 0x3c, END_OF_CHAIN);
+        put32(&mut bytes, 0x44, END_OF_CHAIN);
+        for index in 0..109 {
+            put32(
+                &mut bytes,
+                0x4c + index * 4,
+                if index < fat_count {
+                    u32::try_from(data_count + index).unwrap()
+                } else {
+                    NO_STREAM
+                },
+            );
+        }
+        let entries = [
+            (
+                "Root Entry",
+                5u8,
+                1u8,
+                NO_STREAM,
+                NO_STREAM,
+                1u32,
+                END_OF_CHAIN,
+                0usize,
+            ),
+            ("WordDocument", 2, 1, 2, NO_STREAM, NO_STREAM, 1, word.len()),
+            (
+                if table_one { "1Table" } else { "0Table" },
+                2,
+                0,
+                NO_STREAM,
+                NO_STREAM,
+                NO_STREAM,
+                u32::try_from(1 + word_count).unwrap(),
+                table.len(),
+            ),
+        ];
+        for (index, (name, kind, color, left, right, child, start, size)) in
+            entries.into_iter().enumerate()
+        {
+            let base = sector_size + index * 128;
+            let name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+            for (offset, character) in name.iter().enumerate() {
+                put16(&mut bytes, base + offset * 2, *character);
+            }
+            put16(
+                &mut bytes,
+                base + 64,
+                u16::try_from(name.len() * 2).unwrap(),
+            );
+            bytes[base + 66] = kind;
+            bytes[base + 67] = color;
+            put32(&mut bytes, base + 68, left);
+            put32(&mut bytes, base + 72, right);
+            put32(&mut bytes, base + 76, child);
+            put32(&mut bytes, base + 116, start);
+            put32(&mut bytes, base + 120, u32::try_from(size).unwrap());
+        }
+        bytes[sector_size * 2..sector_size * 2 + word.len()].copy_from_slice(word);
+        let table_at = sector_size * (2 + word_count);
+        bytes[table_at..table_at + table.len()].copy_from_slice(table);
+        let mut fat = vec![NO_STREAM; fat_count * per_fat];
+        fat[0] = END_OF_CHAIN;
+        for (start, count) in [(1usize, word_count), (1 + word_count, table_count)] {
+            for (index, sector) in fat.iter_mut().enumerate().skip(start).take(count) {
+                *sector = if index + 1 == start + count {
+                    END_OF_CHAIN
+                } else {
+                    u32::try_from(index + 1).unwrap()
+                };
+            }
+        }
+        for sector in fat.iter_mut().skip(data_count).take(fat_count) {
+            *sector = 0xffff_fffd;
+        }
+        let fat_at = sector_size * (1 + data_count);
+        for (index, sector) in fat.into_iter().enumerate() {
+            put32(&mut bytes, fat_at + index * 4, sector);
+        }
+        bytes
+    }
+
+    #[test]
+    fn version_three_and_four_regular_streams_preserve_complete_legacy_source_blocks() {
+        let original = SOURCE.to_vec();
+        let file = CompoundFile::open(SOURCE).unwrap();
+        let word = file.stream("WordDocument").unwrap();
+        let original_word = word.clone();
+        let fib = Fib::parse(&word).unwrap();
+        let table = file
+            .stream(if fib.table_one { "1Table" } else { "0Table" })
+            .unwrap();
+        let original_table = table.clone();
+        let expected = read(SOURCE).unwrap();
+        assert!(!expected.blocks.is_empty());
+        let expected_markdown = doc_to_markdown(SOURCE).unwrap();
+        let expected_docx = doc_to_docx(SOURCE).unwrap();
+        for version in [3u16, 4] {
+            for table_one in [false, true] {
+                let mut word = original_word.clone();
+                let flags = u16_at(&word, 0x0a).unwrap();
+                word[0x0a..0x0c].copy_from_slice(
+                    &(if table_one {
+                        flags | 0x0200
+                    } else {
+                        flags & !0x0200
+                    })
+                    .to_le_bytes(),
+                );
+                let bytes = regular_stream_package(&word, &table, version, table_one);
+                let before = bytes.clone();
+                let repackaged = CompoundFile::open(&bytes).unwrap();
+                assert_eq!(
+                    repackaged.sector_size,
+                    if version == 4 { 4096 } else { 512 }
+                );
+                assert!(repackaged.mini_fat.is_empty());
+                assert!(repackaged.mini_stream.is_empty());
+                assert_eq!(
+                    repackaged.stream("WordDocument").as_deref(),
+                    Some(word.as_slice())
+                );
+                assert_eq!(
+                    repackaged
+                        .stream(if table_one { "1Table" } else { "0Table" })
+                        .as_deref(),
+                    Some(table.as_slice())
+                );
+                assert_eq!(
+                    read(&bytes).unwrap(),
+                    expected,
+                    "version{version}/table{table_one}"
+                );
+                assert_eq!(doc_to_markdown(&bytes).unwrap(), expected_markdown);
+                assert_eq!(doc_to_docx(&bytes).unwrap(), expected_docx);
+                assert_eq!(bytes, before);
+            }
+        }
+        assert_eq!(word, original_word);
+        assert_eq!(table, original_table);
+        assert_eq!(SOURCE, original.as_slice());
     }
 }

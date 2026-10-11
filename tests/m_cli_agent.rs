@@ -64,10 +64,9 @@ fn text_prints_markdown_with_paragraph_ids() {
     let file = write_fixture(dir.path());
     let (code, stdout, _) = run(&["text", file.to_str().unwrap()]);
     assert_eq!(code, 0);
-    assert!(
-        stdout.starts_with("[body:p:0] Heading\n\n[body:p:1] The individual"),
-        "{stdout}"
-    );
+    assert!(stdout.starts_with("---\nsource: "), "{stdout}");
+    assert!(stdout.contains("<!-- p0"), "{stdout}");
+    assert!(stdout.contains("The individual"), "{stdout}");
 }
 
 #[test]
@@ -377,7 +376,7 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
     let file = write_fixture(dir.path());
     let output = dir.path().join("result.pdf");
     let report = dir.path().join("report.json");
-    let (code, _, stderr) = run(&[
+    let (code, stdout, stderr) = run(&[
         "convert",
         file.to_str().unwrap(),
         "--pdf",
@@ -389,7 +388,9 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
         "--report",
         report.to_str().unwrap(),
     ]);
-    assert_eq!(code, 1, "{stderr}");
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("invalid value '0'"), "{stderr}");
     assert!(stderr.contains("dpi"), "{stderr}");
     assert!(!output.exists());
     assert!(!report.exists());
@@ -397,7 +398,7 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
 }
 
 #[test]
-fn edit_writes_and_prints_the_patch_of_the_redline_unless_quiet() {
+fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_fixture(dir.path());
     let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
@@ -447,7 +448,17 @@ fn edit_writes_and_prints_the_patch_of_the_redline_unless_quiet() {
         )
         .replace(['{', '}', '+', '='], "");
     assert!(accepted.contains("1(g), 2(c), 2(e), 3"), "{accepted}");
-    assert!(stdout.contains(&patch), "{stdout}");
+    // stdout carries the redline's changed blocks as the agent view, not
+    // the patch (which stays on disk).
+    assert!(!stdout.contains("\n@@ "), "{stdout}");
+    assert!(
+        stdout.contains("\nrange: changed by @C (p1, p2) of p0-p2\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("{~~his or her~>an~~}") && stdout.contains("#c0 @C: post-disclosure duty"),
+        "{stdout}"
+    );
     assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");
     // Quiet: the same files, nothing printed.
     let (stdout, quiet_patch) = edit("quiet", true);

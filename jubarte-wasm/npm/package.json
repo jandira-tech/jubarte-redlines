@@ -26,7 +26,10 @@
     "wasm",
     "webassembly",
     "pdf",
-    "docx-to-pdf"
+    "docx-to-pdf",
+    "markdown",
+    "criticmarkup",
+    "ai-agents"
   ],
   "main": "./node/jubarte_wasm.js",
   "types": "./node/jubarte_wasm.d.ts",

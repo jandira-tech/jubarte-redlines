@@ -12,7 +12,7 @@ widths. Run through ``scripts/gen_docs.sh``; CI fails when the committed block
 drifts from the real one.
 
 Used for all three runners of the shared command set — the Rust ``jubarte``
-binary (clap), the Python wheel's ``jubarte-redlines`` (argparse) and the npm
+binary (clap), the Python wheel's ``jubarte-redlines`` (shared clap) and the npm
 ``jubarte-redlines`` CLI — so one page per surface can quote the exact flags
 the installed runner accepts.
 """
@@ -61,21 +61,25 @@ def run_help(runner: list[str], args: list[str]) -> str:
             f"error: `{joined} --help` exited {proc.returncode}: "
             f"{proc.stderr.strip()[:400]}"
         )
-    return proc.stdout.rstrip("\n")
+    return "\n".join(line.rstrip() for line in proc.stdout.splitlines()).rstrip("\n")
 
 
 def discover_sections(text: str) -> list[str]:
-    """Subcommand names from a ``Commands:``/``commands:`` help section."""
+    """Subcommand names from a ``Commands:``/``Tasks:`` help section."""
     names: list[str] = []
     in_section = False
     for line in text.splitlines():
-        if line.strip() in ("Commands:", "commands:"):
+        if line.strip() in ("Commands:", "commands:", "Tasks:", "tasks:"):
             in_section = True
             continue
         if not in_section:
             continue
         if not line.strip() or not line.startswith("  "):
             break
+        # Clap wraps long descriptions on deeper-indented continuation rows.
+        # Those words are prose, not additional command names.
+        if line.startswith("   "):
+            continue
         match = _NAME_LIST.match(line.strip())
         if not match:
             break
@@ -159,7 +163,7 @@ def command_summaries(text: str) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     in_section = False
     for line in text.splitlines():
-        if line.strip() in ("Commands:", "commands:"):
+        if line.strip() in ("Commands:", "commands:", "Tasks:", "tasks:"):
             in_section = True
             continue
         if not in_section:

@@ -1445,7 +1445,7 @@ fn numbering_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
 /// `text`: one line per paragraph, table and row of a story part, indented
 /// by table and text box depth; with `props`, the `runs` view. Returns the
 /// lines and the paragraph count.
-fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
+fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String>, usize) {
     fn mark(dom: &Dom, n: NodeId, props: &str) -> &'static str {
         let Some(pr) = dom.nodes(n).into_iter().find(|&c| local(dom, c) == props) else {
             return " ";
@@ -1517,6 +1517,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
         out: Vec<String>,
         paras: usize,
         props: bool,
+        critic: bool,
     }
     fn nested(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
         for c in dom.nodes(n) {
@@ -1539,6 +1540,14 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
                         .iter()
                         .map(|(k, f, t)| {
                             let f = f.as_ref().map(|f| format!("«{f}»")).unwrap_or_default();
+                            if w.critic {
+                                let t = crate::text_diff::critic_literal(t);
+                                return match k {
+                                    1 => format!("{{++{t}++}}"),
+                                    2 => format!("{{--{t}--}}"),
+                                    _ => t,
+                                };
+                            }
                             match k {
                                 1 => format!("{{+{f}{t}+}}"),
                                 2 => format!("[-{f}{t}-]"),
@@ -1574,6 +1583,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
         out: Vec::new(),
         paras: 0,
         props,
+        critic,
     };
     walk(dom, root, 0, &mut w);
     (w.out, w.paras)
@@ -1838,7 +1848,7 @@ fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
     let Some(main) = rel_targets("_rels/.rels")
         .into_iter()
         .find(|(_, t, _)| t.ends_with("/officeDocument"))
-        .map(|(_, _, target)| target.trim_start_matches('/').to_string())
+        .map(|(_, _, target)| crate::opc::resolve_rel_target("", &target))
     else {
         return roles;
     };
@@ -1846,11 +1856,7 @@ fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
     let targets: HashMap<String, String> = rel_targets(&format!("{dir}/_rels/{file}.rels"))
         .into_iter()
         .map(|(id, _, target)| {
-            let part = match target.strip_prefix('/') {
-                Some(absolute) => absolute.to_string(),
-                None if dir.is_empty() => target,
-                None => format!("{dir}/{target}"),
-            };
+            let part = crate::opc::resolve_rel_target(&main, &target);
             (id, part)
         })
         .collect();
@@ -1886,63 +1892,230 @@ fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
     roles
 }
 
+/// Ordered, complete lines underlying every debug listing.
+fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
+    // `render` reads the package as a whole; the others part by part.
+    let (mut map, entries) = if check == Check::Render {
+        (render::render_parts(pkg, opts.part.as_deref()), &[][..])
+    } else {
+        (BTreeMap::new(), &pkg.entries[..])
+    };
+    for e in entries {
+        if opts.part.as_deref().is_some_and(|p| !e.name.contains(p)) {
+            continue;
+        }
+        if !(e.name.ends_with(".xml") || e.name.ends_with(".rels")) {
+            continue;
+        }
+        let Some(xml) = decode_xml(&e.data) else {
+            continue;
+        };
+        if check == Check::Xml {
+            map.insert(e.name.clone(), (xml_lines(&xml), 0));
+            continue;
+        }
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else { continue };
+        if check == Check::Changes {
+            let (lines, n) = change_lines(&dom, root);
+            if n > 0 {
+                map.insert(e.name.clone(), (lines, n));
+            }
+            continue;
+        }
+        if check == Check::StyleDefs {
+            if local(&dom, root) == "styles" {
+                map.insert(e.name.clone(), style_lines(&dom, root));
+            }
+            continue;
+        }
+        if check == Check::Numbering {
+            if local(&dom, root) == "numbering" {
+                map.insert(e.name.clone(), numbering_lines(&dom, root));
+            }
+            continue;
+        }
+        if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
+            map.insert(
+                e.name.clone(),
+                text_lines(&dom, root, check == Check::Runs, false),
+            );
+        }
+    }
+    if let Some(g) = opts.grep.as_deref() {
+        for (lines, _) in map.values_mut() {
+            lines.retain(|l| line_has(l, g));
+        }
+        map.retain(|_, (lines, _)| !lines.is_empty());
+    }
+    map
+}
+
+/// A complete text snapshot for unified diffs, with no report clipping.
+/// Header/footer roles are stable when Word renumbers their ZIP parts.
+pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
+    document_text_with_critic(bytes, false)
+}
+
+/// The complete snapshot with revision spans rendered at their XML source.
+pub(crate) fn document_text_with_critic(bytes: &[u8], critic: bool) -> Result<String, String> {
+    document_text_view(bytes, critic, false)
+}
+
+/// Validated document snapshot with an explicit revision policy.
+pub(crate) fn document_text_view(
+    bytes: &[u8],
+    critic: bool,
+    accept: bool,
+) -> Result<String, String> {
+    let admitted = crate::admission::admit(bytes, crate::admission::InputLimits::default())
+        .map_err(|e| e.to_string())?;
+    let pkg = Package::open(bytes)?;
+    let parse = |entry: &Entry| -> Result<(Dom, NodeId), String> {
+        let xml = decode_xml(&entry.data)
+            .ok_or_else(|| format!("{}: unsupported XML encoding", entry.name))?;
+        crate::xmllinq::parse::validate_xml(&xml).map_err(|e| format!("{}: {e}", entry.name))?;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom
+            .root(doc)
+            .ok_or_else(|| format!("{}: missing XML root", entry.name))?;
+        Ok((dom, root))
+    };
+    let types_entry = pkg
+        .entries
+        .iter()
+        .find(|e| e.name == "[Content_Types].xml")
+        .ok_or("missing content types")?;
+    let (types, root) = parse(types_entry)?;
+    let mut overrides = HashMap::new();
+    let mut defaults = HashMap::new();
+    for node in types.elements(root, None) {
+        let kind = attr(&types, node, "ContentType");
+        if local(&types, node) == "Override" {
+            overrides.insert(
+                attr(&types, node, "PartName")
+                    .trim_start_matches('/')
+                    .to_string(),
+                kind,
+            );
+        } else if local(&types, node) == "Default" {
+            defaults.insert(attr(&types, node, "Extension").to_ascii_lowercase(), kind);
+        }
+    }
+    let word_name = |dom: &Dom, node: NodeId, name: &str| {
+        dom.name(node).is_some_and(|n| {
+            n.local_name() == name
+                && matches!(
+                    n.namespace_name(),
+                    "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                        | "http://purl.oclc.org/ooxml/wordprocessingml/main"
+                )
+        })
+    };
+    let roles = story_roles(&pkg);
+    let mut parts = BTreeMap::new();
+    for entry in &pkg.entries {
+        let kind = overrides
+            .get(&entry.name)
+            .or_else(|| {
+                entry
+                    .name
+                    .rsplit_once('.')
+                    .and_then(|(_, ext)| defaults.get(&ext.to_ascii_lowercase()))
+            })
+            .map(String::as_str)
+            .unwrap_or("");
+        let main = entry.name == admitted.main_part;
+        let xml = main
+            || entry.name.ends_with(".xml")
+            || entry.name.ends_with(".rels")
+            || kind.ends_with("+xml")
+            || matches!(kind, "application/xml" | "text/xml");
+        if !xml {
+            continue;
+        }
+        let (mut dom, mut root) = parse(entry)?;
+        if main
+            && (!word_name(&dom, root, "document")
+                || !dom
+                    .elements(root, None)
+                    .into_iter()
+                    .any(|n| word_name(&dom, n, "body")))
+        {
+            return Err(format!(
+                "{}: expected a Word document root and body",
+                entry.name
+            ));
+        }
+        let expected = kind
+            .strip_prefix("application/vnd.openxmlformats-officedocument.wordprocessingml.")
+            .and_then(|k| match k {
+                "header+xml" => Some("hdr"),
+                "footer+xml" => Some("ftr"),
+                "footnotes+xml" => Some("footnotes"),
+                "endnotes+xml" => Some("endnotes"),
+                "comments+xml" => Some("comments"),
+                _ => None,
+            });
+        if expected.is_some_and(|name| !word_name(&dom, root, name)) {
+            return Err(format!("{}: expected a Word story root", entry.name));
+        }
+        // Main parts are resolved by admission; unrelated document-shaped
+        // custom XML is not a second body. Other Word stories keep debug's view.
+        if !main
+            && (local(&dom, root) == "document"
+                || !TEXT_PARTS.iter().any(|name| word_name(&dom, root, name)))
+        {
+            continue;
+        }
+        let name = if main {
+            "body".to_string()
+        } else {
+            roles
+                .get(&entry.name)
+                .cloned()
+                .unwrap_or_else(|| entry.name.clone())
+        };
+        if accept {
+            // Revision transforms use Transitional Word names. Normalize
+            // element and attribute names only, preserving literal URI text.
+            const STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+            const WORD: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            let mut nodes = dom.descendants(root, None);
+            nodes.push(root);
+            for node in nodes {
+                if let Some(n) = dom.name(node).filter(|n| n.namespace_name() == STRICT) {
+                    dom.set_name(node, crate::xmllinq::XName::get(n.local_name(), WORD));
+                }
+                for (n, value) in dom.attributes(node) {
+                    if n.namespace_name() == STRICT {
+                        dom.set_attribute_value(node, &n, None);
+                        dom.set_attribute_value(
+                            node,
+                            &crate::xmllinq::XName::get(n.local_name(), WORD),
+                            Some(&value),
+                        );
+                    }
+                }
+            }
+            root = crate::revision_processor::accept_revisions_for_part_content(&mut dom, root);
+        }
+        parts.insert(name, text_lines(&dom, root, false, critic).0);
+    }
+    let mut out = String::new();
+    for (part, lines) in parts {
+        let _ = writeln!(out, "[{part}]");
+        for line in lines {
+            let _ = writeln!(out, "{line}");
+        }
+    }
+    Ok(out)
+}
+
 /// `text` / `xml` for one package, or their per-part differences between two.
 fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options) -> String {
-    let lines_of = |pkg: &Package| -> BTreeMap<String, (Vec<String>, usize)> {
-        // `render` reads the package as a whole; the others part by part.
-        let (mut map, entries) = if check == Check::Render {
-            (render::render_parts(pkg, opts.part.as_deref()), &[][..])
-        } else {
-            (BTreeMap::new(), &pkg.entries[..])
-        };
-        for e in entries {
-            if opts.part.as_deref().is_some_and(|p| !e.name.contains(p)) {
-                continue;
-            }
-            if !(e.name.ends_with(".xml") || e.name.ends_with(".rels")) {
-                continue;
-            }
-            let Some(xml) = decode_xml(&e.data) else {
-                continue;
-            };
-            if check == Check::Xml {
-                map.insert(e.name.clone(), (xml_lines(&xml), 0));
-                continue;
-            }
-            let mut dom = Dom::new();
-            let doc = dom.parse_xdocument(&xml);
-            let Some(root) = dom.root(doc) else { continue };
-            if check == Check::Changes {
-                let (lines, n) = change_lines(&dom, root);
-                if n > 0 {
-                    map.insert(e.name.clone(), (lines, n));
-                }
-                continue;
-            }
-            if check == Check::StyleDefs {
-                if local(&dom, root) == "styles" {
-                    map.insert(e.name.clone(), style_lines(&dom, root));
-                }
-                continue;
-            }
-            if check == Check::Numbering {
-                if local(&dom, root) == "numbering" {
-                    map.insert(e.name.clone(), numbering_lines(&dom, root));
-                }
-                continue;
-            }
-            if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
-                map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
-            }
-        }
-        if let Some(g) = opts.grep.as_deref() {
-            for (lines, _) in map.values_mut() {
-                lines.retain(|l| line_has(l, g));
-            }
-            map.retain(|_, (lines, _)| !lines.is_empty());
-        }
-        map
-    };
     let label = match check {
         Check::Xml => "xml",
         Check::Runs => "runs",
@@ -1953,7 +2126,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         _ => "text",
     };
     let mut out = String::new();
-    let a = lines_of(pa);
+    let a = listing_lines(pa, check, opts);
     let Some(pb) = pb else {
         for (part, (lines, paras)) in &a {
             if check == Check::Xml {
@@ -1980,7 +2153,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         }
         return out;
     };
-    let b = lines_of(pb);
+    let b = listing_lines(pb, check, opts);
     // Header and footer parts pair by the section that shows them (Word
     // renumbers them on save); XML stays by part name.
     let (a, b) = if check == Check::Xml {
@@ -2422,6 +2595,7 @@ fn print_counts(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -3484,5 +3658,507 @@ mod tests {
         assert!(!out.contains("same"), "{out}");
         let same = report(&b, Some(&b), &opts_for(Check::Xml)).unwrap();
         assert_eq!(same, "xml identical\n");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_byte_diagnostic_contract_tests {
+    use super::*;
+    use std::io::Write;
+
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const TYPES: &[u8] = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const ROOT_RELS: &[u8] = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="main" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+
+    fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut bytes = Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut bytes);
+            for (name, data) in entries {
+                zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                zip.write_all(data).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        bytes.into_inner()
+    }
+
+    fn document(body: &str) -> String {
+        format!(r#"<w:document xmlns:w="{W}"><w:body>{body}</w:body></w:document>"#)
+    }
+
+    fn source(body: &str) -> Vec<u8> {
+        let xml = document(body);
+        zip_bytes(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", xml.as_bytes()),
+        ])
+    }
+
+    fn dom(xml: &str) -> (Dom, NodeId) {
+        let mut d = Dom::new();
+        let doc = d.parse_xdocument(xml);
+        let root = d.root(doc).unwrap();
+        (d, root)
+    }
+
+    #[test]
+    fn malformed_xml_byte_parts_report_exact_findings_and_selected_filter_is_respected() {
+        // Intentional undecodable XML and an empty XML document alongside
+        // valid Word XML, a binary part, and non-XML ZIP directory entries.
+        let xml = document("<w:p/>");
+        let bytes = zip_bytes(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", xml.as_bytes()),
+            ("word/bad.xml", &[0xFF]),
+            ("word/empty.xml", b""),
+            ("word/image.bin", &[0xFF]),
+            ("word/", b""),
+        ]);
+        let before = bytes.clone();
+        let pkg = Package::open(&bytes).unwrap();
+        let mut f = Findings::default();
+        let parts = pkg.xml_parts(Some("word/"), &mut f);
+        assert_eq!(
+            parts.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(),
+            vec!["word/document.xml"]
+        );
+        assert_eq!(
+            f.by_kind,
+            BTreeMap::from([
+                (
+                    "xml-undecodable".into(),
+                    vec![("word/bad.xml".into(), String::new())]
+                ),
+                (
+                    "xml-unparsable".into(),
+                    vec![("word/empty.xml".into(), String::new())]
+                ),
+            ])
+        );
+        let mut filtered = Findings::default();
+        assert_eq!(pkg.xml_parts(Some("document"), &mut filtered).len(), 1);
+        assert!(filtered.by_kind.is_empty());
+        assert_eq!(bytes, before);
+        assert_eq!(pkg.raw, before);
+        assert!(
+            Package::open(b"not a ZIP")
+                .err()
+                .unwrap()
+                .starts_with("not a zip: ")
+        );
+    }
+
+    #[test]
+    fn utf_byte_order_marks_and_malformed_escape_sequences_have_literal_decoding() {
+        let text = "<t>漢😀</t>";
+        let mut utf8 = vec![0xEF, 0xBB, 0xBF];
+        utf8.extend_from_slice(text.as_bytes());
+        assert_eq!(decode_xml(&utf8).as_deref(), Some(text));
+        for big_endian in [false, true] {
+            let mut bytes = if big_endian {
+                vec![0xFE, 0xFF]
+            } else {
+                vec![0xFF, 0xFE]
+            };
+            for unit in text.encode_utf16() {
+                bytes.extend_from_slice(&if big_endian {
+                    unit.to_be_bytes()
+                } else {
+                    unit.to_le_bytes()
+                });
+            }
+            assert_eq!(decode_xml(&bytes).as_deref(), Some(text));
+            let invalid = if big_endian {
+                [0xFE, 0xFF, 0xD8, 0x00]
+            } else {
+                [0xFF, 0xFE, 0x00, 0xD8]
+            };
+            assert!(decode_xml(&invalid).is_none()); // unpaired surrogate diagnostic
+        }
+        assert!(decode_xml(&[0xEF, 0xBB, 0xBF, 0xFF]).is_none());
+        for (input, expected) in [
+            ("header%20one.xml", "header one.xml"),
+            ("%E6%BC%A2", "漢"),
+            ("%", "%"),
+            ("%2", "%2"),
+            ("%GG", "%GG"),
+            ("%2G", "%2G"),
+            ("%FF", "�"),
+        ] {
+            assert_eq!(percent_decode(input), expected);
+        }
+    }
+
+    #[test]
+    fn property_histories_compare_complete_nested_values_and_keep_no_difference_records() {
+        let xml = document(
+            r#"<w:p><w:pPr><w:spacing w:before="120" w:after="80"/><w:pPrChange w:id="1" w:author="A"><w:pPr><w:spacing w:before="120" w:after="80"/></w:pPr></w:pPrChange></w:pPr><w:r><w:rPr><w:rFonts w:ascii="New" w:hAnsi="New"/><w:rPrChange w:id="2" w:author="A"><w:rPr><w:rFonts w:ascii="Old" w:hAnsi="Old"/></w:rPr></w:rPrChange></w:rPr><w:t>Label</w:t></w:r></w:p>"#,
+        );
+        let (d, root) = dom(&xml);
+        let before = d.serialize_element(root);
+        assert_eq!(change_lines(&d, root), (vec![
+            "  pPrChange p \"Label\": (no difference)".into(),
+            "  rPrChange p \"Label\": +rFonts(ascii=New,hAnsi=New) -rFonts(ascii=Old,hAnsi=Old)".into(),
+        ], 2));
+        let (p, r) = dom(&format!(
+            r#"<w:pPr xmlns:w="{W}"><w:tabs><w:tab w:pos="720" w:val="left"/></w:tabs><w:jc w:val="right"/><w:keepNext/><!--source comment--><w:rPr><w:b/></w:rPr></w:pPr>"#
+        ));
+        assert_eq!(
+            prop_items(&p, r),
+            vec!["jc=right", "keepNext", "tabs{tab(pos=720,val=left)}"]
+        );
+        assert_eq!(d.serialize_element(root), before);
+    }
+
+    #[test]
+    fn bookmark_duplicate_end_and_early_end_have_complete_diagnostics_and_chains() {
+        // Intentional malformed range pairing; diagnose every distinct error.
+        let (d, root) = dom(&document(
+            r#"<w:p><w:bookmarkEnd w:id="7"/><w:bookmarkStart w:id="7" w:name="same"/><w:bookmarkStart w:id="7" w:name="same"/><w:bookmarkEnd w:id="7"/></w:p>"#,
+        ));
+        let before = d.serialize_element(root);
+        let mut f = Findings::default();
+        let mut chains = BTreeMap::new();
+        check_bookmarks(&d, root, "word/document.xml", &mut f, Some(&mut chains));
+        assert_eq!(
+            f.by_kind,
+            BTreeMap::from([
+                (
+                    "bookmark-duplicate-end".into(),
+                    vec![("word/document.xml".into(), "id 7".into())]
+                ),
+                (
+                    "bookmark-duplicate-id".into(),
+                    vec![("word/document.xml".into(), "id 7 (same)".into())]
+                ),
+                (
+                    "bookmark-duplicate-name".into(),
+                    vec![("word/document.xml".into(), "same".into())]
+                ),
+                (
+                    "bookmark-end-before-start".into(),
+                    vec![
+                        ("word/document.xml".into(), "id 7 (same)".into()),
+                        ("word/document.xml".into(), "id 7 (same)".into())
+                    ]
+                ),
+            ])
+        );
+        assert_eq!(
+            chains,
+            BTreeMap::from([
+                ("word/document.xml end p".into(), 2),
+                ("word/document.xml start p".into(), 2)
+            ])
+        );
+        assert_eq!(d.serialize_element(root), before);
+    }
+
+    #[test]
+    fn line_diff_handles_identical_large_replacements_and_separated_hunks_exactly() {
+        let strings = |x: &[&str]| x.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let a = strings(&["prefix", "old", "middle", "removed", "suffix"]);
+        let b = strings(&["prefix", "new", "middle", "added", "suffix"]);
+        assert_eq!(diff_lines(&a, &a), Vec::<Hunk>::new());
+        assert_eq!(
+            diff_lines(&a, &b),
+            vec![
+                (1, vec!["old"], vec!["new"]),
+                (3, vec!["removed"], vec!["added"])
+            ]
+        );
+        assert_eq!(
+            diff_lines(&[], &strings(&["new"])),
+            vec![(0, vec![], vec!["new"])]
+        );
+        let mut large_a = vec!["old".to_owned(); 2001];
+        let mut large_b = vec!["new".to_owned(); 2000];
+        large_a.insert(0, "prefix".into());
+        large_b.insert(0, "prefix".into());
+        large_a.push("suffix".into());
+        large_b.push("suffix".into());
+        let h = diff_lines(&large_a, &large_b);
+        assert_eq!(h, vec![(1, vec!["old"; 2001], vec!["new"; 2000])]);
+    }
+
+    #[test]
+    fn diff_report_context_hunk_limit_and_one_sided_parts_keep_exact_source_lines() {
+        let a = source(
+            "<w:p><w:r><w:t>prefix</w:t></w:r></w:p><w:p><w:r><w:t>old</w:t></w:r></w:p><w:p><w:r><w:t>middle</w:t></w:r></w:p><w:p><w:r><w:t>removed</w:t></w:r></w:p><w:p><w:r><w:t>suffix</w:t></w:r></w:p>",
+        );
+        let b = source(
+            "<w:p><w:r><w:t>prefix</w:t></w:r></w:p><w:p><w:r><w:t>new</w:t></w:r></w:p><w:p><w:r><w:t>middle</w:t></w:r></w:p><w:p><w:r><w:t>added</w:t></w:r></w:p><w:p><w:r><w:t>suffix</w:t></w:r></w:p>",
+        );
+        let opts = Options {
+            checks: vec![Check::Text],
+            context: 1,
+            limit: 1,
+            ..Options::default()
+        };
+        assert_eq!(
+            report(&a, Some(&b), &opts).unwrap(),
+            "word/document.xml: 2 lines differ\n     ¶  prefix\n-A   ¶  old\n+B   ¶  new\n     ¶  middle\n  … 1 more hunks (raise --limit)\n"
+        );
+        let opts = Options {
+            limit: 5,
+            context: 0,
+            ..opts
+        };
+        assert_eq!(
+            report(&a, Some(&b), &opts).unwrap(),
+            "word/document.xml: 2 lines differ\n-A   ¶  old\n+B   ¶  new\n  ~\n-A   ¶  removed\n+B   ¶  added\n"
+        );
+        assert_eq!(report(&a, Some(&a), &opts).unwrap(), "text identical\n");
+        let extra_a = zip_bytes(&[(
+            "word/left.xml",
+            format!(r#"<w:hdr xmlns:w="{W}"><w:p/></w:hdr>"#).as_bytes(),
+        )]);
+        let extra_b = zip_bytes(&[(
+            "word/right.xml",
+            format!(r#"<w:ftr xmlns:w="{W}"><w:p/></w:ftr>"#).as_bytes(),
+        )]);
+        assert_eq!(
+            report(&extra_a, Some(&extra_b), &opts).unwrap(),
+            "word/left.xml: only in A\nword/right.xml: only in B\n"
+        );
+    }
+
+    #[test]
+    fn xml_diagnostic_view_normalizes_noise_without_losing_literal_space_or_quoted_angles() {
+        let xml = r#"<?xml version="1.0"?><w:p xmlns:w="urn:w" xmlns:w14="urn:w14" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14" w14:paraId="A" w:rsidR="0"><w:r><w:t xml:space="preserve"> </w:t><w:t title='a>b'>漢</w:t></w:r></w:p>"#;
+        assert_eq!(
+            xml_lines(xml),
+            vec![
+                "<w:p>",
+                "  <w:r>",
+                "    <w:t xml:space=\"preserve\"> </w:t>",
+                "    <w:t title=\"a>b\">漢</w:t>",
+                "  </w:r>",
+                "</w:p>"
+            ]
+        );
+        // Malformed lexical probes exercise a readable partial diagnostic,
+        // never claim the strings are schema-valid XML.
+        assert_eq!(xml_lines("<p key="), vec!["<p>"]);
+        assert_eq!(xml_lines("<p key='unterminated>"), vec!["<p>"]);
+        assert_eq!(
+            strip_namespace_declarations("<x xmlns=\"urn:one\" xmlns:a=\"urn:two\" k=\"v\"/>"),
+            "<x k=\"v\"/>"
+        );
+        assert_eq!(strip_namespace_declarations("<x xmlns:a="), "<x xmlns:a=");
+        assert_eq!(
+            strip_namespace_declarations("<x xmlns:a=\"unterminated"),
+            "<x xmlns:a=\"unterminated"
+        );
+    }
+
+    #[test]
+    fn grep_across_run_and_revision_marks_preserves_the_complete_unclipped_paragraph() {
+        let long = format!("{}needle{}", "漢".repeat(205), "界".repeat(205));
+        let body = format!(
+            r#"<w:p><w:r><w:t>{long}</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>cross</w:t></w:r><w:ins w:id="1" w:author="A"><w:r><w:t>run</w:t></w:r></w:ins></w:p>"#
+        );
+        let bytes = source(&body);
+        let before = bytes.clone();
+        let opts = Options {
+            checks: vec![Check::Runs],
+            grep: Some("needle".into()),
+            ..Options::default()
+        };
+        assert_eq!(
+            report(&bytes, None, &opts).unwrap(),
+            format!("word/document.xml: 2 paragraphs\n  ¶  [] ¶«» «»{long}\n")
+        );
+        let opts = Options {
+            grep: Some("crossrun".into()),
+            ..opts
+        };
+        assert_eq!(
+            report(&bytes, None, &opts).unwrap(),
+            "word/document.xml: 2 paragraphs\n  ¶  [] ¶«» «b»cross{+«»run+}\n"
+        );
+        assert!(!line_has("«nested«property»»hid«b»den", "hiddenz"));
+        assert!(line_has("«nested«property»»hid«b»den", "hidden"));
+        assert_eq!(bytes, before);
+        assert_eq!(
+            clip_line(&"漢".repeat(201)),
+            format!("{}…", "漢".repeat(200))
+        );
+        assert_eq!(
+            clip_from(&"漢".repeat(201), 195),
+            format!("…{}", "漢".repeat(6))
+        );
+    }
+
+    #[test]
+    fn count_reports_keep_zero_missing_sides_sorted_and_do_not_invent_empty_headers() {
+        let a = BTreeMap::from([("a".into(), 2), ("b".into(), 2), ("same".into(), 1)]);
+        let b = BTreeMap::from([("b".into(), 3), ("c".into(), 1), ("same".into(), 1)]);
+        let mut text = String::new();
+        print_counts(&mut text, "chains", &a, None, 2);
+        assert_eq!(text, "chains:\n       2 a\n       2 b\n");
+        text.clear();
+        print_counts(&mut text, "chains", &a, Some(&b), 9);
+        assert_eq!(text, "chains: 3 differ\n  a 2 → 0\n  b 2 → 3\n  c 0 → 1\n");
+        text.clear();
+        print_counts(&mut text, "chains", &a, Some(&a), 9);
+        assert_eq!(text, "chains: 0 differ\n");
+        text.clear();
+        print_counts(
+            &mut text,
+            "chains",
+            &BTreeMap::new(),
+            Some(&BTreeMap::new()),
+            9,
+        );
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn list_filter_keeps_package_totals_but_prints_only_selected_changed_entries() {
+        let a = zip_bytes(&[
+            ("same.xml", b"same"),
+            ("change.xml", b"old"),
+            ("only-a.xml", b"a"),
+        ]);
+        let b = zip_bytes(&[
+            ("same.xml", b"same"),
+            ("change.xml", b"new value"),
+            ("only-b.xml", b"b"),
+        ]);
+        let before_a = a.clone();
+        let before_b = b.clone();
+        let opts = Options {
+            part: Some("change".into()),
+            ..Options::default()
+        };
+        assert_eq!(
+            list(&a, Some(&b), &opts).unwrap(),
+            "1 identical, 1 changed, 1 only in A, 1 only in B\n~          3 → 9          change.xml\n"
+        );
+        let opts = Options {
+            part: Some("absent".into()),
+            ..opts
+        };
+        assert_eq!(
+            list(&a, None, &opts).unwrap(),
+            "3 entries, 8 bytes unpacked\n"
+        );
+        assert_eq!(a, before_a);
+        assert_eq!(b, before_b);
+    }
+
+    #[test]
+    fn property_style_and_numbering_diagnostics_preserve_fallback_ids_and_missing_abstracts() {
+        // The style name is optional; referenced unknown IDs are explicit
+        // malformed-source diagnostics rather than silently dropped links.
+        let (d, root) = dom(&format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:type="paragraph" w:styleId="Fallback"><w:basedOn w:val="absent"/><w:link w:val="other"/><w:pPr><w:jc w:val="center"/></w:pPr></w:style></w:styles>"#
+        ));
+        assert_eq!(
+            style_lines(&d, root),
+            (
+                vec![
+                    "  paragraph \"Fallback\" basedOn=\"absent\" link=\"other\"".into(),
+                    "  paragraph \"Fallback\" pPr[jc=center]".into(),
+                    "  paragraph \"Fallback\" rPr[]".into()
+                ],
+                1
+            )
+        );
+        let (n, nr) = dom(&format!(
+            r#"<w:numbering xmlns:w="{W}"><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num><w:num w:numId="10"><w:abstractNumId w:val="99"/></w:num></w:numbering>"#
+        ));
+        assert_eq!(
+            numbering_lines(&n, nr),
+            (
+                vec![
+                    "  num 2 lvl 0 start=1 decimal \"%1.\" jc=left pPr[] rPr[]".into(),
+                    "  num 10 abstract 99 missing".into()
+                ],
+                2
+            )
+        );
+        // Intentional malformed absent style type defaults to paragraph for
+        // twin detection; distinct named types must never become twins.
+        let (s, sr) = dom(&format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:styleId="A"><w:name w:val="Name"/></w:style><w:style w:type="paragraph" w:styleId="B"><w:name w:val="NAME"/></w:style><w:style w:type="character" w:styleId="C"><w:name w:val="name"/></w:style></w:styles>"#
+        ));
+        let mut f = Findings::default();
+        check_styles(&[(STYLES_PART.into(), s, sr)], &mut f);
+        assert_eq!(
+            f.by_kind,
+            BTreeMap::from([(
+                "style-name-twin".into(),
+                vec![(STYLES_PART.into(), "paragraph \"name\": A, B".into())]
+            )])
+        );
+    }
+
+    #[test]
+    fn field_deletion_states_distinguish_correct_deleted_code_from_wrong_code_kind() {
+        let valid = r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:fldChar w:fldCharType="begin"/><w:delInstrText> PAGE </w:delInstrText><w:fldChar w:fldCharType="separate"/><w:delText>1</w:delText><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p>"#;
+        let (d, root) = dom(&document(valid));
+        let mut f = Findings::default();
+        check_fields(&d, root, "word/document.xml", &mut f);
+        assert!(f.by_kind.is_empty());
+        // Intentional wrong instruction kind and mixed live/deleted field.
+        let invalid = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:del w:id="1" w:author="A"><w:r><w:instrText> PAGE </w:instrText></w:r></w:del><w:r><w:fldChar w:fldCharType="separate"/><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+        let (d, root) = dom(&document(invalid));
+        let before = d.serialize_element(root);
+        let mut f = Findings::default();
+        check_fields(&d, root, "word/document.xml", &mut f);
+        assert_eq!(
+            f.by_kind,
+            BTreeMap::from([
+                (
+                    "field-code-kind-vs-state".into(),
+                    vec![(
+                        "word/document.xml".into(),
+                        "states=-D-- \"PAGE\" at document/body/p/r/fldChar".into()
+                    )]
+                ),
+                (
+                    "field-partly-deleted".into(),
+                    vec![(
+                        "word/document.xml".into(),
+                        "begin/code/separate/end=-D-- \"PAGE\" at document/body/p/r/fldChar".into()
+                    )]
+                ),
+            ])
+        );
+        assert_eq!(d.serialize_element(root), before);
+    }
+
+    #[test]
+    fn mixed_listing_and_triage_reports_retain_each_independent_contract() {
+        let bytes = source("<w:p><w:r><w:t>plain</w:t></w:r></w:p>");
+        let opts = Options {
+            checks: vec![Check::Text, Check::Structure],
+            ..Options::default()
+        };
+        assert_eq!(
+            report(&bytes, None, &opts).unwrap(),
+            "word/document.xml: 1 paragraphs\n  ¶  plain\nno findings\n"
+        );
+        let opts = Options {
+            checks: vec![Check::Elements],
+            ..Options::default()
+        };
+        assert_eq!(
+            report(&bytes, None, &opts).unwrap(),
+            "elements: Default 2, Override 1, Relationship 1, body 1, p 1, r 1, t 1\n"
+        );
+        let opts = Options {
+            checks: vec![Check::Chains],
+            ..Options::default()
+        };
+        assert_eq!(report(&bytes, None, &opts).unwrap(), "");
+        assert_eq!(report(&bytes, Some(&bytes), &opts).unwrap(), "");
     }
 }

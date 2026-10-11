@@ -954,6 +954,7 @@ fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1032,5 +1033,364 @@ mod tests {
         assert_eq!(dom.descendants(p, Some(&W::del_text())).len(), 3);
         assert_eq!(dom.descendants(p, Some(&W::name("delInstrText"))).len(), 1);
         assert!(dom.descendants(p, Some(&W::t())).is_empty());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod nested_run_deletion_source_boundary_tests {
+    use super::*;
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return dom.text_value(node).unwrap_or_default().into();
+        }
+        let name = dom.name(node).unwrap();
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(n, _)| {
+                n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
+            })
+            .collect::<Vec<_>>();
+        if attrs.is_empty()
+            && dom.nodes(node).is_empty()
+            && (name == W::r_pr() || name == W::p_pr())
+        {
+            return String::new();
+        }
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_string(),
+                n.local_name().to_string(),
+                v.clone(),
+            )
+        });
+        format!(
+            "{:?}{attrs:?}[{}]",
+            name,
+            dom.nodes(node)
+                .into_iter()
+                .map(|n| semantic(dom, n))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }
+    #[test]
+    fn deleting_supported_nested_run_containers_preserves_complete_rejected_sources() {
+        let runs = "<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>owned text</w:t><w:tab/><w:br w:type='page'/></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>second run</w:t></w:r>";
+        let field = "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:rPr><w:color w:val='234567'/></w:rPr><w:instrText xml:space='preserve'> REF Clause </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>cached clause</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>";
+        for content in [
+            runs.to_owned(),
+            format!("<w:hyperlink w:anchor='Clause'>{runs}</w:hyperlink>"),
+            format!("<w:smartTag w:uri='urn:source' w:element='clause'>{runs}</w:smartTag>"),
+            format!("<w:customXml w:uri='urn:source' w:element='clause'>{runs}</w:customXml>"),
+            format!("<w:dir w:val='rtl'>{runs}</w:dir>"),
+            format!("<w:bdo w:val='rtl'>{runs}</w:bdo>"),
+            format!("<w:fldSimple w:instr=' DATE '>{runs}</w:fldSimple>"),
+            format!(
+                "<w:sdt><w:sdtPr><w:alias w:val='Clause'/><w:tag w:val='owner'/><w:id w:val='31'/><w:richText/></w:sdtPr><w:sdtContent>{runs}</w:sdtContent></w:sdt>"
+            ),
+            "<w:sdt><w:sdtPr><w:tag w:val='empty-owner'/><w:richText/></w:sdtPr></w:sdt>"
+                .to_owned(),
+            field.to_owned(),
+            format!(
+                "<w:hyperlink w:anchor='Clause'><w:sdt><w:sdtPr><w:tag w:val='nested-owner'/><w:id w:val='32'/><w:richText/></w:sdtPr><w:sdtContent>{runs}</w:sdtContent></w:sdt></w:hyperlink>"
+            ),
+        ] {
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:bookmarkStart w:id='40' w:name='Clause'/>{content}<w:bookmarkEnd w:id='40'/></w:p><w:p><w:r><w:t>independent tail</w:t></w:r></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI));
+            let root = dom.root(document).unwrap();
+            let expected = semantic(&dom, root);
+            let paragraph = dom.descendants(root, Some(&W::p()))[0];
+            let source_runs = dom.descendants(paragraph, Some(&W::r()));
+            let mut stamp = Stamp {
+                author: "New owner",
+                date: "2001-02-03T04:05:06Z",
+                next_id: 100,
+            };
+            delete_runs(&mut dom, paragraph, &mut stamp);
+            mark(&mut dom, paragraph, W::del(), &mut stamp);
+            for run in source_runs {
+                let owner = dom.parent(run).unwrap();
+                assert!(dom.name_is(owner, &W::del()), "run owner: {content}");
+                assert_eq!(dom.attribute(owner, &W::author()), Some("New owner"));
+                assert_eq!(
+                    dom.attribute(owner, &W::date()),
+                    Some("2001-02-03T04:05:06Z")
+                );
+                assert!(dom.descendants(run, Some(&W::t())).is_empty());
+                assert!(dom.descendants(run, Some(&W::name("instrText"))).is_empty());
+            }
+            let result = crate::revision_processor::reject_revisions_document(&mut dom, root);
+            assert_eq!(
+                semantic(&dom, result),
+                expected,
+                "nested container complete source recovery: {content}"
+            );
+        }
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tracked_source_property_boundary_tests {
+    use super::*;
+
+    fn paragraph(dom: &mut Dom, content: &str) -> NodeId {
+        let doc = dom.parse_xdocument(&format!(r#"<w:p xmlns:w="{}">{content}</w:p>"#, W::URI));
+        dom.root(doc).unwrap()
+    }
+
+    #[test]
+    fn property_history_keeps_original_layout_and_leaves_live_marks_and_sections_on_the_source() {
+        for shell in [
+            "",
+            "<w:pPr/>",
+            "<w:pPr><w:pStyle w:val=\"BodyText\"/><w:spacing w:after=\"240\"/><w:rPr><w:b/><w:ins w:id=\"7\" w:author=\"Old\" w:date=\"2026-01-01T00:00:00Z\"/></w:rPr><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr></w:pPr>",
+        ] {
+            let mut dom = Dom::new();
+            let p = paragraph(
+                &mut dom,
+                &format!("{shell}<w:r><w:rPr><w:i/></w:rPr><w:t>owned</w:t></w:r>"),
+            );
+            let run = dom.element(p, &W::r()).unwrap();
+            let frozen_run = dom.serialize_element(run);
+            let original_ppr = dom.element(p, &W::p_pr());
+            let mark = original_ppr
+                .and_then(|node| dom.element(node, &W::r_pr()))
+                .map(|node| dom.serialize_element(node));
+            let section = original_ppr
+                .and_then(|node| dom.element(node, &W::sect_pr()))
+                .map(|node| dom.serialize_element(node));
+            let mut stamp = Stamp {
+                author: "Ada",
+                date: "2026-10-09T12:34:00Z",
+                next_id: 50,
+            };
+            track_properties(&mut dom, p, &mut stamp, |dom| {
+                let ppr = paragraph_properties(dom, p);
+                let jc = dom.new_element(W::name("jc"));
+                dom.set_attribute_value(jc, &W::val(), Some("right"));
+                insert_ppr_child(dom, ppr, jc);
+            });
+            let ppr = dom.element(p, &W::p_pr()).unwrap();
+            let record = dom.element(ppr, &W::p_pr_change()).unwrap();
+            assert_eq!(dom.attribute(record, &W::id()), Some("50"));
+            assert_eq!(dom.attribute(record, &W::author()), Some("Ada"));
+            assert_eq!(
+                dom.attribute(record, &W::date()),
+                Some("2026-10-09T12:34:00Z")
+            );
+            let old = dom.element(record, &W::p_pr()).unwrap();
+            assert!(dom.element(old, &W::r_pr()).is_none());
+            assert!(dom.element(old, &W::sect_pr()).is_none());
+            assert!(dom.element(old, &W::name("jc")).is_none());
+            if shell.contains("BodyText") {
+                assert_eq!(
+                    dom.attribute(dom.element(old, &W::p_style()).unwrap(), &W::val()),
+                    Some("BodyText")
+                );
+                assert_eq!(
+                    dom.attribute(
+                        dom.element(old, &W::name("spacing")).unwrap(),
+                        &W::name("after")
+                    ),
+                    Some("240")
+                );
+                assert_eq!(dom.elements(old, None).len(), 2);
+            } else {
+                assert!(dom.elements(old, None).is_empty());
+            }
+            assert_eq!(
+                dom.element(ppr, &W::r_pr())
+                    .map(|node| dom.serialize_element(node)),
+                mark
+            );
+            assert_eq!(
+                dom.element(ppr, &W::sect_pr())
+                    .map(|node| dom.serialize_element(node)),
+                section
+            );
+            assert_eq!(dom.serialize_element(run), frozen_run);
+            let frozen_record = dom.serialize_element(record);
+            track_properties(&mut dom, p, &mut stamp, |dom| {
+                let ppr = paragraph_properties(dom, p);
+                let jc = dom.element(ppr, &W::name("jc")).unwrap();
+                dom.set_attribute_value(jc, &W::val(), Some("center"));
+            });
+            assert_eq!(dom.serialize_element(record), frozen_record);
+            assert_eq!(stamp.next_id, 51);
+            assert_eq!(dom.elements(ppr, Some(&W::p_pr_change())).len(), 1);
+            assert_eq!(dom.serialize_element(run), frozen_run);
+        }
+    }
+
+    #[test]
+    fn inserted_run_format_clones_drop_only_foreign_change_records() {
+        let mut dom = Dom::new();
+        let p = paragraph(
+            &mut dom,
+            r#"<w:r><w:rPr><w:b/><w:i/><w:color w:val="123456"/><w:sz w:val="24"/><w:rPrChange w:id="3" w:author="Old" w:date="2026-01-01T00:00:00Z"><w:rPr><w:u w:val="single"/></w:rPr></w:rPrChange></w:rPr><w:t>owned</w:t></w:r>"#,
+        );
+        let rpr = dom
+            .element(dom.element(p, &W::r()).unwrap(), &W::r_pr())
+            .unwrap();
+        let frozen = dom.serialize_element(p);
+        let copy = clean_rpr(&mut dom, rpr);
+        let expected_p = paragraph(
+            &mut dom,
+            r#"<w:r><w:rPr><w:b/><w:i/><w:color w:val="123456"/><w:sz w:val="24"/></w:rPr></w:r>"#,
+        );
+        let expected = dom
+            .element(dom.element(expected_p, &W::r()).unwrap(), &W::r_pr())
+            .unwrap();
+        assert_eq!(dom.serialize_element(copy), dom.serialize_element(expected));
+        assert_eq!(dom.serialize_element(p), frozen);
+        let second = clean_rpr(&mut dom, copy);
+        assert_eq!(
+            dom.serialize_element(second),
+            dom.serialize_element(expected)
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_adjacent_run_replacement_owner_tests {
+    use super::*;
+    use crate::edit::deeper_boundary_fixture::docx;
+
+    fn tree(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return dom.text_value(node).unwrap_or_default().into();
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(n, _)| {
+                n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
+            })
+            .collect::<Vec<_>>();
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_owned(),
+                n.local_name().to_owned(),
+                v.clone(),
+            )
+        });
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|n| tree(dom, n))
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }
+    fn source_events(bytes: &[u8]) -> Vec<String> {
+        let pkg = crate::opc::PartFs::open(bytes).unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&pkg.part_string("/word/document.xml").unwrap());
+        let root = dom.root(doc).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let mut out = Vec::new();
+        for child in dom.elements(body, None) {
+            if !dom.name_is(child, &W::p()) {
+                out.push(tree(&dom, child));
+                continue;
+            }
+            out.push("paragraph".into());
+            for node in dom.elements(child, None) {
+                if !dom.name_is(node, &W::r()) {
+                    out.push(tree(&dom, node));
+                    continue;
+                }
+                let props = dom
+                    .element(node, &W::r_pr())
+                    .map(|n| tree(&dom, n))
+                    .unwrap_or_default();
+                for content in dom.elements(node, None) {
+                    if dom.name_is(content, &W::r_pr()) {
+                        continue;
+                    }
+                    if dom.name_is(content, &W::t()) {
+                        out.extend(dom.value(content).chars().map(|ch| format!("{ch}:{props}")));
+                    } else {
+                        out.push(format!("{}:{props}", tree(&dom, content)));
+                    }
+                }
+            }
+            out.push("end paragraph".into());
+        }
+        out
+    }
+    #[test]
+    fn public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner() {
+        let ppr = "<w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr>";
+        let first = "<w:rPr><w:b/><w:color w:val='123456'/><w:sz w:val='22'/></w:rPr>";
+        for second in [
+            first,
+            "<w:rPr><w:i/><w:color w:val='654321'/><w:sz w:val='28'/></w:rPr>",
+        ] {
+            for split_text in [false, true] {
+                let lhs = if split_text {
+                    "<w:t>αfirst</w:t><w:t>part</w:t>"
+                } else {
+                    "<w:t>αfirstpart</w:t>"
+                };
+                let body = format!(
+                    "<w:p>{ppr}<w:r>{first}{lhs}</w:r><w:r>{second}<w:t>secondΖ</w:t></w:r><w:r><w:rPr><w:u w:val='single'/></w:rPr><w:tab/><w:t>tail</w:t><w:br/></w:r></w:p>"
+                );
+                let source = docx(&body);
+                let frozen = source.clone();
+                let plan = r#"{"schema_version":1,"author":"Source owner","date":"2001-02-03T04:05:06Z","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"body:p:0","find":"firstpartsecond","replacement":"owned replacement"}]}"#;
+                let out = crate::edit::apply_plan_json(&source, plan).unwrap();
+                let expected = docx(&format!(
+                    "<w:p>{ppr}<w:r>{first}<w:t>αowned replacement</w:t></w:r><w:r>{second}<w:t>Ζ</w:t></w:r><w:r><w:rPr><w:u w:val='single'/></w:rPr><w:tab/><w:t>tail</w:t><w:br/></w:r></w:p>"
+                ));
+                let accepted = crate::changes::accept_changes(
+                    &out.redline,
+                    &crate::changes::ChangeFilter::default(),
+                )
+                .unwrap();
+                let rejected = crate::changes::reject_changes(
+                    &out.redline,
+                    &crate::changes::ChangeFilter::default(),
+                )
+                .unwrap();
+                assert_eq!(
+                    source_events(&rejected),
+                    source_events(&source),
+                    "all rejected glyphs/properties/controls/section owners"
+                );
+                assert_eq!(
+                    source_events(&accepted),
+                    source_events(&expected),
+                    "replacement inherits first deleted source format only"
+                );
+                assert_eq!(source_events(&out.clean), source_events(&expected));
+                assert_eq!(source, frozen);
+                let changes = crate::changes::list_changes(&out.redline).unwrap();
+                assert_eq!(
+                    changes
+                        .iter()
+                        .map(|c| (c.kind, c.text.as_str(), c.author.as_deref()))
+                        .collect::<Vec<_>>(),
+                    [
+                        (
+                            ChangeKind::Deletion,
+                            "firstpartsecond",
+                            Some("Source owner")
+                        ),
+                        (
+                            ChangeKind::Insertion,
+                            "owned replacement",
+                            Some("Source owner")
+                        )
+                    ]
+                );
+            }
+        }
     }
 }

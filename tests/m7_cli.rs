@@ -44,7 +44,13 @@ fn assert_loadable(path: &Path) {
 fn default_output_name_in_original_dir_and_loadable() {
     let dir = tmpdir();
     let (a, b) = seed(dir.path());
-    let out = Command::new(BIN).arg(&a).arg(&b).output().unwrap();
+    // `compare A B` writes the default name; the shorthand prints instead.
+    let out = Command::new(BIN)
+        .arg("compare")
+        .arg(&a)
+        .arg(&b)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -128,9 +134,14 @@ fn missing_input_file_errors() {
 
 #[test]
 fn missing_arguments_exit_code_2() {
-    let out = Command::new(BIN).arg(ORIG).output().unwrap();
+    // One document alone is `read`; `compare` with one is a usage error.
+    let out = Command::new(BIN).arg("compare").arg(ORIG).output().unwrap();
     assert_eq!(out.status.code(), Some(2), "missing MODIFIED → usage error");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("missing MODIFIED"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("<MODIFIED>") && stderr.contains("Usage:"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -162,10 +173,10 @@ fn the_cli_runs_on_a_one_megabyte_main_stack() {
     assert!(!out.stdout.is_empty());
 }
 
-// --- gems from recipe PR #60 (revisions subcommand) ---
+// --- gems from recipe PR #60 (the listing subcommand, now `changes`) ---
 
 /// Produce a redline .docx via the plain (subcommand-less) compare surface,
-/// for use as input to the `revisions` subcommand tests below.
+/// for use as input to the `changes` subcommand tests below.
 fn make_redline(dir: &Path, author: &str) -> PathBuf {
     let (a, b) = seed(dir);
     let out_path = dir.join("redline.docx");
@@ -185,12 +196,12 @@ fn make_redline(dir: &Path, author: &str) -> PathBuf {
     out_path
 }
 
-/// Prior behavior path: adding the `revisions` subcommand does not disturb
+/// Prior behavior path: the `changes` subcommand does not disturb
 /// the plain compare surface — a normal two-file invocation (whose filenames
 /// don't collide with the subcommand name) still runs the compare job, not
-/// `run_revisions`.
+/// the listing.
 #[test]
-fn plain_compare_surface_still_works_alongside_revisions_subcommand() {
+fn plain_compare_surface_still_works_alongside_changes_subcommand() {
     let dir = tmpdir();
     let (a, b) = seed(dir.path());
     let out = Command::new(BIN).arg(&a).arg(&b).output().unwrap();
@@ -199,18 +210,25 @@ fn plain_compare_surface_still_works_alongside_revisions_subcommand() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(dir.path().join("a_v_b.docx").exists());
+    // Without -o the shorthand prints the redline's agent view, writes nothing.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.starts_with("---\nsource: ")
+            && stdout.contains("a_v_b.docx (not written; -o keeps it)"),
+        "{stdout}"
+    );
+    assert!(!dir.path().join("a_v_b.docx").exists());
 }
 
-/// D.6 — `redline revisions <file that isn't a docx>` fails (exit code 1)
-/// rather than panicking, exercising the `get_revisions failed` error path.
+/// D.6 — `jubarte changes <file that isn't a docx>` fails (exit code 1)
+/// rather than panicking.
 #[test]
-fn revisions_subcommand_invalid_docx_errors() {
+fn changes_subcommand_invalid_docx_errors() {
     let dir = tmpdir();
     let bogus = dir.path().join("bogus.docx");
     std::fs::write(&bogus, b"not a zip").unwrap();
     let out = Command::new(BIN)
-        .args(["revisions"])
+        .args(["changes"])
         .arg(&bogus)
         .output()
         .unwrap();
@@ -218,10 +236,11 @@ fn revisions_subcommand_invalid_docx_errors() {
 }
 
 /// D.6 — the `--json` writer escapes embedded quotes in field values (the
-/// `esc` closure in `run_revisions`), so the emitted line stays valid
-/// JSON-shaped text rather than corrupting the record.
+/// JSON writer of `changes`), so the emitted line stays valid
+/// JSON-shaped text rather than corrupting the record. `changes` replaced
+/// `revisions` (9b6809ae); these four tests moved with it.
 #[test]
-fn revisions_subcommand_json_escapes_quotes_in_author() {
+fn changes_subcommand_json_escapes_quotes_in_author() {
     let dir = tmpdir();
     let (a, b) = seed(dir.path());
     let out_path = dir.path().join("redline.docx");
@@ -236,7 +255,7 @@ fn revisions_subcommand_json_escapes_quotes_in_author() {
     assert!(cmp.status.success());
 
     let json = Command::new(BIN)
-        .args(["revisions"])
+        .args(["changes"])
         .arg(&out_path)
         .args(["--json"])
         .output()
@@ -249,18 +268,18 @@ fn revisions_subcommand_json_escapes_quotes_in_author() {
     );
 }
 
-/// D.6 — `redline revisions <file>` (human summary) and `--json` report the
+/// D.6 — `jubarte changes <file>` (human summary) and `--json` report the
 /// SAME non-zero revision count for a redline known to carry tracked changes
 /// (m5_document_comparer.rs's `compare_documents_produces_redline_zip`
 /// confirms this fixture pair emits `w:ins`/`w:del`), with each output mode's
 /// per-revision row shaped as documented.
 #[test]
-fn revisions_subcommand_lists_tracked_changes_in_both_output_modes() {
+fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
     let dir = tmpdir();
     let redline_path = make_redline(dir.path(), "Tester");
 
     let human = Command::new(BIN)
-        .args(["revisions"])
+        .args(["changes"])
         .arg(&redline_path)
         .output()
         .unwrap();
@@ -273,7 +292,7 @@ fn revisions_subcommand_lists_tracked_changes_in_both_output_modes() {
     let mut lines: Vec<&str> = human_out.lines().collect();
     let summary = lines.pop().expect("summary line present");
     assert!(
-        summary.ends_with("revision(s)"),
+        summary.ends_with("change(s)"),
         "last line is the count summary: {summary:?}"
     );
     let count: usize = summary.split_whitespace().next().unwrap().parse().unwrap();
@@ -287,20 +306,21 @@ fn revisions_subcommand_lists_tracked_changes_in_both_output_modes() {
         "one row per revision before the summary"
     );
     for line in &lines {
-        // type \t author \t part \t {preview:?}
-        // This 4-field count assumes the fixture's revision authors contain no
+        // id \t kind \t target \t author \t {text:?}
+        // This 5-field count assumes the fixture's revision authors contain no
         // literal tab (they don't). The human row format is tab-delimited by
-        // contract, so a tab inside an author would need run_revisions to escape
-        // it (e.g. Debug-format the author) before this could stay parseable.
+        // contract, so a tab inside an author would need `changes` to escape
+        // it before this could stay parseable.
         assert_eq!(
             line.split('\t').count(),
-            4,
-            "row has 4 tab-separated fields: {line:?}"
+            5,
+            "row has 5 tab-separated fields: {line:?}"
         );
+        assert!(line.contains("\tTester\t"), "{line:?}");
     }
 
     let json = Command::new(BIN)
-        .args(["revisions"])
+        .args(["changes"])
         .arg(&redline_path)
         .args(["--json"])
         .output()
@@ -322,19 +342,19 @@ fn revisions_subcommand_lists_tracked_changes_in_both_output_modes() {
             line.starts_with('{') && line.ends_with('}'),
             "JSON-lines row: {line:?}"
         );
-        assert!(line.contains("\"type\":"));
+        assert!(line.contains("\"kind\":"));
         assert!(line.contains("\"author\":\"Tester\""));
-        assert!(line.contains("\"part\":\"word/document.xml\""));
+        assert!(line.contains("\"id\":\"body:rev:"));
     }
 }
 
-/// D.6 — `redline revisions <missing file>` fails like the plain compare
+/// D.6 — `jubarte changes <missing file>` fails like the plain compare
 /// surface's missing-input case: exit code 1, stderr names the read failure.
 #[test]
-fn revisions_subcommand_missing_file_errors() {
+fn changes_subcommand_missing_file_errors() {
     let dir = tmpdir();
     let out = Command::new(BIN)
-        .args(["revisions"])
+        .args(["changes"])
         .arg(dir.path().join("nope.docx"))
         .output()
         .unwrap();

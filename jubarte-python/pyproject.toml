@@ -20,7 +20,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-only"
 authors = [{ name = "Jandira Technologies, LLC" }]
-keywords = ["docx", "redline", "track-changes", "tracked-changes", "word", "microsoft-word", "openxml", "ooxml", "compare", "diff", "pdf", "docx-to-pdf"]
+keywords = ["docx", "redline", "track-changes", "tracked-changes", "word", "microsoft-word", "openxml", "ooxml", "compare", "diff", "pdf", "docx-to-pdf", "markdown", "criticmarkup", "ai-agents"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -56,7 +56,9 @@ Issues = "https://github.com/jandira-tech/jubarte-redlines/issues"
 [tool.maturin]
 module-name = "jubarte_redlines._native"
 python-source = "python"
-strip = true
+# Leave native extension symbols intact: macOS symbol stripping can
+# produce an invalid Mach-O LINKEDIT string pool and prevent import.
+strip = false
 # The sdist vendors the engine checkout (path dep on ".."); keep sibling
 # adapters, local build output, and app junk out of it.
 exclude = [

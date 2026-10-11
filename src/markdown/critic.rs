@@ -352,6 +352,15 @@ impl Pieces {
 /// deletions dropped (`accept`), or the other way round; highlights keep
 /// their text and comments go.
 pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
+    resolve_with_policy(markdown, accept, false)
+}
+
+/// Accepted document clauses omit a wholly deleted paragraph's line break.
+pub(crate) fn accept_clauses(markdown: &str) -> String {
+    resolve_with_policy(markdown, true, true)
+}
+
+fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool) -> String {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum In {
         Text,
@@ -362,6 +371,12 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
         Comment,
     }
     let mut out = String::with_capacity(markdown.len());
+    let mut line_start = 0;
+    let mut visible_text = false;
+    let mut removed_text = false;
+    // A wholly deleted line was just dropped, so the blank separator that
+    // follows it should collapse rather than leave a phantom blank line.
+    let mut dropped_line = false;
     // The state each open span interrupted, innermost last.
     let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
@@ -374,10 +389,44 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
                 In::Comment => false,
             };
             if shown {
-                out.push_str(text);
+                if remove_deleted_lines {
+                    for ch in text.chars() {
+                        if ch == '\n' {
+                            let empty_line = out.len() == line_start;
+                            if removed_text && !visible_text {
+                                out.truncate(line_start);
+                                dropped_line = true;
+                            } else if dropped_line
+                                && empty_line
+                                && (out.is_empty() || out.ends_with("\n\n"))
+                            {
+                                // The blank separator left by a dropped
+                                // paragraph: skip it so an accepted
+                                // whole-paragraph deletion collapses the
+                                // surrounding blank lines to one.
+                                dropped_line = false;
+                            } else {
+                                out.push(ch);
+                                dropped_line = false;
+                            }
+                            line_start = out.len();
+                            visible_text = false;
+                            removed_text = false;
+                        } else {
+                            out.push(ch);
+                            visible_text |= !ch.is_whitespace();
+                        }
+                    }
+                } else {
+                    out.push_str(text);
+                }
             }
         }
         Piece::Token(token) => {
+            if remove_deleted_lines && matches!(token, Token::DeleteStart | Token::SubstituteStart)
+            {
+                removed_text = true;
+            }
             let opened = match token {
                 Token::InsertStart => Some(In::Inserted),
                 Token::DeleteStart => Some(In::Deleted),
@@ -404,10 +453,14 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
             }
         }
     });
+    if remove_deleted_lines && removed_text && !visible_text {
+        out.truncate(line_start);
+    }
     out
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -654,6 +707,28 @@ mod tests {
         let text = "a{++b++}c{--d--}e{~~f~>g~~}h{==i==}{>>j<<}k \\{++l++}";
         assert_eq!(resolve(text, true), "abcegh".to_string() + "ik \\{++l++}");
         assert_eq!(resolve(text, false), "acdefh".to_string() + "ik \\{++l++}");
+    }
+
+    #[test]
+    fn accepting_a_whole_deleted_paragraph_collapses_its_blank_separator() {
+        // A paragraph deleted between blank-line-separated paragraphs must
+        // not leave a phantom blank line once the deletion is accepted (the
+        // dropped line's trailing separator is collapsed, so `diff_text_view`
+        // with accepted changes reports no spurious blank-line change).
+        assert_eq!(
+            accept_clauses("Para A\n\n{--Para B--}\n\nPara C\n"),
+            "Para A\n\nPara C\n"
+        );
+        // Two consecutive deleted paragraphs collapse to a single separator.
+        assert_eq!(
+            accept_clauses("Para A\n\n{--Para B--}\n\n{--Para D--}\n\nPara C\n"),
+            "Para A\n\nPara C\n"
+        );
+        // A surviving paragraph between kept ones is untouched.
+        assert_eq!(
+            accept_clauses("Para A\n\nPara B\n\nPara C\n"),
+            "Para A\n\nPara B\n\nPara C\n"
+        );
     }
 
     #[test]

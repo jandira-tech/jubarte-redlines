@@ -1,0 +1,874 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Deterministic shared CLI parsing, with no document or platform I/O.
+#![cfg(feature = "cli")]
+
+use jubarte::cli::{Cli, Command, PatchFormat, parse_json};
+use serde_json::Value;
+
+fn parse(arguments: &[&str], supported: &[&str]) -> Value {
+    serde_json::from_str(&parse_json(
+        &arguments.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        "jubarte-python",
+        &supported.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    ))
+    .unwrap()
+}
+
+#[test]
+fn convert_update_fields_requires_a_word_output_format() {
+    for output in [
+        vec![],
+        vec!["-o", "out.pdf"],
+        vec!["-o", "out.png"],
+        vec!["-o", "out.md"],
+        vec!["-o", "out.unknown"],
+        vec!["--to", "pdf"],
+        vec!["--to", "png"],
+        vec!["--to", "md"],
+        vec!["--to", "pdf", "-o", "out.docx"],
+    ] {
+        let args = [vec!["convert", "missing.docx", "--update-fields"], output].concat();
+        let result = parse(&args, &["convert"]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(result["stream"], "stderr");
+        assert!(
+            result["text"]
+                .as_str()
+                .unwrap()
+                .contains("--update-fields writes a .docx"),
+            "{result}"
+        );
+    }
+}
+
+#[test]
+fn convert_update_fields_serializes_reports_resolution_and_format_overrides() {
+    for output in [
+        vec!["-o", "out.docx"],
+        vec!["-o", "out.DOCX"],
+        vec!["--to", "docx"],
+        vec!["--to", "docx", "-o", "out.bin"],
+    ] {
+        for mode in ["all", "accept", "reject"] {
+            let args = [
+                vec![
+                    "convert",
+                    "missing.docx",
+                    "--update-fields",
+                    "--report",
+                    "fields.json",
+                    "--track-changes",
+                    mode,
+                    "--force",
+                ],
+                output.clone(),
+            ]
+            .concat();
+            let result = parse(&args, &["convert"]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(result["command"], "convert");
+            assert_eq!(result["args"]["update_fields"], true);
+            assert_eq!(result["args"]["report"], "fields.json");
+            assert_eq!(result["args"]["track_changes"], mode);
+            assert_eq!(result["args"]["force"], true);
+        }
+    }
+    let ordinary = parse(&["convert", "missing.docx"], &["convert"]);
+    assert_eq!(ordinary["args"]["update_fields"], false);
+    let report_without_refresh = parse(
+        &[
+            "convert",
+            "missing.docx",
+            "-o",
+            "out.docx",
+            "--report",
+            "fields.json",
+        ],
+        &["convert"],
+    );
+    assert_eq!(report_without_refresh["exit_code"], 2);
+    assert!(
+        report_without_refresh["text"]
+            .as_str()
+            .unwrap()
+            .contains("--report applies to PDF or PNG output only")
+    );
+}
+
+#[test]
+fn convert_update_fields_does_not_enable_render_only_options() {
+    for flags in [
+        vec!["--pdf"],
+        vec!["--png"],
+        vec!["--dpi", "96"],
+        vec!["--font-report", "fonts.json"],
+        vec!["--fail-on-substitution"],
+        vec!["--move-comments"],
+        vec!["--changed-only"],
+        vec!["--compress"],
+        vec!["--revisions", "word"],
+    ] {
+        let result = parse(
+            &[
+                vec![
+                    "convert",
+                    "missing.docx",
+                    "-o",
+                    "out.docx",
+                    "--update-fields",
+                    "--report",
+                    "fields.json",
+                ],
+                flags.clone(),
+            ]
+            .concat(),
+            &[],
+        );
+        assert_eq!(result["exit_code"], 2, "{flags:?}: {result}");
+        assert!(
+            result["text"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{} applies to PDF or PNG output only", flags[0])),
+            "{result}"
+        );
+    }
+}
+
+#[test]
+fn removed_commands_leave_help_and_restore_legacy_filename_parsing() {
+    let help = parse(&["--help"], &[]);
+    let text = help["text"].as_str().unwrap();
+    assert!(text.contains("\n  changes "));
+    assert!(!text.contains("\n  revisions ") && !text.contains("\n  fields "));
+    for name in ["revisions", "fields"] {
+        let result = parse(&[name, "other.docx", "-o", "result.docx"], &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["command"], "compare");
+        assert_eq!(result["args"]["original"], name);
+        assert_eq!(result["args"]["modified"], "other.docx");
+    }
+    assert_eq!(
+        parse(&["revisions", "in.docx", "--json"], &[])["exit_code"],
+        2
+    );
+    assert_eq!(
+        parse(&["fields", "update", "in.docx", "-o", "out.docx"], &[])["exit_code"],
+        2
+    );
+}
+
+#[test]
+fn explicit_compare_alias_and_shorthand_preserve_overrides() {
+    for prefix in [vec![], vec!["compare"], vec!["redline"]] {
+        let args = [prefix, vec!["a.docx", "b.docx", "-b", "real.docx"]].concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["command"], "compare");
+        assert_eq!(result["args"]["original"], "real.docx");
+        assert_eq!(result["args"]["modified"], "b.docx");
+        assert_eq!(result["args"]["author"], "Redline");
+        assert_eq!(result["args"]["mode"], "word");
+    }
+    assert_eq!(
+        parse(&["compare", "-b", "a", "-m", "b"], &[])["exit_code"],
+        0
+    );
+    for args in [&[][..], &["compare"][..], &["compare", "-b", "a"][..]] {
+        assert_eq!(parse(args, &[])["exit_code"], 2);
+    }
+    // One file is the agent view (`read`); two print their redline's view.
+    let read = parse(&["a.docx"], &[]);
+    assert_eq!(read["exit_code"], 0, "{read}");
+    assert_eq!(read["command"], "read");
+    assert_eq!(read["args"]["file"], "a.docx");
+    assert!(read["args"]["head"].is_null() && read["args"]["changed"] == false);
+    assert_eq!(parse(&["a.docx", "--head", "2"], &[])["args"]["head"], 2);
+    // A bare word is a mistyped task, not a document.
+    let typo = parse(&["frobnicate"], &[]);
+    assert_eq!(typo["exit_code"], 2, "{typo}");
+    assert!(
+        typo["text"].as_str().unwrap().contains("read FILE"),
+        "{typo}"
+    );
+    assert_eq!(parse(&["read", "frobnicate"], &[])["exit_code"], 0);
+    // -o has nothing to write for one document; read options before a task
+    // would be silently dropped.
+    let one = parse(&["a.docx", "-o", "out.docx"], &[]);
+    assert_eq!(one["exit_code"], 2, "{one}");
+    assert!(one["text"].as_str().unwrap().contains("-o"), "{one}");
+    for args in [
+        &["--head", "2", "compare", "a.docx", "b.docx"][..],
+        &["--changed", "read", "a.docx"][..],
+    ] {
+        assert_eq!(parse(args, &[])["exit_code"], 2, "{args:?}");
+    }
+    assert_eq!(
+        parse(&["a.docx"], &["compare"])["exit_code"],
+        2,
+        "read not supported"
+    );
+    assert_eq!(parse(&["compare", "a.docx"], &[])["exit_code"], 2);
+    assert_eq!(
+        parse(&["a.docx", "b.docx", "--head", "2"], &[])["args"]["view"]["head"],
+        2
+    );
+    assert_eq!(
+        parse(&["a.docx", "b.docx", "-o", "x.docx", "--head", "2"], &[])["exit_code"],
+        2
+    );
+    // pi review av5 F3: an adapter without read cannot print the A B view,
+    // so the bare shorthand is refused as the one-file form is; with -o it
+    // is a plain compare and carries no view.
+    assert_eq!(
+        parse(&["a.docx", "b.docx"], &["compare"])["exit_code"],
+        2,
+        "read not supported"
+    );
+    let written = parse(&["a.docx", "b.docx", "-o", "x.docx"], &["compare"]);
+    assert_eq!(written["command"], "compare", "{written}");
+    assert!(written["args"].get("view").is_none(), "{written}");
+}
+
+#[test]
+fn github_aliases_context_and_native_types() {
+    for name in ["github", "unified", "text"] {
+        let result = parse(&["diff", "a.docx", "b.md", "--format", name], &[]);
+        assert_eq!(result["command"], "diff", "{result}");
+        assert_eq!(result["args"]["format"], "github");
+        assert_eq!(result["args"]["context"], 3);
+        assert!(result["args"]["output"].is_null());
+        let cli = Cli::try_parse_from(["jubarte", "diff", "a", "b", "--format", name]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Diff {
+                format: PatchFormat::Github,
+                ..
+            })
+        ));
+    }
+    assert_eq!(
+        parse(
+            &["diff", "a", "b", "--format", "github", "--context", "0"],
+            &[]
+        )["args"]["context"],
+        0
+    );
+    for args in [
+        vec!["diff", "a", "b", "--context", "3"],
+        vec!["diff", "a", "b", "--format", "critic", "--context", "2"],
+        vec!["diff", "a", "b", "--format", "github", "--context", "-1"],
+    ] {
+        assert_eq!(parse(&args, &[])["exit_code"], 2);
+    }
+}
+
+#[test]
+fn github_output_contract_is_checked_before_documents_exist() {
+    for extension in ["patch", "diff", "txt"] {
+        let path = format!("changes.{extension}");
+        assert_eq!(
+            parse(
+                &[
+                    "diff",
+                    "missing-a",
+                    "missing-b",
+                    "--format",
+                    "github",
+                    "-o",
+                    &path
+                ],
+                &[]
+            )["exit_code"],
+            0
+        );
+    }
+    for extra in [
+        vec!["--to", "docx"],
+        vec!["--to", "pdf"],
+        vec!["--to", "png"],
+        vec!["-o", "out.docx"],
+        vec!["-o", "out.pdf"],
+        vec!["-o", "out.png"],
+        vec!["--to", "md", "-o", "out.docx"],
+    ] {
+        let args = [
+            vec!["diff", "missing-a", "missing-b", "--format", "github"],
+            extra,
+        ]
+        .concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 2, "{result}");
+        assert_eq!(result["stream"], "stderr");
+        assert!(result["text"].as_str().unwrap().contains("Usage:"));
+    }
+}
+
+#[test]
+fn facade_restricts_help_acceptance_aliases_and_shorthand() {
+    let supported = ["inspect", "diff"];
+    let help = parse(&["--help"], &supported);
+    assert_eq!(help["exit_code"], 0);
+    assert_eq!(help["stream"], "stdout");
+    let text = help["text"].as_str().unwrap();
+    assert!(text.contains("jubarte-python"));
+    assert!(text.contains("inspect") && text.contains("diff"));
+    assert!(!text.contains("\n  self-update ") && !text.contains("\n  compare "));
+    assert!(!text.contains('\u{1b}'));
+    for args in [
+        &["convert", "a.docx"][..],
+        &["redline", "a", "b"][..],
+        &["a", "b"][..],
+        &["help", "self-update"][..],
+    ] {
+        assert_eq!(parse(args, &supported)["exit_code"], 2);
+    }
+    assert_eq!(
+        parse(&["redline", "a", "b"], &["compare"])["command"],
+        "compare"
+    );
+    assert_eq!(parse(&["--version"], &supported)["stream"], "stdout");
+    assert_eq!(
+        parse(&["inspect", "a", "--json"], &supported)["args"]["json"],
+        true
+    );
+}
+
+#[test]
+fn facade_serializes_native_names_canonical_enums_and_nested_subcommands() {
+    let convert = parse(
+        &[
+            "convert", "draft.md", "--from", "markdown", "--to", "png", "--dpi", "72", "--pages",
+            "1-3,7",
+        ],
+        &[],
+    );
+    assert_eq!(convert["args"]["from"], "md");
+    assert_eq!(convert["args"]["dpi"], 72.0);
+    assert_eq!(convert["args"]["track_changes"], "all");
+    assert_eq!(convert["args"]["pages"], "1-3,7");
+    let accept = parse(
+        &[
+            "accept",
+            "a.docx",
+            "-o",
+            "out.docx",
+            "--id",
+            "body:rev:12",
+            "--kind",
+            "insertion",
+        ],
+        &[],
+    );
+    assert_eq!(accept["args"]["ids"][0], "body:rev:12");
+    assert_eq!(accept["args"]["kinds"][0], "insertion");
+    let fields = parse(&["convert", "a", "-o", "b.docx", "--update-fields"], &[]);
+    assert_eq!(fields["args"]["update_fields"], true);
+    assert_eq!(fields["args"]["output"], "b.docx");
+}
+
+#[test]
+fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
+    for dpi in ["0", "-1", "NaN", "inf", "1201"] {
+        for command in ["convert", "edit", "diff-render"] {
+            let base = match command {
+                "edit" => vec!["edit", "a", "--plan", "p", "--out-dir", "d"],
+                "diff-render" => vec!["diff-render", "a", "b"],
+                _ => vec!["convert", "a", "--png"],
+            };
+            assert_eq!(
+                parse(&[base, vec!["--dpi", dpi]].concat(), &[])["exit_code"],
+                2
+            );
+        }
+    }
+    for ratio in ["NaN", "inf", "-0.1", "1.1"] {
+        assert_eq!(
+            parse(&["compare", "a", "b", "--detail-threshold", ratio], &[])["exit_code"],
+            2
+        );
+    }
+    for ratio in ["0", "1"] {
+        assert_eq!(
+            parse(&["compare", "a", "b", "--detail-threshold", ratio], &[])["exit_code"],
+            0
+        );
+    }
+    for pages in ["0", "3-1", "1,,2", "one", "1-2-3"] {
+        assert_eq!(
+            parse(&["convert", "a", "--png", "--pages", pages], &[])["exit_code"],
+            2
+        );
+    }
+    for flags in [
+        vec!["--revisions", "custom"],
+        vec![
+            "--revisions",
+            "word",
+            "--revision-palette",
+            "deleted=#000000",
+        ],
+        vec!["--revisions", "custom", "--revision-palette", "deleted=red"],
+        vec!["--to", "md", "--png"],
+        vec!["--pages", "1"],
+    ] {
+        assert_eq!(
+            parse(&[vec!["convert", "a"], flags].concat(), &[])["exit_code"],
+            2
+        );
+    }
+}
+
+#[test]
+fn diff_revision_marks_apply_to_rendered_output_only() {
+    let palette = [
+        "--revisions",
+        "custom",
+        "--revision-palette",
+        "deleted=#000000",
+    ];
+    for output in [
+        &[][..],
+        &["-o", "r.docx"],
+        &["--to", "docx"],
+        &["-o", "r.md"],
+    ] {
+        for marks in [&["--revisions", "word"][..], &palette] {
+            let result = parse(
+                &[&["diff", "a.md", "b.md"][..], output, marks].concat(),
+                &[],
+            );
+            assert_eq!(result["exit_code"], 2, "{output:?} {marks:?}: {result}");
+            assert!(
+                result["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("--revisions applies to PDF or PNG output only"),
+                "{result}"
+            );
+        }
+    }
+    for output in [["-o", "r.pdf"], ["-o", "r.png"], ["--to", "pdf"]] {
+        for marks in [&["--revisions", "word"][..], &palette] {
+            let result = parse(
+                &[&["diff", "a.md", "b.md"][..], &output, marks].concat(),
+                &[],
+            );
+            assert_eq!(result["exit_code"], 0, "{output:?} {marks:?}: {result}");
+        }
+    }
+}
+
+#[test]
+fn help_explains_tasks_and_critic_markup() {
+    let help = parse(&["--help"], &[]);
+    let text = help["text"].as_str().unwrap();
+    assert!(text.contains("compare") && text.contains("redline") && text.contains("Examples:"));
+    let diff = parse(&["diff", "--help"], &[]);
+    let text = diff["text"].as_str().unwrap();
+    assert!(text.contains("GitHub") && text.contains("current document text with tracked marks"));
+}
+
+#[test]
+fn supported_compare_never_accepts_a_disabled_task_as_filenames() {
+    for command in ["convert", "self-update", "debug", "audit"] {
+        let result = parse(&[command, "a.docx"], &["compare", "inspect"]);
+        assert_eq!(result["exit_code"], 2, "{result}");
+        assert_eq!(result["stream"], "stderr");
+    }
+    let help = parse(&["convert", "--help"], &["convert"]);
+    let text = help["text"].as_str().unwrap();
+    assert!(text.contains("--reference-doc") && text.contains("--track-changes"));
+}
+
+#[test]
+fn palette_and_timeout_defaults_are_platform_neutral() {
+    let result = parse(
+        &[
+            "convert",
+            "a",
+            "--png",
+            "--revisions",
+            "custom",
+            "--revision-palette",
+            "deleted=#112233:strike",
+            "--timeout",
+            "0.5",
+        ],
+        &[],
+    );
+    assert_eq!(result["exit_code"], 0, "{result}");
+    assert_eq!(result["args"]["revisions"], "custom");
+    assert_eq!(result["args"]["timeout"], 0.5);
+    for seconds in ["0", "-1", "NaN", "inf"] {
+        assert_eq!(
+            parse(&["convert", "a", "--timeout", seconds], &[])["exit_code"],
+            2
+        );
+    }
+    for args in [
+        vec!["convert", "a", "-o", "out.md", "--png"],
+        vec!["convert", "a", "-o", "out.docx", "--report", "report.json"],
+    ] {
+        assert_eq!(parse(&args, &[])["exit_code"], 2);
+    }
+}
+
+#[test]
+fn text_views_options_and_host_metadata_share_clap() {
+    for format in ["github", "word", "normal", "context", "side-by-side"] {
+        let result = parse(
+            &[
+                "diff",
+                "a.docx",
+                "b.txt",
+                "--format",
+                format,
+                "-U0",
+                "--accept-changes",
+                "--full-lines",
+                "-o",
+                "review.txt",
+            ],
+            &[],
+        );
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["args"]["context"], 0);
+        assert_eq!(result["args"]["accept_changes"], true);
+        assert_eq!(result["args"]["full_lines"], true);
+        assert_eq!(result["args"]["old_format"], "docx");
+        assert_eq!(result["args"]["new_format"], "md");
+        assert_eq!(result["args"]["output_format"], "md");
+    }
+    let compared = parse(&["compare", "a.txt", "b.markdown", "-o", "out.md"], &[]);
+    assert_eq!(compared["args"]["old_format"], "md");
+    assert_eq!(compared["args"]["new_format"], "md");
+    assert_eq!(compared["args"]["output_format"], "md");
+    for args in [
+        vec!["--format", "critic", "--full-lines"],
+        vec!["--format", "patch", "--accept-changes"],
+        vec!["--format", "word", "--to", "docx"],
+        vec!["--format", "github", "--context", "4294967296"],
+        vec!["--from", "pdf"],
+    ] {
+        assert_eq!(
+            parse(&[vec!["diff", "a", "b"], args].concat(), &[])["exit_code"],
+            2
+        );
+    }
+    let result = parse(
+        &[
+            "diff",
+            "a.docx",
+            "b.docx",
+            "--from",
+            "md",
+            "--format",
+            "patch",
+            "-o",
+            "unknown.ext",
+        ],
+        &[],
+    );
+    assert_eq!(result["args"]["old_format"], "md");
+    assert_eq!(result["args"]["new_format"], "md");
+    assert!(result["args"]["output_format"].is_null());
+}
+
+#[test]
+fn page_errors_explain_the_invalid_item() {
+    for (pages, phrase) in [
+        ("x", "is not a page number"),
+        ("+1", "is not a page number"),
+        ("0", "pages are counted from 1"),
+        ("1,,2", "empty item in page selection"),
+        ("3-1", "runs backwards"),
+    ] {
+        let result = parse(&["convert", "a", "--png", "--pages", pages], &[]);
+        assert_eq!(result["exit_code"], 2);
+        assert!(
+            result["text"].as_str().unwrap().contains(phrase),
+            "{result}"
+        );
+    }
+}
+
+#[test]
+fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
+    for args in [
+        vec!["convert", "a.docx", "--move-comments", "--changed-only"],
+        vec![
+            "diff",
+            "a.docx",
+            "b.docx",
+            "-o",
+            "out.pdf",
+            "--move-comments",
+            "--changed-only",
+        ],
+    ] {
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["args"]["move_comments"], true, "{result}");
+        assert_eq!(result["args"]["changed_only"], true, "{result}");
+    }
+    for flag in ["--move-comments", "--changed-only"] {
+        for args in [
+            vec!["convert", "a.docx", "-t", "md", flag],
+            vec!["diff", "a.docx", "b.docx", "--format", "github", flag],
+            vec!["diff", "a.docx", "b.docx", "-o", "out.docx", flag],
+            vec!["diff", "a.md", "b.md", flag],
+        ] {
+            assert_eq!(parse(&args, &[])["exit_code"], 2, "{args:?}");
+        }
+    }
+}
+
+/// pi review av4 F11: a revision timestamp is an xsd:dateTime (`w:date`);
+/// clap refuses anything else instead of writing it into the document.
+#[test]
+fn revision_timestamps_must_be_iso_8601() {
+    for bad in [
+        "yesterday",
+        "2026-10-01",
+        "2026-13-01T09:00:00Z",
+        "2026-10-01 09:00",
+        // pi review r392 F4/F5: offsets stop at 14:00, there is no year 0,
+        // and Word's subset has no 24:00:00.
+        "2026-10-01T09:00:00+14:59",
+        "0000-01-01T00:00:00Z",
+        "2026-10-01T24:00:00Z",
+    ] {
+        for args in [
+            vec!["compare", "a.docx", "b.docx", "-d", bad],
+            vec![
+                "edit",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--datetime",
+                bad,
+            ],
+        ] {
+            assert_eq!(parse(&args, &[])["exit_code"], 2, "{args:?}");
+        }
+    }
+    for good in [
+        "2026-10-01T09:00:00Z",
+        "2026-10-01T09:00:00",
+        "2026-10-01T09:00:00.125+02:00",
+        "2026-10-01T09:00:00-14:00",
+    ] {
+        for args in [
+            vec!["compare", "a.docx", "b.docx", "-d", good],
+            vec![
+                "edit",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--datetime",
+                good,
+            ],
+        ] {
+            assert_eq!(parse(&args, &[])["exit_code"], 0, "{args:?}");
+        }
+    }
+}
+
+#[test]
+fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
+    for (date, valid) in [
+        ("2000-02-29T23:59:59.123456789+14:00", true),
+        ("2024-02-29T00:00:00-14:00", true),
+        ("0001-01-01T00:00:00", true),
+        ("9999-12-31T23:59:59.0Z", true),
+        ("2026-04-30T12:00:00+13:59", true),
+        ("1900-02-29T00:00:00Z", false),
+        ("2100-02-29T00:00:00Z", false),
+        ("2026-02-29T00:00:00Z", false),
+        ("2026-04-31T00:00:00Z", false),
+        ("2026-01-00T00:00:00Z", false),
+        ("2026-01-01T00:60:00Z", false),
+        ("2026-01-01T00:00:60Z", false),
+        ("2026-01-01T00:00:00.Z", false),
+        ("2026-01-01T00:00:00.éZ", false),
+        ("2026-01-01T00:00:00+14:01", false),
+        ("2026-01-01T00:00:00-14:01", false),
+        ("2026-01-01T00:00:00+00:60", false),
+        ("2026-01-01T00:00:00+0a:00", false),
+        ("2026-01-01T00:00:00Ztrailing", false),
+        ("2026-01-01T00:00:00z", false),
+        ("２０２６-01-01T00:00:00Z", false),
+        ("", false),
+    ] {
+        for args in [
+            vec!["compare", "a.docx", "b.docx", "--date", date],
+            vec!["a.docx", "b.docx", "-d", date],
+            vec![
+                "edit",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--date",
+                date,
+            ],
+            vec![
+                "add",
+                "a.docx",
+                "-p",
+                "p0",
+                "--content",
+                "x",
+                "--datetime",
+                date,
+            ],
+            vec!["convert", "a.md", "-t", "docx", "--date", date],
+            vec!["diff", "a.docx", "b.docx", "-o", "out.docx", "--date", date],
+        ] {
+            let result = parse(&args, &[]);
+            assert_eq!(
+                result["exit_code"],
+                if valid { 0 } else { 2 },
+                "{args:?}: {result}"
+            );
+            if !valid {
+                assert!(
+                    result["text"].as_str().unwrap().contains("ISO 8601"),
+                    "{result}"
+                );
+            }
+        }
+        if valid {
+            assert_eq!(
+                parse(&["compare", "a", "b", "-d", date], &[])["args"]["date"],
+                date
+            );
+        }
+    }
+}
+
+#[test]
+fn pr392_author_filters_share_validation_with_the_library() {
+    use jubarte::markdown::{Select, author};
+
+    for (given, expected) in [
+        (" AC ", "AC"),
+        ("\t@AC\n", "@AC"),
+        ("\u{2003}Ánn Counsel\u{2003}", "Ánn Counsel"),
+        ("Ann  Counsel", "Ann  Counsel"),
+    ] {
+        assert_eq!(author(given).unwrap(), expected);
+        let selected = Select::from_flags(None, None, None, true, Some(given)).unwrap();
+        assert!(matches!(selected, Some(Select::Changed { by: Some(ref by) }) if by == expected));
+        for prefix in [vec!["read", "a.docx"], vec!["a.docx"]] {
+            let args = [prefix, vec!["--changed", "--by", given]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{result}");
+            assert_eq!(result["args"]["by"], expected, "{result}");
+        }
+    }
+    for bad in [
+        "",
+        "\t\n",
+        "\u{2003}",
+        "@",
+        "@@AC",
+        "@ AC",
+        "@\tAC",
+        "@\u{2003}AC",
+    ] {
+        assert!(author(bad).is_err(), "{bad:?}");
+        assert!(
+            Select::from_flags(None, None, None, true, Some(bad)).is_err(),
+            "{bad:?}"
+        );
+        let result = parse(&["read", "a.docx", "--changed", "--by", bad], &[]);
+        assert_eq!(result["exit_code"], 2, "{bad:?}: {result}");
+        assert!(
+            result["text"].as_str().unwrap().contains("needs an author"),
+            "{result}"
+        );
+    }
+}
+
+#[test]
+fn shorthand_forwards_each_read_option_like_the_explicit_read_task() {
+    for flags in [
+        vec![],
+        vec!["--track-changes", "reject"],
+        vec!["--comments", "none"],
+        vec!["--dates"],
+        vec!["--no-page-markers"],
+        vec!["-p", "p0-p2,t0"],
+        vec!["--head", "0"],
+        vec!["--tail", "1"],
+        vec!["--changed", "--by", "Ann Counsel"],
+    ] {
+        let explicit = parse(&[vec!["read", "a.docx"], flags.clone()].concat(), &[]);
+        let single = parse(&[vec!["a.docx"], flags.clone()].concat(), &[]);
+        assert_eq!(single["exit_code"], 0, "{flags:?}: {single}");
+        assert_eq!(single, explicit, "{flags:?}");
+        let pair = parse(&[vec!["a.docx", "b.docx"], flags].concat(), &[]);
+        assert_eq!(pair["exit_code"], 0, "{pair}");
+        let mut expected = explicit["args"].clone();
+        expected.as_object_mut().unwrap().remove("file");
+        assert_eq!(pair["args"]["view"], expected);
+    }
+}
+
+#[test]
+fn every_explicit_read_option_conflicts_with_writing_even_at_its_default() {
+    for flags in [
+        vec!["--track-changes", "all"],
+        vec!["--comments", "inline"],
+        vec!["--dates"],
+        vec!["--no-page-markers"],
+        vec!["--paragraphs", "p0"],
+        vec!["--head", "0"],
+        vec!["--tail", "0"],
+        vec!["--changed"],
+        vec!["--changed", "--by", "AC"],
+    ] {
+        let args = [
+            vec!["missing-a.docx", "missing-b.docx", "-o", "out.docx"],
+            flags,
+        ]
+        .concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(result["stream"], "stderr");
+        assert!(result["text"].as_str().unwrap().contains("drop -o"));
+        assert_eq!(
+            Cli::try_parse_from([vec!["jubarte"], args].concat())
+                .unwrap_err()
+                .kind(),
+            clap::error::ErrorKind::ArgumentConflict
+        );
+    }
+    assert_eq!(
+        parse(&["a.docx", "b.docx", "-o", "out.docx"], &[])["exit_code"],
+        0
+    );
+}
+
+#[test]
+fn explicit_compare_and_alias_do_not_request_a_printed_view() {
+    for task in ["compare", "redline"] {
+        let result = parse(&[task, "-b", "a.docx", "-m", "b.docx"], &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert!(result["args"].get("view").is_none(), "{result}");
+        assert_eq!(parse(&[task, "-b", "a.docx"], &[])["exit_code"], 2);
+    }
+    let read = parse(&["placeholder.docx", "--original", "actual.docx"], &[]);
+    assert_eq!(read["exit_code"], 0, "{read}");
+    assert_eq!(read["args"]["file"], "actual.docx");
+}

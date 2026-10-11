@@ -74,3 +74,53 @@ def test_a_report_without_fields_decodes_to_an_empty_tuple():
     document = jubarte.Document.from_bytes(docx(para("Alpha")))
     result = document.edit(jubarte.EditPlan(author="Reviewer").replace(0, find="Alpha", replacement="Beta"))
     assert result.report.fields == ()
+
+
+def test_convert_update_fields_writes_the_refreshed_docx_and_its_report(tmp_path, capsys):
+    from jubarte_redlines.__main__ import main
+
+    source = tmp_path / "in.docx"
+    source.write_bytes(docx(para("One") + PAGE_BREAK + NUMPAGES))
+    out, report = tmp_path / "out.docx", tmp_path / "fields.json"
+    assert main(["convert", str(source), "-o", str(out), "--update-fields", "--report", str(report)]) == 0
+    captured = capsys.readouterr()
+    assert 'body:p:2\tNUMPAGES\t"9" -> "2"' in captured.out
+    assert "1 field(s) written; 2 page(s)" in captured.err
+    assert json.loads(report.read_text())["fields"][0]["new"] == "2"
+    assert "2" in texts(jubarte.Document.read(out))
+    # The output is never clobbered without --force; Markdown in is refused.
+    assert main(["convert", str(source), "-o", str(out), "--update-fields"]) == 1
+    note = tmp_path / "note.md"
+    note.write_text("# Note\n")
+    assert main(["convert", str(note), "-o", str(tmp_path / "note.docx"), "--update-fields"]) == 1
+    assert "needs a Word document in" in capsys.readouterr().err
+    assert not (tmp_path / "note.docx").exists()
+
+
+def test_convert_update_fields_refuses_a_report_on_the_input_or_the_output(tmp_path, capsys):
+    # CodeRabbit on #393: the report is written apart from the .docx, so a
+    # shared path would silently replace one with the other.
+    from jubarte_redlines.__main__ import main
+
+    source = tmp_path / "in.docx"
+    original = docx(para("One") + PAGE_BREAK + NUMPAGES)
+    source.write_bytes(original)
+    out = tmp_path / "out.docx"
+    update = ["convert", str(source), "-o", str(out), "--update-fields"]
+    for report, extra, says in [
+        (source, [], "the same file as the input"),
+        (source, ["--force"], "the same file as the input"),
+        (out, [], "the same file as the Word output"),
+    ]:
+        assert main([*update, "--report", str(report), *extra]) == 1
+        assert f"--report '{report}' is {says}" in capsys.readouterr().err
+        assert source.read_bytes() == original
+        assert not out.exists()
+    # An existing report is kept without --force, and replaced with it.
+    report = tmp_path / "fields.json"
+    report.write_text("keep")
+    assert main([*update, "--report", str(report)]) == 1
+    assert "already exists" in capsys.readouterr().err
+    assert report.read_text() == "keep" and not out.exists()
+    assert main([*update, "--report", str(report), "--force"]) == 0
+    assert json.loads(report.read_text())["fields"][0]["kind"] == "NUMPAGES"

@@ -51,8 +51,8 @@ The CI line-coverage floor is 80%; branch coverage needs nightly LLVM coverage
 and must be reported separately rather than inferred from line coverage.
 
 Before a release run the security checks in [SECURITY.md](SECURITY.md), and
-all three [fuzz targets](fuzz/README.md). Debug assertions and the fuzzer's
-sanitizers must remain enabled. Confirmed security findings block release until
+all four [fuzz targets and native allocator runs](fuzz/README.md). Debug
+assertions and the fuzzer's sanitizers must remain enabled. Confirmed security findings block release until
 fixed or shown not exploitable with recorded evidence. Add CVE/GHSA/RustSec
 identifiers, affected/fixed versions and upgrade guidance to the changelog for
 publicly known runtime vulnerabilities fixed in the engine. Dependency updates

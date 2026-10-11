@@ -659,6 +659,7 @@ fn elements(xml: &[u8], local: &str) -> Vec<BTreeMap<String, String>> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::io::Write;
 

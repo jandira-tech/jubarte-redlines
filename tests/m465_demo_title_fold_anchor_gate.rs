@@ -143,3 +143,86 @@ fn unanchored_pair_still_folds_demo_title() {
         "folded title must not grow a live Demo run, got: {p}"
     );
 }
+
+fn folded_paragraph_properties(package: &[u8], needle: &str) -> String {
+    use jubarte::namespaces::W;
+    use jubarte::xmllinq::{Dom, NodeId};
+    fn canonical(dom: &Dom, node: NodeId) -> String {
+        let mut attributes: Vec<_> = dom
+            .attributes(node)
+            .into_iter()
+            .map(|(name, value)| format!("{}={value}", name.local_name()))
+            .collect();
+        attributes.sort();
+        let children: String = dom
+            .elements(node, None)
+            .into_iter()
+            .map(|child| canonical(dom, child))
+            .collect();
+        format!(
+            "{}:{attributes:?}[{children}]",
+            dom.name(node).unwrap().local_name()
+        )
+    }
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(package)).unwrap();
+    let mut xml = String::new();
+    zip.by_name("word/document.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let root = dom.root(document).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let paragraph = dom
+        .elements(body, Some(&W::p()))
+        .into_iter()
+        .find(|&paragraph| {
+            let text: String = dom
+                .descendants(paragraph, Some(&W::t()))
+                .into_iter()
+                .map(|text| dom.value(text))
+                .collect();
+            text.contains(needle)
+        })
+        .expect("source paragraph survives its projection");
+    let properties = dom
+        .element(paragraph, &W::p_pr())
+        .expect("complete authored paragraph properties");
+    canonical(&dom, properties)
+}
+
+#[test]
+fn full_demo_title_fold_restores_both_authored_paragraph_property_sets() {
+    use jubarte::comparer::WmlComparerSettings;
+    use jubarte::document_comparer::{
+        accept_revisions, compare_documents_with_settings, reject_revisions,
+    };
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
+    let a = source.join("double_spacing_bold_demo_id_paraid_overflow.docx");
+    let b = source.join("eigenpal_docx_editor_suggesting_mixed_edits.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: fixtures missing");
+        return;
+    }
+    let a = std::fs::read(a).unwrap();
+    let b = std::fs::read(b).unwrap();
+    let settings = WmlComparerSettings {
+        author_for_revisions: "Layout Editor".into(),
+        date_time_for_revisions: "2026-10-08T12:00:00Z".into(),
+        ..WmlComparerSettings::default()
+    };
+    let output = compare_documents_with_settings(&a, &b, &settings).unwrap();
+    assert_eq!(
+        folded_paragraph_properties(&accept_revisions(&output).unwrap(), "What this is"),
+        folded_paragraph_properties(&accept_revisions(&b).unwrap(), "What this is")
+    );
+    assert_eq!(
+        folded_paragraph_properties(
+            &reject_revisions(&output).unwrap(),
+            "Double Spacing Bold Demo"
+        ),
+        folded_paragraph_properties(&accept_revisions(&a).unwrap(), "Double Spacing Bold Demo")
+    );
+}

@@ -492,7 +492,8 @@ fn parse_code(code: &str, with_arg: &[&str]) -> Code {
 }
 
 /// Whether every switch of `code` is in `known` (a `\*` switch passes only
-/// with a format this module writes: `MERGEFORMAT`, `CHARFORMAT`, `Arabic`).
+/// with `MERGEFORMAT`, `CHARFORMAT` or `Arabic`: a text result such as
+/// `REF`'s takes no number format).
 fn only_switches(code: &Code, known: &[&str]) -> bool {
     code.switches
         .iter()
@@ -503,6 +504,81 @@ fn only_switches(code: &Code, known: &[&str]) -> bool {
             }),
             other => known.contains(&other),
         })
+}
+
+/// A number format a `\*` switch asks for, among those written here.
+/// Word's result for a number its `\*` format cannot write.
+const UNREPRESENTABLE: &str = "Error! Number cannot be represented in specified format.";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumberFormat {
+    Arabic,
+    /// `roman` (false) or `ROMAN` (true).
+    Roman(bool),
+    /// `alphabetic` (false) or `ALPHABETIC` (true).
+    Alpha(bool),
+}
+
+impl NumberFormat {
+    /// `n` in this format, as Word writes it (probe nf1006, 2026-10-06):
+    /// past `z` the letter repeats (27 "aa", 53 "aaa"), past 3999 the M's
+    /// do (4000 "MMMM"), and zero is a single space in Roman and letters.
+    /// Past 780 in letters or 32767 in Roman numerals Word writes
+    /// `UNREPRESENTABLE` (probes bn1006 and bn1006b).
+    fn write(self, n: u32) -> Option<String> {
+        use crate::convert::{ALPHA_LABEL_MAX, ROMAN_LABEL_MAX};
+        Some(match self {
+            Self::Arabic => n.to_string(),
+            Self::Roman(_) | Self::Alpha(_) if n == 0 => " ".to_string(),
+            Self::Roman(_) if n > ROMAN_LABEL_MAX => UNREPRESENTABLE.to_string(),
+            Self::Alpha(_) if n > ALPHA_LABEL_MAX => UNREPRESENTABLE.to_string(),
+            Self::Roman(upper) => crate::convert::roman_label(n, upper),
+            Self::Alpha(upper) => crate::convert::alpha_label(n, upper),
+        })
+    }
+}
+
+/// The number format `code`'s `\*` switches ask for (the last one wins;
+/// `MERGEFORMAT` and `CHARFORMAT` format nothing), or `None` when one asks
+/// for a format not written here (`Ordinal`, `CardText`, `Hex`, ...). The
+/// switch's first letter picks the case: `Roman` and `ROMAN` are upper,
+/// `roman` and `rOMAN` lower (Word 16 probe nf1006, 2026-10-06).
+fn number_format(code: &Code) -> Option<NumberFormat> {
+    // The last format switch wins (Word 16 probe bn1006: "\* CardText
+    // \* roman" and "\* Bogus \* roman" are both "i"); one we do not
+    // write keeps the cached result.
+    let mut format = Some(NumberFormat::Arabic);
+    for (switch, arg) in &code.switches {
+        if switch != "*" {
+            continue;
+        }
+        let arg = arg.as_deref()?;
+        let upper = arg.starts_with(|c: char| c.is_ascii_uppercase());
+        format = match arg.to_ascii_lowercase().as_str() {
+            "roman" => Some(NumberFormat::Roman(upper)),
+            "alphabetic" => Some(NumberFormat::Alpha(upper)),
+            "arabic" => Some(NumberFormat::Arabic),
+            "mergeformat" | "charformat" => format,
+            _ => None,
+        };
+    }
+    format
+}
+
+/// Whether every switch of `code` other than `\*` is in `known`.
+fn plain_switches(code: &Code, known: &[&str]) -> bool {
+    code.switches
+        .iter()
+        .all(|(switch, _)| switch == "*" || known.contains(&switch.as_str()))
+}
+
+/// A page label in `code`'s number format. A label that is not a plain
+/// number (a section's "iii" or "2-1") is written only unformatted.
+fn format_page(label: &str, code: &Code) -> Option<String> {
+    match number_format(code)? {
+        NumberFormat::Arabic => Some(label.to_string()),
+        format => format.write(label.parse().ok()?),
+    }
 }
 
 // ── results ───────────────────────────────────────────────────────────────
@@ -517,8 +593,10 @@ fn results_for(story: &Story, fields: &[Field], context: &Context<'_>) -> HashMa
             "REF" => reference(&story.dom, story.root, &field.code, context),
             "NUMPAGES" => {
                 let code = parse_code(&field.code, &[]);
-                (code.args.is_empty() && only_switches(&code, &[]))
-                    .then(|| context.facts.page_count.to_string())
+                (code.args.is_empty() && plain_switches(&code, &[]))
+                    .then(|| number_format(&code))
+                    .flatten()
+                    .and_then(|format| format.write(context.facts.page_count as u32))
             }
             "SEQ" if story.body => sequence(&field.code, &mut seq),
             _ => None,
@@ -535,7 +613,7 @@ fn pageref(code: &str, context: &Context<'_>) -> Option<String> {
     let [name] = code.args.as_slice() else {
         return None;
     };
-    if !only_switches(&code, &["h"]) {
+    if !plain_switches(&code, &["h"]) {
         return None;
     }
     if !context.defined.contains(name) {
@@ -543,7 +621,8 @@ fn pageref(code: &str, context: &Context<'_>) -> Option<String> {
     }
     // Defined but not paged (outside any paragraph, or in a header): the
     // cached result stays.
-    context.facts.bookmark_pages.get(name).cloned()
+    let label = context.facts.bookmark_pages.get(name)?;
+    format_page(label, &code)
 }
 
 fn reference(dom: &Dom, root: NodeId, code: &str, context: &Context<'_>) -> Option<String> {
@@ -567,7 +646,9 @@ fn sequence(code: &str, counters: &mut HashMap<String, Option<u32>>) -> Option<S
     let parsed = parse_code(code, &["r", "s"]);
     let ident = parsed.args.first()?.clone();
     let counter = counters.entry(ident).or_insert(Some(0));
-    if parsed.args.len() != 1 || !only_switches(&parsed, &["c", "n", "r", "h"]) {
+    let format = number_format(&parsed);
+    if parsed.args.len() != 1 || !plain_switches(&parsed, &["c", "n", "r", "h"]) || format.is_none()
+    {
         *counter = None;
     }
     let mut value = (*counter)?;
@@ -587,11 +668,11 @@ fn sequence(code: &str, counters: &mut HashMap<String, Option<u32>>) -> Option<S
     }
     *counter = Some(value);
     let hidden = parsed.switches.iter().any(|(switch, _)| switch == "h");
-    Some(if hidden {
-        String::new()
+    if hidden {
+        Some(String::new())
     } else {
-        value.to_string()
-    })
+        format?.write(value)
+    }
 }
 
 /// The text a bookmark spans, when it lies within one paragraph.
@@ -1356,6 +1437,7 @@ fn style_definition(id: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::io::{Cursor, Write};
 
@@ -1427,6 +1509,150 @@ mod tests {
     }
 
     #[test]
+    fn number_formats_write_roman_and_letters() {
+        let format = |code: &str| number_format(&parse_code(code, &[]));
+        assert_eq!(format(" NUMPAGES "), Some(NumberFormat::Arabic));
+        assert_eq!(
+            format(" NUMPAGES \\* MERGEFORMAT "),
+            Some(NumberFormat::Arabic)
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* roman "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* ROMAN \\* MERGEFORMAT "),
+            Some(NumberFormat::Roman(true))
+        );
+        assert_eq!(
+            format(" SEQ x \\* alphabetic "),
+            Some(NumberFormat::Alpha(false))
+        );
+        assert_eq!(
+            format(" SEQ x \\* ALPHABETIC "),
+            Some(NumberFormat::Alpha(true))
+        );
+        // Word 16 probe nf1006 (2026-10-06): the switch's first letter
+        // picks the case, "Roman" XIV and "rOMAN" xiv.
+        assert_eq!(
+            format(" NUMPAGES \\* Roman "),
+            Some(NumberFormat::Roman(true))
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* rOMAN "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(
+            format(" SEQ x \\* Alphabetic "),
+            Some(NumberFormat::Alpha(true))
+        );
+        assert_eq!(
+            format(" SEQ x \\* aLPHABETIC "),
+            Some(NumberFormat::Alpha(false))
+        );
+        // Formats not written here keep the cached result.
+        assert_eq!(format(" NUMPAGES \\* CardText "), None);
+        assert_eq!(NumberFormat::Roman(false).write(14).as_deref(), Some("xiv"));
+        assert_eq!(
+            NumberFormat::Roman(true).write(1999).as_deref(),
+            Some("MCMXCIX")
+        );
+        assert_eq!(NumberFormat::Alpha(false).write(3).as_deref(), Some("c"));
+        assert_eq!(NumberFormat::Alpha(true).write(26).as_deref(), Some("Z"));
+        assert_eq!(NumberFormat::Arabic.write(0).as_deref(), Some("0"));
+        // nf1006: past z the letter repeats, past 3999 the M's do, and
+        // zero is a single space in both.
+        assert_eq!(NumberFormat::Alpha(false).write(27).as_deref(), Some("aa"));
+        assert_eq!(NumberFormat::Alpha(true).write(53).as_deref(), Some("AAA"));
+        assert_eq!(
+            NumberFormat::Roman(true).write(4000).as_deref(),
+            Some("MMMM")
+        );
+        assert_eq!(NumberFormat::Roman(false).write(0).as_deref(), Some(" "));
+        assert_eq!(NumberFormat::Alpha(false).write(0).as_deref(), Some(" "));
+        // Word 16 probes bn1006 / bn1006b (2026-10-06): letters reach 780
+        // (thirty z's) and Roman 32767; past them Word writes its error.
+        assert_eq!(
+            NumberFormat::Alpha(false).write(780).as_deref(),
+            Some("z".repeat(30).as_str())
+        );
+        for (format, n) in [
+            (NumberFormat::Alpha(false), 781),
+            (NumberFormat::Alpha(true), u32::MAX),
+            (NumberFormat::Roman(true), 32768),
+            (NumberFormat::Roman(false), u32::MAX),
+        ] {
+            assert_eq!(
+                format.write(n).as_deref(),
+                Some(UNREPRESENTABLE),
+                "{format:?} {n}"
+            );
+        }
+        assert!(
+            NumberFormat::Roman(true)
+                .write(32767)
+                .is_some_and(|r| r.ends_with("MMDCCLXVII"))
+        );
+    }
+
+    #[test]
+    fn the_last_format_switch_wins() {
+        // bn1006: an earlier switch gives way to a later one, "\* CardText
+        // \* roman" i and "\* Bogus \* roman" i; a format we do not
+        // write last ("\* roman \* CardText" one) keeps the cache.
+        let format = |code: &str| number_format(&parse_code(code, &[]));
+        assert_eq!(
+            format(" NUMPAGES \\* CardText \\* roman "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* Bogus \\* roman \\* MERGEFORMAT "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(format(" NUMPAGES \\* roman \\* CardText "), None);
+        assert_eq!(format(" NUMPAGES \\* CardText \\* MERGEFORMAT "), None);
+    }
+
+    #[test]
+    fn a_numbered_sequence_keeps_counting_in_its_format() {
+        let mut counters = HashMap::new();
+        let mut next = |code: &str| sequence(code, &mut counters);
+        assert_eq!(next(" SEQ Annex \\* ALPHABETIC ").as_deref(), Some("A"));
+        assert_eq!(next(" SEQ Annex \\* ALPHABETIC ").as_deref(), Some("B"));
+        assert_eq!(next(" SEQ Annex \\* roman ").as_deref(), Some("iii"));
+        assert_eq!(next(" SEQ Annex ").as_deref(), Some("4"));
+        assert_eq!(next(" SEQ Annex \\* Ordinal "), None);
+        assert_eq!(next(" SEQ Annex "), None);
+        let mut counters = HashMap::new();
+        let mut next = |code: &str| sequence(code, &mut counters);
+        assert_eq!(
+            next(" SEQ Big \\r 28 \\* alphabetic ").as_deref(),
+            Some("bb")
+        );
+    }
+
+    #[test]
+    fn a_page_reference_formats_a_numeric_page() {
+        assert_eq!(
+            format_page("7", &parse_code(" PAGEREF x \\* roman ", &[])).as_deref(),
+            Some("vii")
+        );
+        assert_eq!(
+            format_page("7", &parse_code(" PAGEREF x \\h ", &[])).as_deref(),
+            Some("7")
+        );
+        // A page labelled by its section ("iii", "2-1") has no number to format.
+        assert_eq!(
+            format_page("2-1", &parse_code(" PAGEREF x \\* ROMAN ", &[])),
+            None
+        );
+        assert_eq!(
+            format_page("2-1", &parse_code(" PAGEREF x ", &[])).as_deref(),
+            Some("2-1")
+        );
+    }
+
+    #[test]
     fn toc_levels_read_the_outline_switch() {
         let levels = |code: &str| toc_levels(&parse_code(code, &["o"]));
         assert_eq!(levels(r#" TOC \o "1-3" "#), Some(1..=3));
@@ -1477,5 +1703,705 @@ mod tests {
         );
         assert_eq!(style_definition("TOC10"), None);
         assert_eq!(style_definition("Normal"), None);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod boundary_coverage_tests {
+    use super::*;
+
+    fn document(content: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:body xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{content}</w:body>"#));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    #[test]
+    fn outline_ranges_reject_each_invalid_endpoint() {
+        for range in ["0-1", "1-10", "9-1", "1-x", "x-1", "-1", "1-", "256-256"] {
+            assert_eq!(
+                toc_levels(&parse_code(&format!(r#"TOC \o "{range}""#), &["o"])),
+                None,
+                "{range}"
+            );
+        }
+        for (range, expected) in [("1-9", 1..=9), ("9", 9..=9), (" 2 - 4 ", 2..=4)] {
+            assert_eq!(
+                toc_levels(&parse_code(&format!(r#"TOC \o "{range}""#), &["o"])),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn missing_switch_arguments_never_consume_the_next_switch() {
+        let code = parse_code(r#"TOC \o \h \@ \z \* \u"#, &["o"]);
+        assert!(code.args.is_empty());
+        assert_eq!(
+            code.switches,
+            ["o", "h", "@", "z", "*", "u"].map(|s| (s.to_string(), None))
+        );
+        assert_eq!(number_format(&code), None);
+        assert!(!only_switches(&code, &["o", "h", "@", "z", "u"]));
+        assert!(plain_switches(&code, &["o", "h", "@", "z", "u"]));
+        assert_eq!(
+            code_words("REF \"unterminated bookmark"),
+            vec!["REF", "unterminated bookmark"]
+        );
+        assert_eq!(code_words("REF \"\""), vec!["REF", ""]);
+    }
+
+    #[test]
+    fn formatted_pages_keep_section_labels_only_for_arabic() {
+        for label in ["iii", "2-1", "", "-1", "4294967296"] {
+            assert_eq!(
+                format_page(label, &parse_code("PAGEREF x", &[])),
+                Some(label.into())
+            );
+            assert_eq!(
+                format_page(label, &parse_code(r"PAGEREF x \* roman", &[])),
+                None
+            );
+        }
+        assert_eq!(
+            format_page("12", &parse_code(r"PAGEREF x \* rOMAN", &[])),
+            Some("xii".into())
+        );
+        assert_eq!(
+            format_page("12", &parse_code(r"PAGEREF x \* Roman", &[])),
+            Some("XII".into())
+        );
+        assert_eq!(
+            format_page("12", &parse_code(r"PAGEREF x \* Bogus", &[])),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_sequences_poison_only_their_own_identifier() {
+        for bad in [
+            r"SEQ Figure extra",
+            r"SEQ Figure \r",
+            r"SEQ Figure \r -1",
+            r"SEQ Figure \r 4294967296",
+            r"SEQ Figure \* Hex",
+            r"SEQ Figure \z",
+        ] {
+            let mut counters = HashMap::new();
+            assert_eq!(sequence("SEQ Figure", &mut counters), Some("1".into()));
+            assert_eq!(sequence(bad, &mut counters), None, "{bad}");
+            assert_eq!(sequence(r"SEQ Figure \r 2", &mut counters), None);
+            assert_eq!(sequence("SEQ Table", &mut counters), Some("1".into()));
+            assert_eq!(counters.get("Figure"), Some(&None));
+        }
+    }
+
+    #[test]
+    fn bookmark_names_skip_taken_names_and_keep_existing_toc_bookmarks() {
+        let (mut dom, body) = document(
+            r#"<w:p><w:bookmarkStart w:id="7" w:name="_Toc100000001"/><w:bookmarkEnd w:id="7"/></w:p><w:p><w:pPr/><w:r><w:t>new</w:t></w:r></w:p><w:p><w:bookmarkStart w:id="bad" w:name="ordinary"/><w:r><w:t>other</w:t></w:r></w:p>"#,
+        );
+        let paras = dom.elements(body, Some(&W::p()));
+        let mut namer = BookmarkNamer::new(&dom, body);
+        assert_eq!(namer.ensure(&mut dom, paras[0]), "_Toc100000001");
+        assert_eq!(namer.ensure(&mut dom, paras[1]), "_Toc100000002");
+        assert_eq!(namer.ensure(&mut dom, paras[2]), "_Toc100000003");
+        let children = dom.elements(paras[1], None);
+        assert!(dom.name_is(children[0], &W::p_pr()));
+        assert!(dom.name_is(children[1], &W::name("bookmarkStart")));
+        assert_eq!(dom.attribute(children[1], &W::id()), Some("8"));
+        assert!(dom.name_is(*children.last().unwrap(), &W::name("bookmarkEnd")));
+        assert_eq!(
+            dom.attribute(*children.last().unwrap(), &W::id()),
+            Some("8")
+        );
+        assert_eq!(
+            bookmark_text(&dom, body, "_Toc100000002"),
+            Some("new".into())
+        );
+        assert_eq!(
+            bookmark_text(&dom, body, "_Toc100000003"),
+            Some("other".into())
+        );
+        assert_eq!(namer.ensure(&mut dom, paras[1]), "_Toc100000002");
+    }
+
+    #[test]
+    fn section_text_width_defaults_each_malformed_attribute_and_clamps_small_boxes() {
+        for (content, expected) in [
+            ("", 9360),
+            (
+                r#"<w:sectPr><w:pgSz w:w="bad"/><w:pgMar w:left="bad" w:right="bad" w:gutter="bad"/></w:sectPr>"#,
+                9360,
+            ),
+            (
+                r#"<w:sectPr><w:pgSz w:w="10000"/><w:pgMar w:left="1000" w:right="2000" w:gutter="500"/></w:sectPr>"#,
+                6500,
+            ),
+            (
+                r#"<w:sectPr><w:pgSz w:w="100"/><w:pgMar w:left="0" w:right="0"/></w:sectPr>"#,
+                720,
+            ),
+        ] {
+            let (dom, body) = document(content);
+            assert_eq!(text_width(&dom, body), expected);
+        }
+    }
+
+    #[test]
+    fn explicit_outline_overrides_named_style_but_invalid_values_fall_back() {
+        let names = HashMap::from([("Local".into(), "heading 3".into())]);
+        let (dom, body) = document(
+            r#"<w:p><w:pPr><w:pStyle w:val="Local"/><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>  first</w:t><w:tab/><w:t>second  </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/><w:outlineLvl w:val="9"/></w:pPr><w:r><w:t>fallback</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="bad"/></w:pPr><w:r><w:t>omitted</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t> </w:t></w:r></w:p>"#,
+        );
+        let projected = |outline| {
+            headings(&dom, body, &names, &(1..=9), outline)
+                .iter()
+                .map(|h| (h.level, h.text.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            projected(true),
+            vec![(1, "first second".into()), (2, "fallback".into())]
+        );
+        assert_eq!(
+            projected(false),
+            vec![(3, "first second".into()), (2, "fallback".into())]
+        );
+        assert!(headings(&dom, body, &names, &(4..=9), true).is_empty());
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod field_story_ownership_tests {
+    use super::*;
+    fn body(xml: &str) -> (Dom, NodeId) {
+        let mut d = Dom::new();
+        let doc = d.parse_xdocument(&format!(
+            "<w:body xmlns:w='{}' xmlns:mc='{}' xmlns:v='urn:schemas-microsoft-com:vml'>{xml}</w:body>",
+            W::URI,
+            MC::URI
+        ));
+        let r = d.root(doc).unwrap();
+        (d, r)
+    }
+    const BEGIN: &str = "<w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> REF Anchor </w:instrText></w:r>";
+    const SEP: &str = "<w:r><w:fldChar w:fldCharType='separate'/></w:r>";
+    const END: &str = "<w:r><w:fldChar w:fldCharType='end'/></w:r>";
+    const CACHE: &str = "<w:r><w:rPr><w:i/><w:color w:val='123456'/></w:rPr><w:t>Old</w:t><w:tab/><w:t>cache</w:t></w:r>";
+
+    #[test]
+    fn field_collector_skips_deleted_fallbacks_and_keeps_textbox_story_stacks_separate() {
+        for wrapper in ["del", "moveFrom", "mc:Fallback"] {
+            let tag = if wrapper.starts_with("mc:") {
+                wrapper.to_string()
+            } else {
+                format!("w:{wrapper}")
+            };
+            let xml = format!(
+                "<w:p>{BEGIN}{SEP}<w:fldSimple w:instr='SEQ Body'><w:r><w:t>Body cache</w:t></w:r></w:fldSimple><{tag}><w:fldSimple w:instr='SEQ Gone'><w:r><w:t>Gone cache</w:t></w:r></w:fldSimple></{tag}><w:r><w:pict><v:shape id='Box' style='width:100pt;height:100pt'><v:textbox><w:txbxContent><w:p><w:fldSimple w:instr='SEQ Box'><w:r><w:t>Box cache</w:t></w:r></w:fldSimple></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r>{END}</w:p>"
+            );
+            let (d, r) = body(&xml);
+            let before = d.serialize_element(r);
+            let f = collect_fields(&d, r);
+            assert_eq!(
+                f.iter().map(|f| f.kind.as_str()).collect::<Vec<_>>(),
+                ["REF", "SEQ", "SEQ"]
+            );
+            assert_eq!(f[1].in_result_of, Some(0));
+            assert_eq!(f[2].in_result_of, None);
+            assert_eq!(result_text(&d, r, &f[1]), "Body cache");
+            assert_eq!(result_text(&d, r, &f[2]), "Box cache");
+            let mut results = HashMap::new();
+            results.insert(0, "replacement".into());
+            assert!(inside_rewritten_result(&f, 1, &results));
+            assert!(!inside_rewritten_result(&f, 2, &results));
+            assert_eq!(d.serialize_element(r), before);
+        }
+        let (d, r) = body(&format!(
+            "<w:p><w:r><w:fldChar w:fldCharType='separate'/><w:instrText>orphan</w:instrText><w:fldChar w:fldCharType='end'/><w:fldChar w:fldCharType='unknown'/></w:r>{BEGIN}<w:fldSimple><w:r><w:t>Empty code cache</w:t></w:r></w:fldSimple></w:p>"
+        ));
+        let f = collect_fields(&d, r);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].kind, "");
+        assert_eq!(f[0].in_result_of, None);
+    }
+
+    #[test]
+    fn cached_result_writes_preserve_field_codes_run_format_and_outside_payload() {
+        for simple in [false, true] {
+            for replacement in ["", "New result", " leading & trailing "] {
+                let xml = if simple {
+                    format!(
+                        "<w:p><w:r><w:t>Before</w:t></w:r><w:fldSimple w:instr='REF Anchor'>{CACHE}</w:fldSimple><w:r><w:t>After</w:t></w:r></w:p>"
+                    )
+                } else {
+                    format!(
+                        "<w:p><w:r><w:t>Before</w:t></w:r>{BEGIN}{SEP}{CACHE}{END}<w:r><w:t>After</w:t></w:r></w:p>"
+                    )
+                };
+                let (mut d, r) = body(&xml);
+                let f = collect_fields(&d, r);
+                assert_eq!(f.len(), 1);
+                assert_eq!(result_text(&d, r, &f[0]), "Old\tcache");
+                assert!(write_result(&mut d, &f[0], replacement));
+                let f = collect_fields(&d, r);
+                assert_eq!(f[0].code.trim(), "REF Anchor");
+                assert_eq!(result_text(&d, r, &f[0]), replacement);
+                let texts: Vec<_> = d
+                    .descendants(r, Some(&W::t()))
+                    .into_iter()
+                    .map(|n| d.value(n))
+                    .collect();
+                assert_eq!(
+                    texts,
+                    if replacement.is_empty() {
+                        vec!["Before".to_string(), "After".to_string()]
+                    } else {
+                        vec![
+                            "Before".to_string(),
+                            replacement.to_string(),
+                            "After".to_string(),
+                        ]
+                    }
+                );
+                if !replacement.is_empty() {
+                    let t = d
+                        .descendants(r, Some(&W::t()))
+                        .into_iter()
+                        .find(|&n| d.value(n) == replacement)
+                        .unwrap();
+                    let run = d.parent(t).unwrap();
+                    let rp = d.element(run, &W::r_pr()).unwrap();
+                    assert!(d.element(rp, &W::name("i")).is_some());
+                    let color = d.element(rp, &W::name("color")).unwrap();
+                    assert_eq!(d.attribute(color, &W::val()), Some("123456"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multi_paragraph_result_is_readable_and_refuses_rewrite_without_mutating_source() {
+        let xml = format!(
+            "<w:p><w:pPr><w:keepNext/></w:pPr>{BEGIN}{SEP}{CACHE}</w:p><w:p><w:pPr><w:jc w:val='right'/></w:pPr><w:r><w:t>Second paragraph</w:t></w:r>{END}</w:p>"
+        );
+        let (mut d, r) = body(&xml);
+        let f = collect_fields(&d, r);
+        assert_eq!(f.len(), 1);
+        assert_eq!(result_text(&d, r, &f[0]), "Old\tcache\nSecond paragraph");
+        let before = d.serialize_element(r);
+        assert!(!write_result(&mut d, &f[0], "replacement"));
+        assert_eq!(d.serialize_element(r), before);
+    }
+
+    #[test]
+    fn bookmark_reference_owns_only_live_same_paragraph_text_and_run_tabs() {
+        for deleted in ["del", "moveFrom"] {
+            let xml = format!(
+                "<w:p><w:bookmarkStart w:name='Anchor' w:id='7'/><w:r><w:t>A</w:t><w:tab/><w:t>B</w:t></w:r><w:tab/><w:{deleted}><w:r><w:t>Gone</w:t></w:r></w:{deleted}><w:bookmarkEnd w:id='7'/></w:p>"
+            );
+            let (d, r) = body(&xml);
+            assert_eq!(bookmark_text(&d, r, "Anchor"), Some("A\tB".into()));
+            assert_eq!(bookmark_text(&d, r, "Missing"), None);
+        }
+        for xml in [
+            "<w:p><w:bookmarkStart w:name='Anchor'/><w:r><w:t>A</w:t></w:r><w:bookmarkEnd w:id='7'/></w:p>",
+            "<w:p><w:bookmarkStart w:name='Anchor' w:id='7'/><w:r><w:t>A</w:t></w:r><w:bookmarkEnd w:id='8'/></w:p>",
+            "<w:p><w:bookmarkStart w:name='Anchor' w:id='7'/><w:r><w:t>A</w:t></w:r></w:p><w:p><w:r><w:t>B</w:t></w:r><w:bookmarkEnd w:id='7'/></w:p>",
+        ] {
+            let (d, r) = body(xml);
+            assert_eq!(bookmark_text(&d, r, "Anchor"), None);
+        }
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod field_cache_boundary_tests {
+    use super::*;
+    fn story(xml: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!("<w:body xmlns:w='{}'>{xml}</w:body>", W::URI));
+        let root = dom.root(document).unwrap();
+        (dom, root)
+    }
+    #[test]
+    fn absent_and_shared_run_caches_rewrite_without_consuming_field_code_or_neighbor_text() {
+        for separate in [false, true] {
+            for replacement in ["", "New & spaced "] {
+                let cache = if separate {
+                    "<w:r><w:rPr><w:i/></w:rPr><w:fldChar w:fldCharType='separate'/><w:t>Old</w:t></w:r>"
+                } else {
+                    ""
+                };
+                let old_end = if separate { "<w:t>tail</w:t>" } else { "" };
+                let (mut dom, root) = story(&format!(
+                    "<w:p><w:r><w:t>Before</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> REF Anchor </w:instrText></w:r>{cache}<w:r><w:rPr><w:color w:val='246810'/></w:rPr>{old_end}<w:fldChar w:fldCharType='end'/><w:t>After</w:t></w:r></w:p>"
+                ));
+                let f = collect_fields(&dom, root);
+                assert_eq!(f.len(), 1);
+                assert_eq!(
+                    result_text(&dom, root, &f[0]),
+                    if separate { "Oldtail" } else { "" }
+                );
+                assert!(write_result(&mut dom, &f[0], replacement));
+                let f = collect_fields(&dom, root);
+                assert_eq!(f[0].code, " REF Anchor ");
+                assert_eq!(result_text(&dom, root, &f[0]), replacement);
+                let texts: Vec<_> = dom
+                    .descendants(root, Some(&W::t()))
+                    .into_iter()
+                    .map(|n| dom.value(n))
+                    .collect();
+                let expected: Vec<String> = if replacement.is_empty() {
+                    vec!["Before".into(), "After".into()]
+                } else {
+                    vec!["Before".into(), replacement.into(), "After".into()]
+                };
+                assert_eq!(texts, expected);
+                assert_eq!(dom.descendants(root, Some(&W::name("fldChar"))).len(), 3);
+                let end_run = dom.parent(f[0].end).unwrap();
+                let rp = dom.element(end_run, &W::r_pr()).unwrap();
+                assert_eq!(
+                    dom.attribute(dom.element(rp, &W::name("color")).unwrap(), &W::val()),
+                    Some("246810")
+                );
+                if !replacement.is_empty() {
+                    let text = dom
+                        .descendants(root, Some(&W::t()))
+                        .into_iter()
+                        .find(|&n| dom.value(n) == replacement)
+                        .unwrap();
+                    let rp = dom.element(dom.parent(text).unwrap(), &W::r_pr()).unwrap();
+                    assert!(dom.element(rp, &W::name("b")).is_some());
+                    assert_eq!(
+                        dom.attribute(text, &XNamespace::xml().name("space")),
+                        Some("preserve")
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn uncached_toc_creates_entries_and_moves_only_the_original_closing_field_run() {
+        for links in [false, true] {
+            let (mut dom, root) = story(
+                "<w:p><w:pPr><w:pStyle w:val='Title'/><w:spacing w:after='120'/></w:pPr><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> TOC </w:instrText></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:r><w:t>After</w:t></w:r></w:p>",
+            );
+            let f = collect_fields(&dom, root).remove(0);
+            let closing = dom.parent(f.end).unwrap();
+            let entries = vec![
+                (1, "First".into(), "_Toc1".into()),
+                (3, "Second".into(), "_Toc2".into()),
+            ];
+            assert!(write_toc(&mut dom, &f, &entries, links, 9350));
+            let ps = dom.elements(root, Some(&W::p()));
+            assert_eq!(ps.len(), 2);
+            assert_eq!(dom.parent(closing), Some(ps[1]));
+            let f = collect_fields(&dom, root);
+            assert_eq!(f.len(), 3);
+            assert_eq!(f[0].code, " TOC ");
+            assert_eq!(f[1].kind, "PAGEREF");
+            assert_eq!(f[2].kind, "PAGEREF");
+            assert_eq!(f[1].in_result_of, Some(0));
+            assert_eq!(f[2].in_result_of, Some(0));
+            let text: Vec<_> = dom
+                .descendants(root, Some(&W::t()))
+                .into_iter()
+                .map(|n| dom.value(n))
+                .collect();
+            assert_eq!(text, vec!["First", "Second", "After"]);
+            assert_eq!(
+                dom.descendants(root, Some(&W::name("hyperlink"))).len(),
+                if links { 2 } else { 0 }
+            );
+            for (i, p) in ps.into_iter().enumerate() {
+                let pr = dom.element(p, &W::p_pr()).unwrap();
+                assert_eq!(
+                    dom.attribute(dom.element(pr, &W::p_style()).unwrap(), &W::val()),
+                    Some(if i == 0 { "Title" } else { "TOC3" })
+                );
+                let tabs = dom.element(pr, &W::name("tabs")).unwrap();
+                let tab = dom.element(tabs, &W::name("tab")).unwrap();
+                assert_eq!(dom.attribute(tab, &W::name("pos")), Some("9350"));
+                assert_eq!(dom.attribute(tab, &W::name("leader")), Some("dot"));
+            }
+        }
+    }
+    #[test]
+    fn paragraph_style_projection_requires_ids_and_names_and_never_adopts_character_styles() {
+        let xml = format!(
+            "<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:styleId='Custom'><w:name w:val='HeAdInG 2'/></w:style><w:style w:type='character' w:styleId='Character'><w:name w:val='Heading 1'/></w:style><w:style w:type='paragraph'><w:name w:val='Heading 3'/></w:style><w:style w:type='paragraph' w:styleId='Nameless'/><w:style w:type='paragraph' w:styleId='Valueless'><w:name/></w:style></w:styles>",
+            W::URI
+        );
+        assert_eq!(
+            paragraph_style_names(&xml),
+            HashMap::from([("Custom".to_string(), "heading 2".to_string())])
+        );
+        for invalid in ["", "TOC", "TOCx", "TOC0", "TOC10", "Heading1"] {
+            assert!(style_definition(invalid).is_none(), "{invalid}");
+        }
+        for level in 1..=9 {
+            let xml = style_definition(&format!("TOC{level}")).unwrap();
+            assert!(xml.contains(&format!("w:left=\"{}\"", (level - 1) * 220)));
+            assert!(xml.contains(&format!("w:styleId=\"TOC{level}\"")));
+        }
+        assert!(
+            style_definition("TOCHeading")
+                .unwrap()
+                .contains("w:val=\"9\"")
+        );
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod field_decline_source_boundary_tests {
+    use super::*;
+
+    fn story(body: &str) -> Story {
+        let mut dom = Dom::new();
+        let document =
+            dom.parse_xdocument(&format!(r#"<w:body xmlns:w="{}">{body}</w:body>"#, W::URI));
+        let root = dom.root(document).unwrap();
+        Story {
+            id: "body".to_string(),
+            part: "word/document.xml".to_string(),
+            dom,
+            document,
+            root,
+            body: true,
+            changed: false,
+        }
+    }
+
+    const BEGIN: &str = "<w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> TOC </w:instrText></w:r>";
+    const SEPARATE: &str = "<w:r><w:fldChar w:fldCharType='separate'/></w:r>";
+    const CACHE: &str =
+        "<w:r><w:rPr><w:i/><w:color w:val='123456'/></w:rPr><w:t>owned cache</w:t></w:r>";
+    const END: &str =
+        "<w:r><w:rPr><w:u w:val='single'/></w:rPr><w:fldChar w:fldCharType='end'/></w:r>";
+
+    #[test]
+    fn toc_declines_unhandled_legal_marker_containers_without_changing_any_source_node() {
+        let cases=vec![
+            "<w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/><w:instrText> TOC </w:instrText><w:fldChar w:fldCharType='separate'/><w:t>owned cache</w:t><w:fldChar w:fldCharType='end'/></w:r></w:p>".to_string(),
+            format!("<w:p>{BEGIN}</w:p><w:p><w:r><w:rPr><w:i/></w:rPr><w:fldChar w:fldCharType='separate'/><w:t>owned cache</w:t><w:fldChar w:fldCharType='end'/></w:r></w:p>"),
+            format!("<w:p><w:hyperlink w:anchor='target'>{BEGIN}</w:hyperlink>{SEPARATE}{CACHE}{END}<w:bookmarkStart w:id='3' w:name='target'/><w:bookmarkEnd w:id='3'/></w:p>"),
+            format!("<w:p>{BEGIN}{SEPARATE}{CACHE}<w:hyperlink w:anchor='target'>{END}</w:hyperlink><w:bookmarkStart w:id='3' w:name='target'/><w:bookmarkEnd w:id='3'/></w:p>"),
+            format!("<w:p>{BEGIN}</w:p><w:p>{SEPARATE}{CACHE}</w:p><w:p>{END}</w:p>"),
+        ];
+        let entries = vec![(1, "authored heading".to_string(), "_Toc1".to_string())];
+        for source in cases {
+            let mut story = story(&source);
+            let fields = collect_fields(&story.dom, story.root);
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].kind, "TOC");
+            assert!(!fields[0].simple);
+            let frozen = story.dom.serialize_element(story.root);
+            assert!(
+                !write_toc(&mut story.dom, &fields[0], &entries, true, 9350),
+                "{source}"
+            );
+            assert_eq!(story.dom.serialize_element(story.root), frozen, "{source}");
+            assert_eq!(
+                result_text(&story.dom, story.root, &fields[0]),
+                "owned cache"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_and_nested_tocs_preserve_cache_heading_properties_and_bookmark_ids() {
+        let heading = "<w:p><w:pPr><w:pStyle w:val='Heading1'/><w:spacing w:after='240'/></w:pPr><w:bookmarkStart w:id='4' w:name='owned'/><w:r><w:rPr><w:b/></w:rPr><w:t>authored heading</w:t></w:r><w:bookmarkEnd w:id='4'/></w:p>";
+        for field in [
+            format!("<w:p><w:fldSimple w:instr=' TOC '>{CACHE}</w:fldSimple></w:p>"),
+            format!(
+                "<w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> REF owned </w:instrText></w:r>{SEPARATE}{BEGIN}{SEPARATE}{CACHE}{END}<w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>"
+            ),
+            format!(
+                "<w:p>{}{SEPARATE}{CACHE}{END}</w:p>",
+                BEGIN.replace(" TOC ", " TOC stray ")
+            ),
+            format!(
+                "<w:p>{}{SEPARATE}{CACHE}{END}</w:p>",
+                BEGIN.replace(" TOC ", " TOC \\t &quot;Heading 1,1&quot; ")
+            ),
+            format!(
+                "<w:p>{}{SEPARATE}{CACHE}{END}</w:p>",
+                BEGIN.replace(" TOC ", " TOC \\o &quot;9-1&quot; ")
+            ),
+        ] {
+            let mut story = story(&format!("{field}{heading}"));
+            let frozen = story.dom.serialize_element(story.root);
+            assert!(
+                collect_fields(&story.dom, story.root)
+                    .iter()
+                    .any(|field| field.kind == "TOC")
+            );
+            let result = rebuild_tocs(&mut story, &HashMap::new());
+            assert!(result.rebuilt.is_empty());
+            assert_eq!(result.max_level, 0);
+            assert!(!story.changed);
+            assert_eq!(story.dom.serialize_element(story.root), frozen);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_field_projection_contract_tests {
+    use super::*;
+
+    fn story(source: &str, body: bool) -> Story {
+        let mut dom = Dom::new();
+        let document =
+            dom.parse_xdocument(&format!("<w:body xmlns:w='{}'>{source}</w:body>", W::URI));
+        let root = dom.root(document).unwrap();
+        Story {
+            id: if body { "body" } else { "header1" }.into(),
+            part: if body {
+                "word/document.xml"
+            } else {
+                "word/header1.xml"
+            }
+            .into(),
+            dom,
+            document,
+            root,
+            body,
+            changed: false,
+        }
+    }
+
+    #[test]
+    fn unsupported_field_arguments_keep_their_complete_authored_cache() {
+        let facts = crate::convert::LayoutFacts {
+            page_count: 7,
+            ..Default::default()
+        };
+        let defined = BTreeSet::from(["anchor".to_string()]);
+        let context = Context {
+            facts: &facts,
+            defined: &defined,
+        };
+        for body in [false, true] {
+            for (code, expected) in [
+                ("NUMPAGES", Some("7")),
+                ("NUMPAGES extra", None),
+                ("NUMPAGES \\x", None),
+                ("PAGEREF", None),
+                ("PAGEREF anchor extra", None),
+                ("REF", None),
+                ("REF anchor extra", None),
+                ("SEQ owned", if body { Some("1") } else { None }),
+            ] {
+                let source = format!(
+                    "<w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:fldSimple w:instr='{code}'><w:r><w:rPr><w:i/><w:color w:val='246810'/></w:rPr><w:t>owned cache</w:t><w:tab/><w:t>tail</w:t></w:r></w:fldSimple><w:r><w:t>outside</w:t></w:r></w:p>"
+                );
+                let story = story(&source, body);
+                let frozen = story.dom.serialize_element(story.root);
+                let fields = collect_fields(&story.dom, story.root);
+                assert_eq!(fields.len(), 1, "{code}");
+                let results = results_for(&story, &fields, &context);
+                assert_eq!(
+                    results.get(&0).map(String::as_str),
+                    expected,
+                    "body={body}, {code}"
+                );
+                assert_eq!(
+                    result_text(&story.dom, story.root, &fields[0]),
+                    "owned cache\ttail"
+                );
+                assert_eq!(story.dom.serialize_element(story.root), frozen);
+            }
+        }
+    }
+
+    #[test]
+    fn nested_field_results_belong_to_the_outer_replacement_only() {
+        let source = "<w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>outer</w:t></w:r><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>inner</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:r><w:t>tail</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:r><w:t>outside</w:t></w:r></w:p>";
+        let mut story = story(source, true);
+        let fields = collect_fields(&story.dom, story.root);
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[1].in_result_of, Some(0));
+        let results = HashMap::from([(0, "7".to_string()), (1, "7".to_string())]);
+        assert!(!inside_rewritten_result(&fields, 0, &results));
+        assert!(inside_rewritten_result(&fields, 1, &results));
+        assert!(!inside_rewritten_result(
+            &fields,
+            1,
+            &HashMap::from([(1, "7".to_string())])
+        ));
+        assert!(write_result(&mut story.dom, &fields[0], "7"));
+        let remaining = collect_fields(&story.dom, story.root);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].code, " NUMPAGES ");
+        assert_eq!(result_text(&story.dom, story.root, &remaining[0]), "7");
+        let text: Vec<_> = story
+            .dom
+            .descendants(story.root, Some(&W::t()))
+            .into_iter()
+            .map(|n| story.dom.value(n))
+            .collect();
+        assert_eq!(text, ["7", "outside"]);
+    }
+
+    #[test]
+    fn splitting_combined_mark_runs_keeps_consecutive_code_and_result_nodes_in_order() {
+        let mut story = story(
+            "<w:p><w:r w:rsidR='01234567'><w:rPr><w:b/><w:color w:val='135790'/></w:rPr><w:fldChar w:fldCharType='begin'/><w:instrText> REF </w:instrText><w:instrText>anchor </w:instrText><w:fldChar w:fldCharType='separate'/><w:t>first</w:t><w:tab/><w:t>last</w:t><w:fldChar w:fldCharType='end'/></w:r></w:p>",
+            true,
+        );
+        assert!(split_mark_runs(&mut story.dom, story.root));
+        let fields = collect_fields(&story.dom, story.root);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].code, " REF anchor ");
+        assert_eq!(
+            result_text(&story.dom, story.root, &fields[0]),
+            "first\tlast"
+        );
+        let runs = story.dom.descendants(story.root, Some(&W::r()));
+        assert_eq!(runs.len(), 5);
+        for run in runs {
+            assert_eq!(
+                story.dom.attribute(run, &W::name("rsidR")),
+                Some("01234567")
+            );
+            let properties = story.dom.element(run, &W::r_pr()).unwrap();
+            assert!(story.dom.element(properties, &W::name("b")).is_some());
+            let color = story.dom.element(properties, &W::name("color")).unwrap();
+            assert_eq!(story.dom.attribute(color, &W::val()), Some("135790"));
+        }
+        let frozen = story.dom.serialize_element(story.root);
+        assert!(!split_mark_runs(&mut story.dom, story.root));
+        assert_eq!(story.dom.serialize_element(story.root), frozen);
+    }
+
+    #[test]
+    fn missing_style_insertion_preserves_existing_and_alternate_prefix_parts() {
+        for source in [
+            None,
+            Some(
+                "<w:styles xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:style w:styleId=\"TOC1\" w:type='paragraph'><w:name w:val='owned custom TOC'/></w:style></w:styles>",
+            ),
+            Some(
+                "<x:styles xmlns:x='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><x:style x:styleId='Owned'/></x:styles>",
+            ),
+        ] {
+            let mut pkg = PartFs::open(&tests::tiny_docx("<w:p/>")).unwrap();
+            if let Some(source) = source {
+                pkg.set_part("word/styles.xml", source.as_bytes().to_vec());
+            }
+            let frozen = pkg.part_bytes("word/document.xml").unwrap().to_vec();
+            add_missing_styles(
+                &mut pkg,
+                "word/styles.xml",
+                &BTreeSet::from(["TOC1".into()]),
+            );
+            assert_eq!(pkg.part_string("word/styles.xml").as_deref(), source);
+            assert_eq!(pkg.part_bytes("word/document.xml").unwrap(), frozen);
+        }
     }
 }

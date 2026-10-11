@@ -692,6 +692,7 @@ fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -775,5 +776,455 @@ mod tests {
             r#"<w:hdr xmlns:r="{ns}"><w:p><w:t>Number:1</w:t></w:p></w:hdr>"#
         )));
         assert!(!has_relationship_attribute("<w:hdr><w:p/></w:hdr>"));
+    }
+
+    #[test]
+    fn relationship_uri_schemes_and_malformed_rows_have_explicit_classification() {
+        for target in [
+            "https://host/path",
+            "mailto:a@host",
+            "a+b.c-d:opaque",
+            "A1:payload",
+        ] {
+            assert!(
+                is_external_relationship("urn:part/image", target),
+                "{target}"
+            );
+        }
+        for target in [
+            "",
+            "media/p.png",
+            "/a:part",
+            ":missing",
+            "1bad:part",
+            "a b:part",
+            "é:part",
+        ] {
+            assert!(
+                !is_external_relationship("urn:part/image", target),
+                "{target}"
+            );
+            assert!(is_external_relationship("urn:part/hyperlink", target));
+        }
+        for row in [
+            "<Relationship Id=unquoted Type=\"x\" Target=\"y\"/>",
+            "<Relationship Id=\"x\" Type=\"y\"/>",
+            "<Relationship Id=\"x\" Target=\"y\"/>",
+            "<Relationship Type=\"x\" Target=\"y\"/>",
+            "<Relationship Id=\"x\" Type=\"y\" Target=\"unterminated/>",
+            "<Relationship Id=\"x\" Type=\"y\" Target=\"z\"",
+            "<Relationships Id=\"x\" Type=\"y\" Target=\"z\"/>",
+        ] {
+            assert!(parse_relationship_rows(row).is_empty(), "{row}");
+        }
+        let rows = parse_relationship_rows(
+            "<Relationships><Relationship ExtraId=\"bad\" Id = \"good\" ExtraTarget=\"ignored\" Target = \"media/a&amp;b.png\" Type = \"urn:part/image\"/></Relationships>",
+        );
+        assert_eq!(
+            rows,
+            vec![RelationshipRow {
+                id: "good".into(),
+                rel_type: "urn:part/image".into(),
+                target: "media/a&b.png".into(),
+                external: false
+            }]
+        );
+    }
+
+    #[test]
+    fn carried_images_reuse_only_matching_bytes_content_type_and_internal_type() {
+        let source_part = "word/headerGap.xml";
+        let dest_part = "word/footerGap.xml";
+        for matching_type in [false, true] {
+            for matching_bytes in [false, true] {
+                let mut src = PartFs::open(PACKAGE).unwrap();
+                src.set_part("word/media/source.opaque", b"original image bytes".to_vec());
+                src.add_content_type_override("word/media/source.opaque", "image/png");
+                let rid = src.add_document_relationship(
+                    source_part,
+                    "urn:part/image",
+                    "media/source.opaque",
+                );
+                let mut dest = PartFs::open(PACKAGE).unwrap();
+                dest.set_part(
+                    "word/media/existing.opaque",
+                    if matching_bytes {
+                        b"original image bytes".to_vec()
+                    } else {
+                        b"different image bytes".to_vec()
+                    },
+                );
+                dest.add_content_type_override(
+                    "word/media/existing.opaque",
+                    if matching_type {
+                        "image/png"
+                    } else {
+                        "image/jpeg"
+                    },
+                );
+                let old_id = dest.add_document_relationship(
+                    dest_part,
+                    "urn:part/image",
+                    "media/existing.opaque",
+                );
+                dest.add_document_relationship_external(
+                    dest_part,
+                    "urn:part/image",
+                    "https://host/image.png",
+                );
+                dest.add_document_relationship(
+                    dest_part,
+                    "urn:part/chart",
+                    "media/existing.opaque",
+                );
+                let new_id =
+                    carry_relationship(&mut dest, dest_part, &src, source_part, &rid, |ty| {
+                        ty.ends_with("/image")
+                    })
+                    .unwrap();
+                assert_eq!(new_id == old_id, matching_type && matching_bytes);
+                let rel = dest
+                    .read_rels_for(dest_part)
+                    .unwrap()
+                    .items
+                    .iter()
+                    .find(|r| r.id == new_id)
+                    .unwrap();
+                assert_eq!(rel.rel_type, "urn:part/image");
+                assert_eq!(rel.target_mode, None);
+                let target = dest.resolve_rel_target(dest_part, &rel.target);
+                assert_eq!(
+                    dest.part_bytes(&target),
+                    Some(b"original image bytes".as_slice())
+                );
+                assert_eq!(dest.content_type_for(&target).as_deref(), Some("image/png"));
+                assert_eq!(
+                    src.part_bytes("word/media/source.opaque"),
+                    Some(b"original image bytes".as_slice())
+                );
+                assert_eq!(
+                    carry_relationship(&mut dest, dest_part, &src, source_part, &rid, |_| true),
+                    Some(new_id)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn carried_external_links_and_missing_internal_targets_do_not_create_media() {
+        let mut src = PartFs::open(PACKAGE).unwrap();
+        let mut dest = PartFs::open(PACKAGE).unwrap();
+        let before = dest.parts();
+        for (ty, target, explicit) in [
+            ("urn:part/hyperlink", "https://host/a?x=1&y=2", false),
+            ("urn:part/attachment", "custom+scheme:payload", false),
+            ("urn:part/attachment", "relative-but-external.bin", true),
+        ] {
+            let rid = if explicit {
+                src.add_document_relationship_external("word/headerGap.xml", ty, target)
+            } else {
+                src.add_document_relationship("word/headerGap.xml", ty, target)
+            };
+            let copied = carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                &rid,
+                |_| true,
+            )
+            .unwrap();
+            let rel = dest
+                .read_rels_for("word/footerGap.xml")
+                .unwrap()
+                .items
+                .iter()
+                .find(|r| r.id == copied)
+                .unwrap();
+            assert_eq!(rel.target, target);
+            assert_eq!(rel.target_mode.as_deref(), Some("External"));
+            assert_eq!(dest.parts(), before);
+        }
+        let missing = src.add_document_relationship(
+            "word/headerGap.xml",
+            "urn:part/image",
+            "media/missing.opaque",
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                &missing,
+                |_| true
+            ),
+            None
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                &missing,
+                |_| false
+            ),
+            None
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                "absent",
+                |_| true
+            ),
+            None
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/noRelationships.xml",
+                "absent",
+                |_| true
+            ),
+            None
+        );
+        assert_eq!(dest.parts(), before);
+    }
+
+    #[test]
+    fn markup_collision_names_reuse_bytes_without_overwriting_original_parts() {
+        for source_name in [
+            "word/headerGap.xml",
+            "rootGap.xml",
+            "word/noextension",
+            "folder/with.dot/noextension",
+        ] {
+            let mut dest = PartFs::open(PACKAGE).unwrap();
+            dest.set_part(source_name, b"A".to_vec());
+            let first = dest_uri_for_reconciled_part(&dest, source_name, b"B");
+            assert_ne!(first, source_name);
+            dest.set_part(&first, b"C".to_vec());
+            let next = dest_uri_for_reconciled_part(&dest, source_name, b"B");
+            assert_ne!(first, next);
+            dest.set_part(&next, b"B".to_vec());
+            assert_eq!(dest_uri_for_reconciled_part(&dest, source_name, b"B"), next);
+            assert_eq!(dest.part_bytes(source_name), Some(b"A".as_slice()));
+            assert_eq!(dest.part_bytes(&first), Some(b"C".as_slice()));
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_recursive_part_ownership {
+    use super::*;
+    use crate::namespaces::R;
+    const PACKAGE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
+    const TY: &str = "urn:jandira:document/attachment";
+
+    #[test]
+    fn recursive_xml_parts_keep_each_relationship_local_and_each_source_unchanged() {
+        for depth in [1usize, 2, 8, 9] {
+            for collisions in [false, true] {
+                let mut source = PartFs::open(PACKAGE).unwrap();
+                let mut destination = PartFs::open(PACKAGE).unwrap();
+                let owner = "customXml/owner.xml";
+                for index in 1..=depth {
+                    let part = format!("customXml/item{index}.xml");
+                    let id = if index < depth {
+                        Some(source.add_document_relationship(
+                            &part,
+                            TY,
+                            &format!("item{}.xml", index + 1),
+                        ))
+                    } else {
+                        None
+                    };
+                    let attr = id.map(|id| format!(" r:id=\"{id}\"")).unwrap_or_default();
+                    let xml = format!(
+                        "<item xmlns=\"urn:jandira:coverage\" xmlns:r=\"{}\" index=\"{index}\"{attr}>payload-{index}</item>",
+                        R::URI
+                    );
+                    source.set_part(&part, xml.into_bytes());
+                    source.add_content_type_override(&part, "application/xml");
+                    if collisions {
+                        destination
+                            .set_part(&part, format!("<old index=\"{index}\"/>").into_bytes());
+                        destination.add_content_type_override(&part, "application/xml");
+                    }
+                }
+                let rid = source.add_document_relationship(owner, TY, "item1.xml");
+                let owner_xml = format!(
+                    "<owner xmlns:r=\"{}\" r:id=\"{rid}\"><keep>authored</keep></owner>",
+                    R::URI
+                );
+                source.set_part(owner, owner_xml.as_bytes().to_vec());
+                source.add_content_type_override(owner, "application/xml");
+                destination.set_part(owner, b"<owner/>".to_vec());
+                destination.add_content_type_override(owner, "application/xml");
+                let original = source
+                    .parts()
+                    .into_iter()
+                    .map(|part| {
+                        let bytes = source.part_bytes(&part).unwrap().to_vec();
+                        let content_type = source.content_type_for(&part);
+                        (part, bytes, content_type)
+                    })
+                    .collect::<Vec<_>>();
+                let mut dom = Dom::new();
+                let doc = dom.parse_xdocument(&format!(
+                    "<owner xmlns:r=\"{}\" r:id=\"{rid}\"><keep>authored</keep></owner>",
+                    R::URI
+                ));
+                let root = dom.root(doc).unwrap();
+                carry_part_relationships(&mut destination, owner, &source, owner, &mut dom, root);
+                assert_eq!(dom.value(root), "authored");
+                let mut current_owner = owner.to_owned();
+                let mut current_id = dom.attribute(root, &R::name("id")).unwrap().to_owned();
+                for index in 1..=depth {
+                    let row = destination
+                        .read_rels_for(&current_owner)
+                        .unwrap()
+                        .items
+                        .iter()
+                        .find(|row| row.id == current_id)
+                        .unwrap()
+                        .clone();
+                    assert_eq!(row.rel_type, TY);
+                    assert_ne!(row.target_mode.as_deref(), Some("External"));
+                    let target = destination.resolve_rel_target(&current_owner, &row.target);
+                    assert_eq!(
+                        destination.content_type_for(&target).as_deref(),
+                        Some("application/xml")
+                    );
+                    if collisions {
+                        assert_ne!(target, format!("customXml/item{index}.xml"));
+                    }
+                    let mut copied = Dom::new();
+                    let copied_doc =
+                        copied.parse_xdocument(&destination.part_string(&target).unwrap());
+                    let item = copied.root(copied_doc).unwrap();
+                    assert_eq!(
+                        copied.attribute(item, &crate::xmllinq::XName::get("index", "")),
+                        Some(index.to_string().as_str())
+                    );
+                    assert_eq!(copied.value(item), format!("payload-{index}"));
+                    if index < depth {
+                        current_id = copied.attribute(item, &R::name("id")).unwrap().to_owned();
+                        current_owner = target;
+                    } else {
+                        assert!(copied.attribute(item, &R::name("id")).is_none());
+                    }
+                }
+                assert_eq!(source.part_bytes(owner), Some(owner_xml.as_bytes()));
+                for (part, bytes, content_type) in original {
+                    assert_eq!(source.part_bytes(&part), Some(bytes.as_slice()));
+                    assert_eq!(source.content_type_for(&part), content_type);
+                }
+                assert_eq!(source.read_rels_for(owner).unwrap().items.len(), 1);
+                assert_eq!(source.read_rels_for(owner).unwrap().items[0].rel_type, TY);
+                assert_eq!(
+                    source
+                        .read_rels_for(owner)
+                        .unwrap()
+                        .items
+                        .iter()
+                        .find(|row| row.id == rid)
+                        .unwrap()
+                        .target,
+                    "item1.xml"
+                );
+                for index in 1..depth {
+                    let part = format!("customXml/item{index}.xml");
+                    let rels = source.read_rels_for(&part).unwrap();
+                    assert_eq!(rels.items.len(), 1);
+                    assert_eq!(rels.items[0].rel_type, TY);
+                    assert_eq!(rels.items[0].target, format!("item{}.xml", index + 1));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_references_share_one_carried_local_relationship_without_merging_owners() {
+        for attribute in ["id", "embed", "link"] {
+            let mut source = PartFs::open(PACKAGE).unwrap();
+            let mut destination = PartFs::open(PACKAGE).unwrap();
+            let owner = "customXml/owner.xml";
+            let target = "customXml/payload.xml";
+            let payload =
+                b"<payload xmlns='urn:jandira:coverage' owner='source'>authored payload</payload>";
+            source.set_part(target, payload.to_vec());
+            source.add_content_type_override(target, "application/xml");
+            let source_id = source.add_document_relationship(owner, TY, "payload.xml");
+            let xml = format!(
+                "<owner xmlns:r='{}'><first r:{attribute}='{source_id}'>first owner</first><second r:{attribute}='{source_id}'>second owner</second></owner>",
+                R::URI
+            );
+            source.set_part(owner, xml.as_bytes().to_vec());
+            source.add_content_type_override(owner, "application/xml");
+            destination.set_part(owner, b"<owner/>".to_vec());
+            destination.add_content_type_override(owner, "application/xml");
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(&xml);
+            let root = dom.root(document).unwrap();
+            carry_part_relationships(&mut destination, owner, &source, owner, &mut dom, root);
+            let children = dom.elements(root, None);
+            assert_eq!(children.len(), 2);
+            assert_eq!(dom.name(children[0]).unwrap().local_name(), "first");
+            assert_eq!(dom.name(children[1]).unwrap().local_name(), "second");
+            assert_eq!(dom.value(children[0]), "first owner");
+            assert_eq!(dom.value(children[1]), "second owner");
+            let new_id = dom.attribute(children[0], &R::name(attribute)).unwrap();
+            assert_eq!(
+                dom.attribute(children[1], &R::name(attribute)),
+                Some(new_id)
+            );
+            let relationships = destination.read_rels_for(owner).unwrap();
+            assert_eq!(
+                relationships.items.len(),
+                1,
+                "a repeated RID has one local carried target"
+            );
+            let relationship = &relationships.items[0];
+            assert_eq!(relationship.id, new_id);
+            assert_eq!(relationship.rel_type, TY);
+            let carried = destination.resolve_rel_target(owner, &relationship.target);
+            assert_eq!(destination.part_bytes(&carried), Some(payload.as_slice()));
+            assert_eq!(
+                destination.content_type_for(&carried).as_deref(),
+                Some("application/xml")
+            );
+            assert_eq!(source.part_bytes(owner), Some(xml.as_bytes()));
+            assert_eq!(source.part_bytes(target), Some(payload.as_slice()));
+            assert_eq!(source.read_rels_for(owner).unwrap().items.len(), 1);
+            assert_eq!(source.read_rels_for(owner).unwrap().items[0].id, source_id);
+            assert_eq!(
+                source.read_rels_for(owner).unwrap().items[0].target,
+                "payload.xml"
+            );
+        }
+    }
+
+    #[test]
+    fn relationship_prefix_gate_accepts_valid_unusual_prefixes_without_text_false_positives() {
+        for prefix in ["r", "rel_1", "rel-x", "_relationship"] {
+            for whitespace in [" ", "\t", "\n", "\r\n"] {
+                assert!(has_relationship_attribute(&format!(
+                    "<root xmlns:{prefix}=\"{}\"{whitespace}{prefix}:id=\"rId1\"/>",
+                    R::URI
+                )));
+                assert!(!has_relationship_attribute(&format!(
+                    "<root xmlns:{prefix}=\"{}\"><text>{prefix}:id</text></root>",
+                    R::URI
+                )));
+            }
+        }
     }
 }

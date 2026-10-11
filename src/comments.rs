@@ -1098,6 +1098,7 @@ fn declare_ignorable(dom: &mut Dom, root: NodeId, prefix: &str, uri: &str) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1128,5 +1129,398 @@ mod tests {
         declare_ignorable(&mut dom, root, "w14", W14::URI);
         declare_ignorable(&mut dom, root, "w14", W14::URI);
         assert_eq!(dom.attribute(root, &MC::name("Ignorable")), Some("w15 w14"));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod people_and_text_boundary_tests {
+    use super::*;
+
+    fn pkg() -> PartFs {
+        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+    }
+
+    fn people(pkg: &mut PartFs, xml: &str) {
+        pkg.set_part("word/people.xml", xml.as_bytes().to_vec());
+        pkg.add_content_type_override(
+            "/word/people.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml",
+        );
+        pkg.add_document_relationship("word/document.xml", PEOPLE_REL, "people.xml");
+    }
+
+    #[test]
+    fn people_updates_preserve_existing_presence_and_add_each_remaining_author_once() {
+        let mut pkg = pkg();
+        people(
+            &mut pkg,
+            &format!(
+                r#"<w15:people xmlns:w15="{}"><w15:person w15:author="Alice"/><w15:person w15:author="Bob"><w15:presenceInfo w15:providerId="Existing"/></w15:person></w15:people>"#,
+                W15::URI
+            ),
+        );
+        let mut family = CommentFamily::load(&pkg, "word/document.xml").unwrap();
+        family.removed_authors.insert("Alice".into());
+        family.added_authors = vec!["Bob".into(), "Carol".into(), "Carol".into(), "Gone".into()];
+        family.store_people(
+            &mut pkg,
+            "word/document.xml",
+            &HashSet::from(["Bob".into(), "Carol".into()]),
+        );
+        let output = pkg.part_string("word/people.xml").unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&output);
+        let root = dom.root(doc).unwrap();
+        let authors = dom
+            .descendants(root, Some(&W15::name("person")))
+            .into_iter()
+            .map(|n| dom.attribute(n, &W15::name("author")).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(authors, ["Bob", "Carol"]);
+        let providers = dom
+            .descendants(root, Some(&W15::name("presenceInfo")))
+            .into_iter()
+            .map(|n| dom.attribute(n, &W15::name("providerId")).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(providers, ["Existing", "None"]);
+    }
+
+    #[test]
+    fn removing_the_last_person_removes_its_part_type_and_relationship() {
+        let mut pkg = pkg();
+        people(
+            &mut pkg,
+            &format!(
+                r#"<w15:people xmlns:w15="{}"><w15:person w15:author="Alice"/></w15:people>"#,
+                W15::URI
+            ),
+        );
+        let mut family = CommentFamily::load(&pkg, "word/document.xml").unwrap();
+        family.removed_authors.insert("Alice".into());
+        family.store_people(&mut pkg, "word/document.xml", &HashSet::new());
+        assert!(pkg.part_bytes("word/people.xml").is_none());
+        assert!(
+            !pkg.read_rels_for("word/document.xml")
+                .unwrap()
+                .items
+                .iter()
+                .any(|rel| rel.rel_type == PEOPLE_REL)
+        );
+    }
+
+    #[test]
+    fn unchanged_people_are_byte_identical_and_new_authors_do_not_create_a_people_part() {
+        let mut pkg = pkg();
+        let family = CommentFamily::load(&pkg, "word/document.xml").unwrap();
+        family.store_people(
+            &mut pkg,
+            "word/document.xml",
+            &HashSet::from(["Alice".into()]),
+        );
+        assert!(pkg.part_bytes("word/people.xml").is_none());
+        let input = format!(
+            r#"<w15:people xmlns:w15="{}"><w15:person w15:author="Alice"/></w15:people>"#,
+            W15::URI
+        );
+        people(&mut pkg, &input);
+        let mut family = CommentFamily::load(&pkg, "word/document.xml").unwrap();
+        family.removed_authors.insert("Alice".into());
+        family.store_people(
+            &mut pkg,
+            "word/document.xml",
+            &HashSet::from(["Alice".into()]),
+        );
+        assert_eq!(pkg.part_string("word/people.xml").unwrap(), input);
+        pkg.set_part("word/people.xml", Vec::new());
+        family.store_people(&mut pkg, "word/document.xml", &HashSet::new());
+        assert_eq!(pkg.part_bytes("word/people.xml"), Some([].as_slice()));
+    }
+
+    #[test]
+    fn comment_projection_ignores_tab_stops_and_foreign_elements_but_keeps_breaks() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:comment xmlns:w="{}" xmlns:x="urn:foreign"><w:p><w:pPr><w:tabs><w:tab/></w:tabs></w:pPr><w:r><w:t>one</w:t><w:tab/><w:t>two</w:t><w:br/><w:cr/><x:t>foreign</x:t></w:r></w:p><w:p><w:r><w:t>three</w:t></w:r></w:p></w:comment>"#, W::URI));
+        let root = dom.root(doc).unwrap();
+        assert_eq!(comment_text(&dom, root), "one\ttwo\n\n\nthree");
+        assert!(last_para_id(&dom, root).is_none());
+        let p = *dom.descendants(root, Some(&W::p())).last().unwrap();
+        dom.set_attribute_value(p, &W14::name("paraId"), Some("12345678"));
+        assert_eq!(last_para_id(&dom, root).as_deref(), Some("12345678"));
+    }
+
+    #[test]
+    fn adopted_comments_preserve_text_and_drop_old_paragraph_ids() {
+        let pkg = pkg();
+        let mut family = CommentFamily::load(&pkg, "word/document.xml").unwrap();
+        family.adopt("<not-a-comment/>", 7, None, false, None);
+        assert!(family.meta.is_empty());
+        let input = format!(
+            r#"<w:comment xmlns:w="{}" xmlns:w14="{}" w:id="99" w:author="Alice"><w:p w14:paraId="11111111" w14:textId="22222222"><w:r><w:t>copied</w:t></w:r></w:p></w:comment>"#,
+            W::URI,
+            W14::URI
+        );
+        family.adopt(&input, 7, Some(123), true, Some("2026-01-02T03:04:05Z"));
+        let meta = &family.meta[&7];
+        assert_eq!(comment_text(&family.dom, meta.node), "copied");
+        assert_eq!(family.dom.attribute(meta.node, &W::id()), Some("7"));
+        assert!(last_para_id(&family.dom, meta.node).is_none());
+        assert_eq!(
+            family.thread_state(7),
+            Some((None, true, Some("2026-01-02T03:04:05Z".into())))
+        );
+        assert_eq!(family.thread_state(123), None);
+        family.adopt(&input, 8, Some(7), false, None);
+        assert_eq!(family.thread_state(8), Some((Some(7), false, None)));
+        assert_eq!(family.added_authors, ["Alice"]);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_memory_anchor_boundary_tests {
+    use super::*;
+
+    fn package(body: &str) -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+        pkg
+    }
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    fn paragraph(text: &str) -> String {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>{text}</w:t></w:r></w:p>"
+        )
+    }
+    #[test]
+    fn block_and_point_comments_preserve_exact_unicode_anchor_context_and_package() {
+        let first = paragraph("First ação");
+        let middle = paragraph("Middle café");
+        let last = paragraph("Last τέλος");
+        let cases = [
+            (
+                format!(
+                    "<w:commentRangeStart w:id='7'/>{first}{middle}{last}<w:commentRangeEnd w:id='7'/>"
+                ),
+                "First ação\nMiddle café\nLast τέλος",
+                "",
+                "",
+                "body:p:0",
+            ),
+            (
+                format!(
+                    "{first}<w:commentRangeStart w:id='7'/>{middle}<w:commentRangeEnd w:id='7'/>{last}"
+                ),
+                "Middle café",
+                "",
+                "",
+                "body:p:1",
+            ),
+            (
+                format!(
+                    "{first}<w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:t>Before </w:t></w:r><w:commentRangeStart w:id='7'/><w:r><w:t>ação</w:t></w:r></w:p>{middle}<w:p><w:r><w:t>τέλος</w:t></w:r><w:commentRangeEnd w:id='7'/><w:r><w:t xml:space='preserve'> after</w:t></w:r></w:p>"
+                ),
+                "ação\nMiddle café\nτέλος",
+                "Before ",
+                " after",
+                "body:p:1",
+            ),
+            (
+                format!(
+                    "{first}<w:p><w:r><w:t>Point location</w:t></w:r><w:r><w:rPr><w:rStyle w:val='CommentReference'/></w:rPr><w:commentReference w:id='7'/></w:r></w:p>{last}"
+                ),
+                "",
+                "",
+                "",
+                "body:p:1",
+            ),
+        ];
+        for (body, anchor, before, after, paragraph) in cases {
+            let mut pkg = package(&body);
+            pkg.set_part("word/comments.xml",format!("<w:comments xmlns:w='{}'><w:comment w:id='7' w:author='Source reviewer' w:initials='SR' w:date='2025-02-03T04:05:06Z'><w:p><w:r><w:t>Review ação</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:comment></w:comments>",W::URI).into_bytes());
+            pkg.add_content_type_override(
+                "/word/comments.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            );
+            pkg.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                "comments.xml",
+            );
+            let source = snapshot(&pkg);
+            let bytes = pkg.to_zip().unwrap();
+            let expected = vec![CommentRecord {
+                id: 7,
+                author: "Source reviewer".into(),
+                initials: Some("SR".into()),
+                date: Some("2025-02-03T04:05:06Z".into()),
+                text: "Review ação\nSecond line".into(),
+                parent: None,
+                done: false,
+                paragraph: Some(paragraph.into()),
+                anchor_text: anchor.into(),
+                before: before.into(),
+                after: after.into(),
+            }];
+            assert_eq!(list_comments(&bytes).unwrap(), expected);
+            assert_eq!(
+                list_comments(&bytes).unwrap(),
+                expected,
+                "repeat must have identical anchor and author records"
+            );
+            assert_eq!(
+                snapshot(&PartFs::open(&bytes).unwrap()),
+                source,
+                "listing retains all source properties, relationships and comment history bytes"
+            );
+        }
+    }
+    #[test]
+    fn latest_thread_selection_preserves_complete_winning_source_records_and_thread_order() {
+        let record = |id, parent, author: &str, date: &str| CommentRecord {
+            id,
+            parent,
+            author: author.into(),
+            initials: Some("SR".into()),
+            date: Some(date.into()),
+            text: format!("Source comment {id}"),
+            done: false,
+            paragraph: Some(format!("body:p:{id}")),
+            anchor_text: format!("Owned anchor {id}"),
+            before: "before".into(),
+            after: "after".into(),
+        };
+        let records = vec![
+            record(1, None, "Alice", "2025-02-03T00:00:00Z"),
+            record(2, Some(1), "Bob", "2025-02-05T00:00:00Z"),
+            record(3, Some(2), "Alice", "2025-02-04T00:00:00Z"),
+            record(4, None, "Bob", "2025-02-02T00:00:00Z"),
+            record(5, Some(4), "Bob", "2025-02-02T00:00:00Z"),
+        ];
+        assert_eq!(
+            select_comments(records.clone(), None, true),
+            vec![records[1].clone(), records[4].clone()]
+        );
+        assert_eq!(
+            select_comments(records.clone(), Some("Alice"), true),
+            vec![records[2].clone()]
+        );
+        assert_eq!(
+            select_comments(records.clone(), Some("Nobody"), true),
+            Vec::new()
+        );
+        assert_eq!(select_comments(records.clone(), None, false), records);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_thread_reference_contract_tests {
+    use super::*;
+
+    fn family(parents: [Option<usize>; 3]) -> (PartFs, CommentFamily) {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let comments = (0..3).map(|i| format!("<w:comment w:id='{i}' w:author='Owner{i}' w:date='2025-01-0{}T00:00:00Z'><w:p w14:paraId='{:08X}'><w:pPr><w:spacing w:after='{}'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Comment owner {i}</w:t></w:r></w:p></w:comment>",i+1,i+1,80+i)).collect::<String>();
+        let extended = parents
+            .iter()
+            .enumerate()
+            .map(|(i, parent)| {
+                format!(
+                    "<w15:commentEx w15:paraId='{:08X}'{} w15:done='0'/>",
+                    i + 1,
+                    parent
+                        .map(|p| format!(" w15:paraIdParent='{:08X}'", p + 1))
+                        .unwrap_or_default()
+                )
+            })
+            .collect::<String>();
+        for (index, xml) in [
+            (
+                0,
+                format!(
+                    "<w:comments xmlns:w='{}' xmlns:w14='{}'>{comments}</w:comments>",
+                    W::URI,
+                    W14::URI
+                ),
+            ),
+            (
+                1,
+                format!(
+                    "<w15:commentsEx xmlns:w15='{}'>{extended}</w15:commentsEx>",
+                    W15::URI
+                ),
+            ),
+        ] {
+            let (part, content_type, rel_type) = FAMILY[index];
+            pkg.set_part(&format!("word/{part}"), xml.into_bytes());
+            pkg.add_content_type_override(&format!("/word/{part}"), content_type);
+            pkg.add_document_relationship("word/document.xml", rel_type, part);
+        }
+        let family = CommentFamily::load(&pkg, "word/document.xml").unwrap();
+        (pkg, family)
+    }
+
+    #[test]
+    fn cyclic_and_missing_parent_metadata_terminate_without_discarding_comment_owners() {
+        for (parents, roots, replies) in [
+            ([Some(1), Some(0), None], [0, 1, 2], vec![0, 1]),
+            ([Some(1), Some(2), Some(0)], [0, 1, 2], vec![0, 2, 1]),
+            ([Some(2), Some(2), None], [2, 2, 2], vec![0]),
+            ([Some(0), Some(3), None], [0, 1, 2], vec![0]),
+        ] {
+            let (pkg, family) = family(parents);
+            let source = pkg.to_zip().unwrap();
+            let records = list_comments(&source).unwrap();
+            assert_eq!(records.len(), 3);
+            for i in 0..3 {
+                assert_eq!(family.thread_root(i), roots[i as usize]);
+                assert_eq!(records[i as usize].author, format!("Owner{i}"));
+                assert_eq!(records[i as usize].text, format!("Comment owner {i}"));
+                let expected = parents[i as usize]
+                    .filter(|&p| p < 3 && p != i as usize)
+                    .map(|p| p as u32);
+                assert_eq!(records[i as usize].parent, expected);
+            }
+            assert_eq!(family.with_replies(0), replies);
+            let selected = select_comments(records.clone(), None, true);
+            if roots == [2, 2, 2] {
+                assert_eq!(selected, vec![records[2].clone()]);
+            } else {
+                assert_eq!(selected, records);
+            }
+            assert_eq!(pkg.to_zip().unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn paragraph_id_scan_reserves_only_complete_hex_ids_from_other_xml_parts() {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body/></w:document>".to_vec());
+        pkg.set_part(
+            "word/owned.xml",
+            b"<root paraId=\"abcdef12\"><node paraId=\"NOTHEX12\"/><node paraId=\"short\"/></root>"
+                .to_vec(),
+        );
+        pkg.set_part("word/skipped.xml", b"<root paraId=\"13579024\"/>".to_vec());
+        pkg.set_part("word/image.bin", b"paraId=\"12345678\"".to_vec());
+        pkg.set_part("word/non_utf8.xml", vec![255, 254]);
+        let frozen = pkg.to_zip().unwrap();
+        let used = package_para_ids(&pkg, "word/skipped.xml");
+        assert_eq!(used, HashSet::from(["ABCDEF12".to_string()]));
+        assert_eq!(pkg.to_zip().unwrap(), frozen);
     }
 }

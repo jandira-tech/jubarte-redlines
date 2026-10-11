@@ -8,7 +8,7 @@
 //! `GetParagraphInfo`/`ContentElementsBeforeSelf` :2888) the later
 //! transforms (A.2–A.5) consume.
 
-use jubarte::namespaces::W;
+use jubarte::namespaces::{PT, W};
 use jubarte::revision_processor::{
     Tag, TagType, accept_deleted_and_move_from_paragraph_marks,
     accept_deleted_and_move_from_paragraph_marks_transform,
@@ -1781,4 +1781,191 @@ fn a5b_mixed_surviving_and_fully_deleted_content_controls() {
         .map(|&t| d.value(t))
         .collect();
     assert_eq!(texts, vec!["keep me"]);
+}
+
+/// A removed control pilcrow joins independently owned runs, but does not
+/// extend the control's authored range to the successor's text or formatting.
+#[test]
+fn merged_control_range_keeps_successor_runs_and_marks_outside_its_owner() {
+    for mark in ["del", "moveFrom"] {
+        for successor in ["text", "tab", "math", "empty"] {
+            let mut d = Dom::new();
+            let tail = match successor {
+                "text" => "<w:r><w:rPr><w:i/><w:color w:val='445566'/></w:rPr><w:t>two</w:t></w:r>",
+                "tab" => "<w:r><w:rPr><w:i/><w:color w:val='445566'/></w:rPr><w:tab/></w:r>",
+                "math" => {
+                    "<m:oMath xmlns:m='http://schemas.openxmlformats.org/officeDocument/2006/math'><m:r><m:rPr><m:sty m:val='p'/></m:rPr><m:t>x+y</m:t></m:r></m:oMath>"
+                }
+                _ => "",
+            };
+            let body = body_from(
+                &mut d,
+                &format!(
+                    "<w:sdt><w:sdtPr><w:id w:val='42'/><w:tag w:val='Clause'/><w:alias w:val='Original control'/></w:sdtPr><w:sdtEndPr><w:rPr><w:color w:val='ABCDEF'/></w:rPr></w:sdtEndPr><w:sdtContent><w:p><w:pPr><w:spacing w:after='120'/><w:rPr><w:{mark} w:id='7' w:author='Prior editor'/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:color w:val='112233'/></w:rPr><w:t>one</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:pPr><w:spacing w:after='240'/></w:pPr>{tail}</w:p>"
+                ),
+            );
+            let source_control = d.descendants(body, Some(&W::sdt()))[0];
+            let props = d.serialize_element(d.element(source_control, &W::sdt_pr()).unwrap());
+            let end_props =
+                d.serialize_element(d.element(source_control, &W::name("sdtEndPr")).unwrap());
+            let source_runs = d.descendants(body, Some(&W::r()));
+            let run_props = source_runs
+                .iter()
+                .map(|&run| d.serialize_element(d.element(run, &W::r_pr()).unwrap()))
+                .collect::<Vec<_>>();
+            let out = accept_deleted_and_move_from_paragraph_marks(&mut d, body);
+            let paragraphs = d.elements(out, Some(&W::p()));
+            assert_eq!(
+                paragraphs.len(),
+                1,
+                "{mark} {successor}: source paragraphs merge"
+            );
+            assert_eq!(
+                d.elements(out, None),
+                paragraphs,
+                "control remains inline in the merged body paragraph"
+            );
+            let p = paragraphs[0];
+            let control = d.element(p, &W::sdt()).expect("owned inline control");
+            assert_eq!(d.descendants(out, Some(&W::sdt())).len(), 1);
+            assert_eq!(
+                d.serialize_element(d.element(control, &W::sdt_pr()).unwrap()),
+                props
+            );
+            assert_eq!(
+                d.serialize_element(d.element(control, &W::name("sdtEndPr")).unwrap()),
+                end_props
+            );
+            let content = d.element(control, &W::sdt_content()).unwrap();
+            assert!(d.elements(content, Some(&W::p())).is_empty());
+            let own = d.elements(content, Some(&W::r()));
+            assert_eq!(own.len(), 1);
+            assert_eq!(d.value(own[0]), "one");
+            let outside = d.elements(p, Some(&W::r()));
+            assert_eq!(
+                outside.len(),
+                usize::from(successor == "text" || successor == "tab")
+            );
+            assert_eq!(
+                d.serialize_element(d.element(own[0], &W::r_pr()).unwrap()),
+                run_props[0]
+            );
+            let ppr = d.element(p, &W::p_pr()).unwrap();
+            assert_eq!(
+                d.attribute(d.element(ppr, &W::spacing_el()).unwrap(), &W::name("after")),
+                Some("240")
+            );
+            assert!(d.descendants(ppr, Some(&W::name(mark))).is_empty());
+            let children = d.elements(p, None);
+            assert_eq!(children[..2], [ppr, control]);
+            assert_eq!(children.len(), if successor == "empty" { 2 } else { 3 });
+            assert!(d.attribute(p, &PT::name("MergedParagraphOwners")).is_none());
+            if successor == "math" {
+                let math = children[2];
+                assert_eq!(
+                    d.name(math).unwrap().namespace_name(),
+                    "http://schemas.openxmlformats.org/officeDocument/2006/math"
+                );
+                assert_eq!(d.name(math).unwrap().local_name(), "oMath");
+                assert_eq!(d.value(math), "x+y");
+                assert!(
+                    d.descendants(control, Some(&jubarte::namespaces::M::name("oMath")))
+                        .is_empty()
+                );
+                let sty = d.descendants(math, Some(&jubarte::namespaces::M::name("sty")))[0];
+                assert_eq!(
+                    d.attribute(sty, &jubarte::namespaces::M::name("val")),
+                    Some("p")
+                );
+            } else if successor != "empty" {
+                assert_eq!(children[2], outside[0]);
+                assert_eq!(
+                    d.serialize_element(d.element(outside[0], &W::r_pr()).unwrap()),
+                    run_props[1]
+                );
+                assert_eq!(d.descendants(p, Some(&W::r())), [own[0], outside[0]]);
+                if successor == "text" {
+                    assert_eq!(d.value(outside[0]), "two");
+                    assert_eq!(d.value(p), "onetwo");
+                } else {
+                    assert_eq!(d.elements(outside[0], Some(&W::name("tab"))).len(), 1);
+                    assert!(d.descendants(control, Some(&W::name("tab"))).is_empty());
+                }
+            } else {
+                assert_eq!(d.value(p), "one");
+            }
+        }
+    }
+}
+
+#[test]
+fn wholly_control_owned_merged_paragraphs_keep_the_block_control() {
+    for mark in ["del", "moveFrom"] {
+        let mut d = Dom::new();
+        let body = body_from(
+            &mut d,
+            &format!(
+                "<w:sdt><w:sdtPr><w:id w:val='42'/><w:tag w:val='Clause'/></w:sdtPr><w:sdtContent><w:p><w:pPr><w:rPr><w:{mark} w:id='7' w:author='Prior editor'/></w:rPr></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>one</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:after='240'/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>two</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>after</w:t></w:r></w:p>"
+            ),
+        );
+        let out = accept_deleted_and_move_from_paragraph_marks(&mut d, body);
+        let kids = d.elements(out, None);
+        assert_eq!(kids.len(), 2);
+        assert!(d.name_is(kids[0], &W::sdt()));
+        assert!(d.name_is(kids[1], &W::p()));
+        let content = d.element(kids[0], &W::sdt_content()).unwrap();
+        let ps = d.elements(content, Some(&W::p()));
+        assert_eq!(ps.len(), 1);
+        assert_eq!(d.value(ps[0]), "onetwo");
+        assert_eq!(d.value(kids[1]), "after");
+        assert!(
+            d.attribute(ps[0], &PT::name("MergedParagraphOwners"))
+                .is_none()
+        );
+        let ppr = d.element(ps[0], &W::p_pr()).unwrap();
+        assert_eq!(
+            d.attribute(d.element(ppr, &W::spacing_el()).unwrap(), &W::name("after")),
+            Some("240")
+        );
+        assert!(d.descendants(ppr, Some(&W::name(mark))).is_empty());
+        let runs = d.elements(ps[0], Some(&W::r()));
+        assert_eq!(runs.len(), 2);
+        assert!(
+            d.element(d.element(runs[0], &W::r_pr()).unwrap(), &W::name("b"))
+                .is_some()
+        );
+        assert!(
+            d.element(d.element(runs[1], &W::r_pr()).unwrap(), &W::name("i"))
+                .is_some()
+        );
+        let props = d.element(kids[0], &W::sdt_pr()).unwrap();
+        assert_eq!(
+            d.attribute(d.element(props, &W::id()).unwrap(), &W::val()),
+            Some("42")
+        );
+        assert_eq!(
+            d.attribute(d.element(props, &W::name("tag")).unwrap(), &W::val()),
+            Some("Clause")
+        );
+    }
+}
+
+#[test]
+fn public_paragraph_mark_transform_has_no_new_ownership_scratch_attributes() {
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        "<w:p><w:pPr><w:rPr><w:del w:id='7' w:author='Prior editor'/></w:rPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r></w:p>",
+    );
+    annotate_run_elements_with_id(&mut d, body);
+    let out = accept_deleted_and_move_from_paragraph_marks_transform(&mut d, body);
+    let ps = d.elements(out, Some(&W::p()));
+    assert_eq!(ps.len(), 1);
+    assert_eq!(d.value(ps[0]), "onetwo");
+    for node in d.descendants_and_self(out, None) {
+        assert!(
+            d.attribute(node, &PT::name("MergedParagraphOwners"))
+                .is_none()
+        );
+    }
 }

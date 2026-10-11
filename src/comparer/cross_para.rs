@@ -2116,3 +2116,1296 @@ fn emit_segment(
         edits.push((Op::Equal, le - s + t, re - s + t));
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod lexical_pairing_contract_tests {
+    use super::*;
+    use crate::comparer::atoms::ComparisonUnitWord;
+
+    fn tokens(words: &[&str]) -> Vec<Tok> {
+        words
+            .iter()
+            .map(|key| Tok {
+                kind: if key.chars().any(char::is_alphanumeric) {
+                    Kind::Word
+                } else {
+                    Kind::Sep
+                },
+                key: (*key).into(),
+                chars: key.chars().count(),
+                unit: ComparisonUnit::Word(ComparisonUnitWord::new(Vec::new())),
+            })
+            .collect()
+    }
+    fn lexical(words: &[&str]) -> Bag {
+        bag(&tokens(words), true)
+    }
+
+    #[test]
+    fn multiset_similarity_counts_repetitions_and_lexical_evidence_separately() {
+        let a = lexical(&["alpha", "alpha", "the", "42", " ", "!"]);
+        let b = lexical(&["alpha", "the", "the", "84", " "]);
+        assert_eq!(a.word_count, 4);
+        assert_eq!(a.pairing_count, 3);
+        assert_eq!(a.content, ["alpha", "alpha", "42"]);
+        assert_eq!(multiset_intersection(&a.counts, &b.counts), 3);
+        assert!((jaccard(&a, &b) - 3.0 / 8.0).abs() < 1e-12);
+        assert_eq!(pairing_overlap(&a, &b), (2, 0.5));
+        assert_eq!(shared_content_words(&a, &b), 1);
+        assert!(has_pairing_evidence(&a, &b, 2));
+        let empty = lexical(&[]);
+        assert_eq!(jaccard(&empty, &empty), 1.0);
+        assert_eq!(pairing_overlap(&a, &empty), (0, 0.0));
+        assert_eq!(pairing_overlap(&empty, &a), (0, 0.0));
+        let cases = [
+            (vec![], vec!["alpha", "beta"], true),
+            (vec!["alpha"], vec!["beta"], true),
+            (vec!["the", "and"], vec!["with", "from"], false),
+            (vec!["the", "and"], vec!["the", "and"], true),
+            (vec!["alpha", "beta"], vec!["gamma", "delta"], false),
+        ];
+        for (a, b, expected) in cases {
+            assert_eq!(residue_force_pair(&lexical(&a), &lexical(&b)), expected);
+            assert_eq!(residue_force_pair(&lexical(&b), &lexical(&a)), expected);
+        }
+        let split = tokens(&["-ALPHA--β-", "THE", "42"]);
+        assert_eq!(bag(&split, true).content, ["alpha", "β", "42"]);
+        assert!(bag(&split, false).trimmed.contains("ALPHA"));
+    }
+
+    #[test]
+    fn ordered_words_use_sequence_order_and_cap_oversized_windows() {
+        let a = lexical(&["alpha", "beta", "gamma"]);
+        let b = lexical(&["gamma", "beta", "alpha"]);
+        assert_eq!(ordered_content_words(&a, &b), 1);
+        assert_eq!(ordered_content_words(&b, &a), 1);
+        assert_eq!(ordered_content_words(&a, &lexical(&["alpha", "gamma"])), 2);
+        assert_eq!(ordered_content_words(&lexical(&[]), &a), 0);
+        let huge = lexical(&vec!["alpha"; 1001]);
+        assert_eq!(ordered_content_words(&huge, &huge), 0);
+    }
+
+    #[test]
+    fn paragraph_pairs_preserve_non_crossing_unique_ownership() {
+        let vocabulary: [&[&str]; 8] = [
+            &[],
+            &["alpha"],
+            &["beta"],
+            &["alpha", "beta"],
+            &["the", "and"],
+            &["the", "from"],
+            &["alpha", "beta", "gamma", "delta"],
+            &[" ", "!"],
+        ];
+        let sequences: Vec<Vec<Bag>> = (0..8)
+            .flat_map(|a| (0..8).map(move |b| vec![lexical(vocabulary[a]), lexical(vocabulary[b])]))
+            .collect();
+        for left in &sequences {
+            for right in &sequences {
+                let pairs = pair_gap(left, right);
+                assert_eq!(pairs.len(), left.len());
+                let linked: Vec<_> = pairs.iter().flatten().copied().collect();
+                assert!(linked.iter().all(|&r| r < right.len()));
+                assert!(linked.windows(2).all(|w| w[0] < w[1]));
+                assert_eq!(pairs, pair_gap(left, right));
+            }
+        }
+        for words in vocabulary {
+            let one = vec![lexical(words)];
+            assert_eq!(pair_gap(&one, &one), [Some(0)]);
+            assert_eq!(pair_gap(&one, &[]), [None]);
+            assert!(pair_gap(&[], &one).is_empty());
+        }
+        let left = vec![lexical(&["alpha", "beta"]), lexical(&["gamma", "delta"])];
+        let right = vec![lexical(&["alpha", "beta"]), lexical(&["gamma", "delta"])];
+        assert_eq!(pair_gap(&left, &right), [Some(0), Some(1)]);
+        let unrelated = vec![lexical(&["new", "meaning"]), lexical(&["fresh", "phrase"])];
+        assert_eq!(pair_gap(&left, &unrelated), [None, None]);
+    }
+
+    fn projected(edits: &[(Op, usize, usize)], input: &[Tok], original: bool) -> Vec<String> {
+        edits
+            .iter()
+            .filter_map(|&(op, l, r)| {
+                let index = if original {
+                    (op != Op::Insert).then_some(l)
+                } else {
+                    (op != Op::Delete).then_some(r)
+                };
+                index.map(|i| input[i].key.clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn punctuation_anchors_require_word_or_retained_terminal_mark() {
+        let vocab: [&[&str]; 9] = [
+            &[],
+            &["!"],
+            &["!", " "],
+            &["alpha", "!"],
+            &["beta", "!"],
+            &["!", "alpha"],
+            &[" ", "alpha", " "],
+            &["alpha", " ", "!", " ", "beta"],
+            &["alpha", "\t", "!"],
+        ];
+        for a in vocab {
+            for b in vocab {
+                for retained in [false, true] {
+                    let (left, right) = (tokens(a), tokens(b));
+                    let edits = token_diff(&left, &right, retained);
+                    assert_eq!(projected(&edits, &left, true), a);
+                    assert_eq!(projected(&edits, &right, false), b);
+                    for &(op, l, r) in &edits {
+                        if op == Op::Equal {
+                            assert_eq!(left[l].key, right[r].key);
+                        }
+                    }
+                    assert_eq!(edits, token_diff(&left, &right, retained));
+                }
+            }
+        }
+        for retained in [false, true] {
+            let left = tokens(&["alpha", "!"]);
+            let right = tokens(&["beta", "!"]);
+            let equals: Vec<_> = token_diff(&left, &right, retained)
+                .into_iter()
+                .filter(|e| e.0 == Op::Equal)
+                .collect();
+            assert_eq!(
+                equals,
+                if retained {
+                    vec![(Op::Equal, 1, 1)]
+                } else {
+                    vec![]
+                }
+            );
+        }
+        let common = tokens(&["alpha", " ", "!", " ", "?"]);
+        assert!(
+            token_diff(&common, &common, false)
+                .iter()
+                .all(|e| e.0 == Op::Equal)
+        );
+    }
+
+    #[test]
+    fn region_coverage_rejects_lost_repeated_or_reordered_payload() {
+        let side = vec![tokens(&["alpha", "beta"])];
+        for mark in [Mark::Equal, Mark::Deleted, Mark::Inserted] {
+            for left in [false, true] {
+                let owns = mark == Mark::Equal
+                    || (left && mark == Mark::Deleted)
+                    || (!left && mark == Mark::Inserted);
+                for (paragraph, start, length, mark_owner) in [
+                    (0, 0, 2, 0),
+                    (1, 0, 2, 0),
+                    (0, 1, 1, 0),
+                    (0, 0, 1, 0),
+                    (0, 0, 2, 1),
+                ] {
+                    let cell = Cell {
+                        left: Some((paragraph, start, length)),
+                        right: Some((paragraph, start, length)),
+                        mark,
+                        mark_left: mark_owner,
+                        mark_right: mark_owner,
+                    };
+                    assert_eq!(
+                        covers(&[cell], &side, left),
+                        owns && paragraph == 0 && start == 0 && length == 2 && mark_owner == 0
+                    );
+                }
+                let blank = Cell {
+                    left: None,
+                    right: None,
+                    mark,
+                    mark_left: 0,
+                    mark_right: 0,
+                };
+                assert_eq!(covers(&[blank], &[tokens(&[])], left), owns);
+            }
+        }
+        let cell = || Cell {
+            left: Some((0, 0, 2)),
+            right: Some((0, 0, 2)),
+            mark: Mark::Equal,
+            mark_left: 0,
+            mark_right: 0,
+        };
+        assert!(!covers(&[cell(), cell()], &side, true));
+        assert!(!covers(&[cell()], &[], false));
+        assert!(covers(&[], &[], true));
+        assert!(!covers(&[], &side, false));
+    }
+
+    #[test]
+    fn compound_anchor_stops_at_paragraph_and_whitespace_boundaries() {
+        for delimiter in ["-", ".", "—"] {
+            let t = tokens(&["right", delimiter, "aligned"]);
+            let flat: Vec<_> = t.iter().collect();
+            let compound = build_units(&flat, &[0, 3], 0, 3);
+            assert_eq!(compound.len(), 1);
+            assert_eq!(compound[0].key, format!("right{delimiter}aligned"));
+            assert_eq!(
+                (compound[0].start, compound[0].len, compound[0].chars),
+                (0, 3, 13)
+            );
+            assert_eq!(
+                (&*compound[0].first, &*compound[0].last),
+                ("right", "aligned")
+            );
+            for boundary in [1, 2] {
+                let split = build_units(&flat, &[0, boundary, 3], 0, 3);
+                assert_eq!(
+                    split.iter().map(|u| u.key.as_str()).collect::<Vec<_>>(),
+                    ["right", "aligned"]
+                );
+            }
+            for member in ["right", "aligned"] {
+                let one = tokens(&[member]);
+                let references: Vec<_> = one.iter().collect();
+                let word = build_units(&references, &[0, 1], 0, 1);
+                let mut sink = Vec::new();
+                unit_match_tokens(&compound[0], &word[0], &mut sink);
+                assert_eq!(sink, [(if member == "right" { 0 } else { 2 }, 0)]);
+                sink.clear();
+                unit_match_tokens(&word[0], &compound[0], &mut sink);
+                assert_eq!(sink, [(0, if member == "right" { 0 } else { 2 })]);
+            }
+            let mut sink = Vec::new();
+            unit_match_tokens(&compound[0], &compound[0], &mut sink);
+            assert_eq!(sink, [(0, 0), (1, 1), (2, 2)]);
+        }
+        for delimiter in [" ", "\t", "\n", "\u{a0}"] {
+            let t = tokens(&["right", delimiter, "aligned"]);
+            let flat: Vec<_> = t.iter().collect();
+            assert_eq!(
+                build_units(&flat, &[0, 3], 0, 3)
+                    .iter()
+                    .map(|u| u.key.as_str())
+                    .collect::<Vec<_>>(),
+                ["right", "aligned"]
+            );
+        }
+        assert_eq!(para_of(&[0, 2, 5], 2, 0), 0);
+        assert_eq!(para_of(&[0, 2, 5], 2, 2), 1);
+        assert_eq!(para_of(&[0, 2, 5], 2, 5), 1);
+    }
+
+    #[test]
+    fn pairing_ceiling_keeps_disjoint_large_gaps_unpaired() {
+        let left: Vec<_> = (0..101).map(|_| lexical(&["alpha", "beta"])).collect();
+        let right: Vec<_> = (0..100).map(|_| lexical(&["gamma", "delta"])).collect();
+        assert_eq!(pair_gap(&left, &right), vec![None; 101]);
+        assert!(!below_parity(1, 3));
+        assert!(below_parity(1, 4));
+        assert!(!below_parity(3, 1));
+        assert!(below_parity(4, 1));
+        assert!(!below_parity(0, 0));
+        assert!(below_parity(0, 1));
+    }
+
+    #[test]
+    fn unit_anchors_weight_characters_and_allow_only_compound_endpoint_overlap() {
+        let build = |words: &[&str]| {
+            let t = tokens(words);
+            let flat: Vec<_> = t.iter().collect();
+            build_units(&flat, &[0, t.len()], 0, t.len())
+        };
+        let compound = build(&["right", "-", "aligned"]);
+        for member in ["right", "aligned", "missing"] {
+            let one = build(&[member]);
+            for weighted in [false, true] {
+                for partial in [false, true] {
+                    let expected = if partial && member != "missing" {
+                        vec![(0, 0)]
+                    } else {
+                        vec![]
+                    };
+                    assert_eq!(
+                        unit_lcs(&compound, &one, weighted, partial, &|_, _| false),
+                        expected
+                    );
+                    assert_eq!(
+                        unit_lcs(&one, &compound, weighted, partial, &|_, _| false),
+                        expected
+                    );
+                    assert!(unit_lcs(&one, &compound, weighted, partial, &|_, _| true).is_empty());
+                }
+            }
+        }
+        let left = build(&["a", " ", "lengthy"]);
+        let right = build(&["lengthy", " ", "a"]);
+        assert_eq!(
+            unit_lcs(&left, &right, true, false, &|_, _| false),
+            [(1, 0)]
+        );
+        assert_eq!(
+            unit_lcs(&left, &right, false, false, &|_, _| false),
+            [(1, 0)]
+        );
+        assert!(unit_lcs(&left, &[], true, true, &|_, _| false).is_empty());
+        assert!(unit_lcs(&[], &right, false, false, &|_, _| false).is_empty());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_option_source_ownership_tests {
+    use super::*;
+    use crate::xmllinq::NodeId;
+
+    fn canonical(dom: &Dom, node: NodeId) -> String {
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_string(),
+                    name.local_name().to_string(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let mut result = format!("{:?}:{attrs:?}:{:?}", dom.name(node), dom.text_value(node));
+        for child in dom.nodes(node) {
+            if [W::p_pr(), W::r_pr()]
+                .iter()
+                .any(|name| dom.name_is(child, name))
+                && dom.nodes(child).is_empty()
+                && dom
+                    .attributes(child)
+                    .iter()
+                    .all(|(name, _)| dom.is_namespace_declaration(name))
+            {
+                continue;
+            }
+            let part = canonical(dom, child);
+            result.push_str(&format!("{}:{part}", part.len()));
+        }
+        result
+    }
+
+    fn source_events(bytes: &[u8]) -> Vec<String> {
+        fn walk(dom: &Dom, node: NodeId, pkg: &crate::opc::PartFs, events: &mut Vec<String>) {
+            if dom.name_is(node, &W::name("footnoteReference")) {
+                let id = dom.attribute(node, &W::id()).expect("owned note reference");
+                let mut notes = Dom::new();
+                let doc = notes.parse_xdocument(
+                    &pkg.part_string("word/footnotes.xml")
+                        .expect("owned note part"),
+                );
+                let matches = notes
+                    .elements(notes.root(doc).unwrap(), Some(&W::name("footnote")))
+                    .into_iter()
+                    .filter(|&note| notes.attribute(note, &W::id()) == Some(id))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    matches.len(),
+                    1,
+                    "every projected reference resolves one definition"
+                );
+                let note = matches[0];
+                notes.set_attribute_value(note, &W::id(), None);
+                let mut attrs = dom
+                    .attributes(node)
+                    .into_iter()
+                    .filter(|(name, _)| !dom.is_namespace_declaration(name) && *name != W::id())
+                    .map(|(name, value)| {
+                        (
+                            name.namespace_name().to_string(),
+                            name.local_name().to_string(),
+                            value,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                attrs.sort();
+                let props = dom
+                    .ancestors(node, Some(&W::r()))
+                    .first()
+                    .and_then(|&run| dom.element(run, &W::r_pr()))
+                    .map(|rpr| canonical(dom, rpr))
+                    .unwrap_or_default();
+                events.push(format!("note reference:{attrs:?}:{props}:{}", {
+                    let mut note_events = Vec::new();
+                    for child in notes.elements(note, None) {
+                        walk(&notes, child, pkg, &mut note_events);
+                    }
+                    let mut owner_attrs = notes
+                        .attributes(note)
+                        .into_iter()
+                        .filter(|(name, _)| !notes.is_namespace_declaration(name))
+                        .map(|(name, value)| {
+                            (
+                                name.namespace_name().to_string(),
+                                name.local_name().to_string(),
+                                value,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    owner_attrs.sort();
+                    format!("{:?}:{owner_attrs:?}:{note_events:?}", notes.name(note))
+                }));
+                return;
+            }
+            if dom.name_is(node, &W::t()) {
+                let props = dom
+                    .ancestors(node, Some(&W::r()))
+                    .first()
+                    .and_then(|&run| dom.element(run, &W::r_pr()))
+                    .map(|rpr| canonical(dom, rpr))
+                    .unwrap_or_default();
+                events.extend(
+                    dom.value(node)
+                        .chars()
+                        .map(|ch| format!("text:{ch}:{props}")),
+                );
+                return;
+            }
+            if [W::tbl(), W::tr(), W::tc(), W::sdt(), W::sdt_content()]
+                .iter()
+                .any(|name| dom.name_is(node, name))
+            {
+                let mut attrs = dom
+                    .attributes(node)
+                    .into_iter()
+                    .filter(|(name, _)| !dom.is_namespace_declaration(name))
+                    .map(|(name, value)| (format!("{name:?}"), value))
+                    .collect::<Vec<_>>();
+                attrs.sort();
+                events.push(format!("begin structure:{:?}:{attrs:?}", dom.name(node)));
+                for child in dom.elements(node, None) {
+                    if [
+                        W::tbl_pr(),
+                        W::name("tblGrid"),
+                        W::tr_pr(),
+                        W::tc_pr(),
+                        W::sdt_pr(),
+                        W::name("sdtEndPr"),
+                    ]
+                    .iter()
+                    .any(|name| dom.name_is(child, name))
+                    {
+                        events.push(canonical(dom, child));
+                    } else {
+                        walk(dom, child, pkg, events);
+                    }
+                }
+                events.push(format!("end structure:{:?}", dom.name(node)));
+                return;
+            }
+            if dom.name_is(node, &W::p()) {
+                events.push("begin paragraph".to_string());
+                if let Some(props) = dom.element(node, &W::p_pr()) {
+                    events.push(canonical(dom, props));
+                }
+                for child in dom.elements(node, None) {
+                    if !dom.name_is(child, &W::p_pr()) {
+                        walk(dom, child, pkg, events);
+                    }
+                }
+                events.push("end paragraph".to_string());
+                return;
+            }
+            if dom.name_is(node, &W::r()) {
+                for child in dom.elements(node, None) {
+                    if !dom.name_is(child, &W::r_pr()) {
+                        walk(dom, child, pkg, events);
+                    }
+                }
+                return;
+            }
+            if dom.name_is(node, &W::body()) {
+                for child in dom.elements(node, None) {
+                    walk(dom, child, pkg, events);
+                }
+                return;
+            }
+            let run_properties = dom
+                .ancestors(node, Some(&W::r()))
+                .first()
+                .and_then(|&run| dom.element(run, &W::r_pr()))
+                .map(|rpr| canonical(dom, rpr))
+                .unwrap_or_default();
+            events.push(format!("payload:{}:{run_properties}", canonical(dom, node)));
+        }
+        let pkg = crate::opc::PartFs::open(bytes).unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+        let body = dom.element(dom.root(doc).unwrap(), &W::body()).unwrap();
+        let mut events = Vec::new();
+        walk(&dom, body, &pkg, &mut events);
+        events
+    }
+
+    fn assert_source_projection(actual: &[u8], authored: &[u8], label: &str) {
+        let actual = source_events(actual);
+        let expected = source_events(authored);
+        let event = actual
+            .iter()
+            .zip(&expected)
+            .position(|(a, b)| a != b)
+            .or_else(|| {
+                (actual.len() != expected.len()).then_some(actual.len().min(expected.len()))
+            });
+        let actual_event = event.and_then(|index| actual.get(index));
+        let expected_event = event.and_then(|index| expected.get(index));
+        let character = match (actual_event, expected_event) {
+            (Some(a), Some(b)) => a
+                .chars()
+                .zip(b.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| a.chars().count().min(b.chars().count())),
+            _ => 0,
+        };
+        let context = |value: Option<&String>| {
+            value.map(|value| {
+                let window = value
+                    .chars()
+                    .skip(character.saturating_sub(80))
+                    .take(240)
+                    .collect::<String>();
+                format!("characters={} context={window:?}", value.chars().count())
+            })
+        };
+        assert!(
+            actual == expected,
+            "{label}: complete source events differ; actual events={} expected events={}; first event={event:?} character={character}; actual={:?}; expected={:?}",
+            actual.len(),
+            expected.len(),
+            context(actual_event),
+            context(expected_event)
+        );
+    }
+
+    #[test]
+    fn public_boundary_shifts_preserve_all_source_owners_with_lexical_options() {
+        let properties = "<w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr>";
+        let package = |revised: bool, nonbreaking: bool, payload: usize| {
+            let space = if nonbreaking { "\u{a0}" } else { " " };
+            let words = if revised {
+                [
+                    format!("alpha{space}Straße βeta copper"),
+                    " walnut violet glacier shared closing words".to_string(),
+                ]
+            } else {
+                [
+                    format!("alpha{space}Straße βeta copper walnut"),
+                    " violet glacier shared closing words".to_string(),
+                ]
+            };
+            let extra = match payload {
+                0 => String::new(),
+                1 => format!("<w:r>{properties}<w:tab/></w:r>"),
+                2 => format!("<w:r>{properties}<w:br w:type='textWrapping' w:clear='all'/></w:r>"),
+                3 => format!(
+                    "<w:r>{properties}<w:fldChar w:fldCharType='begin'/></w:r><w:r>{properties}<w:instrText xml:space='preserve'> DATE \\@ &quot;yyyy&quot; </w:instrText></w:r><w:r>{properties}<w:fldChar w:fldCharType='separate'/></w:r><w:r>{properties}<w:t>2026</w:t></w:r><w:r>{properties}<w:fldChar w:fldCharType='end'/></w:r>"
+                ),
+                _ => unreachable!(),
+            };
+            let body = words.iter().enumerate().map(|(index, text)| format!("<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r>{properties}<w:t xml:space='preserve'>{text}</w:t></w:r>{}</w:p>", if index == 1 { extra.as_str() } else { "" })).collect::<String>();
+            let mut pkg = crate::opc::PartFs::open(include_bytes!(
+                "../../tests/fixtures/relids/image_doc.docx"
+            ))
+            .unwrap();
+            pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>", W::URI).into_bytes());
+            pkg.set_part("word/document.xml", format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+            pkg.to_zip().unwrap()
+        };
+        for case_insensitive in [false, true] {
+            for conflate in [false, true] {
+                for payload in 0..4 {
+                    for reverse in [false, true] {
+                        // Casing is authored identically on both sides: asking
+                        // to ignore case must not erase actual source characters.
+                        // Both spaces are NBSP when conflated, otherwise the
+                        // differing authored separator is a tracked edit.
+                        let a = package(false, true, payload);
+                        let b = package(true, conflate, payload);
+                        let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                        let settings = WmlComparerSettings {
+                            case_insensitive,
+                            conflate_breaking_and_nonbreaking_spaces: conflate,
+                            merge_replaced_paragraphs: true,
+                            ..WmlComparerSettings::default()
+                        };
+                        let label = format!(
+                            "case_insensitive={case_insensitive} conflate={conflate} payload={payload} reverse={reverse}"
+                        );
+                        let compared = crate::document_comparer::compare_documents_with_settings(
+                            a, b, &settings,
+                        )
+                        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+                        let accepted = crate::document_comparer::accept_revisions(&compared)
+                            .unwrap_or_else(|error| panic!("accept {label}: {error:?}"));
+                        let rejected = crate::document_comparer::reject_revisions(&compared)
+                            .unwrap_or_else(|error| panic!("reject {label}: {error:?}"));
+
+                        assert_source_projection(&accepted, b, &format!("accepted {label}"));
+                        assert_source_projection(&rejected, a, &format!("rejected {label}"));
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn public_comparison_options_preserve_reordered_paragraphs_formats_and_note_owners() {
+        let mut profiles = Vec::new();
+        for profile in 0..13 {
+            let mut settings = WmlComparerSettings::default();
+            match profile {
+                0 => {}
+                1 => settings.case_insensitive = true,
+                2 => settings.conflate_breaking_and_nonbreaking_spaces = false,
+                3 => settings.detect_moves = false,
+                4 => settings.simplify_move_markup = true,
+                5 => settings.detect_format_changes = false,
+                6 => settings.detail_threshold = 0.0,
+                7 => settings.detail_threshold = 0.15,
+                8 => settings.detail_threshold = 0.5,
+                9 => settings.word_separators = vec![' ', '\t', '\n', '-', ';'],
+                10 => settings.move_minimum_word_count = 1,
+                11 => settings.move_similarity_threshold = 1.0,
+                12 => settings.starting_id_for_footnotes_endnotes = 23,
+                _ => unreachable!(),
+            }
+            profiles.push(settings);
+        }
+        for (profile, settings) in profiles.iter().enumerate() {
+            for family in 0..3 {
+                let package = |revised: bool| {
+                    let first = "alpha copper walnut archival clauses preserve independently authored ordered source paragraphs";
+                    let second = "violet glacier revised botanical inventory retains another independent substantive paragraph owner";
+                    let lines: Vec<String> = match family {
+                        0 if revised => vec![second.into(), first.into()],
+                        0 => vec![first.into(), second.into()],
+                        1 if revised => vec![
+                            "shared alpha;beta-gamma Straße βeta".into(),
+                            "delta epsilon unchanged closing words".into(),
+                        ],
+                        1 => vec![
+                            "shared alpha;beta-gamma Straße βeta delta".into(),
+                            "epsilon unchanged closing words".into(),
+                        ],
+                        2 if !settings.detect_format_changes && revised => vec![
+                            "replacement violet inventory introduced".into(),
+                            "replacement glacier paragraphs rewritten".into(),
+                        ],
+                        2 if !settings.detect_format_changes => vec![
+                            "original copper archive retained".into(),
+                            "original walnut paragraphs removed".into(),
+                        ],
+                        2 => vec![
+                            "shared source format boundary alpha".into(),
+                            "shared source format boundary beta".into(),
+                        ],
+                        _ => unreachable!(),
+                    };
+                    let rpr = format!(
+                        "<w:rPr>{}<w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr>",
+                        if family == 2 && revised && settings.detect_format_changes {
+                            "<w:b/>"
+                        } else {
+                            ""
+                        }
+                    );
+                    // rFonts precedes bold in CT_RPr.
+                    let rpr = rpr.replace(
+                        "<w:b/><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/>",
+                        "<w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:b/>",
+                    );
+                    let body = lines.iter().enumerate().map(|(index,text)| format!("<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r>{rpr}<w:t>{text}</w:t></w:r>{}</w:p>", if index == 1 { format!("<w:r>{rpr}<w:footnoteReference w:id='42'/></w:r>") } else { String::new() })).collect::<String>();
+                    let mut pkg = crate::opc::PartFs::open(include_bytes!(
+                        "../../tests/fixtures/relids/image_doc.docx"
+                    ))
+                    .unwrap();
+                    pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style><w:style w:type='character' w:styleId='FootnoteReference'><w:name w:val='footnote reference'/><w:rPr><w:vertAlign w:val='superscript'/></w:rPr></w:style></w:styles>",W::URI).into_bytes());
+                    pkg.set_part("word/document.xml", format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+                    pkg.set_part("word/footnotes.xml", format!("<w:footnotes xmlns:w='{}'><w:footnote w:type='separator' w:id='-1'><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type='continuationSeparator' w:id='0'><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id='42'><w:p><w:pPr><w:spacing w:after='180'/></w:pPr><w:r><w:rPr><w:rStyle w:val='FootnoteReference'/></w:rPr><w:footnoteRef/></w:r><w:r>{rpr}<w:t>{} authored note payload</w:t><w:tab/></w:r></w:p></w:footnote></w:footnotes>",W::URI,if revised {"Revised"} else {"Original"}).into_bytes());
+                    pkg.add_content_type_override("/word/footnotes.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml");
+                    pkg.add_document_relationship("word/document.xml", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes", "footnotes.xml");
+                    pkg.to_zip().unwrap()
+                };
+                let a = package(false);
+                let b = package(true);
+                for reverse in [false, true] {
+                    let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                    let label = format!("profile={profile} family={family} reverse={reverse}");
+                    let compared =
+                        crate::document_comparer::compare_documents_with_settings(a, b, settings)
+                            .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+                    let accepted = crate::document_comparer::accept_revisions(&compared)
+                        .unwrap_or_else(|error| panic!("accept {label}: {error:?}"));
+                    let rejected = crate::document_comparer::reject_revisions(&compared)
+                        .unwrap_or_else(|error| panic!("reject {label}: {error:?}"));
+
+                    assert_source_projection(&accepted, b, &format!("accepted {label}"));
+                    assert_source_projection(&rejected, a, &format!("rejected {label}"));
+                    let pkg = crate::opc::PartFs::open(&compared).unwrap();
+                    let mut dom = Dom::new();
+                    let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+                    let root = dom.root(doc).unwrap();
+                    if profile == 0 && family == 0 && !reverse {
+                        // The reproduced defect classified this reference as
+                        // MovedDestination. Supporting its definition must not
+                        // silently turn the body's authored relocation into I/D.
+                        assert!(
+                            !dom.descendants(root, Some(&W::move_from())).is_empty(),
+                            "{label}: source body move retained"
+                        );
+                        assert!(
+                            !dom.descendants(root, Some(&W::move_to())).is_empty(),
+                            "{label}: destination body move retained"
+                        );
+                    }
+                    if !settings.detect_moves || settings.simplify_move_markup {
+                        for name in [W::move_from(), W::move_to()] {
+                            assert!(
+                                dom.descendants(root, Some(&name)).is_empty(),
+                                "{label}: disabled or simplified moves"
+                            );
+                        }
+                    }
+                    if !settings.detect_format_changes {
+                        assert!(
+                            dom.descendants(root, Some(&W::name("rPrChange")))
+                                .is_empty(),
+                            "{label}: no invented format tracking"
+                        );
+                    }
+                    // starting_id controls the disjoint preprocessing ranges;
+                    // rectify deliberately publishes a fresh 1-based bijection.
+                    let reference_ids = dom
+                        .descendants(root, Some(&W::name("footnoteReference")))
+                        .into_iter()
+                        .map(|reference| {
+                            dom.attribute(reference, &W::id())
+                                .unwrap()
+                                .parse::<i32>()
+                                .unwrap()
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        reference_ids,
+                        (1..=reference_ids.len() as i32).collect::<Vec<_>>(),
+                        "{label}: final IDs follow reference order"
+                    );
+                    let notes_doc =
+                        dom.parse_xdocument(&pkg.part_string("word/footnotes.xml").unwrap());
+                    let definitions = dom
+                        .elements(dom.root(notes_doc).unwrap(), Some(&W::footnote()))
+                        .into_iter()
+                        .filter(|&note| !crate::comparer::footnotes::is_structural_note(&dom, note))
+                        .map(|note| {
+                            dom.attribute(note, &W::id())
+                                .unwrap()
+                                .parse::<i32>()
+                                .unwrap()
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        definitions, reference_ids,
+                        "{label}: exact normal-reference/definition bijection"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn public_reordered_bulk_paragraphs_preserve_sources_on_move_thrash_boundaries() {
+        for count in [12usize, 13] {
+            for near_exact in [false, true] {
+                for skewed in [false, true] {
+                    let paragraphs = |revised: bool| {
+                        let mut lines = (0..count)
+                            .map(|index| {
+                                (0..80)
+                                    .map(|word| {
+                                        if revised && near_exact && word == 79 {
+                                            format!("revised{index:02}token{word:02}")
+                                        } else {
+                                            format!("clause{index:02}token{word:02}")
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            })
+                            .collect::<Vec<_>>();
+                        if revised {
+                            lines.reverse();
+                        }
+                        if !revised && skewed {
+                            // Entirely unmatched authored paragraphs make the
+                            // candidate source-size skew genuine, not a mocked
+                            // del/ins character counter.
+                            lines.extend((0..count + 2).map(|index| {
+                                (0..80)
+                                    .map(|word| format!("original{index:02}archive{word:02}"))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            }));
+                        }
+                        lines.into_iter().map(|text| format!("<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr><w:t>{text}</w:t></w:r></w:p>")).collect::<String>()
+                    };
+                    let package = |revised| {
+                        let mut pkg = crate::opc::PartFs::open(include_bytes!(
+                            "../../tests/fixtures/relids/image_doc.docx"
+                        ))
+                        .unwrap();
+                        pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>",W::URI).into_bytes());
+                        pkg.set_part("word/document.xml", format!("<w:document xmlns:w='{}'><w:body>{}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI,paragraphs(revised)).into_bytes());
+                        pkg.to_zip().unwrap()
+                    };
+                    let a = package(false);
+                    let b = package(true);
+                    for reverse in [false, true] {
+                        let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                        let settings = WmlComparerSettings {
+                            detect_moves: true,
+                            detail_threshold: 0.5,
+                            ..WmlComparerSettings::default()
+                        };
+                        let label = format!(
+                            "count={count} near_exact={near_exact} skewed={skewed} reverse={reverse}"
+                        );
+                        let compared = crate::document_comparer::compare_documents_with_settings(
+                            a, b, &settings,
+                        )
+                        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+                        let accepted = crate::document_comparer::accept_revisions(&compared)
+                            .unwrap_or_else(|error| panic!("accept {label}: {error:?}"));
+                        let rejected = crate::document_comparer::reject_revisions(&compared)
+                            .unwrap_or_else(|error| panic!("reject {label}: {error:?}"));
+
+                        assert_source_projection(&accepted, b, &format!("accepted {label}"));
+                        assert_source_projection(&rejected, a, &format!("rejected {label}"));
+                        // Revision style is a comparison result; the clean
+                        // sources must not retain a dangling move range.
+                        for bytes in [&accepted, &rejected] {
+                            let pkg = crate::opc::PartFs::open(bytes).unwrap();
+                            let mut dom = Dom::new();
+                            let doc =
+                                dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+                            let root = dom.root(doc).unwrap();
+                            for local in [
+                                "moveFrom",
+                                "moveTo",
+                                "moveFromRangeStart",
+                                "moveFromRangeEnd",
+                                "moveToRangeStart",
+                                "moveToRangeEnd",
+                            ] {
+                                assert!(
+                                    dom.descendants(root, Some(&W::name(local))).is_empty(),
+                                    "{label}: clean projection retains no move marker {local}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn strict_and_transitional_packages_preserve_complete_authored_body_ownership() {
+        let strict_xml = |xml: &str| {
+            xml.replace(
+                "http://schemas.openxmlformats.org/wordprocessingml/2006/",
+                "http://purl.oclc.org/ooxml/wordprocessingml/",
+            )
+            .replace(
+                "http://schemas.openxmlformats.org/officeDocument/2006/",
+                "http://purl.oclc.org/ooxml/officeDocument/",
+            )
+            .replace(
+                "http://schemas.openxmlformats.org/drawingml/2006/",
+                "http://purl.oclc.org/ooxml/drawingml/",
+            )
+        };
+        let package = |family, revised, strict| {
+            let text = if revised {
+                "Revised copper contractual clause retains source properties"
+            } else {
+                "Original violet archival clause retains source properties"
+            };
+            let paragraph = |text: &str| {
+                format!(
+                    "<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr><w:t>{text}</w:t><w:tab/></w:r></w:p>"
+                )
+            };
+            let content = paragraph(text);
+            let body = match family {
+                0 => format!(
+                    "{content}{}",
+                    paragraph("Independent closing paragraph survives source order")
+                ),
+                1 => format!(
+                    "<w:tbl><w:tblPr><w:tblW w:w='3600' w:type='dxa'/><w:tblLayout w:type='fixed'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr>{content}</w:tc><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr>{}</w:tc></w:tr></w:tbl>{}",
+                    paragraph("Independent second cell owner"),
+                    paragraph("Independent closing paragraph survives source order")
+                ),
+                2 => format!(
+                    "<w:sdt><w:sdtPr><w:alias w:val='Clause'/><w:tag w:val='stable-section'/><w:id w:val='11'/><w:richText/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>{}",
+                    paragraph("Independent closing paragraph survives source order")
+                ),
+                _ => unreachable!(),
+            };
+            let mut pkg = crate::opc::PartFs::open(include_bytes!(
+                "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+            ))
+            .unwrap();
+            pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='1440' w:right='1440' w:bottom='1440' w:left='1440' w:header='720' w:footer='720' w:gutter='0'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+            pkg.set_part("word/styles.xml",format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>",W::URI).into_bytes());
+            if strict {
+                for part in pkg.parts() {
+                    if part.ends_with(".xml") {
+                        let xml = pkg.part_string(&part).unwrap();
+                        pkg.set_part(&part, strict_xml(&xml).into_bytes());
+                    }
+                    if let Some(rels) = pkg.read_rels_for(&part) {
+                        let xml = String::from_utf8(rels.to_xml().unwrap()).unwrap();
+                        let rels_part = match part.rsplit_once('/') {
+                            Some((dir, base)) => format!("{dir}/_rels/{base}.rels"),
+                            None => format!("_rels/{part}.rels"),
+                        };
+                        pkg.set_part(&rels_part, strict_xml(&xml).into_bytes());
+                    }
+                }
+                let rels =
+                    String::from_utf8(pkg.package_relationships().to_xml().unwrap()).unwrap();
+                pkg.set_part("_rels/.rels", strict_xml(&rels).into_bytes());
+            }
+            pkg.to_zip().unwrap()
+        };
+        for family in 0..3 {
+            let expected_a = package(family, false, false);
+            let expected_b = package(family, true, false);
+            for strict_a in [false, true] {
+                for strict_b in [false, true] {
+                    if !strict_a && !strict_b {
+                        continue;
+                    }
+                    let a = package(family, false, strict_a);
+                    let b = package(family, true, strict_b);
+                    let frozen_a = a.clone();
+                    let frozen_b = b.clone();
+                    for word in [false, true] {
+                        for reverse in [false, true] {
+                            let (a, b, expected_a, expected_b) = if reverse {
+                                (&b, &a, &expected_b, &expected_a)
+                            } else {
+                                (&a, &b, &expected_a, &expected_b)
+                            };
+                            let label = format!(
+                                "Strict family={family} original={strict_a} revised={strict_b} Word={word} reverse={reverse}"
+                            );
+                            let settings = WmlComparerSettings {
+                                merge_replaced_paragraphs: word,
+                                ..Default::default()
+                            };
+                            let compared =
+                                crate::document_comparer::compare_documents_with_settings(
+                                    a, b, &settings,
+                                )
+                                .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+                            let accepted =
+                                crate::document_comparer::accept_revisions(&compared).unwrap();
+                            let rejected =
+                                crate::document_comparer::reject_revisions(&compared).unwrap();
+                            assert_source_projection(
+                                &accepted,
+                                expected_b,
+                                &format!("accepted {label}"),
+                            );
+                            assert_source_projection(
+                                &rejected,
+                                expected_a,
+                                &format!("rejected {label}"),
+                            );
+                            let out = crate::opc::PartFs::open(&compared).unwrap();
+                            for part in out.parts() {
+                                if part.ends_with(".xml") {
+                                    assert!(
+                                        !out.part_string(&part)
+                                            .unwrap()
+                                            .contains("purl.oclc.org/ooxml/"),
+                                        "mixed output {part} {label}"
+                                    );
+                                }
+                            }
+                            for part in out.parts() {
+                                if let Some(rels) = out.read_rels_for(&part) {
+                                    for relationship in &rels.items {
+                                        assert!(
+                                            !relationship.rel_type.contains("purl.oclc.org/ooxml/"),
+                                            "mixed relationship {} {label}",
+                                            relationship.id
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    assert_eq!(a, frozen_a);
+                    assert_eq!(b, frozen_b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zero_word_move_threshold_preserves_authored_nontext_and_separator_payloads() {
+        for (family, before, after) in [
+            (
+                "tab-break",
+                "<w:tab/>",
+                "<w:br w:type='textWrapping' w:clear='all'/>",
+            ),
+            (
+                "typed-break",
+                "<w:br w:type='column'/>",
+                "<w:br w:type='page'/>",
+            ),
+            ("separator", "<w:t>-</w:t>", "<w:t>;</w:t>"),
+            (
+                "empty-field",
+                "<w:fldChar w:fldCharType='begin'/><w:instrText xml:space='preserve'> DATE </w:instrText><w:fldChar w:fldCharType='separate'/><w:fldChar w:fldCharType='end'/>",
+                "<w:fldChar w:fldCharType='begin'/><w:instrText xml:space='preserve'> TIME </w:instrText><w:fldChar w:fldCharType='separate'/><w:fldChar w:fldCharType='end'/>",
+            ),
+        ] {
+            let package = |payload| {
+                let mut pkg = crate::opc::PartFs::open(include_bytes!(
+                    "../../tests/fixtures/word_probes/tokens/cell_a.docx"
+                ))
+                .unwrap();
+                pkg.set_part("word/styles.xml",format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>",W::URI).into_bytes());
+                pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body><w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:b/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr>{payload}</w:r></w:p><w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Stable closing source owner</w:t></w:r></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+                pkg.to_zip().unwrap()
+            };
+            let a = package(before);
+            let b = package(after);
+            for minimum in [0, 1] {
+                for moves in [false, true] {
+                    for word in [false, true] {
+                        for reverse in [false, true] {
+                            let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                            let settings = WmlComparerSettings {
+                                move_minimum_word_count: minimum,
+                                detect_moves: moves,
+                                merge_replaced_paragraphs: word,
+                                ..Default::default()
+                            };
+                            let label = format!(
+                                "zero-word family={family} minimum={minimum} moves={moves} Word={word} reverse={reverse}"
+                            );
+                            let compared =
+                                crate::document_comparer::compare_documents_with_settings(
+                                    a, b, &settings,
+                                )
+                                .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+                            let accepted =
+                                crate::document_comparer::accept_revisions(&compared).unwrap();
+                            let rejected =
+                                crate::document_comparer::reject_revisions(&compared).unwrap();
+                            assert_source_projection(&accepted, b, &format!("accepted {label}"));
+                            assert_source_projection(&rejected, a, &format!("rejected {label}"));
+                            let pkg = crate::opc::PartFs::open(&compared).unwrap();
+                            let mut dom = Dom::new();
+                            let doc =
+                                dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+                            let root = dom.root(doc).unwrap();
+                            for name in [
+                                W::move_from(),
+                                W::move_to(),
+                                W::name("moveFromRangeStart"),
+                                W::name("moveToRangeStart"),
+                            ] {
+                                assert!(
+                                    dom.descendants(root, Some(&name)).is_empty(),
+                                    "nonlexical payload must not become a move {label}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners() {
+        fn member(
+            dom: &mut Dom,
+            count: usize,
+            reverse: bool,
+            settings: &WmlComparerSettings,
+        ) -> (NodeId, Vec<Tok>) {
+            let indices: Vec<_> = if reverse {
+                (0..count).rev().collect()
+            } else {
+                (0..count).collect()
+            };
+            let text = indices
+                .iter()
+                .map(|index| format!("lexical{index}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:body></w:document>", W::URI));
+            let body = dom.element(dom.root(doc).unwrap(), &W::body()).unwrap();
+            super::super::preprocess::add_sha1_hash_to_block_level_content(
+                dom,
+                body,
+                settings,
+                &super::super::preprocess::null_rel_resolver,
+            );
+            let atoms =
+                super::super::atomize::create_comparison_unit_atom_list(dom, body, settings);
+            let units = super::super::units::get_comparison_unit_list(dom, &atoms, settings);
+            let [ComparisonUnit::Group(group)] = units.as_slice() else {
+                panic!("one actual paragraph owner")
+            };
+            assert_eq!(group.group_type, ComparisonUnitGroupType::Paragraph);
+            let tokens = group
+                .contents
+                .iter()
+                .filter(|unit| {
+                    !unit
+                        .descendant_atoms()
+                        .iter()
+                        .any(|atom| dom.name_is(atom.content_element, &W::p_pr()))
+                })
+                .map(|unit| token(dom, unit, settings))
+                .collect();
+            (body, tokens)
+        }
+        let settings = WmlComparerSettings {
+            merge_replaced_paragraphs: true,
+            ..WmlComparerSettings::default()
+        };
+        for ending_story in [false, true] {
+            let mut dom = Dom::new();
+            let (a, left) = member(&mut dom, 1001, false, &settings);
+            let (b, right) = member(&mut dom, 1001, true, &settings);
+            let owned = (canonical(&dom, a), canonical(&dom, b));
+            let left_flat = left.iter().collect::<Vec<_>>();
+            let right_flat = right.iter().collect::<Vec<_>>();
+            let left_units = build_units(&left_flat, &[0, left.len()], 0, left.len());
+            let right_units = build_units(&right_flat, &[0, right.len()], 0, right.len());
+            assert_eq!((left_units.len(), right_units.len()), (1001, 1001));
+            assert!(left_units.len() * right_units.len() > LCS_CELL_CAP);
+            // These are two real paragraph members with the same lexical bag.
+            // The ordinary pair exceeds pass 1's cap; the story-final pair's
+            // unequal first word leaves the whole capped pass-2 residue.
+            assert!(segment_region(&[left], &[right], &[(0, 0)], ending_story).is_none());
+            assert_eq!((canonical(&dom, a), canonical(&dom, b)), owned);
+        }
+    }
+
+    #[test]
+    fn public_compound_and_one_sided_paragraph_windows_preserve_complete_sources() {
+        let families: Vec<(Vec<&str>, Vec<&str>)> = vec![
+            (
+                vec!["alpha-copper walnut", "violet glacier closing"],
+                vec!["alpha", "copper walnut violet glacier closing"],
+            ),
+            (
+                vec!["alpha walnut", "copper-violet glacier closing"],
+                vec!["alpha walnut copper", "violet glacier closing"],
+            ),
+            (
+                vec!["alpha:copper walnut", "violet glacier closing"],
+                vec!["alpha", "copper walnut violet glacier closing"],
+            ),
+            (
+                vec!["alpha walnut the", "and copper violet glacier"],
+                vec!["alpha walnut", "the and copper violet glacier"],
+            ),
+            (
+                vec![
+                    "alpha walnut copper",
+                    "violet glacier closing",
+                    "independent archival original tail",
+                ],
+                vec!["alpha walnut", "copper violet glacier closing"],
+            ),
+            (
+                vec!["alpha walnut copper", "violet glacier closing"],
+                vec![
+                    "alpha walnut",
+                    "copper violet glacier closing",
+                    "independent revised botanical tail",
+                ],
+            ),
+            (
+                vec![
+                    "alpha walnut copper",
+                    "violet glacier closing",
+                    "same authored terminal witness",
+                ],
+                vec![
+                    "alpha walnut",
+                    "copper violet glacier closing",
+                    "same authored terminal witness",
+                ],
+            ),
+            (
+                vec!["alpha\u{a0}walnut copper", "violet glacier closing"],
+                vec!["alpha\u{a0}walnut", " copper violet glacier closing"],
+            ),
+        ];
+        let package = |paragraphs: &[&str]| {
+            let mut pkg = crate::opc::PartFs::open(include_bytes!(
+                "../../tests/fixtures/relids/image_doc.docx"
+            ))
+            .unwrap();
+            pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>", W::URI).into_bytes());
+            let body = paragraphs.iter().map(|text| format!("<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr><w:t xml:space='preserve'>{text}</w:t></w:r></w:p>")).collect::<String>();
+            pkg.set_part("word/document.xml", format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>", W::URI).into_bytes());
+            pkg.to_zip().unwrap()
+        };
+        for (family, (left, right)) in families.iter().enumerate() {
+            let a = package(left);
+            let b = package(right);
+            for word in [false, true] {
+                for reverse in [false, true] {
+                    let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                    let settings = WmlComparerSettings {
+                        merge_replaced_paragraphs: word,
+                        detect_moves: false,
+                        ..WmlComparerSettings::default()
+                    };
+                    let label =
+                        format!("compound/tail family={family} Word={word} reverse={reverse}");
+                    let compared =
+                        crate::document_comparer::compare_documents_with_settings(a, b, &settings)
+                            .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+                    let accepted = crate::document_comparer::accept_revisions(&compared).unwrap();
+                    let rejected = crate::document_comparer::reject_revisions(&compared).unwrap();
+                    if source_events(&accepted) != source_events(b)
+                        || source_events(&rejected) != source_events(a)
+                    {
+                        for (owner, bytes) in [
+                            ("original", a),
+                            ("revised", b),
+                            ("compared", &compared),
+                            ("accepted", &accepted),
+                            ("rejected", &rejected),
+                        ] {
+                            let pkg = crate::opc::PartFs::open(bytes).unwrap();
+                            eprintln!(
+                                "COMPOUND OWNER {owner} {label}={}",
+                                pkg.part_string("word/document.xml").unwrap()
+                            );
+                        }
+                    }
+                    assert_source_projection(&accepted, b, &format!("accept {label}"));
+                    assert_source_projection(&rejected, a, &format!("reject {label}"));
+                }
+            }
+        }
+    }
+}

@@ -163,6 +163,39 @@ produced `document.xml` and verify child order of the property containers
 ~100 lines on quick-xml, test-only. Defer until W2 shows CI actually
 misses regressions without it — the real validator is strictly stronger.
 
+#### Schema validation inside `jubarte validate`: the three options (2026-10-10)
+
+The question: what would it cost for `jubarte validate` to do what
+`../docx-validate` does (XSD validation through libxml2-wasm)?
+
+Measured on 2026-10-10:
+
+- **docx-validate's schemas**: 80 XSDs (ISO/IEC 29500-4 transitional,
+  Microsoft's extension schemas, `mc.xsd`). They are 977 KB raw, 95 KB
+  gzip -9, and 77 KB zstd -19.
+- **ooxmlsdk 0.13.1 `validators` re-probed**: the W3 trap still holds.
+  - A probe crate (`parts` + `validators`, `WordprocessingDocument::validate`)
+    grew the stripped release binary from 18.75 MB to 21.89 MB (+3.1 MB).
+    The build took 190 s with a 5.2 GB peak RSS.
+  - Each file took 5–19 ms. The probe found **0 findings on 33 of 33**
+    Word-invalid fixtures (`docx-validate/word-invalid-fixtures/OPEN_ERROR`)
+    and on `tests/corpus/broken_ones_two/sources/file_22_v_file_196.docx`.
+  - `tools/validate-docx` reports `Sch_InvalidElementContentExpectingComplex`
+    or `Sch_UnexpectedElementContentExpectingComplex` on each of those files.
+  - The crate checks attribute and simple-type values only; it does no
+    particle (child order or unknown child) checking. Its lenient typed
+    parse also drops unknown children before any check could see them.
+
+| Option | Cost | Catch |
+|---|---|---|
+| **A. Keep W2 as the schema oracle** (`tools/validate-docx` in the release gate) and keep promoting what it finds into Ring-1 codes | none | the schema check stays outside the CLI, Python and WASM; it needs dotnet |
+| **B. libxml2 from Rust**, with the XSDs embedded compressed (~80 KB) and docx-validate's markup-compatibility preprocessing ported | about 1.5–2 MB of binary; a C dependency in every build | complicates the wasm32 build and the Python wheel cross builds; libxml2's XSD engine is not OpenXmlValidator, so its keys would differ from the Ring-2 baseline |
+| **C. A pure-Rust particle checker generated from the XSDs** (or from W1's vendored JSON) at build time, plus the markup-compatibility rules | weeks of work; probably 1–2 MB | runs everywhere, WASM included; the generator has to follow schema updates; strictly W3 grown into a product feature |
+
+Decision as of 2026-10-10: **A**. C is the path if schema validation must
+ship inside the CLI and WASM. B is not recommended: it burdens every
+shipped build for one feature.
+
 ### W4 — Schema-driven data for future features
 
 When accept/reject or formatting-merge work needs enum values, attribute

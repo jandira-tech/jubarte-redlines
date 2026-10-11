@@ -97,6 +97,10 @@ Claude outputs/
 # The desktop app is its own repository (arthrod/jubarte-app), cloned here
 # untracked: scripts/release.sh runs its scripts/release-engine.sh.
 /jubarte-app/
+
+# Microsoft Office owner (lock) files, e.g. ~$ceived.docx while Word has
+# received.docx open. No slash, so the pattern matches in every folder.
+~$*.docx
 .empryo
 .dirac-cache/
 report.json

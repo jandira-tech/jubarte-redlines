@@ -787,6 +787,7 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -15,17 +15,102 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `jubarte FILE` prints the agent view (`read FILE`; a lone name without
+  an extension needs `read`); `jubarte A B` prints
+  the agent view of their redline, with the `read` options (`-o FILE` writes
+  it instead; `compare A B` still writes `<A>_v_<B>.docx`). Same on the
+  Python and npm CLIs.
+
+- `jubarte edit FILE -p WHERE --anchor TEXT --content TEXT` (also
+  `--delete`, `--resolve`, `--style`) and the new `jubarte add` (a paragraph,
+  a comment, or a reply to `c5`) take their operations from flags: each `-p`
+  starts one, so one command carries several. `--author`, `--datetime`,
+  `--existing-revisions` (default `auto`: keep a file's tracked changes) and
+  `--editing-mode` (clean copy and report only) apply to all of them;
+  `--out-dir` defaults to `<stem>.edit` beside the file. After applying, both
+  print the changed blocks as the agent view (the patch stays in
+  `patch.diff`). Same flags on the Python and npm CLIs; library:
+  `jubarte::edit::flags::plan_from_flags`, `jubarte::markdown::changed_view`,
+  Python `_native.flag_plan`/`changed_view`, WASM `flagPlan`/`changedView`.
+
+- Document text diff views: `github` (`unified`, `text`), `word`, `normal`,
+  `context` and `side-by-side`, across Rust, Python and WASM. Line views
+  preserve existing CriticMarkup; word diff accepts all changes in both
+  documents before making fresh marks. `--accept-changes`, `-U`/`--context`
+  and `--full-lines` control the view. Long lines use a 70-character window
+  around the first change. Text output creates no implicit Word file.
+
+- `convert --move-comments` (also on `diff`; library:
+  `PdfOptions::comments = CommentPlacement::End`): the comments leave the
+  balloon pane and are listed after the last page, each with its marker,
+  author and page. The page keeps its own width, the commented text keeps
+  its tint, and a superscript `[JR1]` in the author's ink marks where each
+  comment is anchored (a reply rides on its thread's marker). The default
+  stays Word's balloons beside the text.
+- `convert --changed-only` (also on `diff`; library:
+  `PdfOptions::changed_only`): the whole document is laid out, then only
+  the pages a change bar marks are kept, so page numbers and "Page N of M"
+  stay the document's. A document without body changes keeps its first
+  page. With `--move-comments`, only the kept pages' comments are listed.
+- `PdfOptions` has two more public fields (`comments`, `changed_only`): a
+  struct literal that names every field needs `..PdfOptions::default()`.
+- Python and JavaScript take both options. In Python they are
+  `PdfOptions(move_comments=…, changed_only=…)` for `Document.to_pdf`,
+  `to_png` and `render`, keyword arguments of `docx_to_pdf`, and
+  `python -m jubarte_redlines convert --move-comments / --changed-only`.
+  In JavaScript they are `docxToPdf`'s two trailing arguments and
+  `npx jubarte-redlines convert --move-comments / --changed-only`.
+
+- `fields update` writes `NUMPAGES`, `PAGEREF` and `SEQ` results in
+  `\* roman` and `\* alphabetic` as Word does: the switch's first letter
+  picks the case, letters past z repeat (aa, bb, ...), the last `\*`
+  switch wins, and past 780 in letters or 32767 in Roman numerals the
+  result is Word's "Error! Number cannot be represented in specified
+  format." A `SEQ` identifier with either format keeps counting. Other
+  formats still keep the cached result.
+
 ### Security
 
-- Bound OPC metadata to 256 attributes per element before rdocx-opc's
-  quick-xml 0.37 duplicate checks (RUSTSEC-2026-0194 denial of service).
-  Oversized metadata is now refused. The dependency itself remains affected;
-  direct use of its re-exported parser is outside this mitigation.
+- Upgrade rdocx-opc to 0.2 with quick-xml 0.41, fixing RUSTSEC-2026-0194
+  and RUSTSEC-2026-0195 across the native, Python, WASM and in-process
+  graphs, including the public `Relationships::from_xml` parser. Keep
+  the 256-attribute OPC admission budget and remove the advisory exceptions
+  and obsolete WASM-only dependency patch. Relationship/content-type parser
+  behavior is preserved; consumers sharing dependency types must also use
+  rdocx-opc 0.2 (the re-exported XML errors now use quick-xml 0.41).
+- Add direct relationship-parser regression tests and fuzzing. Fuzz checks
+  now block CI; native runs instrument mimalloc's C code and enable its
+  AddressSanitizer allocation tracking alongside Rust instrumentation.
 - Add contribution and private vulnerability-reporting policies, daily
   dependency/history-secret checks, mandatory release security checks and
   an OpenSSF criterion evidence ledger.
 
 ### Changed
+
+- `jubarte A B` no longer writes a file unless `-o` is given: it prints the
+  redline's agent view. `jubarte compare A B` is unchanged.
+- `edit` prints the redline's changed blocks as the agent view instead of
+  the patch (`patch.diff` is still written); `--plan` and `--out-dir` are
+  optional.
+
+- `jubarte read` (alias `text`) prints the agent view: a YAML header
+  (authors with handles and timestamps, owner, page setup, styles,
+  headers, footers, sections), an `<!-- pN -->` id line before every
+  paragraph (same numbering as `edit`), tracked changes as CriticMarkup
+  followed by a note with their `w:id` and author handle, comments with
+  their ids and thread parents, page markers from the layout pass, and
+  `-p` / `--head` / `--tail` / `--changed` (only the blocks with marks;
+  `--by AUTHOR` for one author's) / `--comments none` / `--dates` /
+  `--no-page-markers`. `edit` selectors take the view's short ids (`p3`,
+  `header1.p1`, `t0.r1.c2`). The previous `[body:p:N]` projection remains
+  available as `inspect::markdown` in the library bindings.
+- CLI commands, help, aliases, defaults and usage validation now share a
+  clap-derived schema across native, Python and WASM. `compare` (alias
+  `redline`) is discoverable alongside the existing two-file shorthand.
+- Python extensions avoid symbol stripping that can corrupt macOS
+  Mach-O metadata and prevent startup.
 
 - The desktop app is no longer tracked here: it is its own repository
   (arthrod/jubarte-app), cloned untracked at `jubarte-app/` or named by
@@ -39,6 +124,25 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Compare: a deleted or inserted field with no shown result
+  (`<w:fldSimple w:instr="PAGE"/>`) stayed live in the redline, so
+  rejecting or accepting kept the wrong page numbers, and Word 16.115 hung
+  on such a footer. It is now tracked the way Word's own redline does.
+- Compare: a header or footer that only one document has now marks its
+  table rows deleted or inserted along with their text; Word 16.115 hung
+  on a footer table whose cells were deleted but whose rows were not.
+
+- A comment anchored in a justified line lost its balloon: the stretched
+  line repaints its words as new runs, which dropped the run's comments.
+
+- PDF: list labels past z repeat the letter as Word does (z, aa, bb, ...,
+  ZZ, AAA), where jubarte counted on like spreadsheet columns (aa, ab, ac,
+  AZ, BA). Past 780 letter labels start again at "a", and past 32767
+  Roman ones at "I", as in Word; a huge list start no longer builds a
+  label millions of characters long.
+- PDF: a list label wider than its hanging indent sends the text to the
+  next tab stop, as Word does, instead of painting the text over the
+  label.
 - `scripts/release.sh` step 11 runs `gh release download` with no terminal
   attached and keeps gh's error. Under `script` (the 0.11.3 run's log
   wrapper), gh's progress display queried the terminal and failed, and the

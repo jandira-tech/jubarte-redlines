@@ -153,10 +153,17 @@ the error is what you initially thought because we get this wrong routinely.
   paragraphs by text, headers by role; three-way lines tagged with the
   files that hold them), e.g. A against our reject and Word's. Build
   clones and variants from its findings instead of ad-hoc scripts.
-- Word-validity rules the validator misses become Ring-1 invariants in
+- Every Word-invalid shape we find becomes a check in `jubarte validate`,
+  every time, before the fix lands: a Ring-1 invariant in
   `src/validate.rs` (`ring1`, which `jubarte validate`, Python and WASM all
   report), with a broken probe in `tests/m_validity_ring1.rs`;
-  `tests/common/validity.rs` only wraps `ring1` for the test gate.
+  `tests/common/validity.rs` only wraps `ring1` for the test gate. Run
+  `jubarte validate` on the broken file to see the new check fire.
+- Double check with Word, always: open the broken file in Word (alone,
+  under a fresh name) before calling a shape Word-invalid, and open the
+  fixed output too. A check marked Word-fatal must have a file Word refused
+  behind it; when Word opens the shape cleanly, say so and do not mark it
+  Word-fatal.
 
 ## Release evidence (release_info/)
 
