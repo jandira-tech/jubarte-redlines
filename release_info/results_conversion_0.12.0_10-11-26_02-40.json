@@ -14,7 +14,7 @@
   "ties": 1,
   "wins": 578
  },
- "generated": "2026-10-10T12:23:30+00:00",
+ "generated": "2026-10-11T06:40:51+00:00",
  "provenance": {
   "measure": "bench docx-to-pdf --origin list (one --files-list per fixture); soffice --score-only --location-to-score results/release_0.12.0_evidence/soffice_sample",
   "scores": {
@@ -24,7 +24,7 @@
  },
  "release": "0.12.0",
  "sample": {
-  "csv": "sample_conversion_0.12.0_10-10-26_08-23.csv",
+  "csv": "sample_conversion_0.12.0_10-11-26_02-40.csv",
   "drawn": {
    "by_state": {
     "clean": 150,
@@ -32,7 +32,7 @@
     "with_comments_clean": 117,
     "with_comments_tracking": 183
    },
-   "date": "2026-10-10",
+   "date": "2026-10-11",
    "n": 600,
    "quotas": {
     "clean": 150,
@@ -47,11 +47,11 @@
   "sha256": "338be7a9bda1f89a6a949c5812761450a6fa039699887a6d941fd29db7b011c9"
  },
  "schema": "jubarte-redlines/release_info/results_conversion/1",
- "stamp": "10-10-26_08-23",
+ "stamp": "10-11-26_02-40",
  "tools": {
   "jubarte": {
    "at_least_90": 117,
-   "binary_sha256": "ee89cb0a93d7ddf43e2bfad1e7a27a91cfd021b566acbfecef27c41c65870b5d",
+   "binary_sha256": "be465e74b765c40cb8f82797fb94820e9dd485f16c832b252012c72e5c3580c8",
    "by_state": {
     "clean": {
      "at_least_90": 82,
@@ -87,7 +87,7 @@
     }
    },
    "candidate_reports": "jubarte 0.11.3",
-   "commit": "c551f287806e4eb53dfb62a455ebbb1da0a45cc0",
+   "commit": "5b8ef078cc24f91ced32cc6d8d24274d6c5bf55c",
    "exact_100": 6,
    "failures": 0,
    "mean": 79.191,
