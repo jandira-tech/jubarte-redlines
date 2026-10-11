@@ -31,6 +31,9 @@ pub(crate) enum Op {
         text: String,
         /// `w:w` horizontal scale of the glyphs (1.0 = none).
         hscale: f32,
+        /// Text no face has glyphs for: unpainted (render mode 3), but
+        /// searchable through `/ActualText` (KNOWN_ISSUES #9).
+        hidden: bool,
     },
     Line {
         x1: f32,
@@ -343,7 +346,16 @@ impl Op {
             color,
             text: text.into(),
             hscale: 1.0,
+            hidden: false,
         }
+    }
+
+    /// The same text left unpainted, for search and copy only.
+    pub(crate) fn hidden(mut self) -> Self {
+        if let Self::Text { hidden, .. } = &mut self {
+            *hidden = true;
+        }
+        self
     }
 
     /// The same text drawn `scale` times as wide (`w:w`).
@@ -609,7 +621,25 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     color,
                     text,
                     hscale,
+                    hidden,
                 } => {
+                    if *hidden {
+                        if open_text.take().is_some() {
+                            stream.push_str("ET\n");
+                        }
+                        let encoded = page_enc[op_idx].as_deref();
+                        let Some((_, name)) = res_for(*face, encoded.is_some()) else {
+                            continue;
+                        };
+                        let lit = encoded.map_or_else(|| hex_glyphs(glyphs), pdf_literal);
+                        let _ = writeln!(
+                            stream,
+                            "q BT /{name} {size:.2} Tf 3 Tr {x:.2} {y:.2} Td \
+                             /Span <</ActualText {}>> BDC {lit} Tj EMC ET Q",
+                            pdf_text_string(text),
+                        );
+                        continue;
+                    }
                     if page.vertical
                         && text.chars().any(stands_upright)
                         && text.chars().count() == glyphs.len()
@@ -2181,6 +2211,7 @@ mod tests {
             color: [0.0; 3],
             text: "a\u{F0A7}".to_string(),
             hscale: 1.0,
+            hidden: false,
         });
         let map = super::face_unicode_map(&sans, FaceId::SansRegular.into(), &[page]);
         assert_eq!(map.get(&square).map(String::as_str), Some("▪"));
@@ -2820,6 +2851,7 @@ mod residual_byte_and_geometry_contract_tests {
                                 color,
                                 text,
                                 hscale,
+                                ..
                             } => (
                                 *face,
                                 *size,
@@ -2942,13 +2974,32 @@ mod residual_byte_and_geometry_contract_tests {
             [0.0, 0.0, 0.0],
             "A".to_string(),
         ));
+        // Unpainted text: render mode 3, restored by Q.
+        page.ops.push(
+            Op::text(
+                face,
+                10.0,
+                10.0,
+                220.0,
+                vec![0],
+                [0.0, 0.0, 0.0],
+                "研".to_string(),
+            )
+            .hidden(),
+        );
         let pdf = emit(&fonts, std::slice::from_ref(&page), PdfOptions::default());
         let pdf = String::from_utf8_lossy(&pdf);
         assert!(
             pdf.contains("/Span <</ActualText <FEFF78147A76>>> BDC <00000000> Tj EMC"),
             "{pdf}"
         );
-        assert_eq!(pdf.matches("/ActualText").count(), 1, "{pdf}");
+        assert!(
+            pdf.contains(
+                "Tf 3 Tr 10.00 220.00 Td /Span <</ActualText <FEFF7814>>> BDC <0000> Tj EMC ET Q"
+            ),
+            "{pdf}"
+        );
+        assert_eq!(pdf.matches("/ActualText").count(), 2, "{pdf}");
     }
 
     #[test]

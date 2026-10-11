@@ -213,6 +213,7 @@ fn paint_op<'f>(
 ) {
     match op {
         Op::Pin(_) => {}
+        Op::Text { hidden: true, .. } => {}
         Op::Text {
             face,
             size,
@@ -717,6 +718,7 @@ mod tests {
             color: [0.0, 0.0, 0.0],
             text: "MMMM".into(),
             hscale: 1.0,
+            hidden: false,
         }]);
         let px = paint_page(&fonts, &page, 72.0).unwrap();
         // Some pixel in the glyph band (baseline at PDF y=20 → pixel row 80,
@@ -729,6 +731,20 @@ mod tests {
         assert_eq!(pixel(&px, 190, 70), [255, 255, 255, 255]);
         assert!(!encode_png(&px).is_empty());
         assert_eq!(&encode_png(&px)[1..4], b"PNG");
+    }
+
+    /// Hidden text (glyphs no face has) paints nothing, not .notdef boxes,
+    /// yet is part of the page's text.
+    #[test]
+    fn hidden_text_paints_nothing_but_reads_back() {
+        let fonts = Fonts::new();
+        let face = FaceRef::Catalogue(FaceId::CarlitoRegular);
+        let page = page_with(vec![
+            Op::text(face, 40.0, 10.0, 20.0, vec![0; 2], [0.0; 3], "研究").hidden(),
+        ]);
+        let px = paint_page(&fonts, &page, 72.0).unwrap();
+        assert!(px.data().iter().all(|&v| v == 255));
+        assert_eq!(page_text(&fonts, &page), "研究\n");
     }
 
     #[test]
@@ -746,6 +762,7 @@ mod tests {
             color: [0.0; 3],
             text: s.into(),
             hscale: 1.0,
+            hidden: false,
         };
         let w = |s: &str| f.width_pt(s, size);
         // "Hello" then "world" a space-width apart on one baseline; a second
@@ -1200,6 +1217,7 @@ mod residual_display_contract_tests {
             color: [0.0; 3],
             text: s.into(),
             hscale,
+            hidden: false,
         };
         for (left, right, expected) in [
             ("A ", "B", "A B\n"),
