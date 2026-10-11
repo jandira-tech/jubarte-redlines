@@ -1992,3 +1992,41 @@ fn insert_paragraph_like_copies_another_paragraphs_properties() {
     .unwrap_err();
     assert!(err.message.starts_with("like:"), "{err:?}");
 }
+
+/// The edit report counts what `jubarte changes` lists: on the keep path,
+/// this edit's changes beside another author's; on the comparer path, every
+/// change of the redline, as `summary` counts it.
+#[test]
+fn the_report_counts_the_listed_changes() {
+    let body = r#"<w:p><w:r><w:t xml:space="preserve">keep this </w:t></w:r><w:ins w:id="1" w:author="a" w:date="2020-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p>"#;
+    let source = docx(body);
+    let ops = r#"[{"kind":"replace","paragraph":{"index":0},"find":"keep","replacement":"hold"},{"kind":"replace","paragraph":{"index":1},"find":"Second","replacement":"Next"}]"#;
+    let json = |existing: &str| {
+        format!(
+            r#"{{"schema_version":1,"source_sha256":"{}","author":"Claude","date":"2026-10-01T09:00:00Z","existing_revisions":"{existing}","operations":{ops}}}"#,
+            source_sha256(&source)
+        )
+    };
+    let kept = apply_plan_json(&source, &json("keep")).unwrap();
+    let listed = jubarte::changes::list_changes(&kept.redline).unwrap();
+    let ours = listed
+        .iter()
+        .filter(|c| {
+            c.author.as_deref() == Some("Claude")
+                && c.date.as_deref() == Some("2026-10-01T09:00:00Z")
+        })
+        .count();
+    assert!(ours > 0 && ours < listed.len(), "{listed:?}");
+    assert_eq!(kept.report.revisions.total, ours);
+
+    let compared = apply_plan_json(&source, &json("accept")).unwrap();
+    let total = compared.report.revisions.total;
+    assert!(total > 0);
+    assert_eq!(total, summary(&compared.redline).unwrap().revisions);
+    assert_eq!(
+        total,
+        jubarte::changes::list_changes(&compared.redline)
+            .unwrap()
+            .len()
+    );
+}
