@@ -15,6 +15,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-11
+
 ### Added
 
 - `jubarte FILE` prints the agent view (`read FILE`; a lone name without
@@ -2976,6 +2978,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.12.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0
 [0.11.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.3
 [0.11.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.2
 [0.11.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.0
