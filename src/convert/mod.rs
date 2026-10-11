@@ -1731,6 +1731,10 @@ struct TextRun {
     /// stands on (Word 16 probe_il: 3936a8fe56's Calibri 11 rule run makes
     /// a 14.49pt line beside an Arial 10 space).
     strut: bool,
+    /// Math letters left ASCII italic for want of a face with the
+    /// mathematical alphanumerics: they still read back as Word's
+    /// (U+1D44E for a), not as the ASCII they are painted with.
+    math_ascii: bool,
 }
 
 impl TextRun {
@@ -1764,6 +1768,7 @@ impl TextRun {
             hf_default_tab: 0.0,
             checkbox: None,
             strut: false,
+            math_ascii: false,
         }
     }
 
@@ -15424,6 +15429,7 @@ fn collect_runs_rec(
                 ctx.dom.attribute(t, &XNamespace::xml().name("space")) == Some("preserve")
             });
             let mut shown = rev_text(text, mark, ctx.in_table || ctx.keep_xml_space || preserved);
+            let mut math_ascii = false;
             if ctx.in_math
                 && let Some(upright) = ctx.math_upright
             {
@@ -15443,10 +15449,12 @@ fn collect_runs_rec(
                         shown = mapped;
                     } else {
                         style.italic = true;
+                        math_ascii = true;
                     }
                 }
             }
             let mut run = TextRun::new(shown, style);
+            run.math_ascii = math_ascii;
             run.rev = mark != RevMark::None;
             run.style.tint = open_tint(ctx);
             run.style.tint_id = ctx.open.first().cloned();
@@ -26418,11 +26426,14 @@ impl<'a> Layout<'a> {
                 if self.past_clip(gx) {
                     break;
                 }
-                let piece = if paired {
+                let mut piece = if paired {
                     chars[i].to_string()
                 } else {
                     pieces.get(i).cloned().unwrap_or_default()
                 };
+                if run.math_ascii {
+                    piece = piece.chars().map(math_italic).collect();
+                }
                 if *gid != 0 {
                     self.push_unpainted(fid, size, y, run.style.color, unpainted.take());
                     self.current().ops.push(
@@ -37135,9 +37146,11 @@ mod field_tests {
         let run = runs.iter().find(|r| !r.text.is_empty()).expect("math run");
         assert_eq!(run.text, "ab2");
         assert!(run.style.italic);
+        assert!(run.math_ascii, "they still read back as math letters");
         drop(_none);
         let runs = math_runs(r#"<w:p><m:oMath><m:r><m:t>a</m:t></m:r></m:oMath></w:p>"#);
         assert_eq!(runs[0].text, "\u{1D44E}", "the flag is restored");
+        assert!(!runs[0].math_ascii);
     }
 
     #[test]
@@ -51065,6 +51078,27 @@ mod coverage_round_three_tests {
                     ("B", 1, false)
                 ]
             );
+        }
+
+        /// Math letters painted ASCII italic (no face draws U+1D44E) carry
+        /// Word's math text: the native PDF's reads 𝑎, not a.
+        #[test]
+        fn ascii_math_letters_paint_ascii_but_carry_math_text() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let mut run = TextRun::new("a+2", Defaults::word().run);
+            run.style.italic = true;
+            run.math_ascii = true;
+            lay.emit_paragraph_runs(&[run], &exact_style(), false, FloatWrap::default());
+            let texts: Vec<&str> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts, ["\u{1D44E}", "+", "2"]);
         }
 
         #[test]

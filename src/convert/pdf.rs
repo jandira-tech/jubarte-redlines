@@ -658,6 +658,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         for (ch, gid) in text.chars().zip(glyphs.iter()) {
                             let adv = f.advance_pt(ch, *size) * *hscale;
                             let show = show_text(
+                                f,
                                 &hex_glyphs(&[*gid]),
                                 &[*gid],
                                 ch.encode_utf8(&mut [0; 4]),
@@ -705,7 +706,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let show = if let Some(bytes) = encoded {
                         format!("{} Tj", pdf_literal(bytes))
                     } else {
-                        show_text(&hex_glyphs(glyphs), glyphs, text)
+                        show_text(fonts.get(*face), &hex_glyphs(glyphs), glyphs, text)
                     };
                     let (r, g, b) = (color[0], color[1], color[2]);
                     // A `w:w` scale squeezes the glyphs themselves about
@@ -801,7 +802,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let show = if let Some(bytes) = encoded {
                         format!("{} Tj", pdf_literal(bytes))
                     } else {
-                        show_text(&hex_glyphs(glyphs), glyphs, text)
+                        show_text(fonts.get(*face), &hex_glyphs(glyphs), glyphs, text)
                     };
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
@@ -1342,10 +1343,16 @@ type TextStateBits = (u32, [u32; 3], u32);
 
 /// A run's text-showing operation, `{lit} Tj`. A run that paints `.notdef`
 /// for text no face covers reads back as NULs, since `/ToUnicode` never maps
-/// glyph 0; an `/ActualText` span (PDF 32000-1 14.9.4) gives search and copy
+/// glyph 0, and a math letter painted from its ASCII italic reads back as
+/// ASCII; an `/ActualText` span (PDF 32000-1 14.9.4) gives search and copy
 /// its text (KNOWN_ISSUES #9: WebAssembly has no CJK or math face).
-fn show_text(lit: &str, glyphs: &[u16], text: &str) -> String {
-    if glyphs.contains(&0) && text.chars().any(|c| !c.is_whitespace()) {
+fn show_text(face: &super::font::Face, lit: &str, glyphs: &[u16], text: &str) -> String {
+    let notdef = glyphs.contains(&0) && text.chars().any(|c| !c.is_whitespace());
+    let stood_in = || {
+        text.chars()
+            .any(|c| matches!(c, '\u{210E}' | '\u{1D400}'..='\u{1D7FF}') && face.glyph(c) == 0)
+    };
+    if notdef || stood_in() {
         format!(
             "/Span <</ActualText {}>> BDC {lit} Tj EMC",
             pdf_text_string(text)
@@ -3000,6 +3007,27 @@ mod residual_byte_and_geometry_contract_tests {
             "{pdf}"
         );
         assert_eq!(pdf.matches("/ActualText").count(), 2, "{pdf}");
+
+        // A math letter painted from its ASCII italic reads back as itself.
+        let a = raw.glyph_index('a').unwrap().0;
+        let mut page = Page::new(200.0, 300.0);
+        page.ops.push(Op::text(
+            face,
+            10.0,
+            10.0,
+            200.0,
+            vec![a],
+            [0.0, 0.0, 0.0],
+            "\u{1D44E}".to_string(),
+        ));
+        let pdf = emit(&fonts, std::slice::from_ref(&page), PdfOptions::default());
+        let pdf = String::from_utf8_lossy(&pdf);
+        assert!(
+            pdf.contains(&format!(
+                "/Span <</ActualText <FEFFD835DC4E>>> BDC <{a:04X}> Tj EMC"
+            )),
+            "{pdf}"
+        );
     }
 
     #[test]
