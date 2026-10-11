@@ -322,7 +322,9 @@ pub enum OperationKind {
     /// anchored on the same range. Word threads are one level deep, so a
     /// reply to a reply joins the thread's first comment.
     ReplyComment {
-        /// `w:id` of the comment replied to (`jubarte comments` lists them).
+        /// `w:id` of the comment replied to (`jubarte comments` lists them):
+        /// a number, or `"c27"`.
+        #[serde(deserialize_with = "crate::ids::comment_id_de")]
         comment_id: u32,
         /// Reply text; `\n` starts a new line.
         text: String,
@@ -330,7 +332,8 @@ pub enum OperationKind {
     /// Resolve comment `comment_id` and its replies (`done: false` opens
     /// them again).
     ResolveComment {
-        /// `w:id` of the comment.
+        /// `w:id` of the comment: a number, or `"c27"`.
+        #[serde(deserialize_with = "crate::ids::comment_id_de")]
         comment_id: u32,
         #[serde(default = "resolve_done")]
         /// Resolved (default) or open.
@@ -339,7 +342,8 @@ pub enum OperationKind {
     /// Replace the text of comment `comment_id`; its id, author, date and
     /// thread stay.
     EditComment {
-        /// `w:id` of the comment.
+        /// `w:id` of the comment: a number, or `"c27"`.
+        #[serde(deserialize_with = "crate::ids::comment_id_de")]
         comment_id: u32,
         /// New text; `\n` starts a new line.
         text: String,
@@ -347,7 +351,8 @@ pub enum OperationKind {
     /// Remove comment `comment_id`, its replies, their range markers and
     /// references.
     DeleteComment {
-        /// `w:id` of the comment.
+        /// `w:id` of the comment: a number, or `"c27"`.
+        #[serde(deserialize_with = "crate::ids::comment_id_de")]
         comment_id: u32,
     },
     /// Insert a table next to the anchor paragraph. Each cell holds one
@@ -747,8 +752,9 @@ pub enum Side {
 
 /// Paragraph selector; every form must match exactly one paragraph. Ids
 /// name their story (`body:p:3`, `header1:p:0`) or use the agent view's
-/// short forms (`p3`, `header1`, `header1.p1`, `footer2`, `t0.r1.c2`,
-/// `t0.r1.c2.p1`); the report prints the long form. The other forms search
+/// short forms (`p3` or `3`, `header1`, `header1.p1`, `footnotes.p2`,
+/// `t0.row1.cell2`, `t0.row1.cell2.p1`; 0.12's `t0.r1.c2` still reads); the
+/// report prints the long form. The other forms search
 /// the body unless they carry a `story` (`header1`, `footnotes`, ...).
 ///
 /// Ids, short ids and indexes name the source's paragraphs, the ones the

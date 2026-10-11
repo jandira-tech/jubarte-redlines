@@ -17,7 +17,7 @@ use super::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FlagOp {
-    /// The `-p` value: `p12`, `header1`, `t0.r1.c2`, `c5`, or a long id.
+    /// The `-p` value: `p12`, `header1`, `t0.row1.cell2`, `c5`, or a long id.
     pub at: String,
     /// `--anchor`: text inside `at`.
     pub anchor: Option<String>,
@@ -159,13 +159,12 @@ fn content_text(content: &str) -> (String, Option<&'static str>) {
     )
 }
 
-/// `c5` → 5.
+/// `c5` (or 0.12's `#c5`) → 5: the comment a `-p` names.
 fn comment_number(at: &str) -> Option<u32> {
-    let digits = at.strip_prefix('c')?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    match crate::ids::parse_location(at) {
+        Ok(crate::ids::Location::Comment(id)) => Some(id),
+        _ => None,
     }
-    digits.parse().ok()
 }
 
 /// The operation one `-p` group stands for, and a note for the report.
