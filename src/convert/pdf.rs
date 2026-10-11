@@ -627,6 +627,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         let mut gx = *x;
                         for (ch, gid) in text.chars().zip(glyphs.iter()) {
                             let adv = f.advance_pt(ch, *size) * *hscale;
+                            let show = show_text(
+                                &hex_glyphs(&[*gid]),
+                                &[*gid],
+                                ch.encode_utf8(&mut [0; 4]),
+                            );
                             if stands_upright(ch) {
                                 // Stand the glyph up about its em box's
                                 // centre; small marks sit in the cell's upper
@@ -640,20 +645,20 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                                 let _ = writeln!(
                                     stream,
                                     "q 1 0 0 1 {cx:.2} {cy:.2} cm {squeeze}0 1 -1 0 0 0 cm BT /{name} {size:.2} Tf \
-                                     {r:.3} {g:.3} {b:.3} rg {ox:.2} {oy:.2} Td <{gid:04X}> Tj ET Q",
+                                     {r:.3} {g:.3} {b:.3} rg {ox:.2} {oy:.2} Td {show} ET Q",
                                     ox = lift - adv / 2.0,
                                     oy = lift - 0.38 * size,
                                 );
                             } else if squeeze.is_empty() {
                                 let _ = writeln!(
                                     stream,
-                                    "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {gx:.2} {y:.2} Td <{gid:04X}> Tj ET",
+                                    "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {gx:.2} {y:.2} Td {show} ET",
                                 );
                             } else {
                                 let _ = writeln!(
                                     stream,
                                     "q 1 0 0 1 {gx:.2} {y:.2} cm {squeeze}BT /{name} {size:.2} Tf \
-                                     {r:.3} {g:.3} {b:.3} rg 0 0 Td <{gid:04X}> Tj ET Q",
+                                     {r:.3} {g:.3} {b:.3} rg 0 0 Td {show} ET Q",
                                 );
                             }
                             gx += adv;
@@ -667,10 +672,10 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
                     };
-                    let lit = if let Some(bytes) = encoded {
-                        pdf_literal(bytes)
+                    let show = if let Some(bytes) = encoded {
+                        format!("{} Tj", pdf_literal(bytes))
                     } else {
-                        hex_glyphs(glyphs)
+                        show_text(&hex_glyphs(glyphs), glyphs, text)
                     };
                     let (r, g, b) = (color[0], color[1], color[2]);
                     // A `w:w` scale squeezes the glyphs themselves about
@@ -693,12 +698,12 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         };
                         let _ = writeln!(
                             stream,
-                            "q {a} 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q",
+                            "q {a} 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {show} ET Q",
                         );
                     } else if (sx - 1.0).abs() > 0.001 {
                         let _ = writeln!(
                             stream,
-                            "q {sx:.4} 0 0 1 {x:.2} {y:.2} cm BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg 0 0 Td {lit} Tj ET Q",
+                            "q {sx:.4} 0 0 1 {x:.2} {y:.2} cm BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg 0 0 Td {show} ET Q",
                         );
                     } else {
                         let tc = word_device_track(*size);
@@ -731,14 +736,14 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                                 push_hundredths(&mut stream, hx - *px);
                                 stream.push(' ');
                                 push_hundredths(&mut stream, hy - *py);
-                                let _ = writeln!(stream, " Td {lit} Tj");
+                                let _ = writeln!(stream, " Td {show}");
                                 (*px, *py) = (hx, hy);
                             }
                             _ => {
                                 if open_text.take().is_some() {
                                     stream.push_str("ET\n");
                                 }
-                                let _ = writeln!(stream, "BT {state}{x:.2} {y:.2} Td {lit} Tj");
+                                let _ = writeln!(stream, "BT {state}{x:.2} {y:.2} Td {show}");
                                 open_text = Some((state, hx, hy));
                             }
                         }
@@ -763,10 +768,10 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let dx = -width / 2.0;
                     let dy = -size * 0.35;
                     let encoded = page_enc[op_idx].as_deref();
-                    let lit = if let Some(bytes) = encoded {
-                        pdf_literal(bytes)
+                    let show = if let Some(bytes) = encoded {
+                        format!("{} Tj", pdf_literal(bytes))
                     } else {
-                        hex_glyphs(glyphs)
+                        show_text(&hex_glyphs(glyphs), glyphs, text)
                     };
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
@@ -774,7 +779,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let _ = writeln!(
                         stream,
                         "q /WmGs gs 1 0 0 1 {x:.2} {y:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
-                         BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {lit} Tj ET Q",
+                         BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {show} ET Q",
                         nsin = -sin,
                         r = color[0],
                         g = color[1],
@@ -1304,6 +1309,21 @@ fn push_hundredths(out: &mut String, h: i64) {
 
 /// A text operator's size, colour and tracking as bits.
 type TextStateBits = (u32, [u32; 3], u32);
+
+/// A run's text-showing operation, `{lit} Tj`. A run that paints `.notdef`
+/// for text no face covers reads back as NULs, since `/ToUnicode` never maps
+/// glyph 0; an `/ActualText` span (PDF 32000-1 14.9.4) gives search and copy
+/// its text (KNOWN_ISSUES #9: WebAssembly has no CJK or math face).
+fn show_text(lit: &str, glyphs: &[u16], text: &str) -> String {
+    if glyphs.contains(&0) && text.chars().any(|c| !c.is_whitespace()) {
+        format!(
+            "/Span <</ActualText {}>> BDC {lit} Tj EMC",
+            pdf_text_string(text)
+        )
+    } else {
+        format!("{lit} Tj")
+    }
+}
 
 /// Glyph ids as a PDF hex string, four digits each: `<0041002A>`.
 fn hex_glyphs(glyphs: &[u16]) -> String {
@@ -2892,6 +2912,43 @@ mod residual_byte_and_geometry_contract_tests {
                 }
             }
         }
+    }
+
+    /// Text no face covers paints `.notdef`, which `/ToUnicode` never maps:
+    /// an `/ActualText` span keeps it searchable (KNOWN_ISSUES #9, the
+    /// WebAssembly PDF's Japanese form read back as NULs).
+    #[test]
+    fn notdef_runs_carry_their_text_as_actual_text() {
+        let fonts = bundled_fonts();
+        let face = fonts.resolve("PDFContractSans", false, false);
+        let raw = ttf_parser::Face::parse(fonts.get(face).bytes(), 0).unwrap();
+        assert!(raw.glyph_index('研').is_none());
+        let mut page = Page::new(200.0, 300.0);
+        page.ops.push(Op::text(
+            face,
+            10.0,
+            10.0,
+            200.0,
+            vec![0, 0],
+            [0.0, 0.0, 0.0],
+            "研究".to_string(),
+        ));
+        page.ops.push(Op::text(
+            face,
+            10.0,
+            40.0,
+            200.0,
+            vec![raw.glyph_index('A').unwrap().0],
+            [0.0, 0.0, 0.0],
+            "A".to_string(),
+        ));
+        let pdf = emit(&fonts, std::slice::from_ref(&page), PdfOptions::default());
+        let pdf = String::from_utf8_lossy(&pdf);
+        assert!(
+            pdf.contains("/Span <</ActualText <FEFF78147A76>>> BDC <00000000> Tj EMC"),
+            "{pdf}"
+        );
+        assert_eq!(pdf.matches("/ActualText").count(), 1, "{pdf}");
     }
 
     #[test]
