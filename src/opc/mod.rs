@@ -248,10 +248,10 @@ enum ZipEntry<'a> {
     Part(&'a [u8]),
 }
 
-// RUSTSEC-2026-0194: rdocx-opc still uses quick-xml 0.37, whose
-// duplicate-attribute check is quadratic. Scan with our fixed parser first,
-// without duplicate checks, and bound the list before the upstream parser.
-// 256 also matches quick-xml's default namespace declaration limit.
+// Retain the OPC metadata budget independently of the parser upgrade that
+// fixed RUSTSEC-2026-0194/0195. Direct Relationships::from_xml callers use
+// patched quick-xml through rdocx-opc 0.2; package admission also bounds the
+// attribute count. 256 matches quick-xml's default namespace declaration limit.
 fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     loop {

@@ -6,6 +6,8 @@
 //! inside its inflation budget.
 #![no_main]
 
+use jubarte_fuzz as _;
+
 use jubarte::admission::InputLimits;
 use jubarte::strict_translation::strict_to_transitional_docx_within;
 use libfuzzer_sys::fuzz_target;
