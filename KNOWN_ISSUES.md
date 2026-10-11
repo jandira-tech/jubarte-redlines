@@ -10,10 +10,46 @@ Engine defects and unresolved design conflicts.
 
 > **Last full re-check: 2026-10-01, against 0.10.1.** Open items below are the
 > complete set. Findings added since then name the build they were checked on
-> (issues 8 and 9: the 0.12.0 release candidate, 2026-10-10); the other items
+> (issues 8 to 10: the 0.12.0 release candidate, 2026-10-10); the other items
 > have not been re-checked against 0.12.0.
 
 ## Open
+
+### 10. A square-wrapped float does not wrap the lines above its anchor — **OPEN, PDF layout**
+
+**Seen:** the 0.12.0 docx→PDF mini-bench (2026-10-10). The redline
+`617c1284c9…__vs__2773adf157…_redline_2ef6ed00b9` scores 23.7, where
+LibreOffice scores 81.5. Word prints it on 2 pages; jubarte prints it on 1.
+
+**The rule (Word 16.115 probes, `w617`, 2026-10-10):** the last paragraph
+anchors a margin-relative `wrapSquare` picture, 54pt wide, near the page
+foot. Its box overlaps a text line laid out *before* its anchor paragraph.
+Word re-lays the page with the float in place. That earlier line wraps
+around the picture and grows, the anchor paragraph no longer fits, and it
+moves to page 2 with its floats.
+
+The probes isolate the picture:
+
+| Probe | Picture | Word | jubarte |
+|---|---|---|---|
+| original | as in the file, overlaps a text line | 2 pages | 1 page |
+| raised | moved up, overlaps the heading instead | 2 pages | 1 page |
+| `wrapTopAndBottom` | as in the file | 2 pages | 2 pages |
+| lowered | beside empty lines only | 1 page | 1 page |
+| `wrapNone` | as in the file | 1 page | 1 page |
+
+Whether the paragraph is deleted or live does not matter.
+
+**Cause:** jubarte lays the page out in one pass. A float takes effect from
+its anchor paragraph on, and the lines already placed on the page never see
+it. `wrapTopAndBottom` matches Word only because the anchor line itself
+meets the band (`apply_top_bottom_wrap`).
+
+**Action:** a page re-layout pass. When a paragraph anchors a margin- or
+page-relative square or tight float whose box overlaps lines already
+placed on its page, lay those lines out again around it, then move the
+anchor paragraph on if it no longer fits. It is not a small change, so it
+is left out of 0.12.
 
 ### 9. WebAssembly PDFs paint no CJK text the document does not embed a font for — **OPEN, fonts**
 
