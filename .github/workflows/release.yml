@@ -137,7 +137,7 @@ jobs:
           "@ | Set-Content "$stage/fonts/NOTICE.txt"
           Compress-Archive -Path $stage -DestinationPath "dist/$stage.zip"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jubarte-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
           path: dist/
@@ -221,7 +221,7 @@ jobs:
           set -euo pipefail
           docker run --rm -v "$PWD/jubarte-python/dist:/dist:ro" python:3.12-alpine \
             sh -ec 'pip install --no-index --find-links /dist jubarte-redlines && python -c "import jubarte_redlines as j; print(j.capabilities()[\"engine_version\"])"'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
           path: jubarte-python/dist/
