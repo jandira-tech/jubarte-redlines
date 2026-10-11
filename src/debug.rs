@@ -265,6 +265,25 @@ fn local(dom: &Dom, n: NodeId) -> String {
         .unwrap_or_default()
 }
 
+/// Whether a table cell's content ends in a paragraph. A cell-level content
+/// control counts by what its content ends in: Word writes and opens a cell
+/// whose last child is a `w:sdt` (nested or not) ending in a `w:p`.
+pub(crate) fn cell_ends_in_paragraph(dom: &Dom, tc: NodeId) -> bool {
+    let mut node = tc;
+    loop {
+        let last = dom
+            .elements(node, None)
+            .into_iter()
+            .map(|c| (c, local(dom, c)))
+            .rfind(|(_, name)| !matches!(name.as_str(), "tcPr" | "sdtPr" | "sdtEndPr"));
+        match last {
+            Some((_, name)) if name == "p" => return true,
+            Some((child, name)) if name == "sdt" || name == "sdtContent" => node = child,
+            _ => return false,
+        }
+    }
+}
+
 /// Story boundaries: a text box is a story inside the story that anchors it.
 const STORIES: [&str; 7] = [
     "txbxContent",
@@ -846,19 +865,17 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
             "instrText" | "delInstrText" if dom.value(n).is_empty() => {
                 f.add(&format!("{name}-empty"), part, path(dom, n));
             }
-            "tc" => {
+            "tc" if !cell_ends_in_paragraph(dom, n) => {
                 let last = dom
                     .elements(n, None)
                     .into_iter()
                     .map(|c| local(dom, c))
                     .rfind(|c| c.as_str() != "tcPr");
-                if last.as_deref() != Some("p") {
-                    f.add(
-                        "cell-not-ending-in-p",
-                        part,
-                        format!("{} last={}", path(dom, n), last.unwrap_or_default()),
-                    );
-                }
+                f.add(
+                    "cell-not-ending-in-p",
+                    part,
+                    format!("{} last={}", path(dom, n), last.unwrap_or_default()),
+                );
             }
             "tr" if !dom
                 .descendants(n, None)

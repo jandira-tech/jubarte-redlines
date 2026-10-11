@@ -1743,14 +1743,7 @@ fn end_cells_with_a_paragraph(dom: &mut Dom, root: NodeId) {
     let cells: Vec<NodeId> = dom
         .descendants(root, Some(&W::name("tc")))
         .into_iter()
-        .filter(|&tc| {
-            let last = dom
-                .elements(tc, None)
-                .into_iter()
-                .filter_map(|c| dom.name(c).map(|n| n.local_name().to_string()))
-                .rfind(|c| c != "tcPr");
-            last.as_deref() != Some("p")
-        })
+        .filter(|&tc| !crate::debug::cell_ends_in_paragraph(dom, tc))
         .collect();
     for tc in cells {
         let p = dom.new_element(W::p());

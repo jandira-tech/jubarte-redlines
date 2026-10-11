@@ -257,6 +257,32 @@ fn a_cell_without_a_last_paragraph_gets_one() {
     assert!(xml.contains("<w:tcPr/><w:p/></w:tc>"), "{xml}");
 }
 
+/// A cell-level content control: the cell's last child is a `w:sdt` (here two,
+/// nested) whose content ends in the paragraph. Word writes and opens this
+/// shape (file_114/115 and file_196/197 redlines of the 0.12.0 sample, Word
+/// 16.115, 2026-10-10); appending a paragraph after it adds a blank line.
+#[test]
+fn a_cell_ending_in_a_content_control_paragraph_is_sound() {
+    let body = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid><w:tr><w:tc><w:tcPr/><w:sdt><w:sdtPr/><w:sdtContent><w:p><w:r><w:t>one</w:t></w:r></w:p></w:sdtContent></w:sdt></w:tc><w:tc><w:tcPr/><w:sdt><w:sdtPr/><w:sdtContent><w:sdt><w:sdtPr/><w:sdtContent><w:p><w:r><w:t>two</w:t></w:r></w:p></w:sdtContent></w:sdt></w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>"#;
+    let findings = validate(&docx(body)).unwrap();
+    assert!(
+        !codes(&findings).contains(&"CELL_WITHOUT_PARAGRAPH"),
+        "{findings:?}"
+    );
+}
+
+/// A content control that ends in a table still leaves the cell without a
+/// closing paragraph.
+#[test]
+fn a_cell_ending_in_a_content_control_table_still_needs_a_paragraph() {
+    let body = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid><w:tr><w:tc><w:tcPr/><w:sdt><w:sdtPr/><w:sdtContent><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="50"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl></w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>"#;
+    let findings = validate(&docx(body)).unwrap();
+    assert!(
+        codes(&findings).contains(&"CELL_WITHOUT_PARAGRAPH"),
+        "{findings:?}"
+    );
+}
+
 #[test]
 fn an_orphan_comment_anchor_is_dropped_with_its_reference_run() {
     let body = r#"<w:p><w:commentRangeStart w:id="3"/><w:r><w:t>x</w:t></w:r><w:commentRangeEnd w:id="3"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="3"/></w:r></w:p>"#;
