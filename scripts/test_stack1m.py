@@ -72,6 +72,22 @@ class Stack1m(unittest.TestCase):
             code = stack1m.main([str(self.binary), str(self.tmp), str(self.tmp / "out"), str(self.redline)])
         self.assertEqual(code, 0)
 
+    def fake(self, body):
+        binary = self.tmp / "fake"
+        binary.write_text("#!/bin/sh\n" + body)
+        binary.chmod(0o755)
+        return str(binary)
+
+    def test_a_job_past_its_timeout_fails(self):
+        # CodeRabbit on #391: the timeout branch had no test.
+        self.assertEqual(stack1m.run(self.fake("exec sleep 30\n"), 1024, 1, "s:0", ["compare"]),
+                         ("s:0", "timed out after 1 s"))
+
+    def test_a_job_killed_by_a_signal_fails_with_its_signal(self):
+        # A stack overflow ends the binary with a signal, not an exit code.
+        failure = stack1m.run(self.fake("echo overflow >&2\nkill -SEGV $$\n"), 1024, 30, "s:0", ["compare"])
+        self.assertEqual(failure, ("s:0", "signal 11: overflow"))
+
 
 if __name__ == "__main__":
     unittest.main()
