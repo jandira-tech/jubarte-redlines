@@ -135,11 +135,11 @@ tracked change and comment. The ids are the ones `edit`, `accept --id`,
 source: received.docx
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 5                       # 1 insertion, 4 substitutions (9 Word marks)
+revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
 comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
-  AC: Ann Counsel                  # 5 revisions, 2 comments, 2026-10-01T09:00:00Z
+  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
   AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z
 body: p0-p20, 1 table, 2 pages     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in

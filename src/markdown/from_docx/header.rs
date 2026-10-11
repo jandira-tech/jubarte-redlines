@@ -71,11 +71,9 @@ pub(crate) struct Facts<'a> {
     pub comments_inline: bool,
     pub tracking_on: bool,
     pub tags: Vec<RevTag>,
-    pub marks: usize,
-    pub format_changes: usize,
-    /// The author of every formatting change, as stored (`None` when the
-    /// change names none).
-    pub format_authors: Vec<Option<String>>,
+    /// The document's changes, as `jubarte changes` lists them: the one
+    /// revision count.
+    pub changes: Vec<crate::changes::Change>,
     pub comments: Vec<CommentFact>,
     pub handles: &'a Handles,
     /// Resolved comment ids (`w15:done`), from `agent::Threads`.
@@ -156,6 +154,76 @@ fn join(items: &[String]) -> String {
     items.join(", ")
 }
 
+/// The `revisions:` line's comment: the body's marks and the changes the
+/// view shows them as, then formatting (body and styles) and each other
+/// story's count: `9 marks shown as 5 changes: 1 insertion, 4
+/// substitutions; 2 formatting; 1 in header1`. Empty for no change.
+fn revisions_comment(f: &Facts) -> String {
+    use crate::changes::ChangeKind;
+    let story = |c: &crate::changes::Change| {
+        c.id.split_once(":rev:")
+            .map_or("body", |(story, _)| story)
+            .to_string()
+    };
+    let marks = f
+        .changes
+        .iter()
+        .filter(|c| story(c) == "body" && c.kind != ChangeKind::Formatting)
+        .count();
+    let formatting = f
+        .changes
+        .iter()
+        .filter(|c| {
+            c.kind == ChangeKind::Formatting && matches!(story(c).as_str(), "body" | "styles")
+        })
+        .count();
+    let mut others: Vec<(String, usize)> = Vec::new();
+    for c in &f.changes {
+        let s = story(c);
+        if matches!(s.as_str(), "body" | "styles") {
+            continue;
+        }
+        match others.iter_mut().find(|(name, _)| *name == s) {
+            Some((_, n)) => *n += 1,
+            None => others.push((s, 1)),
+        }
+    }
+    let mut parts = Vec::new();
+    if marks > 0 {
+        let mut kinds = Vec::new();
+        for (kind, one, many) in [
+            ("ins", "insertion", "insertions"),
+            ("del", "deletion", "deletions"),
+            ("sub", "substitution", "substitutions"),
+            ("mark", "paragraph mark", "paragraph marks"),
+            ("row", "table row", "table rows"),
+            ("cell", "table cell", "table cells"),
+        ] {
+            let n = f.tags.iter().filter(|t| t.kind == kind).count();
+            if n > 0 {
+                kinds.push(plural(n, one, many));
+            }
+        }
+        let marks = plural(marks, "mark", "marks");
+        parts.push(if f.tags.is_empty() {
+            marks
+        } else {
+            format!(
+                "{marks} shown as {}: {}",
+                plural(f.tags.len(), "change", "changes"),
+                join(&kinds)
+            )
+        });
+    }
+    if formatting > 0 {
+        parts.push(format!("{formatting} formatting"));
+    }
+    for (name, n) in others {
+        parts.push(format!("{n} in {name}"));
+    }
+    parts.join("; ")
+}
+
 pub(crate) fn render(f: &Facts) -> String {
     let mut out = String::from("---\n");
     kv(
@@ -168,9 +236,9 @@ pub(crate) fn render(f: &Facts) -> String {
         .order
         .iter()
         .filter(|a| {
-            f.tags
+            f.changes
                 .iter()
-                .any(|t| t.author.as_deref() == Some(a.as_str()))
+                .any(|c| c.author.as_deref() == Some(a.as_str()))
         })
         .filter_map(|a| f.handles.by_author.get(a).cloned())
         .collect();
@@ -209,7 +277,7 @@ pub(crate) fn render(f: &Facts) -> String {
             &format!("view: {}", if accept { "accept-all" } else { "reject-all" }),
             Some(&format!(
                 "{}{by} shown as {}; file unchanged",
-                plural(f.tags.len(), "revision", "revisions"),
+                plural(f.changes.len(), "revision", "revisions"),
                 if accept { "accepted" } else { "rejected" }
             )),
         ),
@@ -227,36 +295,11 @@ pub(crate) fn render(f: &Facts) -> String {
             Some("w:trackRevisions not set; new edits are not tracked unless edit sets it"),
         );
     }
-    if f.tags.is_empty() {
-        let formatting = (f.format_changes > 0)
-            .then(|| plural(f.format_changes, "formatting change", "formatting changes"));
-        kv(&mut out, "revisions: 0", formatting.as_deref());
-    } else {
-        let count = |kind: &str| f.tags.iter().filter(|t| t.kind == kind).count();
-        let mut parts = Vec::new();
-        for (kind, one, many) in [
-            ("ins", "insertion", "insertions"),
-            ("del", "deletion", "deletions"),
-            ("sub", "substitution", "substitutions"),
-            ("mark", "paragraph mark", "paragraph marks"),
-            ("row", "table row", "table rows"),
-            ("cell", "table cell", "table cells"),
-        ] {
-            let n = count(kind);
-            if n > 0 {
-                parts.push(plural(n, one, many));
-            }
-        }
-        let mut marks = plural(f.marks, "Word mark", "Word marks");
-        if f.format_changes > 0 {
-            marks.push_str(&format!(", {} formatting", f.format_changes));
-        }
-        kv(
-            &mut out,
-            &format!("revisions: {}", f.tags.len()),
-            Some(&format!("{} ({marks})", join(&parts))),
-        );
-    }
+    kv(
+        &mut out,
+        &format!("revisions: {}", f.changes.len()),
+        Some(&revisions_comment(f)),
+    );
     if f.comments.is_empty() {
         kv(&mut out, "comments: 0", None);
     } else {
@@ -327,30 +370,18 @@ pub(crate) fn render(f: &Facts) -> String {
             continue;
         };
         let revisions = f
-            .tags
+            .changes
             .iter()
-            .filter(|t| t.author.as_deref() == Some(author.as_str()))
+            .filter(|c| c.author.as_deref() == Some(author.as_str()))
             .count();
         let comments = f
             .comments
             .iter()
             .filter(|c| c.author.as_deref() == Some(author.as_str()))
             .count();
-        let formatting = f
-            .format_authors
-            .iter()
-            .filter(|a| a.as_deref() == Some(author.as_str()))
-            .count();
         let mut parts = Vec::new();
         if revisions > 0 {
             parts.push(plural(revisions, "revision", "revisions"));
-        }
-        if formatting > 0 {
-            parts.push(plural(
-                formatting,
-                "formatting change",
-                "formatting changes",
-            ));
         }
         if comments > 0 {
             parts.push(plural(comments, "comment", "comments"));

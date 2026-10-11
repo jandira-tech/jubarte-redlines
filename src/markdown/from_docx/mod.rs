@@ -361,7 +361,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     if let Some(original) = &original {
         let body = original.child("body").unwrap_or(original);
         let tags = agent::collect_revisions(body, &handles);
-        let (marks, format_changes) = agent::count_marks(body);
         let (rendered, hard) = agent::page_counts(body);
         let settings = package.xml("word/settings.xml").ok().flatten();
         let core = package.xml("docProps/core.xml").ok().flatten();
@@ -576,9 +575,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 .as_ref()
                 .is_some_and(|s| s.child("trackRevisions").is_some()),
             tags,
-            marks,
-            format_changes,
-            format_authors: agent::format_change_authors(body),
+            changes: crate::changes::list_changes(bytes).unwrap_or_default(),
             comments: comment_facts,
             handles: &handles,
             done: &threads.done,

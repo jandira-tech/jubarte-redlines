@@ -699,22 +699,6 @@ pub(crate) fn escape_line_starts(text: &str) -> String {
         .join("\n")
 }
 
-/// The authors of the formatting changes (`*PrChange`) under `e` in document
-/// order, text boxes included once, as `count_marks` counts them.
-pub(crate) fn format_change_authors(e: &Element) -> Vec<Option<String>> {
-    fn walk(e: &Element, out: &mut Vec<Option<String>>) {
-        for c in shown_children(e) {
-            if c.local().ends_with("PrChange") {
-                out.push(c.attr("author").map(str::to_string));
-            }
-            walk(c, out);
-        }
-    }
-    let mut out = Vec::new();
-    walk(e, &mut out);
-    out
-}
-
 /// The tables under `e` in document order, text boxes excluded.
 pub(crate) fn tables(e: &Element) -> Vec<&Element> {
     fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
@@ -1198,19 +1182,6 @@ fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
     for child in shown_children(e) {
         collect_in(child, handles, out);
     }
-}
-
-/// Count of revision elements (`w:ins`, `w:del`, moves, cell marks) and of
-/// formatting changes (`*PrChange`) under `body`, text boxes included once.
-pub(crate) fn count_marks(e: &Element) -> (usize, usize) {
-    let mut marks = usize::from(is_revision(e.local()));
-    let mut formats = usize::from(e.local().ends_with("PrChange"));
-    for child in shown_children(e) {
-        let (m, f) = count_marks(child);
-        marks += m;
-        formats += f;
-    }
-    (marks, formats)
 }
 
 /// One block of the rendered body: its lines, the paragraph span it covers

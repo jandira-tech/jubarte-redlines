@@ -937,14 +937,14 @@ fn header_counts_revisions_comments_and_authors() {
     );
     assert_eq!(
         lines[3],
-        "revisions: 2                       # 1 insertion, 1 substitution (3 Word marks)"
+        "revisions: 3                       # 3 marks shown as 2 changes: 1 insertion, 1 substitution"
     );
     assert_eq!(lines[4], "comments: 0");
     assert_eq!(lines[5], "authors:");
     assert_eq!(lines[6], "  document_owner: Jane Owner       # dc:creator");
     assert_eq!(
         lines[7],
-        "  AC: Ann Counsel                  # 1 revision, 2026-10-01T09:00:00Z"
+        "  AC: Ann Counsel                  # 2 revisions, 2026-10-01T09:00:00Z"
     );
     assert_eq!(
         lines[8],
@@ -1384,7 +1384,9 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     let (del_id, ins_id) = (ids[0], ids[1]);
     assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>#c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
     assert!(
-        text.contains("revisions: 1                       # 1 substitution (2 Word marks)"),
+        text.contains(
+            "revisions: 2                       # 2 marks shown as 1 change: 1 substitution"
+        ),
         "{text}"
     );
     assert!(
@@ -1393,7 +1395,7 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     );
     assert!(
         text.contains(
-            "  AC: Ann Counsel                  # 1 revision, 1 comment, 2026-10-01T09:00:00Z"
+            "  AC: Ann Counsel                  # 2 revisions, 1 comment, 2026-10-01T09:00:00Z"
         ),
         "{text}"
     );
@@ -1521,7 +1523,9 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
         r"\{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>#\d+\+\d+ @JD<<\}\.",
     );
     assert!(
-        text.contains("revisions: 2                       # 2 substitutions (4 Word marks)"),
+        text.contains(
+            "revisions: 4                       # 4 marks shown as 2 changes: 2 substitutions"
+        ),
         "{text}"
     );
 }
@@ -1842,13 +1846,13 @@ fn header_counts_formatting_only_changes() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("revisions: 0 ") && l.ends_with("# 1 formatting change")),
+            .any(|l| l.starts_with("revisions: 1 ") && l.ends_with("# 1 formatting")),
         "{out}"
     );
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("  AC: Ann Counsel ") && l.ends_with("# 1 formatting change")),
+            .any(|l| l.starts_with("  AC: Ann Counsel ") && l.ends_with("# 1 revision")),
         "{out}"
     );
 }
@@ -2039,7 +2043,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         "{out}"
     );
     assert!(
-        out.contains("MU: Modified User") && out.contains("# 3 revisions, 2026-10-01T09:00:00Z"),
+        out.contains("MU: Modified User") && out.contains("# 4 revisions, 2026-10-01T09:00:00Z"),
         "{out}"
     );
     captures(
@@ -3111,13 +3115,13 @@ fn header_counts_a_text_box_formatting_change_once() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("revisions: 0 ") && l.contains("1 formatting change")),
+            .any(|l| l.starts_with("revisions: 1 ") && l.ends_with("# 1 formatting")),
         "{lines:?}"
     );
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("1 formatting change")),
+            .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("1 revision")),
         "{lines:?}"
     );
     assert!(view.contains("fmt #31 @AC"), "{view}");
