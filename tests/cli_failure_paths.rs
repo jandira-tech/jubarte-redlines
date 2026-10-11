@@ -305,6 +305,37 @@ fn convert_update_fields_refuses_a_report_a_dangling_output_link_names() {
     }
 }
 
+/// Neither file exists yet, so identity cannot tell `Out.docx` from
+/// `out.docx`; on a volume that ignores case they are one file, and the
+/// docx replaced the report written before it (pi review of #402).
+#[test]
+fn convert_update_fields_refuses_a_report_that_differs_from_the_output_by_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(
+        r#"<w:p><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    let args = [
+        "convert",
+        "input.docx",
+        "-o",
+        "Out.docx",
+        "--update-fields",
+        "--report",
+        "out.docx",
+        "--force",
+    ];
+    let out = run(dir.path(), &args);
+    assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("--report 'out.docx' is the same file as the Word output"),
+        "{out:?}"
+    );
+    assert!(!dir.path().join("Out.docx").exists());
+    assert!(!dir.path().join("out.docx").exists());
+}
+
 #[test]
 fn debug_diff_disambiguates_duplicate_stems_and_duplicate_paths() {
     let dir = tempfile::tempdir().unwrap();

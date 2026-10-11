@@ -151,7 +151,10 @@ fn revision_style(
 /// by identity, which sees through hard links, symlinks and a volume that
 /// ignores case; a path not written yet is keyed by its canonicalized parent
 /// and its name (`out.pdf` and `./out.pdf` match), after following a symlink
-/// whose target does not exist yet, since a write goes through it.
+/// whose target does not exist yet, since a write goes through it. Names
+/// are matched ignoring case: on a volume that ignores it they are one file
+/// once written, and on one that does not the cost is a refused pair the
+/// user can rename.
 fn same_path(a: &Path, b: &Path) -> bool {
     if let Ok(same) = same_file::is_same_file(a, b) {
         return same;
@@ -173,7 +176,11 @@ fn same_path(a: &Path, b: &Path) -> bool {
             Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
             _ => PathBuf::from("."),
         };
-        Some(std::fs::canonicalize(parent).ok()?.join(name))
+        Some(
+            std::fs::canonicalize(parent)
+                .ok()?
+                .join(name.to_string_lossy().to_lowercase()),
+        )
     }
     a == b || matches!((key(a), key(b)), (Some(x), Some(y)) if x == y)
 }
