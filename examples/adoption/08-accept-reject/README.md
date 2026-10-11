@@ -62,13 +62,13 @@ jubarte reject redline.docx -o rejected_jubarte.docx --force
 | `rejected_jubarte.docx` | `jubarte reject` |
 | `accept_text_jubarte.txt`, `accept_text_libreoffice.txt`, `accept_text.diff` | `jubarte text` of both accepted files and their diff |
 | `reject_text_jubarte.txt`, `text_original.txt`, `reject_text.diff` | reject vs original |
-| `revisions_accepted_*.log` | tracked changes left in each accepted file (0 and 0) |
+| `changes_accepted_*.log` | tracked changes left in each accepted file (0 and 0) |
 | `accept_page_1_jubarte.png`, `accept_page_1_libreoffice.png` | page 1 of each accepted file, rendered by `jubarte convert --png --dpi 72` |
 | `uno_probe.log` | the interpreter probe quoted above |
 
 ## Result
 
-- `jubarte revisions` reports **0 revisions** in both accepted files.
+- `jubarte changes` lists **0 changes** in both accepted files.
 - `accept_text.diff` shows exactly four lines of difference, all the same
   kind: LibreOffice writes an explicit `Normal` paragraph style on the body
   paragraphs, so `jubarte text` tags them `[body:p:1 Normal]` where
