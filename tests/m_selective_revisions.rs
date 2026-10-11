@@ -494,3 +494,165 @@ fn recorded_marks_are_history_and_mark_formatting_goes_with_the_mark() {
     assert_word_valid_package(&out);
     assert_eq!(ids(&out), ["body:rev:1", "body:rev:4"]);
 }
+
+/// Every spelling of a change id selects the same change (plan Task 3).
+#[test]
+fn every_spelling_of_a_change_id_selects_the_same_change() {
+    let pkg = three_changes();
+    let want = accept_changes(&pkg, &filter_ids(&["body:rev:2"])).unwrap();
+    for spelling in ["r2", "2", "#2", "body.r2"] {
+        assert_eq!(
+            accept_changes(&pkg, &filter_ids(&[spelling])).unwrap(),
+            want,
+            "{spelling}"
+        );
+    }
+    let both = accept_changes(&pkg, &filter_ids(&["body:rev:1", "body:rev:2"])).unwrap();
+    for spelling in ["r1+2", "1+2", "#1+2"] {
+        assert_eq!(
+            accept_changes(&pkg, &filter_ids(&[spelling])).unwrap(),
+            both,
+            "{spelling}"
+        );
+    }
+    let err = accept_changes(&pkg, &filter_ids(&["c2"])).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "c2: expected a change id such as r12, header1.r1 or body:rev:12"
+    );
+    assert!(matches!(err, ChangeError::InvalidId(_)), "{err:?}");
+    let err = accept_changes(&pkg, &filter_ids(&["r9"])).unwrap_err();
+    assert!(
+        matches!(&err, ChangeError::UnknownChange(id) if id == "body:rev:9"),
+        "{err:?}"
+    );
+    assert_eq!(err.to_string(), "no tracked change r9");
+}
+
+/// Listings carry the short id and the paragraph each change sits in.
+#[test]
+fn changes_carry_their_short_id_and_paragraph() {
+    let changes = list_changes(&three_changes()).unwrap();
+    let got: Vec<_> = changes
+        .iter()
+        .map(|c| (c.r#ref.as_str(), c.paragraph.as_deref()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("r1", Some("body:p:0")),
+            ("r2", Some("body:p:0")),
+            ("r3", Some("body:p:1")),
+        ]
+    );
+    let json = serde_json::to_string(&changes[0]).unwrap();
+    assert!(
+        json.starts_with(r#"{"id":"body:rev:1","ref":"r1","#),
+        "{json}"
+    );
+    assert!(json.contains(r#""paragraph":"body:p:0""#), "{json}");
+}
+
+#[test]
+fn changes_text_is_the_listing() {
+    let changes = list_changes(&three_changes()).unwrap();
+    assert_eq!(
+        jubarte::changes::changes_text(&changes),
+        "r1\tinsertion\ttext\tAnn\tp0\t\"new\"\n\
+         r2\tdeletion\ttext\tBob\tp0\t\"old\"\n\
+         r3\tformatting\tproperties\tAnn\tp1\t\"Centred\"\n\
+         3 change(s)\n"
+    );
+}
+
+/// A duplicate `w:ins` id names two changes: resolving it is refused, and
+/// the message lists both and names the repair.
+#[test]
+fn a_duplicate_insertion_id_is_ambiguous() {
+    let pkg = docx(&format!(
+        r#"<w:p><w:ins w:id="4" {A}><w:r><w:t>one</w:t></w:r></w:ins><w:ins w:id="4" {A}><w:r><w:t>two</w:t></w:r></w:ins></w:p>"#
+    ));
+    for spelling in ["r4", "body:rev:4"] {
+        let err = accept_changes(&pkg, &filter_ids(&[spelling])).unwrap_err();
+        assert!(matches!(&err, ChangeError::Ambiguous { candidates, .. } if candidates.len() == 2));
+        assert_eq!(
+            err.to_string(),
+            "r4 names 2 changes (duplicate w:id; validate --repair renumbers them): r4 insertion \"one\" in p0; r4 insertion \"two\" in p0"
+        );
+    }
+}
+
+/// Two paragraphs' formatting changes sharing an id are ambiguous too, but
+/// `validate --repair` does not renumber them, so the message does not
+/// promise it.
+#[test]
+fn a_shared_formatting_id_is_ambiguous_without_the_repair_hint() {
+    let pkg = docx(&format!(
+        r#"<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="3" {A}><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="right"/><w:pPrChange w:id="3" {A}><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Two</w:t></w:r></w:p>"#
+    ));
+    let err = reject_changes(&pkg, &filter_ids(&["r3"])).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "r3 names 2 changes: r3 formatting \"One\" in p0; r3 formatting \"Two\" in p1"
+    );
+}
+
+/// Word gives a style's paragraph and run formatting changes one `w:id`:
+/// one change, listed once as `styles.rN`, resolved whole.
+#[test]
+fn a_styles_one_id_pair_is_one_change() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="21" {A}><w:pPr/></w:pPrChange></w:pPr><w:rPr><w:i/><w:rPrChange w:id="21" {A}><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let styles: &'static str = Box::leak(styles.into_boxed_str());
+    let pkg = common::docx::docx_with(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: styles,
+        }],
+    );
+    let listed = list_changes(&pkg).unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].r#ref, "styles.r21");
+    assert_eq!(listed[0].paragraph, None);
+    let out = reject_changes(&pkg, &filter_ids(&["styles.r21"])).unwrap();
+    assert_word_valid_package(&out);
+    assert!(ids(&out).is_empty());
+    let xml = part_string(&out, "word/styles.xml").unwrap();
+    assert!(
+        !xml.contains("PrChange") && !xml.contains("<w:i/>"),
+        "{xml}"
+    );
+}
+
+/// A header change prints `header1.rN` and resolves by it.
+#[test]
+fn a_header_change_resolves_by_its_short_id() {
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:ins w:id="7" {B}><w:r><w:t>Head</w:t></w:r></w:ins></w:p></w:hdr>"#
+    );
+    let header: &'static str = Box::leak(header.into_boxed_str());
+    let pkg = docx_with_sect(
+        &format!(r#"<w:p><w:ins w:id="7" {A}><w:r><w:t>Body</w:t></w:r></w:ins></w:p>"#),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let refs: Vec<String> = list_changes(&pkg)
+        .unwrap()
+        .into_iter()
+        .map(|c| format!("{} {}", c.r#ref, c.paragraph.unwrap_or_default()))
+        .collect();
+    assert_eq!(refs, ["r7 body:p:0", "header1.r7 header1:p:0"]);
+    let out = reject_changes(&pkg, &filter_ids(&["header1.r7"])).unwrap();
+    assert_eq!(ids(&out), ["body:rev:7"]);
+}

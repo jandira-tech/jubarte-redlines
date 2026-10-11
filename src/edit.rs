@@ -1082,6 +1082,12 @@ fn resolve_selected(
             None,
             format!("resolve_revisions: no tracked change {id}"),
         ),
+        ChangeError::InvalidId(m) => err("INVALID_PLAN", None, format!("resolve_revisions: {m}")),
+        ambiguous @ ChangeError::Ambiguous { .. } => err(
+            "AMBIGUOUS_CHANGE",
+            None,
+            format!("resolve_revisions: {ambiguous}"),
+        ),
         ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
     };
     let listed = crate::changes::list_changes(source).map_err(change_err)?;
@@ -1090,14 +1096,8 @@ fn resolve_selected(
         let Some(filter) = filter else {
             return Ok(Vec::new());
         };
-        if let Some(unknown) = filter
-            .ids
-            .iter()
-            .flatten()
-            .find(|id| !listed.iter().any(|c| &c.id == *id))
-        {
-            return Err(change_err(ChangeError::UnknownChange(unknown.clone())));
-        }
+        let filter = &filter.normalized().map_err(change_err)?;
+        filter.check(&listed).map_err(change_err)?;
         let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
         Ok(listed
             .iter()
