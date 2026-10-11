@@ -32572,9 +32572,11 @@ const JUSTIFY_SQUEEZE: Squeeze = Squeeze {
 /// 21) or the word's length, and paints every advance narrower alike.
 /// Word 16 probes 2026-10-03 (bench `scripts/probe_wp_justify.py`, 42
 /// documents): kept at 1.0385 (Courier New 10 and 9), 1.037 (Arial 12),
-/// 1.038 (Times New Roman 12); wrapped at 1.041 (Courier 14), 1.042
-/// (Arial), 1.043 (Times). Courier New 12 on 468pt holds 67 cells at
-/// 6.985 each; 041ec70002's lines hold 66 and 67 in Word's PDF.
+/// 1.038 (Times New Roman 12); wrapped at 1.042 (Arial), 1.043 (Times).
+/// (The probe's Courier 14 line, once read as a wrap at 1.041, was 1.077:
+/// the generator padded it, fixed in bench 802b99db4.) Courier New 12 on
+/// 468pt holds 67 cells at 6.985 each; 041ec70002's lines hold 66 and 67
+/// in Word's PDF.
 const WP_SQUEEZE: Squeeze = Squeeze {
     share: 0.0,
     word_cap: false,
