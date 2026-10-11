@@ -13,6 +13,15 @@ import pytest
 
 from jubarte_redlines import Document, FieldUpdate, UpdatedFields
 from jubarte_redlines import __main__ as cli
+from docx_fixture import docx
+
+PAGE_BREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+NUMPAGES = (
+    '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+    '<w:r><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r>'
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r>'
+    '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+)
 
 
 @pytest.fixture
@@ -37,27 +46,24 @@ def refreshed():
     return UpdatedFields(document=document, fields=fields, page_count=2)
 
 
-@pytest.mark.parametrize("mode", ["all", "accept", "reject"])
-def test_convert_refreshes_the_resolved_document(args, refreshed, monkeypatch, mode):
-    args.track_changes = mode
-    source = Mock(spec=Document)
-    resolved = source if mode == "all" else getattr(source, mode).return_value
-    resolved.update_fields.return_value = refreshed
-    read = Mock(return_value=source)
-    monkeypatch.setattr(cli, "_read", read)
+@pytest.mark.parametrize("mode,kept,dropped", [("accept", "new", "gone"), ("reject", "gone", "new")])
+def test_convert_refreshes_the_resolved_document(tmp_path, mode, kept, dropped):
+    # A real document, not a mocked one: the tracked paragraph shows which
+    # side was resolved, the NUMPAGES field that the refresh ran after it.
+    stamp = 'w:date="2020-01-01T00:00:00Z"'
+    tracked = (
+        '<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
+        f'<w:del w:id="1" w:author="a" {stamp}><w:r><w:delText>gone</w:delText></w:r></w:del>'
+        f'<w:ins w:id="2" w:author="b" {stamp}><w:r><w:t>new</w:t></w:r></w:ins></w:p>'
+    )
+    source, output = tmp_path / "input.docx", tmp_path / "output.docx"
+    source.write_bytes(docx(tracked + PAGE_BREAK + NUMPAGES))
 
-    assert cli.cmd_convert(args) == 0
+    assert cli.main(["convert", str(source), "-o", str(output), "--update-fields", "--track-changes", mode]) == 0
 
-    read.assert_called_once_with(args.file)
-    resolved.update_fields.assert_called_once_with()
-    for operation in ("accept", "reject"):
-        if operation == mode:
-            getattr(source, operation).assert_called_once_with()
-        else:
-            getattr(source, operation).assert_not_called()
-    if mode != "all":
-        source.update_fields.assert_not_called()
-    assert args.output.read_bytes() == refreshed.document.to_bytes.return_value
+    paragraphs = [p.text for p in Document.read(output).inspect().paragraphs]
+    assert kept in paragraphs[0] and dropped not in paragraphs[0], paragraphs
+    assert paragraphs[-1] == "2", paragraphs
 
 
 def test_field_report_and_console_preserve_unicode_and_escape_control_characters(args, refreshed, capsys):
@@ -110,7 +116,7 @@ def test_existing_destinations_are_checked_before_refresh(args, existing):
     destination.write_bytes(b"preserve this file")
     source = Mock(spec=Document)
 
-    with pytest.raises(cli.CliError, match="already exists.*--force"):
+    with pytest.raises(cli.CliError, match=r"already exists.*--force"):
         cli._write_updated_fields(args, source)
 
     source.update_fields.assert_not_called()
@@ -154,7 +160,7 @@ def test_report_write_failure_prevents_document_write(args, refreshed, capsys):
     source = Mock(spec=Document)
     source.update_fields.return_value = refreshed
 
-    with pytest.raises(cli.CliError, match="writing .*fields.json"):
+    with pytest.raises(cli.CliError, match=r"writing .*fields\.json"):
         cli._write_updated_fields(args, source)
 
     assert not args.output.exists()
@@ -163,19 +169,15 @@ def test_report_write_failure_prevents_document_write(args, refreshed, capsys):
 
 
 @pytest.mark.parametrize("suffix", [".md", ".markdown", ".MD", ".MARKDOWN"])
-def test_markdown_refresh_is_rejected_before_reading_input(args, monkeypatch, suffix):
-    args.file = args.file.with_suffix(suffix)
-    read = Mock()
-    markdown = Mock()
-    monkeypatch.setattr(cli, "_read", read)
-    monkeypatch.setattr(cli, "_from_markdown", markdown)
+def test_markdown_refresh_is_refused_before_anything_is_written(tmp_path, capsys, suffix):
+    note = tmp_path / f"note{suffix}"
+    note.write_text("# Note\n", encoding="utf-8")
+    output, report = tmp_path / "note.docx", tmp_path / "fields.json"
 
-    with pytest.raises(cli.CliError, match="--update-fields needs a Word document in"):
-        cli.cmd_convert(args)
+    assert cli.main(["convert", str(note), "-o", str(output), "--update-fields", "--report", str(report)]) == 1
 
-    read.assert_not_called()
-    markdown.assert_not_called()
-    assert not args.output.exists() and not args.report.exists()
+    assert "--update-fields needs a Word document in" in capsys.readouterr().err
+    assert not output.exists() and not report.exists()
 
 
 @pytest.mark.parametrize("output", ["out.docx", "out.DOCX"])
