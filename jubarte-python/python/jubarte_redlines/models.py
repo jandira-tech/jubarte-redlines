@@ -92,15 +92,24 @@ def _input_limits(value: object) -> Mapping[str, int]:
 
 @dataclass(frozen=True, slots=True)
 class PdfOptions:
-    """PDF options with the same defaults as the current byte API."""
+    """PDF options with the same defaults as the current byte API.
+
+    ``move_comments`` lists the comments after the last page instead of in
+    balloons beside the text; ``changed_only`` keeps only the pages a tracked
+    change touches. Both mirror the binary's flags and apply to PDF and PNG
+    output; ``diff_render`` ignores them.
+    """
 
     compress: bool = False
     revisions: RevisionStyle = "conventional"
     revision_palette: str | None = None
+    move_comments: bool = False
+    changed_only: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.compress, bool):
-            raise TypeError("compress must be a bool")
+        for name in ("compress", "move_comments", "changed_only"):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a bool")
         if self.revisions not in ("conventional", "word", "custom"):
             raise ValueError("revisions must be conventional, word, or custom")
         if self.revision_palette is not None and not isinstance(self.revision_palette, str):
@@ -1233,6 +1242,10 @@ class EditOutcome:
     comment_id: int | None = None
     code: str | None = None
     message: str | None = None
+    #: The anchor as given, when it matched only without its Markdown marks.
+    anchor_given: str | None = None
+    #: The plain text it was read as.
+    anchor_read_as: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1301,6 +1314,8 @@ class _EditOutcomeRow(TypedDict):
     comment_id: NotRequired[int]
     code: NotRequired[str]
     message: NotRequired[str]
+    anchor_given: NotRequired[str]
+    anchor_read_as: NotRequired[str]
 
 
 def _decode_outcomes(rows: list[_EditOutcomeRow]) -> tuple[EditOutcome, ...]:

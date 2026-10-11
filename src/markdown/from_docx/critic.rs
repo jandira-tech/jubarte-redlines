@@ -56,6 +56,67 @@ impl Mark {
 /// `{>>…<<}` note (`Ana Lima (2026-09-29T14:05:00Z)`), already escaped.
 pub(crate) type Change = (Mark, Option<String>);
 
+/// Agent-view attribution: an internal tag (`0@AC`, `1+2@AC`, optionally
+/// `0@AC 2026-10-03T14:05:00Z`) behind this sentinel, so that it is never
+/// mistaken for an author's note. Printed through `agent::format_tag`;
+/// never written to the output.
+pub(crate) const TAG: &str = "\u{E000}";
+
+fn tag(by: Option<&str>) -> Option<&str> {
+    by?.strip_prefix(TAG)
+}
+
+/// The tag proper and its optional inline timestamp.
+fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
+    match tagged.split_once(' ') {
+        Some((t, date)) => (t, Some(date)),
+        None => (tagged, None),
+    }
+}
+
+/// A note's text: the formatted tag, or the plain attribution.
+fn display(by: &str) -> String {
+    match by.strip_prefix(TAG) {
+        Some(tagged) => {
+            let (t, date) = tag_parts(tagged);
+            let mut out = super::agent::format_tag(t);
+            if let Some(date) = date {
+                out.push(' ');
+                out.push_str(date);
+            }
+            out
+        }
+        None => by.to_string(),
+    }
+}
+
+/// Two attributions join as neighbours: equal notes, or two tags of one
+/// author (their ids differ by design).
+fn same_author(a: Option<&str>, b: Option<&str>) -> bool {
+    match (tag(a), tag(b)) {
+        (Some(a), Some(b)) => {
+            super::agent::handle_of(tag_parts(a).0) == super::agent::handle_of(tag_parts(b).0)
+        }
+        _ => a == b,
+    }
+}
+
+/// The tags of two neighbours or of a substitution's two sides, joined,
+/// keeping the first inline timestamp.
+fn join_tagged(a: &str, b: &str) -> String {
+    let (ta, da) = tag_parts(a);
+    let (tb, db) = tag_parts(b);
+    let mut out = format!(
+        "{TAG}{}",
+        super::agent::join_tags(&[ta.to_string(), tb.to_string()])
+    );
+    if let Some(date) = da.or(db) {
+        out.push(' ');
+        out.push_str(date);
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Leaf {
     /// Document text: escaped when rendered.
@@ -63,6 +124,8 @@ enum Leaf {
         text: String,
         bold: bool,
         italic: bool,
+        /// Agent view only: `<u>…</u>`.
+        underline: bool,
         link: Option<String>,
     },
     /// Markdown built by the converter (images, math, note references).
@@ -104,6 +167,8 @@ pub(crate) struct Critic {
     /// The paragraph is joined to more text on the same line (a flattened
     /// table's cells): see [`space_into_last_change`].
     inline_end: bool,
+    /// Agent view: runs of spaces stay as the file holds them.
+    keep_spaces: bool,
 }
 
 impl Critic {
@@ -116,17 +181,33 @@ impl Critic {
         }
     }
 
+    /// Agent view: keeps runs of spaces as the file holds them.
+    pub(crate) fn set_keep_spaces(&mut self) {
+        self.keep_spaces = true;
+    }
+
     /// Marks the paragraph as joined to more text on the same line.
     pub(crate) fn set_inline_end(&mut self) {
         self.inline_end = true;
     }
 
     pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
+        self.push_styled(text, (bold, italic, false), link);
+    }
+
+    /// [`Critic::push`] with underline, which only the agent view sets.
+    pub(crate) fn push_styled(
+        &mut self,
+        text: &str,
+        (bold, italic, underline): (bool, bool, bool),
+        link: Option<&str>,
+    ) {
         if !text.is_empty() {
             self.tokens.push(Token::Leaf(Leaf::Text {
                 text: text.to_string(),
                 bold,
                 italic,
+                underline,
                 link: link.map(str::to_string),
             }));
         }
@@ -214,8 +295,15 @@ impl Critic {
         render(&nodes, &mut pieces, self.plain, &mut 0);
         wrap_markers(&mut pieces);
         let mut inline = Inline::default();
+        if self.keep_spaces {
+            inline.keep_spaces();
+        }
         for piece in pieces {
-            inline.push(&piece.text, piece.bold, piece.italic, piece.link.as_deref());
+            inline.push_styled(
+                &piece.text,
+                (piece.bold, piece.italic, piece.underline),
+                piece.link.as_deref(),
+            );
         }
         inline
     }
@@ -294,10 +382,12 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
         };
         if !nodes.iter().any(Node::has_content) {
             lift_comments(nodes, &mut out);
-        } else if let Some(Node::Span(.., before)) = out
-            .last_mut()
-            .filter(|last| matches!(last, Node::Span(m, b, _) if *m == mark && *b == by))
-        {
+        } else if let Some(Node::Span(_, before_by, before)) = out.last_mut().filter(|last| {
+            matches!(last, Node::Span(m, b, _) if *m == mark && same_author(b.as_deref(), by.as_deref()))
+        }) {
+            if let (Some(a), Some(b)) = (tag(before_by.as_deref()), tag(by.as_deref())) {
+                *before_by = Some(join_tagged(a, b));
+            }
             before.extend(nodes);
         } else {
             out.push(Node::Span(mark, by, nodes));
@@ -326,15 +416,19 @@ fn join_text(nodes: Vec<Node>) -> Vec<Node> {
                     text: before,
                     bold: b,
                     italic: i,
+                    underline: u,
                     link: l,
                 })),
                 Node::Leaf(Leaf::Text {
                     text,
                     bold,
                     italic,
+                    underline,
                     link,
                 }),
-            ) if *b == bold && *i == italic && *l == link => before.push_str(&text),
+            ) if *b == bold && *i == italic && *u == underline && *l == link => {
+                before.push_str(&text);
+            }
             (_, node) => out.push(node),
         }
     }
@@ -349,11 +443,15 @@ fn space_into_last_change(nodes: &mut [Node]) {
     let [
         ..,
         Node::Leaf(Leaf::Text { text, .. }),
-        Node::Span(Mark::Insertion | Mark::Deletion, _, inner),
+        Node::Span(Mark::Insertion | Mark::Deletion, by, inner),
     ] = nodes
     else {
         return;
     };
+    // A tagged change (agent view) keeps its text exactly as the file holds it.
+    if tag(by.as_deref()).is_some() {
+        return;
+    }
     // Only into text the change starts with, so the space keeps a format.
     let Some(Node::Leaf(Leaf::Text { text: first, .. })) = inner.first_mut() else {
         return;
@@ -387,6 +485,7 @@ struct Piece {
     text: String,
     bold: bool,
     italic: bool,
+    underline: bool,
     link: Option<String>,
     /// For a marker, the change or comment it belongs to: all of one change's
     /// markers join a link, or none do, so brackets never cross.
@@ -412,9 +511,17 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 marker(out, "~>", id);
                 render(new, out, plain, ids);
                 marker(out, "~~}", id);
-                attribution(out, old_by.as_deref(), id);
-                if new_by != old_by {
-                    attribution(out, new_by.as_deref(), id);
+                match (tag(old_by.as_deref()), tag(new_by.as_deref())) {
+                    (Some(a), Some(b)) if same_author(old_by.as_deref(), new_by.as_deref()) => {
+                        let joined = join_tagged(a, b);
+                        attribution(out, Some(&joined), id);
+                    }
+                    _ => {
+                        attribution(out, old_by.as_deref(), id);
+                        if new_by != old_by {
+                            attribution(out, new_by.as_deref(), id);
+                        }
+                    }
                 }
                 index += 2;
                 continue;
@@ -433,6 +540,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                     text,
                     bold,
                     italic,
+                    underline,
                     link,
                 }),
                 _,
@@ -441,6 +549,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                     text: if plain { text.clone() } else { escape(text) },
                     bold: *bold,
                     italic: *italic,
+                    underline: *underline,
                     link: link.clone(),
                     marker: None,
                 });
@@ -453,6 +562,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 },
                 bold: false,
                 italic: false,
+                underline: false,
                 link: None,
                 marker: None,
             }),
@@ -470,6 +580,7 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
         text: text.to_string(),
         bold: false,
         italic: false,
+        underline: false,
         link: None,
         marker: Some(id),
     });
@@ -482,8 +593,15 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
 /// resolve. A change joins only if all its markers do; one that starts inside
 /// the link and ends after it stays outside.
 fn wrap_markers(pieces: &mut [Piece]) {
-    type Format = (bool, bool, Option<String>);
-    let format = |piece: &Piece| -> Format { (piece.bold, piece.italic, piece.link.clone()) };
+    type Format = (bool, bool, bool, Option<String>);
+    let format = |piece: &Piece| -> Format {
+        (
+            piece.bold,
+            piece.italic,
+            piece.underline,
+            piece.link.clone(),
+        )
+    };
     let mut joined: Vec<Option<Format>> = vec![None; pieces.len()];
     let mut start = 0;
     while start < pieces.len() {
@@ -497,7 +615,7 @@ fn wrap_markers(pieces: &mut [Piece]) {
         let before = start.checked_sub(1).map(|at| format(&pieces[at]));
         let after = pieces.get(end).map(format);
         if let Some(around) =
-            before.filter(|f| *f != (false, false, None) && Some(f) == after.as_ref())
+            before.filter(|f| *f != (false, false, false, None) && Some(f) == after.as_ref())
         {
             joined[start..end].fill(Some(around));
         }
@@ -510,11 +628,12 @@ fn wrap_markers(pieces: &mut [Piece]) {
         .filter_map(|(piece, _)| piece.marker)
         .collect();
     for (piece, around) in pieces.iter_mut().zip(joined) {
-        if let Some((bold, italic, link)) =
+        if let Some((bold, italic, underline, link)) =
             around.filter(|_| piece.marker.is_some_and(|id| !refused.contains(&id)))
         {
             piece.bold = bold;
             piece.italic = italic;
+            piece.underline = underline;
             piece.link = link;
         }
     }
@@ -522,7 +641,7 @@ fn wrap_markers(pieces: &mut [Piece]) {
 
 fn attribution(out: &mut Vec<Piece>, by: Option<&str>, id: usize) {
     if let Some(by) = by {
-        marker(out, &note(by), id);
+        marker(out, &note(&display(by)), id);
     }
 }
 
@@ -603,7 +722,7 @@ pub(crate) fn splice(
         return;
     };
     let (open, close) = mark.delimiters();
-    let by = by.as_deref().map(note).unwrap_or_default();
+    let by = by.as_deref().map(|b| note(&display(b))).unwrap_or_default();
     let end = format!("{close}{by}");
     match out.strip_suffix(end.as_str()) {
         Some(kept) => out.truncate(kept.len()),
@@ -702,6 +821,7 @@ pub(crate) fn join_marked(parts: Vec<Part>, separator: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use Mark::{Deletion as Del, Highlight as Hl, Insertion as Ins};

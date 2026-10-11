@@ -1323,6 +1323,7 @@ pub fn hash_block_level_content(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod escape_xml_tests {
     use super::{escape_xml_attr, escape_xml_text};
 
@@ -1336,5 +1337,99 @@ mod escape_xml_tests {
     fn specials_are_escaped() {
         assert_eq!(escape_xml_text("a&b<c>d"), "a&amp;b&lt;c&gt;d");
         assert_eq!(escape_xml_attr(r#"say "hi""#), "say &quot;hi&quot;");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_hash_owner_boundaries {
+    use super::*;
+
+    #[test]
+    fn ole_object_hash_projection_distinguishes_payload_identity_from_word_instance_ids() {
+        for include_related in [false, true] {
+            for resolved in [false, true] {
+                for kind in ["Embed", "Link"] {
+                    let mut dom = Dom::new();
+                    let xml = format!(
+                        "<w:p xmlns:w=\"{}\" xmlns:o=\"{}\" xmlns:r=\"{}\"><w:r><w:object><o:OLEObject Type=\"{kind}\" ProgID=\"Excel.Sheet.12\" ShapeID=\"shape42\" DrawAspect=\"Content\" ObjectID=\"instance42\" r:id=\"rId42\"/></w:object></w:r></w:p>",
+                        W::URI,
+                        O::URI,
+                        R::URI
+                    );
+                    let doc = dom.parse_xdocument(&xml);
+                    let original = dom.root(doc).unwrap();
+                    let original_xml = dom.serialize_element(original);
+                    let resolver = |rid: &str| {
+                        assert_eq!(rid, "rId42");
+                        resolved.then(|| "owned-payload-sha256".to_owned())
+                    };
+                    let projected = clone_block_level_content_for_hashing(
+                        &mut dom,
+                        original,
+                        include_related,
+                        &WmlComparerSettings::default(),
+                        &resolver,
+                    );
+                    let object = dom.descendants(projected, Some(&O::name("OLEObject")))[0];
+                    for (attr, expected) in [
+                        ("Type", kind),
+                        ("ProgID", "Excel.Sheet.12"),
+                        ("DrawAspect", "Content"),
+                    ] {
+                        assert_eq!(dom.attribute(object, &XName::get(attr, "")), Some(expected));
+                    }
+                    assert_eq!(
+                        dom.attribute(object, &XName::get("ShapeID", "")),
+                        (!include_related).then_some("shape42")
+                    );
+                    let expected_id =
+                        (include_related && resolved).then_some("owned-payload-sha256");
+                    assert_eq!(dom.attribute(object, &R::name("id")), expected_id);
+                    assert_eq!(dom.attribute(object, &XName::get("ObjectID", "")), None);
+                    assert_eq!(
+                        dom.serialize_element(original),
+                        original_xml,
+                        "hashing must not mutate authored IDs or relationships"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn direct_cell_bookmarks_are_ignored_only_in_hash_projection() {
+        for content in ["", "cell payload", "\u{a0} spaced words "] {
+            for correlated_ws in [false, true] {
+                let mut dom = Dom::new();
+                let doc = dom.parse_xdocument(&format!("<w:tc xmlns:w=\"{}\"><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:bookmarkStart w:id=\"42\" w:name=\"CellOwner\"/><w:p><w:r><w:t xml:space=\"preserve\">{content}</w:t></w:r></w:p><w:bookmarkEnd w:id=\"42\"/></w:tc>",W::URI));
+                let cell = dom.root(doc).unwrap();
+                let before = dom.serialize_element(cell);
+                let settings = WmlComparerSettings::default();
+                let with_bookmarks =
+                    try_stream_hash_simple_table_or_tr(&dom, cell, &settings, correlated_ws)
+                        .unwrap();
+                let copy = dom.clone_subtree(cell);
+                for name in [W::bookmark_start(), W::bookmark_end()] {
+                    for mark in dom.elements(copy, Some(&name)) {
+                        dom.remove(mark);
+                    }
+                }
+                let without_bookmarks =
+                    try_stream_hash_simple_table_or_tr(&dom, copy, &settings, correlated_ws)
+                        .unwrap();
+                assert_eq!(with_bookmarks, without_bookmarks);
+                assert_eq!(dom.serialize_element(cell), before);
+                assert_eq!(dom.descendants(cell, Some(&W::bookmark_start())).len(), 1);
+                assert_eq!(dom.descendants(cell, Some(&W::bookmark_end())).len(), 1);
+                assert_eq!(
+                    dom.attribute(
+                        dom.elements(cell, Some(&W::bookmark_start()))[0],
+                        &W::name("name")
+                    ),
+                    Some("CellOwner")
+                );
+            }
+        }
     }
 }

@@ -629,6 +629,7 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

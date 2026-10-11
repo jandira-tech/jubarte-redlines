@@ -326,6 +326,7 @@ impl Dom {
     /// Shrink the arena's backing `Vec` capacity to its current length. Lets a test
     /// pin `capacity == length` so any subsequent internal push provably reallocs.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn shrink_arena_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
     }
@@ -1031,6 +1032,7 @@ impl Dom {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod node_layout_tests {
     use super::*;
 
@@ -1076,6 +1078,7 @@ mod node_layout_tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod intern_tests {
     use super::*;
 

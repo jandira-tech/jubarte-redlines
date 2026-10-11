@@ -498,6 +498,7 @@ fn evaluate_views(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -744,6 +745,155 @@ mod tests {
                     Some([0.0, 0.0, 200.0, bottom])
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_custom_path_contract_tests {
+    use super::*;
+
+    #[test]
+    fn guide_division_and_conditional_boundaries_keep_finite_authored_coordinates() {
+        let guides = HashMap::new();
+        for (fmla, expected) in [
+            ("*/ 8 3 0", 0.0),
+            ("+/ 8 3 0", 0.0),
+            ("?: 0 5 7", 7.0),
+            ("?: -1 5 7", 7.0),
+            ("pin 2 1 8", 2.0),
+            ("pin 2 5 8", 5.0),
+            ("pin 2 9 8", 8.0),
+            ("sqrt -4", 0.0),
+            ("sqrt 9", 3.0),
+        ] {
+            assert_eq!(formula(fmla, &guides), expected, "{fmla}");
+        }
+        let geom = CustomGeom {
+            av: vec![],
+            gd: vec![
+                ("x".into(), "*/ 8 3 0".into()),
+                ("y".into(), "?: 0 5 7".into()),
+            ],
+            paths: vec![CustomPath {
+                w: 10.0,
+                h: 10.0,
+                fill: Fill::Norm,
+                stroke: true,
+                cmds: vec![
+                    OwnedCmd::M("x".into(), "y".into()),
+                    OwnedCmd::L("10".into(), "10".into()),
+                ],
+            }],
+        };
+        let paths = evaluate_custom(&geom, 40.0, 20.0);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].fill, Fill::Norm);
+        assert!(paths[0].stroke);
+        assert_eq!(
+            paths[0].subpaths,
+            vec![Subpath {
+                pts: vec![(0.0, 14.0), (40.0, 20.0)],
+                closed: false
+            }]
+        );
+        assert_eq!(
+            geom.gd,
+            vec![
+                ("x".to_owned(), "*/ 8 3 0".to_owned()),
+                ("y".to_owned(), "?: 0 5 7".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn cubic_and_quadratic_paths_keep_literal_midpoints_endpoints_and_independent_flags() {
+        let geom = CustomGeom {
+            av: vec![],
+            gd: vec![],
+            paths: vec![
+                CustomPath {
+                    w: 100.0,
+                    h: 100.0,
+                    fill: Fill::Norm,
+                    stroke: false,
+                    cmds: vec![
+                        OwnedCmd::M("0".into(), "0".into()),
+                        OwnedCmd::C(["0", "100", "100", "100", "100", "0"].map(str::to_owned)),
+                        OwnedCmd::Z,
+                    ],
+                },
+                CustomPath {
+                    w: 100.0,
+                    h: 100.0,
+                    fill: Fill::None,
+                    stroke: true,
+                    cmds: vec![
+                        OwnedCmd::M("0".into(), "0".into()),
+                        OwnedCmd::Q(["50", "100", "100", "0"].map(str::to_owned)),
+                    ],
+                },
+            ],
+        };
+        let paths = evaluate_custom(&geom, 40.0, 20.0);
+        assert_eq!(paths.len(), 2);
+        for (index, points, midpoint, closed) in
+            [(0, 13, (20.0, 15.0), true), (1, 11, (20.0, 10.0), false)]
+        {
+            let sub = &paths[index].subpaths;
+            assert_eq!(sub.len(), 1);
+            assert_eq!(sub[0].pts.len(), points);
+            assert_eq!(sub[0].pts[0], (0.0, 0.0));
+            assert_eq!(sub[0].pts[points / 2], midpoint);
+            assert_eq!(sub[0].pts[points - 1], (40.0, 0.0));
+            assert_eq!(sub[0].closed, closed);
+        }
+        assert_eq!(paths[0].fill, Fill::Norm);
+        assert!(!paths[0].stroke);
+        assert_eq!(paths[1].fill, Fill::None);
+        assert!(paths[1].stroke);
+        assert_eq!(geom.paths[0].cmds.len(), 3);
+        assert_eq!(geom.paths[1].cmds.len(), 2);
+    }
+
+    #[test]
+    fn clockwise_and_counterclockwise_custom_arcs_keep_authored_radii_and_bounded_turns() {
+        for (sweep, endpoint, points) in [
+            ("5400000", (50.0, 100.0), 9),
+            ("-5400000", (50.0, 0.0), 9),
+            ("216000000", (100.0, 50.0), 257),
+        ] {
+            let geom = CustomGeom {
+                av: vec![],
+                gd: vec![],
+                paths: vec![CustomPath {
+                    w: 100.0,
+                    h: 100.0,
+                    fill: Fill::None,
+                    stroke: true,
+                    cmds: vec![
+                        OwnedCmd::M("100".into(), "50".into()),
+                        OwnedCmd::A("50".into(), "50".into(), "0".into(), sweep.into()),
+                    ],
+                }],
+            };
+            let paths = evaluate_custom(&geom, 100.0, 100.0);
+            assert_eq!(paths.len(), 1);
+            let sub = &paths[0].subpaths[0];
+            assert_eq!(sub.pts.len(), points);
+            assert_eq!(sub.pts[0], (100.0, 50.0));
+            let last = sub.pts.last().unwrap();
+            assert!((last.0 - endpoint.0).abs() < 0.001 && (last.1 - endpoint.1).abs() < 0.001);
+            assert!(
+                sub.pts
+                    .iter()
+                    .all(|&(x, y)| (-0.001..=100.001).contains(&x)
+                        && (-0.001..=100.001).contains(&y))
+            );
+            assert!(!sub.closed);
+            assert_eq!(paths[0].fill, Fill::None);
+            assert!(paths[0].stroke);
         }
     }
 }

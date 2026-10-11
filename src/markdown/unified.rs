@@ -1129,6 +1129,7 @@ fn starts_block(text: &str) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1187,5 +1188,94 @@ mod tests {
         for text in ["x", "1.5 x", "-5 x", "word"] {
             assert!(!starts_block(text), "{text}");
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod literal_wrapping_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn protected_source_ranges_keep_exact_code_target_and_autolink_owners() {
+        for (source, owned) in [
+            ("before ``one ` two`` after", "``one ` two``"),
+            ("before `one `` two` after", "`one `` two`"),
+            (
+                "before [label](outer(inner) tail) after",
+                "](outer(inner) tail",
+            ),
+            (r"before [label](escaped\) tail) after", r"](escaped\) tail"),
+            ("before [label](unterminated tail", "](unterminated tail"),
+            ("before <mailto:one two> after", "<mailto:one two>"),
+            ("before <https://one two", "<https://one two"),
+        ] {
+            let ranges = protected(source);
+            assert_eq!(ranges.len(), 1, "{source}");
+            assert_eq!(&source[ranges[0].0..ranges[0].1], owned, "{source}");
+            for (at, c) in source
+                .char_indices()
+                .filter(|(at, c)| *c == ' ' && ranges[0].0 < *at && *at < ranges[0].1)
+            {
+                assert_eq!(c, ' ');
+                assert!(!can_break(source, at, &ranges));
+            }
+            let wrapped = wrap(source, 8);
+            assert_eq!(wrapped.replace('\n', " "), source);
+            assert!(wrapped.contains(owned));
+        }
+        for source in [
+            "before `unclosed tail",
+            r"before \`literal tail",
+            "before <ordinary tail>",
+            r"before [label]\(literal tail)",
+        ] {
+            assert!(protected(source).is_empty(), "{source}");
+            assert_eq!(wrap(source, 8).replace('\n', " "), source);
+        }
+    }
+
+    #[test]
+    fn exact_markdown_break_guards_preserve_literal_whitespace_and_block_markers() {
+        for source in [" leading", "trailing ", "double  space", r"escaped\ space"] {
+            for (at, _) in source.char_indices().filter(|(_, c)| *c == ' ') {
+                assert!(!can_break(source, at, &[]), "{source:?} at {at}");
+            }
+        }
+        for marker in ["[-", "{+", "{==", "{>>"] {
+            let source = format!("{marker} text");
+            assert!(!can_break(&source, marker.len(), &[]));
+        }
+        for marker in ["-]", "+}", "==}", "<<}"] {
+            let source = format!("text {marker}");
+            assert!(!can_break(&source, 4, &[]));
+        }
+        for (suffix, starts) in [
+            ("*** text", true),
+            ("__ text", true),
+            ("~~~", true),
+            ("12) text", true),
+            ("1x. text", false),
+            (". text", false),
+            ("a*b text", false),
+            ("=x text", false),
+            ("", false),
+        ] {
+            assert_eq!(starts_block(suffix), starts, "{suffix}");
+            let source = format!("owned {suffix}");
+            assert_eq!(
+                can_break(&source, 5, &[]),
+                !starts && !suffix.is_empty(),
+                "{suffix}"
+            );
+        }
+        assert_eq!(wrap("αβ γδ εζ", 5), "αβ γδ\nεζ");
+        assert_eq!(wrap("unbreakable", 1), "unbreakable");
+        assert_eq!(wrap("a b c", 0), "a b c");
+        let fenced = "~~~rust\nowned very long source\n~~~\na b c";
+        assert_eq!(
+            wrap(fenced, 3),
+            "~~~rust\nowned very long source\n~~~\na b\nc"
+        );
     }
 }

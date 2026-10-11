@@ -48,7 +48,7 @@ __all__ = [
 def get_revisions(docx: bytes) -> list[dict[str, Any]]:
     """List the tracked revisions in a DOCX as parsed objects.
 
-    Each item has the same shape as the CLI ``jubarte revisions --json`` lines
+    Grouped as Docxodus's ``GetRevisions`` groups them; each item has
     (``type``/``author``/``date``/``part``/``moveGroupId``/``isMoveSource``/
     ``formatChange``/``text``).
     """

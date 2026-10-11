@@ -186,6 +186,8 @@ impl Transaction<'_> {
             comment_id: None,
             code: None,
             message: None,
+            anchor_given: None,
+            anchor_read_as: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -328,6 +330,7 @@ impl Transaction<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

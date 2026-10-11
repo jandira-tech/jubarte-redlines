@@ -210,6 +210,17 @@ impl Rels {
             .find(|r| r.kind.ends_with(suffix))
     }
 
+    /// The package-internal targets of every relationship of a type, in
+    /// document order.
+    pub(crate) fn targets_of_type(&self, suffix: &str) -> Vec<String> {
+        self.order
+            .iter()
+            .filter_map(|id| self.by_id.get(id))
+            .filter(|r| !r.external && r.kind.ends_with(suffix))
+            .map(|r| r.target.clone())
+            .collect()
+    }
+
     /// A hyperlink target for a relationship id: external URLs only.
     pub(crate) fn link(&self, id: &str) -> Option<String> {
         self.get(id)
@@ -469,6 +480,8 @@ pub(crate) struct Span {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
+    /// Agent view only: `<u>…</u>`, innermost.
+    pub underline: bool,
     pub link: Option<String>,
 }
 
@@ -476,9 +489,16 @@ pub(crate) struct Span {
 #[derive(Debug, Default)]
 pub(crate) struct Inline {
     spans: Vec<Span>,
+    /// Agent view: runs of spaces are not collapsed.
+    keep_spaces: bool,
 }
 
 impl Inline {
+    /// Agent view: keeps runs of spaces as the file holds them.
+    pub(crate) fn keep_spaces(&mut self) {
+        self.keep_spaces = true;
+    }
+
     /// Whether the text starts and ends with a space, which rendering trims.
     pub(crate) fn edges(&self) -> (bool, bool) {
         let spaced = |c: char| matches!(c, ' ' | '\u{a0}' | '\t');
@@ -497,13 +517,21 @@ impl Inline {
         (leading, trailing)
     }
 
-    pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
+    /// Appends text with its bold, italic and underline (underline only in
+    /// the agent view), merging into the last span when they all match.
+    pub(crate) fn push_styled(
+        &mut self,
+        text: &str,
+        (bold, italic, underline): (bool, bool, bool),
+        link: Option<&str>,
+    ) {
         if text.is_empty() {
             return;
         }
         if let Some(last) = self.spans.last_mut()
             && last.bold == bold
             && last.italic == italic
+            && last.underline == underline
             && last.link.as_deref() == link
         {
             last.text.push_str(text);
@@ -513,6 +541,7 @@ impl Inline {
             text: text.to_string(),
             bold,
             italic,
+            underline,
             link: link.map(str::to_string),
         });
     }
@@ -548,45 +577,51 @@ impl Inline {
             }
             index = end;
         }
-        tidy_inline(&out)
+        tidy_inline(&out, self.keep_spaces)
     }
 }
 
 fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     let mut out = String::new();
     // Merge neighbours with identical emphasis (links already grouped).
-    let mut merged: Vec<(bool, bool, String)> = Vec::new();
+    let mut merged: Vec<(bool, bool, bool, String)> = Vec::new();
     for span in spans {
-        let (bold, italic) = if emphasis {
-            (span.bold, span.italic)
+        let style = if emphasis {
+            (span.bold, span.italic, span.underline)
         } else {
-            (false, false)
+            (false, false, false)
         };
         // Whitespace-only spans inherit the previous formatting so markers do not split.
-        let (bold, italic) = if span.text.trim().is_empty() {
+        let (bold, italic, underline) = if span.text.trim().is_empty() {
             merged
                 .last()
-                .map(|(b, i, _)| (*b, *i))
-                .unwrap_or((bold, italic))
+                .map(|(b, i, u, _)| (*b, *i, *u))
+                .unwrap_or(style)
         } else {
-            (bold, italic)
+            style
         };
         match merged.last_mut() {
-            Some((b, i, text)) if *b == bold && *i == italic => text.push_str(&span.text),
-            _ => merged.push((bold, italic, span.text.clone())),
+            Some((b, i, u, text)) if *b == bold && *i == italic && *u == underline => {
+                text.push_str(&span.text);
+            }
+            _ => merged.push((bold, italic, underline, span.text.clone())),
         }
     }
-    for (bold, italic, text) in merged {
+    for (bold, italic, underline, text) in merged {
         let (lead, core, trail) = split_ws(&text);
-        if core.is_empty() || (!bold && !italic) {
+        if core.is_empty() || (!bold && !italic && !underline) {
             out.push_str(&text);
             continue;
         }
-        let (open, close) = match (bold, italic) {
+        let (emphasis_open, emphasis_close) = match (bold, italic) {
             (true, true) => ("**_", "_**"),
             (true, false) => ("**", "**"),
-            _ => ("_", "_"),
+            (false, true) => ("_", "_"),
+            (false, false) => ("", ""),
         };
+        let (u_open, u_close) = if underline { ("<u>", "</u>") } else { ("", "") };
+        let open = format!("{emphasis_open}{u_open}");
+        let close = format!("{u_close}{emphasis_close}");
         out.push_str(lead);
         // Markers cannot wrap line breaks; apply them per line.
         let lines: Vec<String> = core
@@ -613,7 +648,7 @@ fn split_ws(s: &str) -> (&str, &str, &str) {
 }
 
 /// Collapse runs of spaces, trim line ends, and drop empty lines inside a paragraph.
-fn tidy_inline(s: &str) -> String {
+fn tidy_inline(s: &str, keep_spaces: bool) -> String {
     let mut lines = Vec::new();
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
@@ -621,7 +656,7 @@ fn tidy_inline(s: &str) -> String {
         for c in line.chars() {
             let is_space = c == ' ' || c == '\u{a0}';
             if is_space {
-                if !prev_space {
+                if keep_spaces || !prev_space {
                     out.push(' ');
                 }
             } else {
@@ -738,6 +773,9 @@ pub(crate) struct Blocks {
     separator: Option<Change>,
     /// The last paragraph ended with a space, which rendering trimmed.
     trailing_space: bool,
+    /// The next block follows after one newline: an id line was just
+    /// written (agent view).
+    tight: bool,
 }
 
 impl Blocks {
@@ -747,6 +785,7 @@ impl Blocks {
             last_was_list: false,
             separator: None,
             trailing_space: false,
+            tight: false,
         }
     }
 
@@ -762,6 +801,19 @@ impl Blocks {
     /// item stays valid.
     pub(crate) fn push_prefixed(&mut self, prefix: &str, body: &str, is_list: bool) {
         self.push_paragraph(prefix, body, is_list, (false, false));
+    }
+
+    /// An id, table or page line of the agent view. It opens after a blank
+    /// line, like any block, and the block under it follows directly.
+    pub(crate) fn push_line(&mut self, line: &str) {
+        self.separator = None;
+        if !self.out.is_empty() {
+            self.out.push_str("\n\n");
+        }
+        self.out.push_str(line);
+        self.last_was_list = false;
+        self.trailing_space = false;
+        self.tight = true;
     }
 
     /// A paragraph, with whether its text started and ended with a space before
@@ -783,7 +835,7 @@ impl Blocks {
             self.out.push_str(prefix);
             self.out.push_str(body);
         } else {
-            let separator = if is_list && self.last_was_list {
+            let separator = if self.tight || (is_list && self.last_was_list) {
                 "\n"
             } else {
                 "\n\n"
@@ -798,6 +850,7 @@ impl Blocks {
             );
         }
         self.last_was_list = is_list;
+        self.tight = false;
         self.trailing_space = trailing;
     }
 
@@ -838,8 +891,15 @@ impl ListIndent {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    impl Inline {
+        pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
+            self.push_styled(text, (bold, italic, false), link);
+        }
+    }
 
     #[test]
     fn resolves_relative_targets() {
@@ -883,5 +943,199 @@ mod tests {
         assert_eq!(list.item(0, "10.", "a"), "10. a");
         assert_eq!(list.item(1, "-", "b"), "    - b");
         assert_eq!(list.item(0, "11.", "c\nd"), "11. c\n    d");
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod ooxml_package_boundary_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    fn package_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn png() -> Vec<u8> {
+        use image::ImageEncoder as _;
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&[31, 47, 59], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn media_relationships_extract_owned_bytes_once_and_leave_non_images_as_alt_text() {
+        let image = png();
+        let relationships = br#"<Relationships><Relationship Id="a" Type="urn:test/image" Target="media/a.png"/><Relationship Id="duplicate" Type="urn:test/image" Target="media/a.png"/><Relationship Id="external" Type="urn:test/image" Target="https://example.invalid/a.png" TargetMode="External"/><Relationship Id="other" Type="urn:test/chart" Target="media/other.bin"/><Relationship Id="missing" Type="urn:test/image" Target="media/missing.png"/><Relationship Id="vector" Type="urn:test/image" Target="media/a.svg"/><Relationship Id="empty" Type="urn:test/hyperlink" Target="" TargetMode="External"/><Relationship Id="incomplete" Type="urn:test/image"/></Relationships>"#;
+        let bytes = package_bytes(&[
+            ("word/_rels/document.xml.rels", relationships),
+            ("word/media/a.png", &image),
+            ("word/media/a.svg", b"<svg/>"),
+            ("word/media/other.bin", b"owned chart"),
+        ]);
+        let frozen = bytes.clone();
+        let mut package = Package::open(&bytes, "docx").unwrap();
+        let rels = package.rels("word/document.xml").unwrap();
+        assert!(rels.get("incomplete").is_none());
+        assert_eq!(
+            rels.link("external").as_deref(),
+            Some("https://example.invalid/a.png")
+        );
+        assert_eq!(rels.link("empty"), None);
+        assert_eq!(rels.link("a"), None);
+        let mut disabled = Media::load(&mut package, &rels, None);
+        assert!(disabled.files.is_empty());
+        assert_eq!(
+            disabled.markdown("drawing", Some("word/media/a.png")),
+            Some("![drawing](a.png)".to_string())
+        );
+        let mut media = Media::load(&mut package, &rels, Some(Extracted::new("media files/")));
+        assert_eq!(media.files.len(), 2);
+        assert_eq!(media.files["word/media/a.png"], image);
+        assert_eq!(media.files["word/media/a.svg"], b"<svg/>");
+        use sha2::{Digest as _, Sha256};
+        let hash = Sha256::digest(&image)
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            media.markdown("A [chart]", Some("word/media/a.png")),
+            Some(format!("![A \\[chart\\]](<media files/{hash}.png>)"))
+        );
+        assert_eq!(
+            media.markdown("again", Some("word/media/a.png")),
+            Some(format!("![again](<media files/{hash}.png>)"))
+        );
+        assert_eq!(
+            media.markdown("vector", Some("word/media/a.svg")),
+            Some("![vector](a.svg)".to_string())
+        );
+        assert_eq!(
+            media.markdown("missing", Some("word/media/missing.png")),
+            Some("![missing](missing.png)".to_string())
+        );
+        assert_eq!(
+            media.markdown("external", Some("https://example.invalid/a.png")),
+            Some("![external](a.png)".to_string())
+        );
+        let files = media.into_files();
+        assert_eq!(
+            files,
+            std::collections::BTreeMap::from([(format!("{hash}.png"), image)])
+        );
+        assert_eq!(bytes, frozen);
+    }
+
+    #[test]
+    fn media_part_limit_retains_the_first_512_authored_targets_in_relationship_order() {
+        let payloads = (0..MAX_MEDIA_PARTS + 1)
+            .map(|i| {
+                (
+                    format!("word/media/image{i}.bin"),
+                    format!("owned image {i}").into_bytes(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut relationships = String::from("<Relationships>");
+        for i in 0..payloads.len() {
+            relationships.push_str(&format!(
+                "<Relationship Id=\"i{i}\" Type=\"urn:test/image\" Target=\"media/image{i}.bin\"/>"
+            ));
+        }
+        relationships.push_str("</Relationships>");
+        let mut entries = vec![("word/_rels/document.xml.rels", relationships.as_bytes())];
+        entries.extend(
+            payloads
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+        );
+        let bytes = package_bytes(&entries);
+        let mut package = Package::open(&bytes, "docx").unwrap();
+        let rels = package.rels("word/document.xml").unwrap();
+        let media = Media::load(&mut package, &rels, Some(Extracted::new("images")));
+        assert_eq!(media.files.len(), MAX_MEDIA_PARTS);
+        for (name, payload) in &payloads[..MAX_MEDIA_PARTS] {
+            assert_eq!(media.files.get(name), Some(payload));
+        }
+        assert!(!media.files.contains_key(&payloads[MAX_MEDIA_PARTS].0));
+        assert!(media.into_files().is_empty());
+    }
+
+    #[test]
+    fn literal_hyperlinks_and_mail_addresses_use_exact_autolink_forms() {
+        for (text, url, expected) in [
+            (
+                "https://example.invalid",
+                "https://example.invalid",
+                "<https://example.invalid>",
+            ),
+            (
+                "ada@example.invalid",
+                "mailto:ada@example.invalid",
+                "<mailto:ada@example.invalid>",
+            ),
+            (
+                "other@example.invalid",
+                "mailto:ada@example.invalid",
+                "[other@example.invalid](mailto:ada@example.invalid)",
+            ),
+            ("   ", "https://example.invalid", ""),
+            (
+                "label",
+                "https://example.invalid/a b)",
+                "[label](https://example.invalid/a%20b%29)",
+            ),
+        ] {
+            let mut inline = Inline::default();
+            inline.push("", true, true, Some("unused"));
+            inline.push(text, false, false, Some(url));
+            assert_eq!(inline.render(true), expected);
+            assert_eq!(inline.render(false), expected);
+        }
+        let mut list = ListIndent::default();
+        assert_eq!(
+            list.item(3, "10.", "one\ntwo"),
+            "      10. one\n          two"
+        );
+        list.reset();
+        assert_eq!(list.item(0, "-", "next"), "- next");
+    }
+
+    #[test]
+    fn utf16_xml_keeps_namespaced_attributes_and_authored_text() {
+        let xml = "<w:p xmlns:w='urn:w' w:val='owned'>Aé水<![CDATA[<drawing>]]></w:p>";
+        for big_endian in [false, true] {
+            let mut bytes = if big_endian {
+                vec![0xfe, 0xff]
+            } else {
+                vec![0xff, 0xfe]
+            };
+            for code in xml.encode_utf16() {
+                bytes.extend_from_slice(&if big_endian {
+                    code.to_be_bytes()
+                } else {
+                    code.to_le_bytes()
+                });
+            }
+            let root = parse_xml(&bytes).unwrap();
+            assert_eq!(root.name, "w:p");
+            assert_eq!(root.attr("val"), Some("owned"));
+            assert_eq!(root.text(), "Aé水<drawing>");
+            assert_eq!(root.children.len(), 1);
+        }
+        let recovered = parse_xml(b"<p><r>owned").unwrap();
+        assert_eq!(recovered.name, "p");
+        assert_eq!(recovered.child("r").unwrap().text(), "owned");
+        for invalid in [b"</p>".as_slice(), b"<p x='unterminated>"] {
+            assert!(parse_xml(invalid).is_err(), "{invalid:?}");
+        }
     }
 }

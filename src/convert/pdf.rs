@@ -31,6 +31,9 @@ pub(crate) enum Op {
         text: String,
         /// `w:w` horizontal scale of the glyphs (1.0 = none).
         hscale: f32,
+        /// Text no face has glyphs for: unpainted (render mode 3), but
+        /// searchable through `/ActualText` (KNOWN_ISSUES #9).
+        hidden: bool,
     },
     Line {
         x1: f32,
@@ -181,6 +184,12 @@ pub(crate) struct Page {
     /// Laid out turned a quarter for vertical text (`tbRl`): the writer
     /// turns it back and stands CJK glyphs upright.
     pub vertical: bool,
+    /// A body change bar is on the page: a tracked change touches it
+    /// (`PdfOptions::changed_only` keeps such pages).
+    pub changed: bool,
+    /// The page's number in the whole document, from 1: kept when
+    /// `PdfOptions::changed_only` drops pages around it.
+    pub number: usize,
 }
 
 impl Page {
@@ -194,6 +203,8 @@ impl Page {
             markup_pane: false,
             margin_r: 0.0,
             vertical: false,
+            changed: false,
+            number: 0,
         }
     }
 }
@@ -335,7 +346,16 @@ impl Op {
             color,
             text: text.into(),
             hscale: 1.0,
+            hidden: false,
         }
+    }
+
+    /// The same text left unpainted, for search and copy only.
+    pub(crate) fn hidden(mut self) -> Self {
+        if let Self::Text { hidden, .. } = &mut self {
+            *hidden = true;
+        }
+        self
     }
 
     /// The same text drawn `scale` times as wide (`w:w`).
@@ -601,7 +621,26 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     color,
                     text,
                     hscale,
+                    hidden,
                 } => {
+                    if *hidden {
+                        if open_text.take().is_some() {
+                            stream.push_str("ET\n");
+                        }
+                        let encoded = page_enc[op_idx].as_deref();
+                        let Some((_, name)) = res_for(*face, encoded.is_some()) else {
+                            continue;
+                        };
+                        let show = Show {
+                            lit: encoded.map_or(Lit::Glyphs(glyphs), Lit::Bytes),
+                            actual: Some(text),
+                        };
+                        let _ = writeln!(
+                            stream,
+                            "q BT /{name} {size:.2} Tf 3 Tr {x:.2} {y:.2} Td {show} ET Q"
+                        );
+                        continue;
+                    }
                     if page.vertical
                         && text.chars().any(stands_upright)
                         && text.chars().count() == glyphs.len()
@@ -619,6 +658,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         let mut gx = *x;
                         for (ch, gid) in text.chars().zip(glyphs.iter()) {
                             let adv = f.advance_pt(ch, *size) * *hscale;
+                            let mut utf8 = [0; 4];
+                            let show = Show::new(
+                                f,
+                                std::slice::from_ref(gid),
+                                None,
+                                ch.encode_utf8(&mut utf8),
+                            );
                             if stands_upright(ch) {
                                 // Stand the glyph up about its em box's
                                 // centre; small marks sit in the cell's upper
@@ -632,20 +678,20 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                                 let _ = writeln!(
                                     stream,
                                     "q 1 0 0 1 {cx:.2} {cy:.2} cm {squeeze}0 1 -1 0 0 0 cm BT /{name} {size:.2} Tf \
-                                     {r:.3} {g:.3} {b:.3} rg {ox:.2} {oy:.2} Td <{gid:04X}> Tj ET Q",
+                                     {r:.3} {g:.3} {b:.3} rg {ox:.2} {oy:.2} Td {show} ET Q",
                                     ox = lift - adv / 2.0,
                                     oy = lift - 0.38 * size,
                                 );
                             } else if squeeze.is_empty() {
                                 let _ = writeln!(
                                     stream,
-                                    "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {gx:.2} {y:.2} Td <{gid:04X}> Tj ET",
+                                    "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {gx:.2} {y:.2} Td {show} ET",
                                 );
                             } else {
                                 let _ = writeln!(
                                     stream,
                                     "q 1 0 0 1 {gx:.2} {y:.2} cm {squeeze}BT /{name} {size:.2} Tf \
-                                     {r:.3} {g:.3} {b:.3} rg 0 0 Td <{gid:04X}> Tj ET Q",
+                                     {r:.3} {g:.3} {b:.3} rg 0 0 Td {show} ET Q",
                                 );
                             }
                             gx += adv;
@@ -659,11 +705,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
                     };
-                    let lit = if let Some(bytes) = encoded {
-                        pdf_literal(bytes)
-                    } else {
-                        hex_glyphs(glyphs)
-                    };
+                    let show = Show::new(fonts.get(*face), glyphs, encoded, text);
                     let (r, g, b) = (color[0], color[1], color[2]);
                     // A `w:w` scale squeezes the glyphs themselves about
                     // their origin; advances were scaled at layout.
@@ -685,12 +727,12 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         };
                         let _ = writeln!(
                             stream,
-                            "q {a} 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q",
+                            "q {a} 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {show} ET Q",
                         );
                     } else if (sx - 1.0).abs() > 0.001 {
                         let _ = writeln!(
                             stream,
-                            "q {sx:.4} 0 0 1 {x:.2} {y:.2} cm BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg 0 0 Td {lit} Tj ET Q",
+                            "q {sx:.4} 0 0 1 {x:.2} {y:.2} cm BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg 0 0 Td {show} ET Q",
                         );
                     } else {
                         let tc = word_device_track(*size);
@@ -723,14 +765,14 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                                 push_hundredths(&mut stream, hx - *px);
                                 stream.push(' ');
                                 push_hundredths(&mut stream, hy - *py);
-                                let _ = writeln!(stream, " Td {lit} Tj");
+                                let _ = writeln!(stream, " Td {show}");
                                 (*px, *py) = (hx, hy);
                             }
                             _ => {
                                 if open_text.take().is_some() {
                                     stream.push_str("ET\n");
                                 }
-                                let _ = writeln!(stream, "BT {state}{x:.2} {y:.2} Td {lit} Tj");
+                                let _ = writeln!(stream, "BT {state}{x:.2} {y:.2} Td {show}");
                                 open_text = Some((state, hx, hy));
                             }
                         }
@@ -755,18 +797,14 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let dx = -width / 2.0;
                     let dy = -size * 0.35;
                     let encoded = page_enc[op_idx].as_deref();
-                    let lit = if let Some(bytes) = encoded {
-                        pdf_literal(bytes)
-                    } else {
-                        hex_glyphs(glyphs)
-                    };
+                    let show = Show::new(fonts.get(*face), glyphs, encoded, text);
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
                     };
                     let _ = writeln!(
                         stream,
                         "q /WmGs gs 1 0 0 1 {x:.2} {y:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
-                         BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {lit} Tj ET Q",
+                         BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {show} ET Q",
                         nsin = -sin,
                         r = color[0],
                         g = color[1],
@@ -1271,6 +1309,7 @@ fn hundredths(v: f32) -> i64 {
 
 /// Hundredths as the shortest decimal: `0`, `6`, `-12.5`, `0.07`.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn fmt_hundredths(h: i64) -> String {
     let mut out = String::new();
     push_hundredths(&mut out, h);
@@ -1296,18 +1335,74 @@ fn push_hundredths(out: &mut String, h: i64) {
 /// A text operator's size, colour and tracking as bits.
 type TextStateBits = (u32, [u32; 3], u32);
 
-/// Glyph ids as a PDF hex string, four digits each: `<0041002A>`.
-fn hex_glyphs(glyphs: &[u16]) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(glyphs.len() * 4 + 2);
-    out.push('<');
-    for g in glyphs {
-        for shift in [12, 8, 4, 0] {
-            out.push(char::from(HEX[usize::from((g >> shift) & 0xF)]));
+/// A run's text-showing operation, `{lit} Tj`, written in place. A run
+/// that paints `.notdef` for text no face covers reads back as NULs, since
+/// `/ToUnicode` never maps glyph 0, and a math letter painted from its ASCII
+/// italic reads back as ASCII; an `/ActualText` span (PDF 32000-1 14.9.4)
+/// gives search and copy its text (KNOWN_ISSUES #9: WebAssembly has no CJK
+/// or math face).
+struct Show<'a> {
+    lit: Lit<'a>,
+    actual: Option<&'a str>,
+}
+
+/// A text-showing operand: glyph ids as a hex string under Identity-H, or
+/// WinAnsi bytes as a literal string.
+enum Lit<'a> {
+    Glyphs(&'a [u16]),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> Show<'a> {
+    fn new(
+        face: &super::font::Face,
+        glyphs: &'a [u16],
+        encoded: Option<&'a [u8]>,
+        text: &'a str,
+    ) -> Self {
+        // WinAnsi text reads back through the simple font's encoding.
+        if let Some(bytes) = encoded {
+            return Self {
+                lit: Lit::Bytes(bytes),
+                actual: None,
+            };
+        }
+        let notdef = glyphs.contains(&0) && text.chars().any(|c| !c.is_whitespace());
+        let stood_in = || {
+            text.chars()
+                .any(|c| matches!(c, '\u{210E}' | '\u{1D400}'..='\u{1D7FF}') && face.glyph(c) == 0)
+        };
+        Self {
+            lit: Lit::Glyphs(glyphs),
+            actual: (notdef || stood_in()).then_some(text),
         }
     }
-    out.push('>');
-    out
+}
+
+impl std::fmt::Display for Show<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(text) = self.actual {
+            write!(f, "/Span <</ActualText {}>> BDC ", pdf_text_string(text))?;
+        }
+        match self.lit {
+            // Glyph ids four hex digits each: `<0041002A>`.
+            Lit::Glyphs(glyphs) => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                f.write_char('<')?;
+                for g in glyphs {
+                    for shift in [12, 8, 4, 0] {
+                        f.write_char(char::from(HEX[usize::from((g >> shift) & 0xF)]))?;
+                    }
+                }
+                f.write_str("> Tj")?;
+            }
+            Lit::Bytes(bytes) => write!(f, "{} Tj", pdf_literal(bytes))?,
+        }
+        if self.actual.is_some() {
+            f.write_str(" EMC")?;
+        }
+        Ok(())
+    }
 }
 
 /// A `cmap` of one format 4 subtable mapping only the characters whose
@@ -2056,6 +2151,7 @@ fn stands_upright(c: char) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::uniquify;
 
@@ -2151,6 +2247,7 @@ mod tests {
             color: [0.0; 3],
             text: "a\u{F0A7}".to_string(),
             hscale: 1.0,
+            hidden: false,
         });
         let map = super::face_unicode_map(&sans, FaceId::SansRegular.into(), &[page]);
         assert_eq!(map.get(&square).map(String::as_str), Some("▪"));
@@ -2492,6 +2589,659 @@ mod tests {
                 '\u{2FA20}',
             ] {
                 assert!(!stands_upright(c), "{c}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_byte_and_geometry_contract_tests {
+    use super::*;
+    use std::io::Read;
+
+    fn bundled_fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded(
+            "PDFContractCarlito",
+            false,
+            false,
+            FaceId::CarlitoRegular.bytes(),
+        );
+        fonts.insert_embedded("PDFContractMono", false, false, FaceId::MonoRegular.bytes());
+        fonts
+    }
+
+    fn stream(object: &[u8]) -> Vec<u8> {
+        let at = object.windows(8).position(|w| w == b"\nstream\n").unwrap() + 8;
+        let dictionary = std::str::from_utf8(&object[..at]).unwrap();
+        let length = dictionary
+            .split("/Length ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let payload = &object[at..at + length];
+        assert_eq!(&object[at + length..], b"\nendstream");
+        if dictionary.contains("/FlateDecode") {
+            let mut out = Vec::new();
+            flate2::read::ZlibDecoder::new(payload)
+                .read_to_end(&mut out)
+                .unwrap();
+            out
+        } else {
+            payload.to_vec()
+        }
+    }
+
+    #[test]
+    fn large_signed_coordinates_and_sparse_cid_widths_have_exact_serialized_values() {
+        for (coordinate, expected) in [
+            (10_000_000.0, 1_000_000_000),
+            (-10_000_000.0, -1_000_000_000),
+            (10_000_001.0, 1_000_000_100),
+        ] {
+            assert_eq!(hundredths(coordinate), expected);
+        }
+        assert_eq!(
+            cid_widths(&[500, 600, 700, 800], &BTreeSet::from([1, 2, 3, 99])),
+            "1 [600 700 800]"
+        );
+        assert_eq!(cid_widths(&[500], &BTreeSet::from([99])), ""); // malformed unmapped CID declines safely
+        assert_eq!(cid_widths(&[], &BTreeSet::new()), "");
+        let show = Show {
+            lit: Lit::Glyphs(&[0, 10, 65535]),
+            actual: None,
+        };
+        assert_eq!(show.to_string(), "<0000000AFFFF> Tj");
+    }
+
+    #[test]
+    fn text_string_encodings_preserve_ascii_controls_unicode_and_winansi_boundaries() {
+        assert_eq!(pdf_text_string("(a)\\\n\t"), "(\\(a\\)\\\\\\012\\011)");
+        assert_eq!(pdf_text_string("😀漢"), "<FEFFD83DDE006F22>");
+        assert_eq!(winansi_bytes(""), None);
+        assert_eq!(winansi_bytes("漢"), None);
+        assert_eq!(
+            winansi_bytes("A\u{2011}€ŒœŠšŸŽžƒˆ˜–—‘’‚“”„†‡•…‰‹›™"),
+            Some(vec![
+                65, 45, 128, 140, 156, 138, 154, 159, 142, 158, 131, 136, 152, 150, 151, 145, 146,
+                130, 147, 148, 132, 134, 135, 149, 133, 137, 139, 155, 153
+            ])
+        );
+        for byte in [0, 0x81, 0x8D, 0x8F, 0x90, 0x9D] {
+            assert_eq!(winansi_char(byte), ' ');
+        }
+    }
+
+    #[test]
+    fn unicode_cmap_chunks_preserve_every_cid_and_utf16_surrogate_exactly() {
+        let mut map = BTreeMap::new();
+        for g in 1..=101 {
+            map.insert(g, "A".into());
+        }
+        map.insert(102, "😀漢".into());
+        let before = map.clone();
+        for compress in [false, true] {
+            let decoded = String::from_utf8(stream(&to_unicode_obj(&map, compress))).unwrap();
+            assert!(decoded.contains("100 beginbfchar\n<0001> <0041>\n"));
+            assert!(decoded.contains("<0064> <0041>\nendbfchar\n2 beginbfchar\n<0065> <0041>\n<0066> <D83DDE006F22>\nendbfchar\n"));
+            assert_eq!(decoded.matches("> <").count(), 103); // 102 mappings + codespace
+            assert!(
+                decoded
+                    .ends_with("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend")
+            );
+        }
+        assert_eq!(map, before);
+    }
+
+    #[test]
+    fn image_xobjects_keep_literal_color_spaces_masks_and_lossless_samples() {
+        let samples = [0, 1, 127, 128, 254, 255];
+        for compress in [false, true] {
+            for mask in [None, Some(7)] {
+                let object = rgb_xobject(2, 1, &samples, compress, mask);
+                assert_eq!(stream(&object), samples);
+                let dictionary = String::from_utf8_lossy(
+                    &object[..object.windows(8).position(|w| w == b"\nstream\n").unwrap()],
+                );
+                assert!(
+                    dictionary
+                        .contains("/Width 2 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8")
+                );
+                assert_eq!(dictionary.contains("/SMask 7 0 R"), mask.is_some());
+            }
+            assert_eq!(stream(&gray_xobject(6, 1, &samples, compress)), samples);
+            assert_eq!(stream(&font_file_obj(&samples, compress)), samples);
+            assert_eq!(stream(&stream_object("q\nQ\n", compress)), b"q\nQ\n");
+        }
+        // JPEG objects preserve the encoded bytes. Component metadata selects
+        // the declared PDF colorspace, with an explicit unknown fallback.
+        for (components, color, decode) in [
+            (1, "/DeviceGray", false),
+            (3, "/DeviceRGB", false),
+            (4, "/DeviceCMYK", true),
+            (2, "/DeviceRGB", false),
+        ] {
+            let object = jpeg_xobject(2, 1, &samples, components);
+            assert_eq!(stream(&object), samples);
+            let dict = String::from_utf8_lossy(
+                &object[..object.windows(8).position(|w| w == b"\nstream\n").unwrap()],
+            );
+            assert!(dict.contains(color));
+            assert_eq!(dict.contains("/Decode [1 0 1 0 1 0 1 0]"), decode);
+        }
+    }
+
+    #[test]
+    fn image_rotation_keeps_cardinal_matrices_and_subthreshold_rotation_is_identity() {
+        let literal = "owned\n";
+        for degrees in [-0.01, 0.0, 0.01] {
+            assert_eq!(
+                rotate_about_centre(10.0, 20.0, 80.0, 40.0, degrees, literal),
+                literal
+            );
+        }
+        for (degrees, matrix) in [
+            (90.0, "0.0000 1.0000 -1.0000 0.0000"),
+            (180.0, "-1.0000 0.0000 -0.0000 -1.0000"),
+            (-90.0, "0.0000 -1.0000 1.0000 0.0000"),
+        ] {
+            assert_eq!(
+                rotate_about_centre(10.0, 20.0, 80.0, 40.0, degrees, literal),
+                format!(
+                    "q 1 0 0 1 50.00 40.00 cm {matrix} 0 0 cm 1 0 0 1 -50.00 -40.00 cm owned\nQ\n"
+                )
+            );
+        }
+        for crop in [None, Some([0.0; 4]), Some([0.0001; 4])] {
+            assert_eq!(
+                paint_image(10.0, 20.0, 80.0, 40.0, crop, 3, 0.0),
+                "q 80.00 0 0 40.00 10.00 20.00 cm /Im3 Do Q\n"
+            );
+        }
+    }
+
+    #[test]
+    fn glyph_usage_and_unicode_maps_keep_face_ownership_and_ignore_nonpainting_source() {
+        let fonts = bundled_fonts();
+        let a = FaceRef::Embedded(0);
+        let b = FaceRef::Embedded(1);
+        let fa = fonts.get(a);
+        let fb = fonts.get(b);
+        let ag = fa.glyphs("A");
+        let bg = fb.glyphs("B");
+        let mut page = Page::new(40.0, 40.0);
+        page.ops = vec![
+            Op::text(a, 10.0, 1.0, 10.0, ag.clone(), [0.0; 3], "A"),
+            Op::text(b, 10.0, 1.0, 20.0, bg, [0.0; 3], "B"),
+            Op::text(a, 10.0, 1.0, 30.0, vec![], [0.0; 3], "not painted"),
+            Op::Pin(true),
+            Op::Pin(false),
+        ];
+        let map = face_unicode_map(fa, a, &[page]);
+        assert_eq!(map, BTreeMap::from([(ag[0], "A".into())]));
+        let mut page = Page::new(40.0, 40.0);
+        page.ops = vec![Op::text(a, 10.0, 1.0, 10.0, ag.clone(), [0.0; 3], "A")];
+        assert_eq!(face_used_glyphs(fa, a, &[page]), BTreeSet::from([0, ag[0]]));
+    }
+
+    #[test]
+    fn subset_declines_corrupt_sfnt_directory_but_keeps_valid_empty_and_out_of_range_usage() {
+        let original = FaceId::CarlitoRegular.bytes();
+        let full = ttf_parser::Face::parse(original, 0).unwrap();
+        let gid = full.glyph_index('A').unwrap();
+        for used in [BTreeSet::new(), BTreeSet::from([gid.0, u16::MAX])] {
+            let sub = subset_keep_gids(original, &used).unwrap();
+            let parsed = ttf_parser::Face::parse(&sub, 0).unwrap();
+            assert_eq!(parsed.number_of_glyphs(), full.number_of_glyphs());
+            if used.contains(&gid.0) {
+                assert_eq!(parsed.glyph_bounding_box(gid), full.glyph_bounding_box(gid));
+            } else {
+                assert!(parsed.glyph_bounding_box(gid).is_none());
+            }
+        }
+        // Deliberately malformed font directory, not a handcrafted fake font.
+        for bytes in [original[..3].to_vec(), original[..12].to_vec(), {
+            let mut b = original.to_vec();
+            b[20..24].copy_from_slice(&u32::MAX.to_be_bytes());
+            b
+        }] {
+            let before = bytes.clone();
+            assert!(subset_keep_gids(&bytes, &BTreeSet::from([gid.0])).is_none());
+            assert_eq!(bytes, before);
+        }
+        let mut missing = original.to_vec();
+        let tables = u16::from_be_bytes(missing[4..6].try_into().unwrap()) as usize;
+        let rec = (0..tables)
+            .map(|i| 12 + 16 * i)
+            .find(|&i| &missing[i..i + 4] == b"glyf")
+            .unwrap();
+        missing[rec..rec + 4].copy_from_slice(b"BAD!");
+        assert!(subset_keep_gids(&missing, &BTreeSet::from([gid.0])).is_none());
+    }
+
+    #[test]
+    fn pdf_cross_reference_offsets_point_to_exact_unmodified_binary_object_boundaries() {
+        let objects = vec![
+            b"<< /Type /Catalog >>\n".to_vec(),
+            b"binary\0\xff".to_vec(),
+            b"<< /Producer (test) >>".to_vec(),
+        ];
+        let before = objects.clone();
+        let bytes = finalize_pdf(&objects);
+        let xref = bytes.windows(5).position(|w| w == b"xref\n").unwrap();
+        let tail = std::str::from_utf8(&bytes[xref..]).unwrap();
+        assert!(tail.starts_with("xref\n0 4\n0000000000 65535 f \n"));
+        for (i, row) in tail.lines().skip(3).take(3).enumerate() {
+            let offset: usize = row[..10].parse().unwrap();
+            let head = format!("{} 0 obj\n", i + 1);
+            assert_eq!(&bytes[offset..offset + head.len()], head.as_bytes());
+            assert_eq!(
+                &bytes[offset + head.len()..offset + head.len() + objects[i].len()],
+                objects[i]
+            );
+        }
+        assert!(tail.ends_with(&format!("startxref\n{xref}\n%%EOF\n")));
+        assert_eq!(objects, before);
+    }
+
+    #[test]
+    fn authored_width_scales_close_text_objects_without_leaking_into_following_glyphs() {
+        let fonts = bundled_fonts();
+        let face = fonts.resolve("PDFContractMono", false, false);
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        for (size, ppem, tracking) in [
+            (10.0, None, ""),
+            (11.04, Some(46), "-0.0015"),
+            (16.08, Some(67), "-0.0018"),
+        ] {
+            for scale in [0.5, 1.0, 1.5] {
+                let mut page = Page::new(200.0, 300.0);
+                // These are the real writer operations emitted for w:w=50/100/150.
+                // Unscaled owners before and after the scaled run must retain
+                // their own text state rather than inheriting its transform.
+                for (c, x, sx) in [('A', 10.0, 1.0), ('B', 20.0, scale), ('C', 30.0, 1.0)] {
+                    page.ops.push(
+                        Op::text(
+                            face,
+                            size,
+                            x,
+                            200.0,
+                            vec![raw.glyph_index(c).unwrap().0],
+                            [1.0, 0.0, 0.0],
+                            c.to_string(),
+                        )
+                        .scaled(sx),
+                    );
+                }
+                let signature = |page: &Page| {
+                    page.ops
+                        .iter()
+                        .map(|op| match op {
+                            Op::Text {
+                                face,
+                                size,
+                                x,
+                                y,
+                                glyphs,
+                                color,
+                                text,
+                                hscale,
+                                ..
+                            } => (
+                                *face,
+                                *size,
+                                *x,
+                                *y,
+                                glyphs.clone(),
+                                *color,
+                                text.clone(),
+                                *hscale,
+                            ),
+                            _ => panic!(
+                                "source owns only text operations: {:?}",
+                                std::mem::discriminant(op)
+                            ),
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let original = signature(&page);
+                for compress in [false, true] {
+                    let pdf = emit(
+                        &fonts,
+                        std::slice::from_ref(&page),
+                        PdfOptions {
+                            compress,
+                            ..PdfOptions::default()
+                        },
+                    );
+                    let xref = pdf.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 1;
+                    let tail = std::str::from_utf8(&pdf[xref..]).unwrap();
+                    let count = tail
+                        .lines()
+                        .nth(1)
+                        .unwrap()
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap()
+                        .parse::<usize>()
+                        .unwrap();
+                    let offsets = tail
+                        .lines()
+                        .skip(3)
+                        .take(count - 1)
+                        .map(|row| row[..10].parse::<usize>().unwrap())
+                        .collect::<Vec<_>>();
+                    let mut contents = Vec::new();
+                    for (i, &at) in offsets.iter().enumerate() {
+                        let end = offsets.get(i + 1).copied().unwrap_or(xref);
+                        let prefix = format!("{} 0 obj\n", i + 1);
+                        let object = pdf[at..end]
+                            .strip_prefix(prefix.as_bytes())
+                            .unwrap()
+                            .strip_suffix(b"\nendobj\n")
+                            .unwrap();
+                        if object.windows(8).any(|w| w == b"\nstream\n") {
+                            let decoded = stream(object);
+                            if decoded.windows(3).any(|w| w == b" Tj") {
+                                contents.push(String::from_utf8(decoded).unwrap());
+                            }
+                        }
+                    }
+                    assert_eq!(contents.len(), 1);
+                    let content = &contents[0];
+                    assert_eq!(content.matches(" Tj").count(), 3);
+                    if let Some(ppem) = ppem {
+                        // Device paint always isolates each glyph; 300 - 200
+                        // snaps from 100pt down to 100.08pt down, hence y199.92.
+                        for (c, x, a) in [
+                            ('A', 10, "0.24".to_string()),
+                            ('B', 20, format!("{:.4}", 0.24 * scale)),
+                            ('C', 30, "0.24".to_string()),
+                        ] {
+                            let a = if c == 'B' && scale == 1.0 {
+                                "0.24".to_string()
+                            } else {
+                                a
+                            };
+                            assert!(content.contains(&format!("q {a} 0 0 0.24 {x}.00 199.92 cm BT /LiberationMono {ppem} Tf 1.000 0.000 0.000 rg {tracking} Tc 0 0 Td ({c}) Tj ET Q")), "size={size}, scale={scale}, content={content}");
+                        }
+                    } else if scale == 1.0 {
+                        assert!(content.contains("BT /LiberationMono 10.00 Tf 1.000 0.000 0.000 rg 10.00 200.00 Td (A) Tj\n10 0 Td (B) Tj\n10 0 Td (C) Tj\nET\n"), "{content}");
+                    } else {
+                        assert!(
+                            content.contains("10.00 200.00 Td (A) Tj\nET\n"),
+                            "{content}"
+                        );
+                        assert!(content.contains(&format!("q {scale:.4} 0 0 1 20.00 200.00 cm BT /LiberationMono 10.00 Tf 1.000 0.000 0.000 rg 0 0 Td (B) Tj ET Q\n")), "{content}");
+                        assert!(content.contains("BT /LiberationMono 10.00 Tf 1.000 0.000 0.000 rg 30.00 200.00 Td (C) Tj\nET\n"), "{content}");
+                    }
+                    assert_eq!(signature(&page), original);
+                }
+            }
+        }
+    }
+
+    /// Text no face covers paints `.notdef`, which `/ToUnicode` never maps:
+    /// an `/ActualText` span keeps it searchable (KNOWN_ISSUES #9, the
+    /// WebAssembly PDF's Japanese form read back as NULs).
+    #[test]
+    fn notdef_runs_carry_their_text_as_actual_text() {
+        let fonts = bundled_fonts();
+        let face = fonts.resolve("PDFContractSans", false, false);
+        let raw = ttf_parser::Face::parse(fonts.get(face).bytes(), 0).unwrap();
+        assert!(raw.glyph_index('研').is_none());
+        let mut page = Page::new(200.0, 300.0);
+        page.ops.push(Op::text(
+            face,
+            10.0,
+            10.0,
+            200.0,
+            vec![0, 0],
+            [0.0, 0.0, 0.0],
+            "研究".to_string(),
+        ));
+        page.ops.push(Op::text(
+            face,
+            10.0,
+            40.0,
+            200.0,
+            vec![raw.glyph_index('A').unwrap().0],
+            [0.0, 0.0, 0.0],
+            "A".to_string(),
+        ));
+        // Unpainted text: render mode 3, restored by Q.
+        page.ops.push(
+            Op::text(
+                face,
+                10.0,
+                10.0,
+                220.0,
+                vec![0],
+                [0.0, 0.0, 0.0],
+                "研".to_string(),
+            )
+            .hidden(),
+        );
+        let pdf = emit(&fonts, std::slice::from_ref(&page), PdfOptions::default());
+        let pdf = String::from_utf8_lossy(&pdf);
+        assert!(
+            pdf.contains("/Span <</ActualText <FEFF78147A76>>> BDC <00000000> Tj EMC"),
+            "{pdf}"
+        );
+        assert!(
+            pdf.contains(
+                "Tf 3 Tr 10.00 220.00 Td /Span <</ActualText <FEFF7814>>> BDC <0000> Tj EMC ET Q"
+            ),
+            "{pdf}"
+        );
+        assert_eq!(pdf.matches("/ActualText").count(), 2, "{pdf}");
+
+        // A math letter painted from its ASCII italic reads back as itself.
+        let a = raw.glyph_index('a').unwrap().0;
+        let mut page = Page::new(200.0, 300.0);
+        page.ops.push(Op::text(
+            face,
+            10.0,
+            10.0,
+            200.0,
+            vec![a],
+            [0.0, 0.0, 0.0],
+            "\u{1D44E}".to_string(),
+        ));
+        let pdf = emit(&fonts, std::slice::from_ref(&page), PdfOptions::default());
+        let pdf = String::from_utf8_lossy(&pdf);
+        assert!(
+            pdf.contains(&format!(
+                "/Span <</ActualText <FEFFD835DC4E>>> BDC <{a:04X}> Tj EMC"
+            )),
+            "{pdf}"
+        );
+    }
+
+    #[test]
+    fn repeated_image_objects_share_only_identical_encoded_samples_and_alpha_owners() {
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode(
+                &[0, 0, 0, 127, 64, 32, 255, 255, 255],
+                3,
+                1,
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        let jpeg_before = jpeg.clone();
+        let pixels_a = vec![0, 1, 127, 128, 254, 255];
+        let pixels_b = vec![255, 254, 128, 127, 1, 0];
+        let alpha = vec![64, 192];
+        let mut pages = Vec::new();
+        for page_number in 1..=2 {
+            let mut page = Page::new(200.0, 300.0);
+            page.number = page_number;
+            for x in [10.0, 50.0] {
+                page.ops.push(Op::Jpeg {
+                    x,
+                    y: 20.0,
+                    dw: 30.0,
+                    dh: 10.0,
+                    width: 3,
+                    height: 1,
+                    bytes: jpeg.clone(),
+                    components: 3,
+                    crop: None,
+                    rotate_deg: 0.0,
+                    oval: false,
+                });
+            }
+            for (x, pixels) in [(90.0, &pixels_a), (130.0, &pixels_b)] {
+                page.ops.push(Op::Rgb {
+                    x,
+                    y: 20.0,
+                    dw: 30.0,
+                    dh: 10.0,
+                    width: 2,
+                    height: 1,
+                    bytes: pixels.clone(),
+                    alpha: Some(alpha.clone()),
+                    crop: None,
+                    rotate_deg: 0.0,
+                    oval: false,
+                });
+            }
+            pages.push(page);
+        }
+        for compress in [false, true] {
+            let bytes = emit(
+                &bundled_fonts(),
+                &pages,
+                PdfOptions {
+                    compress,
+                    ..PdfOptions::default()
+                },
+            );
+            // Decode actual object boundaries through the writer's xref offsets;
+            // binary image/font streams must never be parsed as text objects.
+            let xref = bytes.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 1;
+            let tail = std::str::from_utf8(&bytes[xref..]).unwrap();
+            let count: usize = tail
+                .lines()
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .parse()
+                .unwrap();
+            let offsets = tail
+                .lines()
+                .skip(3)
+                .take(count - 1)
+                .map(|row| row[..10].parse::<usize>().unwrap())
+                .collect::<Vec<_>>();
+            let mut objects = Vec::new();
+            for (i, &start) in offsets.iter().enumerate() {
+                let end = offsets.get(i + 1).copied().unwrap_or(xref);
+                let head = format!("{} 0 obj\n", i + 1);
+                assert_eq!(&bytes[start..start + head.len()], head.as_bytes());
+                let complete = &bytes[start + head.len()..end];
+                objects.push(complete.strip_suffix(b"\nendobj\n").unwrap());
+            }
+            let image_ids = objects
+                .iter()
+                .enumerate()
+                .filter(|(_, obj)| obj.windows(15).any(|w| w == b"/Subtype /Image"))
+                .map(|(i, _)| i + 1)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                image_ids.len(),
+                4,
+                "one shared JPEG, one shared mask, two distinct RGB samples"
+            );
+            let mut resources = Vec::new();
+            let mut paints = Vec::new();
+            for object in &objects {
+                let dictionary = String::from_utf8_lossy(object);
+                if dictionary.contains("/Type /Page ") {
+                    let mut ids = Vec::new();
+                    for name in ["Im1", "Im2", "Im3", "Im4"] {
+                        ids.push(
+                            dictionary
+                                .split(&format!("/{name} "))
+                                .nth(1)
+                                .unwrap()
+                                .split_whitespace()
+                                .next()
+                                .unwrap()
+                                .parse::<usize>()
+                                .unwrap(),
+                        );
+                    }
+                    assert_eq!(ids[0], ids[1]);
+                    assert_ne!(ids[0], ids[2]);
+                    assert_ne!(ids[2], ids[3]);
+                    resources.push(ids);
+                }
+                if dictionary.contains("\nstream\n")
+                    && !dictionary.contains("/Subtype /Image")
+                    && !dictionary.contains("/Length1 ")
+                    && !dictionary.contains("/CMap")
+                {
+                    let decoded = stream(object);
+                    if decoded.windows(4).any(|w| w == b"/Im1") {
+                        paints.push(String::from_utf8(decoded).unwrap());
+                    }
+                }
+            }
+            assert_eq!(resources.len(), 2);
+            assert_eq!(resources[0], resources[1]);
+            let ids = &resources[0];
+            assert_eq!(stream(objects[ids[0] - 1]), jpeg);
+            assert_eq!(stream(objects[ids[2] - 1]), pixels_a);
+            assert_eq!(stream(objects[ids[3] - 1]), pixels_b);
+            let mask_id = |object: &[u8]| {
+                String::from_utf8_lossy(object)
+                    .split("/SMask ")
+                    .nth(1)
+                    .unwrap()
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap()
+            };
+            let mask_a = mask_id(objects[ids[2] - 1]);
+            let mask_b = mask_id(objects[ids[3] - 1]);
+            assert_eq!(mask_a, mask_b);
+            assert_eq!(stream(objects[mask_a - 1]), alpha);
+            assert_eq!(paints.len(), 2);
+            for paint in paints {
+                for (n, x) in [(1, 10), (2, 50), (3, 90), (4, 130)] {
+                    assert!(
+                        paint.contains(&format!("q 30.00 0 0 10.00 {x}.00 20.00 cm /Im{n} Do Q\n"))
+                    );
+                }
+                assert_eq!(paint.matches(" Do Q\n").count(), 4);
+            }
+        }
+        assert_eq!(jpeg, jpeg_before);
+        for page in pages {
+            for (i, op) in page.ops.iter().enumerate() {
+                match op {
+                    Op::Jpeg { bytes, .. } => assert_eq!(bytes, &jpeg),
+                    Op::Rgb {
+                        bytes,
+                        alpha: plane,
+                        ..
+                    } => {
+                        assert_eq!(bytes, if i == 2 { &pixels_a } else { &pixels_b });
+                        assert_eq!(plane.as_ref(), Some(&alpha));
+                    }
+                    _ => panic!("authored image operation changed"),
+                }
             }
         }
     }

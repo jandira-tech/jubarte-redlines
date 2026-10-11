@@ -82,6 +82,7 @@
 //! [`comparer::WmlComparerSettings::powertools_faithful`] skips the
 //! mode-specific passes.
 //!
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 //! ## Provenance
@@ -101,6 +102,8 @@ mod builtin_styles;
 pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
 pub mod changes;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod comments;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;
@@ -132,6 +135,7 @@ pub mod scrub;
 pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
+pub mod text_diff;
 pub mod unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
 #[cfg(feature = "self-update")]

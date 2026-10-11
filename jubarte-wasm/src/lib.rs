@@ -167,8 +167,8 @@ pub fn reject_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue
     jubarte::changes::reject_changes(docx, &change_filter(filter_json)?).map_err(js_err)
 }
 
-/// List the tracked revisions in a DOCX as a JSON array string — the same
-/// object shape as the CLI `jubarte revisions --json` lines
+/// List the tracked revisions in a DOCX as a JSON array string, grouped as
+/// Docxodus's `GetRevisions` groups them; each object has
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 ///
 /// Mirrors `jubarte::document_comparer::get_revisions` with default settings,
@@ -192,6 +192,10 @@ pub fn get_revisions(docx: &[u8], input_limits_json: Option<String>) -> Result<S
 /// `revisions` (optional, default `"conventional"`) paints tracked changes:
 /// `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
 /// `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+/// `moveComments` (optional, default `false`) lists the comments after the
+/// last page instead of in balloons beside the text; `changedOnly`
+/// (optional, default `false`) keeps only the pages a tracked change
+/// touches (a document without changes keeps its first page).
 #[cfg(feature = "pdf")]
 #[wasm_bindgen(js_name = docxToPdf)]
 pub fn docx_to_pdf(
@@ -199,6 +203,8 @@ pub fn docx_to_pdf(
     compress: Option<bool>,
     revisions: Option<String>,
     revision_palette: Option<String>,
+    move_comments: Option<bool>,
+    changed_only: Option<bool>,
 ) -> Result<Vec<u8>, JsValue> {
     let revisions = jubarte::convert::RevisionStyle::from_choice(
         revisions.as_deref().unwrap_or("conventional"),
@@ -208,6 +214,12 @@ pub fn docx_to_pdf(
     let options = jubarte::convert::PdfOptions {
         compress: compress.unwrap_or(false),
         revisions,
+        comments: if move_comments.unwrap_or(false) {
+            jubarte::convert::CommentPlacement::End
+        } else {
+            jubarte::convert::CommentPlacement::Margin
+        },
+        changed_only: changed_only.unwrap_or(false),
     };
     jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
 }
@@ -248,6 +260,156 @@ pub fn inspect_document(docx: &[u8]) -> Result<String, JsValue> {
 #[wasm_bindgen(js_name = documentMarkdown)]
 pub fn document_markdown(docx: &[u8]) -> Result<String, JsValue> {
     jubarte::inspect::markdown(docx).map_err(js_err)
+}
+
+/// Markdown without paragraph ids, with tracked changes kept or resolved.
+#[wasm_bindgen(js_name = documentMarkdownWithChanges)]
+pub fn document_markdown_with_changes(docx: &[u8], track_changes: &str) -> Result<String, JsValue> {
+    let choice = jubarte::markdown::TrackChanges::parse(track_changes)
+        .ok_or_else(|| js_err("track_changes must be all, accept or reject"))?;
+    jubarte::markdown::docx_to_markdown(
+        docx,
+        &jubarte::markdown::MarkdownOptions {
+            track_changes: choice,
+            extract_media: None,
+            ..jubarte::markdown::MarkdownOptions::default()
+        },
+    )
+    .map(|read| read.markdown)
+    .map_err(js_err)
+}
+
+/// `readView` options: the `read` command's flags.
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+struct ReadViewOptions {
+    track_changes: Option<String>,
+    comments: Option<String>,
+    dates: bool,
+    page_markers: Option<bool>,
+    paragraphs: Option<String>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    changed: bool,
+    by: Option<String>,
+    source: Option<String>,
+}
+
+fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: ReadViewOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("readView options: {e}"))?,
+        None => ReadViewOptions::default(),
+    };
+    let track_changes = match options.track_changes.as_deref() {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or("trackChanges must be all, accept or reject")?,
+    };
+    let comments = match options.comments.as_deref() {
+        None | Some("inline") => true,
+        Some("none") => false,
+        Some(other) => return Err(format!("comments must be inline or none, not {other:?}")),
+    };
+    let select = jubarte::markdown::Select::from_flags(
+        options.paragraphs.as_deref(),
+        options.head,
+        options.tail,
+        options.changed,
+        options.by.as_deref(),
+    )?;
+    let view = jubarte::markdown::read(
+        docx,
+        &jubarte::markdown::ReadOptions {
+            track_changes,
+            comments,
+            dates: options.dates,
+            page_markers: options.page_markers.unwrap_or(true),
+            select,
+            source: options.source,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "markdown": view.markdown, "warnings": view.warnings }).to_string())
+}
+
+/// The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
+/// then Markdown with `<!-- pN -->` id lines and every change and comment
+/// with its id. Options (JSON, all optional): `trackChanges` (all, accept,
+/// reject), `comments` (inline, none), `dates`, `pageMarkers` (default
+/// true: the layout pass numbers the pages), `paragraphs` (`"p3,p10-p20,t0"`),
+/// `head`, `tail`, `changed` (only the blocks with marks) with `by` (one
+/// author's: a handle or a full name), `source` (the name printed as
+/// `source:`).
+///
+/// Mirrors `jubarte::markdown::read`.
+#[wasm_bindgen(js_name = readView)]
+pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
+    read_view_json(docx, options_json.as_deref()).map_err(js_err)
+}
+
+/// Options of [`flagPlan`](flag_plan).
+#[derive(serde::Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct FlagPlanOptions {
+    author: Option<String>,
+    date: Option<String>,
+    existing_revisions: Option<String>,
+}
+
+fn flag_plan_json(
+    verb: &str,
+    operations_json: &str,
+    docx: &[u8],
+    options_json: Option<&str>,
+) -> Result<String, String> {
+    let options: FlagPlanOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("options: {e}"))?,
+        None => FlagPlanOptions::default(),
+    };
+    let (plan, notes) = jubarte::edit::flags::plan_from_flags_json(
+        verb,
+        operations_json,
+        options.author.as_deref().unwrap_or("Modified User"),
+        options.date.as_deref(),
+        options.existing_revisions.as_deref().unwrap_or("auto"),
+        docx,
+    )?;
+    Ok(serde_json::json!({ "plan": plan, "notes": notes }).to_string())
+}
+
+/// The plan the `edit`/`add` operation flags describe, as JSON `{plan,
+/// notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
+/// `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
+/// `operationsJson` the parsed command's `operations` array. Options (JSON,
+/// all optional): `author` (default `Modified User`), `date`,
+/// `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
+/// An error is a usage error.
+///
+/// Mirrors `jubarte::edit::flags::plan_from_flags`.
+#[wasm_bindgen(js_name = flagPlan)]
+pub fn flag_plan(
+    verb: &str,
+    operations_json: &str,
+    docx: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsValue> {
+    flag_plan_json(verb, operations_json, docx, options_json.as_deref()).map_err(js_err)
+}
+
+/// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
+/// view `edit` and `add` print (every changed block when none does);
+/// `accepted` reads its accepted text, `source` is the name printed as
+/// `source:`.
+///
+/// Mirrors `jubarte::markdown::changed_view`.
+#[wasm_bindgen(js_name = changedView)]
+pub fn changed_view(
+    docx: &[u8],
+    author: &str,
+    accepted: bool,
+    source: Option<String>,
+) -> Result<String, JsValue> {
+    jubarte::markdown::changed_view(docx, author, accepted, source.as_deref()).map_err(js_err)
 }
 
 /// What [`applyEditPlan`](apply_edit_plan) and
@@ -381,12 +543,246 @@ fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
     if bytes.starts_with(b"PK\x03\x04") {
         return Ok(jubarte::markdown::Source::Docx(bytes));
     }
-    std::str::from_utf8(bytes)
+    std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes))
         .map(jubarte::markdown::Source::Markdown)
         .map_err(|e| js_err(format!("a side is neither a .docx nor UTF-8 Markdown: {e}")))
 }
 
-/// The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+/// Explicit input kinds supplied by the shared CLI or API caller.
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SideFormat {
+    Docx,
+    Md,
+}
+
+fn typed_side(
+    bytes: &[u8],
+    format: Option<SideFormat>,
+) -> Result<jubarte::markdown::Source<'_>, String> {
+    let format = format.unwrap_or(if bytes.starts_with(b"PK\x03\x04") {
+        SideFormat::Docx
+    } else {
+        SideFormat::Md
+    });
+    match format {
+        SideFormat::Docx => {
+            if !bytes.starts_with(b"PK\x03\x04") {
+                return Err("invalid DOCX: expected a ZIP package".to_string());
+            }
+            Ok(jubarte::markdown::Source::Docx(bytes))
+        }
+        // The native, Python and npm readers drop a UTF-8 BOM too.
+        SideFormat::Md => std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes))
+            .map(jubarte::markdown::Source::Markdown)
+            .map_err(|e| format!("invalid UTF-8 Markdown: {e}")),
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ViewFormat {
+    #[default]
+    Github,
+    Word,
+    Normal,
+    Context,
+    SideBySide,
+}
+
+impl From<ViewFormat> for jubarte::text_diff::TextFormat {
+    fn from(format: ViewFormat) -> Self {
+        match format {
+            ViewFormat::Github => Self::Github,
+            ViewFormat::Word => Self::Word,
+            ViewFormat::Normal => Self::Normal,
+            ViewFormat::Context => Self::Context,
+            ViewFormat::SideBySide => Self::SideBySide,
+        }
+    }
+}
+
+fn default_context() -> u32 {
+    3
+}
+
+fn deserialize_context<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    <u32 as serde::Deserialize>::deserialize(deserializer).map_err(|e| {
+        serde::de::Error::custom(format!(
+            "context must be an integer in the u32 range (0..4294967295): {e}"
+        ))
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ViewOptions {
+    #[serde(default)]
+    format: ViewFormat,
+    old_name: Option<String>,
+    new_name: Option<String>,
+    #[serde(default = "default_context", deserialize_with = "deserialize_context")]
+    context: u32,
+    #[serde(default)]
+    accept_changes: bool,
+    #[serde(default)]
+    full_lines: bool,
+    old_format: Option<SideFormat>,
+    new_format: Option<SideFormat>,
+}
+
+fn document_view(old: &[u8], next: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: ViewOptions = serde_json::from_str(options_json.unwrap_or("{}"))
+        .map_err(|e| format!("invalid diff view options: {e}"))?;
+    let (old, next) = (
+        typed_side(old, options.old_format)?,
+        typed_side(next, options.new_format)?,
+    );
+    let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
+        given.unwrap_or_else(|| match source {
+            jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
+            jubarte::markdown::Source::Markdown(_) => format!("{default}.md"),
+        })
+    };
+    let defaults = jubarte::text_diff::TextOptions::default();
+    let options = jubarte::text_diff::TextOptions {
+        unified: jubarte::text_diff::UnifiedOptions {
+            old_name: name(options.old_name, &old, "old"),
+            new_name: name(options.new_name, &next, "new"),
+            context: options.context as usize,
+        },
+        format: options.format.into(),
+        accept_changes: options.accept_changes,
+        window: if options.full_lines {
+            None
+        } else {
+            defaults.window
+        },
+    };
+    jubarte::text_diff::diff_documents_view(old, next, &options)
+}
+
+/// Document review view. `optionsJson` is a strict camelCase object with
+/// `format` (github, word, normal, context, side-by-side), `oldName`,
+/// `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+/// and `newFormat` (docx/md). Defaults use the core display window; Word
+/// always accepts both inputs' revisions before creating new CriticMarkup.
+#[wasm_bindgen(js_name = diffDocumentsView)]
+pub fn diff_documents_view(
+    old: &[u8],
+    next: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsValue> {
+    document_view(old, next, options_json.as_deref()).map_err(js_err)
+}
+
+/// Complete, unwrapped document snapshots as a Git text patch. `context`
+/// is validated before wasm-bindgen can coerce booleans or wrap u32 values.
+#[wasm_bindgen(js_name = diffDocumentsUnified, skip_typescript)]
+pub fn diff_documents_unified(
+    old: &[u8],
+    next: &[u8],
+    old_name: Option<String>,
+    new_name: Option<String>,
+    context: JsValue,
+) -> Result<String, JsValue> {
+    let context = if context.is_undefined() {
+        3
+    } else {
+        let number = context
+            .as_f64()
+            .filter(|number| {
+                number.is_finite()
+                    && number.fract() == 0.0
+                    && (0.0..=f64::from(u32::MAX)).contains(number)
+            })
+            .ok_or_else(|| js_err("context must be an integer in the u32 range (0..4294967295)"))?;
+        number as u32
+    };
+    let (old, next) = (side(old)?, side(next)?);
+    let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
+        given.unwrap_or_else(|| match source {
+            jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
+            jubarte::markdown::Source::Markdown(_) => format!("{default}.md"),
+        })
+    };
+    let options = jubarte::text_diff::UnifiedOptions {
+        old_name: name(old_name, &old, "old"),
+        new_name: name(new_name, &next, "new"),
+        context: context as usize,
+    };
+    jubarte::text_diff::diff_documents(old, next, &options).map_err(js_err)
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const UNIFIED_TYPES: &str = r#"
+export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+"#;
+
+/// Shared clap parsing, with no filesystem, clock or process access.
+#[wasm_bindgen(js_name = parseCli)]
+pub fn parse_cli(
+    arguments_json: &str,
+    program: Option<String>,
+    supported_json: Option<String>,
+) -> Result<String, JsValue> {
+    let arguments: Vec<String> = serde_json::from_str(arguments_json).map_err(js_err)?;
+    let supported: Vec<String> =
+        serde_json::from_str(supported_json.as_deref().unwrap_or("[]")).map_err(js_err)?;
+    Ok(jubarte::cli::parse_json(
+        &arguments,
+        program.as_deref().unwrap_or("jubarte-redlines"),
+        &supported,
+    ))
+}
+
+/// The complete document as CriticMarkup; existing paragraph patches stay separate.
+#[wasm_bindgen(js_name = diffDocumentsCritic)]
+pub fn diff_documents_critic(
+    old: &[u8],
+    next: &[u8],
+    author: Option<String>,
+    date: Option<String>,
+) -> Result<String, JsValue> {
+    let (old, next) = (side(old)?, side(next)?);
+    let mut options = jubarte::markdown::RedlineOptions::default();
+    if let Some(author) = author {
+        options.settings.author_for_revisions = author;
+    }
+    if let Some(date) = date {
+        options.settings.date_time_for_revisions = date;
+    }
+    match (old, next) {
+        (jubarte::markdown::Source::Markdown(old), jubarte::markdown::Source::Markdown(next)) => {
+            Ok(jubarte::markdown::diff_markdown(old, next))
+        }
+        _ => jubarte::markdown::redline(old, next, &options)
+            .and_then(|docx| jubarte::markdown::docx_to_markdown(&docx, &Default::default()))
+            .map(|read| read.markdown)
+            .map_err(js_err),
+    }
+}
+
+/// DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
+#[wasm_bindgen(js_name = redlineDocuments)]
+pub fn redline_documents(
+    old: &[u8],
+    next: &[u8],
+    author: &str,
+    date: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let options = jubarte::markdown::RedlineOptions {
+        settings: jubarte::comparer::WmlComparerSettings {
+            author_for_revisions: author.to_string(),
+            date_time_for_revisions: date.to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    jubarte::markdown::redline(side(old)?, side(next)?, &options).map_err(js_err)
+}
+
+/// The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 /// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 /// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
 /// `body:p:N` id in a Word document or `line:N` in Markdown.
@@ -400,14 +796,14 @@ fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
 #[wasm_bindgen(js_name = diffDocuments)]
 pub fn diff_documents(
     old: &[u8],
-    new: &[u8],
+    next: &[u8],
     author: &str,
     date: &str,
     columns: Option<u32>,
     old_name: Option<String>,
     new_name: Option<String>,
 ) -> Result<String, JsValue> {
-    let (old, new) = (side(old)?, side(new)?);
+    let (old, next) = (side(old)?, side(next)?);
     let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
         given.unwrap_or_else(|| match source {
             jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
@@ -416,17 +812,20 @@ pub fn diff_documents(
     };
     let options = patch_options(
         &name(old_name, &old, "old"),
-        &name(new_name, &new, "new"),
+        &name(new_name, &next, "new"),
         author,
         date,
     );
-    let patch = jubarte::markdown::patch_documents(
-        old,
-        new,
-        &jubarte::markdown::RedlineOptions::default(),
-        &options,
-    )
-    .map_err(js_err)?;
+    let redline = jubarte::markdown::RedlineOptions {
+        settings: jubarte::comparer::WmlComparerSettings {
+            author_for_revisions: author.to_string(),
+            date_time_for_revisions: date.to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let patch =
+        jubarte::markdown::patch_documents(old, next, &redline, &options).map_err(js_err)?;
     let hunks: Vec<serde_json::Value> = patch
         .hunks
         .iter()
@@ -724,6 +1123,83 @@ mod tests {
     use super::*;
 
     #[test]
+    fn document_views_validate_options_and_formats_without_js_coercions() {
+        let old = b"Due in 30 days.\n";
+        let new = b"Due in 60 days.\n";
+        for format in ["github", "word", "normal", "context", "side-by-side"] {
+            let options = serde_json::json!({"format": format, "context": 0, "fullLines": true, "oldName": "before.md", "newName": "after.md", "oldFormat": "md", "newFormat": "md"}).to_string();
+            let text = document_view(old, new, Some(&options)).unwrap();
+            assert!(text.contains("30") && text.contains("60"), "{text}");
+        }
+        assert!(
+            document_view(old, new, None)
+                .unwrap()
+                .contains("diff --git")
+        );
+        for value in ["true", "false", "-1", "1.5", "4294967296", "null", "\"3\""] {
+            assert!(
+                document_view(old, new, Some(&format!("{{\"context\":{value}}}")))
+                    .unwrap_err()
+                    .contains("context")
+            );
+        }
+        for options in [
+            "{",
+            "null",
+            "[]",
+            "{\"format\":\"critic\"}",
+            "{\"typo\":1}",
+            "{\"acceptChanges\":null}",
+            "{\"oldFormat\":\"txt\"}",
+        ] {
+            assert!(document_view(old, new, Some(options)).is_err(), "{options}");
+        }
+        assert!(document_view(old, new, Some("{\"context\":4294967295}")).is_ok());
+    }
+
+    #[test]
+    fn a_markdown_side_drops_its_utf8_bom() {
+        let plain = b"Due in 30 days.\n";
+        let bom = b"\xEF\xBB\xBFDue in 30 days.\n";
+        for options in [None, Some(r#"{"oldFormat":"md","newFormat":"md"}"#)] {
+            assert_eq!(
+                document_view(bom, plain, options).unwrap(),
+                "",
+                "{options:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn document_view_typed_sources_preserve_or_accept_docx_histories() {
+        let old = word("Due in {~~30~>45~~} days.\n");
+        let new = word("Due in {~~60~>45~~} days.\n");
+        let marked = document_view(
+            &old,
+            &new,
+            Some(r#"{"oldFormat":"docx","newFormat":"docx"}"#),
+        )
+        .unwrap();
+        assert!(marked.contains("{--30--}{++45++}") && marked.contains("{--60--}{++45++}"));
+        for options in [r#"{"acceptChanges":true}"#, r#"{"format":"word"}"#] {
+            assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
+        }
+        for options in [r#"{"oldFormat":"docx"}"#, r#"{"newFormat":"docx"}"#] {
+            assert!(
+                document_view(b"plain", b"text", Some(options))
+                    .unwrap_err()
+                    .contains("DOCX")
+            );
+        }
+        assert!(
+            document_view(&[255], b"text", Some(r#"{"oldFormat":"md"}"#))
+                .unwrap_err()
+                .contains("UTF-8")
+        );
+        assert!(document_view(b"plain", &[255], Some(r#"{"newFormat":"md"}"#)).is_err());
+    }
+
+    #[test]
     fn append_documents_puts_b_after_a_and_reads_options() {
         let a = word("A first.\n");
         let b = word("B second.\n");
@@ -787,6 +1263,41 @@ mod tests {
             jubarte::comments::list_comments(&dropped.docx())
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn docx_to_pdf_moves_comments_and_keeps_changed_pages() {
+        let plan = jubarte::edit::EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"body:p:0","text":"Too low"}]}"#,
+        )
+        .unwrap();
+        let noted = jubarte::edit::apply_plan(&word("The cap is 10.\n"), &plan)
+            .unwrap()
+            .clean;
+        let pages = |pdf: Vec<u8>| pdf_page_count(&pdf);
+        assert_eq!(
+            pages(docx_to_pdf(&noted, None, None, None, None, None).unwrap()),
+            1
+        );
+        assert_eq!(
+            pages(docx_to_pdf(&noted, None, None, None, Some(true), None).unwrap()),
+            2,
+            "the comments are listed on a page after the last"
+        );
+        let long: String = (0..120).map(|i| format!("Paragraph {i}.\n\n")).collect();
+        let red = jubarte::document_comparer::compare_documents(
+            &word(&long),
+            &word(&long.replacen("Paragraph 0.", "Paragraph zero.", 1)),
+            "Ann",
+        )
+        .unwrap();
+        let whole = pages(docx_to_pdf(&red, None, None, None, None, None).unwrap());
+        assert!(whole > 1, "{whole} pages");
+        assert_eq!(
+            pages(docx_to_pdf(&red, None, None, None, None, Some(true)).unwrap()),
+            1
         );
     }
 
@@ -941,6 +1452,23 @@ mod tests {
              @@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"
         );
         assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
+    }
+
+    #[test]
+    fn flag_plan_builds_the_plan_the_cli_flags_describe() {
+        let source = word(OLD);
+        let ops = r#"[{"at":"p1","anchor":"30","content":"45","delete":false,"resolve":false,"before":false,"comment":false,"styles":[]}]"#;
+        let out: serde_json::Value = serde_json::from_str(
+            &flag_plan_json("edit", ops, &source, Some(r#"{"author":"Ann"}"#)).unwrap(),
+        )
+        .unwrap();
+        let plan = out["plan"].as_str().unwrap();
+        assert!(plan.contains(r#""author":"Ann""#), "{plan}");
+        let edited = jubarte::edit::apply_plan_json(&source, plan).unwrap();
+        let view = jubarte::markdown::changed_view(&edited.redline, "Ann", false, None).unwrap();
+        assert!(view.contains("{~~30~>45~~}"), "{view}");
+        assert!(flag_plan_json("edit", "[]", &source, None).is_err());
+        assert!(flag_plan_json("edit", ops, &source, Some("{")).is_err());
     }
 
     #[test]

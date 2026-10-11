@@ -11,6 +11,17 @@
 //! (jubarte's included) drop, so the Markdown still converts back to the
 //! same document.
 
+/// An agent-view id or table line (`<!-- p3 … -->`, `<!-- p1-p4 empty -->`,
+/// `<!-- t0 … -->`). Other comment-like lines are document text and key
+/// their block like any other.
+fn agent_line(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix("<!-- ")
+        .and_then(|rest| rest.strip_prefix(['p', 't']))
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        && trimmed.ends_with("-->")
+}
+
 /// Characters of a block's opening text that must match the page text.
 const KEY_CHARS: usize = 24;
 
@@ -54,10 +65,19 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
     // The last block is a list item (or its indented continuation): a
     // marker before the next item would split the list in two.
     let mut in_list = false;
+    // The agent view's id and table lines held at a block's start.
+    let mut held = String::new();
     for line in markdown.split_inclusive('\n') {
         let line_offset = offset;
         offset = offset.saturating_add(line.len());
         let trimmed = line.trim();
+        // The agent view's id and table lines open a block as HTML
+        // comments. They are held back: the block's key is the text under
+        // them, and a marker due for the block goes above them.
+        if block_start && fence.is_none() && agent_line(trimmed) {
+            held.push_str(line);
+            continue;
+        }
         let fenced = fence.is_some();
         match (fence, fence_run(trimmed)) {
             // A fence opens a block, never mid-paragraph text.
@@ -106,12 +126,15 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
                 out.push_str(&marker(page.saturating_add(1), total));
             }
         }
+        out.push_str(&held);
+        held.clear();
         out.push_str(line);
         if !trimmed.is_empty() {
             in_list = list_item(line) || continues_list;
         }
         block_start = trimmed.is_empty() && fence.is_none();
     }
+    out.push_str(&held);
     out
 }
 
@@ -356,6 +379,7 @@ fn mask(line: &str, offset: usize, unpainted: &[std::ops::Range<usize>]) -> Stri
 
 /// The labels the document's link reference definitions define.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn definitions(markdown: &str) -> Vec<String> {
     let parser = pulldown_cmark::Parser::new_ext(markdown, super::write::parser_options());
     let mut labels: Vec<String> = parser
@@ -369,6 +393,7 @@ fn definitions(markdown: &str) -> Vec<String> {
 
 /// The page text of `markdown`'s first line, as `paginate` keys it.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn line_text(markdown: &str) -> String {
     let line = markdown.split_inclusive('\n').next().unwrap_or("");
     visible_text(mask(line, 0, &unpainted(markdown)).trim_end_matches('\n'))
@@ -425,6 +450,7 @@ fn find(stream: &[(char, usize)], from: usize, key: &[char]) -> Option<usize> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -743,5 +769,71 @@ mod tests {
     #[test]
     fn no_pages_leaves_the_markdown_alone() {
         assert_eq!(paginate("Text.\n", &[]), "Text.\n");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod source_autolink_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn commonmark_uri_scheme_boundaries_preserve_exact_targets() {
+        for target in [
+            "ab:",
+            "AZ09+.-:owned",
+            "abcdefghijklmnopqrstuvwxyzABCDEF:owned",
+            "mailto:owned@example.org",
+            "https:Ω\u{a0}owned",
+        ] {
+            let source = format!("<{target}> suffix");
+            assert_eq!(autolink(&source), Some(target), "{target}");
+        }
+        for target in [
+            "a:owned",
+            "abcdefghijklmnopqrstuvwxyzABCDEFG:owned",
+            "1a:owned",
+            "a_:owned",
+            "éa:owned",
+            "ab:space here",
+            "ab:tab\there",
+            "ab:new\nline",
+            "ab:<nested",
+            "ab:\u{7f}control",
+        ] {
+            assert_eq!(autolink(&format!("<{target}>")), None, "{target}");
+        }
+        for source in [
+            "<>",
+            "<ab:unterminated",
+            "ab:unbracketed",
+            "<span>",
+            "<br/>",
+        ] {
+            assert_eq!(autolink(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn commonmark_mailbox_boundaries_keep_literal_punctuation_and_decline_invalid_owners() {
+        for target in [
+            "a@b",
+            "a.!#$%&'*+/=?^_`{|}~-@domain-name.example",
+            "A09@B09.EXAMPLE",
+        ] {
+            assert_eq!(autolink(&format!("<{target}>")), Some(target), "{target}");
+        }
+        for target in [
+            "@domain",
+            "local@",
+            "Ω@domain",
+            "local@Ω",
+            "local@domain_name",
+            "local@@domain",
+            "local@domain/name",
+            "(local)@domain",
+        ] {
+            assert_eq!(autolink(&format!("<{target}>")), None, "{target}");
+        }
     }
 }

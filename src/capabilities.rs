@@ -136,10 +136,15 @@ pub struct Limits {
     /// `summary` but are not stories; text boxes are not stories either, and
     /// their owner paragraph carries the `text_box_omitted` limitation.
     pub stories: Vec<String>,
-    /// Inserted run text is plain: no tabs or line breaks inside runs.
+    /// Inserted run text is plain: false since a `\t` or a `\n` in edit
+    /// text writes a tab or a line break; other control characters and the
+    /// symbol placeholder U+FFFC are refused.
     pub plain_text_runs: bool,
     /// Edits refuse ranges crossing fields, hyperlinks, content controls,
-    /// revisions, tabs, breaks and symbols.
+    /// revisions and symbols. A range over a tab, a line break or a
+    /// non-breaking hyphen removes it; a page or column break stays. A
+    /// comment edits nothing and may cover any of them; its anchor text is
+    /// the paragraph as it reads, so it cannot start or end in deleted text.
     pub refuses_opaque_ranges: bool,
     /// Legacy `.doc` input is not read: an OLE compound file (a Word
     /// 97-2003 `.doc`, or an encrypted document of any Word version) is
@@ -248,7 +253,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
                 .chain(crate::inspect::STORY_KINDS.iter().copied())
                 .map(str::to_string)
                 .collect(),
-            plain_text_runs: true,
+            plain_text_runs: false,
             refuses_opaque_ranges: true,
             reads_legacy_doc: false,
             input: crate::admission::InputLimits::default().into(),
@@ -267,6 +272,7 @@ pub fn capabilities_json(runtime: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

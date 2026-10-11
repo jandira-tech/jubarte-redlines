@@ -480,6 +480,7 @@ fn definition(dom: &mut Dom, id: &str) -> Option<NodeId> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -596,5 +597,99 @@ mod tests {
         }
         // Every base precedes the style built on it.
         assert!(xml.find("\"TableNormal\"").unwrap() < xml.find("\"TableGrid\"").unwrap());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod numbering_source_property_boundary_tests {
+    use super::*;
+    #[test]
+    fn new_numbering_adds_a_style_only_when_the_authored_paragraph_has_none() {
+        for existing_style in [false, true] {
+            for original_id in [None, Some("0"), Some("7")] {
+                let mut dom = Dom::new();
+                let style = if existing_style {
+                    "<w:pStyle w:val='AuthoredParagraph'/>"
+                } else {
+                    ""
+                };
+                let number = original_id.map_or(String::new(), |id| {
+                    format!("<w:numPr><w:ilvl w:val='1'/><w:numId w:val='{id}'/></w:numPr>")
+                });
+                let document=dom.parse_xdocument(&format!("<w:p xmlns:w='{}'><w:pPr>{style}<w:keepNext/>{number}<w:spacing w:after='120'/><w:rPr><w:b/></w:rPr><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:pPr><w:bookmarkStart w:id='31' w:name='Clause'/><w:r><w:rPr><w:i/><w:color w:val='123456'/></w:rPr><w:t>authored paragraph payload</w:t><w:tab/></w:r><w:bookmarkEnd w:id='31'/></w:p>",W::URI));
+                let paragraph = dom.root(document).unwrap();
+                let ppr = dom.element(paragraph, &W::p_pr()).unwrap();
+                let untouched = dom
+                    .elements(ppr, None)
+                    .into_iter()
+                    .filter(|&node| {
+                        !dom.name_is(node, &W::num_pr()) && !dom.name_is(node, &W::p_style())
+                    })
+                    .map(|n| dom.serialize_element(n))
+                    .collect::<Vec<_>>();
+                let payload = dom
+                    .elements(paragraph, None)
+                    .into_iter()
+                    .filter(|&n| !dom.name_is(n, &W::p_pr()))
+                    .map(|n| dom.serialize_element(n))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    direct_num_id(&dom, paragraph),
+                    original_id.filter(|id| *id != "0").map(str::to_owned)
+                );
+                assert_eq!(
+                    number_paragraph(&mut dom, paragraph, 2, "9", "ListParagraph"),
+                    !existing_style
+                );
+                assert_eq!(direct_num_id(&dom, paragraph), Some("9".to_owned()));
+                assert_eq!(dom.elements(ppr, Some(&W::num_pr())).len(), 1);
+                let num = dom.element(ppr, &W::num_pr()).unwrap();
+                let level = dom.element(num, &W::name("ilvl")).unwrap();
+                assert_eq!(dom.attribute(level, &W::val()), Some("2"));
+                let style = dom.element(ppr, &W::p_style()).unwrap();
+                assert_eq!(
+                    dom.attribute(style, &W::val()),
+                    Some(if existing_style {
+                        "AuthoredParagraph"
+                    } else {
+                        "ListParagraph"
+                    })
+                );
+                assert_eq!(
+                    dom.elements(ppr, None)
+                        .into_iter()
+                        .filter(|&node| !dom.name_is(node, &W::num_pr())
+                            && !dom.name_is(node, &W::p_style()))
+                        .map(|n| dom.serialize_element(n))
+                        .collect::<Vec<_>>(),
+                    untouched
+                );
+                assert_eq!(
+                    dom.elements(paragraph, None)
+                        .into_iter()
+                        .filter(|&n| !dom.name_is(n, &W::p_pr()))
+                        .map(|n| dom.serialize_element(n))
+                        .collect::<Vec<_>>(),
+                    payload
+                );
+                assert!(!number_paragraph(
+                    &mut dom,
+                    paragraph,
+                    0,
+                    "10",
+                    "DifferentFallback"
+                ));
+                assert_eq!(direct_num_id(&dom, paragraph), Some("10".to_owned()));
+                assert_eq!(
+                    dom.attribute(dom.element(ppr, &W::p_style()).unwrap(), &W::val()),
+                    Some(if existing_style {
+                        "AuthoredParagraph"
+                    } else {
+                        "ListParagraph"
+                    })
+                );
+            }
+        }
     }
 }

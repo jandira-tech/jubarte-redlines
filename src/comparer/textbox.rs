@@ -239,3 +239,89 @@ fn redline_boxes(dom: &mut Dom, old: NodeId, new: NodeId, settings: &WmlComparer
     }
     true
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod complete_shape_revision_contract_tests {
+    use super::*;
+    fn document(source: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc=dom.parse_xdocument(&format!(r#"<w:document xmlns:w="{}" xmlns:v="urn:schemas-microsoft-com:vml"><w:body><w:p><w:pPr><w:spacing w:after="160"/></w:pPr>{source}</w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,W::URI));
+        (dom, doc)
+    }
+    #[test]
+    fn matching_opaque_shapes_keep_every_neighbor_when_revision_wrappers_split() {
+        let shape = r#"<w:r><w:rPr><w:color w:val="0000FF"/></w:rPr><w:pict><v:rect id="owned" style="width:20pt;height:10pt"/></w:pict></w:r>"#;
+        let old_shape = shape.replace("owned", "prior");
+        let prefix = r#"<w:r><w:rPr><w:b/></w:rPr><w:t>owned before</w:t></w:r>"#;
+        let tail = r#"<w:r><w:rPr><w:i/></w:rPr><w:t>owned after</w:t></w:r>"#;
+        for (old_neighbor, new_before, new_after) in [
+            ("", "", ""),
+            (tail, prefix, tail),
+            (tail, "", tail),
+            (tail, prefix, ""),
+        ] {
+            let del_open = r#"<w:del w:id="4" w:author="Old" w:date="2026-10-09T00:00:00Z">"#;
+            let ins_open = r#"<w:ins w:id="5" w:author="New" w:date="2026-10-09T00:00:00Z">"#;
+            let input = format!(
+                "{del_open}{old_shape}{old_neighbor}</w:del>{ins_open}{new_before}{shape}{new_after}</w:ins>"
+            );
+            let expected = format!(
+                "{}{}{shape}{}",
+                if old_neighbor.is_empty() {
+                    String::new()
+                } else {
+                    format!("{del_open}{old_neighbor}</w:del>")
+                },
+                if new_before.is_empty() {
+                    String::new()
+                } else {
+                    format!("{ins_open}{new_before}</w:ins>")
+                },
+                if new_after.is_empty() {
+                    String::new()
+                } else {
+                    format!("{ins_open}{new_after}</w:ins>")
+                }
+            );
+            let (mut dom, doc) = document(&input);
+            let root = dom.root(doc).unwrap();
+            let (expected_dom, expected_doc) = document(&expected);
+            diff_inside_replaced_text_boxes(&mut dom, root, &WmlComparerSettings::default());
+            assert_eq!(
+                dom.serialize_document(doc),
+                expected_dom.serialize_document(expected_doc)
+            );
+            diff_inside_replaced_text_boxes(&mut dom, root, &WmlComparerSettings::default());
+            assert_eq!(
+                dom.serialize_document(doc),
+                expected_dom.serialize_document(expected_doc)
+            );
+        }
+    }
+    #[test]
+    fn unrelated_or_mixed_shape_carriers_retain_complete_source_revisions() {
+        let shape = r#"<w:r><w:pict><v:rect style="width:20pt;height:10pt"/></w:pict></w:r>"#;
+        for (old, new) in [
+            (shape, shape.replace("20pt", "21pt")),
+            (shape, shape.replace("w:pict", "w:drawing")),
+            (
+                shape,
+                shape.replace("</w:r>", "<w:t>mixed authored text</w:t></w:r>"),
+            ),
+            (
+                shape,
+                format!("<w:hyperlink w:anchor=\"owned\">{shape}</w:hyperlink>"),
+            ),
+        ] {
+            let input = format!(
+                "<w:del w:id=\"1\" w:author=\"A\">{old}</w:del><w:ins w:id=\"2\" w:author=\"B\">{new}</w:ins>"
+            );
+            let (mut dom, doc) = document(&input);
+            let root = dom.root(doc).unwrap();
+            let before = dom.serialize_document(doc);
+            diff_inside_replaced_text_boxes(&mut dom, root, &WmlComparerSettings::default());
+            assert_eq!(dom.serialize_document(doc), before);
+        }
+    }
+}

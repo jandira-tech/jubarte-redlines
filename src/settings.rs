@@ -343,6 +343,7 @@ pub fn apply_settings_to_docx(docx: &[u8], request: &SettingsRequest) -> Result<
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

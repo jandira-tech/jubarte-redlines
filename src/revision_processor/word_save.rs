@@ -54,8 +54,9 @@ pub(super) fn tidy(pkg: &mut PartFs, story_parts: &[String]) {
     }
 }
 
-/// Remove the header and footer parts no section references any more.
-fn drop_unreferenced_headers_footers(pkg: &mut PartFs) {
+/// Remove the header and footer parts no section references any more
+/// (also a redline's last step: Word's own compares leave none).
+pub(crate) fn drop_unreferenced_headers_footers(pkg: &mut PartFs) {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());

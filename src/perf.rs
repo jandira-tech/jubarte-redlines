@@ -9,7 +9,7 @@
 //! stage timers record a machine-readable JSON snapshot of one comparison.
 //!
 //! The profiled build is diagnostic only — never use it for final wall-time
-//! acceptance numbers (OPERATING PLAN #4 / LCS_PERF_PLAN.md).
+//! acceptance numbers (OPERATING PLAN #4 / docs/LCS_PERF_PLAN.md).
 
 /// Coarse pipeline stages recorded by [`record_stage_ns`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -294,6 +294,7 @@ mod active {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

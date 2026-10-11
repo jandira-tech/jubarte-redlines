@@ -248,6 +248,51 @@ enum ZipEntry<'a> {
     Part(&'a [u8]),
 }
 
+// Retain the OPC metadata budget independently of the parser upgrade that
+// fixed RUSTSEC-2026-0194/0195. Direct Relationships::from_xml callers use
+// patched quick-xml through rdocx-opc 0.2; package admission also bounds the
+// attribute count. 256 matches quick-xml's default namespace declaration limit.
+fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    loop {
+        match reader.read_event().map_err(refused)? {
+            quick_xml::events::Event::Start(tag) | quick_xml::events::Event::Empty(tag) => {
+                for (index, attr) in tag.attributes().with_checks(false).enumerate() {
+                    if index >= 256 {
+                        return Err(refused(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "OPC metadata element exceeds 256 attributes",
+                        )));
+                    }
+                    attr.map_err(refused)?;
+                }
+            }
+            quick_xml::events::Event::Eof => return Ok(()),
+            _ => {}
+        }
+    }
+}
+
+fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        if entry.name() != "[Content_Types].xml" && !entry.name().ends_with(".rels") {
+            continue;
+        }
+        let mut xml = Vec::new();
+        entry.take(limit.saturating_add(1)).read_to_end(&mut xml)?;
+        if u64::try_from(xml.len()).unwrap_or(u64::MAX) > limit {
+            return Err(refused(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "OPC metadata exceeds part byte budget",
+            )));
+        }
+        check_opc_attributes(&xml)?;
+    }
+    Ok(())
+}
+
 /// Thin adapter over `rdocx_opc::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
     pkg: OpcPackage,
@@ -259,9 +304,29 @@ pub struct PartFs {
     repaired_duplicate_ids: Vec<(String, String)>,
 }
 
+/// Canonical target resolution shared by package APIs and text story labels.
+pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String {
+    let joined = OpcPackage::resolve_rel_target(&norm(source_part), rel_target);
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    segments.join("/")
+}
+
 impl PartFs {
     /// Open a `.docx`/OPC package from raw bytes.
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
+        check_package_metadata(
+            bytes,
+            crate::admission::InputLimits::compare().max_part_bytes,
+        )?;
         let mut pkg = OpcPackage::from_reader(Cursor::new(bytes.to_vec()))?;
         reparse_explicitly_closed(&mut pkg, bytes);
         unescape_relationships(&mut pkg.package_rels);
@@ -328,6 +393,7 @@ impl PartFs {
     /// Unparseable relationship XML is kept raw, as before.
     pub fn set_part(&mut self, name: &str, data: Vec<u8>) {
         if let Some(owner) = rels_path_to_part_name(name)
+            && check_opc_attributes(&data).is_ok()
             && let Ok(mut rels) = Relationships::from_xml(&data)
         {
             unescape_relationships(&mut rels);
@@ -360,7 +426,7 @@ impl PartFs {
     /// `zip` crate default level 6. Level 1 skips `longest_match` (the
     /// largest WASM self-time frame, 26% of the deflate cluster per the W5
     /// profile) while producing content-identical decompressed bytes — Word
-    /// opens any deflate level. ZIP-LEVEL-01 (WASM_PERF_PLAN.md).
+    /// opens any deflate level. ZIP-LEVEL-01 (docs/WASM_PERF_PLAN.md).
     ///
     /// Every entry is dated 1980-01-01 00:00, as Office dates its own, so the
     /// same input writes the same bytes.
@@ -418,21 +484,10 @@ impl PartFs {
     /// absolute target ("/word/footer1.xml") was later re-prefixed into a
     /// "//word/…" relationship, and "word/../customXml/item1.xml" named no part.
     pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {
-        // The relationships reader keeps the Target attribute as written, so
-        // "image1.jpg&amp;ehk=…" names the part "image1.jpg&ehk=…".
+        // PartFs receives raw relationship attributes; DOM consumers already
+        // decoded XML entities and call the pure resolver directly.
         let target = crate::xmllinq::parse::unescape_xml_text(rel_target);
-        let joined = OpcPackage::resolve_rel_target(&norm(source_part), &target);
-        let mut segments: Vec<&str> = Vec::new();
-        for seg in joined.split('/') {
-            match seg {
-                "" | "." => {}
-                ".." => {
-                    segments.pop();
-                }
-                s => segments.push(s),
-            }
-        }
-        segments.join("/")
+        resolve_rel_target(source_part, &target)
     }
 
     /// `contentTypeFor(part)`.
@@ -523,7 +578,8 @@ impl PartFs {
 
     /// Remove the relationship `rel_id` of `source_part` and, unless another
     /// internal relationship still targets it, the part it names with that
-    /// part's own relationships and content-type override. No-op for an
+    /// part's own relationships and content-type override, then the parts
+    /// (a header's images) nothing else targets any more. No-op for an
     /// unknown or external relationship.
     pub fn remove_related_part(&mut self, source_part: &str, rel_id: &str) {
         let key = norm(source_part);
@@ -540,10 +596,23 @@ impl PartFs {
             .get_or_create_part_rels(&key)
             .items
             .retain(|r| r.id != rel_id);
+        self.remove_untargeted_part(&part);
+    }
+
+    /// Remove `part`, its relationships and content-type override when no
+    /// internal relationship of another part targets it, then each part it
+    /// targeted that is left untargeted. Its own relationships never keep
+    /// it, and a removed part ends a loop.
+    fn remove_untargeted_part(&mut self, part: &str) {
+        let key = norm(part);
+        if !self.pkg.parts.contains_key(&key) {
+            return;
+        }
         let still_targeted = self
             .pkg
             .part_rels
             .iter()
+            .filter(|(source, _)| **source != key)
             .map(|(source, rels)| (source.as_str(), rels))
             .chain(std::iter::once(("/", &self.pkg.package_rels)))
             .any(|(source, rels)| {
@@ -555,9 +624,23 @@ impl PartFs {
         if still_targeted {
             return;
         }
-        self.pkg.parts.remove(&norm(&part));
-        self.pkg.part_rels.remove(&norm(&part));
+        self.pkg.parts.remove(&key);
+        let targets: Vec<String> = self
+            .pkg
+            .part_rels
+            .remove(&key)
+            .map(|rels| {
+                rels.items
+                    .iter()
+                    .filter(|r| r.target_mode.as_deref() != Some("External"))
+                    .map(|r| self.resolve_rel_target(part, &r.target))
+                    .collect()
+            })
+            .unwrap_or_default();
         self.remove_content_type_override(&format!("/{part}"));
+        for target in targets {
+            self.remove_untargeted_part(&target);
+        }
     }
 
     /// `readRelsFor(part)` — the relationships of a part, if any.
@@ -630,8 +713,44 @@ impl PartFs {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opc_attribute_budget_bounds_upstream_duplicate_checks() {
+        let attrs = |count| {
+            (0..count)
+                .map(|i| format!(" a{i}=\"x\""))
+                .collect::<String>()
+        };
+        for close in ["/>", "></Relationship>"] {
+            let at_limit = format!("<Relationship{}{close}", attrs(256));
+            assert!(check_opc_attributes(at_limit.as_bytes()).is_ok());
+            let over_limit = format!("<Relationship{}{close}", attrs(257));
+            assert!(check_opc_attributes(over_limit.as_bytes()).is_err());
+            let bytes = package_with_document_rels(&over_limit);
+            assert!(PartFs::open(&bytes).is_err());
+        }
+        assert!(check_opc_attributes(b"<Relationship broken/>").is_err());
+        assert!(check_opc_attributes(b"<Relationship").is_err());
+        let bytes = package_with_document_rels(
+            "<Relationship Id=\"rId1\" Type=\"test\" Target=\"a.xml\"/>",
+        );
+        assert!(PartFs::open(&bytes).is_ok());
+        assert!(check_package_metadata(&bytes, 32).is_err());
+        assert!(check_package_metadata(b"not a zip", 32).is_err());
+
+        // Content types are also parsed by upstream, before relationships.
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("[Content_Types].xml", SimpleFileOptions::default())
+            .unwrap();
+        write!(writer, "<Types{}/>", attrs(257)).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let err = check_package_metadata(&bytes, 4096).unwrap_err();
+        assert!(err.to_string().contains("256 attributes"));
+    }
 
     const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
     const HYPERLINK: &str =
@@ -990,5 +1109,62 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    /// Dropping a header takes the media only it used with it; media another
+    /// part still uses stays, and so does a part reached in a loop.
+    #[test]
+    fn removing_a_related_part_drops_the_parts_only_it_targeted() {
+        const HEADER: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+        const IMAGE: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+        let rel = |id: &str, ty: &str, target: &str| {
+            format!(r#"<Relationship Id="{id}" Type="{ty}" Target="{target}"/>"#)
+        };
+        let mut fs = PartFs::open(&package_with_document_rels(&format!(
+            "{}{}",
+            rel("rId1", HEADER, "header1.xml"),
+            rel("rId2", HEADER, "header2.xml")
+        )))
+        .unwrap();
+        for part in ["header1.xml", "header2.xml"] {
+            fs.set_part(&format!("word/{part}"), b"<w:hdr/>".to_vec());
+        }
+        for media in ["logo.png", "shared.png"] {
+            fs.set_part(&format!("word/media/{media}"), vec![0x89]);
+        }
+        fs.set_part(
+            "word/_rels/header1.xml.rels",
+            format!(
+                r#"<Relationships xmlns="{RELS_NS}">{}{}{}</Relationships>"#,
+                rel("rId1", IMAGE, "media/logo.png"),
+                rel("rId2", IMAGE, "media/shared.png"),
+                rel("rId3", HEADER, "header1.xml")
+            )
+            .into_bytes(),
+        );
+        fs.set_part(
+            "word/_rels/header2.xml.rels",
+            format!(
+                r#"<Relationships xmlns="{RELS_NS}">{}</Relationships>"#,
+                rel("rId1", IMAGE, "media/shared.png")
+            )
+            .into_bytes(),
+        );
+
+        fs.remove_related_part("word/document.xml", "rId1");
+
+        let parts = fs.parts();
+        let has = |name: &str| parts.iter().any(|p| p == name);
+        assert!(!has("word/header1.xml"), "{parts:?}");
+        assert!(
+            !has("word/media/logo.png"),
+            "only header1 used it: {parts:?}"
+        );
+        assert!(has("word/media/shared.png"), "header2 still uses it");
+        assert!(has("word/header2.xml"));
+        assert!(fs.read_rels_for("word/header1.xml").is_none());
+        PartFs::open(&fs.to_zip().unwrap()).unwrap();
     }
 }
