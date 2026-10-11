@@ -656,3 +656,64 @@ fn a_header_change_resolves_by_its_short_id() {
     let out = reject_changes(&pkg, &filter_ids(&["header1.r7"])).unwrap();
     assert_eq!(ids(&out), ["body:rev:7"]);
 }
+
+/// A text box Word stores twice: the `mc:Choice` copy and its `mc:Fallback`
+/// twin, `extra` adding a Fallback-only insertion.
+fn boxed(extra: &str) -> Vec<u8> {
+    let copy = |id: u32, more: &str| {
+        format!(
+            r#"<w:txbxContent><w:p><w:ins w:id="{id}" {A}><w:r><w:t>Boxed</w:t></w:r></w:ins>{more}</w:p></w:txbxContent>"#
+        )
+    };
+    docx(&format!(
+        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+        copy(5, ""),
+        copy(6, extra)
+    ))
+}
+
+/// Word gives the Fallback copy of a text box change its own consecutive
+/// `w:id`: the change lists once (the Choice copy, the one the view shows)
+/// and resolves in both copies. A Fallback carrier without a Choice partner
+/// stays listed.
+#[test]
+fn a_text_box_change_lists_once_and_resolves_in_both_copies() {
+    assert_eq!(ids(&boxed("")), ["body:rev:5"]);
+    let accepted = accept_changes(&boxed(""), &filter_ids(&["r5"])).unwrap();
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:ins"), "{xml}");
+    assert_eq!(xml.matches(">Boxed<").count(), 2, "{xml}");
+    let rejected = reject_changes(&boxed(""), &filter_ids(&["r5"])).unwrap();
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(!xml.contains("Boxed"), "{xml}");
+
+    let extra = format!(r#"<w:ins w:id="7" {A}><w:r><w:t>Extra</w:t></w:r></w:ins>"#);
+    assert_eq!(ids(&boxed(&extra)), ["body:rev:5", "body:rev:7"]);
+}
+
+/// Word's own redline of a text box: the Choice copy's deletions are
+/// r9-r10 and the Fallback's r11-r12. Each lists once; rejecting r10 also
+/// restores its Fallback twin r12, and the deletion around the box stays.
+#[test]
+fn a_word_redlines_text_box_twins_list_once() {
+    let word = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/4640e71ddd__vs__1424386e9b_redline_32d0abcfc9.docx"
+    ))
+    .unwrap();
+    let listed = ids(&word);
+    for twin in ["body:rev:11", "body:rev:12"] {
+        assert!(!listed.iter().any(|id| id == twin), "{twin}: {listed:?}");
+    }
+    for own in ["body:rev:8", "body:rev:9", "body:rev:10"] {
+        assert!(listed.iter().any(|id| id == own), "{own}: {listed:?}");
+    }
+    let rejected = reject_changes(&word, &filter_ids(&["r10"])).unwrap();
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    for gone in [r#"w:id="10""#, r#"w:id="12""#] {
+        assert!(!xml.contains(gone), "{gone}");
+    }
+    for kept in [r#"w:id="8""#, r#"w:id="9""#, r#"w:id="11""#] {
+        assert!(xml.contains(kept), "{kept}");
+    }
+}

@@ -20,7 +20,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::namespaces::W;
+use crate::namespaces::{MC, W};
 use crate::opc::PartFs;
 use crate::revision_processor::{FROZEN_NS, Resolution, resolve_package, revision_bearing_parts};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -501,6 +501,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
             }),
         });
     }
+    fold_twins(dom, &mut out);
     fold_style_pairs(dom, &mut out);
     let ids: HashMap<NodeId, String> = out
         .iter()
@@ -517,6 +518,68 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
         }
     }
     out
+}
+
+/// The `mc:Choice` or `mc:Fallback` branch `e` sits in, innermost.
+fn branch(dom: &Dom, e: NodeId) -> Option<NodeId> {
+    dom.ancestors(e, None).into_iter().find(|&a| {
+        dom.name(a).is_some_and(|n| {
+            n.namespace_name() == MC::URI && matches!(n.local_name(), "Choice" | "Fallback")
+        })
+    })
+}
+
+/// Word stores a text box twice, in an `mc:AlternateContent`'s `mc:Choice`
+/// and its `mc:Fallback`, and gives the Fallback copy of each change its own
+/// consecutive `w:id`. A Fallback carrier pairs with the Choice carrier at
+/// the same ordinal, of the same kind and target: the Choice copy (the one
+/// the view shows) is listed, and the twin joins its group unlisted, so
+/// resolving the change resolves both copies. A carrier without a partner
+/// stays listed.
+fn fold_twins(dom: &Dom, carriers: &mut [Carrier]) {
+    let listed: Vec<(usize, NodeId)> = carriers
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.change.is_some())
+        .filter_map(|(i, c)| Some((i, branch(dom, c.node)?)))
+        .collect();
+    if listed.is_empty() {
+        return;
+    }
+    let choice = MC::name("Choice");
+    let in_branch = |b: NodeId| -> Vec<usize> {
+        listed
+            .iter()
+            .filter(|&&(_, at)| at == b)
+            .map(|&(i, _)| i)
+            .collect()
+    };
+    let fallbacks: Vec<NodeId> = {
+        let mut seen = Vec::new();
+        for &(_, b) in &listed {
+            if dom.name_is(b, &MC::name("Fallback")) && !seen.contains(&b) {
+                seen.push(b);
+            }
+        }
+        seen
+    };
+    for fallback in fallbacks {
+        let Some(partner) = dom.parent(fallback).and_then(|ac| dom.element(ac, &choice)) else {
+            continue;
+        };
+        let twins = in_branch(fallback);
+        let originals = in_branch(partner);
+        for (&twin, &original) in twins.iter().zip(&originals) {
+            let same = match (&carriers[twin].change, &carriers[original].change) {
+                (Some(t), Some(o)) => t.kind == o.kind && t.target == o.target,
+                _ => false,
+            };
+            if same {
+                carriers[twin].group = carriers[original].group.clone();
+                carriers[twin].change = None;
+            }
+        }
+    }
 }
 
 /// Word records a style's paragraph and run formatting changes
