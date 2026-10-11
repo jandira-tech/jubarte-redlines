@@ -3805,7 +3805,7 @@ fn cached_page_markers_can_be_disabled_without_losing_ids_or_text() {
     ));
     let out = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             page_markers: false,
             ..agent_defaults()
         },
@@ -3825,7 +3825,7 @@ fn layout_pages_override_cached_breaks_even_when_cached_markers_are_disabled() {
     ));
     let out = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             pages: Some(vec!["Alpha text here".into(), "Beta text here".into()]),
             page_markers: false,
             ..agent_defaults()
@@ -3842,7 +3842,7 @@ fn empty_layout_pages_do_not_fall_back_to_cached_breaks() {
     let bytes = docx(r#"<w:p><w:r><w:lastRenderedPageBreak/><w:t>Text</w:t></w:r></w:p>"#);
     let out = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             pages: Some(vec![]),
             ..agent_defaults()
         },
@@ -3860,14 +3860,14 @@ fn agent_only_options_leave_plain_conversion_byte_identical() {
     ] {
         let plain = agent_options(
             &bytes,
-            MarkdownOptions {
+            &MarkdownOptions {
                 track_changes,
                 ..MarkdownOptions::default()
             },
         );
         let configured = agent_options(
             &bytes,
-            MarkdownOptions {
+            &MarkdownOptions {
                 track_changes,
                 ids: false,
                 comments: false,
@@ -3895,7 +3895,7 @@ fn agent_preserves_spaces_across_runs_while_plain_conversion_collapses_them() {
         "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nAlpha    Beta\n"
     );
     assert_eq!(
-        agent_options(&bytes, MarkdownOptions::default()),
+        agent_options(&bytes, &MarkdownOptions::default()),
         "Alpha Beta\n"
     );
 }
@@ -4031,7 +4031,7 @@ fn comment_dates_include_revision_dates_when_deciding_whether_to_print_inline() 
     );
     let dated = agent_options(
         &bytes,
-        MarkdownOptions {
+        &MarkdownOptions {
             dates: true,
             ..agent_defaults()
         },

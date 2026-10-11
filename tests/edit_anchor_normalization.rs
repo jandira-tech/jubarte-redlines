@@ -203,7 +203,8 @@ fn pr392_emphasis_pairing_preserves_literal_unicode_and_unmatched_runs() {
         ("__東京__ and naïve__word__", "東京 and naïve__word__"),
         ("__outer _inner_ end__", "outer inner end"),
         ("_one_ __two__ ___three___", "one two three"),
-        ("__open_ and _closed_", "__open_ and closed"),
+        // CommonMark closes one `_` of the `__` opener: `_<em>open</em>`.
+        ("__open_ and _closed_", "_open and closed"),
         ("_ spaced _", "_ spaced _"),
         (r"\_literal\_ and _marked_", "_literal_ and marked"),
         ("*one* and 2 * 3", "one and 2 * 3"),
@@ -378,6 +379,10 @@ fn plain_anchor_distinguishes_hard_breaks_from_literal_backslashes() {
         (r"path\name", r"path\name"),
         ("trailing\\", "trailing\\"),
     ] {
-        assert_eq!(jubarte::markdown::plain_anchor(given), expected, "{given:?}");
+        assert_eq!(
+            jubarte::markdown::plain_anchor(given),
+            expected,
+            "{given:?}"
+        );
     }
 }

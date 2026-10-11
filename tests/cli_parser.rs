@@ -838,7 +838,11 @@ fn every_explicit_read_option_conflicts_with_writing_even_at_its_default() {
         vec!["--changed"],
         vec!["--changed", "--by", "AC"],
     ] {
-        let args = [vec!["missing-a.docx", "missing-b.docx", "-o", "out.docx"], flags].concat();
+        let args = [
+            vec!["missing-a.docx", "missing-b.docx", "-o", "out.docx"],
+            flags,
+        ]
+        .concat();
         let result = parse(&args, &[]);
         assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
         assert_eq!(result["stream"], "stderr");
