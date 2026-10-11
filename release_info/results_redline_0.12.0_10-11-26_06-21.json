@@ -14,7 +14,7 @@
   "ties": 72,
   "wins": 350
  },
- "generated": "2026-10-11T06:40:51+00:00",
+ "generated": "2026-10-11T10:21:52+00:00",
  "provenance": {
   "measure": "results/redlines_0929_full/measure.py --fresh ../compare_regen/out --sample-csv results/release_0.12.0_evidence/sample_redline_0.12.0.csv",
   "scores": {
@@ -24,7 +24,7 @@
  },
  "release": "0.12.0",
  "sample": {
-  "csv": "sample_redline_0.12.0_10-11-26_02-40.csv",
+  "csv": "sample_redline_0.12.0_10-11-26_06-21.csv",
   "drawn": {
    "adopted_sha256": "2d0ceab7194ef71f5da5edd3221c09bdef4c09f01969ae8b6147c649bb7824f2",
    "by_state": {
@@ -46,7 +46,7 @@
   "sha256": "d197dfb59e420e44215a68b6c38af6d2320fd8d49e553734c7eed7e3761784e0"
  },
  "schema": "jubarte-redlines/release_info/results_redline/1",
- "stamp": "10-11-26_02-40",
+ "stamp": "10-11-26_06-21",
  "tools": {
   "docxodus": {
    "at_least_90": 76,
@@ -1901,7 +1901,7 @@
   },
   "jubarte": {
    "at_least_90": 112,
-   "binary_sha256": "be465e74b765c40cb8f82797fb94820e9dd485f16c832b252012c72e5c3580c8",
+   "binary_sha256": "42769074e27429a7ca2a91f46b4bef86e4668e740dcf56a2bebf725899bff1e4",
    "by_state": {
     "clean": {
      "at_least_90": 2,
@@ -1937,7 +1937,7 @@
     }
    },
    "candidate_reports": "jubarte 0.11.3",
-   "commit": "5b8ef078cc24f91ced32cc6d8d24274d6c5bf55c",
+   "commit": "9263d3772f113df6f93d24afc5ffa54f31bb9522",
    "exact_100": 54,
    "failures": 23,
    "mean": 71.8869,
