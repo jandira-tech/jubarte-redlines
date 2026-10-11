@@ -73,7 +73,7 @@ Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the sli
 ### `diffDocumentsUnified`
 
 ```typescript
-diffDocumentsUnified(old: Uint8Array, _new: Uint8Array, oldName?: string, newName?: string, context?: number): string
+diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string
 ```
 
 ### `AppendOutput`
@@ -334,10 +334,10 @@ holds, so browser hosts should lower it.
 ### `diffDocuments`
 
 ```typescript
-diffDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string
+diffDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string
 ```
 
-The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 with `[-old-]{+new+}` changes and CriticMarkup comments, at its
 `body:p:N` id in a Word document or `line:N` in Markdown.
@@ -352,7 +352,7 @@ Mirrors `jubarte::markdown::patch_documents`.
 ### `diffDocumentsCritic`
 
 ```typescript
-diffDocumentsCritic(old: Uint8Array, _new: Uint8Array, author?: string | null, date?: string | null): string
+diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: string | null, date?: string | null): string
 ```
 
 The complete document as CriticMarkup; existing paragraph patches stay separate.
@@ -360,7 +360,7 @@ The complete document as CriticMarkup; existing paragraph patches stay separate.
 ### `diffDocumentsView`
 
 ```typescript
-diffDocumentsView(old: Uint8Array, _new: Uint8Array, options_json?: string | null): string
+diffDocumentsView(old: Uint8Array, next: Uint8Array, options_json?: string | null): string
 ```
 
 Document review view. `optionsJson` is a strict camelCase object with
@@ -441,8 +441,8 @@ Mirrors `jubarte::edit::flags::plan_from_flags`.
 getRevisions(docx: Uint8Array, input_limits_json?: string | null): string
 ```
 
-List the tracked revisions in a DOCX as a JSON array string — the same
-object shape as the CLI `jubarte revisions --json` lines
+List the tracked revisions in a DOCX as a JSON array string, grouped as
+Docxodus's `GetRevisions` groups them; each object has
 (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 
 Mirrors `jubarte::document_comparer::get_revisions` with default settings,
@@ -561,7 +561,7 @@ Mirrors `jubarte::markdown::read`.
 ### `redlineDocuments`
 
 ```typescript
-redlineDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string): Uint8Array
+redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array
 ```
 
 DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
@@ -1075,6 +1075,13 @@ Options:
           Exit 4 when a requested font was substituted (listed on stderr and in
           --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
           requested font was substituted
+
+      --update-fields
+          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
+          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
+          --track-changes. Field codes stay, so Word can update them again; page numbers
+          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
+          per field; --report writes `{page_count, fields}`
 
       --timeout <SECONDS>
           Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
