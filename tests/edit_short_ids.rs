@@ -365,8 +365,10 @@ fn footer_ids_use_the_part_number_and_default_to_its_first_paragraph() {
     assert!(!xml.contains("First") && !xml.contains("Second"), "{xml}");
 }
 
+/// `tN` counts top-level tables only, while `cC.pK` counts the nested
+/// table's paragraphs as the view does (ba9798e9): "After" is the cell's p2.
 #[test]
-fn table_ids_skip_nested_tables_and_cell_indices_skip_nested_paragraphs() {
+fn table_ids_skip_nested_tables_and_cell_indices_count_nested_paragraphs() {
     let nested = format!(
         "<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>",
         para("Nested")
@@ -382,7 +384,7 @@ fn table_ids_skip_nested_tables_and_cell_indices_skip_nested_paragraphs() {
         &bytes,
         &plan(
             r#"[
-        {"kind":"replace","paragraph":"t0.r0.c0.p1","find":"After","replacement":"Later"},
+        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"After","replacement":"Later"},
         {"kind":"replace","paragraph":"t1.r0.c0","find":"Next","replacement":"Last"}
     ]"#,
         ),
