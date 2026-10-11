@@ -548,3 +548,24 @@ diagram and VML picture size; each needs a Word probe or a decision first.
 - [ ] **5a6c page 5** shows a stray `_` line that Word does not.
 - [ ] **5a6c pages 11 and 13**: a header that Word leaves empty shows
   "Crown Suits Act 1947" in jubarte (present before this work).
+
+## 12. Dependency follow-ups after 0.12.0 (LOW)
+
+Status: open, 2026-10-11. Found in the PR sweep; deliberately not in
+the 0.12.0 release, whose evidence was measured on zip 8.6.0.
+
+- [ ] **zip 8.6.0 → 9.0.1.** 9.0.1 (2026-10-10, MSRV 1.88) fails
+  reads that exceed an entry's declared uncompressed size and rejects
+  an empty archive whose central directory offset lies past the EOCD.
+  Both are hardening for untrusted `.docx` input. It also writes only
+  the sentinel-marked ZIP64 central fields.
+  Before bumping:
+  - Check that every entry we write still sets `last_modified_time` to
+    1980, so outputs stay byte-stable (986c526; the `time` feature note
+    beside `self_update` in `Cargo.toml`).
+  - Rerun the two-binary identity on the release sample. Convert every
+    docx in `release_info/`'s conversion CSV with `convert -o X --force
+    --revisions word --compress`, and redline every pair in its redline
+    CSV. Every sha256 must match the CSVs' (600/600 each).
+  The legacy `arthrod/jubarte-rs` Renovate PR for this bump (#30) was
+  closed in favour of this entry.
