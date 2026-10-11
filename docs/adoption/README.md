@@ -44,7 +44,7 @@ Runnable evidence:
 No page states a benchmark number. The plans call for the six-task agent
 evaluation of
 [06-agent-adoption.md](../superpowers/plans/2026-09-26-jubarte-adoption/06-agent-adoption.md)
-on the 0.11.0 release, with pinned settings, before any number is quoted
+on a tagged release, with pinned settings, before any number is quoted
 here. Fidelity scores elsewhere in this repository come from
 `neurotic_docx_bench`, which the jubarte author runs; treat them as
 affiliated, and use the runnable folders above instead.

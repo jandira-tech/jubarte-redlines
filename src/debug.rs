@@ -265,6 +265,34 @@ fn local(dom: &Dom, n: NodeId) -> String {
         .unwrap_or_default()
 }
 
+/// Whether a table cell's content ends in a paragraph. A cell-level content
+/// control counts by what its content ends in: Word writes and opens a cell
+/// whose last child is a `w:sdt` (nested or not) ending in a `w:p`. Each level
+/// skips only its own properties (`w:tcPr`; a control's `w:sdtContent` comes
+/// after its `w:sdtPr` and `w:sdtEndPr`).
+pub(crate) fn cell_ends_in_paragraph(dom: &Dom, tc: NodeId) -> bool {
+    let mut node = tc;
+    let mut properties = Some("tcPr");
+    loop {
+        let last = dom
+            .elements(node, None)
+            .into_iter()
+            .map(|c| (c, local(dom, c)))
+            .rfind(|(_, name)| Some(name.as_str()) != properties);
+        match last {
+            Some((_, name)) if name == "p" => return true,
+            Some((sdt, name)) if name == "sdt" => {
+                match dom.elements(sdt, None).last().map(|&c| (c, local(dom, c))) {
+                    Some((content, name)) if name == "sdtContent" => node = content,
+                    _ => return false,
+                }
+                properties = None;
+            }
+            _ => return false,
+        }
+    }
+}
+
 /// Story boundaries: a text box is a story inside the story that anchors it.
 const STORIES: [&str; 7] = [
     "txbxContent",
@@ -694,13 +722,16 @@ fn elements_named<'a>(
         .filter(move |&n| local(dom, n) == name)
 }
 
+/// Office's legacy `[trash]/` folder: its entries are no parts and need no
+/// content type; Word ignores them.
+pub(crate) const OFFICE_TRASH: &str = "[trash]/";
+
 fn check_package(pkg: &Package, parts: &[(String, Dom, NodeId)], f: &mut Findings) {
     const CT: &str = "[Content_Types].xml";
     let names: HashSet<String> = pkg
         .entries
         .iter()
-        // Office's legacy `[trash]/` folder is no part; Word ignores it.
-        .filter(|e| !e.name.ends_with('/') && !e.name.starts_with("[trash]/"))
+        .filter(|e| !e.name.ends_with('/') && !e.name.starts_with(OFFICE_TRASH))
         .map(|e| percent_decode(&e.name))
         .collect();
     let by_name: HashMap<&str, (&Dom, NodeId)> = parts
@@ -846,19 +877,17 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
             "instrText" | "delInstrText" if dom.value(n).is_empty() => {
                 f.add(&format!("{name}-empty"), part, path(dom, n));
             }
-            "tc" => {
+            "tc" if !cell_ends_in_paragraph(dom, n) => {
                 let last = dom
                     .elements(n, None)
                     .into_iter()
                     .map(|c| local(dom, c))
                     .rfind(|c| c.as_str() != "tcPr");
-                if last.as_deref() != Some("p") {
-                    f.add(
-                        "cell-not-ending-in-p",
-                        part,
-                        format!("{} last={}", path(dom, n), last.unwrap_or_default()),
-                    );
-                }
+                f.add(
+                    "cell-not-ending-in-p",
+                    part,
+                    format!("{} last={}", path(dom, n), last.unwrap_or_default()),
+                );
             }
             "tr" if !dom
                 .descendants(n, None)
@@ -2615,6 +2644,48 @@ mod tests {
             z.finish().unwrap();
         }
         buf.into_inner()
+    }
+
+    #[test]
+    fn a_cell_ends_in_a_paragraph_through_its_content_controls_only() {
+        const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        let cases = [
+            ("<w:tcPr/><w:p/>", true),
+            ("<w:tcPr/>", false),
+            (
+                "<w:sdt><w:sdtPr/><w:sdtContent><w:p/></w:sdtContent></w:sdt>",
+                true,
+            ),
+            (
+                "<w:sdt><w:sdtPr/><w:sdtEndPr/><w:sdtContent><w:sdt><w:sdtContent><w:sdt>\
+                 <w:sdtContent><w:p/></w:sdtContent></w:sdt></w:sdtContent></w:sdt>\
+                 </w:sdtContent></w:sdt>",
+                true,
+            ),
+            ("<w:sdt><w:sdtPr/><w:sdtContent/></w:sdt>", false),
+            ("<w:sdt><w:sdtPr/></w:sdt>", false),
+            (
+                "<w:sdt><w:sdtContent><w:tbl/></w:sdtContent></w:sdt>",
+                false,
+            ),
+            // Only the level's own properties are skipped.
+            (
+                "<w:sdt><w:sdtContent><w:p/><w:tcPr/></w:sdtContent></w:sdt>",
+                false,
+            ),
+            (
+                "<w:sdt><w:sdtContent><w:p/></w:sdtContent><w:sdtPr/></w:sdt>",
+                false,
+            ),
+            ("<w:p/><w:sdtEndPr/>", false),
+            ("<w:sdtContent><w:p/></w:sdtContent>", false),
+        ];
+        for (cell, expected) in cases {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&format!(r#"<w:tc xmlns:w="{W_NS}">{cell}</w:tc>"#));
+            let tc = dom.root(doc).unwrap();
+            assert_eq!(cell_ends_in_paragraph(&dom, tc), expected, "{cell}");
+        }
     }
 
     fn document(body: &str) -> String {

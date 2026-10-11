@@ -1047,6 +1047,33 @@ fn probe_run_under_a_block_wrapper_fails() {
     }
 }
 
+#[test]
+fn office_trash_folder_needs_no_content_type() {
+    // Office's legacy `[trash]/` folder holds no part: a document of the
+    // 0.12.0 sample (52220b20c3) carries `[trash]/0000.dat` with no content
+    // type, and Word 16.115 opened it and its redline (2026-10-10).
+    let report = check_word_valid_package(&zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("[trash]/0000.dat", "junk"),
+    ]));
+    assert!(
+        !codes(&report)
+            .iter()
+            .any(|(code, _)| *code == "MISSING_CONTENT_TYPE"),
+        "{:?}",
+        report.findings
+    );
+    let report = check_word_valid_package(&zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/media/0000.dat", "junk"),
+    ]));
+    assert!(
+        codes(&report).contains(&("MISSING_CONTENT_TYPE", true)),
+        "{:?}",
+        report.findings
+    );
+}
+
 /// A run straight under a part's root element, with no story container on
 /// the way: Word refused each alone (2026-10-10) under `w:document` past
 /// the body (k03), `w:comments` (k02) and `w:footnotes` (k01).

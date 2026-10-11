@@ -387,7 +387,10 @@ fn check_namespace_qname_contexts(pkg: &PartFs, out: &mut Vec<Finding>) {
 fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
     for name in pkg.parts() {
         // Every part should have a content type (default or override).
-        if pkg.content_type_for(&name).is_none() && name != "[Content_Types].xml" {
+        if pkg.content_type_for(&name).is_none()
+            && name != "[Content_Types].xml"
+            && !name.starts_with(crate::debug::OFFICE_TRASH)
+        {
             out.push(Finding::new(
                 "MISSING_CONTENT_TYPE",
                 &name,
@@ -1743,14 +1746,7 @@ fn end_cells_with_a_paragraph(dom: &mut Dom, root: NodeId) {
     let cells: Vec<NodeId> = dom
         .descendants(root, Some(&W::name("tc")))
         .into_iter()
-        .filter(|&tc| {
-            let last = dom
-                .elements(tc, None)
-                .into_iter()
-                .filter_map(|c| dom.name(c).map(|n| n.local_name().to_string()))
-                .rfind(|c| c != "tcPr");
-            last.as_deref() != Some("p")
-        })
+        .filter(|&tc| !crate::debug::cell_ends_in_paragraph(dom, tc))
         .collect();
     for tc in cells {
         let p = dom.new_element(W::p());

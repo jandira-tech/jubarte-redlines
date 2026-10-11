@@ -131,6 +131,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - Compare: a header or footer that only one document has now marks its
   table rows deleted or inserted along with their text; Word 16.115 hung
   on a footer table whose cells were deleted but whose rows were not.
+- `jubarte validate` no longer calls two shapes Word opens Word-fatal: a
+  table cell that ends in a content control holding its last paragraph
+  (its repair added a blank line to the cell), and Office's legacy
+  `[trash]/` folder, which needs no content type.
 
 - A comment anchored in a justified line lost its balloon: the stretched
   line repaints its words as new runs, which dropped the run's comments.
