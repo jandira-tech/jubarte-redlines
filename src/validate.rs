@@ -285,7 +285,8 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
 /// A run outside any paragraph: Word loads the document empty. Probed
 /// 2026-10-10 with a comment's reference run straight in `w:body`, in a
 /// `w:tc`, and in a body-level `w:ins`, `w:del`, `w:moveTo`, block
-/// `w:sdtContent` or block `w:customXml`.
+/// `w:sdtContent` or block `w:customXml`; and with a run straight under a
+/// part's root (`w:document`, `w:comments`, `w:footnotes`) or a footnote.
 fn check_runs_inside_paragraphs(pkg: &PartFs, out: &mut Vec<Finding>) {
     // Story and cell containers: a run reaching one before any paragraph is
     // outside a paragraph, whatever wraps it on the way.
@@ -306,23 +307,26 @@ fn check_runs_inside_paragraphs(pkg: &PartFs, out: &mut Vec<Finding>) {
         };
         for run in dom.descendants(root, Some(&W::r())) {
             let mut up = dom.parent(run);
-            while let Some(node) = up {
+            let outside = loop {
+                let Some(node) = up else { break true };
                 if dom.name_is(node, &W::p()) {
-                    break;
+                    break false;
                 }
                 if BLOCKS
                     .iter()
                     .any(|block| dom.name_is(node, &W::name(block)))
                 {
-                    out.push(Finding::new(
-                        "RUN_OUTSIDE_PARAGRAPH",
-                        &name,
-                        element_path(&dom, run),
-                        format!("a run outside any paragraph in '{name}'"),
-                    ));
-                    break;
+                    break true;
                 }
                 up = dom.parent(node);
+            };
+            if outside {
+                out.push(Finding::new(
+                    "RUN_OUTSIDE_PARAGRAPH",
+                    &name,
+                    element_path(&dom, run),
+                    format!("a run outside any paragraph in '{name}'"),
+                ));
             }
         }
     }
@@ -1034,9 +1038,18 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
+/// How often each id occurs on `local` elements. An `mc:Fallback` copy is
+/// not counted: Word reads one branch of a dual-saved shape, so markers
+/// repeated in its fallback are no second anchor (probe k05, 2026-10-10).
 fn comment_id_counts(dom: &Dom, root: NodeId, local: &str) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     for element in dom.descendants(root, Some(&W::name(local))) {
+        if !dom
+            .ancestors(element, Some(&MC::name("Fallback")))
+            .is_empty()
+        {
+            continue;
+        }
         if let Some(id) = dom.attribute(element, &W::id()) {
             *counts.entry(id.to_string()).or_default() += 1;
         }
@@ -1108,17 +1121,20 @@ fn check_hex_id(
     part: &str,
     out: &mut Vec<Finding>,
 ) {
-    let parsed = if value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        u32::from_str_radix(value, 16).ok()
-    } else {
-        None
-    };
+    // Word reads up to eight hex digits: seven open (k06), nine are refused
+    // (k07, 2026-10-10).
+    let parsed =
+        if (1..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            u32::from_str_radix(value, 16).ok()
+        } else {
+            None
+        };
     let Some(parsed) = parsed else {
         comment_finding(
             out,
             "COMMENT_PARTS_INCONSISTENT",
             part,
-            format!("{label} '{value}' is not an 8-digit hexadecimal id"),
+            format!("{label} '{value}' is not a hexadecimal id of up to 8 digits"),
         );
         return;
     };
@@ -1898,16 +1914,19 @@ mod validation_boundary_tests {
             // hangs on one that is not hexadecimal (h08, 2026-10-10).
             ("80000000", true, Some("outside Word")),
             ("80000000", false, None),
-            ("1234567", true, Some("not an 8-digit")),
-            ("123456789", false, Some("not an 8-digit")),
-            ("1234567z", true, Some("not an 8-digit")),
-            ("é234567", false, Some("not an 8-digit")),
+            // Seven digits open (k06); nine are refused (k07, 2026-10-10).
+            ("1234567", true, None),
+            ("1", false, None),
+            ("", true, Some("not a hexadecimal id")),
+            ("123456789", false, Some("not a hexadecimal id")),
+            ("1234567z", true, Some("not a hexadecimal id")),
+            ("é234567", false, Some("not a hexadecimal id")),
         ] {
             let mut findings = Vec::new();
             check_hex_id("test", value, bound, "part", &mut findings);
             assert_eq!(findings.len(), usize::from(expected.is_some()), "{value}");
             if let Some(message) = expected {
-                let refused = message == "not an 8-digit";
+                let refused = message == "not a hexadecimal id";
                 assert_eq!(
                     findings[0].code,
                     if refused {

@@ -1047,6 +1047,60 @@ fn probe_run_under_a_block_wrapper_fails() {
     }
 }
 
+/// A run straight under a part's root element, with no story container on
+/// the way: Word refused each alone (2026-10-10) under `w:document` past
+/// the body (k03), `w:comments` (k02) and `w:footnotes` (k01).
+#[test]
+fn probe_run_under_a_part_root_fails() {
+    const STRAY: &str = "<w:r><w:t>stray</w:t></w:r>";
+    let document = COMMENT_DOCUMENT.replace("</w:body>", &format!("</w:body>{STRAY}"));
+    let comments = COMMENTS.replace("</w:comments>", &format!("{STRAY}</w:comments>"));
+    for (probe, document, comments) in [
+        ("k03", document.as_str(), COMMENTS),
+        ("k02", COMMENT_DOCUMENT, comments.as_str()),
+    ] {
+        let report = check_word_valid_package(&package_with_comment_graph(
+            document,
+            comments,
+            COMMENTS_EXTENDED,
+            COMMENTS_IDS,
+            COMMENTS_EXTENSIBLE,
+        ));
+        assert_eq!(codes(&report), [("RUN_OUTSIDE_PARAGRAPH", true)], "{probe}");
+    }
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p>{KEPT}</w:p></w:footnote>{STRAY}</w:footnotes>"#
+    );
+    let report = check_word_valid_package(&zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/footnotes.xml", &footnotes),
+    ]));
+    assert!(
+        codes(&report).contains(&("RUN_OUTSIDE_PARAGRAPH", true)),
+        "k01: {:?}",
+        report.findings
+    );
+}
+
+/// A text box saved twice, as DrawingML in `mc:Choice` and VML in
+/// `mc:Fallback`, carries the comment's markers in both copies. Word reads
+/// one copy and opens the file (k05, 2026-10-10): not a second reference.
+#[test]
+fn probe_comment_in_both_copies_of_a_dual_saved_text_box_passes() {
+    let marked = format!("<w:txbxContent><w:p>{S0}{KEPT}{E0}{R0}</w:p></w:txbxContent>");
+    let document = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:v="urn:schemas-microsoft-com:vml" mc:Ignorable="wps"><w:body><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:inline><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Box"/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:txbx>{marked}</wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape style="width:72pt;height:36pt"><v:textbox>{marked}</v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p><w:sectPr/></w:body></w:document>"#
+    );
+    let report = check_word_valid_package(&package_with_comment_graph(
+        &document,
+        COMMENTS,
+        COMMENTS_EXTENDED,
+        COMMENTS_IDS,
+        COMMENTS_EXTENSIBLE,
+    ));
+    assert_eq!(codes(&report), [], "k05");
+}
+
 /// The comment parts beside `word/comments.xml` that disagree with it, as
 /// Word met them in the 2026-10-10 probe: it opens these and shows the
 /// comment, so each is a lead (the test gate still refuses leads).
