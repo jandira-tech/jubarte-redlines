@@ -872,3 +872,58 @@ fn explicit_compare_and_alias_do_not_request_a_printed_view() {
     assert_eq!(read["exit_code"], 0, "{read}");
     assert_eq!(read["args"]["file"], "actual.docx");
 }
+
+/// `-p r1 --accept`, `-p header1.r2 --reject` and `-p c5 --reply TEXT` group
+/// with their -p like every other operation flag.
+#[test]
+fn edit_and_add_group_accept_reject_and_reply_by_their_location() {
+    let ops = |argv: &[&str]| -> Vec<jubarte::edit::flags::FlagOp> {
+        match Cli::try_parse_from(argv).unwrap().command {
+            Some(Command::Edit { operations, .. } | Command::Add { operations, .. }) => operations,
+            other => panic!("{other:?}"),
+        }
+    };
+    let edit = ops(&[
+        "jubarte",
+        "edit",
+        "a.docx",
+        "-p",
+        "r1",
+        "--accept",
+        "-p",
+        "header1.r2",
+        "--reject",
+        "-p",
+        "c5",
+        "--reply",
+        "Yes.",
+    ]);
+    assert_eq!(
+        edit.iter()
+            .map(|o| (o.at.as_str(), o.accept, o.reject, o.reply.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            ("r1", true, false, None),
+            ("header1.r2", false, true, None),
+            ("c5", false, false, Some("Yes.")),
+        ]
+    );
+    let add = ops(&["jubarte", "add", "a.docx", "-p", "c5", "--reply", "Yes."]);
+    assert_eq!(add[0].reply.as_deref(), Some("Yes."));
+    for argv in [
+        &[
+            "jubarte", "edit", "a.docx", "-p", "c5", "--reply", "x", "--reply", "y",
+        ][..],
+        &["jubarte", "edit", "a.docx", "--accept", "-p", "r1"][..],
+        &["jubarte", "edit", "a.docx", "--plan", "p.json", "--accept"][..],
+        &["jubarte", "add", "a.docx", "-p", "r1", "--accept"][..],
+    ] {
+        assert!(Cli::try_parse_from(argv).is_err(), "{argv:?}");
+    }
+    let twice = Cli::try_parse_from([
+        "jubarte", "edit", "a.docx", "-p", "c5", "--reply", "x", "--reply", "y",
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(twice.contains("-p c5: --reply given twice"), "{twice}");
+}

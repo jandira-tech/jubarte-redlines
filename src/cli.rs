@@ -188,16 +188,17 @@ impl ExistingArg {
 /// `-p`, in command-line order. `matches` is the subcommand's.
 pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String> {
     let mut tokens: Vec<(usize, &str, Option<String>)> = Vec::new();
-    for name in ["location", "anchor", "content", "style"] {
+    for name in ["location", "anchor", "content", "reply", "style"] {
         if let (Some(indices), Some(values)) =
             (matches.indices_of(name), matches.get_many::<String>(name))
         {
             tokens.extend(indices.zip(values).map(|(i, v)| (i, name, Some(v.clone()))));
         }
     }
-    for name in ["delete", "resolve", "before", "comment"] {
+    for name in ["delete", "resolve", "before", "comment", "accept", "reject"] {
         // `try_get_many` is `Err` for a flag this command does not declare
-        // (`add` has no --resolve); `indices_of` would panic on it.
+        // (`add` has no --resolve or --accept); `indices_of` would panic on
+        // it.
         if matches.try_get_many::<bool>(name).ok().flatten().is_none() {
             continue;
         }
@@ -224,11 +225,15 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
             "anchor" => op.anchor = value,
             "content" if op.content.is_some() => return twice("content"),
             "content" => op.content = value,
+            "reply" if op.reply.is_some() => return twice("reply"),
+            "reply" => op.reply = value,
             "style" => op.styles.push(value.unwrap_or_default()),
             "delete" => op.delete = true,
             "resolve" => op.resolve = true,
             "before" => op.before = true,
             "comment" => op.comment = true,
+            "accept" => op.accept = true,
+            "reject" => op.reject = true,
             _ => {}
         }
     }
@@ -607,7 +612,8 @@ pub enum Command {
         args: ReadArgs,
     },
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
-    /// --resolve or --style (several -p per command), or a JSON plan. Writes
+    /// --resolve, --reply, --accept, --reject or --style (several -p per
+    /// command), or a JSON plan. Writes
     /// clean copy, redline, patch and report, then prints the changed
     /// paragraphs as the agent view (refusal: exit 3).
     #[command(after_help = "Examples:\n  \
@@ -617,9 +623,12 @@ pub enum Command {
         jubarte edit a.docx -p p3 --content \"The parties agree as follows.\"    rewrite\n  \
         jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2\n  \
         jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
+        jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\"\n  \
+        jubarte edit a.docx -p r3 --accept -p header1.r1 --reject\n  \
         jubarte edit a.docx --plan plan.json --out-dir review\n\n\
-        WHERE is an id from `jubarte read`: p12, header1, footer2.p1, t0.r1.c2,\n\
-        c5 (a comment), or a long id (body:p:12).")]
+        WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
+        t0.row1.cell2, c5 (a comment), r12 (a revision), or a long id\n\
+        (body:p:12).")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
@@ -630,11 +639,12 @@ pub enum Command {
             long,
             value_name = "PLAN.json",
             required_unless_present = "location",
-            conflicts_with_all = ["location", "anchor", "content", "delete", "resolve", "style", "author", "datetime", "existing_revisions"]
+            conflicts_with_all = ["location", "anchor", "content", "delete", "resolve", "reply", "accept", "reject", "style", "author", "datetime", "existing_revisions"]
         )]
         plan: Option<PathBuf>,
-        /// Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a comment.
-        /// Each -p starts an operation; the flags after it belong to it.
+        /// Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment) or
+        /// r12 (a revision, with --accept or --reject). Each -p starts an
+        /// operation; the flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
         /// Text inside WHERE the operation applies to (must occur once).
@@ -650,6 +660,15 @@ pub enum Command {
         /// Resolve comment c5 (with -p c5).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         resolve: Vec<bool>,
+        /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
+        #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
+        reply: Vec<String>,
+        /// Accept revision r12 (with -p r12; r1+2 for several).
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        accept: Vec<bool>,
+        /// Reject revision r12 (with -p r12; r1+2 for several).
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        reject: Vec<bool>,
         /// Formatting for the anchored text: bold, italic, underline, strike,
         /// caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any
         /// other value is a paragraph style (Heading2).
@@ -690,12 +709,13 @@ pub enum Command {
         jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
         jubarte add a.docx -p p5 --anchor \"monthly fee\" --content \"Net of taxes?\"   a comment\n  \
         jubarte add a.docx -p p5 --comment --content \"Whole clause needs a cap.\"\n  \
-        jubarte add a.docx -p c5 --content \"Agreed, will fix.\"           a reply")]
+        jubarte add a.docx -p c5 --content \"Agreed, will fix.\"           a reply\n  \
+        jubarte add a.docx -p c5 --reply \"Agreed, will fix.\"             the same reply")]
     Add {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a reply.
+        /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply.
         /// Each -p starts an operation; the flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required = true)]
         location: Vec<String>,
@@ -705,6 +725,9 @@ pub enum Command {
         /// The paragraph, comment or reply text.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         content: Vec<String>,
+        /// Reply to comment c5 (with -p c5); the same as --content there.
+        #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
+        reply: Vec<String>,
         /// A new paragraph before WHERE instead of after it.
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         before: Vec<bool>,
