@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.11.3"
+version = "0.12.0"
 dependencies = [
  "clap",
  "criterion",

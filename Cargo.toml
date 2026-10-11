@@ -8,7 +8,7 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.11.3"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
@@ -53,6 +53,7 @@ include = [
 "0.11.0" = "Edit plans gain rewrite, tables, lists, run formatting, footnotes, images, page setup, content controls, watermark, redact, settings and field updates; new audit, validate/repair, scrub, append, comments and diff-render modules; input admission with LEGACY_DOC refusal; conventional marks follow Litera Compare; closer-to-Word docx-to-PDF. Breaking: WmlDocument::document_byte_array is private, use bytes()."
 "0.11.2" = "Word-mode compare decides word-level marks or a whole-paragraph replacement by Word's own kept-character rule; convert paints comments as Word's balloons and tracks Word's PDF layout more closely; release_info/ carries each release's benchmark evidence. On two 600-item samples scored against Word's own output: redlines mean 76.71 (Docxodus 69.24), PDFs mean 78.77 (LibreOffice 54.06), no failed item."
 "0.11.3" = "convert reads Word 97-2003 .doc files and writes page markers into Markdown; OMML math is laid out as Word does; the font report no longer counts a guessed face as a match; MSRV 1.94. On two 600-item samples scored against Word's own output: redlines mean 72.06 (Docxodus 65.15), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.14 (LibreOffice 54.61), no failed document."
+"0.12.0" = "Agent view (jubarte::markdown, read/edit/add flag plans), text diff views, PdfOptions::comments (CommentPlacement::End) and PdfOptions::changed_only (a struct literal naming every field now needs ..PdfOptions::default()), Word's Roman/letter field formats, a searchable PDF text layer for text no font covers (/ActualText), and redline fixes for files Word 16.115 hung on. rdocx-opc 0.2 fixes RUSTSEC-2026-0194. On two 600-item samples scored against Word's own output: redlines mean 71.89 (Docxodus 64.95), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document."
 [lib]
 name = "jubarte"
 path = "src/lib.rs"
