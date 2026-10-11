@@ -55811,8 +55811,10 @@ mod rendering_uncovered_contract_tests {
         font[18..29].copy_from_slice(b"Memory Mono");
         let words = |bytes: &[u8]| {
             bytes
-                .chunks_exact(2)
-                .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&p| u16::from_le_bytes(p))
                 .collect::<Vec<_>>()
         };
         let records: [(u16, Vec<u16>); 13] = [
@@ -55836,8 +55838,10 @@ mod rendering_uncovered_contract_tests {
         bytes[12..14].copy_from_slice(&4_i16.to_le_bytes());
         bytes[14..16].copy_from_slice(&1440_u16.to_le_bytes());
         let checksum = bytes[..20]
-            .chunks_exact(2)
-            .fold(0_u16, |a, p| a ^ u16::from_le_bytes([p[0], p[1]]));
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .fold(0_u16, |a, &p| a ^ u16::from_le_bytes(p));
         bytes[20..22].copy_from_slice(&checksum.to_le_bytes());
         bytes[22..24].copy_from_slice(&1_u16.to_le_bytes());
         bytes[24..26].copy_from_slice(&9_u16.to_le_bytes());

@@ -135,8 +135,8 @@ pub(crate) fn scalar(value: &str, flow: bool) -> String {
         && !RESERVED.contains(&value.to_ascii_lowercase().as_str())
         // One word that opens with a digit, `+` or `.` may be a number, a
         // time (`12:30`, base 60 in YAML 1.1) or a date to some reader.
-        && !(value.starts_with(|c: char| c.is_ascii_digit() || c == '+' || c == '.')
-            && !value.contains(char::is_whitespace));
+        && (!value.starts_with(|c: char| c.is_ascii_digit() || c == '+' || c == '.')
+            || value.contains(char::is_whitespace));
     if plain {
         value.to_string()
     } else {
