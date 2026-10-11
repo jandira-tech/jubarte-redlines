@@ -224,6 +224,30 @@ fn probe_wt_under_del_fails() {
     );
 }
 
+/// A comment's reference run written before its paragraph, straight into
+/// the body: Word loads the document empty (2026-10-10).
+#[test]
+fn probe_run_outside_paragraph_fails() {
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:r><w:t>stray</w:t></w:r>
+    <w:p><w:r><w:t>kept</w:t></w:r></w:p>
+    <w:tbl><w:tr><w:tc><w:ins w:id="1" w:author="A"><w:r><w:t>stray too</w:t></w:r></w:ins><w:p/></w:tc></w:tr></w:tbl>
+    <w:p/>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+    let bytes = zip_with_parts(&[("word/document.xml", doc)]);
+    let report = check_word_valid_package(&bytes);
+    let stray: Vec<_> = report
+        .errors
+        .iter()
+        .filter(|e| e.contains("a run outside any paragraph"))
+        .collect();
+    assert_eq!(stray.len(), 2, "{:?}", report.errors);
+}
+
 /// KNOWN ISSUE 1 settled: Word requires `w:t` under `w:moveFrom` — `delText` fails open.
 #[test]
 fn probe_deltext_under_movefrom_fails() {
@@ -292,7 +316,7 @@ fn probe_orphan_comment_ref_fails() {
 }
 
 #[test]
-fn probe_dangling_comment_parent_fails() {
+fn probe_dangling_comment_parent_is_a_lead() {
     let comments_extended = r#"<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w15:commentEx w15:paraId="11111111" w15:paraIdParent="22222222"/></w15:commentsEx>"#;
     let bytes = package_with_comment_graph(
         COMMENT_DOCUMENT,
@@ -309,6 +333,15 @@ fn probe_dangling_comment_parent_fails() {
             .any(|error| error.contains("paraIdParent") && error.contains("22222222")),
         "expected dangling paraIdParent error, got: {:?}",
         report.errors
+    );
+    // Word opens a reply to a missing parent and shows it (h10, 2026-10-10).
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "COMMENT_METADATA_MISMATCH" && !f.word_fatal),
+        "{:?}",
+        report.findings
     );
 }
 
@@ -330,7 +363,7 @@ fn healthy_comment_graph_passes_ring1() {
 }
 
 #[test]
-fn probe_dangling_comment_durable_id_fails() {
+fn probe_dangling_comment_durable_id_is_a_lead() {
     let comments_extensible = COMMENTS_EXTENSIBLE.replace("10000001", "20000002");
     let bytes = package_with_comment_graph(
         COMMENT_DOCUMENT,
@@ -346,6 +379,15 @@ fn probe_dangling_comment_durable_id_fails() {
         }),
         "expected dangling extensible durableId error, got: {:?}",
         report.errors
+    );
+    // Word opens durableIds that disagree across parts (h03, h05, 2026-10-10).
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "COMMENT_METADATA_MISMATCH" && !f.word_fatal),
+        "{:?}",
+        report.findings
     );
 }
 
@@ -377,11 +419,20 @@ fn probe_unanchored_comment_definition_fails() {
     let report = check_word_valid_package(&bytes);
     assert!(
         report.errors.iter().any(|error| {
-            error.contains("comment definition id '1'") && error.contains("commentReference")
+            error.contains("comment definition id '1'") && error.contains("no commentReference")
         }),
         "expected unanchored comment definition error, got: {:?}",
         report.errors
     );
+    // Word opens a comment with no reference as it is and does not show it
+    // (2026-10-10, d33): the finding is a lead, which the test gate still
+    // refuses.
+    let unanchored = report
+        .findings
+        .iter()
+        .find(|f| f.code == "COMMENT_UNANCHORED")
+        .expect("COMMENT_UNANCHORED");
+    assert!(!unanchored.word_fatal, "{unanchored:?}");
 }
 
 #[test]
@@ -410,7 +461,7 @@ fn probe_unresolved_comment_qname_prefix_fails() {
 }
 
 #[test]
-fn probe_duplicate_comment_para_id_fails() {
+fn probe_duplicate_comment_para_id_is_a_lead() {
     let document = COMMENT_DOCUMENT.replace(
         "<w:sectPr/>",
         r#"<w:p><w:commentRangeStart w:id="1"/><w:r><w:t>y</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p><w:sectPr/>"#,
@@ -434,10 +485,19 @@ fn probe_duplicate_comment_para_id_fails() {
         "expected duplicate comment paraId error, got: {:?}",
         report.errors
     );
+    // Word opens a paraId repeated in word/comments.xml (j09, 2026-10-10).
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "COMMENT_METADATA_MISMATCH" && !f.word_fatal),
+        "{:?}",
+        report.findings
+    );
 }
 
 #[test]
-fn probe_comment_parent_cycle_fails() {
+fn probe_comment_parent_cycle_is_a_lead() {
     let document = COMMENT_DOCUMENT.replace(
         "<w:sectPr/>",
         r#"<w:p><w:commentRangeStart w:id="1"/><w:r><w:t>y</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p><w:sectPr/>"#,
@@ -471,6 +531,15 @@ fn probe_comment_parent_cycle_fails() {
         "expected comment parent cycle error, got: {:?}",
         report.errors
     );
+    // Word opens two comments that are each other's parent and shows both (j12, 2026-10-10).
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "COMMENT_PARENT_CYCLE" && !f.word_fatal),
+        "{:?}",
+        report.findings
+    );
 }
 
 #[test]
@@ -494,6 +563,15 @@ fn probe_wrong_comment_relationship_target_fails() {
         }),
         "expected wrong comment relationship target error, got: {:?}",
         report.errors
+    );
+    // Word refuses a comment-family relationship to the wrong part (j14, j15, 2026-10-10).
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "COMMENT_PARTS_INCONSISTENT" && f.word_fatal),
+        "{:?}",
+        report.findings
     );
 }
 
@@ -539,7 +617,7 @@ fn probe_undefined_picture_bullet_fails() {
 }
 
 #[test]
-fn probe_paraid_overflow_fails() {
+fn probe_paraid_overflow_is_a_repairable_lead() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
             xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">
@@ -557,6 +635,15 @@ fn probe_paraid_overflow_fails() {
             .any(|e| e.contains("0x80000000") || e.contains("paraId")),
         "expected paraId overflow error, got: {:?}",
         report.errors
+    );
+    // Word opens paraIds of 0x80000000 and zero in the body and in comments (i01, i02, h07, 2026-10-10); the schema forbids them, so repair renumbers them.
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "PARA_ID_OUT_OF_RANGE" && !f.word_fatal),
+        "{:?}",
+        report.findings
     );
 }
 
@@ -701,4 +788,465 @@ fn probe_application_requires_in_custom_xml_passes() {
         "application Requires read as an MC prefix list: {:?}",
         report.errors
     );
+}
+
+// Comment anchors, as Word reads them: a 61-file Word probe (2026-10-10,
+// jubarte-loop/fixplan/n4/cprobe and cprobe2). Each case names its probe.
+
+const S0: &str = r#"<w:commentRangeStart w:id="0"/>"#;
+const E0: &str = r#"<w:commentRangeEnd w:id="0"/>"#;
+const R0: &str = r#"<w:r><w:commentReference w:id="0"/></w:r>"#;
+const KEPT: &str = "<w:r><w:t>Kept.</w:t></w:r>";
+
+/// The one-comment package with `body` before the section properties.
+fn comment_report(body: &str) -> common::validity::ValidityReport {
+    let document = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr/></w:body></w:document>"#
+    );
+    check_word_valid_package(&package_with_comment_graph(
+        &document,
+        COMMENTS,
+        COMMENTS_EXTENDED,
+        COMMENTS_IDS,
+        COMMENTS_EXTENSIBLE,
+    ))
+}
+
+fn codes(report: &common::validity::ValidityReport) -> Vec<(&str, bool)> {
+    report
+        .findings
+        .iter()
+        .map(|f| (f.code.as_str(), f.word_fatal))
+        .collect()
+}
+
+/// Word opens these and shows the comment: a reference in a paragraph is
+/// all it needs, whatever the range markers do or whatever wraps it.
+#[test]
+fn probe_comment_shown_from_its_reference_in_a_paragraph_passes() {
+    let ins = |x: &str| format!(r#"<w:ins w:id="90" w:author="B">{x}</w:ins>"#);
+    let del = |x: &str| format!(r#"<w:del w:id="91" w:author="B">{x}</w:del>"#);
+    for (probe, body) in [
+        ("c02 reference only", format!("<w:p>{KEPT}{R0}</w:p>")),
+        (
+            "c05 end and reference",
+            format!("<w:p>{KEPT}{E0}{R0}</w:p>"),
+        ),
+        (
+            "c06 markers at body level",
+            format!("{S0}<w:p>{KEPT}</w:p>{E0}<w:p>{R0}</w:p>"),
+        ),
+        (
+            "c08 reference in an empty paragraph",
+            format!("<w:p>{R0}</w:p>"),
+        ),
+        (
+            "d01 end before start",
+            format!("<w:p>{E0}{KEPT}{S0}{R0}</w:p>"),
+        ),
+        (
+            "d02 reference before the range",
+            format!("<w:p>{R0}{S0}{KEPT}{E0}</w:p>"),
+        ),
+        (
+            "d05 range over three paragraphs",
+            format!("<w:p>{S0}{KEPT}</w:p><w:p>{R0}</w:p><w:p>{KEPT}{E0}</w:p>"),
+        ),
+        (
+            "d10 markers in a table and row",
+            format!(
+                r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid>{S0}<w:tr>{E0}<w:tc><w:p>{KEPT}{R0}</w:p></w:tc></w:tr></w:tbl><w:p/>"#
+            ),
+        ),
+        (
+            "d12 reference in a deletion",
+            format!(
+                "<w:p>{S0}{}{E0}{}</w:p>",
+                del(r#"<w:r><w:delText>Kept.</w:delText></w:r>"#),
+                del(R0).replace("91", "92")
+            ),
+        ),
+        (
+            "d13 reference in an insertion",
+            format!("<w:p>{S0}{}{E0}</w:p>", ins(&format!("{KEPT}{R0}"))),
+        ),
+        (
+            "d15 reference in a hyperlink",
+            format!(r#"<w:p>{S0}<w:hyperlink w:anchor="t">{KEPT}{E0}{R0}</w:hyperlink></w:p>"#),
+        ),
+        (
+            "d16 reference in a content control",
+            format!(r#"<w:p>{S0}<w:sdt><w:sdtContent>{KEPT}{E0}{R0}</w:sdtContent></w:sdt></w:p>"#),
+        ),
+        (
+            "d24 reference without its run",
+            format!(r#"<w:p>{S0}{KEPT}{E0}<w:commentReference w:id="0"/></w:p>"#),
+        ),
+        (
+            "d35 reference inside its own range",
+            format!("<w:p>{S0}{KEPT}{R0}{KEPT}{E0}</w:p>"),
+        ),
+        (
+            "d38 reference in custom XML",
+            format!(r#"<w:p>{S0}<w:customXml w:element="x">{KEPT}{E0}{R0}</w:customXml></w:p>"#),
+        ),
+    ] {
+        let report = comment_report(&body);
+        assert!(report.findings.is_empty(), "{probe}: {:?}", report.findings);
+    }
+}
+
+/// No reference in a paragraph: Word opens the file and shows no comment.
+/// A lead (content loss), not Word-invalidity.
+#[test]
+fn probe_comment_without_reference_is_a_lead() {
+    for (probe, body) in [
+        ("c00 no markers", format!("<w:p>{KEPT}</w:p>")),
+        (
+            "c03 range, no reference",
+            format!("<w:p>{S0}{KEPT}{E0}</w:p>"),
+        ),
+        ("c04 start only", format!("<w:p>{S0}{KEPT}</w:p>")),
+        (
+            "c07 markers at body level",
+            format!("{S0}{E0}<w:p>{KEPT}</w:p>"),
+        ),
+    ] {
+        let report = comment_report(&body);
+        assert_eq!(codes(&report), [("COMMENT_UNANCHORED", false)], "{probe}");
+        assert!(report.errors[0].contains("shows no comment"), "{probe}");
+    }
+}
+
+/// Repeated range markers open (d29, g01), and so do two definitions under
+/// one id, Word showing the first (d41): leads. Two references for one
+/// comment hang Word (d28, twice).
+#[test]
+fn probe_repeated_comment_ids() {
+    for (probe, body) in [
+        (
+            "d29 two starts",
+            format!("<w:p>{S0}{KEPT}{S0}{KEPT}{E0}{R0}</w:p>"),
+        ),
+        (
+            "g01 two ends",
+            format!("<w:p>{S0}{KEPT}{E0}{KEPT}{E0}{R0}</w:p>"),
+        ),
+    ] {
+        let report = comment_report(&body);
+        assert_eq!(codes(&report), [("COMMENT_ID_REPEATED", false)], "{probe}");
+    }
+    let report = comment_report(&format!("<w:p>{S0}{KEPT}{E0}{R0}{R0}</w:p>"));
+    assert_eq!(
+        codes(&report),
+        [("COMMENT_PARTS_INCONSISTENT", true)],
+        "d28"
+    );
+
+    let comments = COMMENTS.replace(
+        "</w:comments>",
+        r#"<w:comment w:id="0" w:author="A"><w:p><w:r><w:t>again</w:t></w:r></w:p></w:comment></w:comments>"#,
+    );
+    let document = COMMENT_DOCUMENT;
+    let report = check_word_valid_package(&package_with_comment_graph(
+        document,
+        &comments,
+        COMMENTS_EXTENDED,
+        COMMENTS_IDS,
+        COMMENTS_EXTENSIBLE,
+    ));
+    assert!(
+        codes(&report).contains(&("COMMENT_ID_REPEATED", false)),
+        "d41: {:?}",
+        report.findings
+    );
+}
+
+/// An anchor whose id names no comment: Word refuses a reference (d30), but
+/// opens range markers beside the comments part (d31, d32). With no comments
+/// part, range markers are refused too (f02).
+#[test]
+fn probe_orphan_comment_anchors() {
+    let five = r#"<w:commentRangeStart w:id="5"/><w:r><w:t>More.</w:t></w:r><w:commentRangeEnd w:id="5"/>"#;
+    let report = comment_report(&format!("<w:p>{S0}{KEPT}{E0}{R0}{five}</w:p>"));
+    assert_eq!(
+        codes(&report),
+        [
+            ("COMMENT_RANGE_ORPHAN", false),
+            ("COMMENT_RANGE_ORPHAN", false)
+        ],
+        "d31"
+    );
+    assert!(report.findings.iter().all(|f| f.repairable));
+
+    let report = comment_report(&format!(
+        r#"<w:p>{S0}{KEPT}{E0}{R0}<w:r><w:commentReference w:id="5"/></w:r></w:p>"#
+    ));
+    assert_eq!(codes(&report), [("COMMENT_ANCHOR_ORPHAN", true)], "d30");
+
+    let doc = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:commentRangeStart w:id="42"/><w:r><w:t>Kept.</w:t></w:r><w:commentRangeEnd w:id="42"/></w:p><w:sectPr/></w:body></w:document>"#;
+    let report = check_word_valid_package(&zip_with_parts(&[("word/document.xml", doc)]));
+    assert_eq!(
+        codes(&report),
+        [
+            ("COMMENT_ANCHOR_ORPHAN", true),
+            ("COMMENT_ANCHOR_ORPHAN", true)
+        ],
+        "f02"
+    );
+}
+
+/// Repair drops the range markers that name no comment and keeps the rest.
+#[test]
+fn repair_drops_orphan_range_markers() {
+    let document = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>{S0}{KEPT}{E0}{R0}<w:commentRangeStart w:id="5"/><w:commentRangeEnd w:id="5"/></w:p><w:sectPr/></w:body></w:document>"#
+    );
+    let bytes = package_with_comment_graph(
+        &document,
+        COMMENTS,
+        COMMENTS_EXTENDED,
+        COMMENTS_IDS,
+        COMMENTS_EXTENSIBLE,
+    );
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(repaired.repaired.len(), 2);
+    assert!(repaired.remaining.is_empty(), "{:?}", repaired.remaining);
+    assert_word_valid_package(&repaired.docx);
+}
+
+/// A comment's reference run outside a paragraph, under each wrapper Word
+/// refused (2026-10-10): body-level `w:del` (d39) and `w:moveTo` (g02),
+/// block `w:sdtContent` (g03) and block `w:customXml` (g04).
+#[test]
+fn probe_run_under_a_block_wrapper_fails() {
+    for (probe, body) in [
+        (
+            "d39",
+            format!(r#"<w:p>{S0}{KEPT}{E0}</w:p><w:del w:id="91" w:author="B">{R0}</w:del>"#),
+        ),
+        (
+            "g02",
+            format!(r#"<w:p>{S0}{KEPT}{E0}</w:p><w:moveTo w:id="96" w:author="B">{R0}</w:moveTo>"#),
+        ),
+        (
+            "g03",
+            format!(
+                "<w:p>{S0}{KEPT}{E0}</w:p><w:sdt><w:sdtContent>{R0}</w:sdtContent></w:sdt><w:p/>"
+            ),
+        ),
+        (
+            "g04",
+            format!(
+                r#"<w:p>{S0}{KEPT}{E0}</w:p><w:customXml w:element="x">{R0}</w:customXml><w:p/>"#
+            ),
+        ),
+    ] {
+        let report = comment_report(&body);
+        assert_eq!(codes(&report), [("RUN_OUTSIDE_PARAGRAPH", true)], "{probe}");
+    }
+}
+
+/// The comment parts beside `word/comments.xml` that disagree with it, as
+/// Word met them in the 2026-10-10 probe: it opens these and shows the
+/// comment, so each is a lead (the test gate still refuses leads).
+#[test]
+fn probe_comment_metadata_word_opens_is_a_lead() {
+    const EX: &str =
+        r#"<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">"#;
+    const IDS: &str = r#"<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid">"#;
+    const CEX: &str = r#"<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex">"#;
+    let ex_end = "</w15:commentsEx>";
+    let ids_end = "</w16cid:commentsIds>";
+    let cex_end = "</w16cex:commentsExtensible>";
+    let overflow = |x: &str| x.replace("11111111", "80000000");
+    for (probe, comments, extended, ids, extensible) in [
+        (
+            "h01 comment paraId in neither side part",
+            COMMENTS.replace("11111111", "22222222"),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.to_string(),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "h02 commentsExtended entry missing",
+            COMMENTS.to_string(),
+            format!("{EX}{ex_end}"),
+            COMMENTS_IDS.to_string(),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "h03 commentsIds entry missing",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.to_string(),
+            format!("{IDS}{ids_end}"),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "h04 extra commentsExtended entry",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.replace(ex_end, &format!(r#"<w15:commentEx w15:paraId="10000005"/>{ex_end}"#)),
+            COMMENTS_IDS.to_string(),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "h05 commentsExtensible entry missing",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.to_string(),
+            format!("{CEX}{cex_end}"),
+        ),
+        (
+            "h07 comment paraId at 0x80000000",
+            overflow(COMMENTS),
+            overflow(COMMENTS_EXTENDED),
+            overflow(COMMENTS_IDS),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "h09 commentsExtended entry repeated",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.replace(ex_end, &format!(r#"<w15:commentEx w15:paraId="11111111"/>{ex_end}"#)),
+            COMMENTS_IDS.to_string(),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "j02 commentsIds entry without durableId",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.replace(r#" w16cid:durableId="10000001""#, ""),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "j03 commentsExtensible entry without durableId",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.to_string(),
+            COMMENTS_EXTENSIBLE.replace(r#" w16cex:durableId="10000001""#, ""),
+        ),
+        (
+            "j08 comment paragraph without paraId",
+            COMMENTS.replace(r#" w14:paraId="11111111""#, ""),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.to_string(),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "j10 commentsIds durableId repeated",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.replace(ids_end, &format!(r#"<w16cid:commentId w16cid:paraId="10000004" w16cid:durableId="10000001"/>{ids_end}"#)),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "j16 commentsIds paraId repeated",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.replace(ids_end, &format!(r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="10000009"/>{ids_end}"#)),
+            COMMENTS_EXTENSIBLE.to_string(),
+        ),
+        (
+            "j17 commentsExtensible durableId repeated",
+            COMMENTS.to_string(),
+            COMMENTS_EXTENDED.to_string(),
+            COMMENTS_IDS.to_string(),
+            COMMENTS_EXTENSIBLE.replace(cex_end, &format!(r#"<w16cex:commentExtensible w16cex:durableId="10000001"/>{cex_end}"#)),
+        ),
+    ] {
+        let report = check_word_valid_package(&package_with_comment_graph(
+            COMMENT_DOCUMENT,
+            &comments,
+            &extended,
+            &ids,
+            &extensible,
+        ));
+        assert!(
+            report.findings.iter().any(|f| f.code == "COMMENT_METADATA_MISMATCH"),
+            "{probe}: {:?}",
+            report.findings
+        );
+        assert!(
+            report.findings.iter().all(|f| !f.word_fatal),
+            "{probe}: {:?}",
+            report.findings
+        );
+    }
+}
+
+/// What Word refused in the same probe, each confirmed alone: an id that is
+/// not hexadecimal (hung), an entry without its paraId, and a side part
+/// that is not wired exactly once to the right part ("document loaded
+/// empty").
+#[test]
+fn probe_comment_metadata_word_refuses_is_fatal() {
+    const EXTENDED_TYPE: &str =
+        "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
+    let not_hex = |x: &str| x.replace("11111111", "XYZ");
+    let graph = |comments: &str, extended: &str, ids: &str| {
+        package_with_comment_graph(
+            COMMENT_DOCUMENT,
+            comments,
+            extended,
+            ids,
+            COMMENTS_EXTENSIBLE,
+        )
+    };
+    let wired = |change: &dyn Fn(&mut PartFs)| {
+        let mut pkg =
+            PartFs::open(&graph(COMMENTS, COMMENTS_EXTENDED, COMMENTS_IDS)).expect("open package");
+        change(&mut pkg);
+        pkg.to_zip().expect("serialize package")
+    };
+    for (probe, bytes) in [
+        (
+            "h08 paraId not hexadecimal",
+            graph(
+                &not_hex(COMMENTS),
+                &not_hex(COMMENTS_EXTENDED),
+                &not_hex(COMMENTS_IDS),
+            ),
+        ),
+        (
+            "h12 commentsExtended entry without paraId",
+            graph(
+                COMMENTS,
+                &COMMENTS_EXTENDED.replace(r#" w15:paraId="11111111""#, ""),
+                COMMENTS_IDS,
+            ),
+        ),
+        (
+            "j01 commentsIds entry without paraId",
+            graph(
+                COMMENTS,
+                COMMENTS_EXTENDED,
+                &COMMENTS_IDS.replace(r#" w16cid:paraId="11111111""#, ""),
+            ),
+        ),
+        (
+            "j05 two relationships to commentsExtended",
+            wired(&|pkg| {
+                pkg.add_document_relationship(
+                    "word/document.xml",
+                    EXTENDED_TYPE,
+                    "commentsExtended.xml",
+                );
+            }),
+        ),
+        (
+            "j18 commentsExtended without a relationship",
+            wired(&|pkg| {
+                pkg.remove_relationships_by_type("word/document.xml", EXTENDED_TYPE);
+            }),
+        ),
+    ] {
+        let report = check_word_valid_package(&bytes);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "COMMENT_PARTS_INCONSISTENT" && f.word_fatal),
+            "{probe}: {:?}",
+            report.findings
+        );
+    }
 }

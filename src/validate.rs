@@ -29,12 +29,15 @@
 //! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID`, `DUPLICATE_DOCPR_ID` | no (leads) | yes: renumbered |
-//! | `PARA_ID_OUT_OF_RANGE` | yes | yes: renumbered |
+//! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
 //! | `INSTR_TEXT_INSIDE_DELETION` | no (not probed in Word) | yes |
 //! | `BOOKMARK_IN_SINGLE_VALUE_CONTROL` | yes | yes: the bookmark is dropped |
 //! | `COMMENT_ANCHOR_ORPHAN` | yes | yes: the anchor is dropped |
-//! | `COMMENT_WITHOUT_ANCHOR`, `COMMENT_PARTS_INCONSISTENT`, `COMMENT_PARENT_CYCLE` | yes | no |
+//! | `COMMENT_RANGE_ORPHAN` | no: Word opens it | yes: the marker is dropped |
+//! | `COMMENT_PARTS_INCONSISTENT` | yes | no |
+//! | `COMMENT_UNANCHORED`, `COMMENT_ID_REPEATED`, `COMMENT_METADATA_MISMATCH`, `COMMENT_PARENT_CYCLE` | no: Word opens it | no |
+//! | `RUN_OUTSIDE_PARAGRAPH` | yes | no |
 //! | `FIELD_UNBALANCED`, `FIELD_SPLIT_DELETION` | yes | no |
 //! | `FIELD_CODE_STATE` | no | no |
 //! | `EMPTY_FIELD_CODE`, `ROW_WITHOUT_CELL`, `NESTED_SAME_REVISION`, `SECTPR_NOT_LAST` | yes | no |
@@ -42,6 +45,18 @@
 //! | `NOTE_REFERENCE_DANGLING` | yes | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
+//!
+//! The comment codes follow a 98-file Word probe (2026-10-10). Word opens
+//! a comment whatever its range markers: missing, reversed, repeated, at
+//! block level, across paragraphs or cells. It shows the comment only from
+//! a `w:commentReference` in a paragraph of the main story. It refuses a
+//! reference whose id has no definition, two references for one id, any
+//! anchor when there is no comments part, and a run outside a paragraph.
+//! Of the parts beside `word/comments.xml` it refuses an id that is not
+//! hexadecimal, an entry without its paraId, and a part not related exactly
+//! once, to itself, with its content type; any other disagreement between
+//! them (missing, extra or repeated entries, out-of-range ids, dangling or
+//! cyclic parents) opens and shows the comment.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -106,7 +121,6 @@ pub fn traits(code: &str) -> (bool, bool) {
     match code {
         "MC_UNBOUND_PREFIX"
         | "DANGLING_RELATIONSHIP"
-        | "PARA_ID_OUT_OF_RANGE"
         | "TEXT_INSIDE_DELETION"
         | "DELTEXT_OUTSIDE_DELETION"
         | "MOVEFROM_WITH_DELTEXT"
@@ -121,26 +135,27 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "MALFORMED_XML"
         | "MISSING_REL_TARGET"
         | "PICTURE_BULLET_UNDEFINED"
-        | "COMMENT_WITHOUT_ANCHOR"
         | "COMMENT_PARTS_INCONSISTENT"
-        | "COMMENT_PARENT_CYCLE"
         | "FIELD_UNBALANCED"
+        | "RUN_OUTSIDE_PARAGRAPH"
         | "FIELD_SPLIT_DELETION"
         | "EMPTY_FIELD_CODE"
         | "ROW_WITHOUT_CELL"
         | "NESTED_SAME_REVISION"
         | "SECTPR_NOT_LAST"
         | "NOTE_REFERENCE_DANGLING" => (true, false),
-        "DUPLICATE_REVISION_ID" | "DUPLICATE_DOCPR_ID" | "INSTR_TEXT_INSIDE_DELETION" => {
-            (false, true)
-        }
+        "DUPLICATE_REVISION_ID"
+        | "DUPLICATE_DOCPR_ID"
+        | "INSTR_TEXT_INSIDE_DELETION"
+        | "PARA_ID_OUT_OF_RANGE"
+        | "COMMENT_RANGE_ORPHAN" => (false, true),
         _ => (false, false),
     }
 }
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 18] = [
+const RING1_CODES: [&str; 22] = [
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
     "MALFORMED_XML",
@@ -156,9 +171,13 @@ const RING1_CODES: [&str; 18] = [
     "MOVEFROM_WITH_DELTEXT",
     "BOOKMARK_IN_SINGLE_VALUE_CONTROL",
     "COMMENT_ANCHOR_ORPHAN",
-    "COMMENT_WITHOUT_ANCHOR",
+    "COMMENT_RANGE_ORPHAN",
     "COMMENT_PARTS_INCONSISTENT",
     "COMMENT_PARENT_CYCLE",
+    "RUN_OUTSIDE_PARAGRAPH",
+    "COMMENT_UNANCHORED",
+    "COMMENT_ID_REPEATED",
+    "COMMENT_METADATA_MISMATCH",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -259,7 +278,54 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_bookmarks_outside_single_value_controls(pkg, &mut out);
     check_comment_graph(pkg, &mut out);
     check_namespace_qname_contexts(pkg, &mut out);
+    check_runs_inside_paragraphs(pkg, &mut out);
     out
+}
+
+/// A run outside any paragraph: Word loads the document empty. Probed
+/// 2026-10-10 with a comment's reference run straight in `w:body`, in a
+/// `w:tc`, and in a body-level `w:ins`, `w:del`, `w:moveTo`, block
+/// `w:sdtContent` or block `w:customXml`.
+fn check_runs_inside_paragraphs(pkg: &PartFs, out: &mut Vec<Finding>) {
+    // Story and cell containers: a run reaching one before any paragraph is
+    // outside a paragraph, whatever wraps it on the way.
+    const BLOCKS: [&str; 9] = [
+        "body",
+        "tc",
+        "hdr",
+        "ftr",
+        "footnote",
+        "endnote",
+        "comment",
+        "txbxContent",
+        "docPartBody",
+    ];
+    for name in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &name) else {
+            continue;
+        };
+        for run in dom.descendants(root, Some(&W::r())) {
+            let mut up = dom.parent(run);
+            while let Some(node) = up {
+                if dom.name_is(node, &W::p()) {
+                    break;
+                }
+                if BLOCKS
+                    .iter()
+                    .any(|block| dom.name_is(node, &W::name(block)))
+                {
+                    out.push(Finding::new(
+                        "RUN_OUTSIDE_PARAGRAPH",
+                        &name,
+                        element_path(&dom, run),
+                        format!("a run outside any paragraph in '{name}'"),
+                    ));
+                    break;
+                }
+                up = dom.parent(node);
+            }
+        }
+    }
 }
 
 /// `w:body[0]/w:p[3]/w:r[2]`: conventional prefix and local name with the
@@ -841,7 +907,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
             if pkg.part_bytes(part).is_some() {
                 comment_finding(
                     out,
-                    "COMMENT_PARTS_INCONSISTENT",
+                    "COMMENT_METADATA_MISMATCH",
                     part,
                     format!("'{part}' exists without word/comments.xml"),
                 );
@@ -857,36 +923,52 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         ("commentRangeEnd", &ends, main.as_str()),
         ("commentReference", &references, main.as_str()),
     ] {
+        // Word hangs on two references for one comment; it opens repeated
+        // range markers or definitions, showing the first definition.
+        let code = if kind == "commentReference" {
+            "COMMENT_PARTS_INCONSISTENT"
+        } else {
+            "COMMENT_ID_REPEATED"
+        };
         for (id, count) in counts {
             if *count != 1 {
                 comment_finding(
                     out,
-                    "COMMENT_PARTS_INCONSISTENT",
+                    code,
                     part,
                     format!("{kind} id '{id}' occurs {count} times"),
                 );
             }
         }
     }
-    let definition_ids: HashSet<String> = definitions.keys().cloned().collect();
-    for (kind, counts) in [
-        ("commentRangeStart", &starts),
-        ("commentRangeEnd", &ends),
-        ("commentReference", &references),
+    // Word shows a comment from its reference in a paragraph and from
+    // nothing else; without one the file opens and the comment is not shown
+    // (2026-10-10), so it is a lead. Missing range markers are no finding:
+    // the reference alone shows a point comment.
+    for id in definitions
+        .keys()
+        .filter(|id| !references.contains_key(*id))
+    {
+        comment_finding(
+            out,
+            "COMMENT_UNANCHORED",
+            COMMENTS_PART,
+            format!(
+                "comment definition id '{id}' has no commentReference in the document: Word opens it and shows no comment"
+            ),
+        );
+    }
+    // A reference to no definition is refused; a range marker to none is
+    // opened as it is.
+    for (kind, counts, code) in [
+        ("commentRangeStart", &starts, "COMMENT_RANGE_ORPHAN"),
+        ("commentRangeEnd", &ends, "COMMENT_RANGE_ORPHAN"),
+        ("commentReference", &references, "COMMENT_ANCHOR_ORPHAN"),
     ] {
-        let ids: HashSet<String> = counts.keys().cloned().collect();
-        for id in definition_ids.difference(&ids) {
+        for id in counts.keys().filter(|id| !definitions.contains_key(*id)) {
             comment_finding(
                 out,
-                "COMMENT_WITHOUT_ANCHOR",
-                COMMENTS_PART,
-                format!("comment definition id '{id}' has no matching {kind}"),
-            );
-        }
-        for id in ids.difference(&definition_ids) {
-            comment_finding(
-                out,
-                "COMMENT_ANCHOR_ORPHAN",
+                code,
                 &main,
                 format!("{kind} id '{id}' has no entry in word/comments.xml"),
             );
@@ -914,7 +996,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
             if !all_para_ids.insert(key.clone()) {
                 comment_finding(
                     out,
-                    "COMMENT_PARTS_INCONSISTENT",
+                    "COMMENT_METADATA_MISMATCH",
                     COMMENTS_PART,
                     format!("duplicate comment paraId '{para_id}' in word/comments.xml"),
                 );
@@ -924,7 +1006,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         if aux_present && comment_para_ids.is_empty() {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 COMMENTS_PART,
                 format!("comment id '{comment_id}' has no w14:paraId for its auxiliary metadata"),
             );
@@ -942,7 +1024,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
             if !extended.keys.contains(parent) {
                 comment_finding(
                     out,
-                    "COMMENT_PARTS_INCONSISTENT",
+                    "COMMENT_METADATA_MISMATCH",
                     "word/commentsExtended.xml",
                     format!("commentsExtended paraIdParent '{parent}' does not resolve"),
                 );
@@ -1011,7 +1093,7 @@ fn check_comment_family_packaging(pkg: &PartFs, main: &str, out: &mut Vec<Findin
         } else if !matching.is_empty() {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 main,
                 format!("'{main}' has a relationship for missing comment part '{part}'"),
             );
@@ -1043,7 +1125,7 @@ fn check_hex_id(
     if word_para_bound && parsed >= 0x8000_0000 {
         comment_finding(
             out,
-            "COMMENT_PARTS_INCONSISTENT",
+            "COMMENT_METADATA_MISMATCH",
             part,
             format!("{label} '{value}' is outside Word's paraId range"),
         );
@@ -1079,7 +1161,7 @@ fn check_comments_extended(
         if !keys.insert(key.clone()) {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 PART,
                 format!("duplicate commentsExtended paraId '{para_id}'"),
             );
@@ -1126,7 +1208,7 @@ fn check_comments_ids(
         if !para_ids.insert(para_key) {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 PART,
                 format!("duplicate commentsIds paraId '{para_id}'"),
             );
@@ -1134,7 +1216,7 @@ fn check_comments_ids(
         let Some(durable_id) = attribute_by_local(&dom, entry, "durableId") else {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 PART,
                 format!("commentsIds paraId '{para_id}' has no durableId"),
             );
@@ -1145,7 +1227,7 @@ fn check_comments_ids(
         if !durable_ids.insert(durable_key) {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 PART,
                 format!("duplicate commentsIds durableId '{durable_id}'"),
             );
@@ -1169,7 +1251,7 @@ fn check_comments_extensible(
         let Some(durable_id) = attribute_by_local(&dom, entry, "durableId") else {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 PART,
                 "commentsExtensible entry has no durableId".to_string(),
             );
@@ -1180,7 +1262,7 @@ fn check_comments_extensible(
         if !durable_ids.insert(key) {
             comment_finding(
                 out,
-                "COMMENT_PARTS_INCONSISTENT",
+                "COMMENT_METADATA_MISMATCH",
                 PART,
                 format!("duplicate commentsExtensible durableId '{durable_id}'"),
             );
@@ -1196,7 +1278,7 @@ fn check_comments_extensible(
         ),
         None => comment_finding(
             out,
-            "COMMENT_PARTS_INCONSISTENT",
+            "COMMENT_METADATA_MISMATCH",
             PART,
             "commentsExtensible exists without commentsIds".to_string(),
         ),
@@ -1223,7 +1305,7 @@ fn check_exact_key_set(
     for key in expected.difference(actual) {
         comment_finding(
             out,
-            "COMMENT_PARTS_INCONSISTENT",
+            "COMMENT_METADATA_MISMATCH",
             part,
             format!("{label} is missing '{key}'"),
         );
@@ -1231,7 +1313,7 @@ fn check_exact_key_set(
     for key in actual.difference(expected) {
         comment_finding(
             out,
-            "COMMENT_PARTS_INCONSISTENT",
+            "COMMENT_METADATA_MISMATCH",
             part,
             format!("{label} '{key}' has no matching comment paragraph"),
         );
@@ -1398,7 +1480,7 @@ pub fn repair(docx: &[u8]) -> Result<Repaired, ValidateError> {
     for part in parts_with(&["CELL_WITHOUT_PARAGRAPH"]) {
         edit_part(&mut pkg, &part, end_cells_with_a_paragraph);
     }
-    if has("COMMENT_ANCHOR_ORPHAN")
+    if (has("COMMENT_ANCHOR_ORPHAN") || has("COMMENT_RANGE_ORPHAN"))
         && let Some(main) = main_part(&pkg)
     {
         let defined: HashSet<String> = parse_part(&pkg, COMMENTS_PART)
@@ -1812,6 +1894,8 @@ mod validation_boundary_tests {
             ("12345678", true, None),
             ("abcdef01", false, None),
             ("7FFFFFFF", true, None),
+            // Word opens a comment paraId at 0x80000000 (probe h07) and
+            // hangs on one that is not hexadecimal (h08, 2026-10-10).
             ("80000000", true, Some("outside Word")),
             ("80000000", false, None),
             ("1234567", true, Some("not an 8-digit")),
@@ -1823,9 +1907,17 @@ mod validation_boundary_tests {
             check_hex_id("test", value, bound, "part", &mut findings);
             assert_eq!(findings.len(), usize::from(expected.is_some()), "{value}");
             if let Some(message) = expected {
-                assert_eq!(findings[0].code, "COMMENT_PARTS_INCONSISTENT");
+                let refused = message == "not an 8-digit";
+                assert_eq!(
+                    findings[0].code,
+                    if refused {
+                        "COMMENT_PARTS_INCONSISTENT"
+                    } else {
+                        "COMMENT_METADATA_MISMATCH"
+                    }
+                );
                 assert!(findings[0].message.contains(message));
-                assert!(findings[0].word_fatal);
+                assert_eq!(findings[0].word_fatal, refused, "{value}");
             }
         }
     }
@@ -2200,7 +2292,7 @@ mod public_memory_validator_owner_boundary_tests {
                 .filter(|finding| finding.code == "PARA_ID_OUT_OF_RANGE")
                 .cloned()
                 .collect::<Vec<_>>();
-            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),part:"word/comments.xml".into(),path:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:true,repairable:true});
+            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),part:"word/comments.xml".into(),path:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:false,repairable:true});
             assert_eq!(range, expected_range);
             let result = repair(&bytes).unwrap();
             assert!(
@@ -2438,7 +2530,7 @@ mod authored_comment_family_validation_contract_tests {
             assert_eq!(
                 findings,
                 vec![Finding::new(
-                    "COMMENT_PARTS_INCONSISTENT",
+                    "COMMENT_METADATA_MISMATCH",
                     part,
                     "",
                     format!("'{part}' exists without word/comments.xml")
@@ -2523,7 +2615,7 @@ mod authored_comment_family_validation_contract_tests {
                         ),
                     ),
                     _ => Finding::new(
-                        "COMMENT_PARTS_INCONSISTENT",
+                        "COMMENT_METADATA_MISMATCH",
                         "word/document.xml",
                         "",
                         format!(
