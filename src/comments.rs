@@ -44,6 +44,9 @@ const SENTINEL: u32 = 0x10_0000;
 pub struct CommentRecord {
     /// `w:id` of the comment.
     pub id: u32,
+    /// The id the view and `jubarte comments` print: `c{id}`.
+    #[serde(default, rename = "ref")]
+    pub r#ref: String,
     /// `w:author`.
     pub author: String,
     /// `w:initials`.
@@ -133,6 +136,33 @@ pub fn list_comments(docx: &[u8]) -> Result<Vec<CommentRecord>, CommentError> {
             record
         })
         .collect())
+}
+
+/// `jubarte comments`' listing: one line per comment, `c{id}\t{paragraph}
+/// \t{author}\t{text}\ton {anchor}[\treply to c{parent}][\tresolved]`
+/// (`-` for an absent paragraph; text and anchor quoted, their first 60 and
+/// 40 characters), then `{n} comment(s)`.
+pub fn comments_text(comments: &[CommentRecord]) -> String {
+    let mut out = String::new();
+    for c in comments {
+        let text: String = c.text.chars().take(60).collect();
+        let anchor: String = c.anchor_text.chars().take(40).collect();
+        let paragraph = c
+            .paragraph
+            .as_deref()
+            .map_or_else(|| "-".to_string(), crate::ids::short_paragraph);
+        let thread = c
+            .parent
+            .map(|p| format!("\treply to c{p}"))
+            .unwrap_or_default();
+        let done = if c.done { "\tresolved" } else { "" };
+        out.push_str(&format!(
+            "c{}\t{paragraph}\t{}\t{text:?}\ton {anchor:?}{thread}{done}\n",
+            c.id, c.author
+        ));
+    }
+    out.push_str(&format!("{} comment(s)\n", comments.len()));
+    out
 }
 
 /// Filter a listing: `author` keeps that author's comments (exact match);
@@ -536,6 +566,7 @@ impl CommentFamily {
         };
         CommentRecord {
             id,
+            r#ref: format!("c{id}"),
             author: attr("author").unwrap_or_default(),
             initials: attr("initials"),
             date: attr("date"),
@@ -1363,6 +1394,7 @@ mod public_memory_anchor_boundary_tests {
             let bytes = pkg.to_zip().unwrap();
             let expected = vec![CommentRecord {
                 id: 7,
+                r#ref: "c7".into(),
                 author: "Source reviewer".into(),
                 initials: Some("SR".into()),
                 date: Some("2025-02-03T04:05:06Z".into()),
@@ -1391,6 +1423,7 @@ mod public_memory_anchor_boundary_tests {
     fn latest_thread_selection_preserves_complete_winning_source_records_and_thread_order() {
         let record = |id, parent, author: &str, date: &str| CommentRecord {
             id,
+            r#ref: format!("c{id}"),
             parent,
             author: author.into(),
             initials: Some("SR".into()),
