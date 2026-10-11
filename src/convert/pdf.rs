@@ -631,12 +631,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                             continue;
                         };
-                        let lit = encoded.map_or_else(|| hex_glyphs(glyphs), pdf_literal);
+                        let show = Show {
+                            lit: encoded.map_or(Lit::Glyphs(glyphs), Lit::Bytes),
+                            actual: Some(text),
+                        };
                         let _ = writeln!(
                             stream,
-                            "q BT /{name} {size:.2} Tf 3 Tr {x:.2} {y:.2} Td \
-                             /Span <</ActualText {}>> BDC {lit} Tj EMC ET Q",
-                            pdf_text_string(text),
+                            "q BT /{name} {size:.2} Tf 3 Tr {x:.2} {y:.2} Td {show} ET Q"
                         );
                         continue;
                     }
@@ -657,11 +658,12 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         let mut gx = *x;
                         for (ch, gid) in text.chars().zip(glyphs.iter()) {
                             let adv = f.advance_pt(ch, *size) * *hscale;
-                            let show = show_text(
+                            let mut utf8 = [0; 4];
+                            let show = Show::new(
                                 f,
-                                &hex_glyphs(&[*gid]),
-                                &[*gid],
-                                ch.encode_utf8(&mut [0; 4]),
+                                std::slice::from_ref(gid),
+                                None,
+                                ch.encode_utf8(&mut utf8),
                             );
                             if stands_upright(ch) {
                                 // Stand the glyph up about its em box's
@@ -703,11 +705,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
                     };
-                    let show = if let Some(bytes) = encoded {
-                        format!("{} Tj", pdf_literal(bytes))
-                    } else {
-                        show_text(fonts.get(*face), &hex_glyphs(glyphs), glyphs, text)
-                    };
+                    let show = Show::new(fonts.get(*face), glyphs, encoded, text);
                     let (r, g, b) = (color[0], color[1], color[2]);
                     // A `w:w` scale squeezes the glyphs themselves about
                     // their origin; advances were scaled at layout.
@@ -799,11 +797,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let dx = -width / 2.0;
                     let dy = -size * 0.35;
                     let encoded = page_enc[op_idx].as_deref();
-                    let show = if let Some(bytes) = encoded {
-                        format!("{} Tj", pdf_literal(bytes))
-                    } else {
-                        show_text(fonts.get(*face), &hex_glyphs(glyphs), glyphs, text)
-                    };
+                    let show = Show::new(fonts.get(*face), glyphs, encoded, text);
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
                     };
@@ -1341,39 +1335,74 @@ fn push_hundredths(out: &mut String, h: i64) {
 /// A text operator's size, colour and tracking as bits.
 type TextStateBits = (u32, [u32; 3], u32);
 
-/// A run's text-showing operation, `{lit} Tj`. A run that paints `.notdef`
-/// for text no face covers reads back as NULs, since `/ToUnicode` never maps
-/// glyph 0, and a math letter painted from its ASCII italic reads back as
-/// ASCII; an `/ActualText` span (PDF 32000-1 14.9.4) gives search and copy
-/// its text (KNOWN_ISSUES #9: WebAssembly has no CJK or math face).
-fn show_text(face: &super::font::Face, lit: &str, glyphs: &[u16], text: &str) -> String {
-    let notdef = glyphs.contains(&0) && text.chars().any(|c| !c.is_whitespace());
-    let stood_in = || {
-        text.chars()
-            .any(|c| matches!(c, '\u{210E}' | '\u{1D400}'..='\u{1D7FF}') && face.glyph(c) == 0)
-    };
-    if notdef || stood_in() {
-        format!(
-            "/Span <</ActualText {}>> BDC {lit} Tj EMC",
-            pdf_text_string(text)
-        )
-    } else {
-        format!("{lit} Tj")
+/// A run's text-showing operation, `{lit} Tj`, written in place. A run
+/// that paints `.notdef` for text no face covers reads back as NULs, since
+/// `/ToUnicode` never maps glyph 0, and a math letter painted from its ASCII
+/// italic reads back as ASCII; an `/ActualText` span (PDF 32000-1 14.9.4)
+/// gives search and copy its text (KNOWN_ISSUES #9: WebAssembly has no CJK
+/// or math face).
+struct Show<'a> {
+    lit: Lit<'a>,
+    actual: Option<&'a str>,
+}
+
+/// A text-showing operand: glyph ids as a hex string under Identity-H, or
+/// WinAnsi bytes as a literal string.
+enum Lit<'a> {
+    Glyphs(&'a [u16]),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> Show<'a> {
+    fn new(
+        face: &super::font::Face,
+        glyphs: &'a [u16],
+        encoded: Option<&'a [u8]>,
+        text: &'a str,
+    ) -> Self {
+        // WinAnsi text reads back through the simple font's encoding.
+        if let Some(bytes) = encoded {
+            return Self {
+                lit: Lit::Bytes(bytes),
+                actual: None,
+            };
+        }
+        let notdef = glyphs.contains(&0) && text.chars().any(|c| !c.is_whitespace());
+        let stood_in = || {
+            text.chars()
+                .any(|c| matches!(c, '\u{210E}' | '\u{1D400}'..='\u{1D7FF}') && face.glyph(c) == 0)
+        };
+        Self {
+            lit: Lit::Glyphs(glyphs),
+            actual: (notdef || stood_in()).then_some(text),
+        }
     }
 }
 
-/// Glyph ids as a PDF hex string, four digits each: `<0041002A>`.
-fn hex_glyphs(glyphs: &[u16]) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(glyphs.len() * 4 + 2);
-    out.push('<');
-    for g in glyphs {
-        for shift in [12, 8, 4, 0] {
-            out.push(char::from(HEX[usize::from((g >> shift) & 0xF)]));
+impl std::fmt::Display for Show<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(text) = self.actual {
+            write!(f, "/Span <</ActualText {}>> BDC ", pdf_text_string(text))?;
         }
+        match self.lit {
+            // Glyph ids four hex digits each: `<0041002A>`.
+            Lit::Glyphs(glyphs) => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                f.write_char('<')?;
+                for g in glyphs {
+                    for shift in [12, 8, 4, 0] {
+                        f.write_char(char::from(HEX[usize::from((g >> shift) & 0xF)]))?;
+                    }
+                }
+                f.write_str("> Tj")?;
+            }
+            Lit::Bytes(bytes) => write!(f, "{} Tj", pdf_literal(bytes))?,
+        }
+        if self.actual.is_some() {
+            f.write_str(" EMC")?;
+        }
+        Ok(())
     }
-    out.push('>');
-    out
 }
 
 /// A `cmap` of one format 4 subtable mapping only the characters whose
@@ -2623,7 +2652,11 @@ mod residual_byte_and_geometry_contract_tests {
         );
         assert_eq!(cid_widths(&[500], &BTreeSet::from([99])), ""); // malformed unmapped CID declines safely
         assert_eq!(cid_widths(&[], &BTreeSet::new()), "");
-        assert_eq!(hex_glyphs(&[0, 10, 65535]), "<0000000AFFFF>");
+        let show = Show {
+            lit: Lit::Glyphs(&[0, 10, 65535]),
+            actual: None,
+        };
+        assert_eq!(show.to_string(), "<0000000AFFFF> Tj");
     }
 
     #[test]
