@@ -832,6 +832,16 @@ else
     python3 scripts/gen_wasm_api.py \
       --dts jubarte-wasm/npm/node/jubarte_wasm.d.ts \
       --file docs/javascript.md --marker wasm-api
+    # Its cli-npm block is the npm CLI's --help run on this build; step 6 ran
+    # it on the committed artifacts of an older engine (the 0.12.0 dry run
+    # rewrote the block back to help text the release had changed). The
+    # cli's jubarte-wasm dependency is linked to npm/ as gen_docs.sh links it.
+    mkdir -p jubarte-wasm/cli/node_modules
+    rm -rf jubarte-wasm/cli/node_modules/jubarte-wasm
+    ln -sfn ../../npm jubarte-wasm/cli/node_modules/jubarte-wasm
+    python3 scripts/gen_cli_docs.py \
+      --runner node "$PWD/jubarte-wasm/cli/bin/jubarte-redlines.mjs" \
+      --display jubarte-redlines --file docs/javascript.md --marker cli-npm
     # The build re-resolves jubarte-wasm/Cargo.lock too; it ships in this commit.
     if [ -n "$(git status --porcelain -- jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api docs/javascript.md)" ]; then
       git add jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api docs/javascript.md
