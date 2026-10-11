@@ -159,6 +159,7 @@ Rules behind the table:
   - New, also parse errors: `t0.row0`, `t0.row-1.cell0`, `t0.row0.cell+1`, `t0.row0.cell0.p`, `t0.row0.cell0.p0.extra`, `t0.row0.cell18446744073709551616`.
   - `header` parses as a story stem and is refused because the document has no story named `header`.
 - **Shell spellings:** every printed id is shell-safe (Rule 6).
+- **One spelling per number:** digits are ASCII, without leading zeros (`p0` yes, `p012` no), up to `usize` for paragraphs, tables, rows and cells and `u32` for comments and `w:id`s; Task 5b proves it.
 - **Behaviour change for edit:** `-p 6` ≡ `-p p6`. Today it is refused with "unknown paragraph id 6". CHANGELOG.
 
 - [ ] **Failing tests** (in-module):
@@ -374,6 +375,41 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
   - `join_tags` and `join_tagged` join only when story and handle match.
 - [ ] The internal tag becomes `[{story}#]{ids}@{HH}` (internal only; never printed). `format_tag` prints `r{ids} @HH` without a story and `{story}.r{ids} @HH` with one.
 - [ ] Run `cargo test --test agent_text_view`, then the **gate**. Commit (split to five files a commit; the tip is green): `feat(read): the view prints r12, c5 and row1.cell2; tags name their story; header and footer changes are visible`.
+
+### Task 5b: The neurotic id round trip (Markdown ⇄ docx, many documents)
+Arthur (2026-10-11): "a neurotic multi-document test to correctly parse from the markdown <|-- --> (with different combinations, very long ps, e.g. p51000 etc) so we no doubt, absolutely, parse correctly". Both directions: every id the view prints parses back to exactly the element it labels (Markdown → docx), and every element the docx holds is printed with exactly one id that parses back to it (docx → Markdown). Nothing is sampled away.
+
+**Files:** new `tests/ids_roundtrip.rs` (one file, its generators inside, built on `tests/common/docx.rs`); `src/ids.rs` gains the in-module generator property test.
+
+**Documents** (built once per test binary, `std::sync::OnceLock`):
+- **Long body:** 51,200 paragraphs, so the view prints every width: `p0`, `p9`, `p10`, `p99`, `p100`, `p999`, `p1000`, `p9999`, `p10000`, `p51000`, `p51199`. Revisions on paragraphs 0, 9, 10, 99, 100, 999, 1000, 9999, 10000, 51000 and the last, with `w:id`s that do not follow their order (51000, 9, 10000, 0, …) and two adjacent marks joined as `rA+B`. Comments with ids 0, 9, 10, 99, 51000, replies and a resolved thread.
+- **Tables:** a 120-row × 12-cell table (`t0.row119.cell11`), a cell holding three paragraphs (`.p2`), merged cells (`gridSpan`, `vMerge`), a nested table (not numbered, as in the view), 12 tables in a row (`t11`), and a table whose row and cell hold revisions and a comment.
+- **Every story:** `header1`–`header3`, `footer1`–`footer3` (default, first, even), footnotes and endnotes (ids up to 51000), a style's `pPrChange`+`rPrChange` pair sharing one `w:id`, and a text box with its `mc:Fallback` twin.
+- **Collisions on purpose:** body change `r5` and footnote change `footnotes.r5`; comment `c5` and change `r5` and paragraph `p5`; a header story whose part is named `hdr.xml` (prints `hdr.r1`), and one named `Header_1.xml` (outside the stem rule; prints the long `Header_1:rev:1`).
+- **Real redlines:** the 100 `tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/*.docx` and the 25 `…/corpus/word/with_comments_tracking/` documents.
+
+**Markdown → docx, for every document:**
+- Read the view (`markdown::read`, no selection). Extract every id the view prints: tags (`{>>r12 @AC<<}`, `{>>header1.r1 @AC; r2 @JD<<}`), comment notes (`{>>c5 …<<}`, `re c5`), id lines (`<!-- p12 … rev r12 @AC; comments c5; in c9 -->`), table lines (`t0`, `row1`, `row1.cell2`, `p8-p16`), header lines (`id: header1`) and the legend (`c5 (+ reply c6)`). The extractor is one regex per form, written in the test and not shared with the engine.
+- Each extracted change id: `ids::parse_change_ids` → long ids; each is in `list_changes(docx)`, and the change's `ref` equals the printed token. `accept --id TOKEN` on the CLI exits 0 and removes exactly those changes (`changes` before minus after == the token's set) for one id per document plus every collision case.
+- Each comment id: `parse_comment_id` → an id `list_comments` has; `ref == "c{id}"`.
+- Each paragraph id: `edit::origin::Ids::long_id` resolves it, and `inspect::paragraphs` at that long id has the text the view printed after that id line (whitespace and marks normalized with `anchor::plain_anchor`).
+- Each `t0.rowR.cellC[.pK]` built from a table line's row and cell resolves to the paragraph the view prints at that position; the retired `t0.rR.cC` of the same cell resolves to the same long id.
+
+**docx → Markdown, for every document:**
+- Every change `list_changes` lists has its `ref` printed in the view at least once (or is a style/twin carrier folded into its partner), and no printed change token is left without a listed change.
+- Every comment `list_comments` lists is printed once as `cN`; every body paragraph `inspect` lists is reachable by `pN` from the view's id lines.
+- `short()` of every long id parses back to that long id (`ChangeId::from_long(x).short()` → `parse_change_ids` → `[x]`); same for `short_paragraph`.
+
+**Grammar edges, in `src/ids.rs`:**
+- Widths: `p0` … `p51000`, `p4294967295` (accepted), `p18446744073709551615` (accepted as `usize` where 64-bit), `p18446744073709551616` (refused); `r4294967295` and `c4294967295` accepted, `c4294967296` refused (`u32`).
+- Leading zeros are refused (`p012`, `r007`, `c05`, `t01`, `t0.row01.cell2`): the printed form is the only spelling of a number, so two tokens never name one element. Today `-p p012` is accepted as `p12`: CHANGELOG (Breaking, tiny).
+- Unicode digits (`p１`, `r٣`), whitespace inside (`p 1`, `r1 +2`), empty parts (`r1+`, `+2`, `r1++2`, `t0..row1`), trailing dots, uppercase (`P1`, `R1`, `C5`, `ROW1`), `rows1`, `cells2`, `row`, `cell`, `r-1`, `r+1`: all refused with the row's message.
+- A deterministic generator (seeded xorshift in the test, no new dependency) draws 200,000 tokens from the grammar's alphabet (`prc#t.+:-` digits and the stems `body`, `header1`, `footnotes`, `row`, `cell`). For each: if a parser accepts it, printing the result and parsing again gives the same value; no parser panics; the three parsers never accept one token as two different kinds except where the table says so (`12`).
+- The printed-set property of Rule 6: every printed id matches `^[a-z][a-z0-9.+:-]*$` or `^[0-9]+$`.
+
+**Speed:** the long body's view must stay fast enough to test in debug. If the round trip over 51,200 paragraphs takes more than 60 s under `cargo test`, the test reads the view once and checks ids in one pass (no per-id CLI calls beyond the named ones); it never becomes `#[ignore]`.
+
+- [ ] Run `CARGO_PROFILE_DEV_DEBUG=0 cargo test --test ids_roundtrip` and `cargo test --lib ids`, then the **gate**. Commit (at most five files a commit): `test(ids): the view's every id round-trips on 51,200 paragraphs, every story and 125 Word redlines`.
 
 ### Task 6: `sha256:` header line
 **Files:**
@@ -1038,6 +1074,7 @@ The `jubarte` on PATH is 0.11.2, so always pass `JUBARTE`. Verify with `scripts/
   - PNG pages are named by document page.
   - `--pdf`/`--png` are aliases of `--to`, so `convert --pdf --png` and `--to md --png` are usage errors.
   - `edit -p 6` means `p6`.
+  - Ids with leading zeros (`-p p012`) are refused; each number has one spelling.
 - **Changed:** not breaking:
   - The view tags note, header and footer changes with their story, and shows header/footer changes on the `headers:`/`footers:` lines.
   - MCP `docx_text` returns the agent view.
@@ -1067,7 +1104,7 @@ The `jubarte` on PATH is 0.11.2, so always pass `JUBARTE`. Verify with `scripts/
    - Run the same clippy in `jubarte-python`, `jubarte-rust-inproc`, and `jubarte-wasm` (`--target wasm32-unknown-unknown`).
    - MSRV, as CI's job does (ci.yml:139-149): `cargo +1.94 clippy --all-targets --all-features -- -D warnings` and `cargo +1.94 test --all-features`.
 2. **Coverage**, as CI's nightly job does (ci.yml:95-133; there is no local script). Floors: 95 % lines, 88 % branches. Report lines and branches in the PR.
-   - The touched modules: `CARGO_PROFILE_DEV_DEBUG=0 cargo +nightly llvm-cov --all-features --branch --test cli_output --test cli_parser --test m_selective_revisions --test convert_comment_placement --test validate_cli --summary-only`.
+   - The touched modules: `CARGO_PROFILE_DEV_DEBUG=0 cargo +nightly llvm-cov --all-features --branch --test cli_output --test cli_parser --test ids_roundtrip --test m_selective_revisions --test convert_comment_placement --test validate_cli --summary-only`.
    - The whole workspace: `cargo +nightly llvm-cov --all-features --workspace --branch --doctests --summary-only`.
 3. **Smoke:**
    - `target/debug/jubarte --help`: tasks only, `self-update` last, no `inspect` or `debug`.
