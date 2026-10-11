@@ -5,16 +5,16 @@
    "seed": 42
   },
   "ci95": [
-   0.2205,
-   1.0086
+   0.2669,
+   1.0902
   ],
   "comparator": "docxodus",
-  "losses": 189,
-  "median_delta": 0.5672,
-  "ties": 68,
-  "wins": 343
+  "losses": 178,
+  "median_delta": 0.67,
+  "ties": 72,
+  "wins": 350
  },
- "generated": "2026-10-10T12:23:30+00:00",
+ "generated": "2026-10-11T06:40:51+00:00",
  "provenance": {
   "measure": "results/redlines_0929_full/measure.py --fresh ../compare_regen/out --sample-csv results/release_0.12.0_evidence/sample_redline_0.12.0.csv",
   "scores": {
@@ -24,28 +24,29 @@
  },
  "release": "0.12.0",
  "sample": {
-  "csv": "sample_redline_0.12.0_10-10-26_08-23.csv",
+  "csv": "sample_redline_0.12.0_10-11-26_02-40.csv",
   "drawn": {
+   "adopted_sha256": "2d0ceab7194ef71f5da5edd3221c09bdef4c09f01969ae8b6147c649bb7824f2",
    "by_state": {
     "clean": 2,
     "tracking_without_comments": 421,
     "with_comments_clean": 3,
     "with_comments_tracking": 174
    },
-   "date": "2026-10-10",
-   "docxodus_coverage": "local PDFs + cached Hub listing",
-   "docxodus_covered_pairs": 548,
+   "date": "2026-10-11",
+   "docxodus_coverage": "local PDFs",
+   "docxodus_covered_pairs": 575,
    "n": 600,
    "pairs": 600,
-   "rule": "pool compares that have their oracle, balanced by compare state: every scarce state whole (docxodus-covered pairs first), filled with tracking_without_comments compares of docxodus-covered pairs, then uncovered ones; seeded shuffles",
+   "rule": "adopted from results/release_0.12.0_evidence_c551/sample_redline_0.12.0.csv, not drawn",
    "seed": 20261003
   },
   "n": 600,
   "pairs": 600,
-  "sha256": "9c6f9fc004ffd25948b07540b24e6f6e0428f1ac005790e58e791d6e6055bf06"
+  "sha256": "d197dfb59e420e44215a68b6c38af6d2320fd8d49e553734c7eed7e3761784e0"
  },
  "schema": "jubarte-redlines/release_info/results_redline/1",
- "stamp": "10-10-26_08-23",
+ "stamp": "10-11-26_02-40",
  "tools": {
   "docxodus": {
    "at_least_90": 76,
@@ -1899,8 +1900,8 @@
    "version": "Docxodus 12.6.5 (C#)"
   },
   "jubarte": {
-   "at_least_90": 107,
-   "binary_sha256": "ee89cb0a93d7ddf43e2bfad1e7a27a91cfd021b566acbfecef27c41c65870b5d",
+   "at_least_90": 112,
+   "binary_sha256": "be465e74b765c40cb8f82797fb94820e9dd485f16c832b252012c72e5c3580c8",
    "by_state": {
     "clean": {
      "at_least_90": 2,
@@ -1911,10 +1912,10 @@
      "n": 2
     },
     "tracking_without_comments": {
-     "at_least_90": 77,
-     "exact_100": 49,
-     "failures": 16,
-     "mean": 70.6039,
+     "at_least_90": 81,
+     "exact_100": 54,
+     "failures": 14,
+     "mean": 71.0381,
      "median": 83.5147,
      "n": 421
     },
@@ -1922,171 +1923,171 @@
      "at_least_90": 2,
      "exact_100": 0,
      "failures": 0,
-     "mean": 91.6145,
-     "median": 96.5827,
+     "mean": 91.3124,
+     "median": 95.6763,
      "n": 3
     },
     "with_comments_tracking": {
-     "at_least_90": 26,
+     "at_least_90": 27,
      "exact_100": 0,
      "failures": 9,
-     "mean": 73.1718,
-     "median": 82.9081,
+     "mean": 73.3017,
+     "median": 83.0764,
      "n": 174
     }
    },
    "candidate_reports": "jubarte 0.11.3",
-   "commit": "c551f287806e4eb53dfb62a455ebbb1da0a45cc0",
-   "exact_100": 49,
-   "failures": 25,
-   "mean": 71.5461,
-   "median": 83.226,
+   "commit": "5b8ef078cc24f91ced32cc6d8d24274d6c5bf55c",
+   "exact_100": 54,
+   "failures": 23,
+   "mean": 71.8869,
+   "median": 83.2872,
    "median_ci95": [
-    81.06,
+    80.98,
     84.2
    ],
    "n": 600,
    "per_document": {
     "0018843794_889f4c3958e28978a0d96a95a8938d9eb0dc100e66f7c483__vs__943e62959d_88646e9284c944b7dd39810ba5832dbf955c2892c6161f87_redline_49aa6b8d2f": {
-     "overall": 45.520056948526246
+     "overall": 45.49990860396605
     },
     "0048ba31dd_000be19a055234f8e79ec0baadc41d2a49050b2ea0a60654__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_5fee58b86b": {
-     "overall": 84.67402217167515
+     "overall": 84.96204232569671
     },
     "0048ba31dd_000be19a055234f8e79ec0baadc41d2a49050b2ea0a60654__vs__aa5340125d_00a4b0b91e9b5b072dc3771391c2d608518690eccf44eae8_redline_8d5cf8c9ad": {
-     "overall": 67.37648420041552
+     "overall": 67.27689467634121
     },
     "0048ba31dd_000be19a055234f8e79ec0baadc41d2a49050b2ea0a60654__vs__bd3824dd1e_000ee64ef7226d353297888f59a251e24ce5d776fea000fa_redline_f852ffac2f": {
-     "overall": 78.53722813367042
+     "overall": 77.18128568511302
     },
     "0086695f46_file_124__vs__d8f8e09b6e_file_125_redline_51d1d87a1f": {
-     "overall": 89.77643725178595
+     "overall": 84.87719316709726
     },
     "008908795c_increase_indent_demo_id_paraid_overflow__vs__5adc853144_insert_link_demo_id_paraid_overflow_redline_3e548d2eec": {
-     "overall": 84.7721218179185
+     "overall": 100.00000000000003
     },
     "00b4bca293_ba67b1a0b34e662dd68f08ac7dd30bf0db3b1e2054002207__vs__daadabf34a_d3a0981ed305b4a50bf3b4780a018be510b1f8012281f045_redline_1971c5ad89": {
-     "overall": 52.055871378783415
+     "overall": 52.11014948010865
     },
     "00da16e738_heading_4_style_demo_id_paraid_overflow_2__vs__82928b2e05_heading_4_style_demo_id_paraid_overflow_redline_98576c297a": {
-     "overall": 84.98779611084218
+     "overall": 100.00000000000003
     },
     "00f467c010_0008753aa70a6a7b929aa1958001da41574c2d407e5b9863__vs__1424386e9b_017447de83753a0e3b7afc659df038ef56972925336c6a5b_redline_3f877dde6e": {
-     "overall": 81.04279091024816
+     "overall": 81.45851866910274
     },
     "00f467c010_0008753aa70a6a7b929aa1958001da41574c2d407e5b9863__vs__aa5340125d_00a4b0b91e9b5b072dc3771391c2d608518690eccf44eae8_redline_ecad91f16e": {
-     "overall": 83.9406124815427
+     "overall": 82.58394909829059
     },
     "017c22e2a3_heading_3_style_demo_id_paraid_overflow_2__vs__e0e6c96bb7_heading_3_style_demo_id_paraid_overflow_redline_db52aa8564": {
-     "overall": 84.98132037276609
+     "overall": 84.99455723132405
     },
     "01d1b3da75_table_bookmark_end__vs__906753e55b_super_editor__table_c70ca973_redline_f6531f6275": {
-     "overall": 44.612225118716985
+     "overall": 44.63757105587606
     },
     "0203b5fed7_strikethrough_bold_demo_id_paraid_overflow__vs__aa62a37db2_strikethrough_text_demo_id_paraid_overflow_redline_c1e675e74b": {
-     "overall": 84.93773112461844
+     "overall": 100.00000000000003
     },
     "02c9605488_bold_superscript_demo_style_default_missing__vs__f84571f3fc_bold_text_formatting_demo_id_paraid_overflow_2_redline_e1b23f59d9": {
-     "overall": 84.86226878636556
+     "overall": 84.98971118930034
     },
     "0332219534_red_bold_text_demo_id_paraid_overflow__vs__dab313767f_red_heading_demo_id_paraid_overflow_redline_ac07053fc1": {
-     "overall": 87.79987932714386
+     "overall": 84.98583520419069
     },
     "042b952c89_file_138__vs__4fb2440e08_file_139_redline_fd462e4b06": {
-     "overall": 100.0
+     "overall": 84.98509474438461
     },
     "0483e899af_file_143__vs__cc82deb093_file_144_redline_428f3f3022": {
-     "overall": 86.19955449396679
+     "overall": 84.15531136908888
     },
     "048aab732f_4bec88f88424107024aff883b5838333fbae149ecfa95e3e__vs__f9fd30aee1_1c7818800c02640e8e44b03151617024d45b0d6e3d7de49b_redline_f43143bbb5": {
-     "overall": 97.59246681854609
+     "overall": 84.06000169192168
     },
     "049e83d7a7_file_137__vs__042b952c89_file_138_redline_992b75fc51": {
-     "overall": 84.98575024896343
+     "overall": 84.96584498032439
     },
     "04dafefc52_00048cb6667d721bdb2219ecbadb6eb369e439c130ac475e__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_7876988ef8": {
-     "overall": 35.75423349304045
+     "overall": 35.681586737782354
     },
     "04dafefc52_00048cb6667d721bdb2219ecbadb6eb369e439c130ac475e__vs__a5f2b9318d_002aa60c2ae1187417b4b157c5ec6450324cc056ec551a12_redline_c12a65b46b": {
-     "overall": 34.99330773878339
+     "overall": 35.0516489990023
     },
     "05cadf8b81_b41061303601c5466eaae8808a8196ad9aa4e79040a716a9__vs__7e0db913e2_beeb804b22eaff60a3f67611690f5c9b42475c58bf23fd75_redline_e23c1442ca": {
-     "overall": 42.73469589493141
+     "overall": 42.710231084464546
     },
     "079f874985_d7c6db54eed56cba8e414272fd1de8d10df8257850e68fc5__vs__d4f4f33ca7_ce3c279407c9eb4e94d8e9f4ca9e68b8f882674fc6a1caff_redline_51c9eab1af": {
-     "overall": 74.63635881903346
+     "overall": 80.45826615680711
     },
     "0800162a66_000799b53487acb327ccf0c0ab87fb14b9e8636346719296__vs__2773adf157_0004c94ca2a8684d47449bb0e7abf87de1df71a7e6543252_redline_20c6f89d2f": {
-     "overall": 84.7005019144704
+     "overall": 85.74472554420427
     },
     "0800162a66_000799b53487acb327ccf0c0ab87fb14b9e8636346719296__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_86f2cf4fed": {
-     "overall": 84.72313166418269
+     "overall": 84.97170021172546
     },
     "0800162a66_000799b53487acb327ccf0c0ab87fb14b9e8636346719296__vs__a5f2b9318d_002aa60c2ae1187417b4b157c5ec6450324cc056ec551a12_redline_02514c26c3": {
-     "overall": 43.87455803152699
+     "overall": 43.81603741576668
     },
     "0800162a66_000799b53487acb327ccf0c0ab87fb14b9e8636346719296__vs__aa5340125d_00a4b0b91e9b5b072dc3771391c2d608518690eccf44eae8_redline_4aca112da9": {
-     "overall": 46.44761188338727
+     "overall": 46.29870971772268
     },
     "08147dee09_file_195__vs__c09b14fcd7_file_196_redline_1edc0f56f4": {
-     "overall": 45.59662115932125
+     "overall": 45.06386038147099
     },
     "08286ffbfb_super_editor__basic_resolved_comment_cac5a1b0__vs__5fa01813d3_super_editor__basic_table_shading_d3212ffd_redline_3fdab4ace6": {
-     "overall": 85.6115507669376
+     "overall": 95.64883424664534
     },
     "08e3f68925_bold_underline_combined_demo_id_paraid_overflow__vs__e29df71807_bold_underline_highlight_demo_id_paraid_overflow_redline_10bf0a337d": {
-     "overall": 84.93119430075603
+     "overall": 100.00000000000003
     },
     "0a0b6470c3_00051beee50076d47db468069cab455933b72d9df9165e1f__vs__aa5340125d_00a4b0b91e9b5b072dc3771391c2d608518690eccf44eae8_redline_9a24c84c64": {
-     "overall": 84.25800645274282
+     "overall": 83.83696699469664
     },
     "0a1badc333_super_editor__missing_sectpr_967a402d__vs__84f5fb598b_super_editor__diff_before11_1b953eaf_redline_a78b94020d": {
-     "overall": 82.6914181467148
+     "overall": 89.76083886485098
     },
     "0aa6426932_file_114__vs__ab85c77154_file_115_redline_f7bbf6e831": {
-     "overall": 46.905598653829195
+     "overall": 46.340895607349424
     },
     "0b2a46481b_nested_table_rowspan__vs__bdd82b239b_numbered_list_demo_id_paraid_overflow_redline_c053ccd3b8": {
-     "overall": 84.92877373198337
+     "overall": 83.8584465701723
     },
     "0b5f1f7cad_003ca0a88e8358b347e771feb6970ff773753fad85416364__vs__2773adf157_0004c94ca2a8684d47449bb0e7abf87de1df71a7e6543252_redline_05d5797055": {
-     "overall": 45.91895621749346
+     "overall": 45.929662276945905
     },
     "0b5f1f7cad_003ca0a88e8358b347e771feb6970ff773753fad85416364__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_dcbff66ff4": {
-     "overall": 35.182210956236865
+     "overall": 35.27774296569618
     },
     "0b5f1f7cad_003ca0a88e8358b347e771feb6970ff773753fad85416364__vs__a5f2b9318d_002aa60c2ae1187417b4b157c5ec6450324cc056ec551a12_redline_2b03bf1e4a": {
-     "overall": 84.3362030204238
+     "overall": 84.59654690832514
     },
     "0b9cc47345_file_136__vs__049e83d7a7_file_137_redline_3fb014942a": {
-     "overall": 82.06327839550787
+     "overall": 75.9851295520865
     },
     "0bf5192ed0_00afb3e6b2bb1a5ab1e1770ba41f6f455f87472d24ab2767__vs__deff0e697a_00b5defcad6e58038eac35472a2d48c89905068e5ece0cc3_redline_72de76d733": {
-     "overall": 58.84779897216719
+     "overall": 58.76203137452955
     },
     "0c81cbfe45_b5755b377d1c36349380137dc51de3f4ac8e5aa43114c3f1__vs__6d3d7b292c_08cd966de5e2befa9e834d3c2b93201b6130e3bf438cb6f0_redline_2b70cf763e": {
-     "overall": 40.4139301813825
+     "overall": 40.377728236977816
     },
     "0cf73436ac_contract_review_suggesting_insertions__vs__93477c6068_contract_review_suggesting_mixed_edits_redline_bda43b51f7": {
-     "overall": 84.97729249111254
+     "overall": 100.00000000000003
     },
     "0d888e38b7_file_157__vs__b3869d974a_file_158_redline_52dcc19c24": {
-     "overall": 84.89296437883216
+     "overall": 100.00000000000003
     },
     "0e08fd6d80_super_editor__diff_before19_97e0f4e6__vs__1e1f1ad583_super_editor__diff_before2_ca0c6859_redline_54af2359d0": {
-     "overall": 71.07960378416085
+     "overall": 71.07251358939999
     },
     "0e6f813e69_00d2ca27359f3d1d5ee2c2904b48a3e4717faf7fdf6413f6__vs__1424386e9b_017447de83753a0e3b7afc659df038ef56972925336c6a5b_redline_862df17b60": {
-     "overall": 51.2942732036469
+     "overall": 51.18705716993104
     },
     "0e6f813e69_00d2ca27359f3d1d5ee2c2904b48a3e4717faf7fdf6413f6__vs__a5f2b9318d_002aa60c2ae1187417b4b157c5ec6450324cc056ec551a12_redline_f5a297b6a7": {
-     "overall": 39.842031676325185
+     "overall": 39.87627064068174
     },
     "0f5a806b4c_file_141__vs__dccd972179_file_142_redline_3d22ad3c37": {
-     "overall": 79.01396037079923
+     "overall": 82.91182427860375
     },
     "10415d5332_behavior__rtl_mixed_bidi_e955f185__vs__96fa27757a_behavior__rtl_page_numpages_54739e26_redline_1942a590b4": {
-     "overall": 58.3076492944672
+     "overall": 58.015397938288295
     },
     "1072677c3a_file_6__vs__1b8ec2a8cd_file_7_redline_0b033b1c23": {
      "overall": 0.0
@@ -2107,10 +2108,10 @@
      "overall": 73.97578601741579
     },
     "13ea153d22_file_174__vs__66dcec3e49_file_175_redline_301e236134": {
-     "overall": 84.31583294143181
+     "overall": 84.15196620336725
     },
     "1547c5df73_file_130__vs__df097720f7_file_131_redline_2e3f1e261d": {
-     "overall": 71.05186498119218
+     "overall": 71.24126835843029
     },
     "154fce3ec8_file_186__vs__1fda7fa6e2_file_187_redline_f303456c76": {
      "overall": 84.91071177069807
@@ -2137,13 +2138,13 @@
      "overall": 44.11709898129661
     },
     "18eb110b3b_numwords_fldsimple__vs__60697d46b7_strict01_redline_57dfcda882": {
-     "overall": 65.67529599841907
+     "overall": 65.67592127443132
     },
     "193054264a_127a38d92f96a2a732d0f22d6eaad012191ba6d7525d619a__vs__0a3a0c1a32_36c6d281d1ea6bbef531f8c4ac6f8a3089348db8d85da6c6_redline_ff806d3b39": {
      "overall": 46.01246602615865
     },
     "19313bb0d2_013bfd9bed003f93622f5b45095bb7471499aea576b0e48e__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_436a150ce2": {
-     "overall": 74.01021904517488
+     "overall": 74.01382444638337
     },
     "19313bb0d2_013bfd9bed003f93622f5b45095bb7471499aea576b0e48e__vs__deff0e697a_00b5defcad6e58038eac35472a2d48c89905068e5ece0cc3_redline_c7154d9bbc": {
      "overall": 84.90789424086553
@@ -2152,7 +2153,7 @@
      "overall": 49.057070058117866
     },
     "1aa7a03758_004c43cb816aed2ca4b0d0adf6e2bb8f115182135f2b4b42__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_766d6d6968": {
-     "overall": 75.12668544885558
+     "overall": 75.1328802278839
     },
     "1aa7a03758_004c43cb816aed2ca4b0d0adf6e2bb8f115182135f2b4b42__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_0a28d5402a": {
      "overall": 84.95867648527178
@@ -2176,7 +2177,7 @@
      "overall": 85.1833372927178
     },
     "1d137d70ee_005bf179b17b3d109d473d5bb10a968731ba985c4bff3743__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_bf007373d6": {
-     "overall": 61.08915991070678
+     "overall": 61.090197439790856
     },
     "1d137d70ee_005bf179b17b3d109d473d5bb10a968731ba985c4bff3743__vs__a5f2b9318d_002aa60c2ae1187417b4b157c5ec6450324cc056ec551a12_redline_f8beef8268": {
      "overall": 95.96512869075724
@@ -2191,10 +2192,10 @@
      "overall": 83.58684933342366
     },
     "1e212fbfdc_file_122__vs__85692b483f_file_123_redline_2ba84d60d1": {
-     "overall": 83.45288843701448
+     "overall": 84.6630085916849
     },
     "1ea717ddd6_file_126__vs__47400ffd33_file_127_redline_1bbdcbcf65": {
-     "overall": 84.95160721287274
+     "overall": 84.95458490386403
     },
     "1edf67e1e5_8f213f720f5776de6384d10633123cb37b9d1f64abde5fe1__vs__8d793b3df9_8389849ea8c3fee8dacbb8135dd4ac68bf50809dba47953b_redline_ec0b7a80fd": {
      "overall": 33.60636650804894
@@ -2203,7 +2204,7 @@
      "overall": 100.0
     },
     "1fda7fa6e2_file_187__vs__66e70631fb_file_188_redline_92ec8417eb": {
-     "overall": 54.589322942189185
+     "overall": 54.59308797563064
     },
     "21c9d98951_file_168__vs__3aaa78255e_file_169_redline_248b86273d": {
      "overall": 100.00000000000003
@@ -2218,7 +2219,7 @@
      "overall": 88.42446712906252
     },
     "24ad1aa6e5_docx_lots_of_comments_addition_removal__vs__e57ad0eaa4_docx_lots_of_comments_addition_redline_a836952933": {
-     "overall": 92.87484408011883
+     "overall": 93.81932922305378
     },
     "24bd3ad29d_center_aligned_bold_text_id_paraid_overflow__vs__a98d0a8c12_center_alignment_demo_id_paraid_overflow_2_redline_c70f19a792": {
      "overall": 100.0
@@ -2230,7 +2231,7 @@
      "overall": 85.23961146619499
     },
     "26ccb443f6_file_11__vs__799980e6af_file_12_redline_69e44ac125": {
-     "overall": 83.96583939615927
+     "overall": 84.65737905219052
     },
     "26ce1d6300_super_editor__diff_after5_9fb9d5b4__vs__b389f55091_super_editor__comment_23ee5ec1_redline_01fa32ec8b": {
      "overall": 94.9841411429142
@@ -2275,7 +2276,7 @@
      "overall": 51.25251284971947
     },
     "2ad8d15e88_00e901c5aa86bd93002ce801375c57e44c2c78a0e5b308d3__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_f263af77b3": {
-     "overall": 55.366542508504196
+     "overall": 55.36652961397772
     },
     "2ad8d15e88_00e901c5aa86bd93002ce801375c57e44c2c78a0e5b308d3__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_f14ce3f749": {
      "overall": 45.669749877796555
@@ -2449,7 +2450,7 @@
      "overall": 84.35053179001343
     },
     "3c1e5d4d00_00b540ddc1a1fef3ab9acae5b93ca90e9fcef840e25d53cd__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_19fabd4927": {
-     "overall": 82.11580297780404
+     "overall": 82.11642898003902
     },
     "3c47f1b463_8dcbefa6e9bcf0c292392ca7fda1d9f2260ea724f9ad5f98__vs__f400cafcba_6565bfe1c9b7b19a2feedc7c358db69a32ed064149f2920f_redline_b00e0b4340": {
      "overall": 38.24685198046324
@@ -2557,7 +2558,7 @@
      "overall": 84.72850450594436
     },
     "4f0a3847e3_verdana_italic_centered_demo_id_paraid_overflow__vs__60697d46b7_strict01_redline_0dfc906eb1": {
-     "overall": 71.09051977110937
+     "overall": 71.09385260370964
     },
     "4f0a3847e3_verdana_italic_centered_demo_id_paraid_overflow__vs__eb2f3c86b5_vfdsdfcacawesd_suggesting_mixed_edits_redline_5af67335fe": {
      "overall": 84.46734498255788
@@ -2587,13 +2588,13 @@
      "overall": 0.0
     },
     "52220b20c3_00a54bff7e15af78fe7cfc20219c28cb208fde807bd28d44__vs__bd3824dd1e_000ee64ef7226d353297888f59a251e24ce5d776fea000fa_redline_8018df6bdf": {
-     "overall": 0.0
+     "overall": 84.34098504885037
     },
     "52a93475ba_782587f67411866f3365a7ca1732a2fde50189c876b6d9a4__vs__8977e1c922_7672b472b406ac51ddf3a68e14bb0255c9e0f7f732c999c7_redline_6d0d0954dd": {
      "overall": 41.78858556623095
     },
     "52dab5bc1c_super_editor__sdt_node_comment_ec887683__vs__7367931dbf_super_editor__sdt_test_60079f08_redline_23e5ec96c0": {
-     "overall": 90.51249478732073
+     "overall": 91.39040914284395
     },
     "531cf3d312_00ce789bc3226c2a68967cc29792927c80b7f55d9b5267ad__vs__1424386e9b_017447de83753a0e3b7afc659df038ef56972925336c6a5b_redline_34cdc4aef6": {
      "overall": 81.34689721020828
@@ -2629,7 +2630,7 @@
      "overall": 100.0
     },
     "57ff9e1b30_file_89__vs__9c8272b1e2_file_90_redline_849e0cb7c4": {
-     "overall": 82.64523659212267
+     "overall": 83.5488484954214
     },
     "58e8dbed99_c0a8a94f1fbd0a64b613f427aeaafeb44ef2a608460554cb__vs__c07f221713_eb9634eee0b2ef1acef7efc1e0f68f9956208e077be4e02e_redline_14b7e79ab0": {
      "overall": 41.27515302088095
@@ -2659,7 +2660,7 @@
      "overall": 40.664244720867785
     },
     "5c207ef361_super_editor__font_formatting_runs_8be3565a__vs__a0738533be_gdocs_comments_export_redline_1d045a4304": {
-     "overall": 83.94558971437091
+     "overall": 84.89472954866676
     },
     "5c207ef361_super_editor__font_formatting_runs_8be3565a__vs__bb9c5a8bd5_doc_api_stories__table_style_options_roundtrip_1_redline_34e52d37ea": {
      "overall": 84.77960484929503
@@ -2695,7 +2696,7 @@
      "overall": 53.902662508879985
     },
     "60697d46b7_strict01__vs__60697d46b7_strict01_redline_34ffddfe47": {
-     "overall": 75.45317971026874
+     "overall": 75.45757861455455
     },
     "60697d46b7_strict01__vs__a04e2d2749_ooxml_style_link_redline_6b74ac1ae6": {
      "overall": 65.73735629933965
@@ -2704,7 +2705,7 @@
      "overall": 41.756812216270006
     },
     "60dfd517a9_00f0e7f365a34acc5911a38c89776a4bdd2ba1685edcd0cc__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_72cc9f4ac6": {
-     "overall": 53.31909775702147
+     "overall": 53.32008520040555
     },
     "60dfd517a9_00f0e7f365a34acc5911a38c89776a4bdd2ba1685edcd0cc__vs__aa5340125d_00a4b0b91e9b5b072dc3771391c2d608518690eccf44eae8_redline_3f3f2b03b1": {
      "overall": 72.0779657866511
@@ -2737,7 +2738,7 @@
      "overall": 86.35421519944093
     },
     "63f2ae8323_00d7e931786f09113a59daafeb4c51113fbd97f3f09d93c2__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_6f561090f4": {
-     "overall": 61.54250732947129
+     "overall": 61.54404372628231
     },
     "63f2ae8323_00d7e931786f09113a59daafeb4c51113fbd97f3f09d93c2__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_a7b35571b9": {
      "overall": 71.39153342681516
@@ -2836,7 +2837,7 @@
      "overall": 84.876813859894
     },
     "6fffde4ae2_000bf66110e841e1d2c2e862fc7db869b8d410586ad12d0d__vs__bd3824dd1e_000ee64ef7226d353297888f59a251e24ce5d776fea000fa_redline_d16e567fd2": {
-     "overall": 59.86099140507199
+     "overall": 59.81407574493861
     },
     "70584b4a0e_file_189__vs__50d8be9682_file_190_redline_8b2753ce02": {
      "overall": 83.1210776268999
@@ -2854,7 +2855,7 @@
      "overall": 87.85261164773023
     },
     "725cdbebe3_0013892c946c551d309fcec9bb3f3500fc08bc77121a3849__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_d6dcdfe5e4": {
-     "overall": 48.34184691087975
+     "overall": 48.34784372115615
     },
     "725cdbebe3_0013892c946c551d309fcec9bb3f3500fc08bc77121a3849__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_4957773781": {
      "overall": 86.51784274801493
@@ -2863,7 +2864,7 @@
      "overall": 85.72563115655163
     },
     "73444f5e84_aff82827a78c80e2bde19746162cd1dab4219fc091c46c59__vs__27a876dee7_c6fa0e30be63352472b401261b38948abcec01c80f386b3a_redline_07fa3d80e5": {
-     "overall": 43.64368666665111
+     "overall": 43.67116889580379
     },
     "735c372b41_super_editor__diff_after8_58e5c288__vs__75aeff4f58_super_editor__diff_after9_a9d4b4b0_redline_5a72b1ad9e": {
      "overall": 78.94190402828775
@@ -2965,7 +2966,7 @@
      "overall": 50.17494706674561
     },
     "8061e5912f_file_159__vs__8f8f5a3e4d_file_160_redline_69a4d71d6f": {
-     "overall": 85.664649674778
+     "overall": 84.20132180908038
     },
     "80823431bc_ea1fed2d74136683550937c3dfae358f9b3d842d2f19a26e__vs__1f244f1bea_fb618684761911d415f0bc0e32cea10f12c6eb0f3b6f64f9_redline_d3c6552dae": {
      "overall": 85.14198317077248
@@ -2983,13 +2984,13 @@
      "overall": 97.15765273731324
     },
     "82348eef4b_multi_section__vs__756fb54224_potpourritest_redline_ae9547abd2": {
-     "overall": 51.89878997974059
+     "overall": 51.90447592798067
     },
     "82ee7342fd_file_5__vs__1072677c3a_file_6_redline_70a6883d16": {
-     "overall": 72.67834207369498
+     "overall": 72.48839201472424
     },
     "830eb0f0a2_file_169__vs__bc85714262_file_170_redline_10358095a4": {
-     "overall": 61.35025412590716
+     "overall": 61.34545213449713
     },
     "836d7aa3c4_file_14__vs__70a28a8258_file_15_redline_25f1d6ecc3": {
      "overall": 84.18322993750623
@@ -3013,7 +3014,7 @@
      "overall": 57.09685455562442
     },
     "838af02d11_file_173__vs__13ea153d22_file_174_redline_23e03057e6": {
-     "overall": 81.76319433032705
+     "overall": 80.74478159123304
     },
     "8441c4ae21_sd_2517_localized_heading_styles__vs__7e685cbab1_super_editor__ooxml_underline_rstyle_linked_comb_redline_f0875f6d19": {
      "overall": 58.141148826703564
@@ -3025,7 +3026,7 @@
      "overall": 86.77801510770831
     },
     "85692b483f_file_123__vs__0086695f46_file_124_redline_1108cc4aae": {
-     "overall": 83.41584465497492
+     "overall": 80.9111773106854
     },
     "87ee63a6b6_b88ac900a2a7f9d3d475b69fdc41a213da2f249d3f32e218__vs__1782e25c92_d9e1d2c6898adb00cf03d7667365533d6fb11663f56deafe_redline_14fb06f7e5": {
      "overall": 84.55100550027788
@@ -3070,7 +3071,7 @@
      "overall": 84.7567174633046
     },
     "8ef32902e8_file_158__vs__8061e5912f_file_159_redline_8de55978f2": {
-     "overall": 70.73244909876824
+     "overall": 71.70090968397736
     },
     "8f47b1dc90_file_176__vs__a3586d71f8_file_177_redline_5f0fed8e2a": {
      "overall": 0.0
@@ -3142,7 +3143,7 @@
      "overall": 41.94749192637838
     },
     "96a0ee0e8f_004b3b3dd84014405562584f62d67267b9a7993e21b974e8__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_24835ef22b": {
-     "overall": 57.60572593626995
+     "overall": 57.60629913940482
     },
     "96fa27757a_behavior__rtl_page_numpages_54739e26__vs__4cb1926093_behavior__sd_1960_word_replacement_no_comments_1_redline_a57fd27d47": {
      "overall": 62.75223178729976
@@ -3169,7 +3170,7 @@
      "overall": 92.04301923343436
     },
     "97ec0fecd2_bdfddb39d04de4c189c85b353faf57d3bd637b8a74322c41__vs__52545bbf00_c6209bb293e3d902b2de2e9b20a2e0e29d2f82dd7dab17df_redline_ba86b047dd": {
-     "overall": 0.0
+     "overall": 52.796513341244534
     },
     "9af9772ce2_font_family_demo_id_paraid_overflow__vs__7cf8462738_font_size_12_demo_id_paraid_overflow_redline_3100fbed33": {
      "overall": 83.20033239038204
@@ -3178,13 +3179,13 @@
      "overall": 99.64532411358903
     },
     "9bf625ba95_file_19__vs__2bf4db734d_file_20_redline_6dee5896b8": {
-     "overall": 83.99002244961841
+     "overall": 83.91162272353971
     },
     "9c1fb4747e_super_editor__sd_1495_auto_page_break_854a2dd9__vs__14211b982b_super_editor__simple_ordered_list_8288421a_redline_b4bafdd04d": {
      "overall": 66.23854777415323
     },
     "9c6ebd430d_file_185__vs__154fce3ec8_file_186_redline_4d40d1f136": {
-     "overall": 85.21016462470111
+     "overall": 85.21587859603903
     },
     "9d3fa84f9f_bullet_list_demo_id_paraid_overflow__vs__8b3bfdf247_calibri_bold_italic_demo_id_paraid_overflow_redline_ada34cd34e": {
      "overall": 75.60032842568177
@@ -3202,37 +3203,37 @@
      "overall": 95.1662009137091
     },
     "9f5481078e_docx_lots_of_comments_addition_redline__vs__ee9bfc2650_docx_lots_of_comments_addition_removal_redline_r_redline_60e784f2de": {
-     "overall": 96.58270917502631
+     "overall": 95.67633132635775
     },
     "9f6091a4ac_super_editor__threaded_comment_27bda0ba__vs__5fa01813d3_super_editor__basic_table_shading_d3212ffd_redline_67d0b6f3e8": {
-     "overall": 86.8309973662735
+     "overall": 84.76352504301585
     },
     "9f6091a4ac_super_editor__threaded_comment_27bda0ba__vs__776a437291_behavior__two_column_simple_e77be963_redline_a954a57308": {
-     "overall": 94.50338966927066
+     "overall": 94.55604909561345
     },
     "9f6091a4ac_super_editor__threaded_comment_27bda0ba__vs__84f5fb598b_super_editor__diff_before11_1b953eaf_redline_621637d747": {
-     "overall": 78.39449558670509
+     "overall": 78.4338374507291
     },
     "9f6091a4ac_super_editor__threaded_comment_27bda0ba__vs__b3028f2d5b_super_editor__super_basic_table_86d8d916_redline_254bc964f4": {
-     "overall": 80.11233512891243
+     "overall": 80.60607992246872
     },
     "9f96e7f4f8_it_security_policy_v2_suggesting_insertions__vs__277b6145d6_italic_and_underline_combo_style_default_missing_redline_1825689107": {
      "overall": 67.62982617939697
     },
     "a0738533be_gdocs_comments_export__vs__199cb211b5_super_editor__basic_footnotes_5be96945_redline_6b7f035223": {
-     "overall": 67.8208294871886
+     "overall": 68.02278712272857
     },
     "a0738533be_gdocs_comments_export__vs__2a69e1ce5c_green_bold_text_demo_id_paraid_overflow_redline_b4c606bf91": {
-     "overall": 73.37280898264595
+     "overall": 73.35296361747064
     },
     "a0738533be_gdocs_comments_export__vs__d5a56cdeb3_super_editor__gdocs_single_comment_ac5db87f_redline_745218f254": {
-     "overall": 81.5016472700701
+     "overall": 81.5790955630455
     },
     "a0e6a09304_super_editor__diff_after11_1d5b767f__vs__3e50084c2e_super_editor__diff_after16_2a48697a_redline_63ec3a403e": {
-     "overall": 85.0230169967394
+     "overall": 84.81798125067223
     },
     "a0e6a09304_super_editor__diff_after11_1d5b767f__vs__e844ea2053_evals__table_doc_4d728d83_redline_80e8acff6a": {
-     "overall": 94.59597323226987
+     "overall": 93.74152933566168
     },
     "a1872de6f9_4ba11863826eb6a508ea7cf4b938acc078e24964b0ea83a4__vs__449768761e_36038ad632cd3662736f37687dea555e6b927e719c71c644_redline_9663f2ad29": {
      "overall": 83.51469961318053
@@ -3256,7 +3257,7 @@
      "overall": 81.72392496374988
     },
     "a4c38b1bf5_4c17189eb7a543ae96f42443a9f4001a3be8fec6e47f7481__vs__cd63d2dccf_3f2752287dacf8e3e52d649dc467cbab2214df665039ab15_redline_e9ef73a8e4": {
-     "overall": 50.07230937761968
+     "overall": 50.07836272262263
     },
     "a4ebc0e89c_0016d88a731db087feb2e28e8bfc163c1fe94df0ee048d55__vs__5203829c7a_001cc92b88566d5f930fe57f25813c0bf52a7bdc72c217d0_redline_44a0775d6b": {
      "overall": 42.5672807411917
@@ -3319,13 +3320,13 @@
      "overall": 66.3277853354275
     },
     "ab85c77154_file_115__vs__b7219494de_file_116_redline_61959b1953": {
-     "overall": 88.48162225294563
+     "overall": 88.49049138242994
     },
     "abd0b75d88_file_184__vs__9c6ebd430d_file_185_redline_7f412aa4b4": {
-     "overall": 45.73813397708936
+     "overall": 45.73677568061744
     },
     "ac0bcc10fe_file_146__vs__9c0dd6b3f6_file_147_redline_9c8876c6d7": {
-     "overall": 85.06120442668785
+     "overall": 84.89335401864706
     },
     "ac4b41aa8e_verdana_font_demo_id_paraid_overflow__vs__4f0a3847e3_verdana_italic_centered_demo_id_paraid_overflow_redline_30d1cde0ac": {
      "overall": 84.99743731951438
@@ -3340,7 +3341,7 @@
      "overall": 81.7521888501848
     },
     "acd3595c3a_0032221e68ad2a7986d1fe113eb1d46b5a7d1901b5aa9318__vs__342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08_redline_0876a1f7de": {
-     "overall": 47.65734305051175
+     "overall": 47.65786967727561
     },
     "acd3595c3a_0032221e68ad2a7986d1fe113eb1d46b5a7d1901b5aa9318__vs__a5f2b9318d_002aa60c2ae1187417b4b157c5ec6450324cc056ec551a12_redline_6c8c342674": {
      "overall": 69.93944667075539
@@ -3355,7 +3356,7 @@
      "overall": 66.11031962822705
     },
     "af4645ebd0_file_99__vs__b8115d0dab_file_100_redline_65aa483982": {
-     "overall": 46.38036280781147
+     "overall": 46.38199357422443
     },
     "af540c50e4_00edeec4b73ab68a9a4e2b0281464f067656d89fc9969ab4__vs__aa5340125d_00a4b0b91e9b5b072dc3771391c2d608518690eccf44eae8_redline_498f22a0ba": {
      "overall": 42.92083572157741
@@ -3553,7 +3554,7 @@
      "overall": 66.24140523747678
     },
     "d16179a60b_c3cb50c9620520f54d70a4f079a12e94bf94f54f507eff8d__vs__1aaca1d5af_ef31e540797c67a78c662cc2e5ecb21bf446e3d696ce26ad_redline_f72cd71154": {
-     "overall": 42.66406582689784
+     "overall": 42.68680510722118
     },
     "d48e02b548_super_editor__google_docs_originated_comments__vs__d0281643d2_super_editor__hello_docx_world_12f11074_redline_37c978d405": {
      "overall": 81.90232548791504
@@ -3616,7 +3617,7 @@
      "overall": 67.70802673540754
     },
     "e355cec096_small_font_size_demo_id_paraid_overflow__vs__60697d46b7_strict01_redline_0cd32d67b2": {
-     "overall": 74.41324969104419
+     "overall": 74.41692244558766
     },
     "e451997662_super_editor__h_f_normal_5d2a8d96__vs__837d45926d_super_editor__header_alternating_odd_even_11e019_redline_b33793b0f8": {
      "overall": 74.40566697588878
