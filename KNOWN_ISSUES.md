@@ -69,6 +69,11 @@ deleted or inserted empty `w:fldSimple` stayed live. The other three
 (two documents and a table-style case) crash only with a combination of
 content that no single element explains, the same class as the 20.
 
+**Main after the 0.12 pre-release merge (2026-10-10, 7a382267):** the two
+fixed pairs export; the other 23 crash Word 16.115 again, in the batch and
+one at a time. 115 random redlines of the same sample all export, and
+jubarte validate flags none of the 140 Word-fatal.
+
 **Action:** rerun the 25 on the next Word update; reduce one of the three
 layout cases further only if a Word update does not clear it.
 
