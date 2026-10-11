@@ -135,6 +135,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   that no section uses once the revised document's section breaks bring
   their own. Word's own redlines carry none. Their half-matched page
   number fields made `jubarte validate` report them as Word-fatal.
+- Removing a header, footer or other related part (redline, Accept, Reject,
+  markdown export) also removes the images and other parts that only it
+  used, instead of leaving them in the package with nothing pointing at
+  them.
 - `jubarte validate` no longer calls two shapes Word opens Word-fatal: a
   table cell that ends in a content control holding its last paragraph
   (its repair added a blank line to the cell), and Office's legacy
