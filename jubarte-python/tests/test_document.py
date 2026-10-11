@@ -214,7 +214,7 @@ def test_input_limits_tighten_the_compare_budget():
 
 
 def test_input_limits_refuse_an_unknown_key():
-    with pytest.raises(jubarte.JubarteError, match="invalid input limits.*max_entrys"):
+    with pytest.raises(jubarte.JubarteError, match=r"invalid input limits.*max_entrys"):
         jubarte.compare_documents(
             make_document("a"), make_document("b"), input_limits={"max_entrys": 2}
         )

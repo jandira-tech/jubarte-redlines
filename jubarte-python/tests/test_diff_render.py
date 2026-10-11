@@ -78,7 +78,7 @@ def test_a_changed_word_and_an_extra_page(tmp_path: Path) -> None:
     assert 0.0 < first.changed_ratio < 0.05
     assert first.bbox is not None and first.bbox[2] > first.bbox[0]
     assert d.overlays[0] is not None and d.overlays[0].startswith(b"\x89PNG")
-    assert extra.only_in == "b" and extra.changed_ratio == 1.0
+    assert extra.only_in == "b" and extra.changed_ratio == pytest.approx(1.0)
     assert d.overlays[1] is None
     assert len(d.a) == 1 and len(d.b) == 2
     assert diff_render(a, str(path), dpi=30, overlay=False).overlays == (None, None)

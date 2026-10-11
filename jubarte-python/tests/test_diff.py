@@ -63,7 +63,7 @@ def test_two_markdown_texts_keep_their_lines() -> None:
     assert d.text.startswith(
         f"--- a/old.md\n+++ b/new.md{HEADER}@@ [line:3] @@\nPayment is due in [-30-]{{+45+}} days.\n"
     ), d.text
-    assert [h.at for h in d.hunks][0] == "line:3"
+    assert d.hunks[0].at == "line:3"
     assert "{+Returns+}" in d.text
 
 
