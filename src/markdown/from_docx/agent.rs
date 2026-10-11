@@ -1378,9 +1378,8 @@ pub(crate) fn select_blocks(
 ) -> Result<(String, String), String> {
     let blocks = blocks_of(body);
     let keep: Vec<bool>;
-    let range: String;
     let mut changed_notes: Vec<String> = Vec::new();
-    match select {
+    let range: String = match select {
         Select::Head(n) | Select::Tail(n) if *n == 0 => {
             return Err(format!(
                 "{} needs a count above 0",
@@ -1395,26 +1394,26 @@ pub(crate) fn select_blocks(
             keep = (0..blocks.len()).map(|i| i < *n).collect();
             let spans: Vec<(usize, usize)> =
                 blocks.iter().take(*n).filter_map(|b| b.span).collect();
-            range = format!(
+            format!(
                 "head {n} ({})",
                 span_text(
                     spans.first().map_or(0, |s| s.0),
                     spans.last().map_or(0, |s| s.1)
                 )
-            );
+            )
         }
         Select::Tail(n) => {
             let skip = blocks.len().saturating_sub(*n);
             keep = (0..blocks.len()).map(|i| i >= skip).collect();
             let spans: Vec<(usize, usize)> =
                 blocks.iter().skip(skip).filter_map(|b| b.span).collect();
-            range = format!(
+            format!(
                 "tail {n} ({})",
                 span_text(
                     spans.first().map_or(0, |s| s.0),
                     spans.last().map_or(0, |s| s.1)
                 )
-            );
+            )
         }
         Select::Changed { by } => {
             let handle = by.as_deref().map(|by| by.strip_prefix('@'));
@@ -1443,7 +1442,7 @@ pub(crate) fn select_blocks(
                 })
                 .chain(changed_notes.iter().map(|label| format!("[^{label}]")))
                 .collect();
-            range = format!(
+            format!(
                 "changed{} ({})",
                 by.as_deref()
                     .map_or(String::new(), |by| format!(" by {by}")),
@@ -1452,7 +1451,7 @@ pub(crate) fn select_blocks(
                 } else {
                     names.join(", ")
                 }
-            );
+            )
         }
         Select::Picks(picks) => {
             let mut wanted: Vec<(usize, usize)> = Vec::new();
@@ -1510,13 +1509,13 @@ pub(crate) fn select_blocks(
                 })
                 .collect();
             names.sort_by_key(|(at, _)| *at);
-            range = names
+            names
                 .into_iter()
                 .map(|(_, name)| name)
                 .collect::<Vec<_>>()
-                .join(", ");
+                .join(", ")
         }
-    }
+    };
     let mut out = String::new();
     let mut page_due: Option<&str> = None;
     let mut page_written: Option<&str> = None;

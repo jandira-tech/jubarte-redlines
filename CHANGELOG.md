@@ -131,6 +131,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - Compare: a header or footer that only one document has now marks its
   table rows deleted or inserted along with their text; Word 16.115 hung
   on a footer table whose cells were deleted but whose rows were not.
+- Compare: a redline no longer keeps the original's headers and footers
+  that no section uses once the revised document's section breaks bring
+  their own. Word's own redlines carry none. Their half-matched page
+  number fields made `jubarte validate` report them as Word-fatal.
+- Removing a header, footer or other related part (redline, Accept, Reject,
+  markdown export) also removes the images and other parts that only it
+  used, instead of leaving them in the package with nothing pointing at
+  them.
 - `jubarte validate` no longer calls two shapes Word opens Word-fatal: a
   table cell that ends in a content control holding its last paragraph
   (its repair added a blank line to the cell), and Office's legacy

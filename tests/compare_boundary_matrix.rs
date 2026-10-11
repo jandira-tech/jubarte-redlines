@@ -373,9 +373,7 @@ fn structured_signature_with_policy(
             };
             output.push(format!("start:{local}:{details:?}"));
         }
-        if (word && local == "t")
-            || (name.namespace_name() == jubarte::namespaces::M::URI && local == "t")
-        {
+        if local == "t" && (word || name.namespace_name() == jubarte::namespaces::M::URI) {
             let context = content_context(&context, fields, allow_untracked_internal_links);
             for character in dom.value(node).chars() {
                 output.push(format!(

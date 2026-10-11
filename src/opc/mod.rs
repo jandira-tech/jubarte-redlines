@@ -578,7 +578,8 @@ impl PartFs {
 
     /// Remove the relationship `rel_id` of `source_part` and, unless another
     /// internal relationship still targets it, the part it names with that
-    /// part's own relationships and content-type override. No-op for an
+    /// part's own relationships and content-type override, then the parts
+    /// (a header's images) nothing else targets any more. No-op for an
     /// unknown or external relationship.
     pub fn remove_related_part(&mut self, source_part: &str, rel_id: &str) {
         let key = norm(source_part);
@@ -595,10 +596,23 @@ impl PartFs {
             .get_or_create_part_rels(&key)
             .items
             .retain(|r| r.id != rel_id);
+        self.remove_untargeted_part(&part);
+    }
+
+    /// Remove `part`, its relationships and content-type override when no
+    /// internal relationship of another part targets it, then each part it
+    /// targeted that is left untargeted. Its own relationships never keep
+    /// it, and a removed part ends a loop.
+    fn remove_untargeted_part(&mut self, part: &str) {
+        let key = norm(part);
+        if !self.pkg.parts.contains_key(&key) {
+            return;
+        }
         let still_targeted = self
             .pkg
             .part_rels
             .iter()
+            .filter(|(source, _)| **source != key)
             .map(|(source, rels)| (source.as_str(), rels))
             .chain(std::iter::once(("/", &self.pkg.package_rels)))
             .any(|(source, rels)| {
@@ -610,9 +624,23 @@ impl PartFs {
         if still_targeted {
             return;
         }
-        self.pkg.parts.remove(&norm(&part));
-        self.pkg.part_rels.remove(&norm(&part));
+        self.pkg.parts.remove(&key);
+        let targets: Vec<String> = self
+            .pkg
+            .part_rels
+            .remove(&key)
+            .map(|rels| {
+                rels.items
+                    .iter()
+                    .filter(|r| r.target_mode.as_deref() != Some("External"))
+                    .map(|r| self.resolve_rel_target(part, &r.target))
+                    .collect()
+            })
+            .unwrap_or_default();
         self.remove_content_type_override(&format!("/{part}"));
+        for target in targets {
+            self.remove_untargeted_part(&target);
+        }
     }
 
     /// `readRelsFor(part)` — the relationships of a part, if any.
@@ -1081,5 +1109,62 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    /// Dropping a header takes the media only it used with it; media another
+    /// part still uses stays, and so does a part reached in a loop.
+    #[test]
+    fn removing_a_related_part_drops_the_parts_only_it_targeted() {
+        const HEADER: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+        const IMAGE: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+        let rel = |id: &str, ty: &str, target: &str| {
+            format!(r#"<Relationship Id="{id}" Type="{ty}" Target="{target}"/>"#)
+        };
+        let mut fs = PartFs::open(&package_with_document_rels(&format!(
+            "{}{}",
+            rel("rId1", HEADER, "header1.xml"),
+            rel("rId2", HEADER, "header2.xml")
+        )))
+        .unwrap();
+        for part in ["header1.xml", "header2.xml"] {
+            fs.set_part(&format!("word/{part}"), b"<w:hdr/>".to_vec());
+        }
+        for media in ["logo.png", "shared.png"] {
+            fs.set_part(&format!("word/media/{media}"), vec![0x89]);
+        }
+        fs.set_part(
+            "word/_rels/header1.xml.rels",
+            format!(
+                r#"<Relationships xmlns="{RELS_NS}">{}{}{}</Relationships>"#,
+                rel("rId1", IMAGE, "media/logo.png"),
+                rel("rId2", IMAGE, "media/shared.png"),
+                rel("rId3", HEADER, "header1.xml")
+            )
+            .into_bytes(),
+        );
+        fs.set_part(
+            "word/_rels/header2.xml.rels",
+            format!(
+                r#"<Relationships xmlns="{RELS_NS}">{}</Relationships>"#,
+                rel("rId1", IMAGE, "media/shared.png")
+            )
+            .into_bytes(),
+        );
+
+        fs.remove_related_part("word/document.xml", "rId1");
+
+        let parts = fs.parts();
+        let has = |name: &str| parts.iter().any(|p| p == name);
+        assert!(!has("word/header1.xml"), "{parts:?}");
+        assert!(
+            !has("word/media/logo.png"),
+            "only header1 used it: {parts:?}"
+        );
+        assert!(has("word/media/shared.png"), "header2 still uses it");
+        assert!(has("word/header2.xml"));
+        assert!(fs.read_rels_for("word/header1.xml").is_none());
+        PartFs::open(&fs.to_zip().unwrap()).unwrap();
     }
 }

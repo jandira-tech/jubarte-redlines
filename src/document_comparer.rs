@@ -7884,6 +7884,10 @@ fn compare_documents_impl(
             }
         }
     }
+    // A header or footer of the original whose slots the revised section
+    // breaks took over (redlineB_* parts) is left with no reference: Word's
+    // own redlines carry none, and its half-matched fields read as broken.
+    crate::revision_processor::drop_unreferenced_headers_footers(&mut out);
     out.to_zip()
 }
 
