@@ -141,8 +141,8 @@ pub struct EditOptions {
     /// comparer.
     #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
     pub existing_revisions: ExistingArg,
-    /// Directory to create for the outputs [default:
-    /// `<FILE's directory>/<stem>.edit`].
+    /// Directory to create for the outputs (default:
+    /// `<FILE's directory>/<stem>.edit`).
     #[arg(long, value_name = "DIR")]
     pub out_dir: Option<PathBuf>,
     /// Replace an existing output directory's files.
@@ -275,7 +275,7 @@ pub struct CompareArgs {
     #[arg(short = 'm', long = "modified", value_name = "FILE")]
     pub modified: Option<PathBuf>,
 
-    /// Output path [default: `<original-dir>/<original>_v_<modified>.docx`]. A
+    /// Output path (default: `<original-dir>/<original>_v_<modified>.docx`). A
     /// `.md` output writes the changes as CriticMarkup (both documents
     /// Markdown).
     #[arg(short = 'o', long, value_name = "FILE")]
@@ -397,8 +397,8 @@ pub enum Command {
         /// Word 97-2003 .doc (read into a .docx first).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Output path [default: `<stem>.pdf` next to a .docx, `<stem>.docx`
-        /// next to Markdown; Markdown output goes to stdout]. PNG pages are
+        /// Output path (default: `<stem>.pdf` next to a .docx, `<stem>.docx`
+        /// next to Markdown; Markdown output goes to stdout). PNG pages are
         /// named `<stem>-page-NN.png` beside it.
         #[arg(short = 'o', long, value_name = "FILE")]
         output: Option<PathBuf>,

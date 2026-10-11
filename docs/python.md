@@ -86,7 +86,7 @@ Compare options:
           Modified document (overrides the positional MODIFIED)
 
   -o, --output <FILE>
-          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md`
+          Output path (default: `<original-dir>/<original>_v_<modified>.docx`). A `.md`
           output writes the changes as CriticMarkup (both documents Markdown)
 
   -a, --author <NAME>
@@ -205,7 +205,7 @@ Options:
           Modified document (overrides the positional MODIFIED)
 
   -o, --output <FILE>
-          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md`
+          Output path (default: `<original-dir>/<original>_v_<modified>.docx`). A `.md`
           output writes the changes as CriticMarkup (both documents Markdown)
 
   -a, --author <NAME>
@@ -356,9 +356,9 @@ Arguments:
 
 Options:
   -o, --output <FILE>
-          Output path [default: <stem>.pdf next to a .docx, <stem>.docx next to
-          Markdown; Markdown output goes to stdout]. PNG pages are named
-          <stem>-page-NN.png beside it
+          Output path (default: `<stem>.pdf` next to a .docx, `<stem>.docx` next to
+          Markdown; Markdown output goes to stdout). PNG pages are named
+          `<stem>-page-NN.png` beside it
 
       --force
           Overwrite the output file if it already exists
@@ -367,7 +367,7 @@ Options:
           Write the PDF (the default when neither --pdf nor --png is given)
 
       --png
-          Rasterize every page to PNG (<stem>-page-NN.png)
+          Rasterize every page to PNG (`<stem>-page-NN.png`)
 
       --report <FILE>
           Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`)
@@ -830,7 +830,8 @@ Options:
           [default: auto]
 
       --out-dir <DIR>
-          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
+          Directory to create for the outputs (default: `<FILE's
+          directory>/<stem>.edit`)
 
       --force
           Replace an existing output directory's files
@@ -948,7 +949,8 @@ Options:
           [default: auto]
 
       --out-dir <DIR>
-          Directory to create for the outputs [default: <FILE's directory>/<stem>.edit]
+          Directory to create for the outputs (default: `<FILE's
+          directory>/<stem>.edit`)
 
       --force
           Replace an existing output directory's files
