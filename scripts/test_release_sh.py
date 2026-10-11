@@ -238,6 +238,16 @@ class Lessons0101(unittest.TestCase):
         add = next(l for l in s8.splitlines() if "git add jubarte-wasm/npm" in l)
         self.assertIn("docs/javascript.md", add)
 
+    def test_the_artifacts_commit_regenerates_the_npm_cli_reference(self) -> None:
+        # docs/javascript.md's cli-npm block is the npm CLI's --help, run on
+        # the wasm build. Step 6 ran it on the committed artifacts of an
+        # older engine, so the 0.12.0 dry run rewrote the block back to help
+        # text the release had already changed.
+        s8 = step(8)
+        regen = s8.index("--marker cli-npm")
+        self.assertLess(s8.index("jubarte-wasm/build-npm.sh"), regen)
+        self.assertLess(regen, s8.index("git add jubarte-wasm/npm"))
+
     def test_pypi_is_checked_on_the_project_listing(self) -> None:
         # PyPI's CDN keeps a 404 for /pypi/<name>/<version>/json once asked
         # before the upload; v0.11.0's verify failed on a release that was
