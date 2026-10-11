@@ -282,6 +282,15 @@ pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
     Ok(changes_in(&open(docx)?))
 }
 
+/// [`list_changes`] for a view that already renders the package: no
+/// admission, and a part that does not parse lists nothing, so the view's
+/// count fails only where the package itself does.
+pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    let pkg = PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
+    Ok(changes_in(&pkg))
+}
+
 /// The changes of an opened (transitional) package, as [`list_changes`]
 /// lists them.
 pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
@@ -306,12 +315,15 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
     out
 }
 
-/// Accept the changes `filter` selects; the others stay tracked.
+/// Accept the changes `filter` selects; the others stay tracked. A Strict
+/// package is written back transitional, as the comparer writes it; with
+/// nothing selected the bytes come back untouched.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Accept)
 }
 
-/// Reject the changes `filter` selects; the others stay tracked.
+/// Reject the changes `filter` selects; the others stay tracked. A Strict
+/// package is written back transitional, as [`accept_changes`] writes it.
 pub fn reject_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Reject)
 }
@@ -322,13 +334,13 @@ fn resolve(
     resolution: Resolution,
 ) -> Result<Vec<u8>, ChangeError> {
     let filter = &filter.normalized()?;
-    let listed = list_changes(docx)?;
+    let mut pkg = open(docx)?;
+    let listed = changes_in(&pkg);
     filter.check(&listed)?;
     // Nothing selected: nothing to resolve, and nothing else to touch.
     if !listed.iter().any(|c| filter.matches(c)) {
         return Ok(docx.to_vec());
     }
-    let mut pkg = open(docx)?;
     let main = main_part(&pkg);
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
         let found = carriers(dom, root, &story_id(&main, part));
@@ -527,64 +539,68 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
     out
 }
 
-/// The `mc:Choice` or `mc:Fallback` branch `e` sits in, innermost.
-fn branch(dom: &Dom, e: NodeId) -> Option<NodeId> {
-    dom.ancestors(e, None).into_iter().find(|&a| {
-        dom.name(a).is_some_and(|n| {
-            n.namespace_name() == MC::URI && matches!(n.local_name(), "Choice" | "Fallback")
-        })
-    })
-}
-
 /// Word stores a text box twice, in an `mc:AlternateContent`'s `mc:Choice`
 /// and its `mc:Fallback`, and gives the Fallback copy of each change its own
-/// consecutive `w:id`. A Fallback carrier pairs with the Choice carrier at
-/// the same ordinal, of the same kind and target: the Choice copy (the one
-/// the view shows) is listed, and the twin joins its group unlisted, so
-/// resolving the change resolves both copies. A carrier without a partner
-/// stays listed.
+/// consecutive `w:id`. Each Fallback's carriers pair, in order, with the
+/// Choice's still-listed carriers of the same kind, target and text (a
+/// carrier the Choice lacks is skipped, not mispaired): the Choice copy (the
+/// one the view shows) is listed, and the twin joins its group unlisted, so
+/// resolving the change resolves both copies. Inner `mc:AlternateContent`s
+/// pair first, so an outer Fallback meets one listed copy of each nested
+/// change. A carrier without a partner stays listed.
 fn fold_twins(dom: &Dom, carriers: &mut [Carrier]) {
-    let listed: Vec<(usize, NodeId)> = carriers
+    let (choice, fallback) = (MC::name("Choice"), MC::name("Fallback"));
+    // Each listed carrier's mc:Choice / mc:Fallback ancestors.
+    let branches: Vec<(usize, Vec<NodeId>)> = carriers
         .iter()
         .enumerate()
         .filter(|(_, c)| c.change.is_some())
-        .filter_map(|(i, c)| Some((i, branch(dom, c.node)?)))
+        .map(|(i, c)| {
+            let mut found = dom.ancestors(c.node, Some(&choice));
+            found.extend(dom.ancestors(c.node, Some(&fallback)));
+            (i, found)
+        })
+        .filter(|(_, found)| !found.is_empty())
         .collect();
-    if listed.is_empty() {
-        return;
-    }
-    let choice = MC::name("Choice");
-    let in_branch = |b: NodeId| -> Vec<usize> {
-        listed
-            .iter()
-            .filter(|&&(_, at)| at == b)
-            .map(|&(i, _)| i)
-            .collect()
-    };
-    let fallbacks: Vec<NodeId> = {
-        let mut seen = Vec::new();
-        for &(_, b) in &listed {
-            if dom.name_is(b, &MC::name("Fallback")) && !seen.contains(&b) {
-                seen.push(b);
+    let mut fallbacks: Vec<NodeId> = Vec::new();
+    for (_, found) in &branches {
+        for &b in found {
+            if dom.name_is(b, &fallback) && !fallbacks.contains(&b) {
+                fallbacks.push(b);
             }
         }
-        seen
+    }
+    // Innermost first.
+    fallbacks.sort_by_key(|&f| std::cmp::Reverse(dom.ancestors(f, None).len()));
+    let key = |c: &Carrier| {
+        c.change
+            .as_ref()
+            .map(|ch| (ch.kind, ch.target, ch.text.clone()))
     };
-    for fallback in fallbacks {
-        let Some(partner) = dom.parent(fallback).and_then(|ac| dom.element(ac, &choice)) else {
+    for f in fallbacks {
+        let Some(partner) = dom.parent(f).and_then(|ac| dom.element(ac, &choice)) else {
             continue;
         };
-        let twins = in_branch(fallback);
-        let originals = in_branch(partner);
-        for (&twin, &original) in twins.iter().zip(&originals) {
-            let same = match (&carriers[twin].change, &carriers[original].change) {
-                (Some(t), Some(o)) => t.kind == o.kind && t.target == o.target,
-                _ => false,
+        let under = |b: NodeId, carriers: &[Carrier]| -> Vec<usize> {
+            branches
+                .iter()
+                .filter(|(i, found)| found.contains(&b) && carriers[*i].change.is_some())
+                .map(|(i, _)| *i)
+                .collect()
+        };
+        let originals = under(partner, carriers);
+        let mut next = 0;
+        for twin in under(f, carriers) {
+            let Some(at) = originals[next..]
+                .iter()
+                .position(|&o| key(&carriers[o]) == key(&carriers[twin]))
+            else {
+                continue;
             };
-            if same {
-                carriers[twin].group = carriers[original].group.clone();
-                carriers[twin].change = None;
-            }
+            let original = originals[next + at];
+            next += at + 1;
+            carriers[twin].group = carriers[original].group.clone();
+            carriers[twin].change = None;
         }
     }
 }

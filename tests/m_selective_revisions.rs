@@ -744,3 +744,60 @@ fn a_word_redlines_text_box_twins_list_once() {
         assert!(xml.contains(kept), "{kept}");
     }
 }
+
+fn alternate(choice: &str, fallback: &str) -> String {
+    format!(
+        r#"<mc:AlternateContent><mc:Choice Requires="wps">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"#
+    )
+}
+
+fn boxed_text(inner: &str) -> String {
+    format!(r#"<w:txbxContent><w:p>{inner}</w:p></w:txbxContent>"#)
+}
+
+/// A Fallback-only change between two twins is skipped, not paired with
+/// the next Choice change: each twin still finds its own partner.
+#[test]
+fn a_fallback_only_change_between_twins_does_not_shift_the_pairs() {
+    let ins = |id: u32, text: &str| {
+        format!(r#"<w:ins w:id="{id}" {A}><w:r><w:t>{text}</w:t></w:r></w:ins>"#)
+    };
+    let del = |id: u32, text: &str| {
+        format!(r#"<w:del w:id="{id}" {A}><w:r><w:delText>{text}</w:delText></w:r></w:del>"#)
+    };
+    let body = format!(
+        r#"<w:p><w:r>{}</w:r></w:p>"#,
+        alternate(
+            &boxed_text(&format!("{}{}", ins(5, "One"), del(6, "Two"))),
+            &boxed_text(&format!(
+                "{}{}{}",
+                ins(7, "One"),
+                ins(8, "Extra"),
+                del(9, "Two")
+            )),
+        )
+    );
+    let pkg = docx(&body);
+    assert_eq!(ids(&pkg), ["body:rev:5", "body:rev:6", "body:rev:8"]);
+    let rejected = reject_changes(&pkg, &filter_ids(&["r6"])).unwrap();
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:del "), "both copies of r6 resolve: {xml}");
+}
+
+/// A group shape nests one `mc:AlternateContent` in another's Choice: the
+/// inner Fallback twin and the outer Fallback copy both join the change.
+#[test]
+fn nested_alternate_content_copies_join_one_change() {
+    let ins = |id: u32| format!(r#"<w:ins w:id="{id}" {A}><w:r><w:t>Grouped</w:t></w:r></w:ins>"#);
+    let inner = alternate(&boxed_text(&ins(5)), &boxed_text(&ins(6)));
+    let body = format!(
+        r#"<w:p><w:r>{}</w:r></w:p>"#,
+        alternate(&format!("<w:r>{inner}</w:r>"), &boxed_text(&ins(7)))
+    );
+    let pkg = docx(&body);
+    assert_eq!(ids(&pkg), ["body:rev:5"]);
+    let accepted = accept_changes(&pkg, &filter_ids(&["r5"])).unwrap();
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:ins "), "every copy resolves: {xml}");
+    assert_eq!(xml.matches(">Grouped<").count(), 3, "{xml}");
+}
