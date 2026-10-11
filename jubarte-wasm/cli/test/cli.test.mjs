@@ -236,7 +236,7 @@ test("edit and add by flags print the changed blocks, as the binary does", () =>
   }
   const comment = run("add", untracked, "-p", `p${para.index}`, "--anchor", word, "--content", "Why?", "--author", "Ann Counsel", "--out-dir", path.join(tmp, "flags-comment"));
   assert.equal(comment.code, 0, comment.err);
-  assert.ok(comment.out.includes(`{==${word}==}{>>#c0 @AC: Why?<<}`), comment.out);
+  assert.ok(comment.out.includes(`{==${word}==}{>>c0 @AC: Why?<<}`), comment.out);
   const editing = run("add", untracked, "-p", `p${para.index}`, "--content", "Recitals", "--editing-mode", "--out-dir", path.join(tmp, "flags-editing"));
   assert.equal(editing.code, 0, editing.err);
   assert.ok(!fs.existsSync(path.join(tmp, "flags-editing", "redline.docx")));

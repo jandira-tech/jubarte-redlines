@@ -48,7 +48,7 @@ test("readView by resolves names, bare handles and prefixed handles for comment 
   const expected = read(received, { changed: true, by: "Arthur Souza Rodrigues" });
   assert.deepEqual(blockIds(expected), ["p5"]);
   assert.match(expected, /range: changed by @AS \(p5\)/);
-  assert.match(body(expected), /#c6 @AS re #c5: Disagree/);
+  assert.match(body(expected), /c6 @AS re c5: Disagree/);
   // Filtering keeps the complete block, including other authors' marks.
   assert.match(body(expected), /#3\+4 @AC/);
   for (const by of ["AS", "@AS"]) {
@@ -74,7 +74,7 @@ for (const trackChanges of ["accept", "reject"]) {
   test(`readView changed retains author metadata in the ${trackChanges} view`, () => {
     const view = read(received, { changed: true, by: "AC", trackChanges });
     assert.deepEqual(blockIds(view), ["p3", "p5", "p7", "t0", "p18"]);
-    assert.match(body(view), /<!-- p3 rev #0 @AC; #1\+2 @AC -->/);
+    assert.match(body(view), /<!-- p3 rev r0 @AC; r1\+2 @AC -->/);
     assert.doesNotMatch(body(view), /\{(?:\+\+|--|~~)/);
     assert.ok(body(view).includes(trackChanges === "accept" ? "Day 15" : "Day 10"));
   });
@@ -83,7 +83,7 @@ for (const trackChanges of ["accept", "reject"]) {
 test("readView changed includes hidden comment-only blocks without their text", () => {
   const view = read(received, { changed: true, comments: "none" });
   assert.deepEqual(blockIds(view), ["p3", "p5", "p7", "t0", "p18"]);
-  assert.match(body(view), /<!-- p18 .*comments #c11 -->/);
+  assert.match(body(view), /<!-- p18 .*comments c11 -->/);
   assert.doesNotMatch(body(view), /three-year survival|Disagree\./);
 });
 

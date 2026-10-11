@@ -391,9 +391,9 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     assert '\nnote: op-1: anchor "# Heading" read as "Heading" (Markdown marks are not document text)\n' in out, out
     # add: a comment, then a reply on the redline; editing mode writes no redline.
     assert main(["add", str(letter), "-p", "p2", "--anchor", "survive", "--content", "Which?", "--author", "Ann Counsel", "--out-dir", str(tmp_path / "c")]) == 0
-    assert "{==survive==}{>>#c0 @AC: Which?<<}" in capsys.readouterr().out
+    assert "{==survive==}{>>c0 @AC: Which?<<}" in capsys.readouterr().out
     assert main(["add", str(tmp_path / "c" / "redline.docx"), "-p", "c0", "--content", "All three.", "--author", "Bob Lee", "--out-dir", str(tmp_path / "r")]) == 0
-    assert "{>>#c1 @BL re #c0: All three.<<}" in capsys.readouterr().out
+    assert "{>>c1 @BL re c0: All three.<<}" in capsys.readouterr().out
     assert main(["add", str(letter), "-p", "p0", "--content", "Recitals", "--editing-mode", "--out-dir", str(tmp_path / "e")]) == 0
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
