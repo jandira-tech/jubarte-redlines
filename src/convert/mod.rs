@@ -26609,6 +26609,7 @@ impl<'a> Layout<'a> {
         let piece = |run: &TextRun, text: String| {
             let mut out = TextRun::new(text, run.style.clone());
             out.comment_marker = run.comment_marker;
+            out.math_ascii = run.math_ascii;
             out
         };
         let joined: String = line.iter().map(|r| r.text.as_str()).collect();
@@ -51099,6 +51100,56 @@ mod coverage_round_three_tests {
                 })
                 .collect();
             assert_eq!(texts, ["\u{1D44E}", "+", "2"]);
+
+            // A justified line repaints each word as a run of its own.
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let mut run = TextRun::new("a b", Defaults::word().run);
+            run.style.italic = true;
+            run.math_ascii = true;
+            lay.paint_stretched(&[run], 72.0, 700.0, 2.0);
+            let texts: Vec<&str> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, .. } if !text.trim().is_empty() => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts, ["\u{1D44E}", "\u{1D44F}"]);
+        }
+
+        /// Two stretches of missing glyphs around painted text: one hidden
+        /// op each, in reading order between the painted ones.
+        #[test]
+        fn each_stretch_of_missing_glyphs_is_its_own_hidden_op() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            lay.emit_paragraph_runs(
+                &[TextRun::new(
+                    "\u{13000}A\u{13001}\u{13002}B",
+                    Defaults::word().run,
+                )],
+                &exact_style(),
+                false,
+                FloatWrap::default(),
+            );
+            let texts: Vec<(&str, bool)> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, hidden, .. } => Some((text.as_str(), *hidden)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                texts,
+                [
+                    ("\u{13000}", true),
+                    ("A", false),
+                    ("\u{13001}\u{13002}", true),
+                    ("B", false)
+                ]
+            );
         }
 
         #[test]

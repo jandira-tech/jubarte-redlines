@@ -745,6 +745,27 @@ mod tests {
         let px = paint_page(&fonts, &page, 72.0).unwrap();
         assert!(px.data().iter().all(|&v| v == 255));
         assert_eq!(page_text(&fonts, &page), "研究\n");
+
+        // Between painted text on one line, laid out at .notdef advances
+        // as the layout does, it reads back with no gaps.
+        let f = fonts.get(face);
+        let size = 10.0;
+        let notdef = f32::from(f.widths[0]) * size / f.upem;
+        let a = f.width_pt("A", size);
+        let page = page_with(vec![
+            Op::text(face, size, 10.0, 20.0, f.glyphs("A"), [0.0; 3], "A"),
+            Op::text(face, size, 10.0 + a, 20.0, vec![0; 2], [0.0; 3], "研究").hidden(),
+            Op::text(
+                face,
+                size,
+                10.0 + a + 2.0 * notdef,
+                20.0,
+                f.glyphs("B"),
+                [0.0; 3],
+                "B",
+            ),
+        ]);
+        assert_eq!(page_text(&fonts, &page), "A研究B\n");
     }
 
     #[test]
