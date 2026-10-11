@@ -691,8 +691,8 @@ Options:
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
 A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
-is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>#12
-@AC<<}`) and comments with theirs (`{>>#c5 @AC: …<<}`).
+is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
+@AC<<}`) and comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte read [OPTIONS] <FILE>
 
