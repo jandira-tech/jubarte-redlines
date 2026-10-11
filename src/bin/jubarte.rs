@@ -150,12 +150,24 @@ fn revision_style(
 /// Whether two CLI paths name the same file. Two existing paths are compared
 /// by identity, which sees through hard links, symlinks and a volume that
 /// ignores case; a path not written yet is keyed by its canonicalized parent
-/// and its name (`out.pdf` and `./out.pdf` match).
+/// and its name (`out.pdf` and `./out.pdf` match), after following a symlink
+/// whose target does not exist yet, since a write goes through it.
 fn same_path(a: &Path, b: &Path) -> bool {
     if let Ok(same) = same_file::is_same_file(a, b) {
         return same;
     }
     fn key(p: &Path) -> Option<PathBuf> {
+        let mut p = p.to_path_buf();
+        // The kernel's own bound on a link chain (Linux MAXSYMLINKS).
+        for _ in 0..40 {
+            let Ok(target) = std::fs::read_link(&p) else {
+                break;
+            };
+            p = match p.parent() {
+                Some(dir) if target.is_relative() => dir.join(target),
+                _ => target,
+            };
+        }
         let name = p.file_name()?;
         let parent = match p.parent() {
             Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),

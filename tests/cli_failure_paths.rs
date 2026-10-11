@@ -268,6 +268,43 @@ fn convert_update_fields_refuses_a_report_that_names_the_input_another_way() {
     }
 }
 
+/// CodeRabbit on #398: an output that is a symlink to the report path, not
+/// written yet, named the same file; the docx went through the link and the
+/// report then replaced it.
+#[cfg(unix)]
+#[test]
+fn convert_update_fields_refuses_a_report_a_dangling_output_link_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = docx(
+        r#"<w:p><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    std::fs::write(dir.path().join("input.docx"), &original).unwrap();
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    std::os::unix::fs::symlink("fields.json", dir.path().join("updated.docx")).unwrap();
+    std::os::unix::fs::symlink("../hop.docx", dir.path().join("sub/two.docx")).unwrap();
+    std::os::unix::fs::symlink("fields.json", dir.path().join("hop.docx")).unwrap();
+    for output in ["updated.docx", "sub/two.docx"] {
+        let args = [
+            "convert",
+            "input.docx",
+            "-o",
+            output,
+            "--update-fields",
+            "--report",
+            "fields.json",
+            "--force",
+        ];
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("--report 'fields.json' is the same file as the Word output"),
+            "{err}"
+        );
+        assert!(!dir.path().join("fields.json").exists());
+    }
+}
+
 #[test]
 fn debug_diff_disambiguates_duplicate_stems_and_duplicate_paths() {
     let dir = tempfile::tempdir().unwrap();
