@@ -578,7 +578,7 @@ function compareDocuments(original, modified, author, input_limits_json) {
 exports.compareDocuments = compareDocuments;
 
 /**
- * The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+ * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
  * `body:p:N` id in a Word document or `line:N` in Markdown.
@@ -590,7 +590,7 @@ exports.compareDocuments = compareDocuments;
  *
  * Mirrors `jubarte::markdown::patch_documents`.
  * @param {Uint8Array} old
- * @param {Uint8Array} _new
+ * @param {Uint8Array} next
  * @param {string} author
  * @param {string} date
  * @param {number | null} [columns]
@@ -598,14 +598,14 @@ exports.compareDocuments = compareDocuments;
  * @param {string | null} [new_name]
  * @returns {string}
  */
-function diffDocuments(old, _new, author, date, columns, old_name, new_name) {
+function diffDocuments(old, next, author, date, columns, old_name, new_name) {
     let deferred8_0;
     let deferred8_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(_new, wasm.__wbindgen_export2);
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len2 = WASM_VECTOR_LEN;
@@ -639,19 +639,19 @@ exports.diffDocuments = diffDocuments;
 /**
  * The complete document as CriticMarkup; existing paragraph patches stay separate.
  * @param {Uint8Array} old
- * @param {Uint8Array} _new
+ * @param {Uint8Array} next
  * @param {string | null} [author]
  * @param {string | null} [date]
  * @returns {string}
  */
-function diffDocumentsCritic(old, _new, author, date) {
+function diffDocumentsCritic(old, next, author, date) {
     let deferred6_0;
     let deferred6_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(_new, wasm.__wbindgen_export2);
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         var len2 = WASM_VECTOR_LEN;
@@ -682,20 +682,20 @@ exports.diffDocumentsCritic = diffDocumentsCritic;
  * Complete, unwrapped document snapshots as a Git text patch. `context`
  * is validated before wasm-bindgen can coerce booleans or wrap u32 values.
  * @param {Uint8Array} old
- * @param {Uint8Array} _new
+ * @param {Uint8Array} next
  * @param {string | null | undefined} old_name
  * @param {string | null | undefined} new_name
  * @param {any} context
  * @returns {string}
  */
-function diffDocumentsUnified(old, _new, old_name, new_name, context) {
+function diffDocumentsUnified(old, next, old_name, new_name, context) {
     let deferred6_0;
     let deferred6_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(_new, wasm.__wbindgen_export2);
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(old_name) ? 0 : passStringToWasm0(old_name, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         var len2 = WASM_VECTOR_LEN;
@@ -729,18 +729,18 @@ exports.diffDocumentsUnified = diffDocumentsUnified;
  * and `newFormat` (docx/md). Defaults use the core display window; Word
  * always accepts both inputs' revisions before creating new CriticMarkup.
  * @param {Uint8Array} old
- * @param {Uint8Array} _new
+ * @param {Uint8Array} next
  * @param {string | null} [options_json]
  * @returns {string}
  */
-function diffDocumentsView(old, _new, options_json) {
+function diffDocumentsView(old, next, options_json) {
     let deferred5_0;
     let deferred5_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(_new, wasm.__wbindgen_export2);
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         var len2 = WASM_VECTOR_LEN;
@@ -922,8 +922,8 @@ function flagPlan(verb, operations_json, docx, options_json) {
 exports.flagPlan = flagPlan;
 
 /**
- * List the tracked revisions in a DOCX as a JSON array string — the same
- * object shape as the CLI `jubarte revisions --json` lines
+ * List the tracked revisions in a DOCX as a JSON array string, grouped as
+ * Docxodus's `GetRevisions` groups them; each object has
  * (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
  *
  * Mirrors `jubarte::document_comparer::get_revisions` with default settings,
@@ -1246,17 +1246,17 @@ exports.readView = readView;
 /**
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
  * @param {Uint8Array} old
- * @param {Uint8Array} _new
+ * @param {Uint8Array} next
  * @param {string} author
  * @param {string} date
  * @returns {Uint8Array}
  */
-function redlineDocuments(old, _new, author, date) {
+function redlineDocuments(old, next, author, date) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(old, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(_new, wasm.__wbindgen_export2);
+        const ptr1 = passArray8ToWasm0(next, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len2 = WASM_VECTOR_LEN;
