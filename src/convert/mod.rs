@@ -1731,6 +1731,10 @@ struct TextRun {
     /// stands on (Word 16 probe_il: 3936a8fe56's Calibri 11 rule run makes
     /// a 14.49pt line beside an Arial 10 space).
     strut: bool,
+    /// Math letters left ASCII italic for want of a face with the
+    /// mathematical alphanumerics: they still read back as Word's
+    /// (U+1D44E for a), not as the ASCII they are painted with.
+    math_ascii: bool,
 }
 
 impl TextRun {
@@ -1764,6 +1768,7 @@ impl TextRun {
             hf_default_tab: 0.0,
             checkbox: None,
             strut: false,
+            math_ascii: false,
         }
     }
 
@@ -8102,6 +8107,7 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
                         color: text_ink,
                         text: word.clone(),
                         hscale: 1.0,
+                        hidden: false,
                     });
                     x += adv;
                 }
@@ -15423,6 +15429,7 @@ fn collect_runs_rec(
                 ctx.dom.attribute(t, &XNamespace::xml().name("space")) == Some("preserve")
             });
             let mut shown = rev_text(text, mark, ctx.in_table || ctx.keep_xml_space || preserved);
+            let mut math_ascii = false;
             if ctx.in_math
                 && let Some(upright) = ctx.math_upright
             {
@@ -15442,10 +15449,12 @@ fn collect_runs_rec(
                         shown = mapped;
                     } else {
                         style.italic = true;
+                        math_ascii = true;
                     }
                 }
             }
             let mut run = TextRun::new(shown, style);
+            run.math_ascii = math_ascii;
             run.rev = mark != RevMark::None;
             run.style.tint = open_tint(ctx);
             run.style.tint_id = ctx.open.first().cloned();
@@ -26131,6 +26140,25 @@ impl<'a> Layout<'a> {
         x
     }
 
+    /// A stretch of .notdef glyphs as hidden text: `(x, text, glyph count)`.
+    /// Blank stretches add nothing.
+    fn push_unpainted(
+        &mut self,
+        face: FaceRef,
+        size: f32,
+        y: f32,
+        color: [f32; 3],
+        stretch: Option<(f32, String, usize)>,
+    ) {
+        if let Some((x, text, n)) = stretch
+            && !text.trim().is_empty()
+        {
+            self.current()
+                .ops
+                .push(Op::text(face, size, x, y, vec![0; n], color, text).hidden());
+        }
+    }
+
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
         // Word's separator is the run's strikeout line on the 300dpi grid
         // (Word 16 probes 2026-10-03: Calibri 11 0.72 thick with its top
@@ -26390,24 +26418,37 @@ impl<'a> Layout<'a> {
             }
         } else {
             let mut gx = x;
+            // Text no face has glyphs for is not painted, but stays
+            // searchable: one hidden op per stretch of .notdef glyphs.
+            let mut unpainted: Option<(f32, String, usize)> = None;
             for (i, (gid, _)) in shaped.iter().enumerate() {
                 let adv_pt = advs[i] * scale + run.style.track;
                 if self.past_clip(gx) {
                     break;
                 }
+                let mut piece = if paired {
+                    chars[i].to_string()
+                } else {
+                    pieces.get(i).cloned().unwrap_or_default()
+                };
+                if run.math_ascii {
+                    piece = piece.chars().map(math_italic).collect();
+                }
                 if *gid != 0 {
-                    let piece = if paired {
-                        chars[i].to_string()
-                    } else {
-                        pieces.get(i).cloned().unwrap_or_default()
-                    };
+                    self.push_unpainted(fid, size, y, run.style.color, unpainted.take());
                     self.current().ops.push(
                         Op::text(fid, size, gx, y, vec![*gid], run.style.color, piece)
                             .scaled(scale),
                     );
+                } else if let Some((_, text, n)) = unpainted.as_mut() {
+                    text.push_str(&piece);
+                    *n += 1;
+                } else {
+                    unpainted = Some((gx, piece, 1));
                 }
                 gx += adv_pt;
             }
+            self.push_unpainted(fid, size, y, run.style.color, unpainted);
         }
         self.decorate_run(x, y, ink_w, &run.style);
         self.place_run_comments(run, x, y, w);
@@ -26568,6 +26609,7 @@ impl<'a> Layout<'a> {
         let piece = |run: &TextRun, text: String| {
             let mut out = TextRun::new(text, run.style.clone());
             out.comment_marker = run.comment_marker;
+            out.math_ascii = run.math_ascii;
             out
         };
         let joined: String = line.iter().map(|r| r.text.as_str()).collect();
@@ -37105,9 +37147,11 @@ mod field_tests {
         let run = runs.iter().find(|r| !r.text.is_empty()).expect("math run");
         assert_eq!(run.text, "ab2");
         assert!(run.style.italic);
+        assert!(run.math_ascii, "they still read back as math letters");
         drop(_none);
         let runs = math_runs(r#"<w:p><m:oMath><m:r><m:t>a</m:t></m:r></m:oMath></w:p>"#);
         assert_eq!(runs[0].text, "\u{1D44E}", "the flag is restored");
+        assert!(!runs[0].math_ascii);
     }
 
     #[test]
@@ -51001,6 +51045,113 @@ mod coverage_round_three_tests {
             assert_eq!(lay.y, 196.0);
         }
 
+        /// Text no face has glyphs for is not painted, but its text stays on
+        /// the page as one hidden op per stretch (KNOWN_ISSUES #9: the
+        /// WebAssembly PDF of a Japanese form read back blank).
+        #[test]
+        fn text_without_glyphs_stays_unpainted_but_searchable() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            lay.emit_paragraph_runs(
+                &[TextRun::new("A\u{13000}\u{13001}B", Defaults::word().run)],
+                &exact_style(),
+                false,
+                FloatWrap::default(),
+            );
+            let texts: Vec<(&str, usize, bool)> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text {
+                        text,
+                        glyphs,
+                        hidden,
+                        ..
+                    } => Some((text.as_str(), glyphs.len(), *hidden)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                texts,
+                vec![
+                    ("A", 1, false),
+                    ("\u{13000}\u{13001}", 2, true),
+                    ("B", 1, false)
+                ]
+            );
+        }
+
+        /// Math letters painted ASCII italic (no face draws U+1D44E) carry
+        /// Word's math text: the native PDF's reads 𝑎, not a.
+        #[test]
+        fn ascii_math_letters_paint_ascii_but_carry_math_text() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let mut run = TextRun::new("a+2", Defaults::word().run);
+            run.style.italic = true;
+            run.math_ascii = true;
+            lay.emit_paragraph_runs(&[run], &exact_style(), false, FloatWrap::default());
+            let texts: Vec<&str> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts, ["\u{1D44E}", "+", "2"]);
+
+            // A justified line repaints each word as a run of its own.
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let mut run = TextRun::new("a b", Defaults::word().run);
+            run.style.italic = true;
+            run.math_ascii = true;
+            lay.paint_stretched(&[run], 72.0, 700.0, 2.0);
+            let texts: Vec<&str> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, .. } if !text.trim().is_empty() => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts, ["\u{1D44E}", "\u{1D44F}"]);
+        }
+
+        /// Two stretches of missing glyphs around painted text: one hidden
+        /// op each, in reading order between the painted ones.
+        #[test]
+        fn each_stretch_of_missing_glyphs_is_its_own_hidden_op() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            lay.emit_paragraph_runs(
+                &[TextRun::new(
+                    "\u{13000}A\u{13001}\u{13002}B",
+                    Defaults::word().run,
+                )],
+                &exact_style(),
+                false,
+                FloatWrap::default(),
+            );
+            let texts: Vec<(&str, bool)> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, hidden, .. } => Some((text.as_str(), *hidden)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                texts,
+                [
+                    ("\u{13000}", true),
+                    ("A", false),
+                    ("\u{13001}\u{13002}", true),
+                    ("B", false)
+                ]
+            );
+        }
+
         #[test]
         fn direct_and_conditional_cell_fills_have_distinct_inner_heights() {
             // Conditional shading covers the row; direct shading backs the line.
@@ -56025,6 +56176,7 @@ mod rendering_uncovered_contract_tests {
                 color,
                 text,
                 hscale,
+                ..
             } = &layout.pages[0].ops[1]
             else {
                 panic!("text paint")
@@ -56238,6 +56390,7 @@ mod rendering_uncovered_contract_tests {
                                 color,
                                 text,
                                 hscale,
+                                ..
                             } = op
                                 && !text.trim().is_empty()
                             {

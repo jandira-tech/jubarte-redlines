@@ -74,6 +74,12 @@ fonts the document embeds and the ones the engine bundles, Carlito and
 Liberation Sans, Serif and Mono: Latin, Greek and Cyrillic, no CJK and no
 math alphabet. The CLI and Python use the machine's installed fonts.
 
+**Text layer fixed (2026-10-11):** the text no face covers is now written
+as hidden text in an `/ActualText` span, and a math letter painted from its
+ASCII italic reads back as the math letter. The same 15 pairs now read
+back the same text in both PDFs (`parity_check.py`, CLI against
+WebAssembly). The Japanese is still not painted.
+
 **Options:** let `docxToPdf` take font files from its caller, as
 `JUBARTE_FONT_DIR` lets the CLI; ship a CJK font in an opt-in package; or
 report the text no font covers instead of painting nothing.

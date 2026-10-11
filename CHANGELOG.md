@@ -157,6 +157,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - PDF: a list label wider than its hanging indent sends the text to the
   next tab stop, as Word does, instead of painting the text over the
   label.
+- PDF: text no available font has glyphs for (Japanese in the WebAssembly
+  build) is still left unpainted, but search and copy now read it, where
+  they read nothing or NULs. Math letters painted from their ASCII italic
+  read back as Word's math letters (𝑎, not a). Both use `/ActualText`.
 - `scripts/release.sh` step 11 runs `gh release download` with no terminal
   attached and keeps gh's error. Under `script` (the 0.11.3 run's log
   wrapper), gh's progress display queried the terminal and failed, and the
