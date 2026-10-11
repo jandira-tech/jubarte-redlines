@@ -78,6 +78,13 @@ pub(crate) struct Converted {
     pub(crate) media: BTreeMap<String, Vec<u8>>,
 }
 
+/// A part's file stem: `word/footnotes.xml` → `footnotes`, the story
+/// `jubarte changes` names its changes by.
+fn part_stem(path: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.strip_suffix(".xml").unwrap_or(file).to_string()
+}
+
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
     let mut package = Package::open(bytes, "DOCX")?;
     let main = package.main_part("word/document.xml")?;
@@ -109,11 +116,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     };
     let threads = agent::threads(comments_root.as_ref(), extended.as_ref());
     let mut note_roots = Vec::new();
+    // The notes parts' stems (`footnotes`), which name their changes' story.
+    let mut note_stories: HashMap<bool, String> = HashMap::new();
     for (kind, fallback, name) in [
         ("/footnotes", "word/footnotes.xml", "footnote"),
         ("/endnotes", "word/endnotes.xml", "endnote"),
     ] {
-        if let Ok(Some(root)) = package.xml(&part(kind, fallback)) {
+        let path = part(kind, fallback);
+        if let Ok(Some(root)) = package.xml(&path) {
+            note_stories.insert(name == "endnote", part_stem(&path));
             note_roots.push((name, root));
         }
     }
@@ -255,6 +266,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         page: 0,
         para_comments: Vec::new(),
         threads: threads.clone(),
+        story: None,
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -305,6 +317,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         };
         let around = std::mem::replace(&mut writer.revisions, changes);
         writer.lead = Some(format!("[^{index}]: "));
+        writer.story = note_stories.get(&key.0).cloned();
         let parts = note
             .children_named("p")
             .map(|p| {
@@ -317,6 +330,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             })
             .collect();
         writer.revisions = around;
+        writer.story = None;
         // Still set: no paragraph had text, so there is no note.
         if writer.lead.take().is_none() {
             defs.push(critic::join_marked(parts, " "));
@@ -515,7 +529,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                     "right" | "end" => Some("right"),
                                     _ => None,
                                 });
-                            (i, header::story_text(p), align)
+                            let agent = (options.ids && accept.is_none())
+                                .then_some((&handles, stem.as_str()));
+                            (i, header::story_text(p, agent), align)
                         })
                         .find(|(_, text, _)| !text.is_empty())
                         .unwrap_or((0, String::new(), None));
@@ -1038,7 +1054,7 @@ struct Writer<'a> {
     /// Comment ranges open at this point, in the order they started.
     open_comments: Vec<String>,
     /// Agent view, comments hidden: the ranges open at this point. They
-    /// highlight nothing; the id lines name them (`in #c5`).
+    /// highlight nothing; the id lines name them (`in c5`).
     hidden_ranges: Vec<String>,
     /// Notes of unreferenced comments whose range ended between paragraphs;
     /// they open the next paragraph.
@@ -1081,6 +1097,9 @@ struct Writer<'a> {
     para_comments: Vec<String>,
     /// Agent view: comment threads (`commentsExtended.xml`).
     threads: agent::Threads,
+    /// Agent view: the story being written (`footnotes`, `header1`), whose
+    /// stem prefixes its change tags; `None` in the body.
+    story: Option<String>,
 }
 
 impl Writer<'_> {
@@ -1279,7 +1298,7 @@ impl Writer<'_> {
                 std::mem::take(&mut self.para_comments)
             };
             self.para_comments.clear();
-            // A comment the line lists (`comments #c9`) is not named again
+            // A comment the line lists (`comments c9`) is not named again
             // as a range it runs in.
             spans.retain(|id| !comments.contains(id));
             let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
@@ -1432,7 +1451,7 @@ impl Writer<'_> {
         }
     }
 
-    /// The thread roots among `ids`, for an id line's `in #c5` (agent view).
+    /// The thread roots among `ids`, for an id line's `in c5` (agent view).
     fn threads_of(&self, ids: &[String]) -> Vec<String> {
         if !self.agent {
             return Vec::new();
@@ -1447,7 +1466,7 @@ impl Writer<'_> {
     }
 
     /// The comment ranges open here plus those `container` opens and leaves
-    /// open: every range a table line's `in #c5` names. A text box is a
+    /// open: every range a table line's `in c5` names. A text box is a
     /// story of its own; its ranges stay inside it.
     fn open_after(&self, container: &Element) -> Vec<String> {
         fn walk(e: &Element, comments: &HashMap<String, Element>, open: &mut Vec<String>) {
@@ -1981,7 +2000,15 @@ impl Writer<'_> {
     /// The agent tag of a revision element, with its timestamp when
     /// `--dates` asks for one and the author has several.
     fn agent_tag(&self, element: &Element) -> String {
-        let mut tagged = format!("{}{}", critic::TAG, agent::tag_of(element, &self.handles));
+        let story = self
+            .story
+            .as_deref()
+            .map_or(String::new(), |s| format!("{s}#"));
+        let mut tagged = format!(
+            "{}{story}{}",
+            critic::TAG,
+            agent::tag_of(element, &self.handles)
+        );
         if self.dates
             && self.handles.needs_date(element.attr("author"))
             && let Some(date) = element.attr("date")

@@ -882,14 +882,19 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
 /// A header/footer paragraph's text with fields as `{PAGE}`: field codes
 /// print, cached results do not, and a field nested in another prints as the
 /// outer one. Line breaks are newlines. Runs inside hyperlinks, content
-/// controls, smart tags, custom XML and insertions count; deleted runs do not.
-pub(crate) fn story_text(p: &Element) -> String {
-    #[derive(Default)]
-    struct State {
+/// controls, smart tags, custom XML and insertions count; deleted runs do
+/// not. With `agent` (the handles and the part's stem) tracked changes show
+/// as the tracked view shows them: `{++DRAFT++}{>>header1.r1 @AC<<}`, a
+/// deletion `{--old--}{>>header1.r2 @AC<<}`.
+pub(crate) fn story_text(p: &Element, agent: Option<(&super::agent::Handles, &str)>) -> String {
+    struct State<'a> {
         out: String,
         /// Open complex fields, outermost first: the instruction so far and
         /// whether the field has reached its result.
         fields: Vec<(String, bool)>,
+        agent: Option<(&'a super::agent::Handles, &'a str)>,
+        /// Inside a tracked deletion the agent view shows.
+        deleting: bool,
     }
     fn code(instr: &str) -> String {
         let name = instr
@@ -903,6 +908,28 @@ pub(crate) fn story_text(p: &Element) -> String {
         for run in parent.elements() {
             match run.local() {
                 "fldSimple" => s.out.push_str(&code(run.attr("instr").unwrap_or(""))),
+                "ins" | "del" if s.agent.is_some() && s.fields.is_empty() => {
+                    let Some((handles, stem)) = s.agent else {
+                        continue;
+                    };
+                    let start = s.out.len();
+                    let deleting = std::mem::replace(&mut s.deleting, run.local() == "del");
+                    walk(run, s);
+                    s.deleting = deleting;
+                    let text = s.out.split_off(start);
+                    if !text.is_empty() {
+                        let (open, close) = if run.local() == "ins" {
+                            ("{++", "++}")
+                        } else {
+                            ("{--", "--}")
+                        };
+                        let tag = format!("{stem}#{}", super::agent::tag_of(run, handles));
+                        s.out.push_str(&format!(
+                            "{open}{text}{close}{{>>{}<<}}",
+                            super::agent::format_tag(&tag)
+                        ));
+                    }
+                }
                 "hyperlink" | "smartTag" | "customXml" | "ins" => walk(run, s),
                 "sdt" => {
                     if let Some(content) = run.child("sdtContent") {
@@ -935,6 +962,7 @@ pub(crate) fn story_text(p: &Element) -> String {
                             }
                             _ if !s.fields.is_empty() => {}
                             "t" => s.out.push_str(&child.text()),
+                            "delText" if s.deleting => s.out.push_str(&child.text()),
                             "tab" => s.out.push('\t'),
                             "br" | "cr" => s.out.push('\n'),
                             _ => {}
@@ -945,7 +973,12 @@ pub(crate) fn story_text(p: &Element) -> String {
             }
         }
     }
-    let mut s = State::default();
+    let mut s = State {
+        out: String::new(),
+        fields: Vec::new(),
+        agent,
+        deleting: false,
+    };
     walk(p, &mut s);
     s.out.trim().to_string()
 }
@@ -1015,8 +1048,8 @@ mod tests {
         ));
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0]), "{PAGE}");
-        assert_eq!(story_text(paragraphs[1]), "");
+        assert_eq!(story_text(paragraphs[0], None), "{PAGE}");
+        assert_eq!(story_text(paragraphs[1], None), "");
     }
 
     #[test]
@@ -1025,7 +1058,7 @@ mod tests {
             r#"<w:p><w:hyperlink><w:r><w:t>Page </w:t></w:r></w:hyperlink><w:sdt><w:sdtContent>{PAGE_RUNS}</w:sdtContent></w:sdt><w:ins><w:r><w:t> of </w:t></w:r></w:ins><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:fldSimple w:instr=" numpages "><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0]),
+            story_text(story_paragraphs(&root)[0], None),
             "Page {PAGE} of {NUMPAGES}"
         );
     }
@@ -1039,8 +1072,8 @@ mod tests {
         );
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0]), "");
-        assert_eq!(story_text(paragraphs[1]), "body");
+        assert_eq!(story_text(paragraphs[0], None), "");
+        assert_eq!(story_text(paragraphs[1], None), "body");
     }
 
     /// pi review r392 F1/F6: values a YAML 1.1 or 1.2 reader takes as a
@@ -1076,7 +1109,7 @@ mod tests {
             r#"<w:p><w:r><w:t>line one</w:t><w:br/><w:t>line two</w:t><w:cr/><w:t>three</w:t></w:r></w:p>"#,
         );
         assert_eq!(
-            story_text(story_paragraphs(&root)[0]),
+            story_text(story_paragraphs(&root)[0], None),
             "line one\nline two\nthree"
         );
     }
@@ -1088,6 +1121,9 @@ mod tests {
         let root = ftr(&format!(
             r#"<w:p><w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF </w:instrText></w:r>{PAGE_RUNS}<w:r><w:instrText xml:space="preserve"> > 1 "more" "" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>more</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t> end</w:t></w:r></w:p>"#
         ));
-        assert_eq!(story_text(story_paragraphs(&root)[0]), "Page {IF} end");
+        assert_eq!(
+            story_text(story_paragraphs(&root)[0], None),
+            "Page {IF} end"
+        );
     }
 }
