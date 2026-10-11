@@ -495,6 +495,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "oxml-opc"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a8ed9a963407e83563274385c6e0898d8a42d2e41866d88d4efbda77e7a94a3"
+dependencies = [
+ "quick-xml 0.41.0",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -568,13 +579,11 @@ dependencies = [
 
 [[package]]
 name = "rdocx-opc"
-version = "0.2.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85e46b87a0ba15c90ba1834844246900c104fd030b7eedbbfc6d9d4284da7292"
+checksum = "9fd29e24fceac7f3dfce30fe9dff24fe590db929864de0e80c1d1e5505bb7fc7"
 dependencies = [
- "quick-xml 0.41.0",
- "thiserror",
- "zip",
+ "oxml-opc",
 ]
 
 [[package]]
