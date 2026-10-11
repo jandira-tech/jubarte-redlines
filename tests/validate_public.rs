@@ -281,6 +281,11 @@ fn a_cell_ending_in_a_content_control_table_still_needs_a_paragraph() {
         codes(&findings).contains(&"CELL_WITHOUT_PARAGRAPH"),
         "{findings:?}"
     );
+    let out = assert_repairs(body, "CELL_WITHOUT_PARAGRAPH");
+    let xml = part_string(&out, "word/document.xml")
+        .unwrap()
+        .replace(" />", "/>");
+    assert!(xml.contains("</w:sdt><w:p/></w:tc>"), "{xml}");
 }
 
 #[test]

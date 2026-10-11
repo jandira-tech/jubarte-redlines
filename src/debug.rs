@@ -267,18 +267,27 @@ fn local(dom: &Dom, n: NodeId) -> String {
 
 /// Whether a table cell's content ends in a paragraph. A cell-level content
 /// control counts by what its content ends in: Word writes and opens a cell
-/// whose last child is a `w:sdt` (nested or not) ending in a `w:p`.
+/// whose last child is a `w:sdt` (nested or not) ending in a `w:p`. Each level
+/// skips only its own properties (`w:tcPr`; a control's `w:sdtContent` comes
+/// after its `w:sdtPr` and `w:sdtEndPr`).
 pub(crate) fn cell_ends_in_paragraph(dom: &Dom, tc: NodeId) -> bool {
     let mut node = tc;
+    let mut properties = Some("tcPr");
     loop {
         let last = dom
             .elements(node, None)
             .into_iter()
             .map(|c| (c, local(dom, c)))
-            .rfind(|(_, name)| !matches!(name.as_str(), "tcPr" | "sdtPr" | "sdtEndPr"));
+            .rfind(|(_, name)| Some(name.as_str()) != properties);
         match last {
             Some((_, name)) if name == "p" => return true,
-            Some((child, name)) if name == "sdt" || name == "sdtContent" => node = child,
+            Some((sdt, name)) if name == "sdt" => {
+                match dom.elements(sdt, None).last().map(|&c| (c, local(dom, c))) {
+                    Some((content, name)) if name == "sdtContent" => node = content,
+                    _ => return false,
+                }
+                properties = None;
+            }
             _ => return false,
         }
     }
@@ -2635,6 +2644,48 @@ mod tests {
             z.finish().unwrap();
         }
         buf.into_inner()
+    }
+
+    #[test]
+    fn a_cell_ends_in_a_paragraph_through_its_content_controls_only() {
+        const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        let cases = [
+            ("<w:tcPr/><w:p/>", true),
+            ("<w:tcPr/>", false),
+            (
+                "<w:sdt><w:sdtPr/><w:sdtContent><w:p/></w:sdtContent></w:sdt>",
+                true,
+            ),
+            (
+                "<w:sdt><w:sdtPr/><w:sdtEndPr/><w:sdtContent><w:sdt><w:sdtContent><w:sdt>\
+                 <w:sdtContent><w:p/></w:sdtContent></w:sdt></w:sdtContent></w:sdt>\
+                 </w:sdtContent></w:sdt>",
+                true,
+            ),
+            ("<w:sdt><w:sdtPr/><w:sdtContent/></w:sdt>", false),
+            ("<w:sdt><w:sdtPr/></w:sdt>", false),
+            (
+                "<w:sdt><w:sdtContent><w:tbl/></w:sdtContent></w:sdt>",
+                false,
+            ),
+            // Only the level's own properties are skipped.
+            (
+                "<w:sdt><w:sdtContent><w:p/><w:tcPr/></w:sdtContent></w:sdt>",
+                false,
+            ),
+            (
+                "<w:sdt><w:sdtContent><w:p/></w:sdtContent><w:sdtPr/></w:sdt>",
+                false,
+            ),
+            ("<w:p/><w:sdtEndPr/>", false),
+            ("<w:sdtContent><w:p/></w:sdtContent>", false),
+        ];
+        for (cell, expected) in cases {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&format!(r#"<w:tc xmlns:w="{W_NS}">{cell}</w:tc>"#));
+            let tc = dom.root(doc).unwrap();
+            assert_eq!(cell_ends_in_paragraph(&dom, tc), expected, "{cell}");
+        }
     }
 
     fn document(body: &str) -> String {
