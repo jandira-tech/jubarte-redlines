@@ -14,7 +14,7 @@
   "ties": 1,
   "wins": 578
  },
- "generated": "2026-10-11T10:21:52+00:00",
+ "generated": "2026-10-11T11:56:22+00:00",
  "provenance": {
   "measure": "bench docx-to-pdf --origin list (one --files-list per fixture); soffice --score-only --location-to-score results/release_0.12.0_evidence/soffice_sample",
   "scores": {
@@ -24,7 +24,7 @@
  },
  "release": "0.12.0",
  "sample": {
-  "csv": "sample_conversion_0.12.0_10-11-26_06-21.csv",
+  "csv": "sample_conversion_0.12.0_10-11-26_07-56.csv",
   "drawn": {
    "by_state": {
     "clean": 150,
@@ -44,10 +44,10 @@
    "seed": 20261003
   },
   "n": 600,
-  "sha256": "338be7a9bda1f89a6a949c5812761450a6fa039699887a6d941fd29db7b011c9"
+  "sha256": "2fbd14cb340beb6f311833e68c8708d01be93008635dd74a1a01d5809717f0e9"
  },
  "schema": "jubarte-redlines/release_info/results_conversion/1",
- "stamp": "10-11-26_06-21",
+ "stamp": "10-11-26_07-56",
  "tools": {
   "jubarte": {
    "at_least_90": 117,
