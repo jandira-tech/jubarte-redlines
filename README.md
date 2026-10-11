@@ -186,7 +186,7 @@ npx jubarte-redlines redline a.docx b.docx -o redline.docx
 ```
 
 Both runners speak the shared command set — `compare`/`redline`,
-`revisions`, `changes`, `accept`, `reject`, `inspect`, `text`, `edit`,
+`changes`, `accept`, `reject`, `inspect`, `text`, `edit`,
 `convert`, `capabilities` — but not the whole binary surface: the Python
 wheel and npm CLI now include `diff` and share the Rust clap parser for
 help, defaults, aliases and usage errors. Native-only tasks such as
