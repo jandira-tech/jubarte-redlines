@@ -629,6 +629,33 @@ fn a_styles_one_id_pair_is_one_change() {
     );
 }
 
+/// Only a style's own `w:pPr`/`w:rPr` records pair: a table style's
+/// conditional (`w:tblStylePr`) record sharing the id is another change, so
+/// the id is ambiguous instead of one record vanishing from the list.
+#[test]
+fn a_conditional_style_record_does_not_pair() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="9" {A}><w:pPr/></w:pPrChange></w:pPr><w:tblStylePr w:type="firstRow"><w:rPr><w:b/><w:rPrChange w:id="9" {B}><w:rPr/></w:rPrChange></w:rPr></w:tblStylePr></w:style></w:styles>"#
+    );
+    let styles: &'static str = Box::leak(styles.into_boxed_str());
+    let pkg = common::docx::docx_with(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: styles,
+        }],
+    );
+    let listed = list_changes(&pkg).unwrap();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(matches!(
+        reject_changes(&pkg, &filter_ids(&["styles.r9"])),
+        Err(ChangeError::Ambiguous { .. })
+    ));
+}
+
 /// A header change prints `header1.rN` and resolves by it.
 #[test]
 fn a_header_change_resolves_by_its_short_id() {

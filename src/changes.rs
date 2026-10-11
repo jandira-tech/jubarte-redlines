@@ -590,18 +590,28 @@ fn fold_twins(dom: &Dom, carriers: &mut [Carrier]) {
 }
 
 /// Word records a style's paragraph and run formatting changes
-/// (`w:pPrChange`, `w:rPrChange`) under one `w:id`: one change. The first
-/// carrier is listed; the others join its group unlisted, so resolving it
-/// resolves them all.
+/// (`w:style/w:pPr/w:pPrChange`, `w:style/w:rPr/w:rPrChange`) under one
+/// `w:id`: one change. The first is listed; the other joins its group
+/// unlisted, so resolving it resolves both. Any other record sharing the
+/// id (a `w:tblStylePr`'s) stays a change of its own.
 fn fold_style_pairs(dom: &Dom, carriers: &mut [Carrier]) {
     let style = W::name("style");
+    // The style whose own pPr/rPr holds `node`, a pPrChange or rPrChange.
+    let own_style = |node: NodeId| {
+        let block = dom.parent(node)?;
+        let owner = dom.parent(block)?;
+        let pair = [("pPrChange", "pPr"), ("rPrChange", "rPr")];
+        let (name, block_name) = (dom.name(node)?, dom.name(block)?);
+        let shape = (name.local_name(), block_name.local_name());
+        (pair.contains(&shape) && dom.name_is(owner, &style)).then_some(owner)
+    };
     let mut first: HashMap<(NodeId, String), Group> = HashMap::new();
     for c in carriers.iter_mut() {
         let Some(change) = &c.change else { continue };
         if change.kind != ChangeKind::Formatting {
             continue;
         }
-        let Some(&owner) = dom.ancestors(c.node, Some(&style)).first() else {
+        let Some(owner) = own_style(c.node) else {
             continue;
         };
         let wid = change
