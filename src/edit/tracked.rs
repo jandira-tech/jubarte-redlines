@@ -24,7 +24,7 @@ use super::{
     new_position, place_reply_markers, remove_comment_markers, set_text, split_run_at,
     toc_paragraphs,
 };
-use crate::changes::{ChangeKind, list_changes};
+use crate::changes::list_changes;
 use crate::inspect::{Opened, Piece, project_paragraph};
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -181,23 +181,15 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
     Ok(redline)
 }
 
-/// Counts of the redline's changes by `author` on `date`.
+/// Counts of the redline's changes by `author` on `date`: the source's
+/// own changes stay out.
 fn revision_counts(redline: &[u8], author: &str, date: &str) -> RevisionCounts {
-    let mut counts = RevisionCounts::default();
     let changes = list_changes(redline).unwrap_or_default();
-    for change in changes
-        .iter()
-        .filter(|c| c.author.as_deref() == Some(author) && c.date.as_deref() == Some(date))
-    {
-        match change.kind {
-            ChangeKind::Insertion => counts.inserted += 1,
-            ChangeKind::Deletion => counts.deleted += 1,
-            ChangeKind::Move => counts.moved += 1,
-            ChangeKind::Formatting => counts.format_changed += 1,
-        }
-        counts.total += 1;
-    }
-    counts
+    RevisionCounts::from_changes(
+        changes
+            .iter()
+            .filter(|c| c.author.as_deref() == Some(author) && c.date.as_deref() == Some(date)),
+    )
 }
 
 /// One past the highest `w:id` in every revision-bearing part and among the
@@ -1258,6 +1250,7 @@ mod tracked_source_property_boundary_tests {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod public_adjacent_run_replacement_owner_tests {
     use super::*;
+    use crate::changes::ChangeKind;
     use crate::edit::deeper_boundary_fixture::docx;
 
     fn tree(dom: &Dom, node: NodeId) -> String {

@@ -279,10 +279,15 @@ pub fn changes_text(changes: &[Change]) -> String {
 /// Every tracked change, story by story (body, headers, footers, endnotes,
 /// footnotes, styles), in document order.
 pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
-    let pkg = open(docx)?;
-    let main = main_part(&pkg);
+    Ok(changes_in(&open(docx)?))
+}
+
+/// The changes of an opened (transitional) package, as [`list_changes`]
+/// lists them.
+pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
+    let main = main_part(pkg);
     let mut out = Vec::new();
-    for (part, _) in revision_bearing_parts(&pkg) {
+    for (part, _) in revision_bearing_parts(pkg) {
         let Some(xml) = pkg.part_string(&part) else {
             continue;
         };
@@ -298,7 +303,7 @@ pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
                 .filter_map(|c| c.change),
         );
     }
-    Ok(out)
+    out
 }
 
 /// Accept the changes `filter` selects; the others stay tracked.
@@ -352,10 +357,12 @@ fn resolve(
         .map_err(|e| ChangeError::Package(e.to_string()))
 }
 
+/// The package, Strict normalized to transitional as `inspect` reads it.
 fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
     crate::document_comparer::admit_package(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    PartFs::open(docx).map_err(|e| ChangeError::Package(e.to_string()))
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))
 }
 
 fn main_part(pkg: &PartFs) -> String {

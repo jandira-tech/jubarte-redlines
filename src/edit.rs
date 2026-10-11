@@ -22,9 +22,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::changes::{Change, ChangeError, ChangeFilter};
+use crate::changes::{Change, ChangeError, ChangeFilter, ChangeKind};
 
-use crate::comparer::{WmlComparerRevisionType, WmlComparerSettings};
+use crate::comparer::WmlComparerSettings;
 use crate::inspect::{
     BODY_STORY, Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256,
 };
@@ -872,7 +872,7 @@ pub struct EditOutcome {
     pub message: Option<String>,
 }
 
-/// Comparer revision counts in the redline.
+/// The redline's changes by kind, as `jubarte changes` lists them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RevisionCounts {
     /// Insertions.
@@ -881,11 +881,29 @@ pub struct RevisionCounts {
     pub deleted: usize,
     /// Moves.
     pub moved: usize,
-    /// Formatting changes: run (`w:rPrChange`) and paragraph
-    /// (`w:pPrChange`) properties.
+    /// Formatting changes: run, paragraph, section, table and style
+    /// properties.
     pub format_changed: usize,
-    /// All revision records.
+    /// All changes.
     pub total: usize,
+}
+
+impl RevisionCounts {
+    /// The counts of `changes`, one per listed change.
+    pub fn from_changes<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Self {
+        let mut counts = Self::default();
+        for change in changes {
+            let slot = match change.kind {
+                ChangeKind::Insertion => &mut counts.inserted,
+                ChangeKind::Deletion => &mut counts.deleted,
+                ChangeKind::Move => &mut counts.moved,
+                ChangeKind::Formatting => &mut counts.format_changed,
+            };
+            *slot += 1;
+            counts.total += 1;
+        }
+        counts
+    }
 }
 
 /// Paragraph count before and after.
@@ -1167,14 +1185,11 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
         Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
         None => (source, probe),
     };
-    let story_revisions: usize = probe
-        .story_parts()
+    // The listed changes of the body, headers, footers and notes; a style's
+    // recorded formatting does not make the text tracked.
+    let has_revisions = crate::changes::changes_in(&probe.pkg)
         .iter()
-        .filter_map(|(_, _, part)| crate::inspect::parse_part(&probe.pkg, part).ok())
-        .map(|(dom, _, root)| crate::inspect::revision_count(&dom, root))
-        .sum();
-    let has_revisions =
-        crate::inspect::revision_count(&probe.dom, probe.body) + story_revisions > 0;
+        .any(|c| !c.id.starts_with("styles:"));
     let (base, opened, flattened) = match (has_revisions, plan.existing_revisions) {
         (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe, false),
         (true, ExistingRevisions::Refuse) => {
@@ -1508,7 +1523,7 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
-    report.revisions = revision_counts(&redline, &settings);
+    report.revisions = revision_counts(&redline);
     report.fields = fields;
     Ok(EditResult {
         clean,
@@ -1542,54 +1557,9 @@ pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditEr
     Ok(report)
 }
 
-fn revision_counts(redline: &[u8], settings: &WmlComparerSettings) -> RevisionCounts {
-    let mut counts = RevisionCounts::default();
-    if let Ok(revs) = crate::document_comparer::get_revisions(redline, settings) {
-        for r in revs {
-            match r.revision_type {
-                WmlComparerRevisionType::Inserted => counts.inserted += 1,
-                WmlComparerRevisionType::Deleted => counts.deleted += 1,
-                WmlComparerRevisionType::Moved => counts.moved += 1,
-                WmlComparerRevisionType::FormatChanged => counts.format_changed += 1,
-            }
-            counts.total += 1;
-        }
-    }
-    // get_revisions follows Open-Xml-PowerTools and lists run formatting
-    // only; a format_paragraph plan must not report zero changes.
-    if let Ok(opened) = Opened::open(redline) {
-        let paragraph_changes = opened
-            .dom
-            .descendants(opened.body, Some(&W::p_pr_change()))
-            .len();
-        counts.format_changed += paragraph_changes;
-        counts.total += paragraph_changes;
-        // get_revisions reads the body and notes only; count headers and
-        // footers by their revision elements.
-        for (_, kind, part) in opened.story_parts() {
-            if !matches!(kind, "header" | "footer") {
-                continue;
-            }
-            let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) else {
-                continue;
-            };
-            for node in dom.descendants(root, None) {
-                let Some(name) = dom.name(node) else { continue };
-                let slot = match name.local_name() {
-                    "ins" => &mut counts.inserted,
-                    "del" => &mut counts.deleted,
-                    "moveFrom" | "moveTo" => &mut counts.moved,
-                    "rPrChange" | "pPrChange" => &mut counts.format_changed,
-                    _ => continue,
-                };
-                if name.namespace_name() == W::URI {
-                    *slot += 1;
-                    counts.total += 1;
-                }
-            }
-        }
-    }
-    counts
+/// The comparer's redline holds this edit's changes only: all of them.
+fn revision_counts(redline: &[u8]) -> RevisionCounts {
+    RevisionCounts::from_changes(&crate::changes::list_changes(redline).unwrap_or_default())
 }
 
 /// A text edit scheduled on one paragraph, in source projection bytes.
@@ -6314,10 +6284,7 @@ mod deeper_boundary_tests {
     // 1376, 1389, 4519: invalid byte input is handled without panic.
     #[test]
     fn invalid_package_has_no_revisions_or_kept_comment_text() {
-        assert_eq!(
-            revision_counts(b"invalid zip", &WmlComparerSettings::default()),
-            RevisionCounts::default()
-        );
+        assert_eq!(revision_counts(b"invalid zip"), RevisionCounts::default());
         assert!(!comment_holds_kept_text(b"invalid zip", 0));
     }
 
@@ -7476,16 +7443,10 @@ mod deeper_boundary_tests {
                 xml: &header,
             }],
         );
-        assert_eq!(
-            revision_counts(&source, &WmlComparerSettings::default()),
-            RevisionCounts::default()
-        );
+        assert_eq!(revision_counts(&source), RevisionCounts::default());
         let broken =
             fixture::replace_entry(&source, "word/header1.xml", b"<?xml version=\"1.0\"?>");
-        assert_eq!(
-            revision_counts(&broken, &WmlComparerSettings::default()),
-            RevisionCounts::default()
-        );
+        assert_eq!(revision_counts(&broken), RevisionCounts::default());
         assert!(!comment_holds_kept_text(&broken, 7));
         assert_eq!(
             fixture::part_string(&broken, "word/header1.xml").as_deref(),

@@ -101,7 +101,9 @@ pub struct Summary {
     pub sections: usize,
     /// Comment definitions in the related comments part.
     pub comments: usize,
-    /// Raw revision carrier elements across XML parts, not coalesced changes.
+    /// Tracked changes, as `jubarte changes` lists them: the body, headers,
+    /// footers, notes and styles, a move's sides and a text box's two copies
+    /// counted once each.
     pub revisions: usize,
     /// Footnotes excluding separators.
     pub footnotes: usize,
@@ -404,18 +406,17 @@ impl Opened {
             if mime.is_some_and(|mime| mime.starts_with("image/")) {
                 summary.images += 1;
             }
-            // Revisions live only in WordprocessingML parts; custom XML items
-            // and vendor parts are not read, so the checked reader cannot
+            // The checked reader refuses a malformed WordprocessingML part;
+            // custom XML items and vendor parts are not read, so it cannot
             // refuse the document over them.
             let wordprocessing = mime.is_some_and(|mime| {
                 mime.starts_with("application/vnd.openxmlformats-officedocument.wordprocessingml.")
             });
             if wordprocessing && name != self.main {
-                let (part_dom, _, part_root) = parse_part(pkg, &name)?;
-                summary.revisions += revision_count(&part_dom, part_root);
+                parse_part(pkg, &name)?;
             }
         }
-        summary.revisions += revision_count(dom, self.body);
+        summary.revisions = crate::changes::changes_in(pkg).len();
         for (kind, targets) in [
             ("header", self.related("header")),
             ("footer", self.related("footer")),
@@ -555,36 +556,6 @@ fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
                 dom.attribute(node, &W::name("type")),
                 Some("separator" | "continuationSeparator")
             )
-        })
-        .count()
-}
-
-const REVISION_CARRIERS: &[&str] = &[
-    "ins",
-    "del",
-    "moveFrom",
-    "moveTo",
-    "rPrChange",
-    "pPrChange",
-    "sectPrChange",
-    "tblPrChange",
-    "tblGridChange",
-    "trPrChange",
-    "tcPrChange",
-    "numberingChange",
-    "cellIns",
-    "cellDel",
-    "cellMerge",
-];
-
-/// Raw revision carrier elements under `root` (self included).
-pub(crate) fn revision_count(dom: &Dom, root: NodeId) -> usize {
-    dom.descendants_and_self(root, None)
-        .iter()
-        .filter(|&&node| {
-            dom.name(node).is_some_and(|name| {
-                name.namespace_name() == W::URI && REVISION_CARRIERS.contains(&name.local_name())
-            })
         })
         .count()
 }

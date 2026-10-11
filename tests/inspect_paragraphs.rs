@@ -303,3 +303,50 @@ fn empty_body_has_no_phantom_paragraphs_or_markdown() {
     assert_eq!(facts.sections, 1);
     assert!(!facts.list_numbering);
 }
+
+/// `summary.revisions` is the change list's length: a body, a header and a
+/// style revision count 3, a style's pPrChange + rPrChange under one id
+/// count once, and a Strict package counts what its transitional twin does.
+#[test]
+fn summary_revisions_count_the_listed_changes() {
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const A: &str = r#"w:author="Ann" w:date="2026-01-01T00:00:00Z""#;
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W}"><w:p><w:ins w:id="2" {A}><w:r><w:t>Head</w:t></w:r></w:ins></w:p></w:hdr>"#
+    );
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W}"><w:style w:type="paragraph" w:styleId="Title"><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="3" {A}><w:pPr/></w:pPrChange></w:pPr><w:rPr><w:b/><w:rPrChange w:id="3" {A}><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let doc = docx_with(
+        &format!(r#"<w:p><w:ins w:id="1" {A}><w:r><w:t>Body</w:t></w:r></w:ins></w:p>"#),
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            },
+            Part {
+                name: "word/styles.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                xml: &styles,
+            },
+        ],
+    );
+    let listed = jubarte::changes::list_changes(&doc).unwrap();
+    assert_eq!(listed.len(), 3, "{listed:?}");
+    assert_eq!(summary(&doc).unwrap().revisions, 3);
+
+    let strict_w = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+    let document = common::docx::part_string(&doc, "word/document.xml")
+        .unwrap()
+        .replace(W, strict_w);
+    let strict = common::docx::replace_entry(&doc, "word/document.xml", document.as_bytes());
+    assert_eq!(
+        jubarte::changes::list_changes(&strict).unwrap().len(),
+        3,
+        "Strict lists what its transitional twin lists"
+    );
+    assert_eq!(summary(&strict).unwrap().revisions, 3);
+}
