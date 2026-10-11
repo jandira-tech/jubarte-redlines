@@ -15,7 +15,6 @@ authors = ["Jandira Technologies, LLC"]
 license = "AGPL-3.0-only"
 description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
 repository = "https://github.com/jandira-tech/jubarte-redlines"
-homepage = "https://github.com/jandira-tech/jubarte-redlines"
 documentation = "https://docs.rs/jubarte-redlines"
 readme = "README.crates.md"
 keywords = ["docx", "redline", "track-changes", "word", "pdf"]
