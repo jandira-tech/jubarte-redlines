@@ -598,6 +598,13 @@ fn the_cli_p_flag_takes_bare_numbers_hash_comments_and_notes() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    let resolved = |out: &str| {
+        let docx = std::fs::read(dir.path().join(out).join("redline.docx")).unwrap();
+        common::docx::part_string(&docx, "word/commentsExtended.xml").unwrap()
+    };
+    let done = resolved("reply0");
+    assert!(done.contains(r#"w15:done="1""#), "{done}");
+    assert_eq!(resolved("reply1"), done);
 
     let footnotes = format!(
         r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t>Source note</w:t></w:r></w:p></w:footnote></w:footnotes>"#
@@ -790,4 +797,53 @@ fn the_cli_refuses_revision_and_reply_flags_on_the_wrong_location() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains(message), "{args:?}: {stderr}");
     }
+}
+
+/// `-p r1 --reject -p p3 --anchor weekly --content biweekly` rejects first:
+/// Ann's deletion "weekly" comes back as text, and the edit then finds it.
+#[test]
+fn a_rejection_lands_before_the_edit_beside_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("received.docx"), received()).unwrap();
+    let out = edit_cli(
+        dir.path(),
+        &[
+            "received.docx",
+            "-p",
+            "r1",
+            "--reject",
+            "-p",
+            "p3",
+            "--anchor",
+            "weekly",
+            "--content",
+            "biweekly",
+            "--existing-revisions",
+            "keep",
+            "--author",
+            "Editor",
+            "--out-dir",
+            "both",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let redline = std::fs::read(dir.path().join("both/redline.docx")).unwrap();
+    let texts: Vec<String> = jubarte::changes::list_changes(&redline)
+        .unwrap()
+        .into_iter()
+        .map(|c| format!("{:?} {} {}", c.kind, c.author.unwrap_or_default(), c.text))
+        .collect();
+    // The edit tracks the smallest change: "bi" before the live "weekly".
+    assert!(
+        texts.iter().any(|t| t == "Insertion Editor bi"),
+        "{texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t == "Deletion Ann Counsel weekly"),
+        "{texts:?}"
+    );
 }
