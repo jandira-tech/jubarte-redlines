@@ -480,6 +480,36 @@ fn next_free_revision_id(dom: &Dom, styles_root: NodeId) -> u32 {
     max.saturating_add(1)
 }
 
+/// The `w:id` of a new `w:pPrChange`/`w:rPrChange` under `block`. A style
+/// already carrying the other record from this comparison (same author and
+/// date) lends it its id: Word gives a style's two records one id (199 of
+/// 199 corpus styles carrying both), so the pair is one revision. A record
+/// the source already held keeps its own revision. Otherwise the
+/// stylesheet's next free id.
+fn style_record_id(
+    dom: &Dom,
+    styles_root: NodeId,
+    block: NodeId,
+    settings: &WmlComparerSettings,
+) -> String {
+    let ours = |c: NodeId| {
+        dom.attribute(c, &W::author()) == Some(settings.author_for_revisions.as_str())
+            && dom.attribute(c, &W::date()) == Some(settings.date_time_for_revisions.as_str())
+    };
+    dom.ancestors(block, Some(&W::name("style")))
+        .first()
+        .and_then(|&style| {
+            ["pPrChange", "rPrChange"].into_iter().find_map(|record| {
+                dom.descendants(style, Some(&W::name(record)))
+                    .into_iter()
+                    .find(|&c| ours(c))
+                    .and_then(|c| dom.attribute(c, &W::id()))
+                    .map(str::to_string)
+            })
+        })
+        .unwrap_or_else(|| next_free_revision_id(dom, styles_root).to_string())
+}
+
 /// `w:pPr` on/off children whose absence reads as off, so "0" neutralizes them.
 const PPR_ON_OFF: &[&str] = &[
     "keepNext",
@@ -1056,11 +1086,11 @@ fn merge_normal_style_spacing(
         insert_child_by_rank(dom, ppr, el, &local, &ppr_child_rank);
     }
     let chg = dom.new_element(W::name("pPrChange"));
-    // Word treats a colliding w:id on two w:*Change records as the same
-    // revision and discards the later one. Scan the stylesheet for the next
-    // free id rather than hardcoding "1" (PR #81 review).
-    let id = next_free_revision_id(dom, out_root);
-    dom.set_attribute_value(chg, &W::name("id"), Some(&id.to_string()));
+    // Word treats a colliding w:id on two styles' records as the same
+    // revision and discards the later one (PR #81 review); only the style's
+    // own rPrChange shares this id.
+    let id = style_record_id(dom, out_root, ppr, settings);
+    dom.set_attribute_value(chg, &W::name("id"), Some(&id));
     dom.set_attribute_value(
         chg,
         &W::name("author"),
@@ -1175,8 +1205,8 @@ fn cascade_normal_change_to_based_styles(
                     }
                 }
                 let chg = dom.new_element(W::name("pPrChange"));
-                let id = next_free_revision_id(dom, styles_root);
-                dom.set_attribute_value(chg, &W::name("id"), Some(&id.to_string()));
+                let id = style_record_id(dom, styles_root, ppr, settings);
+                dom.set_attribute_value(chg, &W::name("id"), Some(&id));
                 dom.set_attribute_value(
                     chg,
                     &W::name("author"),
@@ -1205,8 +1235,8 @@ fn cascade_normal_change_to_based_styles(
             };
             if dom.element(rpr, &W::name("rPrChange")).is_none() {
                 let chg = dom.new_element(W::name("rPrChange"));
-                let id = next_free_revision_id(dom, styles_root);
-                dom.set_attribute_value(chg, &W::name("id"), Some(&id.to_string()));
+                let id = style_record_id(dom, styles_root, rpr, settings);
+                dom.set_attribute_value(chg, &W::name("id"), Some(&id));
                 dom.set_attribute_value(
                     chg,
                     &W::name("author"),
@@ -2077,8 +2107,8 @@ fn append_style_change_record(
     settings: &WmlComparerSettings,
 ) {
     let chg = dom.new_element(W::name(change_local));
-    let id = next_free_revision_id(dom, styles_root);
-    dom.set_attribute_value(chg, &W::name("id"), Some(&id.to_string()));
+    let id = style_record_id(dom, styles_root, block, settings);
+    dom.set_attribute_value(chg, &W::name("id"), Some(&id));
     dom.set_attribute_value(
         chg,
         &W::name("author"),
@@ -4547,11 +4577,10 @@ fn merge_normal_style_rpr(
         }
     }
     let chg = dom.new_element(W::name("rPrChange"));
-    // Next free id (see merge_normal_style_spacing): the pPr pass, when it
-    // fired, reserved `next_free_revision_id` and Word now records that id,
-    // so this rPr pass must not reuse it. Re-scan after the pPr change.
-    let id = next_free_revision_id(dom, out_root);
-    dom.set_attribute_value(chg, &W::name("id"), Some(&id.to_string()));
+    // The pPr pass, when it fired, gave Normal a pPrChange; this record
+    // shares its id, as Word's do (see `style_record_id`).
+    let id = style_record_id(dom, out_root, rpr, settings);
+    dom.set_attribute_value(chg, &W::name("id"), Some(&id));
     dom.set_attribute_value(
         chg,
         &W::name("author"),
@@ -8882,6 +8911,45 @@ mod coverage_boundary_tests {
         assert!(!remove_inherited_only_style_records(&mut dom, &empty));
     }
 
+    /// Word gives a style's `w:pPrChange` and `w:rPrChange` one id (199 of
+    /// 199 corpus styles carrying both), so the pair is one change.
+    #[test]
+    fn a_styles_two_records_share_one_id() {
+        let mut dom = Dom::new();
+        let out = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:style w:styleId=\"Other\"><w:rPr><w:rPrChange w:id=\"4\"><w:rPr/></w:rPrChange></w:rPr></w:style><w:style w:styleId=\"Title\"><w:pPr/><w:rPr/></w:style><w:style w:styleId=\"Next\"><w:rPr/></w:style>",
+            ),
+        );
+        let title = style(&dom, out, "Title");
+        let ids = |dom: &Dom, s: NodeId| -> Vec<String> {
+            dom.descendants(s, None)
+                .into_iter()
+                .filter(|&e| {
+                    dom.name(e)
+                        .is_some_and(|n| n.local_name().ends_with("PrChange"))
+                })
+                .filter_map(|e| dom.attribute(e, &W::id()).map(str::to_string))
+                .collect()
+        };
+        for (block, change, old) in [
+            ("pPr", "pPrChange", W::p_pr()),
+            ("rPr", "rPrChange", W::r_pr()),
+        ] {
+            let block = child(&dom, title, block);
+            let old = dom.new_element(old);
+            append_style_change_record(&mut dom, out, block, old, change, &settings());
+        }
+        assert_eq!(ids(&dom, title), ["5", "5"]);
+        let next = style(&dom, out, "Next");
+        let block = child(&dom, next, "rPr");
+        let old = dom.new_element(W::r_pr());
+        append_style_change_record(&mut dom, out, block, old, "rPrChange", &settings());
+        assert_eq!(ids(&dom, next), ["6"]);
+    }
+
     #[test]
     fn recorded_defaults_complete_slots_without_overwriting_explicit_values() {
         let mut dom = Dom::new();
@@ -10507,7 +10575,8 @@ mod coverage_boundary_tests {
             Some("0000FF")
         );
         let change = child(&dom, rpr, "rPrChange");
-        assert_revision(&dom, change, "2");
+        // One revision with the style's pPrChange, as Word's.
+        assert_revision(&dom, change, "1");
         assert_eq!(
             dom.attribute(child(&dom, child(&dom, change, "rPr"), "color"), &W::val()),
             Some("FF0000")
@@ -10944,7 +11013,8 @@ mod coverage_boundary_tests {
                         );
                         let rpr = child(&dom, owned, "rPr");
                         let rc = child(&dom, rpr, "rPrChange");
-                        assert_revision(&dom, rc, "20");
+                        // One revision with the style's pPrChange, as Word's.
+                        assert_revision(&dom, rc, "19");
                         let old = child(&dom, rc, "rPr");
                         let fonts = child(&dom, old, "rFonts");
                         assert_eq!(
