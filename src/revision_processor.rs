@@ -17,6 +17,7 @@ mod word_save;
 
 pub(crate) use comments::prune_orphan_comments;
 pub(crate) use sections::Resolution;
+pub(crate) use word_save::drop_unreferenced_headers_footers;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
