@@ -34,8 +34,9 @@ Runnable evidence:
 
 ## Status labels used on every page
 
-- **released**: in jubarte 0.11.3 (PyPI, crates.io `jubarte-redlines`, npm
-  `jubarte-wasm` and `jubarte-redlines`, GitHub release binaries).
+- **released**: in every published jubarte release since 0.11.3 (PyPI,
+  crates.io `jubarte-redlines`, npm `jubarte-wasm` and `jubarte-redlines`,
+  GitHub release binaries).
 - **main**: merged, not yet released. Install from source or wait for the
   next release.
 - **pending**: open work in the provider-adoption plans
