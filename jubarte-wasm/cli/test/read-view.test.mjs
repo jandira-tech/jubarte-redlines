@@ -57,10 +57,16 @@ test("readView by resolves names, bare handles and prefixed handles for comment 
 });
 
 test("readView unknown authors never match known handles or document text", () => {
-  for (const by of ["Bo", "Cy Young", "@missing", "@", "", "Ann", "AC2", "ann counsel"]) {
+  for (const by of ["Bo", "Cy Young", "@missing", "Ann", "AC2", "ann counsel"]) {
     const view = read(received, { changed: true, by });
     assert.equal(body(view), "", by);
     assert.match(view, /range: changed by .* \(none\) of p0-p20/);
+  }
+});
+
+test("readView refuses a blank author like the native CLI", () => {
+  for (const by of ["", "@", " "]) {
+    assert.throws(() => read(received, { changed: true, by }), /needs an author/, JSON.stringify(by));
   }
 });
 
