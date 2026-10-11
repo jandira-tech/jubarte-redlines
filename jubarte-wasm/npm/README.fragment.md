@@ -111,11 +111,11 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `previewEditPlan` | `(docx, planJson) → EditOutput` | Resolve every operation without producing documents. |
 | `editReportJsonl` | `(reportJson) → string` | A report as JSON lines (`load`, one `op` per operation, `summary`). |
 | `capabilities` | `() → string` | What this build can do, as JSON (`runtime: "wasm"`, operations, edit kinds, input budgets). |
-| `diffDocuments` | `(old, new, author, date, columns?, oldName?, newName?) → string` | The changed paragraphs as a patch, JSON `{text, hunks}`, each change `[-old-]{+new+}` at its `body:p:N` id (`line:N` in Markdown). Each side is a `.docx` or UTF-8 Markdown. |
-| `diffDocumentsUnified` | `(old, new, oldName?, newName?, context?) → string` | Complete Git unified patch of text snapshots, with no clipping. |
-| `diffDocumentsView` | `(old, new, optionsJson?) → string` | Review view: `github`, `word`, `normal`, `context` or `side-by-side`. Options include `context`, `acceptChanges`, `fullLines`, input labels and explicit `oldFormat`/`newFormat`. Word accepts **all** changes in both inputs before generating fresh CriticMarkup. Other views preserve the input marks by default. |
-| `diffDocumentsCritic` | `(old, new, author?, date?) → string` | Existing CriticMarkup document representation, separate from word comparison. |
-| `redlineDocuments` | `(old, new, author, date) → Uint8Array` | Compare DOCX or Markdown inputs into a Word redline. |
+| `diffDocuments` | `(old, next, author, date, columns?, oldName?, newName?) → string` | The changed paragraphs as a patch, JSON `{text, hunks}`, each change `[-old-]{+new+}` at its `body:p:N` id (`line:N` in Markdown). Each side is a `.docx` or UTF-8 Markdown. |
+| `diffDocumentsUnified` | `(old, next, oldName?, newName?, context?) → string` | Complete Git unified patch of text snapshots, with no clipping. |
+| `diffDocumentsView` | `(old, next, optionsJson?) → string` | Review view: `github`, `word`, `normal`, `context` or `side-by-side`. Options include `context`, `acceptChanges`, `fullLines`, input labels and explicit `oldFormat`/`newFormat`. Word accepts **all** changes in both inputs before generating fresh CriticMarkup. Other views preserve the input marks by default. |
+| `diffDocumentsCritic` | `(old, next, author?, date?) → string` | Existing CriticMarkup document representation, separate from word comparison. |
+| `redlineDocuments` | `(old, next, author, date) → Uint8Array` | Compare DOCX or Markdown inputs into a Word redline. |
 | `documentMarkdownWithChanges` | `(docx, trackChanges) → string` | Document Markdown with `all`, `accept` or `reject` revision handling. |
 | `parseCli` | `(argsJson) → string` | Shared clap-derived CLI parsing; returns command/options or help/usage errors as JSON without host I/O. |
 | `markdownToDocx` | `(text, optionsJson?, reference?) → Uint8Array` | Markdown with CriticMarkup → DOCX (`page`, `author`, `date`, `critic`, `track_changes`); `reference`, a `.docx`, lends its styles and page setup. |

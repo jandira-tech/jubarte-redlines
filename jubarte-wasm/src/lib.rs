@@ -631,12 +631,12 @@ struct ViewOptions {
     new_format: Option<SideFormat>,
 }
 
-fn document_view(old: &[u8], new: &[u8], options_json: Option<&str>) -> Result<String, String> {
+fn document_view(old: &[u8], next: &[u8], options_json: Option<&str>) -> Result<String, String> {
     let options: ViewOptions = serde_json::from_str(options_json.unwrap_or("{}"))
         .map_err(|e| format!("invalid diff view options: {e}"))?;
-    let (old, new) = (
+    let (old, next) = (
         typed_side(old, options.old_format)?,
-        typed_side(new, options.new_format)?,
+        typed_side(next, options.new_format)?,
     );
     let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
         given.unwrap_or_else(|| match source {
@@ -648,7 +648,7 @@ fn document_view(old: &[u8], new: &[u8], options_json: Option<&str>) -> Result<S
     let options = jubarte::text_diff::TextOptions {
         unified: jubarte::text_diff::UnifiedOptions {
             old_name: name(options.old_name, &old, "old"),
-            new_name: name(options.new_name, &new, "new"),
+            new_name: name(options.new_name, &next, "new"),
             context: options.context as usize,
         },
         format: options.format.into(),
@@ -659,7 +659,7 @@ fn document_view(old: &[u8], new: &[u8], options_json: Option<&str>) -> Result<S
             defaults.window
         },
     };
-    jubarte::text_diff::diff_documents_view(old, new, &options)
+    jubarte::text_diff::diff_documents_view(old, next, &options)
 }
 
 /// Document review view. `optionsJson` is a strict camelCase object with
@@ -670,10 +670,10 @@ fn document_view(old: &[u8], new: &[u8], options_json: Option<&str>) -> Result<S
 #[wasm_bindgen(js_name = diffDocumentsView)]
 pub fn diff_documents_view(
     old: &[u8],
-    new: &[u8],
+    next: &[u8],
     options_json: Option<String>,
 ) -> Result<String, JsValue> {
-    document_view(old, new, options_json.as_deref()).map_err(js_err)
+    document_view(old, next, options_json.as_deref()).map_err(js_err)
 }
 
 /// Complete, unwrapped document snapshots as a Git text patch. `context`
@@ -681,7 +681,7 @@ pub fn diff_documents_view(
 #[wasm_bindgen(js_name = diffDocumentsUnified, skip_typescript)]
 pub fn diff_documents_unified(
     old: &[u8],
-    new: &[u8],
+    next: &[u8],
     old_name: Option<String>,
     new_name: Option<String>,
     context: JsValue,
@@ -699,7 +699,7 @@ pub fn diff_documents_unified(
             .ok_or_else(|| js_err("context must be an integer in the u32 range (0..4294967295)"))?;
         number as u32
     };
-    let (old, new) = (side(old)?, side(new)?);
+    let (old, next) = (side(old)?, side(next)?);
     let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
         given.unwrap_or_else(|| match source {
             jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
@@ -708,15 +708,15 @@ pub fn diff_documents_unified(
     };
     let options = jubarte::text_diff::UnifiedOptions {
         old_name: name(old_name, &old, "old"),
-        new_name: name(new_name, &new, "new"),
+        new_name: name(new_name, &next, "new"),
         context: context as usize,
     };
-    jubarte::text_diff::diff_documents(old, new, &options).map_err(js_err)
+    jubarte::text_diff::diff_documents(old, next, &options).map_err(js_err)
 }
 
 #[wasm_bindgen(typescript_custom_section)]
 const UNIFIED_TYPES: &str = r#"
-export function diffDocumentsUnified(old: Uint8Array, _new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+export function diffDocumentsUnified(old: Uint8Array, next: Uint8Array, oldName?: string, newName?: string, context?: number): string;
 "#;
 
 /// Shared clap parsing, with no filesystem, clock or process access.
@@ -740,11 +740,11 @@ pub fn parse_cli(
 #[wasm_bindgen(js_name = diffDocumentsCritic)]
 pub fn diff_documents_critic(
     old: &[u8],
-    new: &[u8],
+    next: &[u8],
     author: Option<String>,
     date: Option<String>,
 ) -> Result<String, JsValue> {
-    let (old, new) = (side(old)?, side(new)?);
+    let (old, next) = (side(old)?, side(next)?);
     let mut options = jubarte::markdown::RedlineOptions::default();
     if let Some(author) = author {
         options.settings.author_for_revisions = author;
@@ -752,11 +752,11 @@ pub fn diff_documents_critic(
     if let Some(date) = date {
         options.settings.date_time_for_revisions = date;
     }
-    match (old, new) {
-        (jubarte::markdown::Source::Markdown(old), jubarte::markdown::Source::Markdown(new)) => {
-            Ok(jubarte::markdown::diff_markdown(old, new))
+    match (old, next) {
+        (jubarte::markdown::Source::Markdown(old), jubarte::markdown::Source::Markdown(next)) => {
+            Ok(jubarte::markdown::diff_markdown(old, next))
         }
-        _ => jubarte::markdown::redline(old, new, &options)
+        _ => jubarte::markdown::redline(old, next, &options)
             .and_then(|docx| jubarte::markdown::docx_to_markdown(&docx, &Default::default()))
             .map(|read| read.markdown)
             .map_err(js_err),
@@ -767,7 +767,7 @@ pub fn diff_documents_critic(
 #[wasm_bindgen(js_name = redlineDocuments)]
 pub fn redline_documents(
     old: &[u8],
-    new: &[u8],
+    next: &[u8],
     author: &str,
     date: &str,
 ) -> Result<Vec<u8>, JsValue> {
@@ -779,10 +779,10 @@ pub fn redline_documents(
         },
         ..Default::default()
     };
-    jubarte::markdown::redline(side(old)?, side(new)?, &options).map_err(js_err)
+    jubarte::markdown::redline(side(old)?, side(next)?, &options).map_err(js_err)
 }
 
-/// The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+/// The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 /// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 /// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
 /// `body:p:N` id in a Word document or `line:N` in Markdown.
@@ -796,14 +796,14 @@ pub fn redline_documents(
 #[wasm_bindgen(js_name = diffDocuments)]
 pub fn diff_documents(
     old: &[u8],
-    new: &[u8],
+    next: &[u8],
     author: &str,
     date: &str,
     columns: Option<u32>,
     old_name: Option<String>,
     new_name: Option<String>,
 ) -> Result<String, JsValue> {
-    let (old, new) = (side(old)?, side(new)?);
+    let (old, next) = (side(old)?, side(next)?);
     let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
         given.unwrap_or_else(|| match source {
             jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
@@ -812,7 +812,7 @@ pub fn diff_documents(
     };
     let options = patch_options(
         &name(old_name, &old, "old"),
-        &name(new_name, &new, "new"),
+        &name(new_name, &next, "new"),
         author,
         date,
     );
@@ -824,7 +824,8 @@ pub fn diff_documents(
         },
         ..Default::default()
     };
-    let patch = jubarte::markdown::patch_documents(old, new, &redline, &options).map_err(js_err)?;
+    let patch =
+        jubarte::markdown::patch_documents(old, next, &redline, &options).map_err(js_err)?;
     let hunks: Vec<serde_json::Value> = patch
         .hunks
         .iter()
