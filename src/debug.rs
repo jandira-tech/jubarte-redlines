@@ -713,13 +713,16 @@ fn elements_named<'a>(
         .filter(move |&n| local(dom, n) == name)
 }
 
+/// Office's legacy `[trash]/` folder: its entries are no parts and need no
+/// content type; Word ignores them.
+pub(crate) const OFFICE_TRASH: &str = "[trash]/";
+
 fn check_package(pkg: &Package, parts: &[(String, Dom, NodeId)], f: &mut Findings) {
     const CT: &str = "[Content_Types].xml";
     let names: HashSet<String> = pkg
         .entries
         .iter()
-        // Office's legacy `[trash]/` folder is no part; Word ignores it.
-        .filter(|e| !e.name.ends_with('/') && !e.name.starts_with("[trash]/"))
+        .filter(|e| !e.name.ends_with('/') && !e.name.starts_with(OFFICE_TRASH))
         .map(|e| percent_decode(&e.name))
         .collect();
     let by_name: HashMap<&str, (&Dom, NodeId)> = parts

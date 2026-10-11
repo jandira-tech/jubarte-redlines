@@ -387,7 +387,10 @@ fn check_namespace_qname_contexts(pkg: &PartFs, out: &mut Vec<Finding>) {
 fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
     for name in pkg.parts() {
         // Every part should have a content type (default or override).
-        if pkg.content_type_for(&name).is_none() && name != "[Content_Types].xml" {
+        if pkg.content_type_for(&name).is_none()
+            && name != "[Content_Types].xml"
+            && !name.starts_with(crate::debug::OFFICE_TRASH)
+        {
             out.push(Finding::new(
                 "MISSING_CONTENT_TYPE",
                 &name,
