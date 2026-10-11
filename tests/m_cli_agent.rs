@@ -456,7 +456,7 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("{~~his or her~>an~~}") && stdout.contains("#c0 @C: post-disclosure duty"),
+        stdout.contains("{~~his or her~>an~~}") && stdout.contains("c0 @C: post-disclosure duty"),
         "{stdout}"
     );
     assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");

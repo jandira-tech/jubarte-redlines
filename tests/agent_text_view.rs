@@ -380,11 +380,11 @@ fn id_line_names_tracked_paragraph_marks_and_formatting_changes() {
     );
     let out = body(&agent(&docx(body_xml))).to_string();
     assert!(
-        out.contains("<!-- p0 break-ins #4 @AC -->\nSplit here"),
+        out.contains("<!-- p0 break-ins r4 @AC -->\nSplit here"),
         "{out}"
     );
     assert!(
-        out.contains("<!-- p1 fmt #5 @AC -->\n**Now bold**"),
+        out.contains("<!-- p1 fmt r5 @AC -->\n**Now bold**"),
         "{out}"
     );
 }
@@ -404,7 +404,7 @@ fn table_line_gives_grid_cells_and_header_row() {
 fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_marks() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:rPr><w:ins w:id="12" w:author="Ann Counsel"/></w:rPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells r0 p0 r1 p1-p3, merged cells, break-ins #12 @AC in p1 -->\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged cells, break-ins r12 @AC in p1 -->\n"), "{out}");
 }
 
 fn ins(id: u32, author: &str, text: &str) -> String {
@@ -441,7 +441,7 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {~~thirty~>forty-five~~}{>>#3+4 @AC<<} days, {++quarterly++}{>>#5 @AC<<} reports{--, nothing else--}{>>#6 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days, {++quarterly++}{>>r5 @AC<<} reports{--, nothing else--}{>>r6 @AC<<}\n"
     );
 }
 
@@ -455,7 +455,7 @@ fn neighbouring_marks_by_one_author_share_one_note_and_keep_their_text() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold words++}{>>#7+8 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold words++}{>>r7+8 @AC<<}\n"
     );
 }
 
@@ -470,7 +470,7 @@ fn a_substitution_by_two_authors_gets_two_notes_deleted_side_first() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nx {~~old~>new~~}{>>#1 @AC<<}{>>#2 @JD<<}{++!++}{>>#3 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nx {~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}{++!++}{>>r3 @AC<<}\n"
     );
 }
 
@@ -485,7 +485,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
     );
     let bytes = docx(&p);
     assert!(
-        body(&agent(&bytes)).contains("{++b++}{>>#1 @AC<<} c {++d++}{>>#2 @AC<<}"),
+        body(&agent(&bytes)).contains("{++b++}{>>r1 @AC<<} c {++d++}{>>r2 @AC<<}"),
         "{}",
         agent(&bytes)
     );
@@ -498,7 +498,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
     );
     assert!(
         body(&dated).contains(
-            "{++b++}{>>#1 @AC 2026-10-01T09:00:00Z<<} c {++d++}{>>#2 @AC 2026-10-03T14:05:00Z<<}"
+            "{++b++}{>>r1 @AC 2026-10-01T09:00:00Z<<} c {++d++}{>>r2 @AC 2026-10-03T14:05:00Z<<}"
         ),
         "{dated}"
     );
@@ -514,7 +514,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
             ..agent_defaults()
         },
     );
-    assert!(body(&dated).contains("{++b++}{>>#1 @AC<<}"), "{dated}");
+    assert!(body(&dated).contains("{++b++}{>>r1 @AC<<}"), "{dated}");
 }
 
 #[test]
@@ -553,8 +553,117 @@ fn a_tracked_mark_inside_a_footnote_carries_its_agent_tag() {
         }],
     );
     let out = agent(&bytes);
-    assert!(out.contains("{>>#4 @AC<<}"), "{out}");
+    assert!(
+        out.contains("[^1]: First{++ ++}{>>footnotes.r4 @AC<<}second"),
+        "{out}"
+    );
     assert!(!out.contains("Ann Counsel ("), "{out}");
+}
+
+/// A note's change names its story: `footnotes.r3` reads back as the
+/// footnote part's `w:id` 3, never the body's.
+#[test]
+fn a_footnote_change_names_its_story() {
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1"><w:p>{}{}</w:p></w:footnote></w:footnotes>"#,
+        run("Source"),
+        ins(3, "Ann Counsel", " x")
+    );
+    let bytes = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+            xml: &footnotes,
+        }],
+    );
+    let out = agent(&bytes);
+    assert!(
+        out.contains("[^1]: Source{++ x++}{>>footnotes.r3 @AC<<}"),
+        "{out}"
+    );
+    assert!(
+        jubarte::changes::list_changes(&bytes)
+            .unwrap()
+            .iter()
+            .any(|c| c.id == "footnotes:rev:3"),
+        "the printed id names a listed change"
+    );
+}
+
+/// A header's change shows on its `headers:` line with a story tag, and
+/// the header counts it.
+#[test]
+fn a_header_change_is_visible_on_the_headers_line() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        ins(1, "Ann Counsel", "DRAFT")
+    );
+    let bytes = common::docx::docx_with_sect(
+        &para("Body"),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert!(
+        lines.contains(&"  default: {id: header1, text: \"{++DRAFT++}{>>header1.r1 @AC<<}\"}"),
+        "{out}"
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("revisions: 1 ")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("# 1 revision,")),
+        "{out}"
+    );
+    // --changed --by AC finds no body block but still shows the change.
+    let changed = changed_by(&bytes, Some("AC"), true);
+    assert!(
+        changed.contains("{++DRAFT++}{>>header1.r1 @AC<<}"),
+        "{changed}"
+    );
+    // The resolved views print the plain text, without tags.
+    let accepted = agent_with(&bytes, TrackChanges::Accept, true);
+    assert!(
+        accepted.contains("  default: {id: header1, text: DRAFT}"),
+        "{accepted}"
+    );
+}
+
+/// `--by AS` keeps the block whose only mark of AS is a hidden reply:
+/// the id line names it `c6`.
+#[test]
+fn changed_by_finds_a_hidden_reply_by_its_comment_id() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
+    let by = ok(
+        &[
+            "read",
+            "received.docx",
+            "--changed",
+            "--by",
+            "AS",
+            "--comments",
+            "none",
+            "--no-page-markers",
+        ],
+        dir.path(),
+    );
+    assert!(
+        by.contains("\nrange: changed by @AS (p5) of p0-p20\n"),
+        "{by}"
+    );
+    assert!(by.contains("<!-- p5 comments c5 c6 -->"), "{by}");
 }
 
 #[test]
@@ -595,9 +704,9 @@ fn handles_keep_only_letters_and_digits() {
         }],
     );
     let out = agent(&bytes);
-    assert!(out.contains("{>>#c9 @AC: One.<<}"), "{out}");
+    assert!(out.contains("{>>c9 @AC: One.<<}"), "{out}");
     // Initials with no letter or digit fall back to the name's initials.
-    assert!(out.contains("{>>#c10 @JD: Two.<<}"), "{out}");
+    assert!(out.contains("{>>c10 @JD: Two.<<}"), "{out}");
 }
 
 const COMMENTS_CT: &str =
@@ -686,7 +795,7 @@ const THREADED: &str = r#"<w15:commentEx w15:paraId="11A5D0F2" w15:done="0"/><w1
 fn comments_carry_ids_handles_and_thread_parents() {
     assert_eq!(
         body(&agent(&commented_docx(THREADED))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nFee. {==Late amounts accrue interest.==}{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}\n\n<!-- p1 -->\nKeep it secret{>>#c11 @AC: Add survival?<<}.\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nFee. {==Late amounts accrue interest.==}{>>c5 @AC: Cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}\n\n<!-- p1 -->\nKeep it secret{>>c11 @AC: Add survival?<<}.\n"
     );
 }
 
@@ -695,7 +804,7 @@ fn two_independent_comments_on_one_anchor_are_not_a_thread() {
     let independent = THREADED.replace(r#" w15:paraIdParent="11A5D0F2""#, "");
     let out = body(&agent(&commented_docx(&independent))).to_string();
     assert!(
-        out.contains("{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS: Disagree.<<}"),
+        out.contains("{>>c5 @AC: Cap in Delaware?<<}{>>c6 @AS: Disagree.<<}"),
         "{out}"
     );
 }
@@ -709,7 +818,7 @@ fn a_resolved_thread_says_so_on_its_root() {
     );
     let out = body(&agent(&commented_docx(&resolved))).to_string();
     assert!(
-        out.contains("{>>#c5 @AC resolved: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}"),
+        out.contains("{>>c5 @AC resolved: Cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}"),
         "{out}"
     );
 }
@@ -722,7 +831,7 @@ fn hidden_comments_are_listed_on_the_id_line() {
             TrackChanges::All,
             false
         )),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 comments #c5 #c6 -->\nFee. Late amounts accrue interest.\n\n<!-- p1 comments #c11 -->\nKeep it secret.\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 comments c5 c6 -->\nFee. Late amounts accrue interest.\n\n<!-- p1 comments c11 -->\nKeep it secret.\n"
     );
 }
 
@@ -762,7 +871,7 @@ fn hidden_comments_in_a_cell_go_on_the_table_line_not_the_next_paragraph() {
     let out = agent_with(&one_comment_docx(&body_xml), TrackChanges::All, false);
     assert!(
         body(&out).starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, comments #c9 in p1 -->\n"
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, comments c9 in p1 -->\n"
         ),
         "{out}"
     );
@@ -783,7 +892,7 @@ fn an_empty_paragraph_keeps_its_line_for_a_hidden_comment() {
             TrackChanges::All,
             false
         )),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, comments #c9 -->\n\n<!-- p2 -->\nAfter\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, comments c9 -->\n\n<!-- p2 -->\nAfter\n"
     );
 }
 
@@ -796,7 +905,7 @@ fn an_inserted_empty_paragraph_keeps_its_line_for_the_mark() {
     );
     assert_eq!(
         body(&agent(&docx(&body_xml))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, break-ins #3 @AC -->\n\n<!-- p2 empty -->\n\n<!-- p3 -->\nAfter\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, break-ins r3 @AC -->\n\n<!-- p2 empty -->\n\n<!-- p3 -->\nAfter\n"
     );
 }
 
@@ -818,11 +927,11 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
     let bytes = docx(&format!("{p0}{p1}"));
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Accept, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #0 @AC; #1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev #3+4 @AC -->\nWithin forty-five\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r3+4 @AC -->\nWithin forty-five\n"
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Reject, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #0 @AC; #1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev #3+4 @AC -->\nWithin thirty\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r3+4 @AC -->\nWithin thirty\n"
     );
 }
 
@@ -836,7 +945,7 @@ fn resolved_views_list_formatting_and_paragraph_mark_revisions() {
     let out = agent_with(&docx(body_xml), TrackChanges::Accept, true);
     assert_eq!(
         body(&out),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #5 @AC -->\n**Now bold**\n\n<!-- p1 rev #6 @AC -->\nKeptLast\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r5 @AC -->\n**Now bold**\n\n<!-- p1 rev r6 @AC -->\nKeptLast\n"
     );
 }
 
@@ -851,7 +960,7 @@ fn a_paragraph_joined_on_resolution_keeps_both_paragraphs_revisions() {
     let out = agent_with(&docx(&body_xml), TrackChanges::Reject, true);
     assert_eq!(
         body(&out),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #10 @AC; #11 @AC -->\nSplit kept\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r10 @AC; r11 @AC -->\nSplit kept\n"
     );
 }
 
@@ -866,7 +975,7 @@ fn rev_counts_revisions_inside_links_content_controls_and_fields() {
     );
     let out = agent_with(&docx(&body_xml), TrackChanges::Accept, true);
     assert!(
-        body(&out).starts_with("<!-- page 1 of 1 -->\n\n<!-- p0 rev #7+8+9+10 @AC -->\n"),
+        body(&out).starts_with("<!-- page 1 of 1 -->\n\n<!-- p0 rev r7+8+9+10 @AC -->\n"),
         "{out}"
     );
 }
@@ -880,7 +989,7 @@ fn accept_all_keeps_comments_in_the_agent_view() {
     ))
     .to_string();
     assert!(
-        out.contains("{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}"),
+        out.contains("{>>c5 @AC: Cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}"),
         "{out}"
     );
 }
@@ -1300,7 +1409,7 @@ fn cli_read_prints_the_agent_view_with_flags() {
     let picked = ok(&["read", "received.docx", "-p", "p5,t0"], dir.path());
     assert!(picked.contains("\nrange: p5, t0 of p0-p20\n"), "{picked}");
     let dated = ok(&["read", "received.docx", "--dates"], dir.path());
-    assert!(dated.contains("{>>#0 @AC<<}"), "{dated}");
+    assert!(dated.contains("{>>r0 @AC<<}"), "{dated}");
     let bad = jubarte(&["read", "received.docx", "-p", "p99"], dir.path());
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("p99 is past the last paragraph p20"));
@@ -1379,10 +1488,10 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     let text = edited(dir.path(), plan, "review");
     let ids = captures(
         &text,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#(\d+)\+(\d+) @AC<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r(\d+)\+(\d+) @AC<<\} days of receipt\.\n",
     );
     let (del_id, ins_id) = (ids[0], ids[1]);
-    assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>#c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
+    assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
     assert!(
         text.contains(
             "revisions: 2                       # 2 marks shown as 1 change: 1 substitution"
@@ -1466,7 +1575,7 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     );
     assert!(rejected.contains("\nrevisions: 0\n"), "{rejected}");
     assert!(
-        rejected.contains("{>>#c0 @AC: Is one percent the statutory cap?<<}"),
+        rejected.contains("{>>c0 @AC: Is one percent the statutory cap?<<}"),
         "{rejected}"
     );
 }
@@ -1489,7 +1598,7 @@ fn a_reply_and_a_resolution_by_a_second_author_thread_under_the_root() {
     let text = edited(dir.path(), second, "two");
     assert!(
         text.contains(
-            "{==one percent==}{>>#c0 @AC resolved: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware.<<}"
+            "{==one percent==}{>>c0 @AC resolved: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware.<<}"
         ),
         "{text}"
     );
@@ -1520,7 +1629,7 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
     let text = edited(dir.path(), second, "two");
     captures(
         &text,
-        r"\{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>#\d+\+\d+ @JD<<\}\.",
+        r"\{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.",
     );
     assert!(
         text.contains(
@@ -1559,7 +1668,7 @@ fn changed_keeps_the_blocks_with_marks_by_anyone_or_by_one_author() {
     );
     assert_eq!(
         body(&all),
-        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{>>#0 @AC<<} days.\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{>>r0 @AC<<} days.\n\n<!-- p3 -->\nFee: {--waived--}{>>r1 @BL<<}\n"
     );
     let bob = agent_options(&bytes, &changed(Some("Bob Lee")));
     assert!(
@@ -1568,7 +1677,7 @@ fn changed_keeps_the_blocks_with_marks_by_anyone_or_by_one_author() {
     );
     assert_eq!(
         body(&bob),
-        "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{>>r1 @BL<<}\n"
     );
     for handle in ["BL", "@BL"] {
         let by_handle = agent_options(&bytes, &changed(Some(handle)));
@@ -1603,7 +1712,7 @@ fn changed_finds_marks_the_resolved_views_carry_on_the_id_line() {
         "{accepted}"
     );
     assert!(
-        accepted.contains("<!-- p1 rev #0 @AC -->\nPay in ten days.\n"),
+        accepted.contains("<!-- p1 rev r0 @AC -->\nPay in ten days.\n"),
         "{accepted}"
     );
 }
@@ -1669,7 +1778,7 @@ fn cli_read_changed_prints_only_the_changed_blocks() {
         "{by}"
     );
     assert!(
-        by.contains("{>>#c6 @AS re #c5: Disagree.<<}") && !by.contains("<!-- p3 "),
+        by.contains("{>>c6 @AS re c5: Disagree.<<}") && !by.contains("<!-- p3 "),
         "{by}"
     );
     let bad = jubarte(
@@ -1774,7 +1883,7 @@ fn a_row_revision_shows_on_the_table_line_after_resolution() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:ins w:id="7" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>c</w:t></w:r></w:ins></w:p></w:tc><w:tc><w:p><w:ins w:id="9" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl>"#;
     let bytes = docx(tbl);
     let accepted = body(&agent_with(&bytes, TrackChanges::Accept, true)).to_string();
-    assert!(accepted.contains(" rev #7 @AC in r1"), "{accepted}");
+    assert!(accepted.contains(" rev r7 @AC in t0.row1"), "{accepted}");
     let rejected = body(&agent_with(&bytes, TrackChanges::Reject, true)).to_string();
     assert!(
         rejected.contains("<!-- t0 1x2, cells p0-p1 by row -->"),
@@ -1863,7 +1972,7 @@ fn header_counts_formatting_only_changes() {
 fn an_orphan_comment_reference_in_a_cell_is_not_listed() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r><w:r><w:commentReference w:id="9"/></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = agent_with(&docx(tbl), TrackChanges::All, false);
-    assert!(!out.contains("#c9"), "{out}");
+    assert!(!out.contains("c9"), "{out}");
 }
 
 /// Review t09-15: the header's style facts skip text boxes, as every other
@@ -2048,15 +2157,15 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     );
     captures(
         &out,
-        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>#\d+ @MU<<\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>r\d+ @MU<<\}\n",
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @MU<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @MU<<\} days of receipt\.\n",
     );
     captures(
         &out,
-        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>#\d+ @MU<<\} ?\.\n",
+        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>r\d+ @MU<<\} ?\.\n",
     );
     assert!(!out.contains("\n@@ "), "the patch is not printed: {out}");
     let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
@@ -2168,11 +2277,11 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"within thirty\{\+\+ \(30\)\+\+\}\{>>#\d+ @MU<<\} days",
+        r"within thirty\{\+\+ \(30\)\+\+\}\{>>r\d+ @MU<<\} days",
     );
     captures(
         &out,
-        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>#\d+ @MU<<\}Late amounts",
+        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>r\d+ @MU<<\}Late amounts",
     );
     let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
     assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
@@ -2202,7 +2311,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"\{\+\+ \(30\)\+\+\}\{>>#\d+ @MU<<\} days of \{~~receipt~>the invoice~~\}\{>>#\d+\+\d+ @JD<<\}\.",
+        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @MU<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.",
     );
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(
@@ -2252,10 +2361,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         ],
         dir.path(),
     );
-    assert!(
-        out.contains("{==one percent==}{>>#c0 @AC: Cap?<<}"),
-        "{out}"
-    );
+    assert!(out.contains("{==one percent==}{>>c0 @AC: Cap?<<}"), "{out}");
     let out = ok(
         &[
             "add",
@@ -2274,7 +2380,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        out.contains("{>>#c0 @AC: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware.<<}"),
+        out.contains("{>>c0 @AC: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware.<<}"),
         "{out}"
     );
     let out = ok(
@@ -2301,7 +2407,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     );
     assert!(
         out.contains(
-            "{>>#c0 @AC resolved: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware (6 Del. C. 2301).<<}"
+            "{>>c0 @AC resolved: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware (6 Del. C. 2301).<<}"
         ),
         "{out}"
     );
@@ -2320,7 +2426,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        out.contains("<!-- p0 -->\n{==Fees==}{>>#c2 @MU: Add a fee schedule.<<}\n"),
+        out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @MU: Add a fee schedule.<<}\n"),
         "{out}"
     );
     let out = ok(
@@ -2336,11 +2442,11 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        !out.contains("#c0") && !out.contains("#c1"),
+        !out.contains("c0") && !out.contains("c1"),
         "the thread is gone: {out}"
     );
     assert!(
-        out.contains("\nrange: changed by @MU (p0) of p0-p2\n") && out.contains("#c2 @MU"),
+        out.contains("\nrange: changed by @MU (p0) of p0-p2\n") && out.contains("c2 @MU"),
         "{out}"
     );
     for bad in [
@@ -2400,7 +2506,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &after,
-        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>#\d+ @MU<<\}\n",
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>r\d+ @MU<<\}\n",
     );
     let before = ok(
         &[
@@ -2422,7 +2528,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>#\d+ @MU<<\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>r\d+ @MU<<\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
@@ -2465,7 +2571,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &out,
-        r"<!-- p1 rev #\d+\+\d+ @MU -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
+        r"<!-- p1 rev r\d+\+\d+ @MU -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
     );
 
     let noted = ok(
@@ -2486,7 +2592,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     assert!(noted.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted}");
     captures(
         &noted,
-        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>#\d+ @MU<<\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>r\d+ @MU<<\}\n",
     );
     let marks = ok(
         &[
@@ -2541,7 +2647,7 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @R<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n",
     );
     assert!(out.contains("R: Redline"), "{out}");
     assert!(
@@ -2776,12 +2882,12 @@ fn changed_by(docx: &[u8], by: Option<&str>, comments: bool) -> String {
 fn literal_critic_markup_in_the_text_is_escaped_and_not_a_change() {
     let doc = docx(&format!(
         "{}{}",
-        para("Use {++bold++} and {>>#0 @AC<<} marks"),
+        para("Use {++bold++} and {>>r0 @AC<<} marks"),
         para("quiet")
     ));
     let view = agent(&doc);
     assert!(
-        view.contains("Use {\\++bold++\\} and {\\>>#0 @AC<<\\} marks"),
+        view.contains("Use {\\++bold++\\} and {\\>>r0 @AC<<\\} marks"),
         "{view}"
     );
     let changed = changed_by(&doc, None, true);
@@ -3066,9 +3172,9 @@ fn a_bidi_wrapper_does_not_split_a_substitution() {
         ins(2, "Ann Counsel", "b")
     ));
     let tracked = agent(&doc);
-    assert!(tracked.contains("{~~a~>b~~}{>>#1+2 @AC<<}"), "{tracked}");
+    assert!(tracked.contains("{~~a~>b~~}{>>r1+2 @AC<<}"), "{tracked}");
     let accepted = agent_with(&doc, TrackChanges::Accept, true);
-    assert!(accepted.contains("<!-- p0 rev #1+2 @AC -->"), "{accepted}");
+    assert!(accepted.contains("<!-- p0 rev r1+2 @AC -->"), "{accepted}");
 }
 
 /// pi review av2 F19: `read --dates` reaches the view through the CLI; an
@@ -3084,13 +3190,13 @@ fn the_dates_flag_reaches_the_cli_view() {
     );
     std::fs::write(dir.path().join("dated.docx"), docx(&p)).unwrap();
     let plain = ok(&["read", "dated.docx", "--no-page-markers"], dir.path());
-    assert!(plain.contains("{++b++}{>>#1 @AC<<}"), "{plain}");
+    assert!(plain.contains("{++b++}{>>r1 @AC<<}"), "{plain}");
     let dated = ok(
         &["read", "dated.docx", "--no-page-markers", "--dates"],
         dir.path(),
     );
     assert!(
-        dated.contains("{++b++}{>>#1 @AC 2026-10-01T09:00:00Z<<}"),
+        dated.contains("{++b++}{>>r1 @AC 2026-10-01T09:00:00Z<<}"),
         "{dated}"
     );
 }
@@ -3124,7 +3230,7 @@ fn header_counts_a_text_box_formatting_change_once() {
             .any(|l| l.starts_with("  AC: Ann Counsel") && l.contains("1 revision")),
         "{lines:?}"
     );
-    assert!(view.contains("fmt #31 @AC"), "{view}");
+    assert!(view.contains("fmt r31 @AC"), "{view}");
     assert!(!view.contains("#32"), "{view}");
 }
 
@@ -3158,7 +3264,10 @@ fn a_header_only_change_points_at_the_headers_line() {
         range.contains("# no body block; header and footer text is on the headers:/footers: lines"),
         "{view}"
     );
-    assert!(view.contains("text: NEW HEADER"), "{view}");
+    assert!(
+        view.contains("text: \"{++NEW HEADER++}{>>header1.r5 @AC<<}\""),
+        "{view}"
+    );
 }
 
 /// The id line names a list paragraph by the label Word prints: its level's
@@ -3275,7 +3384,7 @@ fn an_unanchored_comment_is_not_an_open_thread() {
                 .contains("# 2 comments: c9, c54 (unanchored: in no story, Word shows no balloon)"),
         "{line}"
     );
-    assert!(!body(&view).contains("#c54"), "{view}");
+    assert!(!body(&view).contains("c54"), "{view}");
 }
 
 /// A comment range over several paragraphs repeats `{==…==}` in each, with
@@ -3324,17 +3433,17 @@ fn id_lines_inside_a_multi_paragraph_comment_name_it() {
     let out = body(&agent(&bytes)).to_string();
     for p in [0, 1, 3] {
         assert!(
-            out.contains(&format!("<!-- p{p} in #c9 -->")),
+            out.contains(&format!("<!-- p{p} in c9 -->")),
             "p{p}:\n{out}"
         );
     }
     assert!(
-        out.contains("<!-- t0 1x1, cells p2-p2 by row, in #c9 -->"),
+        out.contains("<!-- t0 1x1, cells p2-p2 by row, in c9 -->"),
         "{out}"
     );
     assert!(out.contains("<!-- p4 -->"), "{out}");
     assert!(
-        out.contains("{==Start==}") && out.contains("{==End==}{>>#c9 @AC: Span.<<}"),
+        out.contains("{==Start==}") && out.contains("{==End==}{>>c9 @AC: Span.<<}"),
         "{out}"
     );
 }
@@ -3376,7 +3485,7 @@ fn changed_keeps_every_paragraph_inside_a_comment_range() {
         let out = changed_by(&bytes, by, true);
         for p in 0..=2 {
             assert!(
-                out.contains(&format!("<!-- p{p} in #c9 -->")),
+                out.contains(&format!("<!-- p{p} in c9 -->")),
                 "{by:?} p{p}:\n{out}"
             );
         }
@@ -3477,10 +3586,10 @@ fn a_table_line_names_a_range_that_starts_in_a_cell() {
     );
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.contains("<!-- t0 1x1, cells p0-p0 by row, in #c9 -->"),
+        out.contains("<!-- t0 1x1, cells p0-p0 by row, in c9 -->"),
         "{out}"
     );
-    assert!(out.contains("<!-- p1 in #c9 -->"), "{out}");
+    assert!(out.contains("<!-- p1 in c9 -->"), "{out}");
     assert!(out.contains("<!-- p2 -->"), "{out}");
 }
 
@@ -3537,7 +3646,7 @@ fn the_range_line_names_kept_notes_and_points_only_at_changed_headers() {
 }
 
 /// CodeRabbit #392: a comment hidden with `--comments none` still names
-/// every paragraph its range runs through (`in #c9`), so `--changed` keeps
+/// every paragraph its range runs through (`in c9`), so `--changed` keeps
 /// the middle paragraph the way the inline view does.
 #[test]
 fn a_hidden_comment_names_every_paragraph_its_range_covers() {
@@ -3553,11 +3662,11 @@ fn a_hidden_comment_names_every_paragraph_its_range_covers() {
     let bytes = one_comment_docx(&body_xml);
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::All, false)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nZero\n\n<!-- p1 comments #c9 -->\none\n\n<!-- p2 in #c9 -->\ntwo\n\n<!-- p3 comments #c9 -->\nthree\n\n<!-- p4 -->\nQuiet\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nZero\n\n<!-- p1 comments c9 -->\none\n\n<!-- p2 in c9 -->\ntwo\n\n<!-- p3 comments c9 -->\nthree\n\n<!-- p4 -->\nQuiet\n"
     );
     assert_eq!(
         body(&changed_by(&bytes, None, false)),
-        "<!-- p1 comments #c9 -->\none\n\n<!-- p2 in #c9 -->\ntwo\n\n<!-- p3 comments #c9 -->\nthree\n"
+        "<!-- p1 comments c9 -->\none\n\n<!-- p2 in c9 -->\ntwo\n\n<!-- p3 comments c9 -->\nthree\n"
     );
 }
 
@@ -3581,7 +3690,7 @@ fn a_hidden_comment_running_through_a_table_names_it_on_the_table_line() {
             .unwrap_or_default()
             .to_string();
         assert!(
-            table.ends_with(", in #c9 -->"),
+            table.ends_with(", in c9 -->"),
             "comments inline {comments}: {out}"
         );
     }
@@ -3609,7 +3718,7 @@ fn a_selection_keeps_the_definition_of_an_inserted_note() {
             xml: &footnotes,
         }],
     );
-    let definition = "{++[^1]: Added note++}{>>#5 @AC<<}";
+    let definition = "{++[^1]: Added note++}{>>r5 @AC<<}";
     let full = agent(&bytes);
     assert!(full.contains(definition), "{full}");
     let picked = agent_options(
@@ -3708,7 +3817,7 @@ fn a_header_reviser_takes_a_handle_before_a_commenter_with_the_same_initials() {
     let reviser = out.find("\n  HG: Hedda Gabler").expect(&out);
     let commenter = out.find("\n  HG2: Henry Gale").expect(&out);
     assert!(reviser < commenter, "{out}");
-    assert!(out.contains("{>>#c9 @HG2: Why?<<}"), "{out}");
+    assert!(out.contains("{>>c9 @HG2: Why?<<}"), "{out}");
 }
 
 #[test]
@@ -3942,7 +4051,7 @@ fn insertion_before_deletion_still_attributes_the_deleted_side_first() {
     ));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{~~old~>new~~}{>>#1 @AC<<}{>>#2 @JD<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}\n"
     );
 }
 
@@ -3956,11 +4065,11 @@ fn a_plain_run_prevents_adjacent_revision_tags_from_merging() {
     ));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>#1 @AC<<} / {++two++}{>>#2 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>r1 @AC<<} / {++two++}{>>r2 @AC<<}\n"
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Accept, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #1 @AC; #2 @AC -->\none / two\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r1 @AC; r2 @AC -->\none / two\n"
     );
 }
 
@@ -3974,7 +4083,7 @@ fn three_colliding_author_initials_stay_distinct_in_revision_notes() {
     ));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>#1 @AC<<}{++two++}{>>#2 @AC2<<}{++three++}{>>#3 @AC3<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>r1 @AC<<}{++two++}{>>r2 @AC2<<}{++three++}{>>r3 @AC3<<}\n"
     );
 }
 
@@ -3983,7 +4092,7 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
     let bytes = docx("<w:p><w:ins><w:r><w:t>new</w:t></w:r></w:ins></w:p>");
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>#? @??<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>r? @??<<}\n"
     );
 }
 
@@ -3999,7 +4108,7 @@ fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers()
         assert_eq!(
             body(&agent_with(&bytes, mode, true)),
             format!(
-                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, rev #1+2 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
+                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, rev r1+2 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
             )
         );
     }
@@ -4023,7 +4132,7 @@ fn unknown_thread_parents_do_not_create_dangling_reply_tags() {
         "w15:paraIdParent=\"FFFFFFFF\"",
     );
     let out = agent(&commented_docx(&extended));
-    assert!(body(&out).contains("{>>#c6 @AS: Disagree.<<}"), "{out}");
+    assert!(body(&out).contains("{>>c6 @AS: Disagree.<<}"), "{out}");
     assert!(!body(&out).contains(" re #c"), "{out}");
 }
 
@@ -4032,7 +4141,7 @@ fn resolved_boolean_true_is_equivalent_to_one_on_comment_threads() {
     let numeric = THREADED.replacen("w15:done=\"0\"", "w15:done=\"1\"", 1);
     let boolean = THREADED.replacen("w15:done=\"0\"", "w15:done=\"true\"", 1);
     let out = agent(&commented_docx(&boolean));
-    assert!(body(&out).contains("#c5 @AC resolved:"), "{out}");
+    assert!(body(&out).contains("c5 @AC resolved:"), "{out}");
     assert_eq!(out, agent(&commented_docx(&numeric)));
 }
 
@@ -4071,11 +4180,11 @@ fn comment_dates_include_revision_dates_when_deciding_whether_to_print_inline() 
     );
     assert_eq!(
         body(&dated),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>#1 @AC 2026-10-01T09:00:00Z<<}{>>#c5 @AC 2026-10-03T14:05:00Z: Check this.<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>r1 @AC 2026-10-01T09:00:00Z<<}{>>c5 @AC 2026-10-03T14:05:00Z: Check this.<<}\n"
     );
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>#1 @AC<<}{>>#c5 @AC: Check this.<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>r1 @AC<<}{>>c5 @AC: Check this.<<}\n"
     );
 }
 
@@ -4110,7 +4219,7 @@ fn hidden_comments_deduplicate_references_and_ignore_missing_comments() {
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::All, false)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 comments #c5 -->\nText\n\n<!-- p1 -->\nAfter\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 comments c5 -->\nText\n\n<!-- p1 -->\nAfter\n"
     );
 }
 
@@ -4349,7 +4458,7 @@ fn pr392_changed_filter_does_not_treat_literal_critic_forms_as_revisions() {
         "{--old--}",
         "{~~old~>new~~}",
         "{==highlight==}",
-        "{>>#7 @AC: note<<}",
+        "{>>r7 @AC: note<<}",
     ] {
         let bytes = docx(&format!(
             "{}<w:p>{}</w:p>",
@@ -4412,9 +4521,9 @@ fn pr392_comment_range_ending_in_a_table_does_not_leak_to_the_next_paragraph() {
         para("Quiet")
     ));
     let view = agent(&bytes);
-    assert!(view.contains("<!-- p0 in #c9 -->"), "{view}");
+    assert!(view.contains("<!-- p0 in c9 -->"), "{view}");
     assert!(
-        view.contains("<!-- t0 1x1, cells p1-p1 by row, in #c9 -->"),
+        view.contains("<!-- t0 1x1, cells p1-p1 by row, in c9 -->"),
         "{view}"
     );
     assert!(view.contains("<!-- p2 -->\nQuiet"), "{view}");

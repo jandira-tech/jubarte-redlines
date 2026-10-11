@@ -83,7 +83,7 @@ fn ids_name_the_paragraphs_of_the_source_once_revisions_are_settled() {
                 settle,
                 r#"[{"kind":"rewrite","paragraph":"p3","text":"Delta clause, amended."},
                     {"kind":"replace","paragraph":"body:p:4","find":"Epsilon","replacement":"Eta"},
-                    {"kind":"replace","paragraph":"t1.r0.c0","find":"Cell","replacement":"Box"},
+                    {"kind":"replace","paragraph":"t1.row0.cell0","find":"Cell","replacement":"Box"},
                     {"kind":"comment","paragraph":{"index":8},"text":"Last."}]"#,
             ),
         )
@@ -204,7 +204,7 @@ fn a_whole_paragraph_edit_of_a_merged_or_removed_paragraph_is_refused_by_name() 
             "body:p:2 is gone",
         ),
         (
-            r#"{"kind":"replace","paragraph":"t0.r0.c0","find":"Gone","replacement":"G"}"#,
+            r#"{"kind":"replace","paragraph":"t0.row0.cell0","find":"Gone","replacement":"G"}"#,
             "body:p:5 is gone",
         ),
     ] {
