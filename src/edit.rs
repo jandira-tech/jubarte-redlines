@@ -745,16 +745,6 @@ pub enum Side {
     After,
 }
 
-/// The number after `prefix` in a part of a short id (`p12`, `r1`, `c2`),
-/// digits only.
-fn short_number(text: &str, prefix: char) -> Option<usize> {
-    let digits = text.strip_prefix(prefix)?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse().ok()
-}
-
 /// Paragraph selector; every form must match exactly one paragraph. Ids
 /// name their story (`body:p:3`, `header1:p:0`) or use the agent view's
 /// short forms (`p3`, `header1`, `header1.p1`, `footer2`, `t0.r1.c2`,
