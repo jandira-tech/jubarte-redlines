@@ -149,14 +149,14 @@ pub(crate) fn join_tags(parts: &[String]) -> String {
 /// `header1.r2 @JD`; `1@AC|2@JD` → `r1 @AC; r2 @JD`. An id the short form
 /// cannot spell prints its long id, one per id: every printed id is one
 /// `accept --id` takes. A mark without a `w:id` (only a malformed file has
-/// one) prints `r?`: it names no change, so no id reads it back.
+/// one) prints `noid`: it names no change, and no id parser reads it.
 pub(crate) fn format_tag(tag: &str) -> String {
     tag.split('|')
         .map(|one| {
             let (story, ids, handle) = split_tag(one);
             if ids.split('+').any(|w| w == "?") {
                 let story = story.map_or(String::new(), |s| format!("{s}."));
-                return format!("{story}r{ids} @{handle}");
+                return format!("{story}noid @{handle}");
             }
             let changes: Vec<crate::ids::ChangeId> = ids
                 .split('+')
@@ -985,8 +985,26 @@ pub(crate) fn table_line(
     let mut break_ins: Vec<String> = Vec::new();
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
+    let mut fmt: Vec<String> = Vec::new();
     let mut held: Vec<String> = Vec::new();
     let mut held_ids: Vec<String> = Vec::new();
+    // The tracked view names the table's own property changes (Word's
+    // `tblPrChange`, `tblGridChange`, `trPrChange`, `tblPrExChange`,
+    // `tcPrChange`) and its cell insertions, deletions and merges, where
+    // they sit: the cells' text shows none of them.
+    let changes_in = |props: Option<&Element>, at: &str, out: &mut Vec<String>| {
+        for change in props
+            .into_iter()
+            .flat_map(|e| e.elements())
+            .filter(|c| c.local().ends_with("Change"))
+        {
+            out.push(format!("{}{at}", format_tag(&tag_of(change, handles))));
+        }
+    };
+    if !resolved {
+        changes_in(tbl.child("tblPr"), "", &mut fmt);
+        changes_in(tbl.child("tblGrid"), "", &mut fmt);
+    }
     for (r, tr) in rows.iter().enumerate() {
         let mut range: Option<(usize, usize)> = None;
         if resolved {
@@ -995,6 +1013,10 @@ pub(crate) fn table_line(
                     .into_iter()
                     .map(|(_, tag)| format!("{} in t{t}.row{r}", format_tag(&tag))),
             );
+        } else {
+            let at = format!(" in t{t}.row{r}");
+            changes_in(tr.child("trPr"), &at, &mut fmt);
+            changes_in(tr.child("tblPrEx"), &at, &mut fmt);
         }
         for (c, tc) in super::row_cells(tr).enumerate() {
             if resolved {
@@ -1003,6 +1025,17 @@ pub(crate) fn table_line(
                         .into_iter()
                         .map(|(_, tag)| format!("{} in t{t}.row{r}.cell{c}", format_tag(&tag))),
                 );
+            } else {
+                let at = format!(" in t{t}.row{r}.cell{c}");
+                let props = tc.child("tcPr");
+                changes_in(props, &at, &mut fmt);
+                for cell_change in props
+                    .into_iter()
+                    .flat_map(|e| e.elements())
+                    .filter(|e| matches!(e.local(), "cellIns" | "cellDel" | "cellMerge"))
+                {
+                    revs.push(format!("{}{at}", format_tag(&tag_of(cell_change, handles))));
+                }
             }
             if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
                 merged = true;
@@ -1086,6 +1119,9 @@ pub(crate) fn table_line(
     }
     if !revs.is_empty() {
         clauses.push(format!("rev {}", revs.join("; ")));
+    }
+    if !fmt.is_empty() {
+        clauses.push(format!("fmt {}", fmt.join("; ")));
     }
     if !held.is_empty() {
         clauses.push(format!("comments {}", held.join("; ")));
@@ -1381,18 +1417,22 @@ fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, Strin
 /// mark clause on its id or table line (`in c5` for a block inside a
 /// comment range whose note is elsewhere).
 fn is_marked(block: &str) -> bool {
-    let first = id_line_of(block);
-    block.contains("{>>")
-        || [
-            " rev ",
-            " comments ",
-            " in c",
-            " break-ins ",
-            " break-del ",
-            " fmt ",
-        ]
-        .iter()
-        .any(|key| first.contains(key))
+    block.contains("{>>") || has_mark_clause(id_line_of(block))
+}
+
+/// Whether an id or table line holds a mark clause: `rev`, `fmt`,
+/// `break-ins` or `break-del` followed by a tag (`r3 @AC`), or `comments`
+/// or `in` followed by a comment id (`c5`). A style or a list label that
+/// reads `rev` is not one.
+fn has_mark_clause(line: &str) -> bool {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    words
+        .windows(3)
+        .any(|w| matches!(w[0], "rev" | "fmt" | "break-ins" | "break-del") && w[2].starts_with('@'))
+        || words.windows(2).any(|w| {
+            matches!(w[0], "comments" | "in")
+                && comment_word(w[1].trim_end_matches([',', ';'])).is_some()
+        })
 }
 
 /// The selected blocks of `body` joined back, and the `range:` text. A
@@ -1596,6 +1636,35 @@ mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
 
+    /// pi review of Task 5 F4: a clause key is a mark only with its tag or
+    /// comment id after it, so a style or list label reading `rev` keeps no
+    /// block under `--changed`.
+    #[test]
+    fn mark_clauses_need_a_tag_or_a_comment_id() {
+        for marked in [
+            "<!-- p0 rev r1 @AC -->",
+            "<!-- p3 Quote, fmt r5 @AC; r6 @AC -->",
+            "<!-- p5 comments c5 c6 -->",
+            "<!-- p1 comments #c5 -->",
+            "<!-- p2 in c9 -->",
+            "<!-- p4 empty, break-ins r3 @AC -->",
+            "<!-- t0 2x2, cells p0-p3 by row, fmt r12 @AS in t0.row1 -->",
+            "<!-- t0 1x2, cells p0-p1 by row, comments c9 in p1 -->",
+        ] {
+            assert!(has_mark_clause(marked), "{marked}");
+        }
+        for plain in [
+            "<!-- p0 rev -->",
+            "<!-- p0 fmt, justify -->",
+            "<!-- p0 comments -->",
+            "<!-- p0 num \"See rev 3\" -->",
+            "<!-- p0 in -->",
+            "<!-- t0 1x1, cells p0-p0 by row -->",
+        ] {
+            assert!(!has_mark_clause(plain), "{plain}");
+        }
+    }
+
     /// CodeRabbit #392: a note inserted or deleted with its reference
     /// carries its label inside the mark.
     #[test]
@@ -1751,8 +1820,9 @@ mod tests {
             format_tag("Header_1#4+5@AC"),
             "Header_1:rev:4 @AC; Header_1:rev:5 @AC"
         );
-        assert_eq!(format_tag("?@??"), "r? @??");
-        assert_eq!(format_tag("footnotes#?@AC"), "footnotes.r? @AC");
+        assert_eq!(format_tag("?@??"), "noid @??");
+        assert_eq!(format_tag("footnotes#?@AC"), "footnotes.noid @AC");
+        assert!(crate::ids::parse_change_ids("noid").is_err());
         assert_eq!(handle_of("1+2@AC"), Some("AC"));
         assert_eq!(handle_of("header1#1@AC"), Some("AC"));
         assert_eq!(

@@ -529,9 +529,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                     "right" | "end" => Some("right"),
                                     _ => None,
                                 });
-                            let agent = (options.ids && accept.is_none())
-                                .then_some((&handles, stem.as_str()));
-                            (i, header::story_text(p, agent), align)
+                            let view = match accept {
+                                None if options.ids => {
+                                    header::StoryView::Tagged(&handles, stem.as_str())
+                                }
+                                Some(false) => header::StoryView::Reject,
+                                _ => header::StoryView::Accept,
+                            };
+                            (i, header::story_text(p, view), align)
                         })
                         .find(|(_, text, _)| !text.is_empty())
                         .unwrap_or((0, String::new(), None));

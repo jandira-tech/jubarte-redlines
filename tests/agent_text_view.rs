@@ -407,6 +407,34 @@ fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_m
     assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged cells, break-ins r12 @AC in p1 -->\n"), "{out}");
 }
 
+/// The ids round trip (Task 5b): a table's own property changes and a
+/// cell's insertion show nowhere in the cells' text, so the tracked view's
+/// table line names each where it sits; the resolved views have applied
+/// them.
+#[test]
+fn table_line_names_the_tables_own_changes() {
+    let a = r#"w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z""#;
+    let tbl = format!(
+        r#"<w:tbl><w:tblPr><w:jc w:val="center"/><w:tblPrChange w:id="1" {a}><w:tblPr/></w:tblPrChange></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/><w:tblGridChange w:id="2"><w:tblGrid><w:gridCol w:w="8000"/></w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:trPr><w:trPrChange w:id="3" {a}><w:trPr/></w:trPrChange></w:trPr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcPrChange w:id="4" {a}><w:tcPr/></w:tcPrChange></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellIns w:id="5" {a}/></w:tcPr><w:p><w:r><w:t>d</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+    );
+    let bytes = docx(&tbl);
+    let out = body(&agent(&bytes)).to_string();
+    assert!(
+        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1 -->\n"),
+        "{out}"
+    );
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.r#ref)
+        .collect();
+    assert_eq!(listed, ["r1", "r2", "r3", "r4", "r5"]);
+    for track_changes in [TrackChanges::Accept, TrackChanges::Reject] {
+        let resolved = body(&agent_with(&bytes, track_changes, true)).to_string();
+        assert!(!resolved.contains(" fmt "), "{resolved}");
+    }
+}
+
 fn ins(id: u32, author: &str, text: &str) -> String {
     ins_at(id, author, "2026-10-01T09:00:00Z", text)
 }
@@ -637,6 +665,49 @@ fn a_header_change_is_visible_on_the_headers_line() {
     assert!(
         accepted.contains("  default: {id: header1, text: DRAFT}"),
         "{accepted}"
+    );
+}
+
+/// pi review of Task 5 F1/F2: each view reads a header's changes its own
+/// way, moves included, and the tracked view escapes document text that
+/// reads like a mark.
+#[test]
+fn header_text_follows_each_view() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}{}{}{}<w:moveTo w:id="9" w:author="Ann Counsel"><w:r><w:t>2</w:t></w:r></w:moveTo><w:moveFrom w:id="8" w:author="Ann Counsel"><w:r><w:delText>7</w:delText></w:r></w:moveFrom>{}</w:p></w:hdr>"#,
+        run("Status: "),
+        ins(1, "Ann Counsel", "DRAFT"),
+        del(2, "Ann Counsel", "FINAL"),
+        run(" {>>x&lt;&lt;} Page "),
+        run(" of 3")
+    );
+    let bytes = common::docx::docx_with_sect(
+        &para("Body"),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let text = |view: &str| {
+        header_lines(view)
+            .into_iter()
+            .find(|l| l.starts_with("  default: {id: header1"))
+            .map_or_else(|| view.to_string(), str::to_string)
+    };
+    assert_eq!(
+        text(&agent(&bytes)),
+        r#"  default: {id: header1, text: "Status: {++DRAFT++}{>>header1.r1 @AC<<}{--FINAL--}{>>header1.r2 @AC<<} {\\>>x<<\\} Page {++2++}{>>header1.r9 @AC<<}{--7--}{>>header1.r8 @AC<<} of 3"}"#
+    );
+    assert_eq!(
+        text(&agent_with(&bytes, TrackChanges::Accept, true)),
+        r#"  default: {id: header1, text: "Status: DRAFT {>>x<<} Page 2 of 3"}"#
+    );
+    assert_eq!(
+        text(&agent_with(&bytes, TrackChanges::Reject, true)),
+        r#"  default: {id: header1, text: "Status: FINAL {>>x<<} Page 7 of 3"}"#
     );
 }
 
@@ -3450,7 +3521,7 @@ fn id_lines_inside_a_multi_paragraph_comment_name_it() {
 
 /// pi review r392b F3: `read --changed` keeps every paragraph a comment
 /// range crosses, not only the one that carries the note, as the hidden
-/// mode already does through its `comments #cN` clause.
+/// mode already does through its `comments cN` clause.
 #[test]
 fn changed_keeps_every_paragraph_inside_a_comment_range() {
     let body_xml = format!(
@@ -4092,7 +4163,7 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
     let bytes = docx("<w:p><w:ins><w:r><w:t>new</w:t></w:r></w:ins></w:p>");
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>r? @??<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>noid @??<<}\n"
     );
 }
 
