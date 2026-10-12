@@ -384,8 +384,9 @@ class Document:
     ) -> Rendered:
         """One layout pass: optional PDF, optional PNG pages, and the page report.
 
-        ``pages`` (counted from 1) rasterizes only those pages; the report
-        still covers every page. A page past the end raises ``JubarteError``.
+        ``pages`` (document pages, counted from 1) writes only those pages:
+        the PDF, the PNGs and the report. A page ``changed_only`` dropped, or
+        one past the end, raises ``JubarteError``.
         """
         options = _pdf_options(options)
         pdf_bytes, pngs, report = _native.render(

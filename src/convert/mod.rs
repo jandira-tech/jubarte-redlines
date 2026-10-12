@@ -340,7 +340,8 @@ pub struct PdfOptions {
     /// Word prints them) or listed after the last page.
     pub comments: CommentPlacement,
     /// Lay the whole document out, then keep only the pages a tracked
-    /// change touches (a body or note change bar marks the page), the
+    /// change touches (a revision in the body, a table, a footnote or an
+    /// endnote), the
     /// pages a comment is anchored on, and the first page of each section
     /// on which a revised header or footer paints. Page numbers stay the
     /// document's. A document with none of these keeps its first page.
@@ -24014,6 +24015,11 @@ impl<'a> Layout<'a> {
     fn paint_note_paras(&mut self, paras: &[FootnotePara], mut y: f32, width: f32) -> f32 {
         for para in paras {
             let runs = &para.runs;
+            // A revised footnote marks its page as a body revision does
+            // (`PdfOptions::changed_only`).
+            if para.style.fmt_rev || runs.iter().any(|r| r.rev) {
+                self.current().changed = true;
+            }
             y -= para.style.before;
             let indent = para.style.indent_left;
             let measure = (width - indent - para.style.indent_right).max(40.0);
@@ -50428,7 +50434,7 @@ mod coverage_round_three_tests {
         }
 
         #[test]
-        fn formatting_revisions_and_run_revisions_mark_body_tables_but_leave_chrome_unchanged() {
+        fn formatting_revisions_and_run_revisions_mark_body_tables_and_chrome_tables_apart() {
             let fonts = fonts();
             for (fmt_rev, run_rev) in [(true, false), (false, true), (true, true)] {
                 for chrome in [false, true] {
@@ -50448,6 +50454,7 @@ mod coverage_round_three_tests {
                     lay.emit_table_cells(&cols, &rows, &exact_style(), None, &geom, None);
                     assert_eq!(contents(&lay.pages), "A");
                     assert_eq!(lay.pages[0].changed, !chrome);
+                    assert_eq!(lay.pages[0].chrome_changed, chrome);
                     assert_eq!(lay.y, 256.0);
                 }
             }

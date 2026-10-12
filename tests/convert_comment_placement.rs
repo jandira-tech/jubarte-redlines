@@ -690,6 +690,111 @@ fn changed_pages_keep_each_sections_first_page_with_a_revised_header() {
     }
 }
 
+/// Two one-page sections; only the second has a header, `header` (the
+/// `w:hdr` children), with `extras` beside it. The pages `changed_only`
+/// keeps, by document number.
+fn kept_with_second_section_header(header: &str, extras: &[Part<'_>]) -> Vec<usize> {
+    const PAGE: &str = r#"<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#;
+    let xml = format!(
+        r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">{header}</w:hdr>"#
+    );
+    let mut parts = vec![Part {
+        name: "word/header1.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+        xml: &xml,
+    }];
+    parts.extend(extras.iter().map(|p| Part { ..*p }));
+    let body = format!(
+        r#"<w:p><w:pPr><w:sectPr>{PAGE}</w:sectPr></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p>"#
+    );
+    let docx = docx_with_sect_pr(
+        &body,
+        &parts,
+        &format!(
+            r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/>{PAGE}</w:sectPr>"#
+        ),
+    );
+    let docx = common::docx::replace_entry(&docx, "word/media/pixel.png", PIXEL_PNG);
+    assert_eq!(texts(&rendered(&docx, PdfOptions::default())).len(), 2);
+    rendered(
+        &docx,
+        PdfOptions {
+            changed_only: true,
+            ..PdfOptions::default()
+        },
+    )
+    .report
+    .pages
+    .iter()
+    .map(|p| p.number)
+    .collect()
+}
+
+/// The picture part and the header's relationship to it (`rIdImg`).
+const HEADER_PICTURE: [Part<'static>; 2] = [
+    Part {
+        name: "word/media/pixel.png",
+        content_type: "image/png",
+        rel_type: "",
+        xml: "",
+    },
+    Part {
+        name: "word/_rels/header1.xml.rels",
+        content_type: "application/vnd.openxmlformats-package.relationships+xml",
+        rel_type: "",
+        xml: r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/pixel.png"/></Relationships>"#,
+    },
+];
+
+#[test]
+fn changed_pages_keep_the_page_where_a_revised_header_table_paints() {
+    let table = r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:ins w:id="1" w:author="Rev"><w:r><w:t>Cell revision</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    assert_eq!(kept_with_second_section_header(table, &[]), [2]);
+    let plain = table
+        .replace(r#"<w:ins w:id="1" w:author="Rev">"#, "")
+        .replace("</w:ins>", "");
+    assert_eq!(
+        kept_with_second_section_header(&plain, &[]),
+        [1],
+        "nothing revised: the first page"
+    );
+}
+
+#[test]
+fn changed_pages_keep_the_page_where_a_revised_header_picture_paints() {
+    let drawing = r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="457200" cy="457200"/><wp:docPr id="1" name="Picture 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="pixel.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let revised = format!(
+        r#"<w:p><w:r><w:t>Logo</w:t></w:r><w:ins w:id="1" w:author="Rev"><w:r>{drawing}</w:r></w:ins></w:p>"#
+    );
+    assert_eq!(
+        kept_with_second_section_header(&revised, &HEADER_PICTURE),
+        [2]
+    );
+}
+
+#[test]
+fn changed_pages_keep_the_page_whose_footnote_is_revised() {
+    let notes = r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Note </w:t></w:r><w:ins w:id="5" w:author="Rev"><w:r><w:t>added</w:t></w:r></w:ins></w:p></w:footnote></w:footnotes>"#;
+    let body = between_untouched_pages(
+        r#"<w:p><w:r><w:t>Noted page</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+    );
+    let docx = docx_with(
+        &body,
+        &[Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+            xml: notes,
+        }],
+    );
+    let all = texts(&rendered(&docx, PdfOptions::default()));
+    assert!(all[1].contains("added"), "{all:?}");
+    let pages = changed_only_pages(&docx);
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("Noted page"), "{pages:?}");
+}
+
 #[test]
 fn changed_only_preserves_page_and_numpages_fields() {
     let footer = r#"<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>99</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> of </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>NUMPAGES</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>99</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>"#;
@@ -843,15 +948,20 @@ fn changed_only_keeps_a_page_whose_only_revision_is_a_picture() {
 
 #[test]
 fn comment_anchors_keep_their_pages_and_list_their_comments() {
-    let pages = texts(&rendered(
+    let kept = rendered(
         &four_pages(false),
         PdfOptions {
             comments: CommentPlacement::End,
             changed_only: true,
             ..PdfOptions::default()
         },
-    ));
+    );
+    let pages = texts(&kept);
     assert_eq!(pages.len(), 3, "Bravo, Charlie and the listing: {pages:?}");
+    // The listing numbers on after the document's last page (4, dropped),
+    // not after the last page kept: page 4 means one page only.
+    let numbers: Vec<usize> = kept.report.pages.iter().map(|p| p.number).collect();
+    assert_eq!(numbers, [2, 3, 5]);
     assert!(!pages.concat().contains("Alpha page text"), "{pages:?}");
     assert!(pages[2].contains("First note here") && pages[2].contains("Second note here"));
 }
