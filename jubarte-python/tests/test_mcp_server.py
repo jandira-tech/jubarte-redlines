@@ -348,6 +348,13 @@ def test_docx_validate_runs_the_engine_and_audits_against_the_original(tmp_path:
     assert "author" in error_text(half)
 
 
+def test_docx_validate_takes_rules_and_reports_one_shape(tmp_path: Path) -> None:
+    (tmp_path / "d.docx").write_bytes(make_document("\u2022 item"))
+    (styled,) = call(tmp_path, ("docx_validate", {"path": "d.docx", "rules": ["style"]}))
+    rows = styled.structured_content["result"]
+    assert {"code": "LITERAL_BULLET", "set": "style", "severity": "warning", "location": "body:p:0"}.items() <= rows[0].items(), rows
+
+
 def test_feature_tools_still_contain_paths(tmp_path: Path) -> None:
     (bad,) = call(tmp_path, ("docx_validate", {"path": "/etc/hostname"}))
     assert "outside root" in error_text(bad)
