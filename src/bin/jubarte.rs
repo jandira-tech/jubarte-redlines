@@ -1080,16 +1080,9 @@ fn run_edit(
                     ));
                 }
             }
+            // FILE itself (`X_modified.docx` edited again, or `-o FILE`)
+            // exists, so it is replaced only with --force (D15).
             EditTarget::Single(path) => {
-                if same_path(path, job.file) {
-                    return Err((
-                        EXIT_USAGE,
-                        format!(
-                            "-o {} is FILE itself; edit never modifies its source",
-                            path.display()
-                        ),
-                    ));
-                }
                 let pdf = job.pdf.then(|| path.with_extension("pdf"));
                 for taken in std::iter::once(path.clone()).chain(pdf) {
                     if taken.exists() && !job.force {

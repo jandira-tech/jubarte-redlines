@@ -82,6 +82,39 @@ fn edit_writes_file_modified_docx_and_prints_its_view() {
     assert_eq!(code, 0, "{err}");
 }
 
+/// D15/Q14: a FILE whose stem ends `_modified` keeps its name, so editing
+/// it again replaces it, with --force; `a.docx` is never touched.
+#[test]
+fn a_modified_file_is_edited_in_place_with_force() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let before = std::fs::read(dir.join("a.docx")).unwrap();
+    assert_eq!(run(dir, &EDIT).0, 0);
+    let again = [
+        "add",
+        "a_modified.docx",
+        "-p",
+        "p2",
+        "--content",
+        "New line.",
+    ];
+    let (code, _, err) = run(dir, &again);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("'a_modified.docx' already exists (use --force"),
+        "{err}"
+    );
+    let mut forced = again.to_vec();
+    forced.push("--force");
+    let (code, out, err) = run(dir, &forced);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("\nsource: a_modified.docx\n"), "{out}");
+    assert_eq!(written(dir), ["a_modified.docx"]);
+    assert!(document_xml(&dir.join("a_modified.docx")).contains("New line."));
+    assert_eq!(std::fs::read(dir.join("a.docx")).unwrap(), before);
+}
+
 #[test]
 fn editing_mode_writes_the_clean_document() {
     let dir = tempfile::tempdir().unwrap();
