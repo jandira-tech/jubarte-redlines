@@ -897,6 +897,15 @@ class SharedParser:
             self.error("read -o is not supported by the Python CLI yet")
         if command == "convert" and written == "json":
             self.error("-o FILE.json is not supported by the Python CLI yet")
+        if command == "compare" and values.get("output") is not None:
+            if written in ("pdf", "png", "json"):
+                self.error(f"-o FILE.{written} is not supported by the Python CLI yet")
+            if values.get("view") is not None:
+                self.error("-o FILE.md of a Word redline is not supported by the Python CLI yet")
+        if command == "compare":
+            for key in ("reference_doc", "critic", "resource_path"):
+                if values.get(key) not in (None, False):
+                    self.error(f"--{key.replace('_', '-')} is not supported by the Python CLI")
         if command == "read" and values.get("json"):
             for key in ("paragraphs", "head", "tail", "changed", "by"):
                 if values.get(key) not in (None, False):
