@@ -414,33 +414,25 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
         raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
-    # The shared parser resolved the target: ``output`` for the one
-    # document (FILE_modified.docx by default), ``out_dir`` for the bundle.
-    out_dir: Path | None = args.out_dir
-    if out_dir is None:
-        single: Path = args.output
-        if not dry_run:
-            # FILE itself (X_modified.docx edited again, or -o FILE) exists,
-            # so it is replaced only with --force (D15).
-            for taken in [single] + ([single.with_suffix(".pdf")] if pdf else []):
-                if taken.exists() and not args.force:
-                    print(f"error: output '{taken}' already exists (use --force to overwrite)", file=sys.stderr)
-                    raise SystemExit(EXIT_USAGE)
-    elif not dry_run:
-        if out_dir.exists() and not args.force:
-            raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
-        if out_dir.resolve() == args.file.resolve().parent:
-            raise CliError("--out-dir must not be the input's own directory")
     try:
         if dry_run:
             sys.stdout.write(doc.preview(plan_text).to_jsonl())
             return EXIT_OK
+        # The plan first: a refused plan prints its whole report, whatever
+        # the outputs (D15).
         result = doc.edit(plan_text)
     except EditPlanError as exc:
         _print_refusal(exc)
         return EXIT_PLAN_REFUSED
+    # The shared parser resolved the target: ``output`` for the one
+    # document (FILE_modified.docx by default), ``out_dir`` for the bundle.
+    out_dir: Path | None = args.out_dir
     if out_dir is None:
-        return _write_edited(args, single, result, notes)
+        return _write_edited(args, args.output, result, notes)
+    if out_dir.exists() and not args.force:
+        raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
+    if out_dir.resolve() == args.file.resolve().parent:
+        raise CliError("--out-dir must not be the input's own directory")
     lines = result.report.to_jsonl().splitlines()
     summary = lines.pop()
     outputs: list[tuple[str, bytes]] = [("clean.docx", result.clean.to_bytes())]
@@ -475,10 +467,11 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     if args.quiet:
         return EXIT_OK
     print(summary)
+    # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
-    print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})")
+    print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
     for note in _edit_notes(notes, result):
-        print(note)
+        print(note, file=sys.stderr)
     shown = out_dir / ("clean.docx" if editing else "redline.docx")
     _print_changed_view(result, editing, shown)
     return EXIT_OK
@@ -518,6 +511,12 @@ def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, note
     document = chosen.to_bytes()
     outputs: list[tuple[Path, bytes]] = [(path, document)]
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
+    # FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
+    # replaced only with --force (D15). The PNG names wait for the page count.
+    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
+        if taken.exists() and not args.force:
+            print(f"error: output '{taken}' already exists (use --force to overwrite)", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
     pages, png_count = None, 0
     if pdf or png:
         # Render before writing, so a failed render writes nothing.

@@ -425,9 +425,12 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     capsys.readouterr()
     # Markdown marks in an anchor and in content leave notes.
     assert main(["edit", str(letter), "-p", "p0", "--anchor", "# Heading", "--content", "**Title**", "--out-dir", str(tmp_path / "n")]) == 0
-    out = capsys.readouterr().out
-    assert '\nnote: op-1: content keeps its Markdown marks as text; use --style for formatting\n' in out, out
-    assert '\nnote: op-1: anchor "# Heading" read as "Heading" (Markdown marks are not document text)\n' in out, out
+    # The bundle's wrote line and notes are status lines, on stderr (D6).
+    out, err = capsys.readouterr()
+    assert err.startswith(f"wrote {tmp_path / 'n'} (4 files: "), err
+    assert '\nnote: op-1: content keeps its Markdown marks as text; use --style for formatting\n' in err, err
+    assert '\nnote: op-1: anchor "# Heading" read as "Heading" (Markdown marks are not document text)\n' in err, err
+    assert "note:" not in out and "\nwrote " not in out, out
     # add: a comment, then a reply on the redline; editing mode writes no redline.
     assert main(["add", str(letter), "-p", "p2", "--anchor", "survive", "--content", "Which?", "--author", "Ann Counsel", "--out-dir", str(tmp_path / "c")]) == 0
     assert "{==survive==}{>>c0 @AC: Which?<<}" in capsys.readouterr().out
@@ -469,6 +472,9 @@ def test_edit_and_add_write_one_document_as_the_binary(letter: Path, tmp_path: P
         assert exit_info.value.code == 2, bad
     assert not (tmp_path / "b.docx").exists() and not (tmp_path / "r").exists()
     capsys.readouterr()
+    # The plan runs first: a refused plan reports even over an existing output.
+    assert main(["edit", str(letter), "-p", "p1", "--anchor", "absent words", "--content", "x"]) == 3
+    assert "absent words" in capsys.readouterr().out
     # A _modified FILE keeps its name: add edits it in place, with --force.
     add = ["add", str(written), "-p", "p2", "--content", "New."]
     with pytest.raises(SystemExit) as exit_info:
