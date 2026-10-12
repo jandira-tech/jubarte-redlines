@@ -289,23 +289,6 @@ function planKeepsRevisions(plan) {
   }
 }
 
-/** The `--plan`-sensitive flags the command line holds, as the binary names them. */
-function givenFlags(o) {
-  const flags = {
-    "--consume": o.consume, "--out-dir": o.out_dir != null, "--force": o.force,
-    "--editing-mode": o.editing_mode, "--suggesting-mode": o.suggesting_mode,
-    "--pdf": o.pdf, "--png": o.png, "--author": o.author !== "Modified User",
-    "--datetime": o.datetime != null, "--existing-revisions": (o.existing_revisions ?? "auto") !== "auto",
-  };
-  return Object.keys(flags).filter((flag) => flags[flag]);
-}
-
-/** A usage error when a flag cannot go with `--plan` this way (shared wording). */
-function planConflict(o, recording) {
-  const message = wasm.planFlagConflict(recording, JSON.stringify(givenFlags(o)), o.plan);
-  if (message != null) throw new UsageError(message);
-}
-
 /** A refused plan's per-operation report on stdout, the error on stderr. */
 function printRefusal(result) {
   const error = JSON.parse(result.json);
@@ -322,9 +305,9 @@ function printRefusal(result) {
 }
 
 /** `--plan PLAN.json` with operation flags: record them into the plan,
- * checked against FILE first; a refusal leaves PLAN.json as it was. */
+ * checked against FILE first; a refusal leaves PLAN.json as it was. The
+ * shared parser has refused the flags that do not go with `--plan`. */
 function recordPlan(verb, file, docx, o) {
-  planConflict(o, true);
   let held;
   try {
     held = fs.readFileSync(o.plan, "utf8");
@@ -346,11 +329,18 @@ function recordPlan(verb, file, docx, o) {
   if (!preview.ok) return printRefusal(preview);
   if (!o.quiet) for (const note of recorded.notes) console.log(`note: ${note}`);
   if (!o.dry_run) {
-    const partial = `${o.plan}.partial`;
-    write(partial, recorded.json);
+    // Through a symbolic link to the file it names; via a hidden partial
+    // file named for this process, removed if the write fails.
+    let target = o.plan;
     try {
-      fs.renameSync(partial, o.plan);
+      target = fs.realpathSync(o.plan);
+    } catch {}
+    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);
+    try {
+      fs.writeFileSync(partial, recorded.json);
+      fs.renameSync(partial, target);
     } catch (e) {
+      fs.rmSync(partial, { force: true });
       throw new CliError(`writing ${o.plan}: ${e.message}`);
     }
   }
@@ -360,16 +350,32 @@ function recordPlan(verb, file, docx, o) {
 
 function runEdit(verb, file, o) {
   const docx = read(file);
-  if (o.plan != null) {
-    if (o.operations?.length) return recordPlan(verb, file, docx, o);
-    planConflict(o, false);
+  if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
+  // What --consume deletes once the edit is written: the plan file as it
+  // was read, never a link to it or an output written over it.
+  let consumed;
+  if (o.consume && !o.dry_run) {
+    if (fs.lstatSync(o.plan, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+    }
+    try {
+      consumed = fs.readFileSync(o.plan);
+    } catch (e) {
+      throw new CliError(`reading ${o.plan}: ${e.message}`);
+    }
   }
   const code = applyEdit(verb, file, docx, o);
-  if ((code ?? EXIT_OK) === EXIT_OK && o.consume && !o.dry_run) {
+  if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
+    const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
+    let current;
+    try {
+      current = fs.readFileSync(o.plan);
+    } catch {}
+    if (!current?.equals(consumed)) throw kept("it no longer holds the plan (an output was written over it?)");
     try {
       fs.unlinkSync(o.plan);
     } catch (e) {
-      throw new CliError(`the plan was applied, but ${o.plan} was not deleted: ${e.message}`);
+      throw kept(e.message);
     }
   }
   return code;

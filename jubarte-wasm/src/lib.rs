@@ -439,23 +439,6 @@ pub fn record_plan(
     record_plan_json(verb, operations_json, docx, options_json, held.as_deref())
 }
 
-/// Why the flags in `given_json` (a JSON array such as `["--pdf"]`) cannot
-/// go with `--plan plan`: `recording` is `--plan` with operation flags,
-/// otherwise the plan is applied. `undefined` when they can.
-#[wasm_bindgen(js_name = planFlagConflict)]
-pub fn plan_flag_conflict(
-    recording: bool,
-    given_json: &str,
-    plan: &str,
-) -> Result<Option<String>, JsValue> {
-    let given: Vec<String> =
-        serde_json::from_str(given_json).map_err(|e| js_err(format!("given: {e}")))?;
-    let given: Vec<&str> = given.iter().map(String::as_str).collect();
-    Ok(jubarte::edit::record::plan_flag_conflict(
-        recording, &given, plan,
-    ))
-}
-
 /// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
 /// view `edit` and `add` print (every changed block when none does);
 /// `accepted` reads its accepted text, `source` is the name printed as
@@ -1573,11 +1556,6 @@ mod tests {
             serde_json::from_str(&record_plan_json("edit", ops, &source, options, Some("{}")))
                 .unwrap();
         assert_eq!(not_plan["usage"], false, "{not_plan}");
-        assert_eq!(
-            plan_flag_conflict(false, r#"["--author"]"#, "p.json").unwrap(),
-            Some("--author belongs to recorded operations; the plan names its own".into())
-        );
-        assert_eq!(plan_flag_conflict(true, "[]", "p.json").unwrap(), None);
     }
 
     #[test]
