@@ -34,9 +34,14 @@ pub struct Capabilities {
     pub edit_operations: Vec<String>,
     /// Scope limits an agent must plan around.
     pub limits: Limits,
-    /// Rule codes `audit` checks ([`crate::audit::RULES`] order).
+    /// Audit codes `validate --rules` takes ([`crate::audit::RULES`]
+    /// order).
     #[serde(default)]
     pub audit_rules: Vec<String>,
+    /// Rule sets `validate --rules` takes, `word` (the default) first
+    /// ([`crate::validate::RULE_SETS`]).
+    #[serde(default)]
+    pub validate_rules: Vec<String>,
 }
 
 /// Availability per operation.
@@ -120,7 +125,7 @@ pub struct Operations {
     #[serde(default)]
     pub scrub: bool,
     /// Accessibility, style and structure findings by paragraph id
-    /// (`jubarte audit`).
+    /// (`jubarte validate --rules a11y,style,structure`).
     #[serde(default)]
     pub audit: bool,
 }
@@ -278,6 +283,10 @@ pub fn capabilities(runtime: &str) -> Capabilities {
         audit_rules: crate::audit::RULES
             .iter()
             .map(|rule| rule.0.to_string())
+            .collect(),
+        validate_rules: crate::validate::RULE_SETS
+            .iter()
+            .map(|set| set.to_string())
             .collect(),
     }
 }

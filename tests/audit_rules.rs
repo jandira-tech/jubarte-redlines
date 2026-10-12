@@ -491,7 +491,7 @@ fn run_cli(bytes: &[u8], args: &[&str]) -> (i32, String, String) {
     let path = dir.path().join("in.docx");
     std::fs::write(&path, bytes).unwrap();
     let out = Command::new(BIN)
-        .arg("audit")
+        .arg("validate")
         .arg(&path)
         .args(args)
         .output()
@@ -537,22 +537,26 @@ fn cli_exits_two_on_an_error_finding_and_info_never_fails() {
 }
 
 #[test]
-fn cli_json_reports_findings_rules_and_layout() {
+fn cli_json_prints_one_finding_per_line_in_the_shared_shape() {
     let (code, stdout, _) = run_cli(&docx(&para("• item")), &["--json", "--rules", "style"]);
     assert_eq!(code, 0);
-    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(value["layout"], false);
-    assert_eq!(value["findings"][0]["code"], "LITERAL_BULLET");
-    assert_eq!(value["findings"][0]["rule_set"], "style");
-    assert_eq!(value["findings"][0]["severity"], "warning");
-    assert_eq!(value["findings"][0]["location"], "body:p:0");
-    assert!(value["rules"].as_array().unwrap().len() == 3);
+    let rows: Vec<serde_json::Value> = stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert_eq!(rows[0]["code"], "LITERAL_BULLET");
+    assert_eq!(rows[0]["set"], "style");
+    assert_eq!(rows[0]["severity"], "warning");
+    assert_eq!(rows[0]["part"], "word/document.xml");
+    assert_eq!(rows[0]["location"], "body:p:0");
+    assert_eq!(rows[0]["word_fatal"], false);
 }
 
 #[test]
-fn cli_unknown_rule_exits_one_with_an_error() {
+fn cli_unknown_rule_is_a_usage_error() {
     let (code, _, stderr) = run_cli(&docx(&para("a")), &["--rules", "BOGUS"]);
-    assert_eq!(code, 1);
+    assert_eq!(code, 2);
     assert!(stderr.contains("BOGUS"), "{stderr}");
 }
 
@@ -568,6 +572,11 @@ fn capabilities_list_audit_and_every_rule_code() {
         serde_json::from_str(&jubarte::capabilities::capabilities_json("cli")).unwrap();
     assert_eq!(json["operations"]["audit"], true);
     assert_eq!(json["audit_rules"].as_array().unwrap().len(), RULES.len());
+    assert_eq!(
+        manifest.validate_rules,
+        ["word", "edits", "a11y", "style", "structure"]
+    );
+    assert_eq!(json["validate_rules"][0], "word");
 }
 
 // ---- without a layout pass (the slim WASM build) ---------------------------
