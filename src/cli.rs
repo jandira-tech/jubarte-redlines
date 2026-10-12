@@ -2027,6 +2027,22 @@ fn validate_matches(
 ) -> Result<(), clap::Error> {
     use clap::{error::ErrorKind, parser::ValueSource};
     let Some((name, args)) = matches.subcommand() else {
+        let given = |id: &str| {
+            matches.try_contains_id(id).unwrap_or(false)
+                && matches.value_source(id) == Some(ValueSource::CommandLine)
+        };
+        let two = given("modified_pos") || given("modified");
+        // The read-only flags first: they say what was meant better than
+        // any -o refusal can.
+        if two && given("json") {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                "--json reads one document; `-o FILE.json` writes the redline's snapshot",
+            ));
+        }
+        if two && given("tables") {
+            return Err(command.error(ErrorKind::ArgumentConflict, "--tables reads one document"));
+        }
         if let Some(message) = json_not_yet(matches, Task::Compare) {
             return Err(command.error(ErrorKind::ValueValidation, message));
         }
@@ -2044,20 +2060,6 @@ fn validate_matches(
                 ErrorKind::ArgumentConflict,
                 "read options apply to the printed view; drop -o to print it",
             ));
-        }
-        let given = |id: &str| {
-            matches.try_contains_id(id).unwrap_or(false)
-                && matches.value_source(id) == Some(ValueSource::CommandLine)
-        };
-        let two = given("modified_pos") || given("modified");
-        if two && given("json") {
-            return Err(command.error(
-                ErrorKind::ArgumentConflict,
-                "--json reads one document; `-o FILE.json` writes the redline's snapshot",
-            ));
-        }
-        if two && given("tables") {
-            return Err(command.error(ErrorKind::ArgumentConflict, "--tables reads one document"));
         }
         if given("output") && !two {
             return Err(command.error(

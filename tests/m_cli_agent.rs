@@ -232,12 +232,23 @@ fn read_tables_and_the_json_refusals() {
     let (code, stdout, _) = run(&["read", RECEIVED, "--tables"]);
     assert_eq!(code, 0);
     assert!(stdout.starts_with("table 0: "), "{stdout}");
-    let (code, _, stderr) = run(&[RECEIVED, RECEIVED, "--json"]);
+    // An -o beside them changes nothing: the read-only flag is what was meant.
+    for args in [
+        &[RECEIVED, RECEIVED, "--json"][..],
+        &[RECEIVED, RECEIVED, "--json", "-o", "x.json"],
+    ] {
+        let (code, _, stderr) = run(args);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(
+            stderr.contains(
+                "--json reads one document; `-o FILE.json` writes the redline's snapshot"
+            ),
+            "{args:?}: {stderr}"
+        );
+    }
+    let (code, _, stderr) = run(&[RECEIVED, RECEIVED, "--tables", "-o", "x.json"]);
     assert_eq!(code, 2, "{stderr}");
-    assert!(
-        stderr.contains("--json reads one document; `-o FILE.json` writes the redline's snapshot"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("--tables reads one document"), "{stderr}");
     for args in [
         &["read", RECEIVED, "--json", "--dates"][..],
         &["read", RECEIVED, "--json", "--comments", "none"],
