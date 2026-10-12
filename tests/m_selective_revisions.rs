@@ -529,6 +529,37 @@ fn a_cell_deletion_recorded_in_its_formatting_history_stays_tracked() {
         let xml = part_string(&out, "word/document.xml").unwrap();
         assert_eq!(xml.matches("<w:tc>").count(), 2, "{xml}");
         assert!(xml.contains("Gone"), "{xml}");
+        assert!(xml.contains(r#"<w:cellDel w:id="4""#), "{xml}");
+    }
+}
+
+/// Formatting history recorded inside a kept change is part of it: a
+/// list's `w:numberingChange` saved in a `w:pPrChange`, and a recorded
+/// vertical merge in a `w:tcPrChange`, stay as recorded when another change
+/// is accepted or rejected.
+#[test]
+fn formatting_history_inside_a_kept_change_stays_as_recorded() {
+    let pkg = docx(&format!(
+        r#"<w:p><w:ins w:id="1" {A}><w:r><w:t>Elsewhere</w:t></w:r></w:ins></w:p><w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="3" {A}><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="4" {A} w:original="%1."/></w:numPr></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Listed</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:tcPrChange w:id="5" {A}><w:tcPr><w:tcW w:w="1500" w:type="dxa"/><w:cellMerge w:id="6" {A} w:vMerge="rest"/></w:tcPr></w:tcPrChange></w:tcPr><w:p><w:r><w:t>Top</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:tcPrChange w:id="7" {A}><w:tcPr><w:tcW w:w="1500" w:type="dxa"/><w:cellMerge w:id="8" {A} w:vMerge="cont"/></w:tcPr></w:tcPrChange></w:tcPr><w:p><w:r><w:t>Below</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+    ));
+    let listed: Vec<String> = list_changes(&pkg)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(
+        listed,
+        ["body:rev:1", "body:rev:3", "body:rev:5", "body:rev:7"]
+    );
+    for resolve in [accept_changes, reject_changes] {
+        let out = resolve(&pkg, &filter_ids(&["body:rev:1"])).unwrap();
+        assert_word_valid_package(&out);
+        assert_eq!(ids(&out), ["body:rev:3", "body:rev:5", "body:rev:7"]);
+        let xml = part_string(&out, "word/document.xml").unwrap();
+        assert!(xml.contains(r#"<w:numberingChange w:id="4""#), "{xml}");
+        assert!(xml.contains(r#"w:original="%1.""#), "{xml}");
+        assert_eq!(xml.matches("<w:cellMerge ").count(), 2, "{xml}");
+        assert!(!xml.contains("<w:vMerge"), "{xml}");
     }
 }
 
