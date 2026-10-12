@@ -282,10 +282,115 @@ def cmd_add(args: argparse.Namespace) -> int:
     return _run_edit(args, "add")
 
 
-def _run_edit(args: argparse.Namespace, verb: str) -> int:
+def _print_refusal(exc: EditPlanError) -> None:
+    """A refused plan's per-operation report on stdout, the error on stderr."""
+    for i, o in enumerate(exc.outcomes, start=1):
+        row: dict[str, object] = {"ev": "op", "i": i, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches}
+        for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
+            if value is not None:
+                row[key] = value
+        print(json.dumps(row, ensure_ascii=False))
+    print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}, ensure_ascii=False))
+    print(f"error: plan refused: {exc}", file=sys.stderr)
+
+
+def _given_flags(args: argparse.Namespace) -> list[str]:
+    """The ``--plan``-sensitive flags the command line holds, as the binary names them."""
+    flags = {
+        "--consume": getattr(args, "consume", False),
+        "--out-dir": args.out_dir is not None,
+        "--force": args.force,
+        "--editing-mode": args.editing_mode,
+        "--suggesting-mode": args.suggesting_mode,
+        "--pdf": getattr(args, "pdf", False),
+        "--png": getattr(args, "png", False),
+        "--author": args.author != "Modified User",
+        "--datetime": args.datetime is not None,
+        "--existing-revisions": args.existing_revisions != "auto",
+    }
+    return [flag for flag, given in flags.items() if given]
+
+
+def _plan_conflict(args: argparse.Namespace, recording: bool) -> None:
+    """Exit 2 when a flag cannot go with ``--plan`` this way (shared wording)."""
     from . import _native
 
+    message = _native.plan_flag_conflict(recording, _given_flags(args), str(args.plan))
+    if message is not None:
+        print(f"error: {message}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
+
+
+def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
+    """``--plan PLAN.json`` with operation flags: record them into the plan,
+    checked against FILE first; a refusal leaves PLAN.json as it was."""
+    from . import _native
+
+    _plan_conflict(args, recording=True)
+    plan_path = Path(args.plan)
+    try:
+        held: str | None = plan_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        held = None
+    except OSError as exc:
+        raise CliError(f"reading {args.plan}: {exc}") from exc
+    dry_run = bool(getattr(args, "dry_run", False))
+    options = {
+        "author": args.author,
+        "date": args.datetime,
+        "existingRevisions": args.existing_revisions,
+        "file": str(args.file),
+        "plan": str(args.plan),
+        "dryRun": dry_run,
+    }
+    try:
+        recorded = json.loads(
+            _native.record_plan(verb, json.dumps(args.operations, ensure_ascii=False), doc.to_bytes(), json.dumps(options), held=held)
+        )
+    except _native.JubarteError as exc:
+        print(f"error: {args.plan}: {exc}", file=sys.stderr)
+        return EXIT_PLAN_REFUSED
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE) from exc
+    try:
+        doc.preview(recorded["plan"])
+    except EditPlanError as exc:
+        _print_refusal(exc)
+        return EXIT_PLAN_REFUSED
+    if not args.quiet:
+        for note in recorded["notes"]:
+            print(f"note: {note}")
+    if not dry_run:
+        partial = plan_path.with_name(plan_path.name + ".partial")
+        _write(partial, recorded["json"])
+        try:
+            os.replace(partial, plan_path)
+        except OSError as exc:
+            raise CliError(f"writing {args.plan}: {exc}") from exc
+    if not args.quiet:
+        print(recorded["summary"])
+    return EXIT_OK
+
+
+def _run_edit(args: argparse.Namespace, verb: str) -> int:
     doc = _read(args.file)
+    if getattr(args, "plan", None) is not None:
+        if args.operations:
+            return _record(args, verb, doc)
+        _plan_conflict(args, recording=False)
+    code = _apply_edit(args, verb, doc)
+    if code == EXIT_OK and getattr(args, "consume", False) and not getattr(args, "dry_run", False):
+        try:
+            Path(args.plan).unlink()
+        except OSError as exc:
+            raise CliError(f"the plan was applied, but {args.plan} was not deleted: {exc}") from exc
+    return code
+
+
+def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
+    from . import _native
+
     plan_text, notes = _edit_plan(args, verb, doc.to_bytes())
     editing = bool(args.editing_mode)
     try:
@@ -309,14 +414,7 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
             return EXIT_OK
         result = doc.edit(plan_text)
     except EditPlanError as exc:
-        for i, o in enumerate(exc.outcomes, start=1):
-            row: dict[str, object] = {"ev": "op", "i": i, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches}
-            for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
-                if value is not None:
-                    row[key] = value
-            print(json.dumps(row, ensure_ascii=False))
-        print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}, ensure_ascii=False))
-        print(f"error: plan refused: {exc}", file=sys.stderr)
+        _print_refusal(exc)
         return EXIT_PLAN_REFUSED
     lines = result.report.to_jsonl().splitlines()
     summary = lines.pop()

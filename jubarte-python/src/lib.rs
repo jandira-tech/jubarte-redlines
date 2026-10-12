@@ -766,6 +766,39 @@ fn flag_plan(
     .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+/// `edit`/`add --plan PLAN.json` with operation flags: the operations
+/// recorded into `held` (PLAN.json's text, `None` before the first
+/// recording). `options` is JSON: `author`, `date`, `existingRevisions`,
+/// `file`, `plan`, `dryRun`. Returns `{plan, json, notes, summary}` as
+/// JSON. A `ValueError` is a usage error; a `JubarteError` means `held` is
+/// not a plan.
+#[pyfunction]
+#[pyo3(signature = (verb, operations, docx, options, *, held = None))]
+fn record_plan(
+    py: Python<'_>,
+    verb: &str,
+    operations: &str,
+    docx: &[u8],
+    options: &str,
+    held: Option<&str>,
+) -> PyResult<String> {
+    use jubarte::edit::record::{RecordError, record_json};
+    py.detach(|| record_json(verb, operations, docx, held, options))
+        .map_err(|e| match e {
+            RecordError::Usage(m) => pyo3::exceptions::PyValueError::new_err(m),
+            RecordError::Plan(m) => JubarteError::new_err(m),
+        })
+}
+
+/// Why the flags `given` cannot go with `--plan plan`: `recording` is
+/// `--plan` with operation flags, otherwise the plan is applied. `None`
+/// when they can.
+#[pyfunction]
+fn plan_flag_conflict(recording: bool, given: Vec<String>, plan: &str) -> Option<String> {
+    let given: Vec<&str> = given.iter().map(String::as_str).collect();
+    jubarte::edit::record::plan_flag_conflict(recording, &given, plan)
+}
+
 /// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
 /// view `edit` and `add` print; `accepted` reads its accepted text.
 #[pyfunction]
@@ -1012,6 +1045,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
     m.add_function(wrap_pyfunction!(flag_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(record_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(plan_flag_conflict, m)?)?;
     m.add_function(wrap_pyfunction!(changed_view, m)?)?;
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
