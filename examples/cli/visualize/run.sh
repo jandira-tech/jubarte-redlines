@@ -65,7 +65,7 @@ An agent has three kinds of eyes:
 
 - **Text views** (`text`, `convert -t md`, `diff`, `changes`, `comments`,
   `inspect`): cheap, exact, greppable, and carry the IDs edit plans need.
-- **Page views** (`convert --png`/`--pdf`, `edit --png`, `diff -o x.png`):
+- **Page views** (`convert --png`/`--pdf`, `edit --png`, `compare -o x.png`):
   what a person sees in Word, for layout, balloons and revision colours.
 - **Machine views** (`--json` everywhere, `--report`, `diff-render --json`):
   for checking a result instead of reading it.
@@ -144,9 +144,9 @@ show '`--move-comments`: comments listed after the last page; the commented text
 image 'received.docx, comments after the text, page 1' out/received-endnotes-page-01.png
 image 'received.docx, the comment listing' out/received-endnotes-page-02.png
 
-show '`--pdf` (the default) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-only` keeps only pages a tracked change touches.' \
+show '`--pdf` (the default) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-pages` keeps only pages a tracked change touches.' \
   convert "$R" --pdf --compress -o out/received-compressed.pdf --force
-show '' convert "$R" --png --pages 1 --changed-only --dpi "$DPI" -o out/received-changed.pdf --force
+show '' convert "$R" --png --pages 1 --changed-pages --dpi "$DPI" -o out/received-changed.pdf --force
 
 say '### 1.6 Check it before trusting it'
 show '`validate`: will Word open it without a repair prompt? (findings: exit 2)' validate "$R"
@@ -198,7 +198,7 @@ image 'redline.docx, Word marks' out/edited-word/redline-page-01.png
 
 # ---------------------------------------------------------------------------
 say '## 3. Diff two documents'
-say 'Old is `received.docx`, new is the agent'"'"'s `redline.docx`. Each view keeps both documents'"'"' tracked marks unless it says otherwise. `-a` and `-d` pin the author and date so this guide is reproducible; by default they are `git config user.name` and now.'
+say 'Old is `received.docx`, new is the agent'"'"'s `redline.docx`. Each view keeps both documents'"'"' tracked marks unless it says otherwise. `-a` and `-d` pin the author and date so this guide is reproducible; by default they are `Redline` and now. `diff` writes text only: `-o FILE` keeps it in a file, and the Word redline, its PDF and its pages are `compare`'"'"'s.'
 O="$R"
 N=out/edited/redline.docx
 PIN=(-a Agent -d 2026-10-02T15:00:00Z)
@@ -206,9 +206,6 @@ PIN=(-a Agent -d 2026-10-02T15:00:00Z)
 say '### 3.1 Text views'
 show '`--format patch` (the default): the changed paragraphs as `git diff --word-diff` with CriticMarkup comments and highlights. `--columns N` wraps it (0: no wrap).' \
   diff "$O" "$N" "${PIN[@]}"
-say 'With a Word document on either side, `patch` and `critic` also write a Word redline (`<old>_v_<new>.docx` beside the old document unless `-o` names another path), so the next run needs `--force`.'
-show '`--format critic`: the whole new document as CriticMarkup.' \
-  diff "$O" "$N" --format critic --force "${PIN[@]}"
 show '`--format github`: a Git/GitHub unified diff of the two documents'"'"' text, tracked marks preserved; `-U N` sets the context lines.' \
   diff "$O" "$N" --format github
 show '`-U0`: changed lines only.' \
@@ -226,17 +223,16 @@ show '`--format side-by-side`: old and new in columns with `|`, `<` and `>` mark
 show '' diff "$O" "$N" --format side-by-side --full-lines -U0
 
 say '### 3.2 Word, PDF and page views'
-show '`diff -o x.docx` (or `compare`): a Word redline of old against new, every difference a tracked change by `--author`.' \
-  diff "$O" "$N" -o out/diff.docx --force "${PIN[@]}"
-show '' compare "$O" "$N" -o out/compare.docx --force -a Agent -d 2026-10-02T15:00:00Z
+show '`compare -o x.docx`: a Word redline of old against new, every difference a tracked change by `--author`.' \
+  compare "$O" "$N" -o out/compare.docx --force -a Agent -d 2026-10-02T15:00:00Z
 show '`compare --mode powertools`: Open-Xml-PowerTools'"'"' coarser paragraph-level redline instead of Word'"'"'s.' \
   compare "$O" "$N" -o out/compare-powertools.docx --mode powertools --force -a Agent -d 2026-10-02T15:00:00Z
 show '`changes` on the comparison: what Compare marked.' changes out/compare.docx
-show '`diff -o x.png`: the redline'"'"'s pages, with every `convert` page option: `--revisions`, `--revision-palette`, `--move-comments`, `--changed-only`.' \
-  diff "$O" "$N" -o out/diff.png --force --revisions word --move-comments "${PIN[@]}"
-image 'diff -o diff.png --revisions word --move-comments, page 1' out/diff-page-01.png
-show '`diff -o x.pdf --changed-only`: only the pages a change touches.' \
-  diff "$O" "$N" -o out/diff-changed.pdf --force --changed-only "${PIN[@]}"
+show '`compare -o x.png`: the redline'"'"'s pages, with every `convert` page option: `--revisions`, `--revision-palette`, `--move-comments`, `--changed-pages`.' \
+  compare "$O" "$N" -o out/compare.png --force --revisions word --move-comments "${PIN[@]}"
+image 'compare -o compare.png --revisions word --move-comments, page 1' out/compare-page-01.png
+show '`compare -o x.pdf --changed-pages`: only the pages a change touches.' \
+  compare "$O" "$N" -o out/compare-changed.pdf --force --changed-pages "${PIN[@]}"
 show '`debug A B --check text`: the two packages'"'"' paragraphs, only the lines that differ, with `{+inserted+}` and `[-deleted-]` runs.' \
   debug "$O" "$N" --check text
 
@@ -247,8 +243,10 @@ sed -e 's/March 1, 2026/April 1, 2026/' \
   received.md > out/agent.md
 show '' diff received.md out/agent.md --format github -U1
 show '' diff received.md out/agent.md --format word
-show '`diff X.docx Y.md -o x.docx`: the Markdown'"'"'s edits as tracked changes on the Word document.' \
-  diff "$R" out/agent.md -o out/from-markdown.docx --force "${PIN[@]}"
+show '`--format critic`: the whole new document as CriticMarkup (two Markdown documents only).' \
+  diff received.md out/agent.md --format critic
+show '`compare X.docx Y.md -o x.docx`: the Markdown'"'"'s edits as tracked changes on the Word document.' \
+  compare "$R" out/agent.md -o out/from-markdown.docx --force "${PIN[@]}"
 
 # ---------------------------------------------------------------------------
 cat >> "$GUIDE" <<'EOF'
@@ -263,12 +261,12 @@ cat >> "$GUIDE" <<'EOF'
 | Comments | `comments FILE` | `--json`, `--author NAME`, `--latest` |
 | Structure | `inspect FILE` | `--json`, `--tables` |
 | Render triage | `debug FILE --check render` | `--check text\|runs\|xml\|changes\|…`, two files print only differences |
-| Pages | `convert FILE --png` / `--pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-only`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout` |
+| Pages | `convert FILE --png` / `--pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-pages`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout` |
 | Validity | `validate FILE`, `audit FILE` | `validate --repair`, `--json` (see `--help`) |
 | Edit result | `edit FILE --plan P --out-dir D` | `--dry-run`, `--pdf`, `--png`, `--dpi`, `--revisions`, `--revision-palette`, `--quiet`; writes `patch.diff`, `report.jsonl`, `clean.*`, `redline.*` |
-| Text diff | `diff OLD NEW` | `--format patch\|critic\|github\|word\|normal\|context\|side-by-side`, `-U N`, `--accept-changes`, `--full-lines`, `--columns N`, `-f md\|docx`, `--critic` |
-| Word redline | `compare OLD NEW`, `diff OLD NEW -o x.docx` | `--mode word\|powertools`, `--detail-threshold`, `-a`, `-d`, `--reference-doc` |
-| Redline pages | `diff OLD NEW -o x.pdf\|x.png` | every page option of `convert` |
+| Text diff | `diff OLD NEW` | `--format patch\|critic\|github\|word\|normal\|context\|side-by-side`, `-U N`, `--accept-changes`, `--full-lines`, `--columns N`, `-f md\|docx`, `-o FILE.md\|.txt\|.patch\|.diff` |
+| Word redline | `compare OLD NEW -o x.docx` | `--mode word\|powertools`, `--detail-threshold`, `-a`, `-d`, `--reference-doc` |
+| Redline pages | `compare OLD NEW -o x.pdf\|x.png` | every page option of `convert` |
 | Pixel diff | `diff-render A B` | `--out-dir`, `--json`, `--no-overlay`, `--dpi` |
 | Package diff | `debug A B`, `debug diff A B` | `--check …`, `--raw` |
 
@@ -278,7 +276,7 @@ Which to reach for:
   and comment IDs).
 - To check an edit: `edit`'s `report.jsonl` (status), `patch.diff` (just the
   touched paragraphs), then `diff-render` (did the layout move, exit 5).
-- To show a person: `convert --png` or `diff -o x.pdf`; add
+- To show a person: `convert --png` or `compare -o x.pdf`; add
   `--revisions word` whenever the page is compared with Word's.
 - To review two versions: `diff --format github` for text, `--accept-changes`
   or `--format word` when only the final wording matters.

@@ -15,8 +15,8 @@ jubarte reads Markdown alongside Word documents:
 | Accept or reject CriticMarkup in Markdown | `jubarte convert draft.md -t md --track-changes accept` | `resolve_critic` |
 | The changes between any two documents as a patch | `jubarte diff old new` | `patch_documents` |
 | Two Markdown documents as CriticMarkup (pandiff) | `jubarte diff old.md new.md --format critic` | `diff_markdown` |
-| Any two documents as a Word redline | `jubarte diff a b -o redline.docx`, `jubarte a b` | `redline` |
-| A Markdown edit applied to a Word document | `jubarte diff contract.docx edited.md -o redline.docx` | `apply_markdown` |
+| Any two documents as a Word redline | `jubarte compare a b -o redline.docx` | `redline` |
+| A Markdown edit applied to a Word document | `jubarte compare contract.docx edited.md -o redline.docx` | `apply_markdown` |
 
 `jubarte convert FILE.docx -t md` prints the document as Markdown, with
 each tracked change and comment as CriticMarkup followed by its author and
@@ -437,8 +437,7 @@ Payment is due in [-30-]{+45+} days.
 - The `+++` line names who made the changes and when, once. A change by
   anyone else (a tracked change already in a Word document) is followed
   by `{>>Name (date)<<}`, and every comment carries its author and date.
-  `-a/--author` defaults to `git config user.name`, else Redline;
-  `-d/--date` to now.
+  `-a/--author` defaults to Redline; `-d/--date` to now.
 - Changes grow to whole words, numbers, formatting spans and links, so
   `[-**twelve**-]{+**eighteen**+}` rather than a change inside the bold.
   Positions and counts are in characters: nothing is tokenized.
@@ -446,11 +445,12 @@ Payment is due in [-30-]{+45+} days.
   link or an autolink; `--columns N` changes it and `--columns 0` does not
   wrap. Nothing is printed when nothing changed.
 
-The patch is printed whatever is written: `-o changes.docx` writes a Word
-redline, `-o changes.md` the CriticMarkup below and `-o changes.pdf` the
-redline painted (see `jubarte convert --help` for `--revisions`). What
-`diff` wrote is said on stderr. With a Word side and no `-o`, the redline
-goes to `<old>_v_<new>.docx` next to OLD, as before.
+`diff` writes text only. `-o changes.patch` (or `.md`, `.txt`, `.diff`)
+writes what it would print, says so on stderr and prints nothing; an
+existing file needs `--force`. Without `-o` nothing is written. The Word
+redline, its PDF and its pages are `compare`'s: `jubarte compare old new
+-o changes.docx` (or `.pdf`, `.png`); `diff -o changes.docx` exits 2
+saying so.
 
 `jubarte edit` writes the same patch of its redline to `patch.diff` and
 prints it after the report's summary; `-q` prints nothing. In Python,
@@ -486,9 +486,10 @@ are not compared: Word numbers items itself. CriticMarkup delimiters
 already in either document are escaped, so they stay text. The patch is
 built from this alignment.
 
-For Word output the two Markdown documents are written to Word and
-compared by the same engine as two `.docx` files, so moves and Word's
-grouping of changes apply. `--reference-doc` styles both.
+For a Word redline (`jubarte compare old.md new.md -o r.docx`) the two
+Markdown documents are written to Word and compared by the same engine as
+two `.docx` files, so moves and Word's grouping of changes apply.
+`--reference-doc` styles both.
 
 ### Git
 
@@ -499,8 +500,8 @@ git difftool -t jubarte -y -- '*.md'
 
 ## Word against Markdown
 
-`jubarte diff contract.docx edited.md -o redline.docx` (or `jubarte
-contract.docx edited.md`) is the redline of an edit made in Markdown, on
+`jubarte compare contract.docx edited.md -o redline.docx` is the redline
+of an edit made in Markdown, on
 the Word document. The Markdown is not written to Word and compared, which
 would lose what Markdown cannot say (empty paragraphs, fields, section
 breaks, direct formatting) and show every loss as a change. Instead the
@@ -521,7 +522,7 @@ the comparer compares the document before and after:
   the paragraph whole.
 - Empty paragraphs, which Markdown cannot hold, stay.
 
-Reversed (`jubarte diff edited.md contract.docx`), the Markdown is applied
+Reversed (`jubarte compare edited.md contract.docx`), the Markdown is applied
 the same way and the redline runs from it to the Word document.
 
 Not applied, and reported as warnings: footnote text (only the body is
@@ -532,8 +533,9 @@ them accepted.
 
 ## Limits
 
-- `jubarte diff --format critic` with a Word side writes a Word redline
-  rather than printing CriticMarkup; the patch (the default) prints it.
+- `jubarte diff --format critic` needs two Markdown documents; with a
+  Word side it exits 1, and `jubarte compare OLD NEW` prints the redline
+  as the agent view, CriticMarkup included.
 - Markdown math, definition lists and raw HTML blocks are not written.
 - Changes have one author and date; CriticMarkup has no syntax for more.
 

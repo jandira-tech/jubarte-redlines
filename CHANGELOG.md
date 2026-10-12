@@ -50,6 +50,24 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **`diff` writes text only.** It prints the paragraph patch, a text
+  view (`--format github|word|normal|context|side-by-side`) or, for two
+  Markdown documents, `--format critic`'s CriticMarkup, on stdout or in
+  `-o FILE` (`.md`, `.markdown`, `.txt`, `.patch`, `.diff`; any other
+  extension writes the same text), with `wrote FILE (md, N bytes)` on
+  stderr and nothing on stdout. Without `-o` it writes no file: the
+  `OLD_v_NEW.docx` it used to write beside a Word side is gone. `-o
+  FILE.docx`, `.pdf` or `.png` exits 2 naming `compare OLD NEW -o FILE`;
+  `--mode`, `--detail-threshold`, `--reference-doc`, `--critic`,
+  `--resource-path`, `--revisions`, `--revision-palette`, `--dpi`,
+  `--pages`, `--move-comments` and `--changed-pages` are compare's and
+  convert's, and diff no longer takes them. `--format critic` with a Word
+  side exits 1, naming compare. The patch's owner is `Redline` unless
+  `--author` says otherwise (git's `user.name` is no longer read). An
+  existing `-o` file exits 1 before anything is read. The Python and npm
+  CLIs do the same, and their patch headers now name the paths as typed,
+  as the binary's always did. `compare` notes the retired
+  `--changed-only` as convert does.
 - **`edit` and `add` write one file, `FILE_modified.docx`**, beside FILE:
   the redline, or in `--editing-mode` the result. `-o FILE.docx` names
   it (another extension exits 2, naming `read`/`convert`); `--pdf` and
