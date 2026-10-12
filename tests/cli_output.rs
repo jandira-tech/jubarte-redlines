@@ -146,6 +146,17 @@ fn read_writes_the_view_or_the_snapshot() {
     assert!(view.starts_with("---\nsource: t.docx\n"), "{view}");
     let printed = jubarte(dir.path(), &["read", "t.docx"]);
     assert_eq!(view, text(&printed.stdout), "-o writes what read prints");
+    // An extension read does not know writes the view too.
+    let out = jubarte(dir.path(), &["read", "t.docx", "-o", "v.weird"]);
+    assert!(
+        text(&out.stderr).contains("wrote v.weird (md, "),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("v.weird")).unwrap(),
+        view
+    );
     let out = jubarte(dir.path(), &["read", "t.docx", "-o", "v.json", "-p", "p3"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let printed = jubarte(dir.path(), &["read", "t.docx", "--json", "-p", "p3"]);
