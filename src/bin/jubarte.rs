@@ -397,7 +397,8 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     let want_pdf = !png;
     for (side, flag) in [(job.font_report, "--font-report"), (job.report, "--report")] {
         if let Some(side) = side {
-            let others = [(output.as_path(), "PDF output"), (job.file, "input")];
+            let named = if png { "PNG output" } else { "PDF output" };
+            let others = [(output.as_path(), named), (job.file, "input")];
             check_side_file(side, flag, others, job.force)?;
         }
     }
@@ -3221,6 +3222,30 @@ mod tests {
         .expect_err("report over the PDF must be refused");
         assert!(
             err.message.contains("same file as the PDF output"),
+            "{}",
+            err.message
+        );
+        // A PNG run names its own output.
+        let err = run_convert(&ConvertJob {
+            file: &docx,
+            bytes: None,
+            output: Some(&pdf),
+            force: false,
+            font_report: Some(&same),
+            options: jubarte::convert::PdfOptions {
+                revisions: RevisionStyle::Word,
+                ..jubarte::convert::PdfOptions::default()
+            },
+            to: Some(Format::Png),
+            dpi: 96.0,
+            report: None,
+            pages: None,
+            fail_on_substitution: false,
+            status_to_stderr: false,
+        })
+        .expect_err("report over the PNG output must be refused");
+        assert!(
+            err.message.contains("same file as the PNG output"),
             "{}",
             err.message
         );

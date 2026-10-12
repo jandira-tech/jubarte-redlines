@@ -538,7 +538,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
     want_pdf = not png
     for side, flag in ((args.font_report, "--font-report"), (args.report, "--report")):
         if side is not None:
-            _check_side_file(side, flag, ((output, "PDF output"), (args.file, "input")), args.force)
+            named = "PNG output" if png else "PDF output"
+            _check_side_file(side, flag, ((output, named), (args.file, "input")), args.force)
     selected = None if args.pages is None else _parse_pages(args.pages)
     if want_pdf:
         _ensure_writable(output, args.force)
