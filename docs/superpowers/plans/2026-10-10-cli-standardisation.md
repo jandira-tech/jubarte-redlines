@@ -62,8 +62,9 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 | D12 | Default author "Redline" wherever jubarte invents one: edit/add (cli.rs:125), WASM `flagPlan`, the Rust `diff` (D4), the Python CLI's `cmd_diff` (`__main__.py:584`) and the npm CLI's `defaultAuthor()` (mjs 397-403; both drop their git lookup). The Python library's `Document.diff()` follows (Q7). |
 | D13 | Retired names and flags (`text`, `inspect`, `audit`, `diff-render`, `--changed-only`, `--pdf`, `--png`) keep working as hidden aliases and print `note: X is now Y; X is removed in 0.14` on stderr once. `debug` hidden. `self-update` listed last. |
 | D14 | The Python and npm CLIs follow every change to the commands they already have, in the same PR; listing text lives in the engine. Neither gains commands here (Q6): npm still lacks `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG output and `--pages`; Python lacks `append` and `scrub`. The CHANGELOG says so. |
-| D15 | **`edit` and `add` write one file** (Arthur, 2026-10-12). Without `--out-dir` they write `<FILE's dir>/<stem>_modified.docx`: the redline in suggesting mode (the default), the result in editing mode. `-o FILE.docx` names it; any other `-o` extension exits 2 naming `convert`/`read`. `--out-dir [DIR]` writes today's bundle (clean, redline, patch.diff, report.jsonl, and what `--pdf`/`--png` ask for), DIR defaulting to `<stem>.edit`; it excludes `-o`. Without the bundle, `--pdf`/`--png` write `<stem>_modified.pdf` / `<stem>_modified-page-NN.png` beside the docx. An existing output exits 2 without `--force`. The view's `source:` names the file and `wrote PATH (docx, N bytes)` goes to stderr (D6). A refused plan still prints its whole report on stdout; a successful plan's per-operation lines live only in the bundle's report.jsonl. MCP `docx_edit` keeps `out_dir` and the bundle. Editing `X_modified.docx` again: Q14. |
+| D15 | **`edit` and `add` write one file** (Arthur, 2026-10-12). Without `--out-dir` they write `<FILE's dir>/<stem>_modified.docx`: the redline in suggesting mode (the default), the result in editing mode. `-o FILE.docx` names it; any other `-o` extension exits 2 naming `convert`/`read`. `--out-dir [DIR]` writes today's bundle (clean, redline, patch.diff, report.jsonl, and what `--pdf`/`--png` ask for), DIR defaulting to `<stem>.edit`; it excludes `-o`. Without the bundle, `--pdf`/`--png` write `<stem>_modified.pdf` / `<stem>_modified-page-NN.png` beside the docx. An existing output exits 2 without `--force`. The view's `source:` names the file and `wrote PATH (docx, N bytes)` goes to stderr (D6). A refused plan still prints its whole report on stdout; a successful plan's per-operation lines live only in the bundle's report.jsonl. MCP `docx_edit` keeps `out_dir` and the bundle. A FILE whose stem already ends in `_modified` keeps its name (Q14): editing `X_modified.docx` again writes `X_modified.docx`, so it needs `--force`, and `X.docx` is never touched. |
 | D16 | **`--plan` without a value is `<FILE's dir>/<stem>_plan.json`** (Arthur, 2026-10-12), for `edit` and `add`, recording and applying, `--consume` included. The shared parser resolves it, so `parse_cli_json`/`parseCli` hand the bindings the path. The summary's "apply with:" line prints `--plan` bare when the plan is the default. An optional value takes the next word that does not start with `-`, so `jubarte edit --plan letter.docx -p p1` reads `letter.docx` as the plan: a `--plan` value ending `.docx`, `.docm`, `.dotx`, `.dotm` or `.doc` exits 2 "--plan letter.docx names a Word document; put FILE before --plan, or write --plan=PLAN.json". |
+| D17 | **`compare` and `diff` date their revisions now** (Arthur, 2026-10-12, Q16). `-d/--date` becomes optional; without it the shared parser fills the current UTC time, to the second (`2026-10-12T07:00:00Z`), so the binary, `parse_cli_json` and `parseCli` hand the same value to every host. `-d 1970-01-01T00:00:00Z` pins it for reproducible output. The library default (`document_comparer::DEFAULT_DATE`, Python `redline()`, WASM `redlineDocuments` callers) stays the epoch: a library call stays deterministic, a person at a prompt sees today. MCP `docx_compare` follows the CLI. |
 
 ## Rules for the implementer
 
@@ -942,6 +943,20 @@ pub fn top_level_command() -> clap::Command {
 
 Python is rebuilt from source here; npm tests run against the checked-in `jubarte-wasm/npm/` build. Each task ends with its suite green.
 
+### Task 18b: `compare` and `diff` date their revisions now (D17)
+**Files:**
+- `src/cli.rs`: `CompareArgs.date` (299) and `Diff.date` (1315) become `Option<String>` without `default_value`; the help says "default: now (UTC); pin it for reproducible output". The post-parse step of Task 13c fills `now` when absent, in `Cli::try_parse_from` and `parse_json` alike.
+- `src/bin/jubarte.rs`: the `Job.date` test at 2787 asserts a `…Z` timestamp within a minute of now.
+- Python `__main__.py` and npm `jubarte-redlines.mjs:165` take the parser's value (npm's own `new Date()` goes).
+- `jubarte-mcp`: `docx_compare`'s missing date → now.
+
+**Tests:**
+- `tests/cli_parser.rs`: `compare a b` → `date` parses as RFC 3339 and lies within a minute of now; `compare a b -d 1970-01-01T00:00:00Z` keeps it.
+- `tests/m7_cli.rs`: a redline written without `-d` carries today's `w:date`; with `-d` the epoch. Every CLI test that compares bytes across two runs passes `-d`.
+- Python and npm: one row each.
+- **Bench consumers** (Task 21): `tryout_jubarte.py` and the release flow pass `-d 1970-01-01T00:00:00Z`, so reruns stay byte-identical.
+- [ ] Run the named tests, then the **gate**. Commit: `feat(compare)!: compare and diff date their revisions now unless -d pins it`.
+
 ### Task 19: Engine exports and the Python CLI
 **Files:**
 - `src/cli.rs`: `compare_json` + `view_source`, the exact `source:` string for a redline view, so no binding rebuilds `_v_` names.
@@ -1193,15 +1208,15 @@ Arthur accepted every default below; Q10 was replaced by his own decision.
 | Q12 | The follow-ups plan spells paraIds `pid:0DCBD3F9`? | Yes (Precedence) |
 | Q13 | Refuse compare-only flags with one file? | Follow-up, not this PR |
 
-## Decisions asked of Arthur (2026-10-12)
+## Decisions taken with Arthur (2026-10-12)
 
 He asked for D15 and D16, and asked again for compare to print instead of writing (already D3, Task 13; unchanged).
 
-| Q | Question | Recommendation |
+| Q | Question | Decision |
 |---|---|---|
-| Q14 | Editing `X_modified.docx` again: write `X_modified_modified.docx` (the literal rule), or keep `X_modified.docx`, so that `--force` edits it in place? | Keep the name: a second round of tracked edits belongs in the same review copy, and `X.docx` is never touched. Open. |
-| Q15 | The flag that writes "the rest": reuse `--out-dir [DIR]`, or a new flag? | Reuse `--out-dir`; it already means "the bundle, here". Open. |
-| Q16 | compare prints a view whose authors line reads `R: Redline … 1970-01-01T00:00:00Z` (the pinned default date). | Leave it in this plan: the epoch date keeps output reproducible. Printing "no date" for the epoch is a follow-up. Open. |
+| Q14 | Editing `X_modified.docx` again: `X_modified_modified.docx`, or keep `X_modified.docx` (so `--force` edits it in place)? | Keep the name (D15) |
+| Q15 | The flag that writes "the rest": reuse `--out-dir [DIR]`, or a new flag? | Reuse `--out-dir` (recommended; Arthur did not object) |
+| Q16 | compare's printed authors line reads `R: Redline … 1970-01-01T00:00:00Z` (the pinned default date). | Arthur: date them now; `-d` pins (D17, Task 18b) |
 
 ## How this plan ships (Arthur, 2026-10-11)
 
