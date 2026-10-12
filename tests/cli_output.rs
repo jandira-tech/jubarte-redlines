@@ -108,15 +108,26 @@ fn every_writing_task_writes_what_its_output_names() {
 #[test]
 fn compare_writes_criticmarkup_for_two_markdown_documents() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.md"), "# Terms\n\nPayment is due in 30 days.\n").unwrap();
-    std::fs::write(dir.path().join("b.md"), "# Terms\n\nPayment is due in 45 days.\n").unwrap();
+    std::fs::write(
+        dir.path().join("a.md"),
+        "# Terms\n\nPayment is due in 30 days.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("b.md"),
+        "# Terms\n\nPayment is due in 45 days.\n",
+    )
+    .unwrap();
     let out = jubarte(dir.path(), &["compare", "a.md", "b.md", "-o", "c.md"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("c.md")).unwrap(),
         DRAFT
     );
-    let out = jubarte(dir.path(), &["compare", "a.md", "b.md", "-o", "h.md", "--head", "1"]);
+    let out = jubarte(
+        dir.path(),
+        &["compare", "a.md", "b.md", "-o", "h.md", "--head", "1"],
+    );
     assert_eq!(out.status.code(), Some(1));
     assert!(
         text(&out.stderr).contains("two Markdown documents write CriticMarkup"),
