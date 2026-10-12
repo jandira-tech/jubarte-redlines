@@ -44,6 +44,18 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
             main(argv)
         assert exit.value.code == 2
         assert "not supported by the Python CLI" in capsys.readouterr().err
+    # The engine writes a task's view, snapshot or PDF; this CLI, Word only.
+    for argv in (
+        ["accept", str(letter), "-o", str(letter.with_name("a.pdf"))],
+        ["scrub", str(letter), "-o", str(letter.with_name("s.md"))],
+        ["read", str(letter), "-o", str(letter.with_name("v.md"))],
+        [str(letter), "-o", str(letter.with_name("v.json"))],
+        ["convert", str(letter), "-o", str(letter.with_name("c.json"))],
+    ):
+        with pytest.raises(SystemExit) as refused:
+            main(argv)
+        assert refused.value.code == 2, argv
+        assert "not supported by the Python CLI yet" in capsys.readouterr().err
     assert main(["inspect", str(letter)]) == 0
     out = capsys.readouterr().out
     assert "paragraphs: 3" in out and "body:p:2" in out

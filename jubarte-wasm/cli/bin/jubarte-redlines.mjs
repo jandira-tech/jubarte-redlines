@@ -503,6 +503,13 @@ function validateHost(name, o) {
     if (o.no_paragraph_merge) reject("no_paragraph_merge");
   }
   if (["inspect", "read"].includes(name) && o.tables) reject("tables");
+  // The engine's -o writer (view, snapshot, PDF of a result) comes to this
+  // CLI with Task 19; until then it writes Word only.
+  if (["accept", "reject", "append", "scrub"].includes(name) && o.output_format != null && o.output_format !== "docx") {
+    throw new UsageError(`-o FILE.${o.output_format} is not supported by the npm CLI yet`);
+  }
+  if (name === "read" && o.output != null) throw new UsageError("read -o is not supported by the npm CLI yet");
+  if (name === "convert" && o.output_format === "json") throw new UsageError("-o FILE.json is not supported by the npm CLI yet");
   if (name === "read" && o.json && (o.paragraphs != null || o.head != null || o.tail != null || o.changed || o.by != null)) {
     throw new UsageError("--json with a selection is not supported by the npm CLI");
   }

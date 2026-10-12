@@ -170,6 +170,18 @@ test("read (alias text), inspect, capabilities and convert", () => {
     assert.equal(refused.code, 2, `${args}: ${refused.err}`);
     assert.match(refused.err, /not supported by the npm CLI/);
   }
+  // The engine writes a task's view, snapshot or PDF; this CLI, Word only.
+  for (const args of [
+    ["accept", tracked, "-o", path.join(tmp, "a.pdf")],
+    ["scrub", tracked, "-o", path.join(tmp, "s.md")],
+    ["read", untracked, "-o", path.join(tmp, "v.md")],
+    [untracked, "-o", path.join(tmp, "v.json")],
+    ["convert", tracked, "-o", path.join(tmp, "c.json")],
+  ]) {
+    const refused = run(...args);
+    assert.equal(refused.code, 2, `${args}: ${refused.err}`);
+    assert.match(refused.err, /not supported by the npm CLI yet/);
+  }
   assert.equal(JSON.parse(run("capabilities").out).runtime, "wasm");
   const pdf = path.join(tmp, "out.pdf");
   const r = run("convert", tracked, "-o", pdf, "--revisions", "word", "--compress");

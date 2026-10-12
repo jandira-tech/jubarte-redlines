@@ -888,6 +888,15 @@ class SharedParser:
                 self.error("--no-paragraph-merge is not supported by the Python CLI")
         if command in ("inspect", "read") and values.get("tables"):
             self.error("--tables is not supported by the Python CLI")
+        # The engine's -o writer (view, snapshot, PDF of a result) comes to
+        # this CLI with Task 19; until then it writes Word only.
+        written = values.get("output_format")
+        if command in ("accept", "reject", "append", "scrub") and written not in (None, "docx"):
+            self.error(f"-o FILE.{written} is not supported by the Python CLI yet")
+        if command == "read" and values.get("output") is not None:
+            self.error("read -o is not supported by the Python CLI yet")
+        if command == "convert" and written == "json":
+            self.error("-o FILE.json is not supported by the Python CLI yet")
         if command == "read" and values.get("json"):
             for key in ("paragraphs", "head", "tail", "changed", "by"):
                 if values.get(key) not in (None, False):
