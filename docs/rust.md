@@ -395,7 +395,8 @@ Arguments:
 
 Options:
   -o, --output <FILE>
-          Output path
+          Output path; its extension picks the format: .docx (also any other), .md (the
+          agent view), .pdf, .png (one file per page) or .json (the snapshot)
 
       --force
           Overwrite the output file if it already exists
@@ -422,6 +423,45 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Rendering (-o FILE.pdf or FILE.png):
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
 ```
 
 #### `jubarte reject`
@@ -438,7 +478,8 @@ Arguments:
 
 Options:
   -o, --output <FILE>
-          Output path
+          Output path; its extension picks the format: .docx (also any other), .md (the
+          agent view), .pdf, .png (one file per page) or .json (the snapshot)
 
       --force
           Overwrite the output file if it already exists
@@ -465,6 +506,45 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Rendering (-o FILE.pdf or FILE.png):
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
 ```
 
 #### `jubarte convert`
@@ -852,6 +932,13 @@ Arguments:
           The document (.docx) to read
 
 Options:
+  -o, --output <FILE>
+          Write the view to FILE.md, or the snapshot to FILE.json, instead of printing
+          it
+
+      --force
+          Overwrite the output file if it already exists
+
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
@@ -1427,7 +1514,8 @@ Arguments:
 
 Options:
   -o, --output <FILE>
-          Output path
+          Output path; its extension picks the format: .docx (also any other), .md (the
+          agent view), .pdf, .png (one file per page) or .json (the snapshot)
 
       --section-break <SECTION_BREAK>
           What separates each document from the one before it
@@ -1458,6 +1546,45 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Rendering (-o FILE.pdf or FILE.png):
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
 
 Examples:
   jubarte append a.docx b.docx -o ab.docx
@@ -1505,19 +1632,75 @@ Remove authors, editing IDs, metadata and comments before sharing
 Usage: jubarte scrub [OPTIONS] --output <FILE> <FILE>
 
 Arguments:
-  <FILE>  The document (.docx) to scrub
+  <FILE>
+          The document (.docx) to scrub
 
 Options:
-  -o, --output <FILE>        Output path
-      --force                Overwrite the output file if it already exists
-      --author-alias <NAME>  Name every author (revisions, comments, people.xml) takes
-      --rsids                Remove rsids, the edit-session ids that tie copies together
-      --docprops             Remove creator, last editor, revision number, dates,
-                             manager, company and custom properties
-      --comments             Remove every comment
-  -q, --quiet                Print nothing on success (files are still written; warnings
-                             and errors still print)
-  -h, --help                 Print help
+  -o, --output <FILE>
+          Output path; its extension picks the format: .docx (also any other), .md (the
+          agent view), .pdf, .png (one file per page) or .json (the snapshot)
+
+      --force
+          Overwrite the output file if it already exists
+
+      --author-alias <NAME>
+          Name every author (revisions, comments, people.xml) takes
+
+      --rsids
+          Remove rsids, the edit-session ids that tie copies together
+
+      --docprops
+          Remove creator, last editor, revision number, dates, manager, company and
+          custom properties
+
+      --comments
+          Remove every comment
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Rendering (-o FILE.pdf or FILE.png):
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
 
 Examples:
   jubarte scrub redline.docx -o out.docx                     everything, alias Author
