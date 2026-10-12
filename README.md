@@ -382,7 +382,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte capabilities` | What this binary can do, for agents choosing an operation |
 | `jubarte self-update` | Check or install a release from GitHub |
 | `jubarte debug` | Diagnose a Word package, or compare package structures |
-| `jubarte diff-render` | Compare rendered pages pixel by pixel (different pages: exit 5) |
+| `jubarte visual-diff` | Compare rendered pages pixel by pixel (different pages: exit 5) |
 | `jubarte comments` | List comments, threads and the text they annotate |
 | `jubarte append` | Join documents in order, preserving images, styles, lists and notes |
 | `jubarte validate` | Check or repair Word validity (findings: exit 2; unreadable: exit 1) |
