@@ -495,6 +495,43 @@ fn recorded_marks_are_history_and_mark_formatting_goes_with_the_mark() {
     assert_eq!(ids(&out), ["body:rev:1", "body:rev:4"]);
 }
 
+/// Word records a deleted cell's properties with their own `w:cellDel` in
+/// its `w:tcPrChange`: history, like a recorded mark. Resolving another
+/// change keeps the cell, its deletion and its formatting change tracked
+/// (the bench's 32328b55db and 3890d0a960 redlines lost three cells).
+#[test]
+fn a_cell_deletion_recorded_in_its_formatting_history_stays_tracked() {
+    let cell = |props: &str, text: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{props}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let pkg = docx(&format!(
+        r#"<w:p><w:ins w:id="1" {A}><w:r><w:t>Elsewhere</w:t></w:r></w:ins></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl><w:p/>"#,
+        cell("", "Kept"),
+        cell(
+            &format!(
+                r#"<w:cellDel w:id="2" {A}/><w:tcPrChange w:id="3" {A}><w:tcPr><w:tcW w:w="1500" w:type="dxa"/><w:cellDel w:id="4" {A}/></w:tcPr></w:tcPrChange>"#
+            ),
+            "Gone"
+        ),
+    ));
+    let listed: Vec<String> = list_changes(&pkg)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(listed, ["body:rev:1", "body:rev:2", "body:rev:3"]);
+    for resolve in [accept_changes, reject_changes] {
+        let out = resolve(&pkg, &filter_ids(&["body:rev:1"])).unwrap();
+        assert_word_valid_package(&out);
+        assert_eq!(ids(&out), ["body:rev:2", "body:rev:3"]);
+        let xml = part_string(&out, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:tc>").count(), 2, "{xml}");
+        assert!(xml.contains("Gone"), "{xml}");
+    }
+}
+
 /// Every spelling of a change id selects the same change (plan Task 3).
 #[test]
 fn every_spelling_of_a_change_id_selects_the_same_change() {

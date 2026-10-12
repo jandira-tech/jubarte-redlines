@@ -685,8 +685,9 @@ fn in_recorded_properties(dom: &Dom, e: NodeId) -> bool {
     })
 }
 
-/// The revision marks a formatting change `e` records: they sit out with it
-/// when it stays tracked.
+/// The revision marks a formatting change `e` records, a cell's
+/// `w:cellDel` in its `w:tcPrChange` among them: they sit out with it when
+/// it stays tracked, or accepting a cell deletion would find them live.
 fn recorded_marks(dom: &Dom, e: NodeId) -> Vec<NodeId> {
     if !dom
         .name(e)
@@ -699,7 +700,10 @@ fn recorded_marks(dom: &Dom, e: NodeId) -> Vec<NodeId> {
         .filter(|&d| {
             dom.name(d).is_some_and(|n| {
                 n.namespace_name() == W::URI
-                    && matches!(n.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+                    && matches!(
+                        n.local_name(),
+                        "ins" | "del" | "moveFrom" | "moveTo" | "cellIns" | "cellDel" | "cellMerge"
+                    )
             })
         })
         .collect()
