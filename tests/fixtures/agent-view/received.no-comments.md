@@ -1,5 +1,6 @@
 ---
 source: received.docx
+sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: tracked, comments hidden     # 2 threads open (3 comments); carrying paragraphs are marked
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
 revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
