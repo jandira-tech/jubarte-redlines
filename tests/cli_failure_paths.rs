@@ -601,7 +601,13 @@ fn layout_only_flags_refuse_word_and_markdown_before_any_output_write() {
         ] {
             let flag = extra[0];
             let destination = format!("compared.{extension}");
-            let mut args = vec!["diff", "original.docx", "revised.docx", "-o", &destination];
+            let mut args = vec![
+                "compare",
+                "original.docx",
+                "revised.docx",
+                "-o",
+                &destination,
+            ];
             args.extend(extra);
             let out = run(dir.path(), &args);
             assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
