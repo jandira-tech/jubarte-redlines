@@ -295,7 +295,7 @@ def _print_refusal(exc: EditPlanError) -> None:
 
 
 def _spelled(args: argparse.Namespace, key: str) -> str:
-    """FILE or --plan as the command line spells it."""
+    """FILE, --plan, OLD, NEW or -o as the command line spells it."""
     return getattr(args, "spelled", {}).get(key) or str(getattr(args, key))
 
 
@@ -751,7 +751,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
     old = _read_side(args.old, args.old_format)
     new = _read_side(args.new, args.new_format)
     if args.format in ("github", "word", "normal", "context", "side-by-side"):
-        text = _native.diff_view(old, new, format=args.format, old_name=str(args.old), new_name=str(args.new),
+        text = _native.diff_view(old, new, format=args.format, old_name=_spelled(args, "old"), new_name=_spelled(args, "new"),
                                  context=args.context, accept_changes=args.accept_changes, full_lines=args.full_lines)
     else:
         critic = args.format == "critic"
@@ -759,14 +759,14 @@ def cmd_diff(args: argparse.Namespace) -> int:
             raise CliError("--format critic needs both documents in Markdown; "
                            "`jubarte compare OLD NEW` prints their redline as the agent view")
         date = args.date if args.date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        text = _decode_diff(_native.diff_json(old, new, old_name=str(args.old), new_name=str(args.new),
+        text = _decode_diff(_native.diff_json(old, new, old_name=_spelled(args, "old"), new_name=_spelled(args, "new"),
                                               author=args.author, date=date, columns=args.columns, critic=critic)).text
     if output is None:
         sys.stdout.write(text)
         return EXIT_OK
     size = _write(output, text)
     if not args.quiet:
-        print(f"wrote {output} (md, {size} bytes)", file=sys.stderr)
+        print(f"wrote {_spelled(args, 'output')} (md, {size} bytes)", file=sys.stderr)
     return EXIT_OK
 
 
@@ -893,7 +893,7 @@ class SharedParser:
         self._validate_host(command, values)
         # FILE and --plan as typed: messages quote them, and Path() would
         # drop a "./" or a trailing "/" the other CLIs keep.
-        values["spelled"] = {key: values[key] for key in ("file", "plan") if values.get(key) is not None}
+        values["spelled"] = {key: values[key] for key in ("file", "plan", "old", "new", "output") if values.get(key) is not None}
         for key in _PATH_ARGUMENTS:
             if values.get(key) is not None:
                 values[key] = Path(values[key])

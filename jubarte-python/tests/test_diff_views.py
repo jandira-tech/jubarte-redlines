@@ -112,6 +112,19 @@ def test_cli_patch_output_uses_native_format_inference(tmp_path, capsys, suffix)
 
 
 @pytest.mark.integration
+def test_cli_patch_names_the_paths_as_typed(tmp_path, capsys, monkeypatch):
+    # zcode-14 F4: the wrote line keeps `./`, as in the native CLI; the
+    # patch header drops it there too (markdown::unified).
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.md").write_text("Due in 30 days.\n")
+    (tmp_path / "b.md").write_text("Due in 45 days.\n")
+    assert main(["diff", "./a.md", "./b.md"]) == 0
+    assert capsys.readouterr().out.startswith("--- a/a.md\n+++ b/b.md\t")
+    assert main(["diff", "./a.md", "./b.md", "-o", "./p.patch"]) == 0
+    assert capsys.readouterr().err.startswith("wrote ./p.patch (md, ")
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("format", ("patch", "critic", *VIEWS))
 def test_invalid_docx_utf8_is_never_markdown(tmp_path, capsys, format):
     a, b = (tmp_path / name for name in ("bad.docx", "valid.md"))
