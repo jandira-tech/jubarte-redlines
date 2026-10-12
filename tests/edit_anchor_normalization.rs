@@ -386,3 +386,56 @@ fn plain_anchor_distinguishes_hard_breaks_from_literal_backslashes() {
         );
     }
 }
+
+/// A line copied from the tracked view finds its paragraph: a list number
+/// typed inside an insertion, ahead of one, or escaped as plain text stays
+/// part of the anchor, and a synthesized heading mark does not.
+#[test]
+fn a_line_copied_from_the_tracked_view_finds_its_paragraph() {
+    let ins = |text: &str| {
+        format!(
+            r#"<w:ins w:id="9" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:ins>"#
+        )
+    };
+    let source = docx(&format!(
+        r#"<w:p>{}</w:p><w:p><w:r><w:t xml:space="preserve">1. </w:t></w:r>{}</w:p>{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{}</w:p>"#,
+        ins("1. one"),
+        ins("two"),
+        para("1. three"),
+        ins("Four"),
+    ));
+    let view = jubarte::markdown::docx_to_markdown(
+        &source,
+        &jubarte::markdown::MarkdownOptions {
+            ids: true,
+            comments: true,
+            ..jubarte::markdown::MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    let lines: Vec<&str> = view.lines().collect();
+    for (paragraph, text) in [
+        ("p0", "1. one"),
+        ("p1", "1. two"),
+        ("p2", "1. three"),
+        ("p3", "Four"),
+    ] {
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with(&format!("<!-- {paragraph} ")))
+            .unwrap_or_else(|| panic!("{paragraph}: {view}"));
+        let find = lines[at + 1];
+        assert_eq!(
+            jubarte::markdown::plain_anchor(find),
+            text,
+            "{paragraph}: {find}"
+        );
+        let keep = EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"Ann Counsel","date":"2026-10-01T09:00:00Z","existing_revisions":"keep","operations":[{{"kind":"comment","paragraph":"{paragraph}","find":{},"text":"x"}}]}}"#,
+            serde_json::to_string(find).unwrap()
+        ))
+        .unwrap();
+        apply_plan(&source, &keep).unwrap_or_else(|e| panic!("{paragraph}: {find}: {e}"));
+    }
+}

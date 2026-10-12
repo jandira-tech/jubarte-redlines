@@ -188,15 +188,20 @@ fn without_emphasis(text: &str) -> String {
 
 /// The document text an agent-view fragment stands for: attribution and
 /// comment notes dropped, insertions and highlights unwrapped, deletions
-/// removed, substitutions replaced by their new side, a leading block mark
-/// (`# `, `> `, `- `, `1. `, ahead of any change mark) dropped, emphasis marks dropped, backslash
-/// escapes resolved. An escaped mark (`\*\*`) is text and stays.
+/// removed, substitutions replaced by their new side, a block mark that
+/// leads the line (`#`–`######`, `> `, `- `, `+ `, `* `, `1. `, `1) `, after
+/// any leading spaces) dropped, emphasis marks dropped, backslash
+/// escapes resolved. A mark inside a change mark (`{++1. one++}`) is the
+/// change's text and stays, as does an escaped mark (`\*\*`).
 pub fn plain_anchor(text: &str) -> String {
     let mut hidden = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
-        // The view's hard break: `\` before a newline is the newline.
+        // The view's hard break: `\` before a newline is the newline, a
+        // character of the paragraph rather than the end of a block.
         if c == '\\' && chars.peek() == Some(&'\n') {
+            hidden.push(hide('\n'));
+            chars.next();
             continue;
         }
         if c == '\\'
@@ -209,14 +214,19 @@ pub fn plain_anchor(text: &str) -> String {
         }
         hidden.push(c);
     }
-    // The view writes a block mark ahead of the line's change marks, so it
-    // goes first: a `1. ` an insertion wraps is the document's text.
-    let mut text = strip_between(without_block_mark(&hidden), "{>>", "<<}", Keep::Nothing);
+    // The view writes a block mark at the start of its line, ahead of the
+    // line's change marks, and escapes a literal one there, so marks go
+    // first, line by line: a `1. ` an insertion wraps is the document's
+    // text, and one after an opener left on the line above is a list's.
+    let blocks: Vec<&str> = hidden.split('\n').map(without_block_mark).collect();
+    let mut text = strip_between(&blocks.join("\n"), "{>>", "<<}", Keep::Nothing);
     text = strip_between(&text, "{--", "--}", Keep::Nothing);
     text = strip_between(&text, "{~~", "~~}", Keep::NewSide);
     text = strip_between(&text, "{++", "++}", Keep::Inner);
     text = strip_between(&text, "{==", "==}", Keep::Inner);
-    let text = without_emphasis(&text);
+    // A newline left at either end separates this paragraph from the one
+    // an opener or closer came from; it is not the paragraph's text.
+    let text = without_emphasis(text.trim_matches('\n'));
     text.chars().map(reveal).collect()
 }
 
@@ -240,6 +250,10 @@ mod tests {
             // `1. ` an insertion wraps is text (bench 1aff6b41d6).
             ("{++1. one++}{>>r0 @AC<<}", "1. one"),
             ("1. {++one++}{>>r0 @AC<<}", "one"),
+            ("{++\n\n1. item two++}{>>r0 @AC<<}", "item two"),
+            ("one{++\n\n## Two++}{>>r0 @AC<<}", "one\n\nTwo"),
+            ("a\\\n1\\. b", "a\n1. b"),
+            ("a\\\n", "a\n"),
             ("# {~~Old~>New~~}{>>#1 @AC<<}", "New"),
             ("- item", "item"),
             ("a_b", "a_b"),
