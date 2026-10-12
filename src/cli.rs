@@ -1182,6 +1182,8 @@ pub enum Format {
     Pdf,
     /// PNG pages.
     Png,
+    /// The JSON snapshot (`read --json`'s object): written, never read.
+    Json,
 }
 
 impl Format {
@@ -1193,7 +1195,19 @@ impl Format {
             "md" | "markdown" | "mdown" | "mkd" | "mkdn" | "txt" => Some(Self::Md),
             "pdf" => Some(Self::Pdf),
             "png" => Some(Self::Png),
+            "json" => Some(Self::Json),
             _ => None,
+        }
+    }
+
+    /// The name `--to` takes and messages print.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Docx => "docx",
+            Self::Md => "md",
+            Self::Pdf => "pdf",
+            Self::Png => "png",
+            Self::Json => "json",
         }
     }
 
@@ -1207,6 +1221,132 @@ impl Format {
             } else {
                 Self::Md
             })
+    }
+}
+
+/// A task that writes a file through `-o`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Task {
+    Compare,
+    Convert,
+    Read,
+    Diff,
+    Accept,
+    Reject,
+    Append,
+    Scrub,
+}
+
+impl Task {
+    /// The command's name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Compare => "compare",
+            Self::Convert => "convert",
+            Self::Read => "read",
+            Self::Diff => "diff",
+            Self::Accept => "accept",
+            Self::Reject => "reject",
+            Self::Append => "append",
+            Self::Scrub => "scrub",
+        }
+    }
+
+    /// The task a command name (or its alias) runs.
+    pub fn of_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "compare" | "redline" => Self::Compare,
+            "convert" => Self::Convert,
+            "read" | "text" => Self::Read,
+            "diff" => Self::Diff,
+            "accept" => Self::Accept,
+            "reject" => Self::Reject,
+            "append" => Self::Append,
+            "scrub" => Self::Scrub,
+            _ => return None,
+        })
+    }
+
+    /// The formats its `-o` writes (`capabilities::OUTPUT_FORMATS`).
+    fn allowed(self) -> Vec<Format> {
+        crate::capabilities::OUTPUT_FORMATS
+            .iter()
+            .find(|(task, _)| *task == self.name())
+            .map(|(_, names)| {
+                names
+                    .iter()
+                    .filter_map(|n| Format::of_path(Path::new(&format!("x.{n}"))))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// What `-o PATH`'s extension says for this task: `diff` reads `.patch`
+    /// and `.diff` as text too.
+    fn known(self, path: &Path) -> Option<Format> {
+        let patch = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("patch") || e.eq_ignore_ascii_case("diff"));
+        if self == Self::Diff && patch {
+            return Some(Format::Md);
+        }
+        Format::of_path(path)
+    }
+
+    /// The refusal for a format this task cannot write.
+    fn cannot_write(self, format: Format) -> String {
+        let ext = format.name();
+        match (self, format) {
+            (Self::Diff, Format::Json) => "diff does not write .json yet".to_string(),
+            (Self::Diff, _) => format!(
+                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o c.{ext}` writes the redline as {ext}"
+            ),
+            (Self::Read, _) => {
+                format!("read writes .md or .json; `convert FILE -o v.{ext}` writes {ext}")
+            }
+            _ => format!("{} does not write .{ext}", self.name()),
+        }
+    }
+}
+
+/// The format a task writes. `-o`'s extension decides; `--to` decides when
+/// the extension is missing or unknown; a known extension that disagrees with
+/// `--to` is an error. `-o` with neither → the task's usual format (`convert`'s
+/// depends on its input: `None`). No `-o` and no `--to` → `None`: the task
+/// prints, or convert picks by input. Pure.
+pub fn output_format(
+    task: Task,
+    output: Option<&Path>,
+    to: Option<Format>,
+) -> Result<Option<Format>, String> {
+    let said = output.and_then(|path| task.known(path));
+    if let (Some(path), Some(said), Some(to)) = (output, said, to)
+        && said != to
+    {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        return Err(format!(
+            "-o {name} says {} and --to says {}: drop one",
+            said.name(),
+            to.name()
+        ));
+    }
+    let format = match (output, said.or(to)) {
+        (None, None) => return Ok(None),
+        (_, Some(format)) => format,
+        (Some(_), None) => match task {
+            Task::Convert => return Ok(None),
+            Task::Read | Task::Diff => Format::Md,
+            _ => Format::Docx,
+        },
+    };
+    if task.allowed().contains(&format) {
+        Ok(Some(format))
+    } else {
+        Err(task.cannot_write(format))
     }
 }
 
@@ -1270,7 +1410,7 @@ pub struct MarkdownArgs {
     #[arg(
         short = 'f',
         long = "from",
-        value_enum,
+        value_parser = input_format_parser(),
         value_name = "FORMAT",
         help_heading = "Formats"
     )]

@@ -5,8 +5,9 @@
 //! Deterministic shared CLI parsing, with no document or platform I/O.
 #![cfg(feature = "cli")]
 
-use jubarte::cli::{Cli, Command, PatchFormat, parse_json};
+use jubarte::cli::{Cli, Command, Format, PatchFormat, Task, output_format, parse_json};
 use serde_json::Value;
+use std::path::Path;
 
 fn parse(arguments: &[&str], supported: &[&str]) -> Value {
     serde_json::from_str(&parse_json(
@@ -979,4 +980,123 @@ fn edit_and_add_group_accept_reject_and_reply_by_their_location() {
     .unwrap_err()
     .to_string();
     assert!(twice.contains("-p c5: --reply given twice"), "{twice}");
+}
+
+/// D1/D2: `-o`'s extension decides, `--to` fills a missing or unknown one,
+/// a disagreement is an error, and each task writes only its own formats.
+#[test]
+fn the_output_rule_is_one_table() {
+    use Format::{Docx, Json, Md, Pdf, Png};
+    let rule = |task, output: Option<&str>, to| output_format(task, output.map(Path::new), to);
+    let all = [
+        Task::Compare,
+        Task::Convert,
+        Task::Read,
+        Task::Diff,
+        Task::Accept,
+        Task::Reject,
+        Task::Append,
+        Task::Scrub,
+    ];
+    for task in all {
+        assert_eq!(rule(task, None, None), Ok(None), "{task:?}");
+        assert_eq!(Task::of_name(task.name()), Some(task));
+    }
+    assert_eq!(Task::of_name("redline"), Some(Task::Compare));
+    assert_eq!(Task::of_name("text"), Some(Task::Read));
+    assert_eq!(Task::of_name("edit"), None);
+    for task in [
+        Task::Compare,
+        Task::Accept,
+        Task::Reject,
+        Task::Append,
+        Task::Scrub,
+    ] {
+        for (path, format) in [
+            ("x.docx", Docx),
+            ("x.md", Md),
+            ("x.txt", Md),
+            ("x.pdf", Pdf),
+            ("x.PNG", Png),
+            ("x.json", Json),
+            ("x.tmp", Docx),
+            ("x", Docx),
+        ] {
+            assert_eq!(
+                rule(task, Some(path), None),
+                Ok(Some(format)),
+                "{task:?} {path}"
+            );
+        }
+    }
+    // convert
+    assert_eq!(rule(Task::Convert, Some("x.tmp"), Some(Png)), Ok(Some(Png)));
+    assert_eq!(rule(Task::Convert, Some("x.pdf"), Some(Pdf)), Ok(Some(Pdf)));
+    assert_eq!(rule(Task::Convert, None, Some(Png)), Ok(Some(Png)));
+    assert_eq!(rule(Task::Convert, Some("x.tmp"), None), Ok(None));
+    assert_eq!(
+        rule(Task::Convert, Some("x.png"), Some(Pdf)),
+        Err("-o x.png says png and --to says pdf: drop one".to_string())
+    );
+    // read
+    for (path, format) in [("v.md", Md), ("v.tmp", Md), ("v.json", Json)] {
+        assert_eq!(
+            rule(Task::Read, Some(path), None),
+            Ok(Some(format)),
+            "{path}"
+        );
+    }
+    for ext in ["docx", "pdf", "png"] {
+        assert_eq!(
+            rule(Task::Read, Some(&format!("v.{ext}")), None),
+            Err(format!(
+                "read writes .md or .json; `convert FILE -o v.{ext}` writes {ext}"
+            ))
+        );
+    }
+    // diff
+    for path in ["d.md", "d.txt", "d.patch", "d.DIFF", "d.markdown", "d.tmp"] {
+        assert_eq!(rule(Task::Diff, Some(path), None), Ok(Some(Md)), "{path}");
+    }
+    for ext in ["docx", "pdf", "png"] {
+        assert_eq!(
+            rule(Task::Diff, Some(&format!("d.{ext}")), None),
+            Err(format!(
+                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o c.{ext}` writes the redline as {ext}"
+            ))
+        );
+    }
+    assert_eq!(
+        rule(Task::Diff, Some("d.json"), None),
+        Err("diff does not write .json yet".to_string())
+    );
+    assert!(
+        rule(Task::Diff, None, Some(Docx))
+            .unwrap_err()
+            .contains("-o c.docx")
+    );
+    assert_eq!(Format::of_path(Path::new("a.json")), Some(Json));
+    let cli = Cli::try_parse_from(["jubarte", "convert", "a.docx", "--to", "json"]).unwrap();
+    assert!(
+        matches!(cli.command, Some(Command::Convert { .. })),
+        "{:?}",
+        cli.command
+    );
+}
+
+/// Every task with a long `--output` has a row in the `-o` table.
+#[test]
+fn every_output_flag_has_a_row_in_the_table() {
+    use clap::CommandFactory;
+    for sub in Cli::command().get_subcommands() {
+        if sub.get_arguments().any(|a| a.get_long() == Some("output")) {
+            let name = sub.get_name();
+            assert!(
+                jubarte::capabilities::OUTPUT_FORMATS
+                    .iter()
+                    .any(|(t, _)| *t == name),
+                "{name} writes -o but has no OUTPUT_FORMATS row"
+            );
+        }
+    }
 }
