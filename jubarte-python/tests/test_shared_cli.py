@@ -169,3 +169,65 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
     assert main(["diff", str(a), str(b), "-o", str(base)]) == 0
     assert (tmp_path / "pages-page-01.png").read_bytes().startswith(b"\x89PNG")
     assert base.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("command", ["accept", "reject"])
+@pytest.mark.parametrize("extension", ["md", "markdown", "PDF", "png", "JSON"])
+def test_shared_writer_rejects_unsupported_formats(command, extension, capsys):
+    argv = [command, "missing.docx"]
+    argv += ["-o", f"result.{extension}", "--force", "-q"]
+    with pytest.raises(SystemExit) as refused:
+        build_parser().parse_args(argv)
+    assert refused.value.code == 2
+    streams = capsys.readouterr()
+    assert streams.out == ""
+    kind = "md" if extension == "markdown" else extension.lower()
+    assert f"-o FILE.{kind} is not supported by the Python CLI yet" in streams.err
+
+
+@pytest.mark.parametrize("command", ["accept", "reject"])
+@pytest.mark.parametrize("extension", ["docx", "DOCX", "docm", "unknown", ""])
+def test_shared_writer_preserves_word_and_unknown_extension_support(command, extension):
+    output = "result" + (f".{extension}" if extension else "")
+    argv = [command, "missing.docx"]
+    args = build_parser().parse_args([*argv, "-o", output])
+    assert args.command == command
+    assert args.output == Path(output)
+    assert args.output_format == "docx"
+
+
+@pytest.mark.parametrize("prefix", [["read", "missing.docx"], ["text", "missing.docx"], ["missing.docx"]])
+@pytest.mark.parametrize("output", ["view.md", "view.JSON", "view.unknown"])
+def test_shared_read_writer_refuses_aliases_and_unknown_extensions(prefix, output, capsys):
+    with pytest.raises(SystemExit) as refused:
+        build_parser().parse_args([*prefix, "-o", output, "--force", "-q"])
+    assert refused.value.code == 2
+    streams = capsys.readouterr()
+    assert streams.out == ""
+    assert "read -o is not supported by the Python CLI yet" in streams.err
+
+
+@pytest.mark.parametrize("output", [["--to", "json"], ["-o", "result.JSON"], ["--to", "json", "-o", "result.unknown"]])
+def test_shared_convert_writer_refuses_json_by_format_or_extension(output, capsys):
+    with pytest.raises(SystemExit) as refused:
+        build_parser().parse_args(["convert", "missing.docx", *output])
+    assert refused.value.code == 2
+    streams = capsys.readouterr()
+    assert streams.out == ""
+    assert "-o FILE.json is not supported by the Python CLI yet" in streams.err
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("command", ["accept", "reject", "convert", "read"])
+def test_unsupported_writer_preserves_existing_output_even_with_force(command, tmp_path, capsys):
+    output = tmp_path / "existing.json"
+    output.write_bytes(b"preserve existing output")
+    argv = [command, str(tmp_path / "missing.docx")]
+    with pytest.raises(SystemExit) as refused:
+        main([*argv, "-o", str(output), "--force", "-q"])
+    assert refused.value.code == 2
+    streams = capsys.readouterr()
+    assert streams.out == ""
+    assert "not supported by the Python CLI yet" in streams.err
+    assert output.read_bytes() == b"preserve existing output"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["existing.json"]
