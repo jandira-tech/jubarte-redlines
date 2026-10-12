@@ -1298,7 +1298,7 @@ fn cli_changed_pages_name_each_png_by_its_document_page() {
 }
 
 #[test]
-fn cli_diff_passes_page_options_to_pdf_rendering() {
+fn cli_compare_passes_page_options_to_pdf_rendering() {
     let dir = tempfile::tempdir().unwrap();
     let old = dir.path().join("old.docx");
     let new = dir.path().join("new.docx");
@@ -1312,7 +1312,7 @@ fn cli_diff_passes_page_options_to_pdf_rendering() {
     std::fs::write(&old, with_comments(&body("original"), COMMENT_XML)).unwrap();
     std::fs::write(&new, with_comments(&body("replacement"), COMMENT_XML)).unwrap();
     let baseline = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .args(["diff", "-o"])
+        .args(["compare", "-o"])
         .arg(&redline)
         .arg(&old)
         .arg(&new)
@@ -1324,7 +1324,7 @@ fn cli_diff_passes_page_options_to_pdf_rendering() {
         String::from_utf8_lossy(&baseline.stderr)
     );
     let result = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .args(["diff", "--move-comments", "--changed-pages", "-o"])
+        .args(["compare", "--move-comments", "--changed-pages", "-o"])
         .arg(&pdf)
         .arg(&old)
         .arg(&new)
@@ -1352,6 +1352,6 @@ fn cli_diff_passes_page_options_to_pdf_rendering() {
     );
     assert!(
         std::fs::read(pdf).unwrap() == expected.pdf.unwrap(),
-        "diff must render its redline with both requested page options"
+        "compare must render its redline with both requested page options"
     );
 }
