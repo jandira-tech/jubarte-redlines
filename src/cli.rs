@@ -355,8 +355,8 @@ pub struct CompareArgs {
     #[arg(long, help_heading = "Markdown inputs")]
     pub critic: bool,
 
-    /// Where images named by the Markdown are found (default: each
-    /// Markdown file's directory).
+    /// Where images named by the Markdown are found (default: the
+    /// original's directory when it is Markdown, else the modified's).
     #[arg(long, value_name = "DIR", help_heading = "Markdown inputs")]
     pub resource_path: Option<PathBuf>,
 
@@ -370,6 +370,12 @@ pub struct CompareArgs {
     #[command(flatten)]
     #[serde(skip)]
     pub read: ReadArgs,
+
+    /// Whether the command line spells out any of `read`'s options (set
+    /// after parsing): a `.md` of two Markdown documents is CriticMarkup,
+    /// which they cannot shape.
+    #[arg(skip)]
+    pub view_given: bool,
 }
 
 /// The derive model with the shorthands' options hidden: `jubarte --help`
@@ -618,8 +624,8 @@ pub enum Command {
         /// (Word output). By default a document compared is text.
         #[arg(long, help_heading = "Word redline")]
         critic: bool,
-        /// Where images named by the Markdown are found [default: each
-        /// Markdown file's directory].
+        /// Where images named by the Markdown are found [default: the
+        /// old document's directory when it is Markdown, else the new's].
         #[arg(long, value_name = "DIR", help_heading = "Word redline")]
         resource_path: Option<PathBuf>,
         /// How a PDF or PNG output is rendered.
@@ -2195,16 +2201,23 @@ fn validate_matches(
                 read_output(output, &given)
                     .map_err(|message| command.error(ErrorKind::ArgumentConflict, message))?;
             }
-            // Compare's own options mean nothing to read.
-            if let Some(flag) = COMPARE_ONLY
-                .into_iter()
-                .chain(RENDER_ONLY)
-                .find(|id| given(id))
-            {
+            // Compare's own options and the rendering ones mean nothing to
+            // read.
+            if let Some(flag) = COMPARE_ONLY.into_iter().find(|id| given(id)) {
                 return Err(command.error(
                     ErrorKind::ArgumentConflict,
                     format!(
                         "--{} is a compare option: name two documents",
+                        flag.replace('_', "-")
+                    ),
+                ));
+            }
+            if let Some(flag) = RENDER_ONLY.into_iter().find(|id| given(id)) {
+                return Err(command.error(
+                    ErrorKind::ArgumentConflict,
+                    format!(
+                        "--{} draws a PDF or PNG, which read does not write: \
+                         `convert FILE -o FILE.pdf` or `compare A B -o FILE.pdf` does",
                         flag.replace('_', "-")
                     ),
                 ));
@@ -2516,8 +2529,23 @@ impl Cli {
         if let Some(task) = cli.command.as_mut() {
             fill_flag_operations(task, &matches, &mut command)?;
         }
+        match (cli.command.as_mut(), matches.subcommand()) {
+            (Some(Command::Compare(compare)), Some((_, args))) => {
+                compare.view_given = view_given(args);
+            }
+            (None, _) => cli.compare.view_given = view_given(&matches),
+            _ => {}
+        }
         Ok(cli)
     }
+}
+
+/// Whether `matches` spells out any of `read`'s options.
+fn view_given(matches: &clap::ArgMatches) -> bool {
+    READ_OPTION_IDS.into_iter().any(|id| {
+        matches.try_contains_id(id).unwrap_or(false)
+            && matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine)
+    })
 }
 
 fn compare_json(compare: &CompareArgs) -> serde_json::Value {
@@ -2547,15 +2575,24 @@ fn compare_json(compare: &CompareArgs) -> serde_json::Value {
         .ok()
         .flatten();
     args["output_format"] = serde_json::to_value(kind).expect("format");
-    // The view's options, when the view is what compare gives: printed
-    // without -o, or written to a .md unless both documents are Markdown
-    // (CriticMarkup then).
-    let markdown = |format: &serde_json::Value| format == "md";
-    let critic = markdown(&args["old_format"]) && markdown(&args["new_format"]);
-    if kind.is_none() || (kind == Some(Format::Md) && !critic) {
+    // The view's options, when the view may be what compare gives: printed
+    // without -o, or written to a .md. Only the host, once it has read
+    // both documents, knows whether a .md is CriticMarkup (both Markdown:
+    // `view_given` must be false) or the view.
+    if matches!(kind, None | Some(Format::Md)) {
         args["view"] = serde_json::to_value(&compare.read).expect("UTF-8 CLI arguments");
     }
     args
+}
+
+/// Whether compare's result is surely the agent view: printed, or a .md of
+/// documents whose names do not both say Markdown. A host without `read`
+/// refuses it.
+fn view_is_output(args: &serde_json::Value) -> bool {
+    let markdown = |format: &serde_json::Value| format == "md";
+    args["output_format"].is_null()
+        || (args["output_format"] == "md"
+            && !(markdown(&args["old_format"]) && markdown(&args["new_format"])))
 }
 
 /// A comparison whose result is the agent view, in an adapter without
@@ -2646,9 +2683,12 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             let mut task = Command::from_arg_matches(&matches)?;
             fill_flag_operations(&mut task, &matches, &mut command)?;
             let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
-            if let Command::Compare(compare) = &task {
+            if let Command::Compare(compare) = &mut task {
+                if let Some((_, args)) = matches.subcommand() {
+                    compare.view_given = view_given(args);
+                }
                 value["args"] = compare_json(compare);
-                if !value["args"]["view"].is_null() && !accepts("read") {
+                if view_is_output(&value["args"]) && !accepts("read") {
                     return Err(view_not_supported(&mut command));
                 }
             }
@@ -2711,7 +2751,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             value["exit_code"] = 0.into();
             Ok(value)
         } else {
-            let compare = CompareArgs::from_arg_matches(&matches)?;
+            let mut compare = CompareArgs::from_arg_matches(&matches)?;
             if compare
                 .original_pos
                 .as_ref()
@@ -2750,8 +2790,9 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 .expect("format");
                 return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
             }
+            compare.view_given = view_given(&matches);
             let args = compare_json(&compare);
-            if !args["view"].is_null() && !accepts("read") {
+            if view_is_output(&args) && !accepts("read") {
                 return Err(view_not_supported(&mut command));
             }
             Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))

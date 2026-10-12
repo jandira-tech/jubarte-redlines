@@ -1469,6 +1469,8 @@ struct Job {
     output: Option<PathBuf>,
     /// The options of that view (printed, or written to a `.md`).
     read: ReadArgs,
+    /// Whether the command line spelled out any of them.
+    view_given: bool,
     /// How a `.pdf` or `.png` output is drawn.
     render: RenderArgs,
     /// `--reference-doc`, `--critic` and `--resource-path`: how Markdown
@@ -1502,6 +1504,7 @@ fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
         modified,
         output: compare.output,
         read: compare.read,
+        view_given: compare.view_given,
         render: compare.render,
         reference: compare.reference_doc,
         critic: compare.critic,
@@ -1573,9 +1576,6 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         source: source.clone(),
         render: &job.render,
     });
-    if let Some(out) = &out {
-        check_output(out)?;
-    }
     let original = read_document(&job.original)?;
     let modified = read_document(&job.modified)?;
     let settings = comparer_settings(
@@ -1595,21 +1595,41 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         Format::of_input(None, &job.modified, &modified),
         modified,
     )?;
+    // A choice the documents read make void is a usage error, before any
+    // output is checked.
+    let usage = |message: String| ConvertFailure { code: 2, message };
+    let markdown_pair = old.markdown.is_some() && new.markdown.is_some();
+    if markdown_pair && job.view_given && out.as_ref().is_some_and(|o| o.kind == Format::Md) {
+        return Err(usage(
+            "read options shape the view; two Markdown documents write CriticMarkup to a .md"
+                .to_string(),
+        ));
+    }
+    let word_pair = old.markdown.is_none() && new.markdown.is_none();
+    if word_pair
+        && let Some(flag) = [
+            (job.reference.is_some(), "--reference-doc"),
+            (job.critic, "--critic"),
+            (job.resource_path.is_some(), "--resource-path"),
+        ]
+        .into_iter()
+        .find_map(|(given, flag)| given.then_some(flag))
+    {
+        return Err(usage(format!(
+            "{flag} applies to Markdown inputs; both documents are Word"
+        )));
+    }
+    if let Some(out) = &out {
+        check_output(out)?;
+    }
     // Two Markdown documents written to a .md: CriticMarkup, not the view.
     if let (Some(out), Some(old_text), Some(new_text)) = (&out, &old.markdown, &new.markdown)
         && out.kind == Format::Md
     {
-        if job.read != ReadArgs::default() {
-            return Err(
-                "read options shape the view; two Markdown documents write CriticMarkup to a .md"
-                    .to_string()
-                    .into(),
-            );
-        }
         let critic = jubarte::markdown::diff_markdown(old_text, new_text);
         return write_output(out, Produced::Text(&critic));
     }
-    let redline = if old.markdown.is_none() && new.markdown.is_none() {
+    let redline = if word_pair {
         jubarte::document_comparer::compare_documents_with_settings(
             &old.bytes, &new.bytes, &settings,
         )

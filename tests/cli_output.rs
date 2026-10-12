@@ -124,17 +124,58 @@ fn compare_writes_criticmarkup_for_two_markdown_documents() {
         std::fs::read_to_string(dir.path().join("c.md")).unwrap(),
         DRAFT
     );
-    let out = jubarte(
-        dir.path(),
-        &["compare", "a.md", "b.md", "-o", "h.md", "--head", "1"],
+    // The binary reads Markdown by its bytes: names that do not say so
+    // still give CriticMarkup.
+    std::fs::copy(dir.path().join("a.md"), dir.path().join("a")).unwrap();
+    std::fs::copy(dir.path().join("b.md"), dir.path().join("b.json")).unwrap();
+    let out = jubarte(dir.path(), &["compare", "a", "b.json", "-o", "n.md"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("n.md")).unwrap(),
+        DRAFT
     );
-    assert_eq!(out.status.code(), Some(1));
-    assert!(
-        text(&out.stderr).contains("two Markdown documents write CriticMarkup"),
-        "{}",
-        text(&out.stderr)
+    // A view option there is a usage error, even over an existing file.
+    std::fs::write(dir.path().join("h.md"), "keep").unwrap();
+    for args in [
+        &["compare", "a.md", "b.md", "-o", "h.md", "--head", "1"][..],
+        &["a", "b.json", "-o", "h.md", "--comments", "inline"],
+    ] {
+        let out = jubarte(dir.path(), args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(
+            text(&out.stderr).contains("two Markdown documents write CriticMarkup"),
+            "{}",
+            text(&out.stderr)
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("h.md")).unwrap(),
+        "keep"
     );
-    assert!(!dir.path().join("h.md").exists());
+}
+
+/// The Markdown-input options with two Word documents would do nothing.
+#[test]
+fn compare_refuses_markdown_options_for_two_word_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(TRACKED, dir.path().join("t.docx")).unwrap();
+    for flags in [
+        &["--reference-doc", "missing.docx"][..],
+        &["--critic"],
+        &["--resource-path", "."],
+    ] {
+        let out = jubarte(
+            dir.path(),
+            &[&["compare", "t.docx", "t.docx", "-o", "r.docx"][..], flags].concat(),
+        );
+        assert_eq!(out.status.code(), Some(2), "{flags:?}");
+        assert!(
+            text(&out.stderr).contains("applies to Markdown inputs; both documents are Word"),
+            "{}",
+            text(&out.stderr)
+        );
+        assert!(!dir.path().join("r.docx").exists());
+    }
 }
 
 #[test]

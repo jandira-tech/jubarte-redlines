@@ -840,7 +840,7 @@ fn images_are_read_next_to_the_markdown_with_escapes_decoded() {
 }
 
 #[test]
-fn diff_takes_a_reference_and_can_read_critic_markup() {
+fn diff_reads_critic_markup_and_compare_takes_a_reference() {
     let dir = tempfile::tempdir().unwrap();
     seed(
         dir.path(),

@@ -1017,7 +1017,9 @@ fn explicit_compare_and_alias_print_the_view_like_the_shorthand() {
         (&["compare", "a.docx", "b.docx", "-o", "r.tmp"], false),
         (&["compare", "a.docx", "b.docx", "-o", "v.md"], true),
         (&["compare", "a.md", "b.docx", "-o", "v.md"], true),
-        (&["compare", "a.md", "b.md", "-o", "c.md"], false),
+        // A .md's view or CriticMarkup is the host's to decide once it has
+        // read both documents (names may not say Markdown).
+        (&["compare", "a.md", "b.md", "-o", "c.md"], true),
         (&["compare", "a.md", "b.md"], true),
     ] {
         let result = parse(args, &[]);
@@ -1032,22 +1034,58 @@ fn explicit_compare_and_alias_print_the_view_like_the_shorthand() {
         parse(&["compare", "a.docx", "b.docx", "-o", "r.tmp"], &[])["args"]["output_format"],
         "docx"
     );
+    // Whether the command line names a view option, at its default too: a
+    // .md of two Markdown documents is CriticMarkup, which none shapes.
+    for (args, given) in [
+        (&["compare", "a.md", "b.md", "-o", "c.md"][..], false),
+        (
+            &[
+                "compare",
+                "a.md",
+                "b.md",
+                "-o",
+                "c.md",
+                "--comments",
+                "inline",
+            ],
+            true,
+        ),
+        (&["a", "b", "--head", "1"], true),
+        (&["a", "b"], false),
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["args"]["view_given"], given, "{args:?}: {result}");
+        let native = Cli::try_parse_from([&["jubarte"][..], args].concat()).unwrap();
+        let compare = match native.command {
+            Some(Command::Compare(compare)) => compare,
+            _ => native.compare,
+        };
+        assert_eq!(compare.view_given, given, "{args:?}");
+    }
+    // A host without read takes CriticMarkup, never the view.
+    assert_eq!(
+        parse(&["compare", "a.md", "b.md", "-o", "c.md"], &["compare"])["exit_code"],
+        0
+    );
     // `jubarte FILE` is read: compare's own options and the rendering ones
     // need a second document.
-    for flags in [
-        &["--author", "Legal"][..],
-        &["--critic"],
-        &["--mode", "powertools"],
-        &["--dpi", "50"],
-        &["--changed-pages"],
+    for (flags, message) in [
+        (
+            &["--author", "Legal"][..],
+            "--author is a compare option: name two documents",
+        ),
+        (&["--critic"], "--critic is a compare option"),
+        (&["--mode", "powertools"], "--mode is a compare option"),
+        (
+            &["--dpi", "50"],
+            "--dpi draws a PDF or PNG, which read does not write",
+        ),
+        (&["--changed-pages"], "--changed-pages draws a PDF or PNG"),
     ] {
         let result = parse(&[&["a.docx"][..], flags].concat(), &[]);
         assert_eq!(result["exit_code"], 2, "{flags:?}: {result}");
         assert!(
-            result["text"]
-                .as_str()
-                .unwrap()
-                .contains("is a compare option: name two documents"),
+            result["text"].as_str().unwrap().contains(message),
             "{result}"
         );
     }
