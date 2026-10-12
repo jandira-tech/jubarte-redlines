@@ -68,6 +68,8 @@ pub struct Recorded {
     pub notes: Vec<String>,
     /// How many operations this recording added.
     pub added: usize,
+    /// How many revision ids this recording added to accept or reject.
+    pub added_revisions: usize,
 }
 
 impl Recorded {
@@ -90,11 +92,21 @@ impl Recorded {
         let (accept, reject) = (ids(|r| &r.accept), ids(|r| &r.reject));
         let total = self.plan.operations.len();
         let s = |n: usize| if n == 1 { "" } else { "s" };
+        // What this recording added: its operations, its revisions, or both.
+        let operations = format!("{} operation{}", self.added, s(self.added));
+        let revisions = format!(
+            "{} revision{}",
+            self.added_revisions,
+            s(self.added_revisions)
+        );
+        let added = match (self.added, self.added_revisions) {
+            (_, 0) => operations,
+            (0, _) => revisions,
+            _ => format!("{operations} and {revisions}"),
+        };
         format!(
-            "{} {} operation{} in {plan}: {total} operation{}, {accept} revision{} to accept, {reject} to reject; apply with: jubarte edit {file} --plan {plan}",
+            "{} {added} in {plan}: {total} operation{}, {accept} revision{} to accept, {reject} to reject; apply with: jubarte edit {file} --plan {plan}",
             if dry_run { "would record" } else { "recorded" },
-            self.added,
-            s(self.added),
             s(total),
             s(accept),
         )
@@ -147,12 +159,24 @@ pub fn record(
         .transpose()
         .map_err(|e| RecordError::Plan(e.to_string()))?;
     let before = held.as_ref().map_or(0, |p| p.operations.len());
+    let revisions = |plan: Option<&EditPlan>| {
+        plan.and_then(|p| p.resolve_revisions.as_ref())
+            .map_or(0, |r| {
+                [&r.accept, &r.reject]
+                    .iter()
+                    .filter_map(|f| f.as_ref().and_then(|f| f.ids.as_ref()))
+                    .map(Vec::len)
+                    .sum::<usize>()
+            })
+    };
+    let revisions_before = revisions(held.as_ref());
     let mut built =
         plan_from_flags(verb, ops, author, date, existing, source).map_err(RecordError::Usage)?;
     built.plan.source_sha256 = Some(crate::inspect::source_sha256(source));
     let plan = record_into(held, built.plan).map_err(RecordError::Usage)?;
     Ok(Recorded {
         added: plan.operations.len() - before,
+        added_revisions: revisions(Some(&plan)) - revisions_before,
         notes: renumber_notes(built.notes, before),
         plan,
     })
@@ -280,6 +304,36 @@ mod tests {
                 .starts_with("would record 2 operations in plan.json: 3 operations,")
         );
         assert!(first.json().ends_with("}\n") && !first.json().contains("null"));
+    }
+
+    #[test]
+    fn a_recording_of_revisions_only_says_so() {
+        let accept = FlagOp {
+            at: "r2".into(),
+            accept: true,
+            ..FlagOp::default()
+        };
+        let both = once(&[rewrite("p1", "One."), accept.clone()], None).unwrap();
+        assert!(
+            both.summary("a.docx", "p.json", false).starts_with(
+                "recorded 1 operation and 1 revision in p.json: 1 operation, 1 revision to accept,"
+            ),
+            "{}",
+            both.summary("a.docx", "p.json", false)
+        );
+        let reject = FlagOp {
+            at: "r3".into(),
+            reject: true,
+            ..FlagOp::default()
+        };
+        let only = once(&[reject], Some(&both.json())).unwrap();
+        assert!(
+            only.summary("a.docx", "p.json", false).starts_with(
+                "recorded 1 revision in p.json: 1 operation, 1 revision to accept, 1 to reject"
+            ),
+            "{}",
+            only.summary("a.docx", "p.json", false)
+        );
     }
 
     #[test]
