@@ -4,8 +4,11 @@
 //! `edit` and `add` with `--plan PLAN.json`: with operation flags they
 //! record the operations into the plan instead of editing; alone they apply
 //! it, and `--consume` deletes it once applied. The binary, the Python CLI
-//! and the npm CLI all record and word their refusals here, so the three
-//! print the same lines.
+//! and the npm CLI all record here, and the shared parser refuses the flags
+//! that do not go with `--plan` ([`plan_flag_conflict`]), so the three print
+//! the same lines.
+
+use std::path::{Path, PathBuf};
 
 use super::flags::{FlagOp, Verb, plan_from_flags, record_into, renumber_notes};
 use super::{EditPlan, ExistingRevisions};
@@ -20,15 +23,18 @@ const APPLY_ONLY: &[&str] = &[
     "--suggesting-mode",
     "--pdf",
     "--png",
+    "--dpi",
+    "--revisions",
+    "--revision-palette",
 ];
 
 /// Flags that describe recorded operations, so applying a plan refuses
 /// them: the plan names its own.
 const RECORD_ONLY: &[&str] = &["--author", "--datetime", "--existing-revisions"];
 
-/// Why `given` (the flags the command line holds) cannot go with `--plan
-/// plan`: `recording` is `--plan` with operation flags, otherwise the plan
-/// is applied. `None` when they can.
+/// Why `given` (the flags the command line spells out) cannot go with
+/// `--plan plan`: `recording` is `--plan` with operation flags, otherwise
+/// the plan is applied. `None` when they can.
 pub fn plan_flag_conflict(recording: bool, given: &[&str], plan: &str) -> Option<String> {
     if recording {
         let flag = APPLY_ONLY.iter().find(|f| given.contains(f))?;
@@ -93,6 +99,34 @@ impl Recorded {
             s(accept),
         )
     }
+}
+
+/// Where a recording is written: the file a symbolic link names (the link
+/// stays a link), else `plan` itself.
+pub fn plan_target(plan: &Path) -> PathBuf {
+    std::fs::canonicalize(plan).unwrap_or_else(|_| plan.to_path_buf())
+}
+
+/// The temporary file a recording is written to before it replaces
+/// `target`: hidden, beside it, and named for this process, so it neither
+/// names another plan or document nor races another recording's.
+pub fn partial_path(target: &Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    target.with_file_name(format!(".{name}.{}.partial", std::process::id()))
+}
+
+/// Write `json` (a [`Recorded::json`]) to PLAN.json at `plan`, atomically:
+/// a failed write leaves the plan as it was and no partial file behind.
+pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<()> {
+    let target = plan_target(plan);
+    let partial = partial_path(&target);
+    std::fs::write(&partial, json)
+        .and_then(|()| std::fs::rename(&partial, &target))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&partial);
+        })
 }
 
 /// The operations `ops` recorded into `held` (PLAN.json's text, `None`
@@ -277,6 +311,37 @@ mod tests {
         assert_eq!(
             plan_flag_conflict(false, &["--consume", "--out-dir"], "p.json"),
             None
+        );
+    }
+
+    #[test]
+    fn a_plan_is_written_through_its_link_and_leaves_no_partial() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("v3.json");
+        std::fs::write(&real, "{}").unwrap();
+        let link = dir.path().join("plan.json");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(&real, &link).unwrap();
+        write_plan(&link, "[1]\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "[1]\n");
+        #[cfg(unix)]
+        {
+            assert!(link.symlink_metadata().unwrap().is_symlink());
+            assert_eq!(std::fs::read_to_string(&real).unwrap(), "[1]\n");
+        }
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left.len(), 2, "{left:?}");
+        // A plan in a directory that is gone fails and leaves nothing.
+        assert!(write_plan(&dir.path().join("gone/plan.json"), "x").is_err());
+        assert!(
+            partial_path(Path::new("a/x.json"))
+                .to_string_lossy()
+                .ends_with(&format!(".x.json.{}.partial", std::process::id()))
         );
     }
 
