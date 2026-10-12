@@ -1160,6 +1160,34 @@ Found while checking 06d's table records against Word. Word's redline is `tests/
 
 ---
 
+## Phase 7: comments and notes (Arthur, 2026-10-12)
+
+### Task 23: Edit the text a comment covers; keep the comment on a replaced range; print note ids
+Arthur asked (2026-10-12) how to change a footnote and how to change text that a comment highlights. Checked on engine `ebde0fc7`:
+- `edit X -p footnotes.p0 --anchor 2025 --content 2026` already edits the note, tracked (`footnotes.r1+2`). But `read` prints `[^1]: …` with no id, so nobody can find `footnotes.p0` without knowing the rule.
+- `edit X -p p1 --anchor ten --content twelve` inside a comment's range works: `commentRangeStart` stays before the `w:ins`, the `w:del` and the rest stay inside, and the reference follows the end.
+- `edit X -p c0 --content …` rewrites the comment's own text (no revision), and `-p c0 --anchor …` exits 2 (`a comment takes no --anchor`). There is no way to name "the text c0 covers".
+- **Bug:** replacing the whole commented text (`-p p1 --anchor "ten dollars" --content "twelve euros"`, where c0 covers exactly "ten dollars") writes `commentRangeStart, w:ins(twelve euros), commentRangeEnd, commentReference, w:del(ten dollars)`. The deleted text falls outside the comment, so rejecting the change leaves c0 covering nothing.
+
+**Decision to confirm with Arthur (Q17):** the id `c0.text` = the text comment c0 covers (recommended: it follows `t0.row1.cell2`, and `-p c0` keeps one meaning), or a flag such as `-p c0 --commented-text`.
+
+**Steps:**
+1. **Red tests** (`tests/edit_comment_text.rs`):
+   - `-p c0.text --content "twelve euros"` replaces the covered text as one tracked substitution; the comment covers both the `w:del` and the `w:ins` (`commentRangeStart` before the first, `commentRangeEnd` after the last), the reference stays after the end. Accept all → c0 covers "twelve euros"; reject all → c0 covers "ten dollars". `assert_word_valid_package` on all three.
+   - `-p c0.text --anchor ten --content twelve` edits inside the range only; an anchor outside it is refused (`not in the text c0 covers`), exit 3.
+   - A range that spans two paragraphs: `--content` rewrites both, the second paragraph mark is deleted as Word does, the comment keeps both ends.
+   - The whole-range bug above through `-p p1 --anchor`: the deletion stays inside c0.
+   - `-p c0 --content` still rewrites the comment's text (guard).
+   - Plan JSON: `{"kind":"replace","comment_text":"c0","replacement":"…"}` and `{"kind":"rewrite","comment_text":"c0","text":"…"}`; recording through `--plan` writes that shape.
+2. **Ids:** `ids.rs` learns `cN.text` (and `#cN.text`, never printed) as `Location::CommentText(N)`; `LOCATION_EXPECTED` and the ids table (Task 2) list it; `capabilities ids` names it.
+3. **Edit:** resolve `CommentText(N)` to the covered span (start/end run positions, across paragraphs) in `src/edit/`; the replace/rewrite paths write the `w:del` before the `w:ins` (Word's order) and widen the comment range around both. Fix the whole-range case in the same place.
+4. **View:** `read` prints `<!-- footnotes.p0 -->` (`<!-- footnotes.p0-p1 -->` for a two-paragraph note) before each note definition, and the same for endnotes. Update the agent-view tests that pin note output.
+5. **Word check:** open the three outputs of step 1 in Word (bench scripts; `word_pdf.py`) and confirm the comment balloon covers the deleted and inserted text; record what Word does with a reject.
+6. Python and npm: nothing new in their CLIs (the parser carries the id); add one test each that `-p c0.text` parses and edits. Docs: the id table Task 21 writes, the skill's edit recipe, CHANGELOG.
+- [ ] Commits: `feat(ids): cN.text names the text a comment covers`, `fix(edit): a replaced comment range keeps the deleted text`, `feat(read): note definitions carry their paragraph ids`.
+
+---
+
 ## Verification (end to end)
 
 1. **Engine:**
@@ -1236,6 +1264,7 @@ He asked for D15 and D16, and asked again for compare to print instead of writin
 | Q14 | Editing `X_modified.docx` again: `X_modified_modified.docx`, or keep `X_modified.docx` (so `--force` edits it in place)? | Keep the name (D15) |
 | Q15 | The flag that writes "the rest": reuse `--out-dir [DIR]`, or a new flag? | Reuse `--out-dir` (recommended; Arthur did not object) |
 | Q16 | compare's printed authors line reads `R: Redline … 1970-01-01T00:00:00Z` (the pinned default date). | Arthur: date them now; `-d` pins (D17, Task 18b) |
+| Q17 | Naming the text a comment covers (Task 23): the id `c0.text`, or a flag on `-p c0`? | Open: `c0.text` recommended, so `-p c0` keeps one meaning |
 
 ## How this plan ships (Arthur, 2026-10-11)
 
