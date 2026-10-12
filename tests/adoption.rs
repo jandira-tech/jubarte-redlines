@@ -197,8 +197,9 @@ fn page_range_rasterizes_only_the_pages_asked_for() {
     assert_eq!(pngs, ["long-page-02.png", "long-page-03.png"]);
 }
 
-/// "Did my edit change the layout?": `diff-render` exits 5 when a page
-/// differs and 0 when none does.
+/// "Did my edit change the layout?": `visual-diff` exits 5 when a page
+/// differs and 0 when none does. Its 0.12 name, `diff-render`, still runs
+/// and says what it is now.
 #[test]
 fn diff_render_exits_five_on_a_changed_page_and_zero_otherwise() {
     let (_dir, dir) = workspace();
@@ -225,6 +226,16 @@ fn diff_render_exits_five_on_a_changed_page_and_zero_otherwise() {
     );
     assert_eq!(changed.status.code(), Some(5), "{changed:?}");
     assert!(dir.join("d/diff.json").is_file());
+    assert_eq!(
+        String::from_utf8_lossy(&changed.stderr),
+        "note: diff-render is now visual-diff; diff-render is removed in 0.14\n"
+    );
+    let renamed = jubarte(
+        &["visual-diff", "input.docx", "after.docx", "--out-dir", "e"],
+        &dir,
+    );
+    assert_eq!(renamed.status.code(), Some(5), "{renamed:?}");
+    assert_eq!(String::from_utf8_lossy(&renamed.stderr), "");
 }
 
 /// "Did a font fall back?": `--fail-on-substitution` exits 4 and still

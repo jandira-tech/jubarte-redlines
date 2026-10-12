@@ -478,11 +478,12 @@ fn the_owner_is_git_user_name_or_redline_and_the_date_now() {
 }
 
 #[test]
-fn diff_takes_no_quiet_flag() {
+fn diff_takes_quiet_after_the_task() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
-    let stderr = failed(&jubarte(&["diff", "-q", "old.md", "new.md"], dir.path()));
-    assert!(stderr.contains("'-q'"), "{stderr}");
+    let out = jubarte(&["diff", "-q", "old.md", "new.md"], dir.path());
+    ok(&out);
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 
 #[test]
