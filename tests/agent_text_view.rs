@@ -902,9 +902,9 @@ fn a_styles_only_author_gets_a_handle() {
 #[test]
 fn changes_printed_nowhere_else_are_unplaced() {
     let body = format!(
-        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:r><w:t>Plain</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:r><w:t>ping r3 @ops; 21 @AC</w:t></w:r></w:p>"#,
         drawing_box(&format!(
-            r#"<w:r><w:t>Box</w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}"#,
+            r#"<w:r><w:t>Box</w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del><w:del w:id="22"><w:r><w:drawing/></w:r></w:del>{}"#,
             ins(20, "Ann Counsel", "Choice")
         )),
         pict_box(&format!(
@@ -912,14 +912,27 @@ fn changes_printed_nowhere_else_are_unplaced() {
             ins(21, "Ann Counsel", "Other")
         ))
     );
-    let bytes = docx(&body);
+    // Document text that reads like a tag (the body's, a header's) prints
+    // no change.
+    let header =
+        format!(r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>see r21 @AC</w:t></w:r></w:p></w:hdr>"#);
+    let bytes = common::docx::docx_with_sect(
+        &body,
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
     let out = agent(&bytes);
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
         .unwrap()
         .into_iter()
         .map(|c| c.id)
         .collect();
-    for id in ["body:rev:3", "body:rev:21"] {
+    for id in ["body:rev:3", "body:rev:21", "body:rev:22"] {
         assert!(listed.iter().any(|l| l == id), "{id} not in {listed:?}");
     }
     let lines = header_lines(&out);
@@ -930,6 +943,10 @@ fn changes_printed_nowhere_else_are_unplaced() {
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
     assert!(unplaced.contains("r21 @AC in p0"), "{out}");
     assert!(!unplaced.contains("r20"), "{out}");
+    // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
+    assert!(unplaced.contains(r#""r22 @?? in p0""#), "{out}");
+    let yaml = header_yaml(&out);
+    assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(3), "{out}");
     for view in [TrackChanges::Accept, TrackChanges::Reject] {
         assert!(
             !agent_with(&bytes, view, true).contains("unplaced:"),
@@ -940,6 +957,91 @@ fn changes_printed_nowhere_else_are_unplaced() {
     assert!(
         !agent(&docx(&format!("<w:p>{}</w:p>", ins(1, "Ann Counsel", "x")))).contains("unplaced:")
     );
+}
+
+/// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
+/// list number's gets a handle; a header's list number change is
+/// formatting; an author only the styles name is numbered after the
+/// comment authors, so theirs keep their handles.
+#[test]
+fn numbering_and_styles_authors_get_handles_after_comment_authors() {
+    let numbered = |id: u32, author: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="{id}" w:author="{author}" w:original="%1."/></w:numPr></w:pPr><w:r><w:t>Item</w:t></w:r></w:p>"#
+        )
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}">{}</w:hdr>"#,
+        numbered(5, "Ann Counsel")
+    );
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:b/><w:rPrChange w:id="9" w:author="Zed Styles"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            1,
+            "Zoe Stone",
+            "ZS",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Note."
+        )
+    );
+    let body = format!(
+        r#"{}<w:p><w:commentRangeStart w:id="1"/>{}<w:commentRangeEnd w:id="1"/>{}</w:p>"#,
+        numbered(4, "Nora Num"),
+        run("x"),
+        reference(1)
+    );
+    let bytes = common::docx::docx_with_sect(
+        &body,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/styles.xml",
+                content_type: STYLES_CT,
+                rel_type: STYLES_REL,
+                xml: &styles,
+            },
+            Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let out = agent(&bytes);
+    assert!(out.contains("r4 @NN"), "{out}");
+    assert!(!out.contains("@??"), "{out}");
+    let lines = header_lines(&out);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("id: header1") && l.contains("fmt: header1.r5 @AC")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.trim_start().starts_with("ZS: Zoe Stone")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.trim_start().starts_with("ZS2: Zed Styles")),
+        "{out}"
+    );
+    assert!(out.contains("styles.r9 @ZS2"), "{out}");
+    assert!(!out.contains("unplaced:"), "{out}");
 }
 
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own
