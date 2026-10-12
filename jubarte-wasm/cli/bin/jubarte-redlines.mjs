@@ -406,28 +406,22 @@ function applyEdit(verb, file, docx, o) {
   if (editing && planKeepsRevisions(plan)) {
     throw new UsageError("--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject");
   }
-  // The shared parser resolved the target: `output` for the one document
-  // (FILE_modified.docx by default), `out_dir` for the bundle.
-  const outDir = o.out_dir;
-  if (outDir == null) {
-    // FILE itself (X_modified.docx edited again, or -o FILE) exists, so it
-    // is replaced only with --force (D15).
-    if (!o.dry_run && fs.existsSync(o.output) && !o.force) {
-      throw new UsageError(`output '${o.output}' already exists (use --force to overwrite)`);
-    }
-  } else if (!o.dry_run) {
-    if (fs.existsSync(outDir) && !o.force) {
-      throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
-    }
-    if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
-      throw new CliError("--out-dir must not be the input's own directory");
-    }
-  }
+  // The plan first: a refused plan prints its whole report, whatever the
+  // outputs (D15).
   const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan);
   if (!result.ok) return printRefusal(result);
   const jsonl = wasm.editReportJsonl(result.json);
   if (o.dry_run) return void process.stdout.write(jsonl);
+  // The shared parser resolved the target: `output` for the one document
+  // (FILE_modified.docx by default), `out_dir` for the bundle.
+  const outDir = o.out_dir;
   if (outDir == null) return writeEdited(o.output, result, notes, o);
+  if (fs.existsSync(outDir) && !o.force) {
+    throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
+  }
+  if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
+    throw new CliError("--out-dir must not be the input's own directory");
+  }
   const lines = jsonl.trimEnd().split("\n");
   const summary = lines.pop();
   const outputs = [["clean.docx", result.clean]];
@@ -446,8 +440,9 @@ function applyEdit(verb, file, docx, o) {
   if (o.quiet) return;
   console.log(summary);
   const names = [...outputs.map(([n]) => n), "report.jsonl"];
-  console.log(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
-  for (const note of editNotes(notes, result)) console.log(note);
+  // The status lines on stderr (D6); the summary and the view are data.
+  console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
+  for (const note of editNotes(notes, result)) console.error(note);
   printChangedView(result, editing, path.join(outDir, editing ? "clean.docx" : "redline.docx"));
 }
 
@@ -482,6 +477,11 @@ function printChangedView(result, editing, shown) {
 function writeEdited(output, result, notes, o) {
   const editing = Boolean(o.editing_mode);
   const document = editing ? result.clean : result.redline;
+  // FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
+  // replaced only with --force (D15).
+  if (fs.existsSync(output) && !o.force) {
+    throw new UsageError(`output '${output}' already exists (use --force to overwrite)`);
+  }
   write(output, document);
   if (o.quiet) return;
   console.error(`wrote ${output} (docx, ${document.length} bytes)`);

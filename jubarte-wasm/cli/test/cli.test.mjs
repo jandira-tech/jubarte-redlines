@@ -298,6 +298,13 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   const bundle = run(...edit, "--out-dir");
   assert.equal(bundle.code, 0, bundle.err);
   assert.ok(fs.existsSync(path.join(tmp, "single.edit", "redline.docx")));
+  // The plan runs first: a refused plan reports even over an existing output.
+  const refused = run("edit", file, "-p", `p${para.index}`, "--anchor", "absent words", "--content", "x");
+  assert.equal(refused.code, 3, refused.err);
+  assert.match(refused.out, /absent words/);
+  // The bundle's wrote line is a status line, on stderr.
+  assert.ok(bundle.err.startsWith(`wrote ${path.join(tmp, "single.edit")} (`), bundle.err);
+  assert.doesNotMatch(bundle.out, /\nwrote /);
   // A _modified FILE keeps its name: add edits it in place, with --force.
   const add = ["add", written, "-p", `p${para.index}`, "--content", "New."];
   assert.equal(run(...add).code, 2);
@@ -642,7 +649,9 @@ test("edit previews write nothing and quiet application still writes its report 
   assert.equal(applied.code, 0, applied.err);
   assert.equal(applied.out, "");
   assert.ok(fs.readFileSync(path.join(dir, "report.jsonl"), "utf8").includes('"ev":"save"'));
-  const own = run("edit", tracked, "--plan", plan, "--out-dir", path.dirname(tracked), "--force");
+  // The plan runs first (a refused plan reports whatever the outputs), so the
+  // directory check needs a plan the document takes.
+  const own = run("edit", untracked, "--plan", plan, "--out-dir", path.dirname(untracked), "--force");
   assert.equal(own.code, 1);
   assert.match(own.err, /input's own directory/);
   const badPlan = path.join(tmp, "malformed-plan.json");

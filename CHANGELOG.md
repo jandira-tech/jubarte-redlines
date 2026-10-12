@@ -58,10 +58,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   redline, `patch.diff`, `report.jsonl`), DIR defaulting to
   `<stem>.edit`; it excludes `-o`. The view names the file it read
   (`source: FILE_modified.docx`) and the `wrote` line and notes go to
-  stderr. A FILE already named `X_modified.docx` keeps its name, so
-  editing it again needs `--force`. An existing output exits 2 without
-  `--force`. `parse_cli_json`/`parseCli` hand the hosts the resolved
-  `output` or `out_dir`; the Python and npm CLIs do the same.
+  stderr, the bundle's too. A FILE already named `X_modified.docx` keeps
+  its name, so editing it again needs `--force`. An existing output exits
+  2 without `--force`; the plan runs first, so a refused plan still
+  prints its report. `parse_cli_json`/`parseCli` hand the hosts the
+  resolved `output` or `out_dir` (both null while recording into a plan),
+  and the Python and npm CLIs write there.
 - **`compare A B` prints the redline's agent view**, as `jubarte A B`
   does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
   moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
