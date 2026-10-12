@@ -65,9 +65,9 @@ An agent has three kinds of eyes:
 
 - **Text views** (`text`, `convert -t md`, `diff`, `changes`, `comments`,
   `inspect`): cheap, exact, greppable, and carry the IDs edit plans need.
-- **Page views** (`convert --png`/`--pdf`, `edit --png`, `compare -o x.png`):
+- **Page views** (`convert -o x.png`/`x.pdf`, `edit --png`, `compare -o x.png`):
   what a person sees in Word, for layout, balloons and revision colours.
-- **Machine views** (`--json` everywhere, `--report`, `diff-render --json`):
+- **Machine views** (`--json` everywhere, `--report`, `visual-diff --json`):
   for checking a result instead of reading it.
 
 The document is a consulting agreement that Ann Counsel already redlined:
@@ -124,29 +124,29 @@ show '`debug --check render`: what each story should put on the page (tables, fo
   debug "$R" --check render
 
 say '### 1.5 See the pages'
-show '`convert --png`: every page as PNG, with `--report` (page count, each page'"'"'s text, fonts) and `--font-report` (how each requested font resolved).' \
-  convert "$R" --png --dpi "$DPI" -o out/received.pdf --report out/received-report.json \
+show '`convert -o x.png`: every page as PNG (`x-page-01.png`, …), with `--report` (page count, each page'"'"'s text, fonts) and `--font-report` (how each requested font resolved).' \
+  convert "$R" --dpi "$DPI" -o out/received.png --report out/received-report.json \
   --font-report out/received-fonts.json --force
 image 'received.docx, conventional marks' out/received-page-01.png
 say 'Conventional marks (the default): deletions red and struck, insertions blue and underlined, moves green; comments in balloons on the right.'
 
 show '`--revisions word`: the markup Microsoft Word paints when it saves as PDF. Use it whenever the page is compared with one of Word'"'"'s.' \
-  convert "$R" --png --dpi "$DPI" -o out/received-word.pdf --revisions word --force
+  convert "$R" --dpi "$DPI" -o out/received-word.png --revisions word --force
 image 'received.docx, Word marks' out/received-word-page-01.png
 
 show '`--revisions custom --revision-palette`: pick each kind'"'"'s colour and line (`strike`, `double-strike`, `underline`, `double-underline`, `plain`).' \
-  convert "$R" --png --dpi "$DPI" -o out/received-custom.pdf --revisions custom \
+  convert "$R" --dpi "$DPI" -o out/received-custom.png --revisions custom \
   --revision-palette 'deleted=#8E44AD:double-strike,inserted=#117A65:double-underline' --force
 image 'received.docx, custom palette' out/received-custom-page-01.png
 
 show '`--move-comments`: comments listed after the last page; the commented text keeps its tint and a `[JR1]` marker, and the page keeps its own width.' \
-  convert "$R" --png --dpi "$DPI" -o out/received-endnotes.pdf --move-comments --force
+  convert "$R" --dpi "$DPI" -o out/received-endnotes.png --move-comments --force
 image 'received.docx, comments after the text, page 1' out/received-endnotes-page-01.png
 image 'received.docx, the comment listing' out/received-endnotes-page-02.png
 
-show '`--pdf` (the default) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-pages` keeps only pages a tracked change touches.' \
-  convert "$R" --pdf --compress -o out/received-compressed.pdf --force
-show '' convert "$R" --png --pages 1 --changed-pages --dpi "$DPI" -o out/received-changed.pdf --force
+show '`-o x.pdf` (the default for Word) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-pages` keeps only pages a tracked change touches.' \
+  convert "$R" --compress -o out/received-compressed.pdf --force
+show '' convert "$R" --pages 1 --changed-pages --dpi "$DPI" -o out/received-changed.png --force
 
 say '### 1.6 Check it before trusting it'
 show '`validate`: will Word open it without a repair prompt? (findings: exit 2)' validate "$R"
@@ -187,11 +187,11 @@ show '`text --track-changes all` on the redline: the whole document with every c
   text out/edited/redline.docx --track-changes all
 
 say '### 2.2 What the edit did, as pages'
-show '`diff-render`: which rendered pages moved, and where (different pages: exit 5). With `--out-dir`, each changed page is written as before, after and a magenta overlay.' \
-  diff-render "$R" out/edited/redline.docx --out-dir out/diff-render --dpi "$DPI" --force
-image 'diff-render overlay: changed pixels in magenta, boxed' out/diff-render/diff-page-01.png
-show '`diff-render --json`: the same answer for a script (`changed_ratio`, `bbox`, `only_in`).' \
-  diff-render "$R" out/edited/redline.docx --json --dpi "$DPI"
+show '`visual-diff`: which rendered pages moved, and where (different pages: exit 5). With `--out-dir`, each changed page is written as before, after and a magenta overlay.' \
+  visual-diff "$R" out/edited/redline.docx --out-dir out/visual-diff --dpi "$DPI" --force
+image 'visual-diff overlay: changed pixels in magenta, boxed' out/visual-diff/diff-page-01.png
+show '`visual-diff --json`: the same answer for a script (`changed_ratio`, `bbox`, `only_in`).' \
+  visual-diff "$R" out/edited/redline.docx --json --dpi "$DPI"
 show '`edit --revisions word`: the same plan, its redline painted as Word paints it.' \
   edit "$R" --plan out/plan.json --out-dir out/edited-word --png --dpi "$DPI" --revisions word
 image 'redline.docx, Word marks' out/edited-word/redline-page-01.png
@@ -261,13 +261,13 @@ cat >> "$GUIDE" <<'EOF'
 | Comments | `comments FILE` | `--json`, `--author NAME`, `--latest` |
 | Structure | `inspect FILE` | `--json`, `--tables` |
 | Render triage | `debug FILE --check render` | `--check text\|runs\|xml\|changes\|…`, two files print only differences |
-| Pages | `convert FILE --png` / `--pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-pages`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout` |
+| Pages | `convert FILE -o x.png` / `x.pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-pages`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout` |
 | Validity | `validate FILE`, `audit FILE` | `validate --repair`, `--json` (see `--help`) |
 | Edit result | `edit FILE --plan P --out-dir D` | `--dry-run`, `--pdf`, `--png`, `--dpi`, `--revisions`, `--revision-palette`, `--quiet`; writes `patch.diff`, `report.jsonl`, `clean.*`, `redline.*` |
 | Text diff | `diff OLD NEW` | `--format patch\|critic\|github\|word\|normal\|context\|side-by-side`, `-U N`, `--accept-changes`, `--full-lines`, `--columns N`, `-f md\|docx`, `-o FILE.md\|.txt\|.patch\|.diff` |
 | Word redline | `compare OLD NEW -o x.docx` | `--mode word\|powertools`, `--detail-threshold`, `-a`, `-d`, `--reference-doc` |
 | Redline pages | `compare OLD NEW -o x.pdf\|x.png` | every page option of `convert` |
-| Pixel diff | `diff-render A B` | `--out-dir`, `--json`, `--no-overlay`, `--dpi` |
+| Pixel diff | `visual-diff A B` | `--out-dir`, `--json`, `--no-overlay`, `--dpi` |
 | Package diff | `debug A B`, `debug diff A B` | `--check …`, `--raw` |
 
 Which to reach for:
@@ -275,8 +275,8 @@ Which to reach for:
 - To decide what to edit: `text` (IDs) and `changes`/`comments` (revision
   and comment IDs).
 - To check an edit: `edit`'s `report.jsonl` (status), `patch.diff` (just the
-  touched paragraphs), then `diff-render` (did the layout move, exit 5).
-- To show a person: `convert --png` or `compare -o x.pdf`; add
+  touched paragraphs), then `visual-diff` (did the layout move, exit 5).
+- To show a person: `convert -o x.png` or `compare -o x.pdf`; add
   `--revisions word` whenever the page is compared with Word's.
 - To review two versions: `diff --format github` for text, `--accept-changes`
   or `--format word` when only the final wording matters.
