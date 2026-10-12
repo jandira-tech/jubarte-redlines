@@ -314,12 +314,13 @@ pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<Str
     (ins, del)
 }
 
-/// Tags of the formatting changes recorded in a paragraph, a text box Word
-/// stores twice read once.
+/// Tags of the formatting changes recorded in a paragraph (its runs' and
+/// its own properties, its list number), a text box Word stores twice read
+/// once.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
     fn walk(e: &Element, handles: &Handles, out: &mut Vec<String>) {
         for child in shown_children(e) {
-            if child.is("rPrChange") || child.is("pPrChange") {
+            if child.is("rPrChange") || child.is("pPrChange") || child.is("numberingChange") {
                 out.push(tag_of(child, handles));
             } else {
                 walk(child, handles, out);
@@ -458,6 +459,14 @@ fn shown_children(e: &Element) -> Vec<&Element> {
     } else {
         e.elements().collect()
     }
+}
+
+/// Whether `e` holds text the view shows: Word's Fallback copy of a text
+/// box is not shown.
+fn shows_text(e: &Element) -> bool {
+    shown_children(e).into_iter().any(|c| {
+        matches!(c.local(), "t" | "delText" | "instrText" | "delInstrText") || shows_text(c)
+    })
 }
 
 fn walk_revision_authors(
@@ -607,6 +616,9 @@ pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<S
         for child in shown_children(e) {
             match child.local() {
                 "pPr" | "txbxContent" => {}
+                // A formatting change's own history (`w:rPrChange/w:rPr/w:del`)
+                // is no change `jubarte changes` lists.
+                local if local.ends_with("PrChange") => {}
                 "ins" | "del" | "moveFrom" | "moveTo" => {
                     if let Some(id) = child.attr("id") {
                         out.push((id.to_string(), tag_of(child, handles)));
@@ -655,6 +667,36 @@ fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
         }
     }
     printed
+}
+
+/// The long ids (`body:rev:12`) of every change `text` prints a tag for:
+/// an id, or ids joined by `+`, followed by an `@` handle, wherever it sits
+/// (a note, an id line, a table line, the header).
+pub(crate) fn printed_change_ids(text: &str) -> HashSet<String> {
+    let words: Vec<&str> = text
+        .split(|c: char| c.is_whitespace() || ",;{}<>()\"".contains(c))
+        .filter(|w| !w.is_empty())
+        .collect();
+    words
+        .windows(2)
+        .filter(|pair| pair[1].len() > 1 && pair[1].starts_with('@'))
+        .filter_map(|pair| crate::ids::parse_change_ids(pair[0]).ok())
+        .flatten()
+        .map(|id| id.long())
+        .collect()
+}
+
+/// A change on the header's `unplaced:` line: `r3 @AC in p0`.
+pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles) -> String {
+    let handle = handles.of(change.author.as_deref()).unwrap_or("??");
+    match change.paragraph.as_deref() {
+        Some(p) => format!(
+            "{} @{handle} in {}",
+            change.r#ref,
+            crate::ids::short_paragraph(p)
+        ),
+        None => format!("{} @{handle}", change.r#ref),
+    }
 }
 
 /// A whole story part's changes (a header, a footer, one note) whose id
@@ -1131,11 +1173,7 @@ pub(crate) fn table_line(
             changes_in(tr.child("tblPrEx"), &at, &mut fmt);
             // A row's insertion or deletion tags its cells' text; a row
             // with no text names it here.
-            let mut texts = Vec::new();
-            for name in ["t", "delText", "instrText", "delInstrText"] {
-                tr.find_all(name, &mut texts);
-            }
-            if texts.is_empty() {
+            if !shows_text(tr) {
                 for mark in tr
                     .child("trPr")
                     .into_iter()
@@ -1187,6 +1225,14 @@ pub(crate) fn table_line(
                         stamped_revs(p)
                             .into_iter()
                             .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
+                    );
+                } else {
+                    // A cell's paragraph has no id line to carry its own
+                    // formatting changes.
+                    fmt.extend(
+                        format_change_tags(p, handles)
+                            .iter()
+                            .map(|t| format!("{} in p{i}", format_tag(t))),
                     );
                 }
                 let ids: Vec<String> = comments.map_or_else(Vec::new, |known| {

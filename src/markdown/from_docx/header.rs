@@ -102,6 +102,9 @@ pub(crate) struct Facts<'a> {
     /// Tracked view: the changes (`rev`, `fmt`) of the notes no definition
     /// line shows, such as Word's footnote separators.
     pub note_changes: (Vec<String>, Vec<String>),
+    /// Tracked view of the whole document: the listed changes no other line
+    /// prints (`r3 @AC in p0`), such as a text box's deleted picture.
+    pub unplaced: Vec<String>,
 }
 
 /// `key: value` padded to 35 columns then `# comment`; a key/value longer
@@ -972,6 +975,13 @@ fn part_two(out: &mut String, f: &Facts) {
             out,
             &format!("notes: {{{}}}", clauses.join(", ")),
             Some("changes in notes the body does not show (separators)"),
+        );
+    }
+    if !f.unplaced.is_empty() {
+        kv(
+            out,
+            &format!("unplaced: [{}]", f.unplaced.join(", ")),
+            Some("changes no other line shows (text boxes, Word's Fallback copies)"),
         );
     }
     if let Some(first) = f.sections.first() {

@@ -139,13 +139,19 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             story_roots.push(root);
         }
     }
+    // Auxiliary parts are best-effort: a broken styles part should not lose the text.
+    let styles_root = package
+        .xml(&part("/styles", "word/styles.xml"))
+        .ok()
+        .flatten();
     let handles = if options.ids {
-        // An author whose only changes sit in a header gets a handle too, so
-        // `--by` takes it.
+        // An author whose only changes sit in a header or the styles gets a
+        // handle too, so `--by` takes it.
         let stories: Vec<&Element> = note_roots
             .iter()
             .map(|(_, root)| root)
             .chain(&story_roots)
+            .chain(&styles_root)
             .collect();
         agent::handles(&document, &stories, comments_root.as_ref())
     } else {
@@ -189,11 +195,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         None => document,
     };
 
-    // Auxiliary parts are best-effort: a broken styles part should not lose the text.
-    let styles_root = package
-        .xml(&part("/styles", "word/styles.xml"))
-        .ok()
-        .flatten();
     let default_style = styles_root.as_ref().and_then(|root| {
         root.children_named("style")
             .find(|s| {
@@ -634,7 +635,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 }
             }
         }
-        let facts = header::Facts {
+        let mut facts = header::Facts {
+            unplaced: Vec::new(),
             note_changes,
             source: options.source.as_deref().unwrap_or("(bytes)"),
             resolved: accept,
@@ -661,7 +663,40 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             table_styles,
             sections,
         };
-        markdown = format!("{}\n{markdown}", header::render(&facts));
+        let mut head = header::render(&facts);
+        // The safety net: a listed change the view prints nowhere else (in
+        // Word's Fallback copy with no Choice twin, in a text box with no
+        // text to tag) is named on the header's `unplaced:` line.
+        if accept.is_none() && facts.range.is_none() {
+            let printed =
+                agent::printed_change_ids(&format!("{head}\n{markdown}\n{}", defs.join("\n")));
+            // A change inside another (a cell's text in an inserted row)
+            // reads from its container's tag: resolving one takes both.
+            let by_id: HashMap<&str, &crate::changes::Change> =
+                facts.changes.iter().map(|c| (c.id.as_str(), c)).collect();
+            let shown = |change: &crate::changes::Change| {
+                let mut at = Some(change);
+                for _ in 0..=facts.changes.len() {
+                    let Some(c) = at else { break };
+                    if printed.contains(&c.id) {
+                        return true;
+                    }
+                    at = c.inside.as_deref().and_then(|i| by_id.get(i).copied());
+                }
+                false
+            };
+            let unplaced: Vec<String> = facts
+                .changes
+                .iter()
+                .filter(|c| !shown(c))
+                .map(|c| agent::unplaced_entry(c, &handles))
+                .collect();
+            facts.unplaced = unplaced;
+            if !facts.unplaced.is_empty() {
+                head = header::render(&facts);
+            }
+        }
+        markdown = format!("{head}\n{markdown}");
     }
     if !defs.is_empty() {
         markdown.push_str("\n\n");
@@ -1356,10 +1391,14 @@ impl Writer<'_> {
             spans.retain(|id| !comments.contains(id));
             let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
             let numbered = heading_marker.is_some() || list_marker.is_some();
+            // A paragraph whose text is only blanks writes none of it, so
+            // the tags its notes would carry print nowhere either.
             let unshown = if self.resolved {
                 Vec::new()
-            } else {
+            } else if written {
                 agent::unshown_tags(p, &inline.render(true), &self.handles)
+            } else {
+                agent::unshown_tags(p, "", &self.handles)
             };
             if empty
                 && !numbered
