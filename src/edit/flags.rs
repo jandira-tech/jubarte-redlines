@@ -495,6 +495,111 @@ pub fn editing_mode_conflict(plan: &EditPlan) -> Option<&'static str> {
     )
 }
 
+/// `plan` with `more` recorded after it: what `--plan PLAN.json` with
+/// operation flags writes back. `None` (no plan yet) takes `more` as it is.
+/// The two must agree on the source (`source_sha256`), the author, the date
+/// and `existing_revisions`, since one plan names each once; `more`'s
+/// operations follow `plan`'s and its revision ids join `plan`'s accept and
+/// reject lists. An error is a usage error and nothing is recorded.
+pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, String> {
+    let Some(mut plan) = plan else {
+        return Ok(more);
+    };
+    if let (Some(pinned), Some(source)) = (&plan.source_sha256, &more.source_sha256)
+        && pinned != source
+    {
+        return Err(format!(
+            "the plan was recorded against another document (sha256 {pinned}); this one is {source}"
+        ));
+    }
+    if plan.author != more.author {
+        return Err(format!(
+            "the plan's author is {:?}; pass --author {:?}, or start a new plan",
+            plan.author, plan.author
+        ));
+    }
+    if plan.date != more.date {
+        return Err(match &plan.date {
+            Some(date) => {
+                format!("the plan's date is {date}; pass --datetime {date}, or start a new plan")
+            }
+            None => {
+                "the plan takes its date when it runs; drop --datetime, or start a new plan".into()
+            }
+        });
+    }
+    if plan.existing_revisions != more.existing_revisions {
+        return Err(format!(
+            "the plan's existing_revisions is {}; pass --existing-revisions {}, or start a new plan",
+            existing_name(plan.existing_revisions),
+            existing_name(plan.existing_revisions)
+        ));
+    }
+    if let Some(more) = more.resolve_revisions {
+        let resolve = plan.resolve_revisions.get_or_insert_with(Default::default);
+        join_ids(&mut resolve.accept, more.accept);
+        join_ids(&mut resolve.reject, more.reject);
+        let (accept, reject) = (filter_ids(&resolve.accept), filter_ids(&resolve.reject));
+        if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
+            return Err(format!("{both} is both accepted and rejected"));
+        }
+    }
+    plan.operations.extend(more.operations);
+    Ok(plan)
+}
+
+/// `--existing-revisions`' spelling of `mode`.
+fn existing_name(mode: ExistingRevisions) -> &'static str {
+    match mode {
+        ExistingRevisions::Keep => "keep",
+        ExistingRevisions::Accept => "accept",
+        ExistingRevisions::Reject => "reject",
+        ExistingRevisions::Refuse => "refuse",
+    }
+}
+
+/// `more`'s ids after `filter`'s, each once.
+fn join_ids(filter: &mut Option<ChangeFilter>, more: Option<ChangeFilter>) {
+    let Some(more) = more.and_then(|m| m.ids) else {
+        return;
+    };
+    let ids = filter
+        .get_or_insert_with(Default::default)
+        .ids
+        .get_or_insert_with(Vec::new);
+    for id in more {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+}
+
+/// The ids `filter` names.
+fn filter_ids(filter: &Option<ChangeFilter>) -> &[String] {
+    filter
+        .as_ref()
+        .and_then(|f| f.ids.as_deref())
+        .unwrap_or_default()
+}
+
+/// `notes` (`op-N: …`, numbered within one recording) renumbered after the
+/// `before` operations the plan already held.
+pub fn renumber_notes(notes: Vec<String>, before: usize) -> Vec<String> {
+    notes
+        .into_iter()
+        .map(|note| {
+            let parsed = note
+                .strip_prefix("op-")
+                .and_then(|rest| rest.split_once(':'))
+                .and_then(|(n, rest)| Some((n.parse::<usize>().ok()?, rest)));
+            match parsed {
+                Some((n, rest)) => format!("op-{}:{rest}", n + before),
+                None => note,
+            }
+        })
+        .collect()
+}
+
 /// [`plan_from_flags`] over JSON, for the Python and npm CLIs: `verb` is
 /// `edit` or `add`, `operations` the `operations` array their parsed
 /// command carries, `existing` the `--existing-revisions` value (`auto`,
@@ -545,6 +650,118 @@ mod tests {
 
     fn kind(verb: Verb, op: &FlagOp) -> Result<OperationKind, String> {
         flag_operation(verb, op).map(|(k, _)| k)
+    }
+
+    /// The plan `ops` record by `author`, pinned to `sha`.
+    fn recorded(verb: Verb, ops: &[FlagOp], author: &str, sha: &str) -> EditPlan {
+        let mut plan = plan_from_flags(verb, ops, author, None, Some(ExistingRevisions::Keep), b"")
+            .unwrap()
+            .plan;
+        plan.source_sha256 = Some(sha.into());
+        plan
+    }
+
+    fn revision(at: &str, accept: bool) -> FlagOp {
+        FlagOp {
+            accept,
+            reject: !accept,
+            ..op(at)
+        }
+    }
+
+    fn rewrite(at: &str, content: &str) -> FlagOp {
+        FlagOp {
+            content: Some(content.into()),
+            ..op(at)
+        }
+    }
+
+    /// `--plan` with operation flags: the first recording is the plan, each
+    /// later one appends its operations and joins its revision ids.
+    #[test]
+    fn recording_appends_operations_and_joins_revision_ids() {
+        let first = recorded(
+            Verb::Edit,
+            &[rewrite("p1", "One."), revision("r2", true)],
+            "Ann",
+            "aa",
+        );
+        let plan = record_into(None, first.clone()).unwrap();
+        assert_eq!(plan, first);
+        let second = recorded(
+            Verb::Add,
+            &[FlagOp {
+                comment: true,
+                ..rewrite("p3", "Why?")
+            }],
+            "Ann",
+            "aa",
+        );
+        let third = recorded(
+            Verb::Edit,
+            &[revision("r2+5", true), revision("header1.r1", false)],
+            "Ann",
+            "aa",
+        );
+        let plan = record_into(Some(record_into(Some(plan), second).unwrap()), third).unwrap();
+        assert_eq!(plan.operations.len(), 2);
+        assert!(matches!(
+            plan.operations[1].kind,
+            OperationKind::Comment { .. }
+        ));
+        let resolve = plan.resolve_revisions.unwrap();
+        assert_eq!(
+            resolve.accept.unwrap().ids.unwrap(),
+            ["body:rev:2", "body:rev:5"]
+        );
+        assert_eq!(resolve.reject.unwrap().ids.unwrap(), ["header1:rev:1"]);
+        assert_eq!(plan.source_sha256.as_deref(), Some("aa"));
+    }
+
+    /// One plan names one source, author, date and mode: a recording that
+    /// disagrees is refused and says what to pass.
+    #[test]
+    fn recording_refuses_what_the_plan_names_differently() {
+        let base = || recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        let refused = |more: EditPlan| record_into(Some(base()), more).unwrap_err();
+        assert!(
+            refused(recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Ann", "bb"))
+                .starts_with("the plan was recorded against another document (sha256 aa)")
+        );
+        assert_eq!(
+            refused(recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Bob", "aa")),
+            r#"the plan's author is "Ann"; pass --author "Ann", or start a new plan"#
+        );
+        let mut dated = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Ann", "aa");
+        dated.date = Some("2026-10-12T00:00:00Z".into());
+        assert_eq!(
+            refused(dated),
+            "the plan takes its date when it runs; drop --datetime, or start a new plan"
+        );
+        let mut refusing = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Ann", "aa");
+        refusing.existing_revisions = ExistingRevisions::Refuse;
+        assert_eq!(
+            refused(refusing),
+            "the plan's existing_revisions is keep; pass --existing-revisions keep, or start a new plan"
+        );
+        let accepted = recorded(Verb::Edit, &[revision("r2", true)], "Ann", "aa");
+        let plan = record_into(Some(base()), accepted).unwrap();
+        assert_eq!(
+            record_into(
+                Some(plan),
+                recorded(Verb::Edit, &[revision("r2", false)], "Ann", "aa")
+            )
+            .unwrap_err(),
+            "body:rev:2 is both accepted and rejected"
+        );
+    }
+
+    #[test]
+    fn notes_count_on_from_the_operations_the_plan_held() {
+        assert_eq!(
+            renumber_notes(vec!["op-1: kept as text".into(), "other".into()], 3),
+            ["op-4: kept as text", "other"]
+        );
     }
 
     /// pi review av4 F5: deleting an anchor has nothing to format, with or
