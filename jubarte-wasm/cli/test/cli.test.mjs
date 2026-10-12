@@ -230,7 +230,7 @@ test("edit and add by flags print the changed blocks, as the binary does", () =>
   assert.match(r.out, new RegExp(`\\nrange: changed by @AC \\(p${para.index}\\) of p0-`));
   assert.ok(r.out.includes(`{~~${word}~>Changed~~}`), r.out);
   assert.doesNotMatch(r.out, /\n@@ /);
-  // --plan excludes the flags; a flag before any -p and a bare -p are usage errors.
+  // A recording takes no --out-dir; a flag before any -p and a bare -p are usage errors.
   for (const bad of [["--plan", "x.json", "-p", "p1", "--delete"], ["--anchor", "a", "-p", "p1", "--content", "b"], ["-p", "p1"]]) {
     assert.equal(run("edit", untracked, ...bad, "--out-dir", path.join(tmp, "flags-bad")).code, 2, bad.join(" "));
   }
@@ -243,6 +243,51 @@ test("edit and add by flags print the changed blocks, as the binary does", () =>
   // The new paragraph after a heading keeps the heading's style here (`# Recitals`).
   assert.match(editing.out, /\n(# )?Recitals\n/);
   assert.ok(!editing.out.includes("{++"), editing.out);
+});
+
+test("edit and add --plan record into one plan that --consume deletes once applied", () => {
+  const paras = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.filter((p) => p.text.length > 3);
+  const [para, other, third] = paras;
+  const word = para.text.split(" ")[0];
+  const file = copy(untracked, "record.docx");
+  const plan = path.join(tmp, "record-plan.json");
+  const before = fs.readFileSync(file);
+  const first = run("edit", file, "--plan", plan, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed");
+  assert.equal(first.code, 0, first.err);
+  assert.equal(first.out.trim(), `recorded 1 operation in ${plan}: 1 operation, 0 revisions to accept, 0 to reject; apply with: jubarte edit ${file} --plan ${plan}`);
+  const second = run("add", file, "--plan", plan, "-p", `p${other.index}`, "--comment", "--content", "Why?");
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /^recorded 1 operation in .*: 2 operations/);
+  assert.deepEqual(fs.readFileSync(file), before, "recording edits nothing");
+  const held = fs.readFileSync(plan, "utf8");
+  assert.ok(!held.includes("null"), held);
+  assert.equal(JSON.parse(held).operations.length, 2);
+  // What applies later is refused while recording; what is recorded is refused while applying.
+  const later = run("edit", file, "--plan", plan, "-p", "p1", "--content", "x", "--out-dir", "d");
+  assert.equal(later.code, 2);
+  assert.match(later.err, /--out-dir takes effect when the plan is applied/);
+  const author = run("edit", file, "--plan", plan, "--author", "Bob");
+  assert.equal(author.code, 2);
+  assert.match(author.err, /--author belongs to recorded operations/);
+  const bob = run("edit", file, "--plan", plan, "-p", "p1", "--content", "x", "--author", "Bob");
+  assert.equal(bob.code, 2);
+  assert.match(bob.err, /the plan's author is "Modified User"/);
+  const missing = run("edit", file, "--plan", plan, "-p", `p${para.index}`, "--anchor", "nowhere at all", "--content", "x");
+  assert.equal(missing.code, 3, missing.out);
+  assert.match(missing.out, /"status":"failed"/);
+  const dry = run("edit", file, "--plan", plan, "--dry-run", "-p", `p${third.index}`, "--content", "Checked only.");
+  assert.equal(dry.code, 0, dry.err);
+  assert.match(dry.out, /^would record 1 operation in .*: 3 operations/);
+  assert.equal(fs.readFileSync(plan, "utf8"), held, "a refused or dry recording keeps the plan");
+  const preview = run("edit", file, "--plan", plan, "--consume", "--dry-run");
+  assert.equal(preview.code, 0, preview.err);
+  assert.ok(fs.existsSync(plan), "a dry run consumes nothing");
+  const dir = path.join(tmp, "record-out");
+  const applied = run("edit", file, "--plan", plan, "--consume", "--out-dir", dir);
+  assert.equal(applied.code, 0, applied.err);
+  assert.ok(!fs.existsSync(plan), "--consume deletes the applied plan");
+  const view = run("read", path.join(dir, "redline.docx")).out;
+  assert.ok(view.includes(`{~~${word}~>Changed~~}`) && view.includes("Why?"), view);
 });
 
 test("help, version and usage errors", () => {
@@ -310,7 +355,7 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.ok(run(a, b, "--quiet").out.includes("{~~30~>45~~}"));
   const acceptedView = run(a, b, "--track-changes", "accept");
   assert.equal(acceptedView.code, 0, acceptedView.err);
-  assert.ok(!acceptedView.out.includes("{~~") && acceptedView.out.includes("rev #"), acceptedView.out);
+  assert.ok(!acceptedView.out.includes("{~~") && acceptedView.out.includes("<!-- p0 rev r"), acceptedView.out);
   const compared = run(a, b, "-o", word, "--quiet");
   assert.equal(compared.code, 0, compared.err);
   assert.equal(compared.out, "");
