@@ -696,10 +696,10 @@ pub enum Command {
         jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout\n  \
         jubarte diff old.md new.md                       the patch on stdout\n  \
         jubarte diff old.md new.md --format critic       CriticMarkup on stdout, as pandiff\n  \
-        jubarte diff old.md new.md -o changes.docx       Word tracked changes\n  \
-        jubarte diff old.md new.md -o changes.pdf        the changes painted in a PDF\n  \
-        jubarte diff contract.docx edited.md -o redline.docx\n      \
-        the Markdown's edits as tracked changes on the Word document\n\n\
+        jubarte diff old.docx new.docx -o changes.patch  the patch in a file\n  \
+        jubarte compare old.md new.md -o changes.docx    Word tracked changes (compare writes redlines)\n  \
+        jubarte compare contract.docx edited.md -o redline.pdf\n      \
+        the Markdown's edits painted on the Word document\n\n\
         GIT:\n  \
         git config --global difftool.jubarte.cmd 'jubarte diff \"$LOCAL\" \"$REMOTE\"'\n  \
         git difftool -t jubarte -y -- '*.md'")]
@@ -710,8 +710,8 @@ pub enum Command {
         /// The new document: .docx or Markdown.
         #[arg(value_name = "NEW")]
         new: PathBuf,
-        /// Write to FILE. Text views default to stdout and write only text.
-        /// Patch/critic infer Word, Markdown, PDF or PNG from the extension.
+        /// Write the view to FILE (.md, .markdown, .txt, .patch or .diff;
+        /// stdout otherwise).
         #[arg(short = 'o', long, value_name = "FILE", help_heading = "Review")]
         output: Option<PathBuf>,
         /// Choose the review view; word accepts ALL input changes first.
@@ -729,7 +729,8 @@ pub enum Command {
         /// Show complete lines instead of a 70-character window around changes.
         #[arg(long, help_heading = "Review")]
         full_lines: bool,
-        /// Output format, when --output does not say.
+        /// Output format: md only (the patch, CriticMarkup or a text view
+        /// are all text).
         #[arg(
             short = 't',
             long = "to",
@@ -750,41 +751,24 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long, help_heading = "Review")]
         force: bool,
-        /// Who made the changes: the patch's owner and the revisions'
-        /// author [default: `git config user.name`, else Redline].
-        #[arg(short = 'a', long, value_name = "NAME", help_heading = "Word redline")]
-        author: Option<String>,
+        /// Who made the changes: the patch's owner.
+        #[arg(
+            short = 'a',
+            long,
+            value_name = "NAME",
+            default_value = "Redline",
+            help_heading = "Paragraph patch"
+        )]
+        author: String,
         /// When (ISO 8601) [default: now]; pin it for reproducible output.
         #[arg(
             short = 'd',
             long,
             value_name = "ISO8601",
-        value_parser = parse_datetime,
-            help_heading = "Word redline"
+            value_parser = parse_datetime,
+            help_heading = "Paragraph patch"
         )]
         date: Option<String>,
-        /// Whose redline to reproduce (see `jubarte --help`).
-        #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word, help_heading = "Word redline")]
-        mode: CompareMode,
-        /// LCS detail threshold (see `jubarte --help`).
-        #[arg(long, value_name = "RATIO", value_parser = parse_threshold, help_heading = "Word redline")]
-        detail_threshold: Option<f64>,
-        /// Two Markdown documents written as Word take styles, page setup,
-        /// headers and footers from this .docx.
-        #[arg(long, value_name = "FILE", help_heading = "Word redline")]
-        reference_doc: Option<PathBuf>,
-        /// Read CriticMarkup in the Markdown documents as tracked changes
-        /// (Word output). By default a document compared is text.
-        #[arg(long, help_heading = "Word redline")]
-        critic: bool,
-        /// Where images named by the Markdown are found [default: the
-        /// old document's directory when it is Markdown, else the new's].
-        #[arg(long, value_name = "DIR", help_heading = "Word redline")]
-        resource_path: Option<PathBuf>,
-        /// How a PDF or PNG output is rendered.
-        #[command(flatten)]
-        #[serde(flatten)]
-        render: RenderArgs,
     },
     /// Inspect document facts, paragraphs, styles and tables.
     Inspect {
@@ -1664,11 +1648,6 @@ pub const RETIRED: &[Retired] = &[
         on: Some("convert"),
     },
     Retired {
-        old: "--changed-only",
-        now: "--changed-pages",
-        on: Some("diff"),
-    },
-    Retired {
         old: "--pdf",
         now: "--to pdf",
         on: Some("convert"),
@@ -2542,7 +2521,7 @@ fn validate_matches(
             &format!("{name} writes a .docx; {how} writes .{ext} from it"),
         ));
     }
-    if matches!(name, "convert" | "edit" | "diff")
+    if matches!(name, "convert" | "edit")
         && args.get_one::<String>("revision_palette").is_some()
         && args.get_one::<Revisions>("revisions") != Some(&Revisions::Custom)
     {
@@ -2552,89 +2531,36 @@ fn validate_matches(
         ));
     }
     if name == "diff" {
-        let output_format = args.get_one::<Format>("to").copied().or_else(|| {
-            args.get_one::<PathBuf>("output")
-                .and_then(|path| Format::of_path(path))
-        });
-        if !matches!(output_format, Some(Format::Pdf | Format::Png)) {
-            for flag in RENDER_ONLY {
-                if args.value_source(flag) == Some(ValueSource::CommandLine) {
-                    return Err(error(
-                        &mut task,
-                        &format!(
-                            "--{} applies to PDF or PNG output only",
-                            flag.replace('_', "-")
-                        ),
-                    ));
-                }
-            }
-        }
+        // Text only: Word, PDF and PNG redlines are compare's.
+        output_format(
+            Task::Diff,
+            args.get_one::<PathBuf>("output").map(PathBuf::as_path),
+            args.get_one::<Format>("to").copied(),
+        )
+        .map_err(|message| error(&mut task, &message))?;
         let format = *args
             .get_one::<PatchFormat>("format")
             .expect("default format");
-        let github = format.is_text_view();
-        if !github {
-            for flag in ["context", "accept_changes", "full_lines"] {
-                if args.value_source(flag) == Some(ValueSource::CommandLine) {
-                    return Err(error(
-                        &mut task,
-                        &format!(
-                            "--{} requires a text diff format (github, word, normal, context or side-by-side)",
-                            flag.replace('_', "-")
-                        ),
-                    ));
-                }
-            }
-        }
-        if github {
-            if args
-                .get_one::<Format>("to")
-                .is_some_and(|f| *f != Format::Md)
-            {
-                return Err(error(
-                    &mut task,
-                    "this diff format writes text; --to must be md (markdown)",
-                ));
-            }
-            if args.get_one::<PathBuf>("output").is_some_and(|path| {
-                !path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                    matches!(
-                        e.to_ascii_lowercase().as_str(),
-                        "patch" | "diff" | "txt" | "md" | "markdown"
+        let (text_view, theirs) = if format.is_text_view() {
+            (true, &["columns", "author", "date"][..])
+        } else {
+            (false, &["context", "accept_changes", "full_lines"][..])
+        };
+        if let Some(flag) = theirs
+            .iter()
+            .find(|flag| args.value_source(flag) == Some(ValueSource::CommandLine))
+        {
+            let flag = flag.replace('_', "-");
+            return Err(error(
+                &mut task,
+                &if text_view {
+                    format!("--{flag} does not apply to this text diff format")
+                } else {
+                    format!(
+                        "--{flag} requires a text diff format (github, word, normal, context or side-by-side)"
                     )
-                })
-            }) {
-                return Err(error(
-                    &mut task,
-                    "text diff output must end in .patch, .diff, .txt or .md",
-                ));
-            }
-            for flag in [
-                "columns",
-                "move_comments",
-                "changed_pages",
-                "pages",
-                "dpi",
-                "revisions",
-                "revision_palette",
-                "reference_doc",
-                "resource_path",
-                "critic",
-                "mode",
-                "detail_threshold",
-                "author",
-                "date",
-            ] {
-                if args.value_source(flag) == Some(ValueSource::CommandLine) {
-                    return Err(error(
-                        &mut task,
-                        &format!(
-                            "--{} does not apply to this text diff format",
-                            flag.replace('_', "-")
-                        ),
-                    ));
-                }
-            }
+                },
+            ));
         }
     }
     if name == "convert" {
@@ -2927,7 +2853,9 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 value["args"]["new_format"] =
                     serde_json::to_value(input_format(new)).expect("format");
                 value["args"]["output_format"] = serde_json::to_value(
-                    to.or_else(|| output.as_deref().and_then(Format::of_path)),
+                    output_format(Task::Diff, output.as_deref(), *to)
+                        .ok()
+                        .flatten(),
                 )
                 .expect("format");
             }

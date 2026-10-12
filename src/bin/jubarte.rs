@@ -115,21 +115,6 @@ fn run_scrub(
     write_output(out, Produced::Docx(&scrubbed))
 }
 
-/// Who a patch's changes are by when `--author` does not say: git's
-/// `user.name`, else Redline.
-fn default_author() -> String {
-    std::process::Command::new("git")
-        .args(["config", "user.name"])
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "Redline".to_string())
-}
-
 /// The library's revision style for `--revisions` / `--revision-palette`.
 fn revision_style(
     revisions: Revisions,
@@ -629,15 +614,6 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         }
     }
     Ok(())
-}
-
-/// A status line: on stdout, or on stderr when stdout carries a patch.
-fn say(to_stderr: bool, line: std::fmt::Arguments<'_>) {
-    if to_stderr {
-        eprintln!("{line}");
-    } else {
-        outln!("{line}");
-    }
 }
 
 /// `--pages` as zero-based indices, ascending and without repeats: `1-3,7`
@@ -1794,14 +1770,13 @@ fn exit_code(r: Result<(), String>) -> ExitCode {
 }
 
 /// A document read for comparison: Word bytes or Markdown text.
-struct Input<'p> {
-    path: &'p Path,
+struct Input {
     bytes: Vec<u8>,
     markdown: Option<String>,
 }
 
-impl<'p> Input<'p> {
-    fn new(path: &'p Path, format: Format, bytes: Vec<u8>) -> Result<Self, String> {
+impl Input {
+    fn new(path: &Path, format: Format, bytes: Vec<u8>) -> Result<Self, String> {
         let markdown = match format {
             Format::Md => Some(markdown_text(path, bytes.clone())?),
             Format::Docx => None,
@@ -1812,11 +1787,7 @@ impl<'p> Input<'p> {
                 ));
             }
         };
-        Ok(Self {
-            path,
-            bytes,
-            markdown,
-        })
+        Ok(Self { bytes, markdown })
     }
 
     fn source(&self) -> jubarte::markdown::Source<'_> {
@@ -1916,51 +1887,15 @@ fn resource_dir(markdown: &Path, resource_path: Option<&Path>) -> PathBuf {
     })
 }
 
-/// `old` against `new` in format `to`: CriticMarkup (both Markdown) or a
-/// Word redline.
-fn compared(
-    old: &Input<'_>,
-    new: &Input<'_>,
-    to: Format,
-    options: &jubarte::markdown::RedlineOptions<'_>,
-) -> Result<Vec<u8>, String> {
-    match to {
-        Format::Md => match (&old.markdown, &new.markdown) {
-            (Some(old), Some(new)) => Ok(jubarte::markdown::diff_markdown(old, new).into_bytes()),
-            _ => Err(format!(
-                "Markdown output needs both documents in Markdown ({} is Word): \
-                 write a Word redline (-o FILE.docx) or a PDF (-o FILE.pdf) instead",
-                if old.markdown.is_none() {
-                    old.path
-                } else {
-                    new.path
-                }
-                .display()
-            )),
-        },
-        _ => jubarte::markdown::redline(old.source(), new.source(), options)
-            .map_err(|e| format!("compare failed: {e}")),
-    }
-}
-
-/// Options for `diff`.
+/// Options for `diff`: text only (D2).
 struct DiffJob<'a> {
     old: &'a Path,
     new: &'a Path,
     output: Option<&'a Path>,
-    to: Option<Format>,
     from: Option<Format>,
     force: bool,
+    /// The patch's owner (`--author`, `--date`).
     settings: jubarte::comparer::WmlComparerSettings,
-    reference: Option<&'a Path>,
-    critic: bool,
-    resource_path: Option<&'a Path>,
-    /// Revision marks, comment placement and kept pages of a PDF or PNG.
-    options: jubarte::convert::PdfOptions,
-    /// PNG resolution.
-    dpi: f32,
-    /// Zero-based document pages of a PDF or PNG; `None` for all.
-    pages: Option<&'a [usize]>,
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
     patch: Option<usize>,
@@ -1968,41 +1903,46 @@ struct DiffJob<'a> {
     quiet: bool,
 }
 
-/// Unified text diff uses the shared core directly, with no redline/render pass.
-fn run_text_diff(
-    old_path: &Path,
-    new_path: &Path,
-    output: Option<&Path>,
-    from: Option<Format>,
+/// `diff -o FILE`: text, through the shared writer; its existing file is
+/// refused before any work.
+fn diff_output<'a>(
+    output: Option<&'a Path>,
+    input: &'a Path,
+    render: &'a RenderArgs,
     force: bool,
-    options: &jubarte::text_diff::TextOptions,
-) -> Result<(), String> {
-    if let Some(path) = output {
-        ensure_writable(path, force)?;
-    }
-    let old_bytes = read_document(old_path)?;
-    let new_bytes = read_document(new_path)?;
-    let old = Input::new(
-        old_path,
-        Format::of_input(from, old_path, &old_bytes),
-        old_bytes,
-    )?;
-    let new = Input::new(
-        new_path,
-        Format::of_input(from, new_path, &new_bytes),
-        new_bytes,
-    )?;
-    let patch = jubarte::text_diff::diff_documents_view(old.source(), new.source(), options)?;
-    if let Some(path) = output {
-        std::fs::write(path, &patch).map_err(|e| format!("writing {}: {e}", path.display()))?;
-        eprintln!("wrote {} ({} bytes)", path.display(), patch.len());
-        Ok(())
-    } else {
-        write_stdout(&patch)
+    quiet: bool,
+) -> Result<Option<Output<'a>>, ConvertFailure> {
+    let Some(path) = output else {
+        return Ok(None);
+    };
+    let out = Output::of_task(Format::Md, path, input, render, force, quiet);
+    check_output(&out)?;
+    Ok(Some(out))
+}
+
+/// `text` on stdout, or written to `out`.
+fn print_or_write(out: Option<&Output<'_>>, text: &str) -> Result<(), ConvertFailure> {
+    match out {
+        Some(out) => write_output(out, Produced::Text(text)),
+        None => write_stdout(text).map_err(ConvertFailure::from),
     }
 }
 
-fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
+/// The text views (github, word, normal, context, side-by-side) use the
+/// shared core directly, with no redline pass.
+fn run_text_diff(
+    job: &DiffJob<'_>,
+    options: &jubarte::text_diff::TextOptions,
+) -> Result<(), ConvertFailure> {
+    let render = RenderArgs::default();
+    let out = diff_output(job.output, job.old, &render, job.force, job.quiet)?;
+    let (old, new) = diff_inputs(job)?;
+    let view = jubarte::text_diff::diff_documents_view(old.source(), new.source(), options)?;
+    print_or_write(out.as_ref(), &view)
+}
+
+/// The two documents of a `diff`, each read as its name or bytes say.
+fn diff_inputs(job: &DiffJob<'_>) -> Result<(Input, Input), String> {
     let (old_bytes, new_bytes) = (read_document(job.old)?, read_document(job.new)?);
     let old = Input::new(
         job.old,
@@ -2014,73 +1954,32 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         Format::of_input(job.from, job.new, &new_bytes),
         new_bytes,
     )?;
-    let both_markdown = old.markdown.is_some() && new.markdown.is_some();
-    let to = job
-        .to
-        .or_else(|| job.output.and_then(Format::of_path))
-        .unwrap_or(if both_markdown {
-            Format::Md
-        } else {
-            Format::Docx
-        });
-    if to == Format::Json {
-        return Err("diff does not write .json yet".into());
-    }
-    if matches!(to, Format::Docx | Format::Md) {
-        for (given, flag) in [
-            (
-                job.options.comments == jubarte::convert::CommentPlacement::End,
-                "--move-comments",
-            ),
-            (job.options.changed_only, "--changed-pages"),
-            (job.pages.is_some(), "--pages"),
-        ] {
-            if given {
-                return Err(format!("{flag} applies to PDF or PNG output only"));
-            }
-        }
-    }
-    let output = match (job.output, to) {
-        (Some(path), _) => Some(path.to_path_buf()),
-        (None, Format::Md) => None,
-        (None, Format::Docx) => Some(default_output(job.old, job.new)),
-        (None, Format::Pdf | Format::Png) => {
-            Some(default_output(job.old, job.new).with_extension("pdf"))
-        }
-        (None, Format::Json) => unreachable!("refused above"),
-    };
-    let reference = job.reference.map(read_document).transpose()?;
-    // Images of a Markdown side are read next to it (both sides share
-    // --resource-path when given).
-    let markdown_side = if old.markdown.is_some() {
-        job.old
-    } else {
-        job.new
-    };
-    let loader = image_loader(resource_dir(markdown_side, job.resource_path));
-    let options = jubarte::markdown::RedlineOptions {
-        settings: job.settings.clone(),
-        reference: reference.as_deref(),
-        critic: job.critic,
-        images: Some(&loader),
-    };
-    // Two Markdown documents with no --output: the patch is all there is.
-    let out = if job.patch.is_some() && output.is_none() && both_markdown {
-        Vec::new()
-    } else {
-        compared(
-            &old,
-            &new,
-            if to == Format::Md { to } else { Format::Docx },
-            &options,
-        )?
-    };
-    // The patch is printed only once the output is written, so a refused
-    // output prints no patch.
-    let patch = match job.patch {
+    Ok((old, new))
+}
+
+/// `diff`'s paragraph patch, or `--format critic`'s CriticMarkup (two
+/// Markdown documents only), on stdout or in `-o`'s text file.
+fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
+    let render = RenderArgs::default();
+    let out = diff_output(job.output, job.old, &render, job.force, job.quiet)?;
+    let (old, new) = diff_inputs(job)?;
+    let text = match job.patch {
         Some(columns) => {
+            // Images of a Markdown side are read next to it.
+            let markdown_side = if old.markdown.is_some() {
+                job.old
+            } else {
+                job.new
+            };
+            let loader = image_loader(resource_dir(markdown_side, None));
+            let options = jubarte::markdown::RedlineOptions {
+                settings: job.settings.clone(),
+                reference: None,
+                critic: false,
+                images: Some(&loader),
+            };
             let name = |path: &Path| path.display().to_string();
-            let patch = jubarte::markdown::patch_documents(
+            jubarte::markdown::patch_documents(
                 old.source(),
                 new.source(),
                 &options,
@@ -2093,61 +1992,21 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
                     },
                 },
             )
-            .map_err(|e| format!("compare failed: {e}"))?;
-            Some(patch.render(columns))
+            .map_err(|e| format!("compare failed: {e}"))?
+            .render(columns)
         }
-        None => None,
-    };
-    if let (Some(patch), None) = (&patch, &output) {
-        return write_stdout(patch);
-    }
-    write_diff_output(job, to, output, &out, patch.is_some())?;
-    match patch {
-        Some(patch) => write_stdout(&patch),
-        None => Ok(()),
-    }
-}
-
-/// Write `diff`'s Markdown, Word, PDF or PNG output. With a patch on
-/// stdout (`patch_on_stdout`), what was written is said on stderr.
-fn write_diff_output(
-    job: &DiffJob<'_>,
-    to: Format,
-    output: Option<PathBuf>,
-    out: &[u8],
-    patch_on_stdout: bool,
-) -> Result<(), String> {
-    match (to, output) {
-        (Format::Json, _) => Err("diff does not write .json yet".into()),
-        (Format::Md, None) => write_stdout(out),
-        (Format::Md | Format::Docx, Some(path)) => {
-            ensure_writable(&path, job.force)?;
-            std::fs::write(&path, out).map_err(|e| format!("writing {}: {e}", path.display()))?;
-            if !job.quiet {
-                say(
-                    patch_on_stdout,
-                    format_args!("wrote {} ({} bytes)", path.display(), out.len()),
+        None => match (&old.markdown, &new.markdown) {
+            (Some(old), Some(new)) => jubarte::markdown::diff_markdown(old, new),
+            _ => {
+                return Err(
+                    "--format critic needs both documents in Markdown; `jubarte compare OLD NEW` prints their redline as the agent view"
+                        .to_string()
+                        .into(),
                 );
             }
-            Ok(())
-        }
-        (Format::Pdf | Format::Png, output) => run_convert(&ConvertJob {
-            file: job.old,
-            bytes: Some(out),
-            output: output.as_deref(),
-            force: job.force,
-            font_report: None,
-            options: job.options,
-            to: Some(to),
-            dpi: job.dpi,
-            report: None,
-            pages: job.pages,
-            fail_on_substitution: false,
-            quiet: job.quiet,
-        })
-        .map_err(|f| f.message),
-        (Format::Docx, None) => unreachable!("a Word output always has a path"),
-    }
+        },
+    };
+    print_or_write(out.as_ref(), &text)
 }
 
 /// `convert`, for every pair of formats it takes.
@@ -2660,7 +2519,6 @@ fn cli_main() -> ExitCode {
             old,
             new,
             output,
-            to,
             from,
             format,
             columns,
@@ -2670,13 +2528,24 @@ fn cli_main() -> ExitCode {
             force,
             author,
             date,
-            mode,
-            detail_threshold,
-            reference_doc,
-            critic,
-            resource_path,
-            render,
+            ..
         }) => {
+            let job = DiffJob {
+                old: &old,
+                new: &new,
+                output: output.as_deref(),
+                from,
+                force,
+                settings: comparer_settings(
+                    &author,
+                    &date.unwrap_or_else(jubarte::convert::utc_now_iso8601),
+                    None,
+                    false,
+                    false,
+                ),
+                patch: (format == PatchFormat::Patch).then_some(columns),
+                quiet,
+            };
             if format.is_text_view() {
                 use jubarte::text_diff::{TextFormat, TextOptions, UnifiedOptions};
                 let style = match format {
@@ -2697,46 +2566,9 @@ fn cli_main() -> ExitCode {
                     accept_changes,
                     window: (!full_lines).then_some(70),
                 };
-                return exit_code(run_text_diff(
-                    &old,
-                    &new,
-                    output.as_deref(),
-                    from,
-                    force,
-                    &options,
-                ));
+                return convert_exit_code(run_text_diff(&job, &options));
             }
-            let options = match pdf_options(&render, false) {
-                Ok(options) => options,
-                Err(e) => return exit_code(Err(e)),
-            };
-            let selected = match render.pages.as_deref().map(parse_pages).transpose() {
-                Ok(selected) => selected,
-                Err(e) => return exit_code(Err(e)),
-            };
-            return exit_code(run_diff(&DiffJob {
-                old: &old,
-                new: &new,
-                output: output.as_deref(),
-                to,
-                from,
-                force,
-                settings: comparer_settings(
-                    &author.unwrap_or_else(default_author),
-                    &date.unwrap_or_else(jubarte::convert::utc_now_iso8601),
-                    detail_threshold,
-                    mode == CompareMode::Powertools,
-                    false,
-                ),
-                reference: reference_doc.as_deref(),
-                critic,
-                resource_path: resource_path.as_deref(),
-                options,
-                dpi: render.dpi,
-                pages: selected.as_deref(),
-                patch: (format == PatchFormat::Patch).then_some(columns),
-                quiet,
-            }));
+            return convert_exit_code(run_diff(&job));
         }
         Some(Command::Inspect { file, json, tables }) => {
             return exit_code(if tables {
