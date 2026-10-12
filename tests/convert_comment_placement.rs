@@ -962,6 +962,7 @@ fn comment_anchors_keep_their_pages_and_list_their_comments() {
     // not after the last page kept: page 4 means one page only.
     let numbers: Vec<usize> = kept.report.pages.iter().map(|p| p.number).collect();
     assert_eq!(numbers, [2, 3, 5]);
+    assert_eq!(kept.report.document_pages, 5, "four pages and the listing");
     assert!(!pages.concat().contains("Alpha page text"), "{pages:?}");
     assert!(pages[2].contains("First note here") && pages[2].contains("Second note here"));
 }
