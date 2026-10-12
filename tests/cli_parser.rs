@@ -785,6 +785,33 @@ fn parse_json_resolves_where_edit_writes() {
     }
 }
 
+/// D16: the shared parser resolves `--plan` without a value, so a host
+/// gets the path and whether it was the default.
+#[test]
+fn parse_json_resolves_a_bare_plan() {
+    let bare = parse(
+        &["edit", "d/a.docx", "--plan", "-p", "p1", "--content", "x"],
+        &["edit"],
+    );
+    assert_eq!(bare["args"]["plan"], "d/a_plan.json", "{bare}");
+    assert_eq!(bare["args"]["plan_default"], true, "{bare}");
+    let named = parse(&["add", "a.docx", "--plan", "p.json"], &["add"]);
+    assert_eq!(named["args"]["plan"], "p.json", "{named}");
+    assert_eq!(named["args"]["plan_default"], false, "{named}");
+    let swallowed = parse(
+        &["edit", "--plan", "a.docx", "-p", "p1", "--content", "x"],
+        &["edit"],
+    );
+    assert_eq!(swallowed["exit_code"], 2, "{swallowed}");
+    assert!(
+        swallowed["text"]
+            .as_str()
+            .unwrap()
+            .contains("--plan a.docx names a Word document"),
+        "{swallowed}"
+    );
+}
+
 /// pi review av4 F11: a revision timestamp is an xsd:dateTime (`w:date`);
 /// clap refuses anything else instead of writing it into the document.
 #[test]

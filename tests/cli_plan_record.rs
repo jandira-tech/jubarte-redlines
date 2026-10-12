@@ -416,3 +416,81 @@ fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
     assert!(dir.join("out/redline.docx").exists());
     assert!(dir.join("out/report.jsonl").exists());
 }
+
+/// D16: `--plan` without a value is `<FILE's dir>/<stem>_plan.json`, for
+/// recording, appending and applying; a Word document's name as its value
+/// is FILE, swallowed.
+#[test]
+fn plan_without_a_value_is_file_plan_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    std::fs::create_dir(dir.join("d")).unwrap();
+    letter(dir, "d/a.docx", "Sections 1(g), 2(e), 3 survive.");
+    let (code, out, err) = run(
+        dir,
+        &["edit", "d/a.docx", "--plan", "-p", "p1", "--content", "X."],
+    );
+    assert_eq!(code, 0, "{err}");
+    let plan = Path::new("d").join("a_plan.json");
+    assert!(dir.join(&plan).is_file(), "{out}");
+    assert!(
+        out.trim_end()
+            .ends_with("apply with: jubarte edit d/a.docx --plan"),
+        "the apply line spells --plan bare: {out}"
+    );
+    assert!(out.contains(&format!(" in {}: ", plan.display())), "{out}");
+    let (code, out, err) = run(
+        dir,
+        &["add", "d/a.docx", "--plan", "-p", "p2", "--content", "Y."],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains(": 2 operations, "), "appended: {out}");
+    let (code, _, err) = run(dir, &["edit", "d/a.docx", "--plan", "--consume", "-q"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(!dir.join(&plan).exists(), "consumed");
+    assert!(dir.join("d/a_modified.docx").is_file());
+
+    // A named plan still works, both spellings, and its apply line names it.
+    for named in [&["--plan", "x.json"][..], &["--plan=x.json"][..]] {
+        let mut args = vec!["edit", "d/a.docx"];
+        args.extend(named);
+        args.extend(["-p", "p1", "--content", "Z."]);
+        let (code, out, err) = run(dir, &args);
+        assert_eq!(code, 0, "{named:?}: {err}");
+        assert!(out.trim_end().ends_with("--plan x.json"), "{out}");
+        std::fs::remove_file(dir.join("x.json")).unwrap();
+    }
+
+    // The value took FILE: say so, whichever way it is spelled.
+    for swallowed in [
+        &["edit", "--plan", "d/a.docx", "-p", "p1", "--content", "X."][..],
+        &["add", "--plan", "d/a.docx", "-p", "p2", "--content", "X."][..],
+        &["edit", "d/a.docx", "--plan=b.docx"][..],
+    ] {
+        let (code, _, err) = run(dir, swallowed);
+        assert_eq!(code, 2, "{swallowed:?}: {err}");
+        assert!(
+            err.contains(
+                "names a Word document; put FILE before --plan, or write --plan=PLAN.json"
+            ),
+            "{swallowed:?}: {err}"
+        );
+    }
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "--out-dir",
+            "d/a.docx",
+            "-p",
+            "p1",
+            "--content",
+            "X.",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("put FILE before --out-dir, or write --out-dir=DIR"),
+        "{err}"
+    );
+}
