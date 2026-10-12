@@ -1366,7 +1366,9 @@ fn reconstruct_element(
             ) {
                 let old_clone = dom.clone_subtree(old_pr);
                 strip_change(dom, old_clone, "tblPrChange");
-                if dom.serialize_element(old_clone) != dom.serialize_element(new_pr) {
+                // By value: each side's copy carries its own scratch Unids,
+                // so serialized XML would differ on every merged table.
+                if props_signature(dom, old_clone) != props_signature(dom, new_pr) {
                     let change = dom.new_element(W::name("tblPrChange"));
                     dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
@@ -1393,7 +1395,7 @@ fn reconstruct_element(
             ) {
                 let old_clone = dom.clone_subtree(old_grid);
                 strip_change(dom, old_clone, "tblGridChange");
-                if dom.serialize_element(old_clone) != dom.serialize_element(new_grid) {
+                if props_signature(dom, old_clone) != props_signature(dom, new_grid) {
                     let change = dom.new_element(W::name("tblGridChange"));
                     // w:id ONLY. CT_TblGridChange is the one revision-history
                     // element that does not extend CT_TrackChange, so it

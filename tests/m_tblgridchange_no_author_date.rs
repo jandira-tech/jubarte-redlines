@@ -149,3 +149,24 @@ fn sibling_tblprchange_keeps_author_and_date() {
         );
     }
 }
+
+/// A table whose properties and grid did not change records no history:
+/// the comparer's scratch Unids differ between the two sides' copies of the
+/// same `w:tblPr`, and comparing those made every merged table carry a
+/// `w:tblPrChange` (by the redline's author) and an identical
+/// `w:tblGridChange` — a formatting change nobody made.
+#[test]
+fn an_unchanged_table_records_no_property_or_grid_change() {
+    let a = docx_table((4675, 4675), "cell one");
+    let b = docx_table((4675, 4675), "cell one changed");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let xml = document_xml(&out);
+    assert!(xml.contains("changed"), "{xml}");
+    assert!(!xml.contains("tblPrChange"), "{xml}");
+    assert!(!xml.contains("tblGridChange"), "{xml}");
+    // Only the grid changed: the grid records it, the properties do not.
+    let b = docx_table((3000, 6350), "cell one changed");
+    let xml = document_xml(&compare_documents_with_settings(&a, &b, &word_mode()).unwrap());
+    assert!(xml.contains("tblGridChange"), "{xml}");
+    assert!(!xml.contains("tblPrChange"), "{xml}");
+}
