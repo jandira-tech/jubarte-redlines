@@ -169,7 +169,7 @@ def test_cli_compare_reports_the_bytes_a_markdown_redline_takes(tmp_path: Path, 
     assert main(["compare", str(old), str(new), "-o", str(out)]) == 0
     size = out.stat().st_size
     assert size > len(out.read_text(encoding="utf-8"))
-    assert f"wrote {out} ({size} bytes)" in capsys.readouterr().out
+    assert f"wrote {out} (md, {size} bytes)" in capsys.readouterr().err
 
 
 def test_cli_convert_reports_a_missing_markdown_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

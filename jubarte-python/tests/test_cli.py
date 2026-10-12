@@ -265,7 +265,8 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     redline = tmp_path / "redline.docx"
     assert main(["compare", str(a), str(b), "-o", str(redline), "--author", "Legal"]) == 0
     assert redline.is_file()
-    assert "wrote" in capsys.readouterr().out
+    written = capsys.readouterr()
+    assert written.out == "" and f"wrote {redline} (docx, " in written.err
     assert main(["changes", str(redline), "--json"]) == 0
     rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
     assert {r["kind"] for r in rows} >= {"insertion", "deletion"}
@@ -608,6 +609,19 @@ def test_shorthand_view_preserves_existing_output(
     assert main(["compare", str(old), str(new), "-o", str(output)]) == 1
     assert "already exists" in capsys.readouterr().err
     assert output.read_bytes() == sentinel
+    # Two Markdown documents written to a .md are CriticMarkup, which view
+    # options cannot shape; the host reads that from the bytes, as natively.
+    plain_old, plain_new = tmp_path / "plain-old", tmp_path / "plain-new.json"
+    plain_old.write_bytes(old.read_bytes())
+    plain_new.write_bytes(new.read_bytes())
+    critic = tmp_path / "critic.md"
+    assert main(["compare", str(plain_old), str(plain_new), "-o", str(critic)]) == 0
+    assert "{~~30~>45~~}" in critic.read_text(encoding="utf-8")
+    assert f"wrote {critic} (md, " in capsys.readouterr().err
+    with pytest.raises(SystemExit) as refused:
+        main(["compare", str(plain_old), str(plain_new), "-o", str(tmp_path / "h.md"), "--head", "1"])
+    assert refused.value.code == 2
+    assert "two Markdown documents write CriticMarkup" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("task,dry_run", [("edit", False), ("edit", True), ("add", False)])
