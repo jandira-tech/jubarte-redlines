@@ -64,7 +64,8 @@ while IFS=, read -r stem _base _next _origin src_base src_next _rest; do
     echo "SKIP $stem (missing source)" >> "$OUT/sweep.log"
     continue
   fi
-  if "$BIN" "$a" "$b" -o "$OUT/$stem.docx" --force --quiet 2>> "$OUT/sweep.log"; then
+  # -d pins the epoch: sweep outputs stay byte-identical to earlier runs.
+  if "$BIN" "$a" "$b" -d 1970-01-01T00:00:00Z -o "$OUT/$stem.docx" --force --quiet 2>> "$OUT/sweep.log"; then
     gen_ok=$((gen_ok+1))
     echo "$OUT/$stem.docx" >> "$MANIFEST"
   else

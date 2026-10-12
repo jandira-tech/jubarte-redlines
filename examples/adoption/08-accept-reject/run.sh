@@ -14,7 +14,7 @@ PROFILE=file:///tmp/lo_adopt_08
 "$JUBARTE" convert revised.md -o revised.docx --force
 
 # The redline under test: Word tracked changes, author Ann.
-"$JUBARTE" original.docx revised.docx -o redline.docx --author Ann --force
+"$JUBARTE" original.docx revised.docx -d 1970-01-01T00:00:00Z -o redline.docx --author Ann --force
 "$JUBARTE" changes redline.docx --json > changes_jubarte.json
 
 # --- Side 1: LibreOffice accept-all ---------------------------------------

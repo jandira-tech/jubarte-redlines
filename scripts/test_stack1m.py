@@ -101,7 +101,8 @@ class Stack1m(unittest.TestCase):
         self.assertEqual(list(stack1m.jobs(Path("/bench root"), Path("/out dir"), self.redline)), [
             ("sample_redline.csv:0", ["compare", "/bench root/corpus/ação, old.docx",
                                      '/bench root/corpus/new "draft".docx', "-o",
-                                     "/out dir/sample_redline_0.docx", "--force"]),
+                                     "/out dir/sample_redline_0.docx", "--force",
+                                     "-d", "1970-01-01T00:00:00Z"]),
         ])
 
     def test_conversion_rows_get_distinct_outputs_even_for_repeated_inputs(self):
@@ -130,7 +131,7 @@ class Stack1m(unittest.TestCase):
         self.assertTrue(out.is_dir())
         run.assert_called_once_with(str(self.binary), 1024, 300, "sample_redline.csv:0", [
             "compare", str(self.tmp / "corpus/a.docx"), str(self.tmp / "corpus/b.docx"),
-            "-o", str(out / "sample_redline_0.docx"), "--force",
+            "-o", str(out / "sample_redline_0.docx"), "--force", "-d", "1970-01-01T00:00:00Z",
         ])
         self.assertEqual(printed.getvalue(), "1 jobs at a 1024 KiB main-thread stack: 0 failed\n")
 
