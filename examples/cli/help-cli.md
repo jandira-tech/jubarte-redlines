@@ -172,8 +172,9 @@ Read options:
       --json
           Print the snapshot as JSON instead of the view: `schema_version`,
           `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
-          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the
-          paragraphs they select, and those paragraphs' changes and comments
+          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body
+          paragraphs they select, and every change and comment that starts in one of
+          them, whoever made it; the rest of the snapshot stays whole
 
       --tables
           Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
@@ -795,8 +796,9 @@ Read options:
       --json
           Print the snapshot as JSON instead of the view: `schema_version`,
           `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
-          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the
-          paragraphs they select, and those paragraphs' changes and comments
+          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body
+          paragraphs they select, and every change and comment that starts in one of
+          them, whoever made it; the rest of the snapshot stays whole
 
       --tables
           Print each body table as a grid instead of the view: a `table N: ROWSxCOLS

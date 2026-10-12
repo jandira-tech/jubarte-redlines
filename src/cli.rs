@@ -112,8 +112,9 @@ pub struct ReadArgs {
     /// Print the snapshot as JSON instead of the view: `schema_version`,
     /// `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`,
     /// `controls`, `changes` and `comments`. -p, --head, --tail, --changed
-    /// and --by keep the paragraphs they select, and those paragraphs'
-    /// changes and comments.
+    /// and --by keep the body paragraphs they select, and every change and
+    /// comment that starts in one of them, whoever made it; the rest of the
+    /// snapshot stays whole.
     #[arg(
         long,
         conflicts_with_all = ["track_changes", "comments", "dates", "no_page_markers"],
