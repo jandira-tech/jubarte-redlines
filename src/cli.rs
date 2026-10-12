@@ -21,7 +21,6 @@ use std::path::{Path, PathBuf};
     subcommand_negates_reqs = true,
     arg_required_else_help = true,
     subcommand_help_heading = "Tasks",
-    next_help_heading = "Compare options",
     after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte contract.docx                    print the agent view (read)\n  jubarte old.docx new.docx                redline printed as the agent view (-o writes it)\n  jubarte inspect contract.docx --json\n  jubarte diff old.docx new.docx --format github\n  jubarte convert contract.docx -o contract.pdf\n\nRun jubarte <task> --help for task options.",
 )]
 pub struct Cli {
@@ -34,16 +33,11 @@ pub struct Cli {
     #[arg(short = 'q', long, global = true, help_heading = None::<&str>)]
     pub quiet: bool,
 
-    /// Inputs and settings for the shorthand document comparison.
+    /// Inputs and settings of the shorthands: `jubarte A B` is `compare A
+    /// B`; `jubarte FILE` is `read FILE`, with `compare.read`'s options.
     #[command(flatten)]
     #[serde(flatten)]
     pub compare: CompareArgs,
-
-    /// Options of the one-file shorthand (`jubarte FILE`) and of the view
-    /// `jubarte A B` prints.
-    #[command(flatten)]
-    #[serde(flatten)]
-    pub read: ReadArgs,
 }
 
 /// Options of `read`.
@@ -306,9 +300,10 @@ pub struct CompareArgs {
     #[arg(short = 'm', long = "modified", value_name = "FILE")]
     pub modified: Option<PathBuf>,
 
-    /// Output path (default: `<original-dir>/<original>_v_<modified>.docx`). A
-    /// `.md` output writes the changes as CriticMarkup (both documents
-    /// Markdown).
+    /// Write the redline to FILE instead of printing its agent view; the
+    /// extension picks the format: .docx (also any other), .md (the agent
+    /// view; CriticMarkup when both documents are Markdown), .pdf, .png
+    /// (one file per page) or .json (the snapshot).
     #[arg(short = 'o', long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 
@@ -339,7 +334,7 @@ pub struct CompareArgs {
     pub mode: CompareMode,
 
     /// Same as --mode powertools.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub powertools_faithful: bool,
 
     /// DEBUG: zero WmlComparerSettings::merge_replaced_paragraphs — the
@@ -349,6 +344,50 @@ pub struct CompareArgs {
     /// --powertools-faithful, which sets the same preset.
     #[arg(long, hide = true)]
     pub no_paragraph_merge: bool,
+
+    /// Two Markdown documents written as Word take styles, page setup,
+    /// headers and footers from this .docx.
+    #[arg(long, value_name = "FILE", help_heading = "Markdown inputs")]
+    pub reference_doc: Option<PathBuf>,
+
+    /// Read CriticMarkup in the Markdown documents as tracked changes. By
+    /// default a document compared is text.
+    #[arg(long, help_heading = "Markdown inputs")]
+    pub critic: bool,
+
+    /// Where images named by the Markdown are found (default: each
+    /// Markdown file's directory).
+    #[arg(long, value_name = "DIR", help_heading = "Markdown inputs")]
+    pub resource_path: Option<PathBuf>,
+
+    /// How a .pdf or .png output is drawn.
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub render: RenderArgs,
+
+    /// The options of the agent view printed without -o (or written to
+    /// FILE.md); `jubarte FILE`'s too.
+    #[command(flatten)]
+    #[serde(skip)]
+    pub read: ReadArgs,
+}
+
+/// The derive model with the shorthands' options hidden: `jubarte --help`
+/// lists the tasks; `jubarte compare --help` and `jubarte read --help` show
+/// every option.
+pub fn top_level_command() -> clap::Command {
+    let hidden: std::collections::HashSet<clap::Id> =
+        <CompareArgs as clap::Args>::augment_args(clap::Command::new("shorthand"))
+            .get_arguments()
+            .map(|a| a.get_id().clone())
+            .collect();
+    Cli::command().mut_args(move |a| {
+        if hidden.contains(a.get_id()) {
+            a.hide(true)
+        } else {
+            a
+        }
+    })
 }
 
 impl std::ops::Deref for Cli {
@@ -362,10 +401,10 @@ impl std::ops::Deref for Cli {
 #[derive(clap::Subcommand, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "command", content = "args")]
 pub enum Command {
-    /// Compare documents and write a Word redline.
+    /// Compare documents: print the redline as the agent view, or write it with -o.
     #[command(
         visible_alias = "redline",
-        after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte compare -b old.docx -m new.docx --author Legal"
+        after_help = "Examples:\n  jubarte compare old.docx new.docx                 the redline's agent view\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte compare old.docx new.docx -o redline.pdf --changed-pages\n  jubarte compare old.md new.md -o changes.md       CriticMarkup\n  jubarte compare -b old.docx -m new.docx --author Legal -o r.docx"
     )]
     Compare(CompareArgs),
     /// List tracked changes with IDs for accept, reject and edit plans.
@@ -2064,10 +2103,9 @@ const READ_OPTION_IDS: [&str; 11] = [
     "tables",
 ];
 
-/// Until `compare` and `diff` write the JSON snapshot (Task 13), their
-/// `-o x.json` and `--to json` are refused here, so the binary and both
-/// bindings exit 2 alike instead of writing a document or a patch into a
-/// `.json`.
+/// `diff` writes no JSON snapshot: its `-o x.json` and `--to json` are
+/// refused here, so the binary and both bindings exit 2 alike instead of
+/// writing a patch into a `.json`.
 fn json_not_yet(matches: &clap::ArgMatches, task: Task) -> Option<String> {
     let to = matches.try_get_one::<Format>("to").ok().flatten().copied();
     let said = matches
@@ -2077,6 +2115,39 @@ fn json_not_yet(matches: &clap::ArgMatches, task: Task) -> Option<String> {
         .and_then(|path| task.known(path));
     (to == Some(Format::Json) || said == Some(Format::Json))
         .then(|| format!("{} does not write .json yet", task.name()))
+}
+
+/// What `compare`'s `-o` writes (`None`: the view is printed), refusing
+/// the options that do not go with it: read's `--json` and `--tables` (one
+/// document), the view's options with a file that is not the view, and the
+/// rendering options without a PDF or PNG.
+fn compare_output(
+    output: Option<&Path>,
+    given: &dyn Fn(&str) -> bool,
+) -> Result<Option<Format>, String> {
+    if given("json") {
+        return Err(
+            "--json reads one document; `-o FILE.json` writes the redline's snapshot".to_string(),
+        );
+    }
+    if given("tables") {
+        return Err("--tables reads one document".to_string());
+    }
+    let kind = output_format(Task::Compare, output, None)?;
+    if kind.is_some_and(|kind| kind != Format::Md) && READ_OPTION_IDS.into_iter().any(given) {
+        return Err(
+            "read options shape the view: print it (no -o) or write it (-o FILE.md)".to_string(),
+        );
+    }
+    if !matches!(kind, Some(Format::Pdf | Format::Png))
+        && let Some(flag) = RENDER_ONLY.into_iter().find(|flag| given(flag))
+    {
+        return Err(format!(
+            "--{} applies to PDF or PNG output only",
+            flag.replace('_', "-")
+        ));
+    }
+    Ok(kind)
 }
 
 /// What `read -o PATH` (and the one-document shorthand's -o) writes: `.md`
@@ -2114,34 +2185,28 @@ fn validate_matches(
                 && matches.value_source(id) == Some(ValueSource::CommandLine)
         };
         let two = given("modified_pos") || given("modified");
-        // The read-only flags first: they say what was meant better than
-        // any -o refusal can.
-        if two && given("json") {
-            return Err(command.error(
-                ErrorKind::ArgumentConflict,
-                "--json reads one document; `-o FILE.json` writes the redline's snapshot",
-            ));
-        }
-        if two && given("tables") {
-            return Err(command.error(ErrorKind::ArgumentConflict, "--tables reads one document"));
-        }
-        if !two {
+        let output = matches.get_one::<PathBuf>("output").map(PathBuf::as_path);
+        if two {
+            compare_output(output, &given)
+                .map_err(|message| command.error(ErrorKind::ArgumentConflict, message))?;
+        } else {
             // One document: `read`, whose -o writes the view or the snapshot.
-            if let Some(output) = matches.get_one::<PathBuf>("output") {
+            if let Some(output) = output {
                 read_output(output, &given)
                     .map_err(|message| command.error(ErrorKind::ArgumentConflict, message))?;
             }
-        } else {
-            if let Some(message) = json_not_yet(matches, Task::Compare) {
-                return Err(command.error(ErrorKind::ValueValidation, message));
-            }
-            // Two documents: read options go with the printed view, which -o
-            // replaces by a file (until compare's -o writes the view, Task 13).
-            let read_option = READ_OPTION_IDS.into_iter().any(&given);
-            if given("output") && read_option {
+            // Compare's own options mean nothing to read.
+            if let Some(flag) = COMPARE_ONLY
+                .into_iter()
+                .chain(RENDER_ONLY)
+                .find(|id| given(id))
+            {
                 return Err(command.error(
                     ErrorKind::ArgumentConflict,
-                    "read options apply to the printed view; drop -o to print it",
+                    format!(
+                        "--{} is a compare option: name two documents",
+                        flag.replace('_', "-")
+                    ),
                 ));
             }
         }
@@ -2187,7 +2252,7 @@ fn validate_matches(
         return Ok(());
     };
     if let Some(message) = Task::of_name(name)
-        .filter(|task| matches!(task, Task::Compare | Task::Diff))
+        .filter(|task| *task == Task::Diff)
         .and_then(|task| json_not_yet(args, task))
     {
         let mut task = command.find_subcommand(name).expect("parsed task").clone();
@@ -2218,6 +2283,13 @@ fn validate_matches(
         && let Some(output) = args.get_one::<PathBuf>("output")
     {
         read_output(output, &given).map_err(|message| error(&mut task, &message))?;
+    }
+    if name == "compare" {
+        compare_output(
+            args.get_one::<PathBuf>("output").map(PathBuf::as_path),
+            &given,
+        )
+        .map_err(|message| error(&mut task, &message))?;
     }
     if let Some(writer) = Task::of_name(name).filter(|task| {
         matches!(
@@ -2406,6 +2478,20 @@ fn validate_matches(
     Ok(())
 }
 
+/// The ids of the options only a comparison takes; `jubarte FILE` refuses
+/// them.
+const COMPARE_ONLY: [&str; 9] = [
+    "author",
+    "date",
+    "detail_threshold",
+    "mode",
+    "powertools_faithful",
+    "no_paragraph_merge",
+    "reference_doc",
+    "critic",
+    "resource_path",
+];
+
 /// The [`RenderArgs`] ids: options of a PDF or PNG output only.
 const RENDER_ONLY: [&str; 6] = [
     "move_comments",
@@ -2423,7 +2509,7 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let mut command = Self::command();
+        let mut command = top_level_command();
         let matches = command.try_get_matches_from_mut(arguments)?;
         validate_matches(&matches, &mut command)?;
         let mut cli = Self::from_arg_matches(&matches)?;
@@ -2456,9 +2542,29 @@ fn compare_json(compare: &CompareArgs) -> serde_json::Value {
         compare.modified.as_ref().or(compare.modified_pos.as_ref()),
     ))
     .expect("format");
-    args["output_format"] =
-        serde_json::to_value(compare.output.as_deref().and_then(Format::of_path)).expect("format");
+    // validate_matches refused a format compare cannot write.
+    let kind = output_format(Task::Compare, compare.output.as_deref(), None)
+        .ok()
+        .flatten();
+    args["output_format"] = serde_json::to_value(kind).expect("format");
+    // The view's options, when the view is what compare gives: printed
+    // without -o, or written to a .md unless both documents are Markdown
+    // (CriticMarkup then).
+    let markdown = |format: &serde_json::Value| format == "md";
+    let critic = markdown(&args["old_format"]) && markdown(&args["new_format"]);
+    if kind.is_none() || (kind == Some(Format::Md) && !critic) {
+        args["view"] = serde_json::to_value(&compare.read).expect("UTF-8 CLI arguments");
+    }
     args
+}
+
+/// A comparison whose result is the agent view, in an adapter without
+/// `read`: only `-o` with a file that is not the view works there.
+fn view_not_supported(command: &mut clap::Command) -> clap::Error {
+    command.error(
+        clap::error::ErrorKind::InvalidSubcommand,
+        "this adapter prints no agent view; write the redline with -o FILE.docx",
+    )
 }
 
 fn error_json(error: &clap::Error) -> String {
@@ -2484,7 +2590,7 @@ fn error_json(error: &clap::Error) -> String {
 /// remain null. Informational/error results contain `{exit_code, stream, text}`.
 /// This function performs no document, filesystem, network or process I/O.
 pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> String {
-    let model = Cli::command();
+    let model = top_level_command();
     let accepts = |name: &str| supported.is_empty() || supported.iter().any(|s| s == name);
     // Rebuild only the outer presentation, cloning every argument/group/task
     // from the derive model. Clap itself parses both native and facade inputs.
@@ -2542,6 +2648,9 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
             if let Command::Compare(compare) = &task {
                 value["args"] = compare_json(compare);
+                if !value["args"]["view"].is_null() && !accepts("read") {
+                    return Err(view_not_supported(&mut command));
+                }
             }
             if let Command::Diff {
                 old,
@@ -2625,8 +2734,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                         "this task is not supported by this adapter",
                     ));
                 }
-                let read = ReadArgs::from_arg_matches(&matches)?;
-                let mut args = serde_json::to_value(&read).expect("UTF-8 CLI arguments");
+                let mut args = serde_json::to_value(&compare.read).expect("UTF-8 CLI arguments");
                 args["file"] = serde_json::to_value(
                     compare.original.as_ref().or(compare.original_pos.as_ref()),
                 )
@@ -2642,17 +2750,9 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 .expect("format");
                 return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
             }
-            let mut args = compare_json(&compare);
-            // Without -o the redline is printed as the read view, which an
-            // adapter without read cannot do; with -o it is a plain compare.
-            if accepts("read") {
-                args["view"] = serde_json::to_value(ReadArgs::from_arg_matches(&matches)?)
-                    .expect("UTF-8 CLI arguments");
-            } else if compare.output.is_none() {
-                return Err(command.error(
-                    clap::error::ErrorKind::InvalidSubcommand,
-                    "this task is not supported by this adapter",
-                ));
+            let args = compare_json(&compare);
+            if !args["view"].is_null() && !accepts("read") {
+                return Err(view_not_supported(&mut command));
             }
             Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))
         }

@@ -1460,15 +1460,22 @@ fn insert_before_summary(jsonl: &mut String, line: &str) {
     };
 }
 
-/// A fully-resolved comparison job (positional/named merged, output computed).
+/// A fully-resolved comparison job (positional/named merged).
 #[derive(Debug, PartialEq)]
 struct Job {
     original: PathBuf,
     modified: PathBuf,
-    /// `None` (the shorthand without -o): print the redline's agent view.
+    /// `None`: print the redline's agent view.
     output: Option<PathBuf>,
-    /// The options of that view.
+    /// The options of that view (printed, or written to a `.md`).
     read: ReadArgs,
+    /// How a `.pdf` or `.png` output is drawn.
+    render: RenderArgs,
+    /// `--reference-doc`, `--critic` and `--resource-path`: how Markdown
+    /// inputs become Word.
+    reference: Option<PathBuf>,
+    critic: bool,
+    resource_path: Option<PathBuf>,
     author: String,
     date: String,
     force: bool,
@@ -1479,9 +1486,9 @@ struct Job {
 }
 
 /// Native runtime defaults; required inputs have already been checked by clap.
-/// `explicit` is `compare A B`, which writes `<A>_v_<B>.docx` by default;
-/// the shorthand `A B` prints the redline's view unless -o names a file.
-fn resolve_compare(compare: CompareArgs, read: ReadArgs, explicit: bool, quiet: bool) -> Job {
+/// `compare A B` and the shorthand `A B` are one task: without -o the
+/// redline's view is printed.
+fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
     let original = compare
         .original
         .or(compare.original_pos)
@@ -1490,14 +1497,15 @@ fn resolve_compare(compare: CompareArgs, read: ReadArgs, explicit: bool, quiet: 
         .modified
         .or(compare.modified_pos)
         .expect("clap requires MODIFIED");
-    let output = compare
-        .output
-        .or_else(|| explicit.then(|| default_output(&original, &modified)));
     Job {
         original,
         modified,
-        output,
-        read,
+        output: compare.output,
+        read: compare.read,
+        render: compare.render,
+        reference: compare.reference_doc,
+        critic: compare.critic,
+        resource_path: compare.resource_path,
         author: compare.author,
         date: compare.date,
         force: compare.force,
@@ -1549,11 +1557,25 @@ fn comparer_settings(
     }
 }
 
-fn run(job: &Job) -> Result<(), String> {
-    if let Some(output) = &job.output {
-        ensure_writable(output, job.force)?;
+fn run(job: &Job) -> Result<(), ConvertFailure> {
+    let kind = output_format(Task::Compare, job.output.as_deref(), None)?;
+    let source = format!(
+        "{} (not written; -o keeps it)",
+        default_output(&job.original, &job.modified).display()
+    );
+    let out = job.output.as_deref().map(|path| Output {
+        kind: kind.unwrap_or(Format::Docx),
+        path,
+        force: job.force,
+        quiet: job.quiet,
+        input: &job.original,
+        view: &job.read,
+        source: source.clone(),
+        render: &job.render,
+    });
+    if let Some(out) = &out {
+        check_output(out)?;
     }
-    let to_markdown = job.output.as_deref().and_then(Format::of_path) == Some(Format::Md);
     let original = read_document(&job.original)?;
     let modified = read_document(&job.modified)?;
     let settings = comparer_settings(
@@ -1563,41 +1585,58 @@ fn run(job: &Job) -> Result<(), String> {
         job.powertools_faithful,
         job.no_paragraph_merge,
     );
-    let formats = (
+    let old = Input::new(
+        &job.original,
         Format::of_input(None, &job.original, &original),
+        original,
+    )?;
+    let new = Input::new(
+        &job.modified,
         Format::of_input(None, &job.modified, &modified),
-    );
-    let out = if formats == (Format::Docx, Format::Docx) && !to_markdown {
-        jubarte::document_comparer::compare_documents_with_settings(&original, &modified, &settings)
-            .map_err(|e| {
-                refusal("compare", &e).unwrap_or_else(|| format!("compare failed: {e:?}"))
-            })?
+        modified,
+    )?;
+    // Two Markdown documents written to a .md: CriticMarkup, not the view.
+    if let (Some(out), Some(old_text), Some(new_text)) = (&out, &old.markdown, &new.markdown)
+        && out.kind == Format::Md
+    {
+        if job.read != ReadArgs::default() {
+            return Err(
+                "read options shape the view; two Markdown documents write CriticMarkup to a .md"
+                    .to_string()
+                    .into(),
+            );
+        }
+        let critic = jubarte::markdown::diff_markdown(old_text, new_text);
+        return write_output(out, Produced::Text(&critic));
+    }
+    let redline = if old.markdown.is_none() && new.markdown.is_none() {
+        jubarte::document_comparer::compare_documents_with_settings(
+            &old.bytes, &new.bytes, &settings,
+        )
+        .map_err(|e| refusal("compare", &e).unwrap_or_else(|| format!("compare failed: {e:?}")))?
     } else {
-        let old = Input::new(&job.original, formats.0, original)?;
-        let new = Input::new(&job.modified, formats.1, modified)?;
-        let to = job
-            .output
-            .as_deref()
-            .and_then(Format::of_path)
-            .unwrap_or(Format::Docx);
+        let reference = job.reference.as_deref().map(read_document).transpose()?;
+        // Images of a Markdown side are read next to it (both sides share
+        // --resource-path when given).
+        let markdown_side = if old.markdown.is_some() {
+            &job.original
+        } else {
+            &job.modified
+        };
+        let loader = image_loader(resource_dir(markdown_side, job.resource_path.as_deref()));
         let options = jubarte::markdown::RedlineOptions {
             settings,
-            ..Default::default()
+            reference: reference.as_deref(),
+            critic: job.critic,
+            images: Some(&loader),
         };
-        compared(&old, &new, to, &options)?
+        jubarte::markdown::redline(old.source(), new.source(), &options)
+            .map_err(|e| format!("compare failed: {e}"))?
     };
-
-    let Some(output) = &job.output else {
-        let name = default_output(&job.original, &job.modified);
-        let source = format!("{} (not written; -o keeps it)", name.display());
-        return print_agent_view(&out, Some(source), &job.read);
-    };
-    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))?;
-
-    if !job.quiet {
-        outln!("wrote {} ({} bytes)", output.display(), out.len());
+    match &out {
+        None => Ok(print_agent_view(&redline, Some(source), &job.read)?),
+        Some(out) => write_output(out, Produced::Docx(&redline)),
     }
-    Ok(())
 }
 
 /// Shared `Result → ExitCode` mapping for every command arm.
@@ -2377,12 +2416,7 @@ fn cli_main() -> ExitCode {
     let quiet = cli.quiet;
     match cli.command {
         Some(Command::Compare(compare)) => {
-            return exit_code(run(&resolve_compare(
-                compare,
-                ReadArgs::default(),
-                true,
-                quiet,
-            )));
+            return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }
         Some(Command::Changes { file, json }) => {
             return exit_code(run_changes(&file, json));
@@ -2788,9 +2822,15 @@ fn cli_main() -> ExitCode {
             .or(cli.compare.original_pos)
             .expect("clap requires ORIGINAL");
         let output = cli.compare.output.as_deref();
-        return convert_exit_code(run_text(&file, &cli.read, output, cli.compare.force, quiet));
+        return convert_exit_code(run_text(
+            &file,
+            &cli.compare.read,
+            output,
+            cli.compare.force,
+            quiet,
+        ));
     }
-    exit_code(run(&resolve_compare(cli.compare, cli.read, false, quiet)))
+    convert_exit_code(run(&resolve_compare(cli.compare, quiet)))
 }
 
 /// `jubarte append`: fold the documents left, `append(append(A, B), C)`.
@@ -2984,10 +3024,8 @@ mod tests {
     fn job_of(args: &[&str]) -> Job {
         let cli = Cli::try_parse_from(args).expect("parse");
         match cli.command {
-            Some(Command::Compare(compare)) => {
-                resolve_compare(compare, ReadArgs::default(), true, cli.quiet)
-            }
-            None => resolve_compare(cli.compare, cli.read, false, cli.quiet),
+            Some(Command::Compare(compare)) => resolve_compare(compare, cli.quiet),
+            None => resolve_compare(cli.compare, cli.quiet),
             other => panic!("expected compare, got {other:?}"),
         }
     }
@@ -3005,7 +3043,7 @@ mod tests {
         assert_eq!(j.modified, PathBuf::from("b.docx"));
         assert_eq!(j.output, None, "the shorthand prints the view without -o");
         let j = job_of(&["jubarte", "compare", "a.docx", "b.docx"]);
-        assert_eq!(j.output, Some(PathBuf::from("a_v_b.docx")));
+        assert_eq!(j.output, None, "so does compare");
         assert_eq!(j.author, "Redline");
         assert_eq!(j.date, "1970-01-01T00:00:00Z");
         assert!(!j.force && !j.quiet);
@@ -3090,7 +3128,7 @@ mod tests {
             "--modified",
             "y.docx",
         ]);
-        assert_eq!(j.output, Some(PathBuf::from("x_v_y.docx")));
+        assert_eq!(j.output, None);
     }
 
     #[test]
@@ -3143,7 +3181,7 @@ mod tests {
     fn revisions_is_no_subcommand() {
         let cli = Cli::try_parse_from(["jubarte", "revisions", "b.docx"]).unwrap();
         assert!(cli.command.is_none());
-        let job = resolve_compare(cli.compare, cli.read, false, cli.quiet);
+        let job = resolve_compare(cli.compare, cli.quiet);
         assert_eq!(job.original, PathBuf::from("revisions"));
     }
 
@@ -3155,7 +3193,7 @@ mod tests {
     fn plain_compare_positionals_leave_command_none() {
         let cli = Cli::try_parse_from(["jubarte", "a.docx", "b.docx"]).unwrap();
         assert!(cli.command.is_none());
-        let job = resolve_compare(cli.compare, cli.read, false, cli.quiet);
+        let job = resolve_compare(cli.compare, cli.quiet);
         assert_eq!(job.original, PathBuf::from("a.docx"));
         assert_eq!(job.modified, PathBuf::from("b.docx"));
     }
@@ -3482,7 +3520,9 @@ mod tests {
             "-o",
             out.to_str().unwrap(),
         ];
-        let err = run(&job_of(&args)).expect_err("a .doc must be refused");
+        let err = run(&job_of(&args))
+            .expect_err("a .doc must be refused")
+            .message;
         assert!(
             err.contains("b.doc is a Word 97-2003 (.doc) or encrypted document"),
             "{err}"
