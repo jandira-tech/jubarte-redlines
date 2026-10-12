@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Task 12: one writer for `-o`. Accept, reject, scrub, append, convert and
-//! read write what the output's extension names: a Word package, the agent
+//! Tasks 12 and 13: one writer for `-o`. Compare, accept, reject, scrub,
+//! append, convert and read write what the output's extension names: a Word package, the agent
 //! view (`.md`), a PDF, PNG pages or the snapshot (`.json`), and say so on
 //! stderr, never on stdout.
 
@@ -49,7 +49,8 @@ fn every_writing_task_writes_what_its_output_names() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(TRACKED, dir.path().join("t.docx")).unwrap();
     std::fs::write(dir.path().join("d.md"), DRAFT).unwrap();
-    let tasks: [(&str, &[&str], &str, bool); 6] = [
+    let tasks: [(&str, &[&str], &str, bool); 7] = [
+        ("compare", &["compare", "t.docx", "t.docx"], "docx", true),
         ("accept", &["accept", "t.docx"], "docx", true),
         ("reject", &["reject", "t.docx"], "docx", true),
         ("scrub", &["scrub", "t.docx"], "docx", true),
@@ -88,12 +89,41 @@ fn every_writing_task_writes_what_its_output_names() {
     // A convert's Markdown of a Word document is its text, with no header.
     let md = std::fs::read_to_string(dir.path().join("convert-docx.md")).unwrap();
     assert!(!md.starts_with("---\nsource:"), "{md}");
+    // The view of a redline names the redline compare did not write.
+    let md = std::fs::read_to_string(dir.path().join("compare.md")).unwrap();
+    assert!(
+        md.starts_with("---\nsource: t_v_t.docx (not written; -o keeps it)\n"),
+        "{md}"
+    );
     // The view of a task's result names the Word file it did not write.
     let md = std::fs::read_to_string(dir.path().join("accept.md")).unwrap();
     assert!(
         md.starts_with("---\nsource: accept.docx (not written)\n"),
         "{md}"
     );
+}
+
+/// Two Markdown documents written to a `.md` are CriticMarkup, which the
+/// view's options do not shape.
+#[test]
+fn compare_writes_criticmarkup_for_two_markdown_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.md"), "# Terms\n\nPayment is due in 30 days.\n").unwrap();
+    std::fs::write(dir.path().join("b.md"), "# Terms\n\nPayment is due in 45 days.\n").unwrap();
+    let out = jubarte(dir.path(), &["compare", "a.md", "b.md", "-o", "c.md"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("c.md")).unwrap(),
+        DRAFT
+    );
+    let out = jubarte(dir.path(), &["compare", "a.md", "b.md", "-o", "h.md", "--head", "1"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("two Markdown documents write CriticMarkup"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!dir.path().join("h.md").exists());
 }
 
 #[test]
@@ -122,6 +152,8 @@ fn png_pages_and_quiet() {
         &["reject", "d.docx", "-o", "q.pdf", "-q"],
         &["read", "d.docx", "-o", "q.json", "-q"],
         &["scrub", "d.docx", "-o", "q.md", "--quiet"],
+        &["compare", "d.docx", "d.docx", "-o", "q3.png", "-q"],
+        &["d.docx", "d.docx", "-o", "q3.json", "-q"],
         &[
             "diff", "d.docx", "d.docx", "-t", "pdf", "-o", "q2.pdf", "-q",
         ],
