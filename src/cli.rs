@@ -1858,7 +1858,9 @@ fn validate_matches(
         return Ok(());
     };
     if let Some(message) = Task::of_name(name).and_then(|task| json_not_yet(args, task)) {
-        return Err(command.error(ErrorKind::ValueValidation, message));
+        let mut task = command.find_subcommand(name).expect("parsed task").clone();
+        task.set_bin_name(format!("{} {name}", command.get_name()));
+        return Err(task.error(ErrorKind::ValueValidation, message));
     }
     if name == "compare"
         && !["modified", "modified_pos"]
