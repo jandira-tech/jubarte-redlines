@@ -1190,6 +1190,9 @@ fn quiet_is_global_and_goes_after_the_task() {
         "{early}"
     );
     assert_eq!(parse(&["-q", "compare", "a", "b"], &[])["exit_code"], 2);
+    // So does a facade without compare: one rule for every binding.
+    let facade_early = parse(&["-q", "edit", "a", "--plan", "p"], &["edit"]);
+    assert_eq!(facade_early["exit_code"], 2, "{facade_early}");
 }
 
 #[test]
@@ -1204,6 +1207,19 @@ fn retired_spellings_are_scoped_and_listed_once() {
     // Only the task position names a task.
     assert_eq!(notes(&["read", "diff-render"]), vec![]);
     assert_eq!(notes(&["--", "diff-render"]), vec![]);
+    // An option's value is not the task.
+    assert_eq!(notes(&["-o", "diff-render", "a", "b"]), vec![]);
+    assert_eq!(notes(&["--author", "diff-render", "a", "b"]), vec![]);
+    // A flag takes no value, so the token after it is the task.
+    assert_eq!(
+        notes(&["-q", "diff-render", "a", "b"]),
+        vec![("diff-render", "visual-diff")]
+    );
+    assert_eq!(
+        notes(&["visual-diff", "-o", "edit", "a", "b"]),
+        vec![],
+        "a value after the task is not a task either"
+    );
     // 0.12's cell form, as a -p value of edit or add, in every spelling.
     let cell = vec![("tN.rR.cC", "tN.rowR.cellC")];
     for argv in [
@@ -1218,6 +1234,10 @@ fn retired_spellings_are_scoped_and_listed_once() {
             "x",
         ],
         &["add", "a", "--location", "t1.r0.c0", "-p", "t2.r1.c1"],
+        // A short cluster: -q takes no value, so -p's is the next token.
+        &["edit", "a", "-qp", "t0.r1.c2", "--content", "x"],
+        &["edit", "a", "-qpt0.r1.c2", "--content", "x"],
+        &["edit", "--content", "x", "a", "-p", "t0.r1.c2"],
     ] {
         assert_eq!(notes(argv), cell, "{argv:?}");
     }

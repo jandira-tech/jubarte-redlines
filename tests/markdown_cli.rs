@@ -482,7 +482,7 @@ fn diff_takes_quiet_after_the_task() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
     let out = jubarte(&["diff", "-q", "old.md", "new.md"], dir.path());
-    ok(&out);
+    assert!(!ok(&out).is_empty(), "-q quiets stderr, not the diff");
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 

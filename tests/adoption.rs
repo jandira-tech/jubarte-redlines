@@ -238,6 +238,38 @@ fn diff_render_exits_five_on_a_changed_page_and_zero_otherwise() {
     assert_eq!(String::from_utf8_lossy(&renamed.stderr), "");
 }
 
+/// 0.12's cell form still edits the cell and says, once, what it is now,
+/// even folded into a short cluster after `-q`.
+#[test]
+fn a_retired_cell_location_edits_the_cell_with_a_note() {
+    let (_dir, dir) = workspace();
+    let out = jubarte(
+        &[
+            "edit",
+            "input.docx",
+            "-qp",
+            "t0.r1.c1",
+            "--anchor",
+            "500",
+            "--content",
+            "600",
+            "--out-dir",
+            "review",
+        ],
+        &dir,
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "note: tN.rR.cC is now tN.rowR.cellC; tN.rR.cC is removed in 0.14\n"
+    );
+    let xml = part(
+        &std::fs::read(dir.join("review/redline.docx")).unwrap(),
+        "word/document.xml",
+    );
+    assert!(xml.contains("600") && xml.contains("<w:del "), "{xml}");
+}
+
 /// "Did a font fall back?": `--fail-on-substitution` exits 4 and still
 /// writes the PDF.
 #[test]
