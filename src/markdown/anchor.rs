@@ -189,7 +189,7 @@ fn without_emphasis(text: &str) -> String {
 /// The document text an agent-view fragment stands for: attribution and
 /// comment notes dropped, insertions and highlights unwrapped, deletions
 /// removed, substitutions replaced by their new side, a leading block mark
-/// (`# `, `> `, `- `, `1. `) dropped, emphasis marks dropped, backslash
+/// (`# `, `> `, `- `, `1. `, ahead of any change mark) dropped, emphasis marks dropped, backslash
 /// escapes resolved. An escaped mark (`\*\*`) is text and stays.
 pub fn plain_anchor(text: &str) -> String {
     let mut hidden = String::with_capacity(text.len());
@@ -209,12 +209,14 @@ pub fn plain_anchor(text: &str) -> String {
         }
         hidden.push(c);
     }
-    let mut text = strip_between(&hidden, "{>>", "<<}", Keep::Nothing);
+    // The view writes a block mark ahead of the line's change marks, so it
+    // goes first: a `1. ` an insertion wraps is the document's text.
+    let mut text = strip_between(without_block_mark(&hidden), "{>>", "<<}", Keep::Nothing);
     text = strip_between(&text, "{--", "--}", Keep::Nothing);
     text = strip_between(&text, "{~~", "~~}", Keep::NewSide);
     text = strip_between(&text, "{++", "++}", Keep::Inner);
     text = strip_between(&text, "{==", "==}", Keep::Inner);
-    let text = without_emphasis(without_block_mark(&text));
+    let text = without_emphasis(&text);
     text.chars().map(reveal).collect()
 }
 
@@ -234,6 +236,11 @@ mod tests {
             ("keep it {--very --}{>>r1 @AC<<}secret", "keep it secret"),
             ("\\*\\*stars\\*\\*", "**stars**"),
             ("1. one", "one"),
+            // A block mark leads the line, outside the change marks: typed
+            // `1. ` an insertion wraps is text (bench 1aff6b41d6).
+            ("{++1. one++}{>>r0 @AC<<}", "1. one"),
+            ("1. {++one++}{>>r0 @AC<<}", "one"),
+            ("# {~~Old~>New~~}{>>#1 @AC<<}", "New"),
             ("- item", "item"),
             ("a_b", "a_b"),
             ("*x*", "x"),
