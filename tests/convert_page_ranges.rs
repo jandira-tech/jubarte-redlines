@@ -187,7 +187,11 @@ fn the_cli_honours_pages_for_pdf_and_png_and_refuses_it_for_other_formats() {
         "a one-page PDF"
     );
     assert!(
-        String::from_utf8_lossy(&pdf.stdout).contains("1 page)"),
+        String::from_utf8_lossy(&pdf.stderr).contains("(pdf, ") && pdf.stdout.is_empty(),
+        "{pdf:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&pdf.stderr).contains("1 page)"),
         "{pdf:?}"
     );
 

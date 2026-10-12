@@ -22885,10 +22885,12 @@ fn cli_convert_twice_writes_openable_pdfs() {
         let pdf = std::fs::read(&output).unwrap();
         assert!(pdf.starts_with(b"%PDF"), "{name} missing %PDF header");
         assert!(pdf_page_count(&pdf) >= 1, "{name} has no pages");
+        // The status line goes to stderr; stdout stays empty.
+        assert!(ran.stdout.is_empty(), "stdout: {:?}", ran.stdout);
         assert!(
-            String::from_utf8_lossy(&ran.stdout).contains(name),
-            "stdout: {}",
-            String::from_utf8_lossy(&ran.stdout)
+            String::from_utf8_lossy(&ran.stderr).contains(name),
+            "stderr: {}",
+            String::from_utf8_lossy(&ran.stderr)
         );
     }
 }
