@@ -303,3 +303,112 @@ fn consume_keeps_the_plan_until_it_has_been_applied() {
     assert!(!dir.join("plan.json").exists());
     assert!(dir.join("letter.edit/redline.docx").exists());
 }
+
+/// zcode review 06b F3, F4, F6, F8, F9.
+#[test]
+fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Sections 1(g), 2(e), 3 survive.");
+    let record = |extra: &[&str]| {
+        let mut args = vec![
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p2",
+            "--content",
+            "New.",
+        ];
+        args.extend_from_slice(extra);
+        run(dir, &args)
+    };
+    for flag in [&["--dpi", "300"][..], &["--revisions", "word"]] {
+        let (code, _, err) = record(flag);
+        assert_eq!(code, 2, "{flag:?}");
+        assert!(
+            err.contains(&format!(
+                "{} takes effect when the plan is applied",
+                flag[0]
+            )),
+            "{err}"
+        );
+    }
+    assert_eq!(record(&[]).0, 0);
+    // The default author spelled out is still a choice the plan names.
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "--author",
+            "Modified User",
+        ],
+    );
+    assert_eq!(code, 2);
+    assert!(
+        err.contains("--author belongs to recorded operations"),
+        "{err}"
+    );
+    // add without -p names -p, not --plan.
+    let (code, _, err) = run(dir, &["add", "letter.docx"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("--location <WHERE>"), "{err}");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("plan.json", dir.join("link.json")).unwrap();
+        let (code, _, err) = run(
+            dir,
+            &["edit", "letter.docx", "--plan", "link.json", "--consume"],
+        );
+        assert_eq!(code, 2);
+        assert!(
+            err.contains("a symbolic link; pass the file it names"),
+            "{err}"
+        );
+        // Recording through the link grows the file it names.
+        let (code, _, err) = run(
+            dir,
+            &[
+                "edit",
+                "letter.docx",
+                "--plan",
+                "link.json",
+                "-p",
+                "p0",
+                "--delete",
+            ],
+        );
+        assert_eq!(code, 0, "{err}");
+        assert!(
+            dir.join("link.json")
+                .symlink_metadata()
+                .unwrap()
+                .is_symlink()
+        );
+        assert_eq!(plan(dir)["operations"].as_array().unwrap().len(), 2);
+    }
+    // A plan an output overwrites is not deleted as if it were the plan.
+    std::fs::create_dir(dir.join("out")).unwrap();
+    std::fs::copy(dir.join("plan.json"), dir.join("out/report.jsonl")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "out/report.jsonl",
+            "--out-dir",
+            "out",
+            "--force",
+            "--consume",
+        ],
+    );
+    assert_eq!(code, 1);
+    assert!(err.contains("it no longer holds the plan"), "{err}");
+    assert!(dir.join("out/redline.docx").exists());
+    assert!(dir.join("out/report.jsonl").exists());
+}
