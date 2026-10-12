@@ -485,13 +485,8 @@ Formats:
   -f, --from <FORMAT>
           Input format [default: from the file: .md and .markdown are Markdown, a zip is
           Word]
-
-          Possible values:
-          - docx: Word (.docx)
-          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
-            CriticMarkup
-          - pdf:  PDF, laid out as Word does
-          - png:  PNG pages
+          
+          [possible values: docx, md, markdown]
 
   -t, --to <FORMAT>
           Output format [default: from --output, else pdf for Word and docx for

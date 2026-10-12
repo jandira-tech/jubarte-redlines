@@ -1076,12 +1076,48 @@ fn the_output_rule_is_one_table() {
             .contains("-o c.docx")
     );
     assert_eq!(Format::of_path(Path::new("a.json")), Some(Json));
-    let cli = Cli::try_parse_from(["jubarte", "convert", "a.docx", "--to", "json"]).unwrap();
-    assert!(
-        matches!(cli.command, Some(Command::Convert { .. })),
-        "{:?}",
-        cli.command
+    // pi-07 F1: a name that is only an extension says it.
+    assert_eq!(Format::of_path(Path::new(".json")), Some(Json));
+    assert_eq!(Format::of_path(Path::new("out/.md")), Some(Md));
+    assert_eq!(Format::of_path(Path::new(".hidden")), None);
+    assert_eq!(
+        rule(Task::Diff, Some(".json"), None),
+        rule(Task::Diff, Some("d.json"), None)
     );
+    assert_eq!(rule(Task::Read, Some(".json"), None), Ok(Some(Json)));
+    assert_eq!(rule(Task::Compare, Some("out/.md"), None), Ok(Some(Md)));
+    assert_eq!(rule(Task::Diff, Some(".patch"), None), Ok(Some(Md)));
+}
+
+/// pi-07 F2, F3: until a task writes the snapshot, its `.json` output exits
+/// 2 in the shared parser, so the binary and both bindings refuse alike.
+#[test]
+fn json_output_is_refused_until_a_task_writes_it() {
+    for args in [
+        vec!["convert", "a.docx", "--to", "json"],
+        vec!["convert", "a.md", "-o", "a.json"],
+        vec!["diff", "a.docx", "b.docx", "-t", "json"],
+        vec!["diff", "a.docx", "b.docx", "-o", ".json"],
+        vec!["compare", "a.docx", "b.docx", "-o", "c.JSON"],
+        vec!["a.docx", "b.docx", "-o", "c.json"],
+        vec!["accept", "a.docx", "-o", "a.json"],
+        vec!["scrub", "a.docx", "-o", "a.json"],
+    ] {
+        let task = if args[0].ends_with(".docx") {
+            "compare"
+        } else {
+            args[0]
+        };
+        let result = parse(&args, &[task]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        let text = result["text"].as_str().unwrap();
+        assert!(
+            text.contains(&format!("{task} does not write .json yet")),
+            "{args:?}: {text}"
+        );
+    }
+    let result = parse(&["convert", "a.docx", "--to", "md"], &["convert"]);
+    assert_eq!(result["exit_code"], 0, "{result}");
 }
 
 /// Every task with a long `--output` has a row in the `-o` table.

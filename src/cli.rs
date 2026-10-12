@@ -1183,14 +1183,35 @@ pub enum Format {
     /// PNG pages.
     Png,
     /// The JSON snapshot (`read --json`'s object): written, never read.
+    /// Hidden until a task writes it; `-o x.json` and `--to json` exit 2
+    /// meanwhile (`json_not_yet`).
+    #[value(hide = true)]
     Json,
 }
 
+/// A file name's extension: `Path::extension`, or the whole name after its
+/// dot when the name is only an extension (`.json`, `out/.md`), which Rust
+/// reads as a hidden file with none.
+fn extension(path: &Path) -> Option<String> {
+    if let Some(extension) = path.extension() {
+        return extension.to_str().map(str::to_string);
+    }
+    let name = path.file_name()?.to_str()?;
+    name.strip_prefix('.')
+        .filter(|rest| !rest.is_empty() && !rest.contains('.'))
+        .map(str::to_string)
+}
+
 impl Format {
-    /// The format a file name says, by extension.
+    /// The format a file name says, by extension (`.json`, a name that is
+    /// only an extension, says json too).
     pub fn of_path(path: &Path) -> Option<Self> {
-        let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-        match extension.as_str() {
+        Self::of_name(&extension(path)?)
+    }
+
+    /// The format an extension names, in any case.
+    pub fn of_name(extension: &str) -> Option<Self> {
+        match extension.to_ascii_lowercase().as_str() {
             "docx" | "docm" | "dotx" | "dotm" => Some(Self::Docx),
             "md" | "markdown" | "mdown" | "mkd" | "mkdn" | "txt" => Some(Self::Md),
             "pdf" => Some(Self::Pdf),
@@ -1283,7 +1304,7 @@ impl Task {
             .map(|(_, names)| {
                 names
                     .iter()
-                    .filter_map(|n| Format::of_path(Path::new(&format!("x.{n}"))))
+                    .map(|n| Format::of_name(n).expect("OUTPUT_FORMATS names a format"))
                     .collect()
             })
             .unwrap_or_default()
@@ -1292,9 +1313,7 @@ impl Task {
     /// What `-o PATH`'s extension says for this task: `diff` reads `.patch`
     /// and `.diff` as text too.
     fn known(self, path: &Path) -> Option<Format> {
-        let patch = path
-            .extension()
-            .and_then(|e| e.to_str())
+        let patch = extension(path)
             .is_some_and(|e| e.eq_ignore_ascii_case("patch") || e.eq_ignore_ascii_case("diff"));
         if self == Self::Diff && patch {
             return Some(Format::Md);
@@ -1749,12 +1768,29 @@ const READ_OPTION_IDS: [&str; 9] = [
     "by",
 ];
 
+/// Until a task writes the JSON snapshot (Tasks 11-13), its `-o x.json` and
+/// `--to json` are refused here, so the binary and both bindings exit 2
+/// alike instead of writing a document or a patch into a `.json`.
+fn json_not_yet(matches: &clap::ArgMatches, task: Task) -> Option<String> {
+    let to = matches.try_get_one::<Format>("to").ok().flatten().copied();
+    let said = matches
+        .try_get_one::<PathBuf>("output")
+        .ok()
+        .flatten()
+        .and_then(|path| task.known(path));
+    (to == Some(Format::Json) || said == Some(Format::Json))
+        .then(|| format!("{} does not write .json yet", task.name()))
+}
+
 fn validate_matches(
     matches: &clap::ArgMatches,
     command: &mut clap::Command,
 ) -> Result<(), clap::Error> {
     use clap::{error::ErrorKind, parser::ValueSource};
     let Some((name, args)) = matches.subcommand() else {
+        if let Some(message) = json_not_yet(matches, Task::Compare) {
+            return Err(command.error(ErrorKind::ValueValidation, message));
+        }
         // The shorthand: read options go with the printed view, which -o
         // replaces by a file.
         let read_option = READ_OPTION_IDS.into_iter().any(|id| {
@@ -1821,6 +1857,9 @@ fn validate_matches(
         }
         return Ok(());
     };
+    if let Some(message) = Task::of_name(name).and_then(|task| json_not_yet(args, task)) {
+        return Err(command.error(ErrorKind::ValueValidation, message));
+    }
     if name == "compare"
         && !["modified", "modified_pos"]
             .into_iter()
