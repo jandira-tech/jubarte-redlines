@@ -342,7 +342,7 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     assert main(["changes", str(out)]) == 0
     assert capsys.readouterr().out.splitlines()[-2:] == ['body:rev:1\tdeletion\ttext\ta\t"gone"', "1 change(s)"]
     assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "body:rev:9"]) == 1
-    assert "body:rev:9" in capsys.readouterr().err
+    assert "no tracked change r9" in capsys.readouterr().err
 
 
 def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -378,7 +378,7 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     assert f"\nsource: {bundle / 'redline.docx'}\n" in out, out
     assert "\nrange: changed by @MU (p0, p1) of p0-p2\n" in out, out
     assert "{~~his or her~>an~~}" in out and "{--Heading--}" in out, out
-    # --plan excludes the operation flags; flags without an operation are usage errors.
+    # A recording takes no --out-dir; flags without an operation are usage errors.
     for bad in (["--plan", "x.json", "-p", "p1", "--delete"], ["-p", "p1"], ["--anchor", "a", "-p", "p1", "--content", "b"]):
         with pytest.raises(SystemExit) as exit_info:
             main(["edit", str(letter), *bad, "--out-dir", str(tmp_path / "bad")])
@@ -398,6 +398,42 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
     assert "\nRecitals\n" in out and "{++" not in out, out
+
+
+def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan = tmp_path / "plan.json"
+    before = letter.read_bytes()
+    assert main(["edit", str(letter), "--plan", str(plan), "-p", "p1", "--anchor", "his or her", "--content", "their"]) == 0
+    assert capsys.readouterr().out.strip() == (
+        f"recorded 1 operation in {plan}: 1 operation, 0 revisions to accept, 0 to reject; apply with: jubarte edit {letter} --plan {plan}"
+    )
+    assert main(["add", str(letter), "--plan", str(plan), "-p", "p2", "--comment", "--content", "Why 3?"]) == 0
+    assert capsys.readouterr().out.startswith(f"recorded 1 operation in {plan}: 2 operations")
+    assert letter.read_bytes() == before and not (tmp_path / "letter.edit").exists()
+    held = plan.read_text()
+    assert "null" not in held and len(json.loads(held)["operations"]) == 2
+    # What applies later is refused while recording; what is recorded is refused while applying.
+    for args, message in (
+        (["-p", "p0", "--delete", "--out-dir", "d"], "--out-dir takes effect when the plan is applied"),
+        (["--author", "Bob"], "--author belongs to recorded operations"),
+        (["-p", "p0", "--delete", "--author", "Bob"], 'the plan\'s author is "Modified User"'),
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            main(["edit", str(letter), "--plan", str(plan), *args])
+        assert exit_info.value.code == 2, args
+        assert message in capsys.readouterr().err, args
+    assert main(["edit", str(letter), "--plan", str(plan), "-p", "p1", "--anchor", "nowhere", "--content", "x"]) == 3
+    assert '"status": "failed"' in capsys.readouterr().out
+    assert main(["edit", str(letter), "--plan", str(plan), "--dry-run", "-p", "p0", "--delete"]) == 0
+    assert capsys.readouterr().out.startswith(f"would record 1 operation in {plan}: 3 operations")
+    assert plan.read_text() == held, "a refused or dry recording keeps the plan"
+    assert main(["edit", str(letter), "--plan", str(plan), "--consume", "--dry-run"]) == 0
+    assert plan.exists(), "a dry run consumes nothing"
+    capsys.readouterr()
+    assert main(["edit", str(letter), "--plan", str(plan), "--consume", "--out-dir", str(tmp_path / "o")]) == 0
+    assert not plan.exists(), "--consume deletes the applied plan"
+    out = capsys.readouterr().out
+    assert "{~~his or her~>their~~}" in out and "Why 3?" in out, out
 
 
 def test_convert_to_md_points_at_a_read_that_works(letter, capsys):

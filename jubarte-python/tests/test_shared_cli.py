@@ -98,7 +98,7 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert "{~~30~>45~~}" in capsys.readouterr().out
     assert main([str(a), str(b), "--track-changes", "accept"]) == 0
     accepted = capsys.readouterr().out
-    assert "{~~" not in accepted and "rev #" in accepted, accepted
+    assert "{~~" not in accepted and "<!-- p0 rev r" in accepted, accepted
     # -o writes it; compare A B writes the default name.
     assert main([str(a), str(b), "-o", str(word), "--quiet"]) == 0
     assert word.read_bytes().startswith(b"PK")
