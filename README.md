@@ -369,7 +369,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | Command | What it does |
 |---|---|
 | `jubarte ORIGINAL MODIFIED` | Read, edit, compare and render Word documents |
-| `jubarte compare` | Compare documents and write a Word redline [alias: redline] |
+| `jubarte compare` | Compare documents: print the redline as the agent view, or write it with -o [alias: redline] |
 | `jubarte changes` | List tracked changes with IDs for accept, reject and edit plans |
 | `jubarte accept` | Accept all tracked changes, or select by ID, author or kind |
 | `jubarte reject` | Reject all tracked changes, or select by ID, author or kind |
