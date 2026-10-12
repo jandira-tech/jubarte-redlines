@@ -33,6 +33,17 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert main(["inspect", str(letter), "--json"]) == 0
     snapshot = json.loads(capsys.readouterr().out)
     assert snapshot["summary"]["paragraphs"] == 3
+    assert snapshot["changes"] == [] and snapshot["comments"] == []
+    # `read --json` (and `FILE --json`) print the same snapshot.
+    for argv in (["read", str(letter), "--json"], [str(letter), "--json"]):
+        assert main(argv) == 0
+        assert json.loads(capsys.readouterr().out) == snapshot
+    # The grid and a selected snapshot need the Rust build for now.
+    for argv in (["read", str(letter), "--tables"], ["read", str(letter), "--json", "-p", "p1"]):
+        with pytest.raises(SystemExit) as exit:
+            main(argv)
+        assert exit.value.code == 2
+        assert "not supported by the Python CLI" in capsys.readouterr().err
     assert main(["inspect", str(letter)]) == 0
     out = capsys.readouterr().out
     assert "paragraphs: 3" in out and "body:p:2" in out

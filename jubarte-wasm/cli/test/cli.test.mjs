@@ -161,7 +161,15 @@ test("read (alias text), inspect, capabilities and convert", () => {
   const summary = run("inspect", untracked);
   assert.match(summary.out, /^sha256: [0-9a-f]{64}\nparagraphs: \d+ /);
   assert.match(summary.out, /\nbody:p:0\t\[/);
-  assert.equal(JSON.parse(run("inspect", untracked, "--json").out).schema_version, 1);
+  const snapshot = JSON.parse(run("inspect", untracked, "--json").out);
+  assert.equal(snapshot.schema_version, 1);
+  assert.ok(Array.isArray(snapshot.changes) && Array.isArray(snapshot.comments));
+  assert.deepEqual(JSON.parse(run("read", untracked, "--json").out), snapshot);
+  for (const args of [["--tables"], ["--json", "--head", "1"]]) {
+    const refused = run("read", untracked, ...args);
+    assert.equal(refused.code, 2, `${args}: ${refused.err}`);
+    assert.match(refused.err, /not supported by the npm CLI/);
+  }
   assert.equal(JSON.parse(run("capabilities").out).runtime, "wasm");
   const pdf = path.join(tmp, "out.pdf");
   const r = run("convert", tracked, "-o", pdf, "--revisions", "word", "--compress");
