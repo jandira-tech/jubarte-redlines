@@ -510,6 +510,11 @@ function validateHost(name, o) {
   }
   if (name === "read" && o.output != null) throw new UsageError("read -o is not supported by the npm CLI yet");
   if (name === "convert" && o.output_format === "json") throw new UsageError("-o FILE.json is not supported by the npm CLI yet");
+  if (name === "compare" && o.output != null) {
+    if (["pdf", "png", "json"].includes(o.output_format)) throw new UsageError(`-o FILE.${o.output_format} is not supported by the npm CLI yet`);
+    if (o.view != null) throw new UsageError("-o FILE.md of a Word redline is not supported by the npm CLI yet");
+  }
+  if (name === "compare") for (const flag of ["reference_doc", "critic", "resource_path"]) if (o[flag] != null && o[flag] !== false) reject(flag);
   if (name === "read" && o.json && (o.paragraphs != null || o.head != null || o.tail != null || o.changed || o.by != null)) {
     throw new UsageError("--json with a selection is not supported by the npm CLI");
   }

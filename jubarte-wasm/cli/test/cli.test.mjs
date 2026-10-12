@@ -89,11 +89,13 @@ test("redline writes a Word redline and refuses to overwrite it", () => {
   assert.equal(run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out, "--force").code, 0);
 });
 
-test("redline names its output after both inputs by default", () => {
+test("redline prints the view without -o and writes nothing", () => {
   const a = copy(path.join(pair, "base.docx"), "a.docx");
   const b = copy(path.join(pair, "next.docx"), "b.docx");
-  assert.equal(run("redline", a, b).code, 0);
-  assert.ok(fs.existsSync(path.join(tmp, "a_v_b.docx")));
+  const result = run("redline", a, b);
+  assert.equal(result.code, 0, result.err);
+  assert.ok(result.out.startsWith(`---\nsource: ${path.join(tmp, "a_v_b.docx")} (not written; -o keeps it)\n`), result.out);
+  assert.ok(!fs.existsSync(path.join(tmp, "a_v_b.docx")));
 });
 
 test("a legacy .doc is refused with a save-as hint", () => {
@@ -575,9 +577,11 @@ test("Markdown conversion supports a reference, inferred output and PDF (integra
 test("comparison refuses Markdown output of Word inputs and sniffs unknown input suffixes (integration)", () => {
   // As natively, a .md output is CriticMarkup of two Markdown documents.
   const markdown = path.join(tmp, "compare-output.md");
+  // A .md of Word inputs is the redline's view, which this CLI does not
+  // write yet.
   const result = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", markdown);
-  assert.equal(result.code, 1, result.out);
-  assert.match(result.err, /Markdown output needs both documents in Markdown/);
+  assert.equal(result.code, 2, result.out);
+  assert.match(result.err, /-o FILE\.md of a Word redline is not supported by the npm CLI yet/);
   assert.ok(!fs.existsSync(markdown));
   const a = copy(path.join(pair, "base.docx"), "sniff-a.bin");
   const b = copy(path.join(pair, "next.docx"), "sniff-b.bin");
@@ -612,6 +616,8 @@ test("edit previews write nothing and quiet application still writes its report 
 test("unsupported host options are rejected before input I/O (integration)", () => {
   const comparison = [
     ["--powertools-faithful"], ["--detail-threshold", "0.1"], ["--no-paragraph-merge"],
+    ["--critic"], ["--reference-doc", "r.docx"], ["--resource-path", "."],
+    ["-o", "r.pdf"], ["-o", "r.json"],
   ];
   for (const flags of comparison) {
     const result = run("compare", "missing-a.docx", "missing-b.docx", ...flags);
@@ -677,11 +683,15 @@ test("diff, compare and convert follow the native input and output contract (int
   const word = path.join(tmp, "contract-a.docx");
   assert.equal(run("convert", a, "--to", "docx", "-o", word).code, 0);
 
-  // Markdown output needs both documents in Markdown, in diff and compare.
-  for (const args of [["diff", word, b, "-o", path.join(tmp, "contract-d.md")], ["compare", word, b, "-o", path.join(tmp, "contract-c.md")]]) {
+  // diff's Markdown output needs both documents in Markdown; compare's is
+  // the redline's view, which this CLI does not write yet.
+  for (const [args, code, message] of [
+    [["diff", word, b, "-o", path.join(tmp, "contract-d.md")], 1, /Markdown output needs both documents in Markdown/],
+    [["compare", word, b, "-o", path.join(tmp, "contract-c.md")], 2, /not supported by the npm CLI yet/],
+  ]) {
     const result = run(...args);
-    assert.equal(result.code, 1, result.out);
-    assert.match(result.err, /Markdown output needs both documents in Markdown/);
+    assert.equal(result.code, code, result.out);
+    assert.match(result.err, message);
     assert.ok(!fs.existsSync(args.at(-1)));
   }
 
@@ -796,9 +806,13 @@ test("agent shorthand reads an in-memory redline without touching an existing de
     assert.doesNotMatch(result.out, /Unchanged intro|<!-- page /);
     assert.deepEqual(fs.readFileSync(fallback), sentinel);
   }
+  // compare prints the same view; only -o writes, and never over a file.
   const explicit = run("compare", a, b);
-  assert.equal(explicit.code, 1);
-  assert.match(explicit.err, /already exists/);
+  assert.equal(explicit.code, 0, explicit.err);
+  assert.ok(explicit.out.startsWith(`---\nsource: ${fallback} (not written; -o keeps it)\n`));
+  const written = run("compare", a, b, "-o", fallback);
+  assert.equal(written.code, 1);
+  assert.match(written.err, /already exists/);
   assert.deepEqual(fs.readFileSync(fallback), sentinel);
 });
 

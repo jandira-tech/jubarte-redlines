@@ -160,10 +160,12 @@ test("agent shorthand forwards every view option and preserves explicit compare"
     assert.deepEqual([output, force, output_format], [null, false, null]);
     assert.deepEqual(pair.args.view, view);
   }
+  // compare A B is the shorthand A B: the same view without -o.
   for (const task of ["compare", "redline"]) {
     const result = parse([task, "-b", "a.docx", "-m", "b.docx"]);
     assert.equal(result.exit_code, 0, JSON.stringify(result));
-    assert.equal(Object.hasOwn(result.args, "view"), false);
+    assert.deepEqual(result.args.view, parse(["-b", "a.docx", "-m", "b.docx"]).args.view);
+    assert.equal(Object.hasOwn(parse([task, "a.docx", "b.docx", "-o", "r.docx"]).args, "view"), false);
     assert.equal(parse([task, "-b", "a.docx"]).exit_code, 2);
   }
 });
@@ -173,7 +175,7 @@ test("agent shorthand rejects all read flags with output including explicit defa
     const result = JSON.parse(wasm.parseCli(JSON.stringify(["a.docx", "b.docx", "-o", "out.docx", ...flags])));
     assert.equal(result.exit_code, 2, flags.join(" "));
     assert.equal(result.stream, "stderr");
-    assert.match(result.text, /drop -o/);
+    assert.match(result.text, /read options shape the view: print it \(no -o\) or write it \(-o FILE\.md\)/);
   }
   assert.equal(JSON.parse(wasm.parseCli('["a.docx","b.docx","-o","out.docx"]')).exit_code, 0);
 });
