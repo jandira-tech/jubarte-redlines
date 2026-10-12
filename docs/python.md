@@ -173,6 +173,17 @@ Read options:
           With --changed: only the blocks with this author's marks (a handle such as AC,
           or the full name)
 
+      --json
+          Print the snapshot as JSON instead of the view: `schema_version`,
+          `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
+          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the
+          paragraphs they select, and those paragraphs' changes and comments
+
+      --tables
+          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          header_rows=H widths=W,...` line, then one line per row of tab-separated
+          `ids=text` cells
+
 Examples:
   jubarte-redlines compare old.docx new.docx -o redline.docx
   jubarte-redlines contract.docx
@@ -713,7 +724,8 @@ Arguments:
 
 Options:
       --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-                `paragraphs`, `stories`, `tables`) instead of a human summary
+                `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`)
+                instead of a human summary
       --tables  Print each body table as a grid instead of the paragraphs: a `table N:
                 ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
                 tab-separated `ids=text` cells
@@ -789,6 +801,17 @@ Read options:
       --by <AUTHOR>
           With --changed: only the blocks with this author's marks (a handle such as AC,
           or the full name)
+
+      --json
+          Print the snapshot as JSON instead of the view: `schema_version`,
+          `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
+          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the
+          paragraphs they select, and those paragraphs' changes and comments
+
+      --tables
+          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          header_rows=H widths=W,...` line, then one line per row of tab-separated
+          `ids=text` cells
 ```
 
 #### `jubarte-redlines edit`
@@ -1518,8 +1541,9 @@ Document.render(self, *, pdf: 'bool' = True, png_dpi: 'float | None' = None, opt
 
 One layout pass: optional PDF, optional PNG pages, and the page report.
 
-``pages`` (counted from 1) rasterizes only those pages; the report
-still covers every page. A page past the end raises ``JubarteError``.
+``pages`` (document pages, counted from 1) writes only those pages:
+the PDF, the PNGs and the report. A page ``changed_only`` dropped, or
+one past the end, raises ``JubarteError``.
 
 #### `Document.inspect_json`
 
@@ -1776,7 +1800,8 @@ PDF options with the same defaults as the current byte API.
 
 ``move_comments`` lists the comments after the last page instead of in
 balloons beside the text; ``changed_only`` keeps only the pages a tracked
-change touches. Both mirror the binary's flags and apply to PDF and PNG
+change touches, the pages a comment is anchored on, and the first page of
+each section on which a revised header or footer paints. Both mirror the binary's flags and apply to PDF and PNG
 output; ``diff_render`` ignores them.
 
 ### `Revision`
