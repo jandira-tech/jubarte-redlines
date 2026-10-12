@@ -62,12 +62,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `--resource-path`, `--revisions`, `--revision-palette`, `--dpi`,
   `--pages`, `--move-comments` and `--changed-pages` are compare's and
   convert's, and diff no longer takes them. `--format critic` with a Word
-  side exits 1, naming compare. The patch's owner is `Redline` unless
+  side exits 1, naming compare; with `--author`, `--date` or `--columns`
+  (the patch's) it exits 2. The patch's owner is `Redline` unless
   `--author` says otherwise (git's `user.name` is no longer read). An
   existing `-o` file exits 1 before anything is read. The Python and npm
   CLIs do the same, and their patch headers now name the paths as typed,
-  as the binary's always did. `compare` notes the retired
-  `--changed-only` as convert does.
+  as the binary's always did. `compare` (and `jubarte A B`), `accept`,
+  `reject`, `append` and `scrub` note the retired `--changed-only` as
+  convert does.
 - **`edit` and `add` write one file, `FILE_modified.docx`**, beside FILE:
   the redline, or in `--editing-mode` the result. `-o FILE.docx` names
   it (another extension exits 2, naming `read`/`convert`); `--pdf` and

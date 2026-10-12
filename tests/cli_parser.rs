@@ -488,7 +488,7 @@ fn diff_has_no_rendering_flags() {
     for flags in [
         &["--revisions", "word"][..],
         &["--revision-palette", "deleted=#000000"],
-        &["--mode", "redline"],
+        &["--mode", "word"],
         &["--detail-threshold", "0.5"],
         &["--reference-doc", "r.docx"],
         &["--critic"],
@@ -499,6 +499,36 @@ fn diff_has_no_rendering_flags() {
         let result = parse(&[&["diff", "a.md", "b.md"][..], flags].concat(), &[]);
         assert_eq!(result["exit_code"], 2, "{flags:?}: {result}");
     }
+    // pi-14 C3: CriticMarkup has no owner and no wrap, so the patch's
+    // flags are refused rather than dropped.
+    for flags in [
+        &["-a", "Ann"][..],
+        &["--date", "2026-01-01T00:00:00Z"],
+        &["--columns", "40"],
+    ] {
+        let result = parse(
+            &[&["diff", "a.md", "b.md", "--format", "critic"][..], flags].concat(),
+            &[],
+        );
+        assert_eq!(result["exit_code"], 2, "{flags:?}: {result}");
+        assert!(
+            result["text"]
+                .as_str()
+                .unwrap()
+                .contains("applies to the paragraph patch only"),
+            "{result}"
+        );
+    }
+    // --to alone names no path: the advice names a placeholder.
+    let result = parse(&["diff", "a.md", "b.md", "--to", "pdf"], &[]);
+    assert_eq!(result["exit_code"], 2, "{result}");
+    assert!(
+        result["text"]
+            .as_str()
+            .unwrap()
+            .contains("`compare OLD NEW -o c.pdf`"),
+        "{result}"
+    );
     for output in ["r.docx", "r.pdf", "r.png"] {
         let result = parse(&["diff", "a.md", "b.md", "-o", output], &[]);
         assert_eq!(result["exit_code"], 2, "{output}: {result}");
@@ -689,6 +719,40 @@ fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
                 "compare",
                 "a.docx",
                 "b.docx",
+                "-o",
+                "out.pdf",
+                "--move-comments",
+                "--changed-only",
+            ],
+            vec![note],
+        ),
+        // zcode-14 F1: the shorthand and every RenderArgs task note it too.
+        (
+            vec![
+                "a.docx",
+                "b.docx",
+                "--changed-only",
+                "-o",
+                "out.pdf",
+                "--move-comments",
+            ],
+            vec![note],
+        ),
+        (
+            vec![
+                "accept",
+                "a.docx",
+                "-o",
+                "out.pdf",
+                "--move-comments",
+                "--changed-only",
+            ],
+            vec![note],
+        ),
+        (
+            vec![
+                "scrub",
+                "a.docx",
                 "-o",
                 "out.pdf",
                 "--move-comments",

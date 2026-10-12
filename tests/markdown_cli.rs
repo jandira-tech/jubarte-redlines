@@ -609,6 +609,12 @@ fn diff_writes_the_patch_once_and_never_over_a_file() {
     assert_eq!(out.status.code(), Some(1));
     assert!(failed(&out).contains("already exists"));
     assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+    // Before the inputs are read: missing ones are not what it says.
+    let out = jubarte(
+        &["diff", "missing.md", "gone.md", "-o", "taken.patch"],
+        dir.path(),
+    );
+    assert!(failed(&out).contains("already exists"));
     assert_eq!(
         std::fs::read(dir.path().join("taken.patch")).unwrap(),
         b"keep"

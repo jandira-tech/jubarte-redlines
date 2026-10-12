@@ -1667,6 +1667,26 @@ pub const RETIRED: &[Retired] = &[
         on: Some("compare"),
     },
     Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("accept"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("reject"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("append"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("scrub"),
+    },
+    Retired {
         old: "--pdf",
         now: "--to pdf",
         on: Some("convert"),
@@ -1787,8 +1807,9 @@ fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<
 
 /// The retired spellings in `argv` (the arguments after the program name),
 /// each once, in the order they first appear. The task is the first token
-/// before `--` that is neither an option nor an option's value; a retired
-/// flag counts only on the task it is retired on, and a `-p`/`--location`
+/// before `--` that is neither an option nor an option's value, compare
+/// when that is no task (the shorthand); a retired flag counts only on the
+/// task it is retired on, and a `-p`/`--location`
 /// value of `edit` or `add` in 0.12's cell form counts as [`RETIRED_CELL`].
 /// Pure: no I/O.
 pub fn retired_spellings<'a>(
@@ -1808,12 +1829,14 @@ pub fn retired_spellings<'a>(
         }
         None => task,
     };
-    let Some(sub) = model.find_subcommand(task) else {
-        return found;
+    // The shorthand `jubarte A B` is compare, with the top level's options
+    // (zcode-14 F1).
+    let (sub, task, from) = match model.find_subcommand(task) {
+        Some(sub) => (sub, sub.get_name(), at + 1),
+        None => (&model, "compare", at),
     };
-    let task = sub.get_name();
     // Options and positionals interleave after the task.
-    let mut rest = &argv[at + 1..];
+    let mut rest = &argv[from..];
     while !rest.is_empty() {
         let (options, next) = spelled_options(sub, rest);
         for option in options {
@@ -2565,10 +2588,21 @@ fn validate_matches(
         } else {
             (false, &["context", "accept_changes", "full_lines"][..])
         };
-        if let Some(flag) = theirs
-            .iter()
-            .find(|flag| args.value_source(flag) == Some(ValueSource::CommandLine))
-        {
+        // CriticMarkup carries no owner and is not wrapped: the patch's
+        // flags would be dropped silently (pi-14 C3).
+        let patch_only: &[&str] = if format == PatchFormat::Critic {
+            &["columns", "author", "date"]
+        } else {
+            &[]
+        };
+        let given = |flag: &&&str| args.value_source(flag) == Some(ValueSource::CommandLine);
+        if let Some(flag) = patch_only.iter().find(given) {
+            return Err(error(
+                &mut task,
+                &format!("--{flag} applies to the paragraph patch only (--format patch)"),
+            ));
+        }
+        if let Some(flag) = theirs.iter().find(given) {
             let flag = flag.replace('_', "-");
             return Err(error(
                 &mut task,
