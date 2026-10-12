@@ -731,11 +731,13 @@ pub enum Command {
         full_lines: bool,
         /// Output format: md only (the patch, CriticMarkup or a text view
         /// are all text).
+        // Every format parses, so another one is refused naming compare.
         #[arg(
             short = 't',
             long = "to",
             value_enum,
             value_name = "FORMAT",
+            hide_possible_values = true,
             help_heading = "Formats"
         )]
         to: Option<Format>,
