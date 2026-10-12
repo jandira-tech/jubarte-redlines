@@ -152,7 +152,7 @@ fn jubarte(args: &[&std::ffi::OsStr]) -> std::process::Output {
 }
 
 #[test]
-fn the_cli_honours_pages_for_png_output_and_refuses_it_for_other_formats() {
+fn the_cli_honours_pages_for_pdf_and_png_and_refuses_it_for_other_formats() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("in.docx");
     std::fs::write(&src, three_pages()).unwrap();
@@ -169,8 +169,29 @@ fn the_cli_honours_pages_for_png_output_and_refuses_it_for_other_formats() {
     assert_eq!(png.status.code(), Some(0), "{png:?}");
     assert!(dir.path().join("in-page-02.png").exists(), "{png:?}");
     assert!(!dir.path().join("in-page-01.png").exists());
+    let out = dir.path().join("out.pdf");
+    let pdf = jubarte(&[
+        "convert".as_ref(),
+        src.as_os_str(),
+        "-t".as_ref(),
+        "pdf".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+        "--pages".as_ref(),
+        "1".as_ref(),
+    ]);
+    assert_eq!(pdf.status.code(), Some(0), "{pdf:?}");
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("/Count 1"),
+        "a one-page PDF"
+    );
+    assert!(
+        String::from_utf8_lossy(&pdf.stdout).contains("1 page)"),
+        "{pdf:?}"
+    );
 
-    for to in ["md", "docx", "pdf"] {
+    for to in ["md", "docx"] {
         let out = jubarte(&[
             "convert".as_ref(),
             src.as_os_str(),
