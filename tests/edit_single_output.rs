@@ -227,3 +227,66 @@ fn a_refused_plan_writes_nothing_and_prints_its_report() {
     assert!(written(dir).is_empty(), "{:?}", written(dir));
     assert!(out.contains("not in the paragraph"), "{out}");
 }
+
+/// zcode-13b F2: the plan runs before the outputs are checked, so a refused
+/// plan prints its report even when the output already exists.
+#[test]
+fn a_refused_plan_reports_even_over_an_existing_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    std::fs::write(dir.join("a_modified.docx"), b"kept").unwrap();
+    std::fs::create_dir(dir.join("a.edit")).unwrap();
+    for extra in [&[][..], &["--out-dir"][..]] {
+        let mut args = vec![
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--anchor",
+            "absent words",
+            "--content",
+            "x",
+        ];
+        args.extend(extra);
+        let (code, out, err) = run(dir, &args);
+        assert_eq!(code, 3, "{extra:?}: {out}{err}");
+        assert!(out.contains("absent words"), "{extra:?}: {out}");
+    }
+    assert_eq!(std::fs::read(dir.join("a_modified.docx")).unwrap(), b"kept");
+}
+
+/// pi-13b F1: the bundle's `wrote` line and notes are status lines, on
+/// stderr (D6); its summary and the view stay on stdout.
+#[test]
+fn the_bundle_says_wrote_on_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let mut args = EDIT.to_vec();
+    args.extend(["--out-dir", "r"]);
+    let (code, out, err) = run(dir, &args);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.starts_with("wrote r (4 files: "), "{err}");
+    assert!(
+        out.starts_with("{") && out.contains("\nsource: r/redline.docx\n"),
+        "{out}"
+    );
+    assert!(!out.contains("\nwrote "), "{out}");
+}
+
+/// zcode-13b F1: the advice names the extension as typed.
+#[test]
+fn a_text_output_is_refused_naming_its_own_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let mut args = EDIT.to_vec();
+    args.extend(["-o", "v.txt"]);
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("`jubarte read FILE_modified.docx -o v.txt` writes .txt from it"),
+        "{err}"
+    );
+}

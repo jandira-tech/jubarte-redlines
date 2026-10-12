@@ -2410,7 +2410,11 @@ fn validate_matches(
         && let Some(output) = args.get_one::<PathBuf>("output")
         && let Some(kind) = Format::of_path(output).filter(|kind| *kind != Format::Docx)
     {
-        let ext = kind.name();
+        // As typed (`.txt`, `.markdown`), which the named task also takes.
+        let ext = output.extension().map_or_else(
+            || kind.name().to_string(),
+            |e| e.to_string_lossy().to_lowercase(),
+        );
         let how = match kind {
             Format::Md | Format::Json => format!("`jubarte read FILE_modified.docx -o v.{ext}`"),
             _ => format!("`jubarte convert FILE_modified.docx -o r.{ext}`"),
@@ -2700,8 +2704,11 @@ fn error_json(error: &clap::Error) -> String {
 /// native snake_case field names, flattened Args groups, canonical enum strings,
 /// string paths, defaults and null optional fields. Nested subcommands use
 /// `{command, args}`. Compare inputs include resolved named-over-positional
-/// values; runtime-dependent defaults (output path, git author, current date)
-/// remain null. Informational/error results contain `{exit_code, stream, text}`.
+/// values; runtime-dependent defaults (compare's output path, git author,
+/// current date) remain null. `edit` and `add` carry where they write,
+/// resolved: `output` for the one document or `out_dir` for the bundle, both
+/// null while recording into a plan. Informational/error results contain
+/// `{exit_code, stream, text}`.
 /// This function performs no document, filesystem, network or process I/O.
 pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> String {
     let model = top_level_command();
@@ -2813,9 +2820,25 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             }
             // edit and add: the one document or the bundle, resolved, so a
             // host never rebuilds the default names.
-            if let Command::Edit { file, options, .. } | Command::Add { file, options, .. } = &task
+            if let Command::Edit {
+                file,
+                options,
+                plan,
+                operations,
+                ..
+            }
+            | Command::Add {
+                file,
+                options,
+                plan,
+                operations,
+                ..
+            } = &task
             {
+                // Recording writes the plan only.
+                let recording = plan.is_some() && !operations.is_empty();
                 let (output, out_dir) = match options.target(file) {
+                    _ if recording => (None, None),
                     EditTarget::Single(path) => (Some(path), None),
                     EditTarget::Bundle(dir) => (None, Some(dir)),
                 };

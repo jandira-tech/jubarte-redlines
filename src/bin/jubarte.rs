@@ -1060,47 +1060,34 @@ fn run_edit(
     notes: &[String],
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
-    if !job.dry_run {
-        match job.target {
-            EditTarget::Bundle(dir) => {
-                if dir.exists() && !job.force {
-                    return Err(fail(format!(
-                        "output directory '{}' already exists (use --force to replace its files)",
-                        dir.display()
-                    )));
-                }
-                let input_dir = job
-                    .file
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or(Path::new("."));
-                if same_dir(dir, input_dir) {
-                    return Err(fail(
-                        "--out-dir must not be the input's own directory".into(),
-                    ));
-                }
-            }
-            // FILE itself (`X_modified.docx` edited again, or `-o FILE`)
-            // exists, so it is replaced only with --force (D15).
-            EditTarget::Single(path) => {
-                let pdf = job.pdf.then(|| path.with_extension("pdf"));
-                for taken in std::iter::once(path.clone()).chain(pdf) {
-                    if taken.exists() && !job.force {
-                        return Err(taken_output(&taken));
-                    }
-                }
-            }
-        }
-    }
     if job.dry_run {
         let report = jubarte::edit::preview_plan(source, plan).map_err(|e| refused(&e))?;
         return write_stdout(report.to_jsonl()).map_err(fail);
     }
+    // The plan first: a refused plan prints its whole report, whatever the
+    // outputs (D15).
     let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
-    let out_dir = match job.target {
+    let dir = match job.target {
         EditTarget::Single(path) => return write_edited(job, path, &result, notes),
-        EditTarget::Bundle(dir) => dir.as_path(),
+        EditTarget::Bundle(dir) => dir,
     };
+    if dir.exists() && !job.force {
+        return Err(fail(format!(
+            "output directory '{}' already exists (use --force to replace its files)",
+            dir.display()
+        )));
+    }
+    let input_dir = job
+        .file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if same_dir(dir, input_dir) {
+        return Err(fail(
+            "--out-dir must not be the input's own directory".into(),
+        ));
+    }
+    let out_dir = dir.as_path();
     let mut jsonl = result.report.to_jsonl();
     // Render (one layout pass per document) before creating the directory,
     // so a failed render leaves no partial bundle.
@@ -1219,14 +1206,15 @@ fn run_edit(
         .map(|(name, _)| name.as_str())
         .chain(["report.jsonl"])
         .collect();
-    outln!(
+    // The status lines on stderr (D6); the summary and the view are data.
+    eprintln!(
         "wrote {} ({} files: {})",
         out_dir.display(),
         names.len(),
         names.join(", ")
     );
     for note in edit_notes(notes, &result) {
-        outln!("{note}");
+        eprintln!("{note}");
     }
     // The changed blocks, as the agent view reads them back: the tracked
     // redline, or in editing mode its accepted text.
@@ -1297,6 +1285,17 @@ fn write_edited(
         Mode::Editing => &result.clean,
     };
     let mut outputs: Vec<(PathBuf, &[u8])> = vec![(path.to_path_buf(), document)];
+    // FILE itself (`X_modified.docx` edited again, or `-o FILE`) exists, so
+    // it is replaced only with --force (D15). The PNG names wait for the
+    // page count.
+    let pdf = job.pdf.then(|| path.with_extension("pdf"));
+    if !job.force
+        && let Some(taken) = std::iter::once(path.to_path_buf())
+            .chain(pdf)
+            .find(|p| p.exists())
+    {
+        return Err(taken_output(&taken));
+    }
     // Render before writing, so a failed render writes nothing.
     let rendered = if job.pdf || job.png {
         let options = jubarte::convert::PdfOptions {

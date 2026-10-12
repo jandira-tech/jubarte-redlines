@@ -774,6 +774,11 @@ fn parse_json_resolves_where_edit_writes() {
         row(&[&edit[..], &["--out-dir", "r"]].concat()),
         (Value::Null, Value::from("r"))
     );
+    // pi-13b F7: recording writes the plan only, so neither is named.
+    assert_eq!(
+        row(&[&edit[..], &["--plan", "p.json"]].concat()),
+        (Value::Null, Value::Null)
+    );
     for bad in [&["-o", "b.pdf"][..], &["--out-dir", "x.docx"][..]] {
         let parsed = parse(&[&edit[..], bad].concat(), &["edit"]);
         assert_eq!(parsed["exit_code"], 2, "{bad:?}: {parsed}");
