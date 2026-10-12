@@ -562,9 +562,10 @@ Arguments:
 
 Options:
   -o, --output <FILE>
-          Output path (default: `<stem>.pdf` next to a .docx, `<stem>.docx` next to
-          Markdown; Markdown output goes to stdout). PNG pages are named
-          `<stem>-page-NN.png` beside it
+          Output path; its extension picks the format: .docx, .md, .pdf, .png (pages
+          named `<stem>-page-NN.png` beside it) or .json (the snapshot of the result).
+          Without it: `<stem>.pdf` next to a .docx, `<stem>.docx` next to Markdown,
+          `<stem>.json` for `--to json`; Markdown output goes to stdout
 
       --force
           Overwrite the output file if it already exists
@@ -652,6 +653,8 @@ Formats:
             CriticMarkup
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
+          - json: The JSON snapshot (`read --json`'s object): written, never read.
+            `compare` and `diff` refuse it until they write it (`json_not_yet`)
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
@@ -799,6 +802,8 @@ Formats:
             CriticMarkup
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
+          - json: The JSON snapshot (`read --json`'s object): written, never read.
+            `compare` and `diff` refuse it until they write it (`json_not_yet`)
 
   -f, --from <FORMAT>
           Input format of both documents [default: from each file]

@@ -39,10 +39,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
-- Every writing task says `wrote PATH (KIND, N bytes[, P pages])` on
-  stderr, or `wrote DIR/STEM-page-NN.png (png, K pages, D dpi)`; `-q`
-  silences it. `convert` and `append` said it on stdout; `accept`,
-  `reject` and `scrub` said nothing before.
+- `accept`, `reject`, `append`, `scrub`, `convert` and `read -o` say
+  `wrote PATH (KIND, N bytes[, P pages])` on stderr, or
+  `wrote DIR/STEM-page-NN.png (png, K pages, D dpi)`; `-q` silences it
+  (and `diff`'s line too). `convert` and `append` said it on stdout;
+  `accept`, `reject` and `scrub` said nothing before. `compare` still
+  prints its line on stdout.
 - `convert --changed-only` (and the library's `PdfOptions::changed_only`)
   also keeps the pages a comment is anchored on and the first page of each
   section on which a revised header or footer paints. The comment listing's
