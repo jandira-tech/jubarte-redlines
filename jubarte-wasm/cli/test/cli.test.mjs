@@ -292,6 +292,14 @@ test("edit and add --plan record into one plan that --consume deletes once appli
   assert.match(linked.err, /a symbolic link; pass the file it names/);
   assert.equal(fs.readFileSync(plan, "utf8"), held);
   assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+  // A plan that is not UTF-8 is an I/O error, as the binary reads it (pi review 06c parity F1).
+  const bad = path.join(tmp, "record-bad.json");
+  fs.writeFileSync(bad, Buffer.from([0xff, 0xfe, 0x7b, 0x7d]));
+  for (const args of [["-p", "p1", "--content", "x"], []]) {
+    const r = run("edit", file, "--plan", bad, ...args);
+    assert.equal(r.code, 1, r.err);
+    assert.match(r.err, /stream did not contain valid UTF-8/);
+  }
   const dir = path.join(tmp, "record-out");
   const applied = run("edit", file, "--plan", plan, "--consume", "--out-dir", dir);
   assert.equal(applied.code, 0, applied.err);

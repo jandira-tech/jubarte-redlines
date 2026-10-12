@@ -262,15 +262,26 @@ const COMMANDS = {
   },
 };
 
+/** PLAN.json's text, strictly UTF-8 as the binary reads it; `undefined`
+ * when there is no such file and `missing` allows it. */
+function readPlanText(plan, missing = false) {
+  let bytes;
+  try {
+    bytes = fs.readFileSync(plan);
+  } catch (e) {
+    if (missing && e.code === "ENOENT") return undefined;
+    throw new CliError(`reading ${plan}: ${e.message}`);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new CliError(`reading ${plan}: stream did not contain valid UTF-8`);
+  }
+}
+
 /** `--plan`'s text, or the plan the operation flags describe, and its notes. */
 function editPlan(verb, docx, o) {
-  if (o.plan != null) {
-    try {
-      return { plan: fs.readFileSync(o.plan, "utf8"), notes: [] };
-    } catch (e) {
-      throw new CliError(`reading ${o.plan}: ${e.message}`);
-    }
-  }
+  if (o.plan != null) return { plan: readPlanText(o.plan), notes: [] };
   try {
     const options = { author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions };
     return JSON.parse(wasm.flagPlan(verb, JSON.stringify(o.operations ?? []), docx, JSON.stringify(options)));
@@ -308,12 +319,7 @@ function printRefusal(result) {
  * checked against FILE first; a refusal leaves PLAN.json as it was. The
  * shared parser has refused the flags that do not go with `--plan`. */
 function recordPlan(verb, file, docx, o) {
-  let held;
-  try {
-    held = fs.readFileSync(o.plan, "utf8");
-  } catch (e) {
-    if (e.code !== "ENOENT") throw new CliError(`reading ${o.plan}: ${e.message}`);
-  }
+  const held = readPlanText(o.plan, true);
   const options = {
     author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
     file, plan: o.plan, dryRun: Boolean(o.dry_run),

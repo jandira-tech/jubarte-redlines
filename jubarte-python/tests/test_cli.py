@@ -445,6 +445,25 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
     assert "{~~his or her~>their~~}" in out and "Why 3?" in out, out
 
 
+def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    # pi review 06c parity F1-F3.
+    monkeypatch.chdir(tmp_path)
+    assert main(["edit", "./letter.docx", "--plan", "./plan.json", "-p", "p1", "--content", "X."]) == 0
+    assert capsys.readouterr().out.strip().endswith("apply with: jubarte edit ./letter.docx --plan ./plan.json")
+    assert main(["edit", "letter.docx", "--plan", "plan.json/", "-p", "p2", "--content", "Y."]) == 1
+    assert capsys.readouterr().err.startswith("error: reading plan.json/:")
+    (tmp_path / "bad.json").write_bytes(b"\xff\xfe{}")
+    assert main(["edit", "letter.docx", "--plan", "bad.json", "-p", "p1", "--content", "X."]) == 1
+    assert "error: reading bad.json: stream did not contain valid UTF-8" in capsys.readouterr().err
+    assert main(["edit", "letter.docx", "--plan", "bad.json"]) == 1
+    assert "stream did not contain valid UTF-8" in capsys.readouterr().err
+    # A dangling link is replaced by the plan, as the binary does.
+    (tmp_path / "dangling.json").symlink_to(tmp_path / "missing.json")
+    assert main(["edit", "letter.docx", "--plan", "dangling.json", "-p", "p1", "--content", "X."]) == 0
+    assert not (tmp_path / "dangling.json").is_symlink() and not (tmp_path / "missing.json").exists()
+    assert b"\r\n" not in (tmp_path / "plan.json").read_bytes()
+
+
 def test_convert_to_md_points_at_a_read_that_works(letter, capsys):
     # pi review av2 F16: `read FILE --track-changes` with no value is a usage error.
     with pytest.raises(SystemExit) as exit:
