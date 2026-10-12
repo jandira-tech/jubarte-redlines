@@ -249,6 +249,13 @@ notes no definition shows (Word's separators) as `notes: {fmt: …}`. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
+A table cell's paragraph has no id line, so the table line names its
+formatting changes: `fmt r6 @AC in p2`. Whatever change no other line
+shows (a change in a text box with no text to tag, or in Word's Fallback
+copy of one with no twin in the copy the view shows) is listed by
+paragraph on the header's `unplaced:` line: `unplaced: [r3 @AC in p0]`.
+A change inside another (a cell's text in an inserted row) reads from
+its container's tag.
 
 The header's `comments:` line counts open and resolved threads, and apart
 from them a comment no story anchors (no range or reference in the body or

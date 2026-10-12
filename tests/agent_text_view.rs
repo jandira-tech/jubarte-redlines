@@ -413,14 +413,16 @@ fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_m
 /// them.
 #[test]
 fn table_line_names_the_tables_own_changes() {
+    // A cell's paragraph has no id line: the table line names its
+    // formatting changes too (`r6 @AC in p2`).
     let a = r#"w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z""#;
     let tbl = format!(
-        r#"<w:tbl><w:tblPr><w:jc w:val="center"/><w:tblPrChange w:id="1" {a}><w:tblPr/></w:tblPrChange></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/><w:tblGridChange w:id="2"><w:tblGrid><w:gridCol w:w="8000"/></w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:trPr><w:trPrChange w:id="3" {a}><w:trPr/></w:trPrChange></w:trPr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcPrChange w:id="4" {a}><w:tcPr/></w:tcPrChange></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellIns w:id="5" {a}/></w:tcPr><w:p><w:r><w:t>d</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+        r#"<w:tbl><w:tblPr><w:jc w:val="center"/><w:tblPrChange w:id="1" {a}><w:tblPr/></w:tblPrChange></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/><w:tblGridChange w:id="2"><w:tblGrid><w:gridCol w:w="8000"/></w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:trPr><w:trPrChange w:id="3" {a}><w:trPr/></w:trPrChange></w:trPr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcPrChange w:id="4" {a}><w:tcPr/></w:tcPrChange></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:jc w:val="right"/><w:pPrChange w:id="6" {a}><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="7" {a}><w:rPr/></w:rPrChange></w:rPr><w:t>c</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellIns w:id="5" {a}/></w:tcPr><w:p><w:r><w:t>d</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
     );
     let bytes = docx(&tbl);
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1 -->\n"),
+        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
         "{out}"
     );
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
@@ -428,7 +430,7 @@ fn table_line_names_the_tables_own_changes() {
         .into_iter()
         .map(|c| c.r#ref)
         .collect();
-    assert_eq!(listed, ["r1", "r2", "r3", "r4", "r5"]);
+    assert_eq!(listed, ["r1", "r2", "r3", "r4", "r6", "r7", "r5"]);
     for track_changes in [TrackChanges::Accept, TrackChanges::Reject] {
         let resolved = body(&agent_with(&bytes, track_changes, true)).to_string();
         assert!(!resolved.contains(" fmt "), "{resolved}");
@@ -825,6 +827,119 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     for tag in ["r6 @AC", "header1.r4", "footnotes.r9"] {
         assert!(!accepted.contains(tag), "{tag} in {accepted}");
     }
+}
+
+/// A run's `w:pict` text box, Word's VML copy of a DrawingML one.
+fn pict_box(inner: &str) -> String {
+    format!(
+        r#"<w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{inner}</w:p></w:txbxContent></v:textbox></v:shape></w:pict>"#
+    )
+}
+
+/// A run's DrawingML text box.
+fn drawing_box(inner: &str) -> String {
+    format!(
+        r#"<w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p>{inner}</w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing>"#
+    )
+}
+
+/// pi review of Task 5b F3–F5: a change kept in a formatting change's
+/// history is no change the view names (`jubarte changes` lists none); a
+/// list number's change is formatting; a row whose only text sits in Word's
+/// Fallback copy shows no text, so its table line names its deletion.
+#[test]
+fn history_numbering_and_fallback_rows_follow_the_listing() {
+    let body = format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="5" w:author="Ann Counsel" w:original="%1."/></w:numPr></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="10" w:author="Ann Counsel"><w:rPr><w:del w:id="11" w:author="Ann Counsel"/></w:rPr></w:rPrChange></w:rPr><w:t>Item</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:trPr><w:del w:id="6" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing/></mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+        pict_box("<w:r><w:t>Old</w:t></w:r>")
+    );
+    let bytes = docx(&body);
+    let out = agent(&bytes);
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert!(!listed.iter().any(|l| l == "body:rev:11"), "{listed:?}");
+    assert!(listed.iter().any(|l| l == "body:rev:5"), "{listed:?}");
+    let r11 = regex::Regex::new(r"\b(r|\+)11\b").unwrap();
+    assert!(!r11.is_match(&out), "{out}");
+    let p0 = out
+        .lines()
+        .find(|l| l.starts_with("<!-- p0"))
+        .unwrap_or_default();
+    assert!(
+        regex::Regex::new(r"\b(r|\+)5\b").unwrap().is_match(p0),
+        "{out}"
+    );
+    assert!(out.contains("rev r6 @AC in t0.row0"), "{out}");
+}
+
+/// pi review of Task 5b F6: an author whose only changes sit in the styles
+/// part gets a handle of their own.
+#[test]
+fn a_styles_only_author_gets_a_handle() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:b/><w:rPrChange w:id="9" w:author="Zed Styles"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let bytes = common::docx::docx_with(
+        &para("Text"),
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    );
+    let out = agent(&bytes);
+    assert!(out.contains("styles.r9 @ZS"), "{out}");
+    assert!(!out.contains("@??"), "{out}");
+}
+
+/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in a
+/// text box with no text to tag, or in Word's Fallback copy with no Choice
+/// twin) is named on the header's `unplaced:` line, by paragraph.
+#[test]
+fn changes_printed_nowhere_else_are_unplaced() {
+    let body = format!(
+        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:r><w:t>Plain</w:t></w:r></w:p>"#,
+        drawing_box(&format!(
+            r#"<w:r><w:t>Box</w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}"#,
+            ins(20, "Ann Counsel", "Choice")
+        )),
+        pict_box(&format!(
+            r#"<w:r><w:t>Box</w:t></w:r>{}"#,
+            ins(21, "Ann Counsel", "Other")
+        ))
+    );
+    let bytes = docx(&body);
+    let out = agent(&bytes);
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    for id in ["body:rev:3", "body:rev:21"] {
+        assert!(listed.iter().any(|l| l == id), "{id} not in {listed:?}");
+    }
+    let lines = header_lines(&out);
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r3 @AC in p0"), "{out}");
+    assert!(unplaced.contains("r21 @AC in p0"), "{out}");
+    assert!(!unplaced.contains("r20"), "{out}");
+    for view in [TrackChanges::Accept, TrackChanges::Reject] {
+        assert!(
+            !agent_with(&bytes, view, true).contains("unplaced:"),
+            "{view:?}"
+        );
+    }
+    // A document whose every change prints has no such line.
+    assert!(
+        !agent(&docx(&format!("<w:p>{}</w:p>", ins(1, "Ann Counsel", "x")))).contains("unplaced:")
+    );
 }
 
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own

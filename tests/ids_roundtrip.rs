@@ -467,7 +467,7 @@ fn patterns() -> &'static Patterns {
         .unwrap(),
         reply: Regex::new(r" re c(\d+)").unwrap(),
         id_line: Regex::new(r"^<!-- p(\d+)(?:-p(\d+))?(.*) -->$").unwrap(),
-        line_tag: Regex::new(r"(?:^|[ ,;])([^\s,;]+) @[A-Za-z0-9?]+").unwrap(),
+        line_tag: Regex::new(r"(?:^|[ ,;\[])([^\s,;\[]+) @[A-Za-z0-9?]+").unwrap(),
         comment_word: Regex::new(r"(?:^|[\s,;(])c(\d+)\b").unwrap(),
         table_line: Regex::new(r"^<!-- t(\d+)(?: center| right)? (\d+)x(\d+), (.*) -->$").unwrap(),
         cells_by_row: Regex::new(r"^cells p(\d+)-p(\d+) by row").unwrap(),
@@ -524,7 +524,8 @@ fn printed(view: &str) -> Printed {
         }
     }
     // Header tags outside notes: `page: …; fmt r2 @AC`, `changes:
-    // {Normal: styles.r9 @AC}`, a header entry's `rev:`/`fmt:`.
+    // {Normal: styles.r9 @AC}`, a header entry's `rev:`/`fmt:`, the
+    // `unplaced: [r3 @AC in p0]` safety net.
     for line in header.lines() {
         let bare = pat.note.replace_all(line, "");
         for tag in pat.line_tag.captures_iter(&bare) {
@@ -1058,10 +1059,19 @@ fn every_story_and_every_collision_round_trips() {
     ] {
         assert!(view.contains(printed), "{printed}:\n{view}");
     }
+    // The view never renders a Fallback, so the fold shows in the listing:
+    // r41 joins r40 unlisted, and nothing is left unplaced.
+    let listed: Vec<String> = jubarte::changes::list_changes(docx)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert!(listed.iter().any(|id| id == "body:rev:40"), "{listed:?}");
     assert!(
-        !view.contains("r41"),
-        "the Fallback twin folds into r40:\n{view}"
+        !listed.iter().any(|id| id == "body:rev:41"),
+        "the Fallback twin folds into r40: {listed:?}"
     );
+    assert!(!view.contains("unplaced:"), "{view}");
     let mut fails = Vec::new();
     round_trip("stories", docx, &mut fails);
     for token in [
