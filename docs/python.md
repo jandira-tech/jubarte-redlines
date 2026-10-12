@@ -160,8 +160,8 @@ Markdown inputs:
           document compared is text
 
       --resource-path <DIR>
-          Where images named by the Markdown are found (default: each Markdown file's
-          directory)
+          Where images named by the Markdown are found (default: the original's
+          directory when it is Markdown, else the modified's)
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
@@ -744,8 +744,8 @@ Word redline:
           By default a document compared is text
 
       --resource-path <DIR>
-          Where images named by the Markdown are found [default: each Markdown file's
-          directory]
+          Where images named by the Markdown are found [default: the old document's
+          directory when it is Markdown, else the new's]
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>

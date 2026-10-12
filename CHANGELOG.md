@@ -42,14 +42,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Markdown inputs, and the Rendering group. `-o` writes `.docx` (and any
   other extension), `.md` (the redline's agent view; CriticMarkup when
   both documents are Markdown), `.pdf`, `.png` or `.json` (the snapshot).
-  The view's options go with the printed view or a `.md`, the Rendering
-  group with a `.pdf` or `.png`; anything else exits 2.
+  The view's options go with the printed view or a `.md` view, the
+  Rendering group with a `.pdf` or `.png`, the Markdown-input options
+  with a Markdown document; anything else exits 2. Whether a `.md` is
+  CriticMarkup is read from the documents' bytes when their names do not
+  say, in the binary and in both hosts.
 
 ### Changed
 
 - **`compare A B` prints the redline's agent view**, as `jubarte A B`
   does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
-  moves to stderr and names the format (`wrote r.docx (docx, N bytes)`).
+  moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
+  in the Python and npm CLIs too.
   The Python and npm CLIs print the view too; they refuse a `.md` view,
   `.pdf`, `.png` and `.json` outputs and the Markdown-input options for
   now, and a host without `read` refuses a compare that prints the view.
