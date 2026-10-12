@@ -554,6 +554,8 @@ fn compare_writes_the_redline_markdown_asks_for() {
             "compare",
             "old.md",
             "new.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
             "-o",
             "changes.docx",
             "-a",
@@ -583,7 +585,7 @@ fn compare_writes_the_redline_markdown_asks_for() {
         ]
     );
     wrote(&jubarte(
-        &["compare", "old.md", "new.md", "-o", "changes.pdf"],
+        &["compare", "old.md", "new.md", "-d", "1970-01-01T00:00:00Z", "-o", "changes.pdf"],
         dir.path(),
     ));
     assert!(
@@ -669,6 +671,8 @@ fn diff_and_compare_take_word_against_markdown() {
             "compare",
             "contract.docx",
             "new.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
             "-o",
             "contract_v_new.docx",
         ],
@@ -688,7 +692,10 @@ fn diff_and_compare_take_word_against_markdown() {
         ]
     );
     // compare takes Markdown too, and without -o prints the redline's view.
-    let view = ok(&jubarte(&["compare", "old.md", "new.md"], dir.path()));
+    let view = ok(&jubarte(
+        &["compare", "old.md", "new.md", "-d", "1970-01-01T00:00:00Z"],
+        dir.path(),
+    ));
     assert!(
         view.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"),
         "{view}"
@@ -699,12 +706,20 @@ fn diff_and_compare_take_word_against_markdown() {
         "no -o, no file"
     );
     wrote(&jubarte(
-        &["compare", "old.md", "new.md", "-o", "old_v_new.docx"],
+        &[
+            "compare",
+            "old.md",
+            "new.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "old_v_new.docx",
+        ],
         dir.path(),
     ));
     assert_word_valid_package(&std::fs::read(dir.path().join("old_v_new.docx")).unwrap());
     ok(&jubarte(
-        &["old.md", "new.md", "-o", "changes.md"],
+        &["old.md", "new.md", "-d", "1970-01-01T00:00:00Z", "-o", "changes.md"],
         dir.path(),
     ));
     assert!(
@@ -908,6 +923,8 @@ fn diff_reads_critic_markup_and_compare_takes_a_reference() {
             "compare",
             "old.md",
             "new.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
             "--critic",
             "--reference-doc",
             reference.to_str().unwrap(),
@@ -920,7 +937,7 @@ fn diff_reads_critic_markup_and_compare_takes_a_reference() {
     assert_word_valid_package(&docx);
     assert!(common::docx::part_string(&docx, "word/header1.xml").is_some());
     wrote(&jubarte(
-        &["compare", "old.md", "new.md", "-o", "old_v_new.png"],
+        &["compare", "old.md", "new.md", "-d", "1970-01-01T00:00:00Z", "-o", "old_v_new.png"],
         dir.path(),
     ));
     assert!(dir.path().join("old_v_new-page-01.png").exists());
@@ -928,7 +945,14 @@ fn diff_reads_critic_markup_and_compare_takes_a_reference() {
     ok(&jubarte(&["convert", "old.md", "-o", "a.docx"], dir.path()));
     ok(&jubarte(&["convert", "new.md", "-o", "b.docx"], dir.path()));
     let stderr = wrote(&jubarte(
-        &["a.docx", "b.docx", "-o", "changes.md"],
+        &[
+            "a.docx",
+            "b.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "changes.md",
+        ],
         dir.path(),
     ));
     assert!(stderr.contains("wrote changes.md (md, "), "{stderr}");

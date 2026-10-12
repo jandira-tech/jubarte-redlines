@@ -1315,7 +1315,7 @@ fn cli_compare_passes_page_options_to_pdf_rendering() {
     std::fs::write(&old, with_comments(&body("original"), COMMENT_XML)).unwrap();
     std::fs::write(&new, with_comments(&body("replacement"), COMMENT_XML)).unwrap();
     let baseline = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .args(["compare", "-o"])
+        .args(["compare", "-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&redline)
         .arg(&old)
         .arg(&new)
@@ -1327,7 +1327,7 @@ fn cli_compare_passes_page_options_to_pdf_rendering() {
         String::from_utf8_lossy(&baseline.stderr)
     );
     let result = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .args(["compare", "--move-comments", "--changed-pages", "-o"])
+        .args(["compare", "-d", "1970-01-01T00:00:00Z", "--move-comments", "--changed-pages", "-o"])
         .arg(&pdf)
         .arg(&old)
         .arg(&new)
