@@ -87,28 +87,31 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert capsys.readouterr().out == "Due in {~~30~>45~~} days.\n"
     # The shorthand prints the redline's agent view and writes nothing.
     word = tmp_path / "before_v_after.docx"
-    assert main([str(a), str(b)]) == 0
+    assert main([str(a), str(b), "-d", "1970-01-01T00:00:00Z"]) == 0
     out = capsys.readouterr().out
     assert out.startswith(f"---\nsource: {word} (not written; -o keeps it)\n"), out
     assert "{~~30~>45~~}" in out, out
     assert not word.exists()
     # The view is the output, so --quiet does not hide it (pi review av5 F6);
     # read options apply to it.
-    assert main([str(a), str(b), "--quiet"]) == 0
+    assert main([str(a), str(b), "--quiet", "-d", "1970-01-01T00:00:00Z"]) == 0
     assert "{~~30~>45~~}" in capsys.readouterr().out
-    assert main([str(a), str(b), "--track-changes", "accept"]) == 0
+    assert main([str(a), str(b), "--track-changes", "accept", "-d", "1970-01-01T00:00:00Z"]) == 0
     accepted = capsys.readouterr().out
     assert "{~~" not in accepted and "<!-- p0 rev r" in accepted, accepted
     # -o writes it; compare A B writes the default name.
-    assert main([str(a), str(b), "-o", str(word), "--quiet"]) == 0
+    assert main([str(a), str(b), "-d", "1970-01-01T00:00:00Z", "-o", str(word), "--quiet"]) == 0
     assert word.read_bytes().startswith(b"PK")
     assert capsys.readouterr().out == ""
-    assert main(["compare", str(a), str(b), "--quiet", "--force"]) == 0
+    assert main(["compare", str(a), str(b), "--quiet", "--force", "-d", "1970-01-01T00:00:00Z"]) == 0
     assert word.read_bytes().startswith(b"PK")
     # --changed --by keeps the author's block, by handle or by name (pi
     # review av3 F8: only the (none) path was tested).
     signed = tmp_path / "signed.docx"
-    assert main([str(a), str(b), "-o", str(signed), "--author", "Ann Counsel", "--quiet"]) == 0
+    assert main([
+        str(a), str(b), "-d", "1970-01-01T00:00:00Z", "-o", str(signed),
+        "--author", "Ann Counsel", "--quiet",
+    ]) == 0
     capsys.readouterr()
     for by in ("AC", "Ann Counsel"):
         assert main(["read", str(signed), "--changed", "--by", by, "--no-page-markers"]) == 0

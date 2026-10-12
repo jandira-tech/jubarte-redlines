@@ -166,7 +166,7 @@ def test_cli_compare_reports_the_bytes_a_markdown_redline_takes(tmp_path: Path, 
     old.write_text("Prazo de 30 días — ok.\n", encoding="utf-8")
     new.write_text("Prazo de 45 días — ok.\n", encoding="utf-8")
     out = tmp_path / "redline.md"
-    assert main(["compare", str(old), str(new), "-o", str(out)]) == 0
+    assert main(["compare", str(old), str(new), "-d", "1970-01-01T00:00:00Z", "-o", str(out)]) == 0
     size = out.stat().st_size
     assert size > len(out.read_text(encoding="utf-8"))
     assert f"wrote {out} (md, {size} bytes)" in capsys.readouterr().err
