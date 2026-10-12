@@ -69,7 +69,8 @@ Tasks:
   capabilities  What this binary can do, for agents choosing an operation
   visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
-  validate      Check or repair Word validity (findings: exit 2; unreadable: exit 1)
+  validate      Check Word validity, tracked edits, accessibility, style and structure;
+                or repair Word validity
   help          Print this message or the help of the given subcommand(s)
 
 Options:
@@ -707,15 +708,6 @@ Formats:
   -t, --to <FORMAT>
           Output format: md only (the patch, CriticMarkup or a text view are all text)
 
-          Possible values:
-          - docx: Word (.docx)
-          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
-            CriticMarkup
-          - pdf:  PDF, laid out as Word does
-          - png:  PNG pages
-          - json: The JSON snapshot (`read --json`'s object): written, never read.
-            `compare` and `diff` refuse it until they write it (`json_not_yet`)
-
   -f, --from <FORMAT>
           Input format of both documents [default: from each file]
 
@@ -946,12 +938,12 @@ Options:
       --force
           Replace an existing output (the bundle directory's files)
 
-      --dry-run
-          Resolve and report only; write nothing
-
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
+
+      --dry-run
+          Resolve and report only; write nothing
 
       --pdf
           Also write the PDF beside the document (the bundle: redline.pdf and clean.pdf)
@@ -1188,30 +1180,64 @@ Options:
 
 ```text
 $ jubarte-redlines validate --help
-Check or repair Word validity (findings: exit 2; unreadable: exit 1)
+Check Word validity, tracked edits, accessibility, style and structure; or repair Word
+validity.
+
+A word or edits finding fails the run (exit 2), and so does any error; --strict fails on
+warnings too. An unreadable file exits 1.
 
 Usage: jubarte-redlines validate [OPTIONS] <FILE>
 
 Arguments:
-  <FILE>  The document (.docx)
+  <FILE>
+          The document (.docx)
 
 Options:
-      --json             JSON Lines: one object per finding, nothing when there is none
-      --repair <FILE>    Write the repaired package here; remaining findings still exit
-                         2
-      --original <FILE>  Audit tracked edits: every text change against ORIGINAL must be
-                         a revision by --author
-      --author <NAME>    The author every change must carry (with --original)
-      --force            Replace an existing --repair output
-  -q, --quiet            Print nothing on success (files are still written; warnings and
-                         errors still print)
-  -h, --help             Print help
+      --json
+          JSON Lines: one object per finding, nothing when there is none
+
+      --rules <RULES>
+          Rule sets or audit codes, comma-separated [default: word; with --original,
+          word and edits]
+
+      --strict
+          Fail (exit 2) on warnings too, not only on errors
+
+      --repair <FILE>
+          Write the repaired package here; remaining findings still fail
+
+      --original <FILE>
+          Check tracked edits: every text change against ORIGINAL must be a revision by
+          --author
+
+      --author <NAME>
+          The author every change must carry (with --original)
+
+      --force
+          Replace an existing --repair output
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 Examples:
   jubarte validate contract.docx
   jubarte validate contract.docx --json
   jubarte validate contract.docx --repair fixed.docx
   jubarte validate review/redline.docx --original contract.docx --author Claude
+  jubarte validate contract.docx --rules word,a11y,style,structure --strict
+
+Rule sets: word (default: Word validity), edits (with --original and --author), a11y,
+style, structure.
+Audit codes (code, set, severity):
+  HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,
+  TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,
+  LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,
+  DIRECT_FORMATTING_OVERRIDES_STYLE style info,
+  STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info
 ```
 <!-- gen:cli-python:end -->
 
@@ -2580,8 +2606,10 @@ every changed pixel (``x1``/``y1`` exclusive), ``None`` when equal.
 ```python
 Finding(
     code: str,
+    set: str,
+    severity: str,
     part: str,
-    path: str,
+    location: str,
     message: str,
     word_fatal: bool,
     repairable: bool,
@@ -2591,11 +2619,13 @@ Finding(
 One thing wrong with a package, from ``Document.validate``.
 
 ``code`` is stable (``TEXT_INSIDE_DELETION``, ``MC_UNBOUND_PREFIX``,
-``UNTRACKED_EDIT``, ...); ``part`` is the package part and ``path`` the
-element chain inside it (``w:body[0]/w:p[3]/w:r[2]``, empty for a
-package-level finding). ``word_fatal`` is true when Word refuses or
-repairs the file for it, ``repairable`` when ``Document.repair`` fixes
-it.
+``UNTRACKED_EDIT``, ...); ``set`` is its rule set (``word``, ``edits``,
+``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
+``warning`` or ``info``. ``part`` is the package part and ``location``
+the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
+id (``body:p:3``), or empty for a package-level finding.
+``word_fatal`` is true when Word refuses or repairs the file for it,
+``repairable`` when ``Document.repair`` fixes it.
 
 ### `Repaired`
 

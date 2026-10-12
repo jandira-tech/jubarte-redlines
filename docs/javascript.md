@@ -659,8 +659,9 @@ Mirrors `jubarte::fields::update_fields`.
 validateDocument(docx: Uint8Array): string
 ```
 
-Word-validity findings beyond the schema as a JSON array (`code`,
-`part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+Word-validity findings beyond the schema as a JSON array (`code`, `set`,
+`severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+`[]` is a pass.
 
 Mirrors `jubarte::validate::validate`.
 <!-- gen:wasm-api:end -->
@@ -1354,15 +1355,6 @@ Formats:
   -t, --to <FORMAT>
           Output format: md only (the patch, CriticMarkup or a text view are all text)
 
-          Possible values:
-          - docx: Word (.docx)
-          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
-            CriticMarkup
-          - pdf:  PDF, laid out as Word does
-          - png:  PNG pages
-          - json: The JSON snapshot (`read --json`'s object): written, never read.
-            `compare` and `diff` refuse it until they write it (`json_not_yet`)
-
   -f, --from <FORMAT>
           Input format of both documents [default: from each file]
 
@@ -1593,12 +1585,12 @@ Options:
       --force
           Replace an existing output (the bundle directory's files)
 
-      --dry-run
-          Resolve and report only; write nothing
-
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
+
+      --dry-run
+          Resolve and report only; write nothing
 
       --pdf
           Also write the PDF beside the document (the bundle: redline.pdf and clean.pdf)
