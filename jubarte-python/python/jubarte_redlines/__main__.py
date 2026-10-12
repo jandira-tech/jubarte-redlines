@@ -704,14 +704,6 @@ def cmd_diff_render(args: argparse.Namespace) -> int:
     return EXIT_PAGES_DIFFER if changed else EXIT_OK
 
 
-def _markdown_needs_both(old: object, new: object, old_path: Path, new_path: Path) -> None:
-    """Markdown output is CriticMarkup of two Markdown documents, as in the native CLI."""
-    if not isinstance(old, str) or not isinstance(new, str):
-        word = old_path if not isinstance(old, str) else new_path
-        raise CliError(f"Markdown output needs both documents in Markdown ({word} is Word): "
-                       "write a Word redline (-o FILE.docx) or a PDF (-o FILE.pdf) instead")
-
-
 def cmd_compare(args: argparse.Namespace) -> int:
     from .document import diff
 
@@ -746,72 +738,36 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_diff(args: argparse.Namespace) -> int:
+    """Text only, as in the native CLI: the patch, a text view, or (two
+    Markdown documents) CriticMarkup, on stdout or in -o's file."""
     from . import _native
-    from .document import diff, _decode_diff, _default_author
+    from .document import _decode_diff
     from datetime import datetime, timezone
 
-    view = args.format in ("github", "word", "normal", "context", "side-by-side")
     output = args.output
+    # An existing output is refused before any work.
+    if output is not None:
+        _ensure_writable(output, args.force)
     old = _read_side(args.old, args.old_format)
     new = _read_side(args.new, args.new_format)
-    both_markdown = isinstance(old, str) and isinstance(new, str)
-    to = args.to or args.output_format or ("md" if both_markdown else "docx")
-    if not view and output is None and to != "md":
-        output = args.old.with_name(f"{args.old.stem}_v_{args.new.stem}.{'pdf' if to == 'png' else to}")
-    if not view and output is not None and to == "md":
-        _markdown_needs_both(old, new, args.old, args.new)
-    # A PNG output's path only names its pages, which are checked once counted.
-    if output is not None and (view or to != "png"):
-        _ensure_writable(output, args.force)
-    # Unified snapshots are pure: no git author lookup or wall-clock default.
-    author = args.author if args.author is not None else ("Redline" if view else _default_author())
-    date = args.date if args.date is not None else ("" if view else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-    if view:
+    if args.format in ("github", "word", "normal", "context", "side-by-side"):
         text = _native.diff_view(old, new, format=args.format, old_name=str(args.old), new_name=str(args.new),
                                  context=args.context, accept_changes=args.accept_changes, full_lines=args.full_lines)
-        if output is not None:
-            _write(output, text)
-            print(f"wrote {output} ({len(text.encode('utf-8'))} bytes)", file=sys.stderr)
-        else:
-            sys.stdout.write(text)
+    else:
+        critic = args.format == "critic"
+        if critic and not (isinstance(old, str) and isinstance(new, str)):
+            raise CliError("--format critic needs both documents in Markdown; "
+                           "`jubarte compare OLD NEW` prints their redline as the agent view")
+        date = args.date if args.date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        text = _decode_diff(_native.diff_json(old, new, old_name=str(args.old), new_name=str(args.new),
+                                              author=args.author, date=date, columns=args.columns, critic=critic)).text
+    if output is None:
+        sys.stdout.write(text)
         return EXIT_OK
-    result = _decode_diff(_native.diff_json(old, new, old_name=args.old.name, new_name=args.new.name,
-                                            author=author, date=date, columns=args.columns, critic=args.format == "critic"))
-    data: str | bytes = result.text
-    if output is not None:
-        if to == "md":
-            data = diff(old, new, format="critic", author=author, date=date).text
-        elif to in ("docx", "pdf", "png"):
-            document = Document.from_bytes(_native.redline_documents(old, new, author=author, date=date))
-            if to == "docx":
-                data = document.to_bytes()
-            elif to == "pdf":
-                data = document.to_pdf(options=_pdf_options(args))
-            else:
-                rendered = document.render(pdf=False, png_dpi=96, options=_pdf_options(args))
-                png_paths = [output.parent / _png_name(output.stem, i, len(rendered.pngs)) for i in range(len(rendered.pngs))]
-                for path in png_paths:
-                    _ensure_writable(path, args.force)
-                for path, png in zip(png_paths, rendered.pngs):
-                    _write(path, png)
-                _diff_done(args, f"wrote {len(png_paths)} PNG page{'' if len(png_paths) == 1 else 's'}", result.text)
-                return EXIT_OK
-    if output is not None:
-        _write(output, data)
-        _diff_done(args, f"wrote {output} ({len(data.encode() if isinstance(data, str) else data)} bytes)", result.text)
-    else:
-        sys.stdout.write(result.text)
+    size = _write(output, text)
+    if not args.quiet:
+        print(f"wrote {output} (md, {size} bytes)", file=sys.stderr)
     return EXIT_OK
-
-
-def _diff_done(args: argparse.Namespace, wrote: str, patch: str) -> None:
-    """Report a written diff output as the native CLI does: the patch on stdout
-    with the status on stderr, or, for ``--format critic``, only the status."""
-    if args.format == "critic":
-        print(wrote)
-    else:
-        print(wrote, file=sys.stderr)
-        sys.stdout.write(patch)
 
 
 def cmd_changes(args: argparse.Namespace) -> int:
@@ -948,7 +904,7 @@ class SharedParser:
 
     def _validate_host(self, command: str, values: dict) -> None:
         # Capability checks only, never an alternate option grammar.
-        if command in ("compare", "diff"):
+        if command == "compare":
             if values.get("mode", "word") != "word" or values.get("powertools_faithful"):
                 self.error("--mode powertools is not supported by the Python CLI")
             if values.get("detail_threshold") is not None:
@@ -976,14 +932,11 @@ class SharedParser:
             for key in ("paragraphs", "head", "tail", "changed", "by"):
                 if values.get(key) not in (None, False):
                     self.error("--json with a selection is not supported by the Python CLI")
-        if command in ("convert", "diff"):
-            for key in (("from",) if command == "convert" else ()) + ("resource_path", "timeout", "fail_on_substitution", "no_page_markers"):
+        if command == "convert":
+            for key in ("from", "resource_path", "timeout", "fail_on_substitution", "no_page_markers"):
                 if values.get(key) not in (None, False):
                     self.error(f"--{key.replace('_', '-')} is not supported by the Python CLI")
         if command == "diff":
-            for key in ("reference_doc", "critic"):
-                if values.get(key) not in (None, False):
-                    self.error(f"--{key.replace('_', '-')} is not supported by the Python diff CLI")
             context = values.get("context", 3)
             if type(context) is not int or not 0 <= context <= 2**32 - 1:
                 self.error("--context must be in the u32 range (0..4294967295)")

@@ -74,7 +74,7 @@ def test_native_view_labels_and_maximum_context():
         jubarte._native.diff_view("a", "b", format="critic")
 
 
-@pytest.mark.parametrize("suffix,expected", (("txt", "md"), ("mdown", "md"), ("unknown", None)))
+@pytest.mark.parametrize("suffix,expected", (("txt", "md"), ("mdown", "md"), ("unknown", "md")))
 def test_shared_format_metadata(suffix, expected):
     args = build_parser().parse_args(["diff", "a.txt", "b.markdown", "-o", f"out.{suffix}"])
     assert args.old_format == args.new_format == "md"
@@ -105,8 +105,10 @@ def test_cli_patch_output_uses_native_format_inference(tmp_path, capsys, suffix)
     a.write_text("Due in 30 days.\n")
     b.write_text("Due in 45 days.\n")
     assert main(["diff", str(a), str(b), "-o", str(out)]) == 0
-    assert out.read_text() == "Due in {~~30~>45~~} days.\n"
-    assert "[-30-]{+45+}" in capsys.readouterr().out
+    # The file holds the patch; stdout holds nothing.
+    assert "[-30-]{+45+}" in out.read_text()
+    streams = capsys.readouterr()
+    assert streams.out == "" and f"wrote {out} (md, " in streams.err
 
 
 @pytest.mark.integration
@@ -142,13 +144,13 @@ def test_cli_accept_changes_and_word_ignore_prior_histories(tmp_path, capsys):
 
 
 @pytest.mark.integration
-def test_unknown_output_suffix_falls_back_to_word_for_word_inputs(tmp_path, capsys):
+def test_unknown_output_suffix_writes_the_patch_for_word_inputs(tmp_path, capsys):
     a, b, out = (tmp_path / name for name in ("base.docx", "next.docx", "redline.unknown"))
     a.write_bytes(jubarte.from_markdown("old\n").to_bytes())
     b.write_bytes(jubarte.from_markdown("new\n").to_bytes())
     assert main(["diff", str(a), str(b), "-o", str(out)]) == 0
-    assert out.read_bytes().startswith(b"PK\x03\x04")
-    assert "[-old-]{+new+}" in capsys.readouterr().out
+    assert "[-old-]{+new+}" in out.read_text()
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.integration

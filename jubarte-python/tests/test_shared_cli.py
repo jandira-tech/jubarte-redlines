@@ -114,8 +114,9 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
         assert main(["read", str(signed), "--changed", "--by", by, "--no-page-markers"]) == 0
         out = capsys.readouterr().out
         assert "\nrange: changed by @AC (p0) of p0" in out and "{~~30~>45~~}" in out, out
+    # diff prints its patch and writes nothing.
     assert main(["diff", str(word), str(word)]) == 0
-    assert (tmp_path / "before_v_after_v_before_v_after.docx").read_bytes().startswith(b"PK")
+    assert not (tmp_path / "before_v_after_v_before_v_after.docx").exists()
 
 
 @pytest.mark.integration
@@ -128,9 +129,13 @@ def test_text_track_changes_modes_and_convert_output(tmp_path, capsys):
         assert main(["text", str(source), "--track-changes", mode]) == 0
         out = capsys.readouterr().out
         assert text in out and "[body:p:" not in out
+    # diff writes text only; a PDF is compare's.
     out = tmp_path / "changes.pdf"
-    assert main(["diff", str(source), str(source), "-o", str(out)]) == 0
-    assert out.read_bytes().startswith(b"%PDF-")
+    with pytest.raises(SystemExit) as refused:
+        main(["diff", str(source), str(source), "-o", str(out)])
+    assert refused.value.code == 2
+    assert f"`compare OLD NEW -o {out}`" in capsys.readouterr().err
+    assert not out.exists()
 
 
 @pytest.mark.integration
@@ -142,34 +147,38 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
     assert main(["convert", str(a), "-o", str(word)]) == 0
     capsys.readouterr()
 
-    # Page flags with a text result are refused by the shared parser.
+    # Page flags with a Word result are refused by the shared parser; diff
+    # has none.
     for flag, named in (("--move-comments", "--move-comments"), ("--changed-pages", "--changed-pages"), ("--changed-only", "--changed-pages")):
+        with pytest.raises(SystemExit) as exit:
+            main(["compare", str(a), str(b), "-o", str(tmp_path / "c.docx"), flag])
+        assert exit.value.code == 2
+        assert f"{named} applies to PDF or PNG output only" in capsys.readouterr().err
         with pytest.raises(SystemExit) as exit:
             main(["diff", str(a), str(b), flag])
         assert exit.value.code == 2
-        assert f"{named} applies to PDF or PNG output only" in capsys.readouterr().err
+        capsys.readouterr()
 
-    # diff's Markdown output needs both documents in Markdown; compare's is
-    # the redline's view, which this CLI does not write yet.
-    assert main(["diff", str(word), str(b), "-o", str(tmp_path / "d.md")]) == 1
-    assert "Markdown output needs both documents in Markdown" in capsys.readouterr().err
-    assert not (tmp_path / "d.md").exists()
+    # diff -o FILE.md of a Word side writes the patch; compare's is the
+    # redline's view, which this CLI does not write yet.
+    assert main(["diff", str(word), str(b), "-o", str(tmp_path / "d.md")]) == 0
+    assert "[-30-]{+45+}" in (tmp_path / "d.md").read_text()
+    capsys.readouterr()
     with pytest.raises(SystemExit) as refused:
         main(["compare", str(word), str(b), "-o", str(tmp_path / "c.md")])
     assert refused.value.code == 2
     assert "-o FILE.md of a Word redline is not supported by the Python CLI yet" in capsys.readouterr().err
     assert not (tmp_path / "c.md").exists()
 
-    # --format critic writing a redline says so and prints no CriticMarkup.
-    redline = tmp_path / "critic.docx"
-    assert main(["diff", str(word), str(b), "--format", "critic", "-o", str(redline)]) == 0
-    out = capsys.readouterr().out
-    assert redline.read_bytes().startswith(b"PK")
-    assert "{~~" not in out and f"wrote {redline}" in out
+    # --format critic needs two Markdown documents.
+    assert main(["diff", str(word), str(b), "--format", "critic"]) == 1
+    streams = capsys.readouterr()
+    assert streams.out == ""
+    assert "--format critic needs both documents in Markdown" in streams.err
 
-    # A PNG output's path only names its pages; an existing file there is no conflict.
+    # A picture is compare's: diff refuses it before writing anything.
     base = tmp_path / "pages.png"
-    base.write_bytes(b"keep")
-    assert main(["diff", str(a), str(b), "-o", str(base)]) == 0
-    assert (tmp_path / "pages-page-01.png").read_bytes().startswith(b"\x89PNG")
-    assert base.read_bytes() == b"keep"
+    with pytest.raises(SystemExit) as refused:
+        main(["diff", str(a), str(b), "-o", str(base)])
+    assert refused.value.code == 2
+    assert not (tmp_path / "pages-page-01.png").exists()
