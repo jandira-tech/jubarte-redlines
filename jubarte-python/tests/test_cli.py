@@ -457,10 +457,10 @@ def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(letter: Path, tmp_pat
     assert "error: reading bad.json: stream did not contain valid UTF-8" in capsys.readouterr().err
     assert main(["edit", "letter.docx", "--plan", "bad.json"]) == 1
     assert "stream did not contain valid UTF-8" in capsys.readouterr().err
-    # A dangling link is replaced by the plan, as the binary does.
-    (tmp_path / "dangling.json").symlink_to(tmp_path / "missing.json")
+    # A link to a plan not written yet creates the file it names, as the binary does.
+    (tmp_path / "dangling.json").symlink_to("missing.json")
     assert main(["edit", "letter.docx", "--plan", "dangling.json", "-p", "p1", "--content", "X."]) == 0
-    assert not (tmp_path / "dangling.json").is_symlink() and not (tmp_path / "missing.json").exists()
+    assert (tmp_path / "dangling.json").is_symlink() and (tmp_path / "missing.json").is_file()
     assert b"\r\n" not in (tmp_path / "plan.json").read_bytes()
 
 

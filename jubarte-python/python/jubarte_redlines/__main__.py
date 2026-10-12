@@ -351,11 +351,10 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
         for note in recorded["notes"]:
             print(f"note: {note}")
     if not dry_run:
-        # Through a symbolic link to the file it names (a dangling link is
-        # replaced, as the binary does); via a hidden partial file named for
-        # this process, removed if the write fails; bytes as they are, so no
-        # platform newline translation.
-        target = Path(os.path.realpath(plan) if os.path.exists(plan) else plan)
+        # Through a symbolic link to the file it names, written yet or not;
+        # via a hidden partial file named for this process, removed if the
+        # write fails; bytes as they are, so no platform newline translation.
+        target = Path(os.path.realpath(plan))
         partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
         try:
             partial.write_bytes(recorded["json"].encode("utf-8"))

@@ -335,12 +335,17 @@ function recordPlan(verb, file, docx, o) {
   if (!preview.ok) return printRefusal(preview);
   if (!o.quiet) for (const note of recorded.notes) console.log(`note: ${note}`);
   if (!o.dry_run) {
-    // Through a symbolic link to the file it names; via a hidden partial
+    // Through a symbolic link to the file it names, written yet or not; via a hidden partial
     // file named for this process, removed if the write fails.
     let target = o.plan;
     try {
       target = fs.realpathSync(o.plan);
-    } catch {}
+    } catch {
+      // A link to a plan not written yet names where it goes.
+      try {
+        target = path.resolve(path.dirname(o.plan), fs.readlinkSync(o.plan));
+      } catch {}
+    }
     const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);
     try {
       fs.writeFileSync(partial, recorded.json);

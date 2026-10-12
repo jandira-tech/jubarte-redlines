@@ -292,6 +292,11 @@ test("edit and add --plan record into one plan that --consume deletes once appli
   assert.match(linked.err, /a symbolic link; pass the file it names/);
   assert.equal(fs.readFileSync(plan, "utf8"), held);
   assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+  // A link to a plan not written yet creates the file it names.
+  const next = path.join(tmp, "record-next.json");
+  fs.symlinkSync("record-next-target.json", next);
+  assert.equal(run("edit", file, "--plan", next, "-p", "p1", "--content", "x").code, 0);
+  assert.ok(fs.lstatSync(next).isSymbolicLink() && fs.existsSync(path.join(tmp, "record-next-target.json")));
   // A plan that is not UTF-8 is an I/O error, as the binary reads it (pi review 06c parity F1).
   const bad = path.join(tmp, "record-bad.json");
   fs.writeFileSync(bad, Buffer.from([0xff, 0xfe, 0x7b, 0x7d]));
