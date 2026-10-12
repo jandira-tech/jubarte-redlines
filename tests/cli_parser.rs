@@ -889,9 +889,11 @@ fn shorthand_forwards_each_read_option_like_the_explicit_read_task() {
         let pair = parse(&[vec!["a.docx", "b.docx"], flags].concat(), &[]);
         assert_eq!(pair["exit_code"], 0, "{pair}");
         let mut expected = explicit["args"].clone();
-        expected.as_object_mut().unwrap().remove("file");
-        // -q is the whole command's, not the view's.
-        expected.as_object_mut().unwrap().remove("quiet");
+        // -q is the whole command's, and read's own -o goes with read: the
+        // view takes only the read options.
+        for key in ["file", "quiet", "output", "force", "output_format"] {
+            expected.as_object_mut().unwrap().remove(key);
+        }
         assert_eq!(pair["args"]["view"], expected);
     }
 }
@@ -1161,17 +1163,15 @@ fn the_output_rule_is_one_table() {
 
 /// pi-07 F2, F3: until a task writes the snapshot, its `.json` output exits
 /// 2 in the shared parser, so the binary and both bindings refuse alike.
+/// Compare and diff still refuse it (Task 13); the writing tasks, convert
+/// and read write it (Task 12).
 #[test]
 fn json_output_is_refused_until_a_task_writes_it() {
     for args in [
-        vec!["convert", "a.docx", "--to", "json"],
-        vec!["convert", "a.md", "-o", "a.json"],
         vec!["diff", "a.docx", "b.docx", "-t", "json"],
         vec!["diff", "a.docx", "b.docx", "-o", ".json"],
         vec!["compare", "a.docx", "b.docx", "-o", "c.JSON"],
         vec!["a.docx", "b.docx", "-o", "c.json"],
-        vec!["accept", "a.docx", "-o", "a.json"],
-        vec!["scrub", "a.docx", "-o", "a.json"],
     ] {
         let task = if args[0].ends_with(".docx") {
             "compare"
@@ -1186,8 +1186,131 @@ fn json_output_is_refused_until_a_task_writes_it() {
             "{args:?}: {text}"
         );
     }
+    for (args, task) in [
+        (vec!["convert", "a.docx", "--to", "json"], "convert"),
+        (vec!["convert", "a.md", "-o", "a.json"], "convert"),
+        (vec!["accept", "a.docx", "-o", "a.json"], "accept"),
+        (vec!["reject", "a.docx", "-o", "a.json"], "reject"),
+        (vec!["scrub", "a.docx", "-o", "a.json"], "scrub"),
+        (vec!["append", "a.docx", "b.docx", "-o", "a.json"], "append"),
+        (vec!["read", "a.docx", "-o", "a.json"], "read"),
+        (vec!["a.docx", "-o", "a.json"], "compare"),
+    ] {
+        // The one-document shorthand needs compare's positionals (and read).
+        let supported: &[&str] = if task == "compare" { &[] } else { &[task] };
+        let result = parse(&args, supported);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(result["args"]["output_format"], "json", "{args:?}");
+    }
     let result = parse(&["convert", "a.docx", "--to", "md"], &["convert"]);
     assert_eq!(result["exit_code"], 0, "{result}");
+}
+
+/// Task 12: `-o` decides what accept, reject, append, scrub and read write;
+/// the render options go with a PDF or PNG only; read writes the view or
+/// the snapshot, and the one-document shorthand is read.
+#[test]
+fn every_writing_task_takes_the_formats_its_output_names() {
+    for (ext, format) in [
+        ("docx", "docx"),
+        ("md", "md"),
+        ("pdf", "pdf"),
+        ("png", "png"),
+        ("json", "json"),
+        ("tmp", "docx"),
+    ] {
+        let file = format!("r.{ext}");
+        for task in ["accept", "reject", "scrub"] {
+            let result = parse(&[task, "a.docx", "-o", &file], &[]);
+            assert_eq!(
+                result["args"]["output_format"], format,
+                "{task} {file}: {result}"
+            );
+        }
+        let result = parse(&["append", "a.docx", "b.docx", "-o", &file], &[]);
+        assert_eq!(
+            result["args"]["output_format"], format,
+            "append {file}: {result}"
+        );
+    }
+    let read = parse(&["read", "a.docx", "-o", "v.md"], &[]);
+    assert_eq!(read["args"]["output_format"], "md", "{read}");
+    let read = parse(&["read", "a.docx"], &[]);
+    assert_eq!(read["args"]["output_format"], serde_json::Value::Null);
+    let single = parse(&["a.docx", "-o", "v.md", "--head", "1"], &[]);
+    assert_eq!(single["exit_code"], 0, "{single}");
+    assert_eq!(single["command"], "read");
+    assert_eq!(single["args"]["output"], "v.md");
+    assert_eq!(single["args"]["output_format"], "md");
+    for (args, says) in [
+        (
+            vec!["read", "a.docx", "-o", "v.pdf"],
+            "read writes .md or .json",
+        ),
+        (
+            vec!["read", "a.docx", "-o", "v.docx"],
+            "convert FILE -o v.docx",
+        ),
+        (vec!["a.docx", "-o", "v.docx"], "read writes .md or .json"),
+        (
+            vec!["read", "a.docx", "-o", "v.md", "--json"],
+            "--json writes the snapshot",
+        ),
+        (
+            vec!["read", "a.docx", "-o", "v.json", "--dates"],
+            "--dates shapes the view",
+        ),
+        (
+            vec!["read", "a.docx", "-o", "v.md", "--tables"],
+            "--tables prints the grids",
+        ),
+        (
+            vec!["accept", "a.docx", "-o", "r.docx", "--changed-pages"],
+            "--changed-pages applies to PDF or PNG output only",
+        ),
+        (
+            vec!["reject", "a.docx", "-o", "r.md", "--pages", "1"],
+            "--pages applies to PDF or PNG output only",
+        ),
+        (
+            vec!["scrub", "a.docx", "-o", "r.json", "--dpi", "50"],
+            "--dpi applies to PDF or PNG output only",
+        ),
+        (
+            vec![
+                "append",
+                "a.docx",
+                "b.docx",
+                "-o",
+                "r.docx",
+                "--revisions",
+                "word",
+            ],
+            "--revisions applies to PDF or PNG output only",
+        ),
+    ] {
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        let text = result["text"].as_str().unwrap();
+        assert!(
+            text.contains(says) && text.contains("Usage:"),
+            "{args:?}: {text}"
+        );
+    }
+    for args in [
+        vec![
+            "accept",
+            "a.docx",
+            "-o",
+            "r.pdf",
+            "--changed-pages",
+            "--pages",
+            "1",
+        ],
+        vec!["scrub", "a.docx", "-o", "r.png", "--dpi", "50"],
+    ] {
+        assert_eq!(parse(&args, &[])["exit_code"], 0, "{args:?}");
+    }
 }
 
 /// Every task with a long `--output` has a row in the `-o` table.

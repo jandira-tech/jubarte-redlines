@@ -146,6 +146,12 @@ fn ok(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// A run that wrote a file: stdout empty, the `wrote …` line on stderr.
+fn wrote(out: &Output) -> String {
+    assert!(ok(out).is_empty(), "stdout carries no status line");
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
 fn failed(out: &Output) -> String {
     assert!(
         !out.status.success(),
@@ -186,11 +192,11 @@ fn revision_kinds(docx: &[u8]) -> Vec<WmlComparerRevisionType> {
 fn convert_writes_critic_markup_as_tracked_changes_next_to_the_markdown() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("draft.md", DRAFT)]);
-    let stdout = ok(&jubarte(
+    let stderr = wrote(&jubarte(
         &["convert", "draft.md", "--author", "Legal"],
         dir.path(),
     ));
-    assert!(stdout.contains("draft.docx"), "{stdout}");
+    assert!(stderr.contains("wrote draft.docx (docx, "), "{stderr}");
     let docx = std::fs::read(dir.path().join("draft.docx")).unwrap();
     assert_word_valid_package(&docx);
     let kinds = revision_kinds(&docx);
@@ -294,11 +300,11 @@ fn convert_accepts_rejects_or_ignores_the_markup() {
 fn convert_renders_markdown_to_pdf_with_the_changes_painted() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("draft.md", DRAFT)]);
-    let stdout = ok(&jubarte(
+    let stderr = wrote(&jubarte(
         &["convert", "draft.md", "-o", "draft.pdf"],
         dir.path(),
     ));
-    assert!(stdout.contains("draft.pdf"), "{stdout}");
+    assert!(stderr.contains("wrote draft.pdf (pdf, "), "{stderr}");
     let pdf = std::fs::read(dir.path().join("draft.pdf")).unwrap();
     assert!(pdf.starts_with(b"%PDF"));
 }
@@ -340,7 +346,7 @@ fn convert_writes_word_back_as_critic_markup() {
             format!("Payment is due in {text} days.\n")
         );
     }
-    let stdout = ok(&jubarte(
+    let stderr = wrote(&jubarte(
         &[
             "convert",
             "draft.docx",
@@ -350,7 +356,7 @@ fn convert_writes_word_back_as_critic_markup() {
         ],
         dir.path(),
     ));
-    assert!(stdout.contains("wrote back.md"), "{stdout}");
+    assert!(stderr.contains("wrote back.md (md, "), "{stderr}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("back.md")).unwrap(),
         critic
@@ -683,11 +689,11 @@ fn convert_resolves_word_to_word_and_renders_markdown_to_png() {
     ));
     assert!(stderr.contains("--output is required"), "{stderr}");
     // Word to PDF with a choice renders the accepted (or rejected) document.
-    let stdout = ok(&jubarte(
+    let stderr = wrote(&jubarte(
         &["convert", "draft.docx", "--track-changes", "reject"],
         dir.path(),
     ));
-    assert!(stdout.contains("draft.pdf"), "{stdout}");
+    assert!(stderr.contains("wrote draft.pdf (pdf, "), "{stderr}");
     ok(&jubarte(
         &[
             "convert",
@@ -716,11 +722,14 @@ fn convert_resolves_word_to_word_and_renders_markdown_to_png() {
     let rejected = std::fs::read(dir.path().join("rejected.docx")).unwrap();
     assert_eq!(texts(&accepted), ["Payment is due in 45 days."]);
     assert_eq!(texts(&rejected), ["Payment is due in 30 days."]);
-    let stdout = ok(&jubarte(
+    let stderr = wrote(&jubarte(
         &["convert", "draft.md", "-t", "png", "--dpi", "20"],
         dir.path(),
     ));
-    assert!(stdout.contains("PNG page"), "{stdout}");
+    assert!(
+        stderr.contains("wrote draft-page-NN.png (png, 1 page, 20 dpi)"),
+        "{stderr}"
+    );
     assert!(dir.path().join("draft-page-01.png").exists());
 }
 
