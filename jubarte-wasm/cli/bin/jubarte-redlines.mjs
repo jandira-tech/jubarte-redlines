@@ -16,7 +16,6 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const wasm = require("jubarte-wasm");
@@ -93,14 +92,6 @@ function markdownText(file, bytes) {
   }
 }
 
-/** Markdown output is CriticMarkup of two Markdown documents. */
-function markdownNeedsBoth(sides) {
-  const word = sides.find(([, kind]) => kind !== "md");
-  if (word) {
-    throw new CliError(`Markdown output needs both documents in Markdown (${word[0]} is Word): write a Word redline (-o FILE.docx) or a PDF (-o FILE.pdf) instead`);
-  }
-}
-
 function write(file, data) {
   try {
     fs.writeFileSync(file, data);
@@ -144,48 +135,35 @@ const COMMANDS = {
     },
   },
   diff: {
+    // Text only, as natively: the patch, a text view, or (two Markdown
+    // documents) CriticMarkup, on stdout or in -o's file.
     run(_, [old, next], o) {
-      const view = ["github", "word", "normal", "context", "side-by-side"].includes(o.format);
+      // An existing output is refused before any work.
+      if (o.output != null) ensureWritable(o.output, o.force);
       const a = read(old, o.old_format), b = read(next, o.new_format);
       const kind = (declared, bytes) => declared ?? (bytes.subarray(0, 4).equals(ZIP_MAGIC) ? "docx" : "md");
       const oldFormat = kind(o.old_format, a), newFormat = kind(o.new_format, b);
       // A side read as Markdown must be text, whichever engine call follows.
       if (oldFormat === "md") markdownText(old, a);
       if (newFormat === "md") markdownText(next, b);
-      let output = o.output;
-      const to = o.to ?? o.output_format ?? (oldFormat === "md" && newFormat === "md" ? "md" : "docx");
-      if (!view && output == null && to !== "md") output = path.join(path.dirname(old), `${stem(old)}_v_${stem(next)}.${to}`);
-      if (!view && output != null && to === "md") markdownNeedsBoth([[old, oldFormat], [next, newFormat]]);
-      if (output != null) ensureWritable(output, o.force);
-      if (view) {
-        const text = wasm.diffDocumentsView(a, b, JSON.stringify({
+      let text;
+      if (["github", "word", "normal", "context", "side-by-side"].includes(o.format)) {
+        text = wasm.diffDocumentsView(a, b, JSON.stringify({
           format: o.format, oldName: old, newName: next, context: o.context,
           acceptChanges: o.accept_changes, fullLines: o.full_lines, oldFormat, newFormat,
         }));
-        if (output != null) {
-          write(output, text);
-          console.error(`wrote ${output} (${Buffer.byteLength(text, "utf8")} bytes)`);
-        } else process.stdout.write(text);
-        return;
+      } else {
+        const date = o.date ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+        if (o.format === "critic") {
+          if (oldFormat !== "md" || newFormat !== "md") {
+            throw new CliError("--format critic needs both documents in Markdown; `jubarte compare OLD NEW` prints their redline as the agent view");
+          }
+          text = wasm.diffDocumentsCritic(a, b, o.author, date);
+        } else text = JSON.parse(wasm.diffDocuments(a, b, o.author, date, o.columns, old, next)).text;
       }
-      const author = o.author ?? defaultAuthor();
-      const date = o.date ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-      const text = o.format === "critic" ? wasm.diffDocumentsCritic(a, b, author, date)
-        : JSON.parse(wasm.diffDocuments(a, b, author, date, o.columns, path.basename(old), path.basename(next))).text;
-      if (output != null) {
-        let data = text;
-        if (to === "md") data = wasm.diffDocumentsCritic(a, b, author, date);
-        if (["docx", "pdf"].includes(to)) {
-          data = wasm.redlineDocuments(a, b, author, date);
-          if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_pages));
-        }
-        write(output, data);
-        // As natively: critic says only what it wrote; a patch keeps stdout.
-        const wrote = `wrote ${output} (${typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.length} bytes)`;
-        if (o.format === "critic") return void console.log(wrote);
-        console.error(wrote);
-      }
-      process.stdout.write(text);
+      if (o.output == null) return void process.stdout.write(text);
+      write(o.output, text);
+      if (!o.quiet) console.error(`wrote ${o.output} (md, ${Buffer.byteLength(text, "utf8")} bytes)`);
     },
   },
   changes: {
@@ -523,19 +501,11 @@ function stem(file) {
   return path.basename(file, path.extname(file));
 }
 
-function defaultAuthor() {
-  try {
-    return execFileSync("git", ["config", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || "Redline";
-  } catch {
-    return "Redline";
-  }
-}
-
 // -- shared clap parser and host capabilities --------------------------------
 
 function validateHost(name, o) {
   const reject = (flag) => { throw new UsageError(`--${flag.replaceAll("_", "-")} is not supported by the npm CLI`); };
-  if (["compare", "diff"].includes(name)) {
+  if (name === "compare") {
     if ((o.mode ?? "word") !== "word" || o.powertools_faithful) reject("mode powertools");
     if (o.detail_threshold != null) reject("detail_threshold");
     if (o.no_paragraph_merge) reject("no_paragraph_merge");
@@ -555,15 +525,15 @@ function validateHost(name, o) {
   if (name === "read" && o.json && (o.paragraphs != null || o.head != null || o.tail != null || o.changed || o.by != null)) {
     throw new UsageError("--json with a selection is not supported by the npm CLI");
   }
-  if (["convert", "diff"].includes(name)) {
-    for (const flag of [...(name === "convert" ? ["from"] : []), "resource_path", "timeout", "fail_on_substitution", "no_page_markers"]) {
+  if (name === "convert") {
+    for (const flag of ["from", "resource_path", "timeout", "fail_on_substitution", "no_page_markers"]) {
       if (o[flag] != null && o[flag] !== false) reject(flag);
     }
     if (o.png || o.to === "png" || path.extname(o.output ?? "").toLowerCase() === ".png") {
       throw new UsageError("PNG pages need the Python or Rust build (uvx jubarte-redlines convert --png)");
     }
   }
-  if (["convert", "diff"].includes(name)) {
+  if (name === "convert") {
     for (const flag of ["dpi", "pages"]) {
       if (flag === "dpi" ? o.dpi !== 96 : o[flag] != null) reject(flag);
     }
@@ -587,7 +557,6 @@ function validateHost(name, o) {
     if (o.revisions !== "conventional" || o.revision_palette != null) reject("revisions");
   }
   if (name === "diff") {
-    for (const flag of ["reference_doc", "critic"]) if (o[flag] != null && o[flag] !== false) reject(flag);
     if (!Number.isInteger(o.context) || o.context < 0 || o.context > 0xffffffff) {
       throw new UsageError("--context must be in the u32 range (0..4294967295)");
     }
