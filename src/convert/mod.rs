@@ -417,6 +417,11 @@ pub struct RenderReport {
     /// `PdfOptions::changed_only` drops, plus a `CommentPlacement::End`
     /// listing, narrowed to [`RenderRequest::pages`] when set.
     pub page_count: usize,
+    /// The document's pages: every page laid out, plus a
+    /// `CommentPlacement::End` listing, whatever was written. The last
+    /// [`PageText::number`] a full render can have; names padded to its
+    /// width sort the same whichever pages are written.
+    pub document_pages: usize,
     /// Per-page painted text.
     pub pages: Vec<PageText>,
     /// Distinct font resolutions (requested → physical face).
@@ -424,7 +429,8 @@ pub struct RenderReport {
 }
 
 impl RenderReport {
-    /// `{"page_count", "pages": [{"index", "number", "text"}], "fonts": [...]}`.
+    /// `{"page_count", "document_pages", "pages": [{"index", "number", "text"}],
+    /// "fonts": [...]}`.
     #[must_use]
     pub fn to_json(&self) -> String {
         let pages: Vec<serde_json::Value> = self
@@ -436,6 +442,7 @@ impl RenderReport {
             serde_json::from_str(&font::font_report_json(&self.fonts)).unwrap_or_default();
         serde_json::json!({
             "page_count": self.page_count,
+            "document_pages": self.document_pages,
             "pages": pages,
             "fonts": fonts,
         })
@@ -498,6 +505,7 @@ pub fn render(
     let (result, font_report) = font::with_font_report(|| {
         with_options(options, || {
             with_layout(docx, |fonts, pages, facts| {
+                let document_pages = document_pages(pages, facts.page_count);
                 let written: Vec<&pdf::Page> = selected_pages(wanted, pages, facts.page_count)?
                     .into_iter()
                     .map(|i| &pages[i])
@@ -529,20 +537,27 @@ pub fn render(
                         text: raster::page_text(fonts, page),
                     })
                     .collect();
-                Ok::<_, ConvertError>((pdf, pngs, written.len(), texts))
+                Ok::<_, ConvertError>((pdf, pngs, written.len(), document_pages, texts))
             })
         })
     });
-    let (pdf, pngs, page_count, pages) = result??;
+    let (pdf, pngs, page_count, document_pages, pages) = result??;
     Ok(Rendered {
         pdf,
         pngs,
         report: RenderReport {
             page_count,
+            document_pages,
             pages,
             fonts: font_report,
         },
     })
+}
+
+/// The document's page count: `laid` (the layout's pages) or, past it, the
+/// last comment-listing page.
+fn document_pages(pages: &[pdf::Page], laid: usize) -> usize {
+    pages.iter().map(|p| p.number).max().unwrap_or(0).max(laid)
 }
 
 /// Where in `pages` (the pages kept) each wanted zero-based document page
@@ -559,7 +574,7 @@ fn selected_pages(
     };
     wanted.sort_unstable();
     wanted.dedup();
-    let page_count = pages.iter().map(|p| p.number).max().unwrap_or(0).max(laid);
+    let page_count = document_pages(pages, laid);
     if let Some(&requested) = wanted.last()
         && requested >= page_count
     {

@@ -147,6 +147,18 @@ fn revision_style(
     }
 }
 
+/// The renderer options a [`RenderArgs`] group asks for.
+fn pdf_options(
+    render: &RenderArgs,
+    compress: bool,
+) -> Result<jubarte::convert::PdfOptions, String> {
+    Ok(render.apply(jubarte::convert::PdfOptions {
+        compress,
+        revisions: revision_style(render.revisions, render.revision_palette.as_deref())?,
+        ..jubarte::convert::PdfOptions::default()
+    }))
+}
+
 /// Whether two CLI paths name the same file. Two existing paths are compared
 /// by identity, which sees through hard links, symlinks and a volume that
 /// ignores case; a path not written yet is keyed by its canonicalized parent
@@ -308,19 +320,18 @@ struct ConvertJob<'a> {
     bytes: Option<&'a [u8]>,
     output: Option<&'a Path>,
     force: bool,
-    compress: bool,
     font_report: Option<&'a Path>,
-    revisions: jubarte::convert::RevisionStyle,
-    pdf: bool,
-    png: bool,
+    /// Compression, revision marks, comment placement and kept pages.
+    options: jubarte::convert::PdfOptions,
+    /// The format asked for (`--to`, or the retired `--pdf`/`--png`);
+    /// `None` takes it from `output`, else from the input.
+    to: Option<Format>,
     dpi: f32,
     report: Option<&'a Path>,
-    /// Zero-based pages to rasterize; `None` for all.
+    /// Zero-based document pages to write; `None` for all.
     pages: Option<&'a [usize]>,
     /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
     fail_on_substitution: bool,
-    /// Comment placement and page selection.
-    page: PageOptions,
     /// Say what was written on stderr: stdout carries a patch.
     status_to_stderr: bool,
 }
@@ -376,15 +387,14 @@ fn convert_exit_code(r: Result<(), ConvertFailure>) -> ExitCode {
     }
 }
 
+/// Render `job` as a PDF, or as PNG pages when it asks for PNG.
 fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     let output = job
         .output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| job.file.with_extension("pdf"));
-    let want_pdf = job.pdf || !job.png;
-    if job.pages.is_some() && !job.png {
-        return Err("--pages selects PNG pages; add --png".into());
-    }
+    let png = job.to == Some(Format::Png);
+    let want_pdf = !png;
     for (side, flag) in [(job.font_report, "--font-report"), (job.report, "--report")] {
         if let Some(side) = side {
             let others = [(output.as_path(), "PDF output"), (job.file, "input")];
@@ -403,47 +413,32 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         Some(bytes) => bytes.to_vec(),
         None => read_document(job.file)?,
     };
-    let options = job.page.apply(jubarte::convert::PdfOptions {
-        compress: job.compress,
-        revisions: job.revisions,
-        ..jubarte::convert::PdfOptions::default()
-    });
     let rendered = jubarte::convert::render(
         &bytes,
-        options,
+        job.options,
         jubarte::convert::RenderRequest {
             pdf: want_pdf,
-            png_dpi: job.png.then_some(job.dpi),
+            png_dpi: png.then_some(job.dpi),
             pages: job.pages.map(<[usize]>::to_vec),
         },
     )
     .map_err(|e| format!("convert failed: {e}"))?;
     let pages = rendered.report.page_count;
-    // `render` returns the selected pages ascending and without repeats.
-    let indices: Vec<usize> = match job.pages {
-        Some(selected) => {
-            let mut selected = selected.to_vec();
-            selected.sort_unstable();
-            selected.dedup();
-            selected
-        }
-        None => (0..rendered.pngs.len()).collect(),
-    };
-    // The page count is known only now; check every PNG path before the
+    // Each PNG is named by its document page, padded to the document's page
+    // count. The pages are known only now; check every PNG path before the
     // first write so a refused page leaves no partial bundle.
-    // Padded to the highest document page written (Task 10 names every
-    // PNG by its document page).
-    let widest = rendered
+    let png_paths: Vec<PathBuf> = rendered
         .report
         .pages
         .iter()
-        .map(|p| p.number)
-        .max()
-        .unwrap_or(0)
-        .max(pages);
-    let png_paths: Vec<PathBuf> = indices
-        .iter()
-        .map(|&i| dir.join(png_name(&stem, i, widest)))
+        .take(rendered.pngs.len())
+        .map(|p| {
+            dir.join(png_name(
+                &stem,
+                p.number - 1,
+                rendered.report.document_pages,
+            ))
+        })
         .collect();
     for path in &png_paths {
         ensure_writable(path, job.force)?;
@@ -460,7 +455,7 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
             ),
         );
     }
-    if job.png {
+    if png {
         for (path, png) in png_paths.iter().zip(&rendered.pngs) {
             std::fs::write(path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
         }
@@ -523,7 +518,6 @@ fn say(to_stderr: bool, line: std::fmt::Arguments<'_>) {
     }
 }
 
-/// `<stem>-page-NN.png`, zero-padded to the page count's width (at least 2).
 /// `--pages` as zero-based indices, ascending and without repeats: `1-3,7`
 /// is `[0, 1, 2, 6]`. Pages are counted from 1 on the command line.
 fn parse_pages(spec: &str) -> Result<Vec<usize>, String> {
@@ -661,6 +655,8 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
     Ok(!changed.is_empty())
 }
 
+/// `<stem>-page-NN.png` for the zero-based page `index`, zero-padded to the
+/// page count's width (at least 2).
 fn png_name(stem: &str, index: usize, count: usize) -> String {
     let width = count.to_string().len().max(2);
     format!("{stem}-page-{:0width$}.png", index + 1)
@@ -1632,9 +1628,12 @@ struct DiffJob<'a> {
     reference: Option<&'a Path>,
     critic: bool,
     resource_path: Option<&'a Path>,
-    revisions: jubarte::convert::RevisionStyle,
-    /// Comment placement and page selection in PDF or PNG output.
-    page: PageOptions,
+    /// Revision marks, comment placement and kept pages of a PDF or PNG.
+    options: jubarte::convert::PdfOptions,
+    /// PNG resolution.
+    dpi: f32,
+    /// Zero-based document pages of a PDF or PNG; `None` for all.
+    pages: Option<&'a [usize]>,
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
     patch: Option<usize>,
@@ -1700,8 +1699,12 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
     }
     if matches!(to, Format::Docx | Format::Md) {
         for (given, flag) in [
-            (job.page.move_comments, "--move-comments"),
-            (job.page.changed_only, "--changed-only"),
+            (
+                job.options.comments == jubarte::convert::CommentPlacement::End,
+                "--move-comments",
+            ),
+            (job.options.changed_only, "--changed-pages"),
+            (job.pages.is_some(), "--pages"),
         ] {
             if given {
                 return Err(format!("{flag} applies to PDF or PNG output only"));
@@ -1802,16 +1805,13 @@ fn write_diff_output(
             bytes: Some(out),
             output: output.as_deref(),
             force: job.force,
-            compress: false,
             font_report: None,
-            revisions: job.revisions,
-            pdf: to == Format::Pdf,
-            png: to == Format::Png,
-            dpi: 96.0,
+            options: job.options,
+            to: Some(to),
+            dpi: job.dpi,
             report: None,
-            pages: None,
+            pages: job.pages,
             fail_on_substitution: false,
-            page: job.page,
             status_to_stderr: patch_on_stdout,
         })
         .map_err(|f| f.message),
@@ -1865,18 +1865,14 @@ fn run_convert_any(
     } else {
         Format::of_input(markdown.from, job.file, &bytes)
     };
-    let to = markdown
+    let to = job
         .to
-        .or_else(|| (job.pdf || job.png).then_some(Format::Pdf))
         .or_else(|| job.output.and_then(Format::of_path))
         .unwrap_or(match from {
             Format::Md => Format::Docx,
             _ if legacy => Format::Docx,
             _ => Format::Pdf,
         });
-    if job.pages.is_some() && to != Format::Png && !job.png {
-        return Err("--pages selects PNG pages; add --png".into());
-    }
     // clap refused any other output; a Markdown input is the one left.
     if update_fields && from != Format::Docx {
         return Err("--update-fields needs a Word document in".into());
@@ -1887,8 +1883,12 @@ fn run_convert_any(
             (job.report.is_some() && !update_fields, "--report"),
             (job.font_report.is_some(), "--font-report"),
             (job.fail_on_substitution, "--fail-on-substitution"),
-            (job.page.move_comments, "--move-comments"),
-            (job.page.changed_only, "--changed-only"),
+            (
+                job.options.comments == jubarte::convert::CommentPlacement::End,
+                "--move-comments",
+            ),
+            (job.options.changed_only, "--changed-pages"),
+            (job.pages.is_some(), "--pages"),
         ] {
             if given {
                 return Err(format!("{flag} applies to PDF or PNG output only").into());
@@ -1897,11 +1897,11 @@ fn run_convert_any(
     }
     let converted = legacy.then_some(bytes.as_slice());
     let pdf_job = |bytes: Option<&[u8]>, to: Format| {
-        let mut rendered = ConvertJob { bytes, ..*job };
-        if to == Format::Png && !job.png {
-            rendered.png = true;
-        }
-        run_convert(&rendered)
+        run_convert(&ConvertJob {
+            bytes,
+            to: Some(to),
+            ..*job
+        })
     };
     match (from, to) {
         // The snapshot writer comes with read --json.
@@ -1938,7 +1938,7 @@ fn run_convert_any(
                     &bytes,
                     &read.markdown,
                     markdown.track_changes,
-                    job.revisions,
+                    job.options.revisions,
                 )
             };
             match job.output {
@@ -2274,27 +2274,23 @@ fn cli_main() -> ExitCode {
             force,
             pdf,
             png,
-            dpi,
             report,
             compress,
             font_report,
-            revisions,
-            revision_palette,
             markdown,
-            pages: page_spec,
+            render,
             fail_on_substitution,
             update_fields,
             timeout,
-            page,
         }) => {
             if let Some(limit) = timeout {
                 arm_timeout(limit);
             }
-            let style = match revision_style(revisions, revision_palette.as_deref()) {
-                Ok(style) => style,
+            let options = match pdf_options(&render, compress) {
+                Ok(options) => options,
                 Err(e) => return exit_code(Err(e)),
             };
-            let selected = match page_spec.as_deref().map(parse_pages).transpose() {
+            let selected = match render.pages.as_deref().map(parse_pages).transpose() {
                 Ok(selected) => selected,
                 Err(e) => return exit_code(Err(e)),
             };
@@ -2303,16 +2299,17 @@ fn cli_main() -> ExitCode {
                 bytes: None,
                 output: output.as_deref(),
                 force,
-                compress,
                 font_report: font_report.as_deref(),
-                revisions: style,
-                pdf,
-                png,
-                dpi,
+                options,
+                // The parser refused --to with a retired flag naming another.
+                to: markdown.to.or_else(|| {
+                    pdf.then_some(Format::Pdf)
+                        .or_else(|| png.then_some(Format::Png))
+                }),
+                dpi: render.dpi,
                 report: report.as_deref(),
                 pages: selected.as_deref(),
                 fail_on_substitution,
-                page,
                 status_to_stderr: false,
             };
             return convert_exit_code(run_convert_any(&job, &markdown, update_fields));
@@ -2336,9 +2333,7 @@ fn cli_main() -> ExitCode {
             reference_doc,
             critic,
             resource_path,
-            revisions,
-            revision_palette,
-            page,
+            render,
         }) => {
             if format.is_text_view() {
                 use jubarte::text_diff::{TextFormat, TextOptions, UnifiedOptions};
@@ -2369,8 +2364,12 @@ fn cli_main() -> ExitCode {
                     &options,
                 ));
             }
-            let style = match revision_style(revisions, revision_palette.as_deref()) {
-                Ok(style) => style,
+            let options = match pdf_options(&render, false) {
+                Ok(options) => options,
+                Err(e) => return exit_code(Err(e)),
+            };
+            let selected = match render.pages.as_deref().map(parse_pages).transpose() {
+                Ok(selected) => selected,
                 Err(e) => return exit_code(Err(e)),
             };
             return exit_code(run_diff(&DiffJob {
@@ -2390,8 +2389,9 @@ fn cli_main() -> ExitCode {
                 reference: reference_doc.as_deref(),
                 critic,
                 resource_path: resource_path.as_deref(),
-                revisions: style,
-                page,
+                options,
+                dpi: render.dpi,
+                pages: selected.as_deref(),
                 patch: (format == PatchFormat::Patch).then_some(columns),
             }));
         }
@@ -2777,10 +2777,10 @@ mod tests {
     fn convert_revisions_default_to_conventional_and_validate_the_palette() {
         let cli =
             Cli::try_parse_from(["jubarte", "convert", "in.docx", "--revisions", "word"]).unwrap();
-        let Some(Command::Convert { revisions, .. }) = cli.command else {
+        let Some(Command::Convert { render, .. }) = cli.command else {
             panic!("expected convert");
         };
-        assert_eq!(revisions, Revisions::Word);
+        assert_eq!(render.revisions, Revisions::Word);
         assert_eq!(
             revision_style(Revisions::Conventional, None),
             Ok(RevisionStyle::Conventional)
@@ -3144,22 +3144,18 @@ mod tests {
                 font_report,
                 compress,
                 force,
-                revisions,
-                revision_palette,
+                render,
                 pdf,
                 png,
-                dpi,
                 report,
                 ..
             }) => {
-                assert_eq!(revisions, Revisions::Conventional);
-                assert!(revision_palette.is_none());
+                assert_eq!(render, RenderArgs::default());
                 assert_eq!(file, PathBuf::from("in.docx"));
                 assert_eq!(output.as_deref(), Some(Path::new("out.pdf")));
                 assert_eq!(font_report.as_deref(), Some(Path::new("out.json")));
                 assert!(!compress && !force);
                 assert!(!pdf && !png && report.is_none());
-                assert_eq!(dpi, 96.0);
             }
             other => panic!("expected convert subcommand, got {other:?}"),
         }
@@ -3210,16 +3206,16 @@ mod tests {
             bytes: None,
             output: Some(&pdf),
             force: false,
-            compress: false,
             font_report: Some(&same),
-            revisions: RevisionStyle::Word,
-            pdf: false,
-            png: false,
+            options: jubarte::convert::PdfOptions {
+                revisions: RevisionStyle::Word,
+                ..jubarte::convert::PdfOptions::default()
+            },
+            to: None,
             dpi: 96.0,
             report: None,
             pages: None,
             fail_on_substitution: false,
-            page: PageOptions::default(),
             status_to_stderr: false,
         })
         .expect_err("report over the PDF must be refused");
@@ -3234,16 +3230,16 @@ mod tests {
             bytes: None,
             output: Some(&pdf),
             force: false,
-            compress: false,
             font_report: Some(&docx),
-            revisions: RevisionStyle::Word,
-            pdf: false,
-            png: false,
+            options: jubarte::convert::PdfOptions {
+                revisions: RevisionStyle::Word,
+                ..jubarte::convert::PdfOptions::default()
+            },
+            to: None,
             dpi: 96.0,
             report: None,
             pages: None,
             fail_on_substitution: false,
-            page: PageOptions::default(),
             status_to_stderr: false,
         })
         .expect_err("report over the input must be refused");
@@ -3305,16 +3301,16 @@ mod tests {
             bytes: None,
             output: Some(&pdf),
             force: false,
-            compress: false,
             font_report: Some(&report),
-            revisions: RevisionStyle::Word,
-            pdf: false,
-            png: false,
+            options: jubarte::convert::PdfOptions {
+                revisions: RevisionStyle::Word,
+                ..jubarte::convert::PdfOptions::default()
+            },
+            to: None,
             dpi: 96.0,
             report: None,
             pages: None,
             fail_on_substitution: true,
-            page: PageOptions::default(),
             status_to_stderr: false,
         })
         .expect_err("a substituted font fails the run");
@@ -3345,16 +3341,16 @@ mod tests {
             bytes: None,
             output: Some(&pdf),
             force: false,
-            compress: false,
             font_report: Some(&report),
-            revisions: RevisionStyle::Word,
-            pdf: false,
-            png: false,
+            options: jubarte::convert::PdfOptions {
+                revisions: RevisionStyle::Word,
+                ..jubarte::convert::PdfOptions::default()
+            },
+            to: None,
             dpi: 96.0,
             report: None,
             pages: None,
             fail_on_substitution: false,
-            page: PageOptions::default(),
             status_to_stderr: false,
         })
         .expect("convert");
@@ -3377,18 +3373,13 @@ mod tests {
         #[test]
         fn convert_without_revision_flags_uses_conventional_marks() {
             let cli = Cli::try_parse_from(["jubarte", "convert", "in.docx"]).unwrap();
-            let Some(Command::Convert {
-                revisions,
-                revision_palette,
-                ..
-            }) = cli.command
-            else {
+            let Some(Command::Convert { render, .. }) = cli.command else {
                 panic!("convert")
             };
-            assert_eq!(revisions, Revisions::Conventional);
-            assert_eq!(revision_palette, None);
+            assert_eq!(render.revisions, Revisions::Conventional);
+            assert_eq!(render.revision_palette, None);
             assert_eq!(
-                revision_style(revisions, None),
+                pdf_options(&render, false).map(|o| o.revisions),
                 Ok(RevisionStyle::Conventional)
             );
         }
@@ -3406,18 +3397,13 @@ mod tests {
                 spec,
             ])
             .unwrap();
-            let Some(Command::Convert {
-                revisions,
-                revision_palette,
-                ..
-            }) = cli.command
-            else {
+            let Some(Command::Convert { render, .. }) = cli.command else {
                 panic!("convert")
             };
-            assert_eq!(revisions, Revisions::Custom);
-            assert_eq!(revision_palette.as_deref(), Some(spec));
+            assert_eq!(render.revisions, Revisions::Custom);
+            assert_eq!(render.revision_palette.as_deref(), Some(spec));
             assert_eq!(
-                revision_style(revisions, revision_palette.as_deref()),
+                pdf_options(&render, false).map(|o| o.revisions),
                 RevisionStyle::from_choice("custom", Some(spec))
             );
         }
@@ -3492,13 +3478,13 @@ mod tests {
 
     #[test]
     fn convert_and_diff_render_parse_their_page_flags() {
-        let cli = Cli::try_parse_from(["jubarte", "convert", "a.docx", "--png", "--pages", "2-3"])
-            .expect("parse");
-        let Some(Command::Convert { pages, png, .. }) = cli.command else {
+        let cli =
+            Cli::try_parse_from(["jubarte", "convert", "a.docx", "--pages", "2-3"]).expect("parse");
+        let Some(Command::Convert { render, png, .. }) = cli.command else {
             panic!("expected convert");
         };
-        assert_eq!(pages.as_deref(), Some("2-3"));
-        assert!(png);
+        assert_eq!(render.pages.as_deref(), Some("2-3"));
+        assert!(!png);
         let cli = Cli::try_parse_from([
             "jubarte",
             "diff-render",
@@ -3559,16 +3545,16 @@ mod tests {
             bytes: None,
             output: Some(output),
             force: false,
-            compress: false,
             font_report: None,
-            revisions: RevisionStyle::Conventional,
-            pdf: false,
-            png: true,
+            options: jubarte::convert::PdfOptions {
+                revisions: RevisionStyle::Conventional,
+                ..jubarte::convert::PdfOptions::default()
+            },
+            to: Some(Format::Png),
             dpi: 20.0,
             report: None,
             pages,
             fail_on_substitution: false,
-            page: PageOptions::default(),
             status_to_stderr: false,
         }
     }
@@ -3603,12 +3589,6 @@ mod tests {
         let docx = dir.path().join("in.docx");
         std::fs::write(&docx, pages_docx(&["A", "B", "C"])).expect("docx");
         let out = dir.path().join("out.pdf");
-        let err = run_convert(&ConvertJob {
-            png: false,
-            ..convert_job(&docx, &out, Some(&[0]))
-        })
-        .expect_err("--pages without PNG output");
-        assert!(err.message.contains("--pages"), "{}", err.message);
         let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
         assert!(
             err.message

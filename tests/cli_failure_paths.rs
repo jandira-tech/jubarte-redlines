@@ -567,7 +567,9 @@ fn layout_only_flags_refuse_word_and_markdown_before_any_output_write() {
             ("--font-report", Some("fonts.json")),
             ("--fail-on-substitution", None),
             ("--move-comments", None),
-            ("--changed-only", None),
+            ("--changed-pages", None),
+            ("--pages", Some("1")),
+            ("--dpi", Some("72")),
         ] {
             let destination = format!("converted.{extension}");
             let mut args = vec!["convert", "original.docx", "-o", &destination, flag];
@@ -587,7 +589,8 @@ fn layout_only_flags_refuse_word_and_markdown_before_any_output_write() {
         }
         for extra in [
             &["--move-comments"][..],
-            &["--changed-only"],
+            &["--changed-pages"],
+            &["--pages", "1"],
             &["--revisions", "word"],
             &[
                 "--revisions",
@@ -610,6 +613,17 @@ fn layout_only_flags_refuse_word_and_markdown_before_any_output_write() {
             assert!(!dir.path().join(&destination).exists());
         }
     }
+    // The retired spelling is refused under the canonical name.
+    let out = run(
+        dir.path(),
+        &["convert", "original.docx", "-o", "c.docx", "--changed-only"],
+    );
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("--changed-pages applies to PDF or PNG output only"),
+        "{out:?}"
+    );
     for name in ["original.docx", "revised.docx"] {
         assert_eq!(
             &std::fs::read(dir.path().join(name)).unwrap(),

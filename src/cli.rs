@@ -408,15 +408,12 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
-        /// Write the PDF (the default when neither --pdf nor --png is given).
-        #[arg(long)]
+        /// Retired: `--to pdf` (or `-o FILE.pdf`).
+        #[arg(long, hide = true)]
         pdf: bool,
-        /// Rasterize every page to PNG (`<stem>-page-NN.png`).
-        #[arg(long)]
+        /// Retired: `--to png` (or `-o FILE.png`).
+        #[arg(long, hide = true)]
         png: bool,
-        /// PNG resolution in dots per inch (1-1200).
-        #[arg(long, default_value_t = 96.0, value_name = "DPI", value_parser = parse_dpi, help_heading = "Rendering")]
-        dpi: f32,
         /// Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`).
         #[arg(long, value_name = "FILE")]
         report: Option<PathBuf>,
@@ -430,31 +427,14 @@ pub enum Command {
         /// (plan Step 2f).
         #[arg(long, value_name = "FILE")]
         font_report: Option<PathBuf>,
-        /// How tracked changes are painted: `conventional` (deletions red
-        /// struck through, insertions blue underlined, moves green:
-        /// double-struck where they left, double-underlined where they landed),
-        /// `word` (what Microsoft Word's Save as PDF paints), or `custom`
-        /// (see --revision-palette).
-        #[arg(long, value_enum, default_value_t = Revisions::Conventional, requires_if("custom", "revision_palette"), help_heading = "Revision marks")]
-        revisions: Revisions,
-        /// Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with
-        /// kinds deleted, inserted, moved-from, moved-to and lines strike,
-        /// double-strike, underline, double-underline, plain. Kinds left out
-        /// keep their conventional mark.
-        #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions", help_heading = "Revision marks")]
-        revision_palette: Option<String>,
-        /// Comment placement and page selection in PDF or PNG output.
-        #[command(flatten)]
-        #[serde(flatten)]
-        page: PageOptions,
         /// Formats and Markdown reading.
         #[command(flatten)]
         #[serde(flatten)]
         markdown: MarkdownArgs,
-        /// Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout
-        /// still runs over the whole document. Needs PNG output.
-        #[arg(long, value_name = "SPEC", value_parser = validate_pages)]
-        pages: Option<String>,
+        /// How a PDF or PNG output is rendered.
+        #[command(flatten)]
+        #[serde(flatten)]
+        render: RenderArgs,
         /// Exit 4 when a requested font was substituted (listed on stderr
         /// and in --report). Every output is still written. Exit status:
         /// 0 ok, 1 error, 4 a requested font was substituted.
@@ -565,17 +545,10 @@ pub enum Command {
         /// Markdown file's directory].
         #[arg(long, value_name = "DIR", help_heading = "Word redline")]
         resource_path: Option<PathBuf>,
-        /// How tracked changes are painted in PDF or PNG output (see
-        /// `convert --help`).
-        #[arg(long, value_enum, default_value_t = Revisions::Conventional, requires_if("custom", "revision_palette"), help_heading = "Revision marks")]
-        revisions: Revisions,
-        /// Marks for --revisions custom (see `convert --help`).
-        #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions", help_heading = "Revision marks")]
-        revision_palette: Option<String>,
-        /// Comment placement and page selection in PDF or PNG output.
+        /// How a PDF or PNG output is rendered.
         #[command(flatten)]
         #[serde(flatten)]
-        page: PageOptions,
+        render: RenderArgs,
     },
     /// Inspect document facts, paragraphs, styles and tables.
     Inspect {
@@ -1389,11 +1362,33 @@ pub struct Retired {
 }
 
 /// Every retired task name and flag (D13).
-pub const RETIRED: &[Retired] = &[Retired {
-    old: "diff-render",
-    now: "visual-diff",
-    on: None,
-}];
+pub const RETIRED: &[Retired] = &[
+    Retired {
+        old: "diff-render",
+        now: "visual-diff",
+        on: None,
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("convert"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("diff"),
+    },
+    Retired {
+        old: "--pdf",
+        now: "--to pdf",
+        on: Some("convert"),
+    },
+    Retired {
+        old: "--png",
+        now: "--to png",
+        on: Some("convert"),
+    },
+];
 
 /// The note 0.12's cell id form earns (`t0.r1.c2`, Task 2).
 const RETIRED_CELL: (&str, &str) = ("tN.rR.cC", "tN.rowR.cellC");
@@ -1580,31 +1575,68 @@ impl From<TrackChanges> for crate::markdown::TrackChanges {
     }
 }
 
-/// Where a PDF's comments go and which pages it keeps (`convert`, `diff`).
-#[derive(clap::Args, Clone, Copy, Debug, Default, Serialize)]
-pub struct PageOptions {
+/// How `-o FILE.pdf` and `-o FILE.png` are rendered (`convert`, `diff`);
+/// refused with any other output.
+#[derive(clap::Args, Clone, Debug, PartialEq, Serialize)]
+#[command(next_help_heading = "Rendering (-o FILE.pdf or FILE.png)")]
+pub struct RenderArgs {
+    /// How tracked changes are painted: `conventional` (deletions red
+    /// struck through, insertions blue underlined, moves green:
+    /// double-struck where they left, double-underlined where they landed),
+    /// `word` (what Microsoft Word's Save as PDF paints), or `custom`
+    /// (see --revision-palette).
+    #[arg(long, value_enum, default_value_t = Revisions::Conventional, requires_if("custom", "revision_palette"))]
+    pub revisions: Revisions,
+    /// Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with
+    /// kinds deleted, inserted, moved-from, moved-to and lines strike,
+    /// double-strike, underline, double-underline, plain. Kinds left out
+    /// keep their conventional mark.
+    #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions")]
+    pub revision_palette: Option<String>,
+    /// PNG resolution in dots per inch (1-1200).
+    #[arg(long, default_value_t = 96.0, value_name = "DPI", value_parser = parse_dpi)]
+    pub dpi: f32,
     /// List the comments after the last page instead of in balloons beside
     /// the text. The commented text keeps its tint and a `[JR1]` marker,
     /// and the pages keep their own width.
     #[arg(long)]
     pub move_comments: bool,
-    /// Keep only the pages a tracked change touches. The whole document is
-    /// laid out first, so page numbers stay the document's; a document
-    /// without changes keeps its first page. --pages counts the kept pages.
-    #[arg(long)]
-    pub changed_only: bool,
+    /// Keep only the pages a change touches: a body or note revision, a
+    /// comment anchor, or the first page on which a revised header or
+    /// footer paints (the first page when none does). Page numbers stay the
+    /// document's.
+    #[arg(long, alias = "changed-only")]
+    pub changed_pages: bool,
+    /// Only these pages, by the document's page numbers: `3`, `1-3,7`.
+    /// Layout still covers the whole document; the PDF carries these pages
+    /// and PNGs are named by them (`STEM-page-03.png`).
+    #[arg(long, value_name = "SPEC", value_parser = validate_pages)]
+    pub pages: Option<String>,
 }
 
-impl PageOptions {
+impl Default for RenderArgs {
+    fn default() -> Self {
+        Self {
+            revisions: Revisions::Conventional,
+            revision_palette: None,
+            dpi: 96.0,
+            move_comments: false,
+            changed_pages: false,
+            pages: None,
+        }
+    }
+}
+
+impl RenderArgs {
     /// Apply comment placement and page filtering to the renderer options.
-    pub fn apply(self, options: crate::convert::PdfOptions) -> crate::convert::PdfOptions {
+    pub fn apply(&self, options: crate::convert::PdfOptions) -> crate::convert::PdfOptions {
         crate::convert::PdfOptions {
             comments: if self.move_comments {
                 crate::convert::CommentPlacement::End
             } else {
                 crate::convert::CommentPlacement::Margin
             },
-            changed_only: self.changed_only,
+            changed_only: self.changed_pages,
             ..options
         }
     }
@@ -2092,12 +2124,7 @@ fn validate_matches(
                 .and_then(|path| Format::of_path(path))
         });
         if !matches!(output_format, Some(Format::Pdf | Format::Png)) {
-            for flag in [
-                "move_comments",
-                "changed_only",
-                "revisions",
-                "revision_palette",
-            ] {
+            for flag in RENDER_ONLY {
                 if args.value_source(flag) == Some(ValueSource::CommandLine) {
                     return Err(error(
                         &mut task,
@@ -2152,7 +2179,9 @@ fn validate_matches(
             for flag in [
                 "columns",
                 "move_comments",
-                "changed_only",
+                "changed_pages",
+                "pages",
+                "dpi",
                 "revisions",
                 "revision_palette",
                 "reference_doc",
@@ -2176,39 +2205,39 @@ fn validate_matches(
         }
     }
     if name == "convert" {
-        let to = args.get_one::<Format>("to").copied();
-        let output = args
-            .get_one::<PathBuf>("output")
-            .and_then(|p| Format::of_path(p));
-        let png = args.get_flag("png") || to.or(output) == Some(Format::Png);
-        if args.get_one::<String>("pages").is_some() && !png {
+        // The retired --pdf and --png name a format, as --to does.
+        let alias = match (args.get_flag("pdf"), args.get_flag("png")) {
+            (true, true) => return Err(error(&mut task, "--pdf and --png name two formats")),
+            (true, false) => Some(Format::Pdf),
+            (false, true) => Some(Format::Png),
+            (false, false) => None,
+        };
+        let given = args.get_one::<Format>("to").copied();
+        if let (Some(to), Some(alias)) = (given, alias)
+            && to != alias
+        {
             return Err(error(
                 &mut task,
-                "--pages selects PNG pages; add --png or --to png",
+                &format!(
+                    "--to {} and --{} name two formats: drop one",
+                    to.name(),
+                    alias.name()
+                ),
             ));
         }
+        let output = args.get_one::<PathBuf>("output").map(PathBuf::as_path);
+        let kind = output_format(Task::Convert, output, given.or(alias))
+            .map_err(|message| error(&mut task, &message))?;
         let update_fields = args.get_flag("update_fields");
-        if update_fields && !matches!(to.or(output), Some(Format::Docx)) {
+        if update_fields && kind != Some(Format::Docx) {
             return Err(error(
                 &mut task,
                 "--update-fields writes a .docx: give -o FILE.docx or --to docx",
             ));
         }
-        if matches!(to.or(output), Some(Format::Docx | Format::Md)) {
-            for flag in [
-                "pdf",
-                "png",
-                "move_comments",
-                "changed_only",
-                "compress",
-                "report",
-                "font_report",
-                "fail_on_substitution",
-                "pages",
-                "dpi",
-                "revisions",
-                "revision_palette",
-            ] {
+        if matches!(kind, Some(Format::Docx | Format::Md | Format::Json)) {
+            let convert_only = ["compress", "report", "font_report", "fail_on_substitution"];
+            for flag in RENDER_ONLY.into_iter().chain(convert_only) {
                 // The fields report is the one report a .docx output has.
                 if flag == "report" && update_fields {
                     continue;
@@ -2227,6 +2256,16 @@ fn validate_matches(
     }
     Ok(())
 }
+
+/// The [`RenderArgs`] ids: options of a PDF or PNG output only.
+const RENDER_ONLY: [&str; 6] = [
+    "move_comments",
+    "changed_pages",
+    "pages",
+    "dpi",
+    "revisions",
+    "revision_palette",
+];
 
 impl Cli {
     /// Parse native arguments with clap and validate cross-option constraints.
@@ -2375,6 +2414,25 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                     serde_json::to_value(input_format(new)).expect("format");
                 value["args"]["output_format"] = serde_json::to_value(
                     to.or_else(|| output.as_deref().and_then(Format::of_path)),
+                )
+                .expect("format");
+            }
+            if let Command::Convert {
+                output,
+                markdown,
+                pdf,
+                png,
+                ..
+            } = &task
+            {
+                // validate_matches refused a disagreement, so the rule holds.
+                let alias = pdf
+                    .then_some(Format::Pdf)
+                    .or_else(|| png.then_some(Format::Png));
+                value["args"]["output_format"] = serde_json::to_value(
+                    output_format(Task::Convert, output.as_deref(), markdown.to.or(alias))
+                        .ok()
+                        .flatten(),
                 )
                 .expect("format");
             }
