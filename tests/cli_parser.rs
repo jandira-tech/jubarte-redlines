@@ -1238,6 +1238,19 @@ fn retired_spellings_are_scoped_and_listed_once() {
         &["edit", "a", "-qp", "t0.r1.c2", "--content", "x"],
         &["edit", "a", "-qpt0.r1.c2", "--content", "x"],
         &["edit", "--content", "x", "a", "-p", "t0.r1.c2"],
+        // --delete takes no value, so -p after it is still an option.
+        &["edit", "a", "--delete", "-p", "t0.r1.c2"],
+        // A hidden alias (--date for --datetime) takes its value.
+        &[
+            "edit",
+            "a",
+            "--date",
+            "2026-10-12",
+            "-p",
+            "t0.r1.c2",
+            "--content",
+            "x",
+        ],
     ] {
         assert_eq!(notes(argv), cell, "{argv:?}");
     }

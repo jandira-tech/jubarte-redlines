@@ -1407,12 +1407,50 @@ struct Spelled<'a> {
     value: Option<&'a str>,
 }
 
+/// How many values `arg` takes after it: `None` for a flag (an option `cmd`
+/// does not know, or one with `num_args = 0` such as `--delete`), else
+/// `Some(optional)`, where an optional value (`num_args = 0..=1`) is taken
+/// only when the next token is not an option, as clap does.
+fn value_taken(arg: Option<&clap::Arg>) -> Option<bool> {
+    let arg = arg.filter(|a| a.get_action().takes_values())?;
+    match arg.get_num_args() {
+        Some(range) if range.max_values() == 0 => None,
+        Some(range) => Some(range.min_values() == 0),
+        None => Some(false),
+    }
+}
+
+/// The argument of `cmd` spelled `--name`, by its long name or any of its
+/// aliases, hidden ones included.
+fn long_arg<'c>(cmd: &'c clap::Command, name: &str) -> Option<&'c clap::Arg> {
+    cmd.get_arguments().find(|a| {
+        a.get_long() == Some(name) || a.get_all_aliases().is_some_and(|v| v.contains(&name))
+    })
+}
+
+/// The argument of `cmd` spelled `-c`, by its short name or a short alias.
+fn short_arg(cmd: &clap::Command, short: char) -> Option<&clap::Arg> {
+    cmd.get_arguments().find(|a| {
+        a.get_short() == Some(short)
+            || a.get_all_short_aliases()
+                .is_some_and(|v| v.contains(&short))
+    })
+}
+
 /// The options of `tokens` (read with `cmd`'s arguments: which take a value)
 /// up to the first token that is not an option, and the index of that one.
 /// A short cluster (`-qp t0`) is split; an option `cmd` does not know takes
 /// no value.
 fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<'a>>, usize) {
-    let takes_value = |arg: &clap::Arg| arg.get_action().takes_values();
+    // The next token as a value, unless an optional value meets an option.
+    let next = |i: &mut usize, optional: bool| {
+        let value = tokens.get(*i).copied();
+        if optional && value.is_none_or(|v| v.starts_with('-')) {
+            return None;
+        }
+        *i += 1;
+        value
+    };
     let mut found = Vec::new();
     let mut i = 0;
     while let Some(&token) = tokens.get(i) {
@@ -1422,17 +1460,11 @@ fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<
                 Some((name, value)) => (name, Some(value)),
                 None => (long, None),
             };
-            let arg = cmd.get_arguments().find(|a| {
-                a.get_long() == Some(name)
-                    || a.get_visible_aliases().is_some_and(|v| v.contains(&name))
-            });
-            let value = match (inline, arg) {
+            let arg = long_arg(cmd, name);
+            let value = match (inline, value_taken(arg)) {
                 (Some(value), _) => Some(value),
-                (None, Some(arg)) if takes_value(arg) => {
-                    i += 1;
-                    tokens.get(i - 1).copied()
-                }
-                _ => None,
+                (None, Some(optional)) => next(&mut i, optional),
+                (None, None) => None,
             };
             found.push(Spelled {
                 name: format!("--{name}"),
@@ -1441,23 +1473,22 @@ fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<
             });
         } else if let Some(cluster) = token.strip_prefix('-').filter(|c| !c.is_empty()) {
             for (at, short) in cluster.char_indices() {
-                let arg = cmd.get_arguments().find(|a| a.get_short() == Some(short));
+                let arg = short_arg(cmd, short);
                 let id = arg.map(|a| a.get_id().to_string());
                 let name = format!("-{short}");
-                if !arg.is_some_and(takes_value) {
+                let Some(optional) = value_taken(arg) else {
                     found.push(Spelled {
                         name,
                         id,
                         value: None,
                     });
                     continue;
-                }
+                };
                 // The rest of the cluster is the value (`-pt0`, `-p=t0`),
                 // else the next token is.
                 let rest = &cluster[at + short.len_utf8()..];
                 let value = if rest.is_empty() {
-                    i += 1;
-                    tokens.get(i - 1).copied()
+                    next(&mut i, optional)
                 } else {
                     Some(rest.strip_prefix('=').unwrap_or(rest))
                 };
