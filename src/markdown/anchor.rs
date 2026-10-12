@@ -71,7 +71,9 @@ fn strip_between(text: &str, open: &str, close: &str, keep: Keep) -> String {
 }
 
 /// The text without a leading block mark: `# ` (one to six), `> `, a
-/// bullet (`- `, `+ `, `* `) or an ordered marker (`1. `, `2) `).
+/// bullet (`- `, `+ `, `* `) or an ordered marker (`1. `, `2) `), and
+/// without the spaces before it: the view trims a line's own edges, so a
+/// leading space is its indent (a list item's continuation line).
 fn without_block_mark(text: &str) -> &str {
     let trimmed = text.trim_start();
     let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
@@ -90,7 +92,7 @@ fn without_block_mark(text: &str) -> &str {
     {
         return &trimmed[digits + 2..];
     }
-    text
+    trimmed
 }
 
 /// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>` and
@@ -202,6 +204,12 @@ pub fn plain_anchor(text: &str) -> String {
         if c == '\\' && chars.peek() == Some(&'\n') {
             hidden.push(hide('\n'));
             chars.next();
+            // A list item's next line is indented under its text; the
+            // view trims the document's own line edges, so the spaces are
+            // the view's.
+            while chars.peek() == Some(&' ') {
+                chars.next();
+            }
             continue;
         }
         if c == '\\'
@@ -214,10 +222,12 @@ pub fn plain_anchor(text: &str) -> String {
         }
         hidden.push(c);
     }
-    // The view writes a block mark at the start of its line, ahead of the
-    // line's change marks, and escapes a literal one there, so marks go
-    // first, line by line: a `1. ` an insertion wraps is the document's
+    // The agent view writes a block mark at the start of its line, ahead
+    // of the line's change marks, and escapes a literal one there, so marks
+    // go first, line by line: a `1. ` an insertion wraps is the document's
     // text, and one after an opener left on the line above is a list's.
+    // (The plain critic view escapes nothing: a literal `1. ` at the start
+    // of a line copied from it is read as a mark.)
     let blocks: Vec<&str> = hidden.split('\n').map(without_block_mark).collect();
     let mut text = strip_between(&blocks.join("\n"), "{>>", "<<}", Keep::Nothing);
     text = strip_between(&text, "{--", "--}", Keep::Nothing);
