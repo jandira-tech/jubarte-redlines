@@ -70,6 +70,9 @@ pub(crate) struct CommentFact {
 
 pub(crate) struct Facts<'a> {
     pub source: &'a str,
+    /// The SHA-256 of the bytes the view reads, in hex: the file, or the
+    /// in-memory redline `jubarte A B` prints.
+    pub sha256: String,
     /// `None` tracked, `Some(true)` accept-all, `Some(false)` reject-all.
     pub resolved: Option<bool>,
     pub comments_inline: bool,
@@ -242,6 +245,7 @@ pub(crate) fn render(f: &Facts) -> String {
         &format!("source: {}", scalar(f.source, false)),
         None,
     );
+    kv(&mut out, &format!("sha256: {}", f.sha256), None);
     let handle_list: Vec<String> = f
         .handles
         .order
