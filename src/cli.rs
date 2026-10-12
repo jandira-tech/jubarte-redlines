@@ -109,6 +109,29 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub by: Option<String>,
+    /// Print the snapshot as JSON instead of the view: `schema_version`,
+    /// `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`,
+    /// `controls`, `changes` and `comments`. -p, --head, --tail, --changed
+    /// and --by keep the paragraphs they select, and those paragraphs'
+    /// changes and comments.
+    #[arg(
+        long,
+        conflicts_with_all = ["track_changes", "comments", "dates", "no_page_markers"],
+        help_heading = "Read options"
+    )]
+    pub json: bool,
+    /// Print each body table as a grid instead of the view: a `table N:
+    /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
+    /// tab-separated `ids=text` cells.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "json", "track_changes", "comments", "dates", "no_page_markers",
+            "paragraphs", "head", "tail", "changed", "by",
+        ],
+        help_heading = "Read options"
+    )]
+    pub tables: bool,
 }
 
 /// `--comments` of `read`.
@@ -556,8 +579,8 @@ pub enum Command {
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Emit the snapshot as JSON (`schema_version`, `source_sha256`,
-        /// `summary`, `paragraphs`, `stories`, `tables`) instead of a human
-        /// summary.
+        /// `summary`, `paragraphs`, `stories`, `tables`, `controls`,
+        /// `changes`, `comments`) instead of a human summary.
         #[arg(long)]
         json: bool,
         /// Print each body table as a grid instead of the paragraphs: a
@@ -1969,7 +1992,7 @@ fn serialize_timeout<S: serde::Serializer>(
 /// Cross-option constraints whose meaning depends on an enum value or output
 /// extension. These are usage errors, checked before any runtime I/O.
 /// The ids of [`ReadArgs`], as the top-level shorthand declares them.
-const READ_OPTION_IDS: [&str; 9] = [
+const READ_OPTION_IDS: [&str; 11] = [
     "track_changes",
     "comments",
     "dates",
@@ -1979,6 +2002,8 @@ const READ_OPTION_IDS: [&str; 9] = [
     "tail",
     "changed",
     "by",
+    "json",
+    "tables",
 ];
 
 /// Until a task writes the JSON snapshot (Tasks 11-13), its `-o x.json` and
@@ -2023,7 +2048,17 @@ fn validate_matches(
             matches.try_contains_id(id).unwrap_or(false)
                 && matches.value_source(id) == Some(ValueSource::CommandLine)
         };
-        if given("output") && !given("modified_pos") && !given("modified") {
+        let two = given("modified_pos") || given("modified");
+        if two && given("json") {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                "--json reads one document; `-o FILE.json` writes the redline's snapshot",
+            ));
+        }
+        if two && given("tables") {
+            return Err(command.error(ErrorKind::ArgumentConflict, "--tables reads one document"));
+        }
+        if given("output") && !two {
             return Err(command.error(
                 ErrorKind::ArgumentConflict,
                 "-o writes a redline of two documents; one document alone prints its view",

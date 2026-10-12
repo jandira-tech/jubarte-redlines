@@ -717,43 +717,11 @@ fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// `inspect --tables` and `read --tables`: each body table as a grid.
 fn run_inspect_tables(file: &Path) -> Result<(), String> {
     let bytes = read_document(file)?;
     let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
-    if tables.is_empty() {
-        outln!("no tables");
-    }
-    for table in &tables {
-        let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
-        let widths: Vec<String> = table.widths_dxa.iter().map(u32::to_string).collect();
-        outln!(
-            "table {}: {}x{columns} header_rows={} widths={}",
-            table.index,
-            table.rows.len(),
-            table.header_rows,
-            widths.join(",")
-        );
-        for row in &table.rows {
-            let cells: Vec<String> = row
-                .iter()
-                .map(|cell| {
-                    let ids = if cell.paragraph_ids.is_empty() {
-                        "-".to_string()
-                    } else {
-                        cell.paragraph_ids.join(",")
-                    };
-                    let text = cell
-                        .text
-                        .replace('\\', "\\\\")
-                        .replace('\n', "\\n")
-                        .replace('\t', "\\t");
-                    format!("{ids}={text}")
-                })
-                .collect();
-            outln!("{}", cells.join("\t"));
-        }
-    }
-    Ok(())
+    write_stdout(jubarte::inspect::tables_text(&tables))
 }
 
 /// `jubarte audit`: print the findings; `Ok(true)` when one fails the run
@@ -803,8 +771,31 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
 /// `read`: the agent view, with page markers from the layout pass unless
 /// `--no-page-markers` skips it.
 fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
+    if args.tables {
+        return run_inspect_tables(file);
+    }
     let bytes = read_document(file)?;
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
+    if args.json {
+        let select = jubarte::markdown::Select::from_flags(
+            args.paragraphs.as_deref(),
+            args.head,
+            args.tail,
+            args.changed,
+            args.by.as_deref(),
+        )?;
+        let snapshot = jubarte::markdown::read_snapshot(
+            &bytes,
+            &jubarte::markdown::ReadOptions {
+                select,
+                source,
+                ..jubarte::markdown::ReadOptions::default()
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+        return write_stdout(format!("{json}\n"));
+    }
     print_agent_view(&bytes, source, args)
 }
 
