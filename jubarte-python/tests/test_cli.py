@@ -47,7 +47,7 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     # The engine writes a task's view, snapshot or PDF; this CLI, Word only.
     for argv in (
         ["accept", str(letter), "-o", str(letter.with_name("a.pdf"))],
-        ["scrub", str(letter), "-o", str(letter.with_name("s.md"))],
+        ["reject", str(letter), "-o", str(letter.with_name("s.md"))],
         ["read", str(letter), "-o", str(letter.with_name("v.md"))],
         [str(letter), "-o", str(letter.with_name("v.json"))],
         ["convert", str(letter), "-o", str(letter.with_name("c.json"))],
