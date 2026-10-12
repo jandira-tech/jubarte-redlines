@@ -431,9 +431,19 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     };
     // The page count is known only now; check every PNG path before the
     // first write so a refused page leaves no partial bundle.
+    // Padded to the highest document page written (Task 10 names every
+    // PNG by its document page).
+    let widest = rendered
+        .report
+        .pages
+        .iter()
+        .map(|p| p.number)
+        .max()
+        .unwrap_or(0)
+        .max(pages);
     let png_paths: Vec<PathBuf> = indices
         .iter()
-        .map(|&i| dir.join(png_name(&stem, i, pages)))
+        .map(|&i| dir.join(png_name(&stem, i, widest)))
         .collect();
     for path in &png_paths {
         ensure_writable(path, job.force)?;
@@ -3580,7 +3590,7 @@ mod tests {
         let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
         assert!(
             err.message
-                .contains("page 6 is out of range: the output has 3 pages"),
+                .contains("page 6 is out of range: the document has 3 pages"),
             "{}",
             err.message
         );

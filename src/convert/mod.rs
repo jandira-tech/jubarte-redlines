@@ -58,14 +58,19 @@ pub enum ConvertError {
     /// A PNG resolution outside `1..=MAX_PNG_DPI`, or a page too large to
     /// rasterize at the requested one.
     Raster(String),
-    /// [`RenderRequest::pages`] named a page the output does not have.
+    /// [`RenderRequest::pages`] named a page past the document's last.
     PageOutOfRange {
-        /// The zero-based index asked for.
+        /// The zero-based document page asked for.
         requested: usize,
-        /// Pages written: the layout's, narrowed by
-        /// `PdfOptions::changed_only` and extended by the listing pages of
-        /// `CommentPlacement::End`.
+        /// The document's pages: the layout's, and the listing pages of
+        /// `CommentPlacement::End` after them.
         page_count: usize,
+    },
+    /// [`RenderRequest::pages`] named a document page that
+    /// `PdfOptions::changed_only` dropped.
+    PageNotKept {
+        /// The zero-based document page asked for.
+        requested: usize,
     },
 }
 
@@ -81,9 +86,14 @@ impl fmt::Display for ConvertError {
                 page_count,
             } => write!(
                 f,
-                "page {} is out of range: the output has {page_count} page{}",
+                "page {} is out of range: the document has {page_count} page{}",
                 requested + 1,
                 if *page_count == 1 { "" } else { "s" }
+            ),
+            Self::PageNotKept { requested } => write!(
+                f,
+                "page {} is not among the kept pages (changed pages only)",
+                requested + 1
             ),
         }
     }
@@ -330,8 +340,10 @@ pub struct PdfOptions {
     /// Word prints them) or listed after the last page.
     pub comments: CommentPlacement,
     /// Lay the whole document out, then keep only the pages a tracked
-    /// change touches (a change bar marks the page). Page numbers stay the
-    /// document's. A document without changes keeps its first page.
+    /// change touches (a body or note change bar marks the page), the
+    /// pages a comment is anchored on, and the first page of each section
+    /// on which a revised header or footer paints. Page numbers stay the
+    /// document's. A document with none of these keeps its first page.
     pub changed_only: bool,
 }
 
@@ -387,8 +399,11 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
 /// Text painted on one page, in paint order (header first when present).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageText {
-    /// Zero-based page index.
+    /// Zero-based index among the pages written.
     pub index: usize,
+    /// The page's number in the document, from 1 (the comment listing's
+    /// pages number on after the last document page).
+    pub number: usize,
     /// One line per baseline.
     pub text: String,
 }
@@ -399,7 +414,7 @@ pub struct PageText {
 pub struct RenderReport {
     /// Pages written: every page laid out, less those
     /// `PdfOptions::changed_only` drops, plus a `CommentPlacement::End`
-    /// listing.
+    /// listing, narrowed to [`RenderRequest::pages`] when set.
     pub page_count: usize,
     /// Per-page painted text.
     pub pages: Vec<PageText>,
@@ -408,13 +423,13 @@ pub struct RenderReport {
 }
 
 impl RenderReport {
-    /// `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
+    /// `{"page_count", "pages": [{"index", "number", "text"}], "fonts": [...]}`.
     #[must_use]
     pub fn to_json(&self) -> String {
         let pages: Vec<serde_json::Value> = self
             .pages
             .iter()
-            .map(|p| serde_json::json!({"index": p.index, "text": p.text}))
+            .map(|p| serde_json::json!({"index": p.index, "number": p.number, "text": p.text}))
             .collect();
         let fonts: serde_json::Value =
             serde_json::from_str(&font::font_report_json(&self.fonts)).unwrap_or_default();
@@ -432,14 +447,16 @@ impl RenderReport {
 pub struct RenderRequest {
     /// Write the PDF.
     pub pdf: bool,
-    /// Rasterize every page to PNG at this resolution.
+    /// Rasterize every page written to PNG at this resolution.
     pub png_dpi: Option<f32>,
-    /// Zero-based pages to rasterize (any order, repeats ignored); `None`
-    /// rasterizes every page. Layout always covers the whole document; the
-    /// report covers every page written, which `PdfOptions::changed_only`
-    /// narrows and `CommentPlacement::End` extends, and so do these
-    /// indices. An index at or past the page count is
-    /// [`ConvertError::PageOutOfRange`].
+    /// Zero-based document pages to write (any order, repeats ignored): the
+    /// PDF, the PNGs and the report hold these pages only; `None` writes
+    /// every page. They count the document's pages whatever
+    /// `PdfOptions::changed_only` keeps, then the listing pages of
+    /// `CommentPlacement::End`. A page it dropped is
+    /// [`ConvertError::PageNotKept`]; one past the last is
+    /// [`ConvertError::PageOutOfRange`]. Layout always covers the whole
+    /// document.
     pub pages: Option<Vec<usize>>,
 }
 
@@ -479,40 +496,42 @@ pub fn render(
     }
     let (result, font_report) = font::with_font_report(|| {
         with_options(options, || {
-            with_pages(docx, |fonts, pages| {
-                let selected = selected_pages(wanted, pages.len());
-                let pdf = (want_pdf && selected.is_ok()).then(|| pdf::emit(fonts, pages, options));
-                let pngs: Result<Vec<Vec<u8>>, ConvertError> = match (png_dpi, selected) {
-                    (_, Err(err)) => Err(err),
-                    (Some(dpi), Ok(selected)) => selected
-                        .into_iter()
-                        .map(|i| {
-                            raster::paint_page(fonts, &pages[i], dpi)
+            with_layout(docx, |fonts, pages, facts| {
+                let written: Vec<&pdf::Page> = selected_pages(wanted, pages, facts.page_count)?
+                    .into_iter()
+                    .map(|i| &pages[i])
+                    .collect();
+                let pdf = want_pdf.then(|| pdf::emit(fonts, &written, options));
+                let pngs: Vec<Vec<u8>> = match png_dpi {
+                    Some(dpi) => written
+                        .iter()
+                        .map(|page| {
+                            raster::paint_page(fonts, page, dpi)
                                 .map(|pixmap| raster::encode_png(&pixmap))
                                 .ok_or_else(|| {
                                     ConvertError::Raster(format!(
                                         "page {} is too large to rasterize at {dpi} dpi",
-                                        i + 1
+                                        page.number
                                     ))
                                 })
                         })
-                        .collect(),
-                    (None, Ok(_)) => Ok(Vec::new()),
+                        .collect::<Result<_, _>>()?,
+                    None => Vec::new(),
                 };
-                let texts = pages
+                let texts = written
                     .iter()
                     .enumerate()
                     .map(|(index, page)| PageText {
                         index,
+                        number: page.number,
                         text: raster::page_text(fonts, page),
                     })
                     .collect();
-                (pdf, pngs, pages.len(), texts)
+                Ok::<_, ConvertError>((pdf, pngs, written.len(), texts))
             })
         })
     });
-    let (pdf, pngs, page_count, pages) = result?;
-    let pngs = pngs?;
+    let (pdf, pngs, page_count, pages) = result??;
     Ok(Rendered {
         pdf,
         pngs,
@@ -524,24 +543,38 @@ pub fn render(
     })
 }
 
-/// The zero-based pages to rasterize, ascending and without repeats: all of
-/// them when `pages` is `None`.
+/// Where in `pages` (the pages kept) each wanted zero-based document page
+/// is, ascending and without repeats: every kept page when `wanted` is
+/// `None`. `laid` is the layout's page count; the comment listing's pages
+/// number on after it.
 fn selected_pages(
-    pages: Option<Vec<usize>>,
-    page_count: usize,
+    wanted: Option<Vec<usize>>,
+    pages: &[pdf::Page],
+    laid: usize,
 ) -> Result<Vec<usize>, ConvertError> {
-    let Some(mut selected) = pages else {
-        return Ok((0..page_count).collect());
+    let Some(mut wanted) = wanted else {
+        return Ok((0..pages.len()).collect());
     };
-    selected.sort_unstable();
-    selected.dedup();
-    match selected.last() {
-        Some(&requested) if requested >= page_count => Err(ConvertError::PageOutOfRange {
+    wanted.sort_unstable();
+    wanted.dedup();
+    let page_count = pages.iter().map(|p| p.number).max().unwrap_or(0).max(laid);
+    if let Some(&requested) = wanted.last()
+        && requested >= page_count
+    {
+        return Err(ConvertError::PageOutOfRange {
             requested,
             page_count,
-        }),
-        _ => Ok(selected),
+        });
     }
+    wanted
+        .into_iter()
+        .map(|requested| {
+            pages
+                .iter()
+                .position(|p| p.number == requested + 1)
+                .ok_or(ConvertError::PageNotKept { requested })
+        })
+        .collect()
 }
 
 /// Rasterize every page to PNG at `dpi` (96 is screen resolution; 150 reads
@@ -766,11 +799,12 @@ fn with_layout<T>(
             for (i, page) in pages.iter_mut().enumerate() {
                 page.number = i + 1;
             }
+            let laid = pages.len();
             if PAGE_PLAN.with(|p| p.get().1) {
                 keep_changed_pages(&mut pages);
             }
             if comments_at_end() {
-                list_comments_at_end(&fonts, &sheet, &mut pages);
+                list_comments_at_end(&fonts, &sheet, &mut pages, laid);
             } else {
                 paint_comment_balloons(&fonts, &sheet, &mut pages);
             }
@@ -7653,11 +7687,23 @@ fn balloon_tint(color: [f32; 3]) -> [f32; 3] {
     )
 }
 
-/// `PdfOptions::changed_only`: the pages a body change bar marks, or the
-/// first page when no change touches the body.
+/// `PdfOptions::changed_only`: the pages a body or note change bar marks,
+/// the pages a comment is anchored on, and the first page of every section
+/// on which a revised header or footer paints; the first page when none
+/// qualifies. A continuous section starts no page, so its pages count with
+/// the section before (Word starts no header there either). With a
+/// different first page, a revised default header first paints on the
+/// section's second page, and that page is the one kept.
 fn keep_changed_pages(pages: &mut Vec<Page>) {
-    if pages.iter().any(|p| p.changed) {
-        pages.retain(|p| p.changed);
+    let mut first_painted: BTreeMap<u32, usize> = BTreeMap::new();
+    for page in pages.iter().filter(|p| p.chrome_changed) {
+        first_painted.entry(page.section).or_insert(page.number);
+    }
+    let keep = |p: &Page| {
+        p.changed || !p.comments.is_empty() || first_painted.get(&p.section) == Some(&p.number)
+    };
+    if pages.iter().any(keep) {
+        pages.retain(keep);
     } else {
         pages.truncate(1);
     }
@@ -7731,8 +7777,10 @@ fn mark_comment_anchors(runs: &mut Vec<TextRun>) {
 /// `CommentPlacement::End`: the comments of the pages kept, taken off
 /// them and listed on pages of their own after the last one, in reading
 /// order: `[JR1] Author, page N` in the author's ink, then the comment's
-/// text, in the document's default face.
-fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>) {
+/// text, in the document's default face. The listing's pages number on
+/// from `laid`, the document's page count, so none takes the number of a
+/// document page `PdfOptions::changed_only` dropped.
+fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>, laid: usize) {
     const MARGIN: f32 = 72.0;
     const HEADING: f32 = 14.0;
     const SIZE: f32 = 10.0;
@@ -7829,6 +7877,9 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
             y -= pitch;
         }
         y -= GAP;
+    }
+    for (i, page) in out.iter_mut().enumerate() {
+        page.number = laid + 1 + i;
     }
     pages.extend(out);
 }
@@ -22300,6 +22351,9 @@ struct Layout<'a> {
     in_chrome_boxes: bool,
     /// Painting the page's headers and footers (`chrome`).
     in_chrome: bool,
+    /// The section being laid out, counted by `apply_section`: each page
+    /// records it (`Page::section`).
+    section_i: u32,
     /// The last row of inline pictures: (page, pen x after it, its bottom,
     /// its height). An inline box in the same textless paragraph joins it.
     pic_row: Option<(usize, f32, f32, f32)>,
@@ -22803,6 +22857,7 @@ impl<'a> Layout<'a> {
             tb_step: false,
             in_chrome_boxes: false,
             in_chrome: false,
+            section_i: 0,
             pic_row: None,
             front_floats: Vec::new(),
             line_probe: LineProbe::default(),
@@ -22851,6 +22906,7 @@ impl<'a> Layout<'a> {
     }
 
     fn apply_section(&mut self, next: &SectionChrome) {
+        self.section_i += 1;
         let (w, h) = (next.page.width, next.page.height);
         self.page = next.page;
         self.mirror_margins = next.mirror_margins;
@@ -23147,6 +23203,7 @@ impl<'a> Layout<'a> {
         page.vertical = self.page.vertical;
         page.markup_pane = self.page.balloon_gutter > 0.0;
         page.margin_r = self.page.margin_r;
+        page.section = self.section_i;
         page
     }
 
@@ -25270,7 +25327,9 @@ impl<'a> Layout<'a> {
         let Some((page, col, top)) = self.rev_bar else {
             return;
         };
-        if !self.in_chrome {
+        if self.in_chrome {
+            self.current().chrome_changed = true;
+        } else {
             self.current().changed = true;
         }
         let top = if (page, col) == (self.pages.len(), self.col_i) {
@@ -30267,7 +30326,9 @@ impl<'a> Layout<'a> {
                     .iter()
                     .any(|c| c.paras.iter().any(|p| p.style.fmt_rev) || c.runs().any(|r| r.rev))
                 {
-                    if !self.in_chrome {
+                    if self.in_chrome {
+                        self.current().chrome_changed = true;
+                    } else {
                         self.current().changed = true;
                     }
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
@@ -31369,6 +31430,7 @@ impl<'a> Layout<'a> {
     /// (9b22b88370's deleted header line and its footer).
     fn hf_rev_bar(&mut self, line: &[TextRun], para: Option<&ParaStyle>, top: f32, h: f32) {
         if line.iter().any(|r| r.rev) || para.is_some_and(|p| p.fmt_rev) {
+            self.current().chrome_changed = true;
             self.paint_rev_bar(self.rev_bar_x(), top - h, top);
         }
     }
@@ -46062,7 +46124,7 @@ mod comment_listing_review_tests {
         pages[0]
             .comments
             .push(note("Jane", "中文中文中文中文中文中文中文中文中文中文"));
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         let mut painted = 0;
         for page in &pages[1..] {
             for op in &page.ops {
@@ -46091,7 +46153,7 @@ mod comment_listing_review_tests {
         pages[0].number = 1;
         let author = "An exceptionally long author attribution that needs several lines";
         pages[0].comments.push(note(author, "First content line"));
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         let mut all = String::new();
         for page in &pages[1..] {
             for op in &page.ops {
@@ -46137,7 +46199,7 @@ mod comment_listing_review_tests {
                     .comments
                     .push(note(&format!("A{i}"), &format!("Body{i}")));
             }
-            list_comments_at_end(&fonts, &sheet(), &mut pages);
+            list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
             let page_of = |needle: &str| {
                 pages.iter().position(|page| {
                     page.ops
@@ -46165,7 +46227,7 @@ mod comment_listing_review_tests {
         page.number = 1;
         page.comments.push(note("Jane", "縦書き"));
         let mut pages = vec![page];
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         let listing = &pages[1];
         assert_eq!((listing.width, listing.height), (595.3, 841.9));
         assert!(!listing.vertical);
@@ -47109,26 +47171,60 @@ mod coverage_boundary_tests {
 
     #[test]
     fn page_selection_sorts_deduplicates_and_reports_the_largest_invalid_page() {
-        assert_eq!(selected_pages(None, 3).unwrap(), vec![0, 1, 2]);
-        assert!(selected_pages(None, 0).unwrap().is_empty());
-        assert!(selected_pages(Some(vec![]), 0).unwrap().is_empty());
+        // Document pages numbered as given (a gap is a page changed_only
+        // dropped).
+        let kept = |numbers: &[usize]| -> Vec<pdf::Page> {
+            numbers
+                .iter()
+                .map(|&number| {
+                    let mut page = pdf::Page::new(612.0, 792.0);
+                    page.number = number;
+                    page
+                })
+                .collect()
+        };
         assert_eq!(
-            selected_pages(Some(vec![2, 0, 2, 1]), 3).unwrap(),
+            selected_pages(None, &kept(&[1, 2, 3]), 3).unwrap(),
+            vec![0, 1, 2]
+        );
+        assert!(selected_pages(None, &[], 0).unwrap().is_empty());
+        assert!(selected_pages(Some(vec![]), &[], 0).unwrap().is_empty());
+        assert_eq!(
+            selected_pages(Some(vec![2, 0, 2, 1]), &kept(&[1, 2, 3]), 3).unwrap(),
             vec![0, 1, 2]
         );
         for count in [0, 1, 3] {
-            let result = selected_pages(Some(vec![0, count, count + 1]), count);
+            let numbers: Vec<usize> = (1..=count).collect();
+            let result = selected_pages(Some(vec![0, count, count + 1]), &kept(&numbers), count);
             assert!(
                 matches!(result,Err(ConvertError::PageOutOfRange{requested,page_count}) if requested==count+1 && page_count==count)
             );
         }
+        // Pages 2 and 4 of 4 kept: page 4 is the second kept; page 1 was
+        // dropped; the listing (5) lies past the layout's 4.
+        let gaps = kept(&[2, 4, 5]);
+        assert_eq!(
+            selected_pages(Some(vec![3, 4]), &gaps, 4).unwrap(),
+            vec![1, 2]
+        );
+        assert!(matches!(
+            selected_pages(Some(vec![0, 1]), &gaps, 4),
+            Err(ConvertError::PageNotKept { requested: 0 })
+        ));
+        assert!(matches!(
+            selected_pages(Some(vec![5]), &gaps, 4),
+            Err(ConvertError::PageOutOfRange {
+                requested: 5,
+                page_count: 5
+            })
+        ));
         assert_eq!(
             ConvertError::PageOutOfRange {
                 requested: 1,
                 page_count: 1
             }
             .to_string(),
-            "page 2 is out of range: the output has 1 page"
+            "page 2 is out of range: the document has 1 page"
         );
         assert_eq!(
             ConvertError::PageOutOfRange {
@@ -47136,7 +47232,11 @@ mod coverage_boundary_tests {
                 page_count: 2
             }
             .to_string(),
-            "page 4 is out of range: the output has 2 pages"
+            "page 4 is out of range: the document has 2 pages"
+        );
+        assert_eq!(
+            ConvertError::PageNotKept { requested: 2 }.to_string(),
+            "page 3 is not among the kept pages (changed pages only)"
         );
         assert_eq!(
             ConvertError::Emit("probe".into()).to_string(),
@@ -58610,7 +58710,7 @@ mod rendering_uncovered_contract_tests {
             resolved: true,
         });
         let mut pages = vec![page];
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         assert_eq!(pages.len(), 2);
         assert!(pages.iter().all(|p| p.comments.is_empty()));
         let ink: Vec<_> = pages[1]

@@ -170,17 +170,23 @@ fn end_placement_keeps_the_commented_range_highlighted() {
 }
 
 #[test]
-fn changed_only_keeps_the_pages_with_tracked_changes() {
+fn changed_only_keeps_the_pages_with_tracked_changes_and_comment_anchors() {
     let options = PdfOptions {
         changed_only: true,
         ..PdfOptions::default()
     };
     let r = rendered(&four_pages(true), options);
     let pages = texts(&r);
-    assert_eq!(pages.len(), 2, "{pages:?}");
+    assert_eq!(pages.len(), 3, "{pages:?}");
     assert!(pages[0].contains("Bravo page text"), "{pages:?}");
-    assert!(pages[1].contains("Delta page text"), "{pages:?}");
-    assert_eq!(r.report.page_count, 2);
+    assert!(
+        pages[1].contains("Charlie page text"),
+        "a comment anchor: {pages:?}"
+    );
+    assert!(pages[2].contains("Delta page text"), "{pages:?}");
+    assert_eq!(r.report.page_count, 3);
+    let numbers: Vec<usize> = r.report.pages.iter().map(|p| p.number).collect();
+    assert_eq!(numbers, [2, 3, 4]);
 }
 
 #[test]
@@ -190,22 +196,24 @@ fn changed_only_with_end_comments_lists_the_kept_pages_comments() {
         comments: CommentPlacement::End,
         ..PdfOptions::default()
     };
-    let pages = texts(&rendered(&four_pages(true), options));
+    let r = rendered(&four_pages(true), options);
+    let pages = texts(&r);
     assert_eq!(
         pages.len(),
-        3,
-        "Bravo, Delta and the comments page: {pages:?}"
+        4,
+        "Bravo, Charlie, Delta and the comments page: {pages:?}"
     );
-    let last = &pages[2];
+    let last = &pages[3];
     assert!(last.contains("First note here"), "{last:?}");
     assert!(
-        !last.contains("Second note here"),
-        "Charlie's page was dropped: {last:?}"
+        last.contains("Second note here"),
+        "Charlie's anchor keeps its page: {last:?}"
     );
     assert!(
-        last.contains("page 2"),
-        "the page number is the document's: {last:?}"
+        last.contains("page 2") && last.contains("page 3"),
+        "the page numbers are the document's: {last:?}"
     );
+    assert_eq!(r.report.pages[3].number, 5, "the listing follows page 4");
 }
 
 #[test]
@@ -214,9 +222,29 @@ fn changed_only_without_changes_keeps_the_first_page() {
         changed_only: true,
         ..PdfOptions::default()
     };
-    let pages = texts(&rendered(&four_pages(false), options));
+    let body = [
+        "Alpha page text",
+        "Bravo page text",
+        "Charlie page text",
+        "Delta page text",
+    ]
+    .map(|text| format!(r#"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#))
+    .join(PAGE_BREAK);
+    let pages = texts(&rendered(&docx_with(&body, &[]), options));
     assert_eq!(pages.len(), 1, "{pages:?}");
     assert!(pages[0].contains("Alpha page text"), "{pages:?}");
+}
+
+#[test]
+fn changed_only_without_changes_keeps_the_commented_pages() {
+    let options = PdfOptions {
+        changed_only: true,
+        ..PdfOptions::default()
+    };
+    let pages = texts(&rendered(&four_pages(false), options));
+    assert_eq!(pages.len(), 2, "{pages:?}");
+    assert!(pages[0].contains("Bravo page text"), "{pages:?}");
+    assert!(pages[1].contains("Charlie page text"), "{pages:?}");
 }
 
 #[test]
@@ -240,7 +268,7 @@ fn cli_convert_takes_move_comments_and_changed_only() {
         .unwrap();
     assert!(status.success());
     let pdf = std::fs::read(&output).unwrap();
-    assert_eq!(jubarte::convert::pdf_page_count(&pdf), 3);
+    assert_eq!(jubarte::convert::pdf_page_count(&pdf), 4);
 }
 
 #[test]
@@ -539,7 +567,7 @@ fn comments_are_listed_in_document_order_across_columns() {
 }
 
 #[test]
-fn changed_only_ignores_revisions_in_headers_and_footers() {
+fn changed_pages_keep_the_first_page_where_a_revised_header_or_footer_paints() {
     for (kind, tag) in [("header", "hdr"), ("footer", "ftr")] {
         for body_changed in [false, true] {
             let chrome = format!(
@@ -577,13 +605,88 @@ fn changed_only_ignores_revisions_in_headers_and_footers() {
                     ..PdfOptions::default()
                 },
             ));
-            let expected = if body_changed { &all[1] } else { &all[0] };
-            assert_eq!(
-                kept,
-                vec![expected.clone()],
-                "{kind}, body_changed={body_changed}"
-            );
+            // The revised chrome keeps the section's first page; a body
+            // change keeps its own.
+            let expected = if body_changed {
+                vec![all[0].clone(), all[1].clone()]
+            } else {
+                vec![all[0].clone()]
+            };
+            assert_eq!(kept, expected, "{kind}, body_changed={body_changed}");
         }
+    }
+}
+
+/// Two sections, the second with a revised header: its first page is kept.
+/// With a different first page (`titlePg`) the revised default header first
+/// paints on the section's second page, which is kept instead.
+#[test]
+fn changed_pages_keep_each_sections_first_page_with_a_revised_header() {
+    const HEADER_CT: &str =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+    const HEADER_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+    const PAGE: &str = r#"<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#;
+    let header = |text: &str, revised: bool| {
+        let run = format!(r#"<w:r><w:t>{text}</w:t></w:r>"#);
+        let run = if revised {
+            format!(r#"<w:ins w:id="1" w:author="Rev">{run}</w:ins>"#)
+        } else {
+            run
+        };
+        format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p>{run}</w:p></w:hdr>"#
+        )
+    };
+    let revised = header("Revised header", true);
+    let plain = header("Plain header", false);
+    for title_page in [false, true] {
+        let title = if title_page { "<w:titlePg/>" } else { "" };
+        let body = format!(
+            r#"<w:p><w:r><w:t>One A</w:t></w:r></w:p>{PAGE_BREAK}<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdX1"/>{PAGE}</w:sectPr></w:pPr><w:r><w:t>One B</w:t></w:r></w:p><w:p><w:r><w:t>Two A</w:t></w:r></w:p>{PAGE_BREAK}<w:p><w:r><w:t>Two B</w:t></w:r></w:p>"#
+        );
+        let docx = docx_with_sect_pr(
+            &body,
+            &[
+                Part {
+                    name: "word/header1.xml",
+                    content_type: HEADER_CT,
+                    rel_type: HEADER_REL,
+                    xml: &revised,
+                },
+                Part {
+                    name: "word/header2.xml",
+                    content_type: HEADER_CT,
+                    rel_type: HEADER_REL,
+                    xml: &plain,
+                },
+            ],
+            &format!(
+                r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:headerReference w:type="first" r:id="rIdX1"/>{title}{PAGE}</w:sectPr>"#
+            ),
+        );
+        let all = rendered(&docx, PdfOptions::default());
+        assert_eq!(texts(&all).len(), 4, "{:?}", texts(&all));
+        let kept = rendered(
+            &docx,
+            PdfOptions {
+                changed_only: true,
+                ..PdfOptions::default()
+            },
+        );
+        let numbers: Vec<usize> = kept.report.pages.iter().map(|p| p.number).collect();
+        let (number, text) = if title_page {
+            (4, "Two B")
+        } else {
+            (3, "Two A")
+        };
+        assert_eq!(
+            numbers,
+            [number],
+            "titlePg={title_page}: {:?}",
+            texts(&kept)
+        );
+        assert!(texts(&kept)[0].contains(text), "{:?}", texts(&kept));
     }
 }
 
@@ -739,9 +842,27 @@ fn changed_only_keeps_a_page_whose_only_revision_is_a_picture() {
 }
 
 #[test]
-fn unchanged_fallback_does_not_list_comments_from_discarded_pages() {
+fn comment_anchors_keep_their_pages_and_list_their_comments() {
     let pages = texts(&rendered(
         &four_pages(false),
+        PdfOptions {
+            comments: CommentPlacement::End,
+            changed_only: true,
+            ..PdfOptions::default()
+        },
+    ));
+    assert_eq!(pages.len(), 3, "Bravo, Charlie and the listing: {pages:?}");
+    assert!(!pages.concat().contains("Alpha page text"), "{pages:?}");
+    assert!(pages[2].contains("First note here") && pages[2].contains("Second note here"));
+}
+
+#[test]
+fn unchanged_fallback_does_not_list_comments_from_discarded_pages() {
+    let body = format!(
+        r#"<w:p><w:r><w:t>Alpha page text</w:t></w:r></w:p>{PAGE_BREAK}<w:p><w:r><w:t>Bravo page text</w:t></w:r></w:p>"#
+    );
+    let pages = texts(&rendered(
+        &with_comments(&body, COMMENT_XML),
         PdfOptions {
             comments: CommentPlacement::End,
             changed_only: true,
@@ -778,7 +899,7 @@ fn unchanged_fallback_lists_comments_anchored_on_the_first_page() {
 }
 
 #[test]
-fn png_selection_indexes_the_filtered_pages_and_comment_listing() {
+fn png_selection_uses_document_page_numbers() {
     let docx = four_pages(true);
     let options = PdfOptions {
         comments: CommentPlacement::End,
@@ -795,42 +916,71 @@ fn png_selection_indexes_the_filtered_pages_and_comment_listing() {
         },
     )
     .unwrap();
-    assert_eq!(all.pngs.len(), 3);
-    assert_eq!(pdf_page_count(all.pdf.as_ref().unwrap()), 3);
+    assert_eq!(all.pngs.len(), 4);
+    assert_eq!(pdf_page_count(all.pdf.as_ref().unwrap()), 4);
     assert_eq!(
         all.report.pages.iter().map(|p| p.index).collect::<Vec<_>>(),
-        [0, 1, 2]
+        [0, 1, 2, 3]
+    );
+    assert_eq!(
+        all.report
+            .pages
+            .iter()
+            .map(|p| p.number)
+            .collect::<Vec<_>>(),
+        [2, 3, 4, 5]
     );
     assert!(all.report.pages[0].text.contains("Bravo page text"));
-    assert!(all.report.pages[1].text.contains("Delta page text"));
-    assert!(all.report.pages[2].text.starts_with("Comments"));
-    let selected = render(
-        &docx,
-        options,
-        RenderRequest {
-            pdf: true,
-            png_dpi: Some(12.0),
-            pages: Some(vec![2, 0, 2]),
-        },
-    )
-    .unwrap();
+    assert!(all.report.pages[2].text.contains("Delta page text"));
+    assert!(all.report.pages[3].text.starts_with("Comments"));
+    let select = |pages: Vec<usize>| {
+        render(
+            &docx,
+            options,
+            RenderRequest {
+                pdf: true,
+                png_dpi: Some(12.0),
+                pages: Some(pages),
+            },
+        )
+    };
+    // Document pages 5 (the listing) and 2, in any order, repeats ignored.
+    let selected = select(vec![4, 1, 4]).unwrap();
     assert_eq!(
         selected.pngs,
-        vec![all.pngs[0].clone(), all.pngs[2].clone()]
+        vec![all.pngs[0].clone(), all.pngs[3].clone()]
     );
     assert_eq!(
-        selected.report, all.report,
-        "PNG selection must not narrow the report"
+        selected
+            .report
+            .pages
+            .iter()
+            .map(|p| p.number)
+            .collect::<Vec<_>>(),
+        [2, 5]
     );
     assert_eq!(
-        selected.pdf, all.pdf,
-        "PNG selection must not narrow the PDF"
+        pdf_page_count(selected.pdf.as_ref().unwrap()),
+        2,
+        "the PDF narrows too"
+    );
+    let one = select(vec![1]).unwrap();
+    assert_eq!(pdf_page_count(one.pdf.as_ref().unwrap()), 1);
+    assert!(one.report.pages[0].text.contains("Bravo page text"));
+    let err = select(vec![0]).unwrap_err();
+    assert!(
+        matches!(err, ConvertError::PageNotKept { requested: 0 }),
+        "{err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "page 1 is not among the kept pages (changed pages only)"
     );
 }
 
 #[test]
 fn png_page_bounds_use_the_output_count_after_filtering_and_listing() {
-    for (comments, count) in [(CommentPlacement::Margin, 2), (CommentPlacement::End, 3)] {
+    for (comments, count) in [(CommentPlacement::Margin, 4), (CommentPlacement::End, 5)] {
         let err = render(
             &four_pages(true),
             PdfOptions {
@@ -853,7 +1003,7 @@ fn png_page_bounds_use_the_output_count_after_filtering_and_listing() {
         assert_eq!(
             err.to_string(),
             format!(
-                "page {} is out of range: the output has {count} pages",
+                "page {} is out of range: the document has {count} pages",
                 count + 1
             )
         );
@@ -876,10 +1026,10 @@ fn pdf_entry_points_apply_both_options_in_every_revision_style() {
         let docx = four_pages(true);
         let r = rendered(&docx, options);
         let pages = texts(&r);
-        assert_eq!(pages.len(), 3, "{revisions:?}: {pages:?}");
+        assert_eq!(pages.len(), 4, "{revisions:?}: {pages:?}");
         assert!(pages[0].contains("[JR1]"), "{revisions:?}: {pages:?}");
-        assert!(pages[2].contains("First note here"));
-        assert!(!pages.concat().contains("Second note here"));
+        assert!(pages[3].contains("First note here"));
+        assert!(pages[3].contains("Second note here"));
         assert_eq!(docx_to_pdf_with(&docx, options).unwrap(), r.pdf.unwrap());
     }
 }
@@ -937,7 +1087,7 @@ fn cli_convert_png_selects_the_comment_listing_after_changed_pages() {
             "--move-comments",
             "--changed-only",
             "--pages",
-            "3",
+            "5",
             "--dpi",
             "12",
             "-o",
@@ -961,17 +1111,18 @@ fn cli_convert_png_selects_the_comment_listing_after_changed_pages() {
         RenderRequest {
             pdf: false,
             png_dpi: Some(12.0),
-            pages: Some(vec![2]),
+            pages: Some(vec![4]),
         },
     )
     .unwrap();
-    assert!(expected.report.pages[2].text.contains("First note here"));
+    assert!(expected.report.pages[0].text.contains("First note here"));
+    assert_eq!(expected.report.pages[0].number, 5);
     assert_eq!(
-        std::fs::read(dir.path().join("selected-page-03.png")).unwrap(),
+        std::fs::read(dir.path().join("selected-page-05.png")).unwrap(),
         expected.pngs[0]
     );
     assert!(!dir.path().join("selected-page-01.png").exists());
-    assert!(!dir.path().join("selected-page-02.png").exists());
+    assert!(!dir.path().join("selected-page-03.png").exists());
 }
 
 #[test]
