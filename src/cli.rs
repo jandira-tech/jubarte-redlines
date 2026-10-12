@@ -1227,13 +1227,21 @@ impl Format {
 /// A task that writes a file through `-o`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Task {
+    /// `compare` (alias `redline`): the redline.
     Compare,
+    /// `convert`: the document in another format.
     Convert,
+    /// `read` (alias `text`): the agent view.
     Read,
+    /// `diff`: a text diff.
     Diff,
+    /// `accept`: the document with changes accepted.
     Accept,
+    /// `reject`: the document with changes rejected.
     Reject,
+    /// `append`: the documents joined.
     Append,
+    /// `scrub`: the document with metadata removed.
     Scrub,
 }
 
