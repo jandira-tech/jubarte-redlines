@@ -36,11 +36,12 @@ def test_to_png_pages_are_counted_from_one() -> None:
     assert doc.to_png(dpi=20, pages=[]) == ()
 
 
-def test_render_pages_rasterizes_some_and_reports_all() -> None:
-    out = Document.from_bytes(pages("A", "B", "C")).render(pdf=False, png_dpi=20, pages=[2])
+def test_render_pages_rasterizes_and_reports_only_the_selection() -> None:
+    out = Document.from_bytes(pages("A", "B", "C")).render(pdf=True, png_dpi=20, pages=[2])
     assert len(out.pngs) == 1
-    assert out.report.page_count == 3
-    assert out.report.pages[1].text.strip() == "B"
+    assert out.report.page_count == 1
+    assert [(p.index, p.number, p.text.strip()) for p in out.report.pages] == [(0, 2, "B")]
+    assert out.pdf is not None and b"/Count 1" in out.pdf
 
 
 @pytest.mark.parametrize("bad", [[0], [-1], [1.5], [True], ["2"]])
@@ -50,7 +51,7 @@ def test_pages_must_be_page_numbers(bad: list[object]) -> None:
 
 
 def test_a_page_past_the_end_is_an_engine_error() -> None:
-    with pytest.raises(JubarteError, match="page 4 is out of range: the output has 3 pages"):
+    with pytest.raises(JubarteError, match="page 4 is out of range: the document has 3 pages"):
         Document.from_bytes(pages("A", "B", "C")).render(pdf=False, png_dpi=20, pages=[4])
 
 

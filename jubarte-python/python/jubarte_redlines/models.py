@@ -1397,9 +1397,14 @@ class FontResolution:
 
 @dataclass(frozen=True, slots=True)
 class PageText:
-    """Text painted on one page, one line per baseline."""
+    """Text painted on one page, one line per baseline.
+
+    ``index`` counts the report's pages from zero; ``number`` is the page's
+    number in the document, which differs once ``changed_only`` drops pages.
+    """
 
     index: int
+    number: int
     text: str
 
 
