@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -406,8 +407,8 @@ def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter
 
 
 def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # Operation flags grouped by -p; the default out dir sits beside the file.
-    code = main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an", "-p", "p0", "--delete", "--datetime", "2026-10-01T09:00:00Z"])
+    # Operation flags grouped by -p; --out-dir alone puts the bundle beside the file.
+    code = main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an", "-p", "p0", "--delete", "--datetime", "2026-10-01T09:00:00Z", "--out-dir"])
     assert code == 0, capsys.readouterr()
     out = capsys.readouterr().out
     bundle = tmp_path / "letter.edit"
@@ -436,6 +437,46 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
     assert "\nRecitals\n" in out and "{++" not in out, out
+
+
+def test_edit_and_add_write_one_document_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    edit = ["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an"]
+    written = tmp_path / "letter_modified.docx"
+    assert main(edit) == 0
+    captured = capsys.readouterr()
+    assert written.is_file() and not (tmp_path / "letter.edit").exists()
+    with zipfile.ZipFile(written) as package:
+        assert b"<w:ins " in package.read("word/document.xml")
+    assert f"\nsource: {written}\n" in captured.out, captured.out
+    assert captured.err.startswith(f"wrote {written} (docx, "), captured.err
+    # An existing output is a usage error until --force.
+    with pytest.raises(SystemExit) as exit_info:
+        main(edit)
+    assert exit_info.value.code == 2
+    assert "already exists (use --force to overwrite)" in capsys.readouterr().err
+    assert main([*edit, "--force", "--pdf", "-q"]) == 0
+    assert capsys.readouterr() == ("", "")
+    assert (tmp_path / "letter_modified.pdf").read_bytes().startswith(b"%PDF")
+    # Editing mode writes the result, with no tracked change in it.
+    assert main([*edit, "--editing-mode", "-o", str(tmp_path / "clean.docx")]) == 0
+    assert "{~~" not in capsys.readouterr().out
+    with zipfile.ZipFile(tmp_path / "clean.docx") as package:
+        assert b"<w:ins " not in package.read("word/document.xml")
+    # -o names a .docx and does not go with --out-dir; FILE itself exists.
+    for bad in (["-o", str(tmp_path / "b.pdf")], ["-o", str(letter)], ["-o", str(tmp_path / "b.docx"), "--out-dir", str(tmp_path / "r")]):
+        with pytest.raises(SystemExit) as exit_info:
+            main([*edit, *bad])
+        assert exit_info.value.code == 2, bad
+    assert not (tmp_path / "b.docx").exists() and not (tmp_path / "r").exists()
+    capsys.readouterr()
+    # A _modified FILE keeps its name: add edits it in place, with --force.
+    add = ["add", str(written), "-p", "p2", "--content", "New."]
+    with pytest.raises(SystemExit) as exit_info:
+        main(add)
+    assert exit_info.value.code == 2 and "--force" in capsys.readouterr().err
+    assert main([*add, "--force"]) == 0
+    assert f"\nsource: {written}\n" in capsys.readouterr().out
+    assert sorted(p.name for p in tmp_path.glob("letter_modified*")) == ["letter_modified.docx", "letter_modified.pdf"]
 
 
 def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
