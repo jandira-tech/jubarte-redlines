@@ -141,11 +141,14 @@ def test_cli_diff_render_exit_codes_and_files(tmp_path: Path, capsys: pytest.Cap
     b.write_bytes(pages("Page one.", "The fee is twenty.", "Extra."))
     out = tmp_path / "diff"
 
-    assert main(["diff-render", str(a), str(a), "--dpi", "20"]) == 0
+    assert main(["visual-diff", str(a), str(a), "--dpi", "20"]) == 0
     assert capsys.readouterr().out == "0 of 2 pages differ\n"
 
+    # 0.12's name still runs and says what it is now.
     assert main(["diff-render", str(a), str(b), "--dpi", "20", "--out-dir", str(out)]) == 5
-    text = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.err == "note: diff-render is now visual-diff; diff-render is removed in 0.14\n"
+    text = captured.out
     assert "page 2: " in text and "page 3: only in b" in text
     assert sorted(p.name for p in out.iterdir()) == ["a-page-02.png", "b-page-02.png", "b-page-03.png", "diff-page-02.png", "diff.json"]
     summary = json.loads((out / "diff.json").read_text())
@@ -155,5 +158,5 @@ def test_cli_diff_render_exit_codes_and_files(tmp_path: Path, capsys: pytest.Cap
     assert main(["diff-render", str(a), str(b), "--dpi", "20", "--out-dir", str(out)]) == 1
     assert "already exists" in capsys.readouterr().err
 
-    assert main(["diff-render", str(a), str(b), "--dpi", "20", "--json", "--no-overlay"]) == 5
+    assert main(["visual-diff", str(a), str(b), "--dpi", "20", "--json", "--no-overlay"]) == 5
     assert json.loads(capsys.readouterr().out)["changed"] == 2
