@@ -58,6 +58,145 @@ fn inspect_prints_json_snapshot_or_a_human_table() {
     assert!(stdout.contains("paragraphs: 3"), "{stdout}");
 }
 
+/// A document with changes, comments and a table.
+const RECEIVED: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/agent-view/received.docx"
+);
+
+fn json(args: &[&str]) -> serde_json::Value {
+    let (code, stdout, stderr) = run(args);
+    assert_eq!(code, 0, "{args:?}: {stderr}");
+    serde_json::from_str(&stdout).unwrap()
+}
+
+/// `read --json` prints the snapshot: the paragraphs, and the changes and
+/// comments as `changes --json` and `comments --json` list them.
+#[test]
+fn read_json_prints_the_snapshot_with_changes_and_comments() {
+    let snapshot = json(&["read", RECEIVED, "--json"]);
+    assert_eq!(snapshot["schema_version"], 1);
+    assert_eq!(snapshot["paragraphs"][1]["id"], "body:p:1");
+    assert_eq!(snapshot["changes"][0]["ref"], "r0");
+    assert_eq!(snapshot["comments"][0]["ref"], "c5");
+    let (_, inspect, _) = run(&["inspect", RECEIVED, "--json"]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&inspect).unwrap(),
+        snapshot
+    );
+    // Each record `changes`/`comments` lists is one of the snapshot's.
+    for (task, key) in [("changes", "changes"), ("comments", "comments")] {
+        let (code, stdout, _) = run(&[task, RECEIVED, "--json"]);
+        assert_eq!(code, 0);
+        let listed: Vec<serde_json::Value> = match serde_json::from_str(&stdout) {
+            Ok(serde_json::Value::Array(all)) => all,
+            _ => stdout
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect(),
+        };
+        assert_eq!(
+            listed.len(),
+            snapshot[key].as_array().unwrap().len(),
+            "{task}"
+        );
+        for record in &listed {
+            assert!(
+                snapshot[key].as_array().unwrap().contains(record),
+                "{task}: {record}"
+            );
+        }
+    }
+}
+
+/// The library's snapshot carries what `list_changes` and `list_comments`
+/// list, and `retain` keeps a paragraph's own records.
+#[test]
+fn the_snapshot_lists_changes_and_comments_and_retains_by_paragraph() {
+    let bytes = std::fs::read(RECEIVED).unwrap();
+    let mut snapshot = jubarte::inspect::snapshot(&bytes).unwrap();
+    assert_eq!(
+        snapshot.changes,
+        jubarte::changes::list_changes(&bytes).unwrap()
+    );
+    assert_eq!(
+        snapshot.comments,
+        jubarte::comments::list_comments(&bytes).unwrap()
+    );
+    let summary = snapshot.summary.clone();
+    snapshot.retain(&[5]);
+    assert_eq!(snapshot.summary, summary);
+    let ids: Vec<&str> = snapshot.paragraphs.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, ["body:p:5"]);
+    let refs: Vec<&str> = snapshot.comments.iter().map(|c| c.r#ref.as_str()).collect();
+    assert_eq!(refs, ["c5", "c6"]);
+    assert!(
+        snapshot
+            .changes
+            .iter()
+            .all(|c| c.paragraph.as_deref() == Some("body:p:5"))
+    );
+}
+
+/// The selection flags keep paragraphs, and only their changes and
+/// comments; the summary still counts the whole document.
+#[test]
+fn read_json_keeps_what_the_selection_flags_select() {
+    let whole = json(&["read", RECEIVED, "--json"]);
+    let one = json(&["read", RECEIVED, "--json", "-p", "p3"]);
+    let ids: Vec<&str> = one["paragraphs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["body:p:3"]);
+    assert_eq!(one["summary"], whole["summary"]);
+    let changes = one["changes"].as_array().unwrap();
+    assert!(!changes.is_empty());
+    assert!(
+        changes.iter().all(|c| c["paragraph"] == "body:p:3"),
+        "{one}"
+    );
+    assert_eq!(one["comments"], serde_json::json!([]));
+    assert_eq!(one["tables"], whole["tables"]);
+    let changed = json(&["read", RECEIVED, "--json", "--changed"]);
+    let kept = changed["paragraphs"].as_array().unwrap();
+    assert!(kept.len() < whole["paragraphs"].as_array().unwrap().len());
+    assert!(kept.iter().all(|p| p["id"] != "body:p:0"), "{changed}");
+    assert_eq!(changed["changes"], whole["changes"]);
+}
+
+/// `read --tables` prints the grids; --json and --tables read one document,
+/// and the view-only flags do not go with --json.
+#[test]
+fn read_tables_and_the_json_refusals() {
+    let (code, stdout, _) = run(&["read", RECEIVED, "--tables"]);
+    assert_eq!(code, 0);
+    assert!(stdout.starts_with("table 0: "), "{stdout}");
+    let (code, _, stderr) = run(&[RECEIVED, RECEIVED, "--json"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("--json reads one document; `-o FILE.json` writes the redline's snapshot"),
+        "{stderr}"
+    );
+    for args in [
+        &["read", RECEIVED, "--json", "--dates"][..],
+        &["read", RECEIVED, "--json", "--comments", "none"],
+        &["read", RECEIVED, "--json", "--track-changes", "accept"],
+        &["read", RECEIVED, "--json", "--no-page-markers"],
+        &["read", RECEIVED, "--tables", "--head", "2"],
+        &[RECEIVED, RECEIVED, "--tables"],
+    ] {
+        assert_eq!(run(args).0, 2, "{args:?}");
+    }
+    // The one-file shorthand reads like `read`.
+    assert_eq!(
+        json(&[RECEIVED, "--json"]),
+        json(&["read", RECEIVED, "--json"])
+    );
+}
+
 #[test]
 fn text_prints_markdown_with_paragraph_ids() {
     let dir = tempfile::tempdir().unwrap();
