@@ -515,8 +515,10 @@ mod tests {
     fn finding(code: &str, part: &str, path: &str) -> crate::validate::Finding {
         crate::validate::Finding {
             code: code.into(),
+            set: "word".into(),
+            severity: "error".into(),
             part: part.into(),
-            path: path.into(),
+            location: path.into(),
             message: String::new(),
             word_fatal: true,
             repairable: false,

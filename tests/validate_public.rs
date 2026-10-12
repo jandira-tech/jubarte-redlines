@@ -22,7 +22,7 @@ fn text_inside_a_deletion_is_word_fatal_and_repairable() {
         .expect("finding");
     assert!(f.word_fatal && f.repairable);
     assert_eq!(f.part, "word/document.xml");
-    assert!(f.path.starts_with("w:body[0]/w:p[0]"), "{}", f.path);
+    assert!(f.location.starts_with("w:body[0]/w:p[0]"), "{}", f.location);
 
     let fixed = repair(&docx(body)).unwrap();
     assert_eq!(fixed.repaired.len(), 1, "{:?}", fixed.repaired);
@@ -67,16 +67,30 @@ fn findings_are_json_with_stable_field_names() {
     let findings = validate(&docx(body)).unwrap();
     let json: serde_json::Value = serde_json::to_value(&findings).unwrap();
     let first = &json[0];
-    for key in [
-        "code",
-        "part",
-        "path",
-        "message",
-        "word_fatal",
-        "repairable",
-    ] {
-        assert!(first.get(key).is_some(), "{key} missing in {first}");
-    }
+    let keys: Vec<&str> = first
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    // serde_json's map sorts keys.
+    assert_eq!(
+        keys,
+        [
+            "code",
+            "location",
+            "message",
+            "part",
+            "repairable",
+            "set",
+            "severity",
+            "word_fatal"
+        ]
+    );
+    assert_eq!(
+        (&first["set"], &first["severity"]),
+        (&"word".into(), &"error".into())
+    );
 }
 
 #[test]
@@ -441,9 +455,9 @@ fn the_audit_sees_an_untracked_header_edit_and_names_its_part() {
     assert_eq!(codes(&findings), ["UNTRACKED_EDIT"], "{findings:?}");
     assert_eq!(findings[0].part, "word/header1.xml");
     assert!(
-        findings[0].path.starts_with("header1:p:"),
+        findings[0].location.starts_with("header1:p:"),
         "{}",
-        findings[0].path
+        findings[0].location
     );
     assert!(
         audit_tracked(&original, &original, "Legal")

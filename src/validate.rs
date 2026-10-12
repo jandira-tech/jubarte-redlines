@@ -73,41 +73,56 @@ use crate::opc::PartFs;
 use crate::xmllinq::serialize::{well_known_namespace, well_known_prefix};
 use crate::xmllinq::{Dom, NodeId, XName};
 
-/// One thing wrong with a package. `path` is the element chain inside
-/// `part` (`w:body[0]/w:p[3]/w:r[2]`, each name indexed among its
-/// same-named siblings, root excluded), stable across runs; empty for a
-/// package-level finding.
+/// One thing wrong with a package, from any rule set: Word validity
+/// (`word`), tracked-edit discipline (`edits`), or the [`crate::audit`] sets
+/// (`a11y`, `style`, `structure`). For `word` and `edits`, `location` is the
+/// element chain inside `part` (`w:body[0]/w:p[3]/w:r[2]`, each name indexed
+/// among its same-named siblings, root excluded), stable across runs, or a
+/// paragraph id (`body:p:3`); empty for a package-level finding. For the
+/// audit sets it is the paragraph id (`body:p:N`, `header1:p:0`) or, when
+/// no paragraph applies, the part name.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     /// Stable code (`TEXT_INSIDE_DELETION`, `MC_UNBOUND_PREFIX`, ...).
     pub code: String,
+    /// The rule set it belongs to: one of [`RULE_SETS`].
+    pub set: String,
+    /// `error`, `warning` or `info`. A `word` finding is an `error` when
+    /// Word-fatal and a `warning` (a lead) otherwise.
+    pub severity: String,
     /// Package part the finding sits in.
     pub part: String,
-    /// Element chain inside the part, or empty for package-level findings.
-    pub path: String,
+    /// Where in the part (see the type's doc), or empty.
+    pub location: String,
     /// Human-readable detail.
     pub message: String,
     /// True when Word refuses or repairs the file for this (Ring-1 and
-    /// Ring-3 evidence); false for leads (`DUPLICATE_DOCPR_ID`).
+    /// Ring-3 evidence); false for leads (`DUPLICATE_DOCPR_ID`) and for
+    /// every finding outside the `word` set.
     pub word_fatal: bool,
     /// True when [`repair`] fixes it deterministically.
     pub repairable: bool,
 }
 
+/// Every rule set `validate` runs, `word` (the default) first.
+pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
+
 impl Finding {
-    /// A finding with `word_fatal` and `repairable` taken from the code's
-    /// table ([`traits`]).
+    /// A `word` finding with `word_fatal` and `repairable` taken from the
+    /// code's table ([`traits`]) and the severity from `word_fatal`.
     pub fn new(
         code: &str,
         part: &str,
-        path: impl Into<String>,
+        location: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
         let (word_fatal, repairable) = traits(code);
         Finding {
             code: code.to_string(),
+            set: "word".to_string(),
+            severity: if word_fatal { "error" } else { "warning" }.to_string(),
             part: part.to_string(),
-            path: path.into(),
+            location: location.into(),
             message: message.into(),
             word_fatal,
             repairable,
@@ -192,6 +207,11 @@ pub enum ValidateError {
     Changes(ChangeError),
     /// The paragraphs could not be read.
     Inspect(InspectError),
+    /// The rules asked for cannot run: an unknown rule, or `edits` without
+    /// the original document and author.
+    Usage(String),
+    /// The layout pass an audit rule reads failed.
+    Layout(String),
 }
 
 impl fmt::Display for ValidateError {
@@ -201,6 +221,8 @@ impl fmt::Display for ValidateError {
             Self::Package(m) => write!(f, "invalid package: {m}"),
             Self::Changes(e) => write!(f, "{e}"),
             Self::Inspect(e) => write!(f, "{e}"),
+            Self::Usage(m) => write!(f, "{m}"),
+            Self::Layout(m) => write!(f, "layout pass failed: {m}"),
         }
     }
 }
@@ -243,7 +265,140 @@ pub struct Repaired {
     pub remaining: Vec<Finding>,
 }
 
-/// Findings in document order, sorted by part and path; an empty vector is
+/// [`validate`] with rule sets: `word` (the default), `edits`, and the
+/// [`crate::audit`] sets or codes (`a11y`, `style`, `structure`,
+/// `LITERAL_BULLET`, ...). `original` (the document before the edits and the
+/// author every change must carry) adds `edits`. `layout` is the pass the
+/// audit's `FONT_SUBSTITUTED` and `STALE_FIELD_CACHE` read
+/// ([`crate::audit::word_layout`] natively; `None` in a build without the
+/// renderer). Findings come word first (by part and location), then edits,
+/// then the audit's in its rule order.
+///
+/// # Errors
+///
+/// [`ValidateError::Usage`] for an unknown rule, or `edits` without
+/// `original`; otherwise as [`validate`] and [`audit_tracked`].
+pub fn validate_with(
+    docx: &[u8],
+    rules: &[&str],
+    original: Option<(&[u8], &str)>,
+    layout: Option<crate::audit::LayoutPass<'_>>,
+) -> Result<Vec<Finding>, ValidateError> {
+    let mut word = rules.is_empty();
+    let mut edits = original.is_some();
+    let mut audit = Vec::new();
+    for &rule in rules {
+        match rule {
+            "word" => word = true,
+            "edits" => edits = true,
+            _ if crate::audit::is_rule(rule) => audit.push(rule),
+            _ => return Err(ValidateError::Usage(unknown_rule(rule))),
+        }
+    }
+    let mut out = Vec::new();
+    if word {
+        out.extend(validate(docx)?);
+    }
+    if edits {
+        let Some((before, author)) = original else {
+            return Err(ValidateError::Usage(
+                "rules edits needs --original and --author".to_string(),
+            ));
+        };
+        out.extend(audit_tracked(before, docx, author)?);
+    }
+    if !audit.is_empty() {
+        let report =
+            crate::audit::audit_report_with(docx, &audit, layout).map_err(|e| match e {
+                crate::audit::AuditError::Inspect(e) => ValidateError::Inspect(e),
+                crate::audit::AuditError::Layout(m) => ValidateError::Layout(m),
+                crate::audit::AuditError::UnknownRule(rule) => {
+                    ValidateError::Usage(unknown_rule(&rule))
+                }
+            })?;
+        out.extend(report.findings.into_iter().map(Finding::from));
+    }
+    Ok(out)
+}
+
+/// The usage message for a rule that is neither a set nor an audit code.
+fn unknown_rule(rule: &str) -> String {
+    let codes: Vec<&str> = crate::audit::RULES.iter().map(|rule| rule.0).collect();
+    format!(
+        "unknown rule {rule}; expected one of {} or {}",
+        RULE_SETS.join(", "),
+        codes.join(", ")
+    )
+}
+
+/// True when `findings` fail a run: any `word` or `edits` finding, any
+/// `error`, or (`strict`) any `warning`.
+pub fn fails(findings: &[Finding], strict: bool) -> bool {
+    findings.iter().any(|f| {
+        matches!(f.set.as_str(), "word" | "edits")
+            || f.severity == "error"
+            || (strict && f.severity == "warning")
+    })
+}
+
+/// One line per finding, then a summary. A line is `* CODE\tSEVERITY\t
+/// PART#LOCATION\tMESSAGE` for `word` and `edits` (`*` marks Word-fatal, a
+/// space otherwise) and `  CODE\tSEVERITY\tLOCATION\tMESSAGE` for the audit
+/// sets. The summary is `no findings` or `N finding(s): E error, W warning,
+/// I info`.
+pub fn findings_text(findings: &[Finding]) -> String {
+    let mut out = String::new();
+    for f in findings {
+        let star = if f.word_fatal { '*' } else { ' ' };
+        let place = if matches!(f.set.as_str(), "word" | "edits") {
+            format!("{}#{}", f.part, f.location)
+        } else {
+            f.location.clone()
+        };
+        out.push_str(&format!(
+            "{star} {}\t{}\t{place}\t{}\n",
+            f.code, f.severity, f.message
+        ));
+    }
+    if findings.is_empty() {
+        out.push_str("no findings\n");
+    } else {
+        let count = |severity: &str| findings.iter().filter(|f| f.severity == severity).count();
+        out.push_str(&format!(
+            "{} finding(s): {} error, {} warning, {} info\n",
+            findings.len(),
+            count("error"),
+            count("warning"),
+            count("info")
+        ));
+    }
+    out
+}
+
+impl From<crate::audit::AuditFinding> for Finding {
+    /// The audit's finding in the shared shape: its part is the story's
+    /// part for a paragraph id (`body:p:3` → `word/document.xml`), else the
+    /// location itself (a part name); it is never Word-fatal or repairable.
+    fn from(f: crate::audit::AuditFinding) -> Self {
+        let part = if f.location.contains(':') {
+            story_part(&f.location)
+        } else {
+            f.location.clone()
+        };
+        Finding {
+            code: f.code,
+            set: f.rule_set,
+            severity: f.severity,
+            part,
+            location: f.location,
+            message: f.message,
+            word_fatal: false,
+            repairable: false,
+        }
+    }
+}
+
+/// Findings in document order, sorted by part and location; an empty vector is
 /// a pass.
 ///
 /// # Errors
@@ -260,7 +415,7 @@ pub fn validate(docx: &[u8]) -> Result<Vec<Finding>, ValidateError> {
             .into_iter()
             .filter(|f| !RING1_CODES.contains(&f.code.as_str())),
     );
-    out.sort_by(|a, b| (&a.part, &a.path).cmp(&(&b.part, &b.path)));
+    out.sort_by(|a, b| (&a.part, &a.location).cmp(&(&b.part, &b.location)));
     Ok(out)
 }
 
@@ -1864,7 +2019,7 @@ pub fn audit_tracked(
                 after.len()
             ),
         ));
-        return Ok(out);
+        return Ok(as_edits(out));
     }
     for (b, a) in before.iter().zip(&after) {
         if b.text != a.text {
@@ -1879,7 +2034,16 @@ pub fn audit_tracked(
             ));
         }
     }
-    Ok(out)
+    Ok(as_edits(out))
+}
+
+/// [`audit_tracked`]'s findings belong to the `edits` set and fail a run.
+fn as_edits(mut findings: Vec<Finding>) -> Vec<Finding> {
+    for f in &mut findings {
+        f.set = "edits".to_string();
+        f.severity = "error".to_string();
+    }
+    findings
 }
 
 #[cfg(test)]
@@ -2248,8 +2412,10 @@ mod public_memory_validator_owner_boundary_tests {
         let bytes = pkg.to_zip().unwrap();
         let expected = Finding {
             code: "MISSING_CONTENT_TYPE".into(),
+            set: "word".into(),
+            severity: "error".into(),
             part: "customXml/source-owned.opaque".into(),
-            path: String::new(),
+            location: String::new(),
             message: "part 'customXml/source-owned.opaque' has no content type".into(),
             word_fatal: true,
             repairable: false,
@@ -2307,7 +2473,7 @@ mod public_memory_validator_owner_boundary_tests {
                 .filter(|finding| finding.code == "PARA_ID_OUT_OF_RANGE")
                 .cloned()
                 .collect::<Vec<_>>();
-            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),part:"word/comments.xml".into(),path:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:false,repairable:true});
+            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),set:"word".into(),severity:"warning".into(),part:"word/comments.xml".into(),location:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:false,repairable:true});
             assert_eq!(range, expected_range);
             let result = repair(&bytes).unwrap();
             assert!(
