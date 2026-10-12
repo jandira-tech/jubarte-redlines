@@ -21,6 +21,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   also keeps the pages a comment is anchored on and the first page of each
   section on which a revised header or footer paints. The comment listing's
   pages number on after the document's last page.
+- `-q`/`--quiet` is one global option that goes after the task
+  (`jubarte compare a.docx b.docx -q`); `jubarte -q read a.docx` exits 2.
+- `diff-render` is `visual-diff`.
+
+### Deprecated
+
+- `diff-render`, and 0.12's cell id `t0.r1.c2` as an `edit`/`add` `-p`
+  value, keep working and print `note: X is now Y; X is removed in 0.14` on
+  stderr. The shared parser's JSON carries those notes as `notes`, and
+  `args.quiet` on every task.
 
 ### Breaking (library)
 
