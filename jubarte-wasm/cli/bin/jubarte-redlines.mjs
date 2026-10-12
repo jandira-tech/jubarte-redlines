@@ -170,7 +170,7 @@ const COMMANDS = {
         if (to === "md") data = wasm.diffDocumentsCritic(a, b, author, date);
         if (["docx", "pdf"].includes(to)) {
           data = wasm.redlineDocuments(a, b, author, date);
-          if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_only));
+          if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_pages));
         }
         write(output, data);
         // As natively: critic says only what it wrote; a patch keeps stdout.
@@ -229,8 +229,8 @@ const COMMANDS = {
       if (kindOf(file, docx) === "md") {
         docx = wasm.markdownToDocx(markdownText(file, docx), JSON.stringify({ page: o.page, author: o.author, date: o.date, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
         if (!o.pdf && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
-          if (o.move_comments || o.changed_only) {
-            throw new CliError("--move-comments / --changed-only applies to PDF or PNG output only");
+          if (o.move_comments || o.changed_pages) {
+            throw new CliError("--move-comments / --changed-pages applies to PDF or PNG output only");
           }
           const output = o.output ?? path.join(path.dirname(file), `${stem(file)}.docx`);
           ensureWritable(output, o.force);
@@ -248,7 +248,7 @@ const COMMANDS = {
       }
       const output = o.output ?? path.join(path.dirname(file), `${stem(file)}.pdf`);
       ensureWritable(output, o.force);
-      const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions, palette, Boolean(o.move_comments), Boolean(o.changed_only));
+      const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions, palette, Boolean(o.move_comments), Boolean(o.changed_pages));
       write(output, pdf);
       console.log(`wrote ${output} (${pdf.length} bytes, ${plural(wasm.pdfPageCount(pdf), "page")})`);
     },
@@ -510,9 +510,14 @@ function validateHost(name, o) {
       throw new UsageError("PNG pages need the Python or Rust build (uvx jubarte-redlines convert --png)");
     }
   }
+  if (["convert", "diff"].includes(name)) {
+    for (const flag of ["dpi", "pages"]) {
+      if (flag === "dpi" ? o.dpi !== 96 : o[flag] != null) reject(flag);
+    }
+  }
   if (name === "convert") {
     if (o.update_fields) reject("update_fields");
-    for (const flag of ["dpi", "pages", "report", "font_report"]) {
+    for (const flag of ["report", "font_report"]) {
       if (flag === "dpi" ? o.dpi !== 96 : o[flag] != null) reject(flag);
     }
     const extension = path.extname(o.output ?? "").toLowerCase();
