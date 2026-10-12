@@ -167,6 +167,64 @@ fn read_json_keeps_what_the_selection_flags_select() {
     assert_eq!(changed["changes"], whole["changes"]);
 }
 
+/// A Strict package keeps its shapes' text in `wne:txbxContent`. The view,
+/// the snapshot and `edit` all leave those paragraphs out, so `pN` names the
+/// same paragraph everywhere (the view's `p131` used to be `body:p:137`).
+#[test]
+fn strict_text_boxes_leave_the_paragraph_ids_alone() {
+    const STRICT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/strict/Strict01.docx"
+    );
+    let whole = json(&["read", STRICT, "--json"]);
+    let (code, view, stderr) = run(&["read", STRICT, "--no-page-markers"]);
+    assert_eq!(code, 0, "{stderr}");
+    let paragraphs = whole["paragraphs"].as_array().unwrap().len();
+    assert!(
+        view.contains(&format!("body: p0-p{}, ", paragraphs - 1)),
+        "{paragraphs} paragraphs: {view}"
+    );
+    let one = json(&["read", STRICT, "--json", "-p", "p131"]);
+    let kept = &one["paragraphs"][0];
+    assert_eq!(kept["id"], "body:p:131");
+    assert!(
+        kept["text"].as_str().unwrap().starts_with("Video provides"),
+        "{kept}"
+    );
+    assert!(
+        view.contains("<!-- p131 -->\n**_<u>Video provides"),
+        "{view}"
+    );
+    assert!(
+        one["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "body:rev:7"),
+        "{one}"
+    );
+    let changed = json(&["read", STRICT, "--json", "--changed"]);
+    assert_eq!(changed["changes"], whole["changes"]);
+    let dir = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = run_in(
+        dir.path(),
+        &[
+            "edit",
+            STRICT,
+            "-q",
+            "-p",
+            "p131",
+            "--anchor",
+            "Video provides",
+            "--content",
+            "Film provides",
+            "--out-dir",
+            "out",
+        ],
+    );
+    assert_eq!(code, 0, "edit -p p131 finds the view's p131: {stderr}");
+}
+
 /// `read --tables` prints the grids; --json and --tables read one document,
 /// and the view-only flags do not go with --json.
 #[test]

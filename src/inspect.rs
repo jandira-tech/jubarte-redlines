@@ -19,7 +19,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::namespaces::{MC, W, W14, W15};
+use crate::namespaces::{MC, W, W14, W15, WNE};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -625,6 +625,27 @@ fn has_ancestor(dom: &Dom, node: NodeId, name: &XName) -> bool {
     !dom.ancestors(node, Some(name)).is_empty()
 }
 
+/// The two names a text box's content goes by: `w:txbxContent`, and the
+/// `wne:txbxContent` a Strict package's shapes hold (the agent view skips
+/// both by local name, so every id walk must too).
+pub(crate) fn text_box_names() -> [XName; 2] {
+    [W::txbx_content(), WNE::name("txbxContent")]
+}
+
+/// Whether `node` sits inside a text box.
+pub(crate) fn in_text_box(dom: &Dom, node: NodeId) -> bool {
+    text_box_names()
+        .iter()
+        .any(|name| has_ancestor(dom, node, name))
+}
+
+/// Whether `node` holds a text box.
+fn holds_text_box(dom: &Dom, node: NodeId) -> bool {
+    text_box_names()
+        .iter()
+        .any(|name| !dom.descendants(node, Some(name)).is_empty())
+}
+
 fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
     dom.descendants(root, Some(&W::name(local)))
         .iter()
@@ -641,7 +662,7 @@ fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
 pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::p()))
         .into_iter()
-        .filter(|&p| !has_ancestor(dom, p, &W::txbx_content()))
+        .filter(|&p| !in_text_box(dom, p))
         .collect()
 }
 
@@ -650,7 +671,7 @@ pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
 pub(crate) fn body_control_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::sdt()))
         .into_iter()
-        .filter(|&sdt| !has_ancestor(dom, sdt, &W::txbx_content()))
+        .filter(|&sdt| !in_text_box(dom, sdt))
         .collect()
 }
 
@@ -1019,7 +1040,7 @@ fn walk_run(
             {
                 out.limitations.insert("drawing".into());
             }
-            if !dom.descendants(child, Some(&W::txbx_content())).is_empty() {
+            if holds_text_box(dom, child) {
                 out.limitations.insert("text_box_omitted".into());
             }
             continue;
@@ -1081,7 +1102,7 @@ fn walk_run(
             }
             "drawing" | "pict" | "object" => {
                 out.limitations.insert("drawing".into());
-                if !dom.descendants(child, Some(&W::txbx_content())).is_empty() {
+                if holds_text_box(dom, child) {
                     out.limitations.insert("text_box_omitted".into());
                 }
             }
