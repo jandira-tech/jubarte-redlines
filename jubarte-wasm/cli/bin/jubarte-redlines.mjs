@@ -503,7 +503,7 @@ function validateHost(name, o) {
     if (o.no_paragraph_merge) reject("no_paragraph_merge");
   }
   if (["inspect", "read"].includes(name) && o.tables) reject("tables");
-  if (name === "read" && o.json && (o.paragraphs != null || o.head != null || o.tail != null || o.changed)) {
+  if (name === "read" && o.json && (o.paragraphs != null || o.head != null || o.tail != null || o.changed || o.by != null)) {
     throw new UsageError("--json with a selection is not supported by the npm CLI");
   }
   if (["convert", "diff"].includes(name)) {

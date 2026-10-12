@@ -889,7 +889,7 @@ class SharedParser:
         if command in ("inspect", "read") and values.get("tables"):
             self.error("--tables is not supported by the Python CLI")
         if command == "read" and values.get("json"):
-            for key in ("paragraphs", "head", "tail", "changed"):
+            for key in ("paragraphs", "head", "tail", "changed", "by"):
                 if values.get(key) not in (None, False):
                     self.error("--json with a selection is not supported by the Python CLI")
         if command in ("convert", "diff"):
