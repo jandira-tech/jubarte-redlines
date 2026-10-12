@@ -917,8 +917,61 @@ fn edit_and_add_group_accept_reject_and_reply_by_their_location() {
         &["jubarte", "edit", "a.docx", "--accept", "-p", "r1"][..],
         &["jubarte", "edit", "a.docx", "--plan", "p.json", "--accept"][..],
         &["jubarte", "add", "a.docx", "-p", "r1", "--accept"][..],
+        &["jubarte", "add", "a.docx"][..],
+        &[
+            "jubarte",
+            "edit",
+            "a.docx",
+            "-p",
+            "p1",
+            "--delete",
+            "--consume",
+        ][..],
+        &[
+            "jubarte",
+            "add",
+            "a.docx",
+            "-p",
+            "p1",
+            "--content",
+            "x",
+            "--consume",
+        ][..],
     ] {
         assert!(Cli::try_parse_from(argv).is_err(), "{argv:?}");
+    }
+    // --plan with operation flags records them; alone it applies the plan,
+    // for add too, and --consume rides along.
+    for argv in [
+        &[
+            "jubarte",
+            "edit",
+            "a.docx",
+            "--plan",
+            "p.json",
+            "-p",
+            "p1",
+            "--content",
+            "x",
+            "--author",
+            "Ann",
+        ][..],
+        &[
+            "jubarte",
+            "add",
+            "a.docx",
+            "--plan",
+            "p.json",
+            "-p",
+            "p1",
+            "--comment",
+            "--content",
+            "x",
+        ][..],
+        &["jubarte", "edit", "a.docx", "--plan", "p.json", "--consume"][..],
+        &["jubarte", "add", "a.docx", "--plan", "p.json", "--consume"][..],
+    ] {
+        assert!(Cli::try_parse_from(argv).is_ok(), "{argv:?}");
     }
     let twice = Cli::try_parse_from([
         "jubarte", "edit", "a.docx", "-p", "c5", "--reply", "x", "--reply", "y",

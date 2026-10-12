@@ -625,7 +625,9 @@ pub enum Command {
         jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
         jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\"\n  \
         jubarte edit a.docx -p r3 --accept -p header1.r1 --reject\n  \
-        jubarte edit a.docx --plan plan.json --out-dir review\n\n\
+        jubarte edit a.docx --plan plan.json --out-dir review\n  \
+        jubarte edit a.docx --plan plan.json -p p3 --content \"New.\"   record into plan.json\n  \
+        jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
         t0.row1.cell2, c5 (a comment), r12 (a revision), or a long id\n\
         (body:p:12).")]
@@ -634,14 +636,15 @@ pub enum Command {
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Edit plan JSON: batches and the other operation kinds (see
-        /// `jubarte capabilities --json`). Excludes the operation flags.
-        #[arg(
-            long,
-            value_name = "PLAN.json",
-            required_unless_present = "location",
-            conflicts_with_all = ["location", "anchor", "content", "delete", "resolve", "reply", "accept", "reject", "style", "author", "datetime", "existing_revisions"]
-        )]
+        /// `jubarte capabilities --json`). Alone, it is applied to FILE; with
+        /// operation flags, they are recorded into it (created on first use)
+        /// and FILE is left as it is.
+        #[arg(long, value_name = "PLAN.json", required_unless_present = "location")]
         plan: Option<PathBuf>,
+        /// Delete PLAN.json once it has been applied and the outputs are
+        /// written (with --plan and no operation flags).
+        #[arg(long, requires = "plan")]
+        consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment) or
         /// r12 (a revision, with --accept or --reject). Each -p starts an
         /// operation; the flags after it belong to it.
@@ -710,14 +713,24 @@ pub enum Command {
         jubarte add a.docx -p p5 --anchor \"monthly fee\" --content \"Net of taxes?\"   a comment\n  \
         jubarte add a.docx -p p5 --comment --content \"Whole clause needs a cap.\"\n  \
         jubarte add a.docx -p c5 --content \"Agreed, will fix.\"           a reply\n  \
-        jubarte add a.docx -p c5 --reply \"Agreed, will fix.\"             the same reply")]
+        jubarte add a.docx -p c5 --reply \"Agreed, will fix.\"             the same reply\n  \
+        jubarte add a.docx --plan plan.json -p p5 --comment --content \"Cap?\"   record into plan.json")]
     Add {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Edit plan JSON. With operation flags, they are recorded into it
+        /// (created on first use) and FILE is left as it is; alone, it is
+        /// applied to FILE, as `edit --plan` does.
+        #[arg(long, value_name = "PLAN.json", required_unless_present = "location")]
+        plan: Option<PathBuf>,
+        /// Delete PLAN.json once it has been applied and the outputs are
+        /// written (with --plan and no operation flags).
+        #[arg(long, requires = "plan")]
+        consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply.
         /// Each -p starts an operation; the flags after it belong to it.
-        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required = true)]
+        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
         /// Text inside WHERE to comment on (must occur once).
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
