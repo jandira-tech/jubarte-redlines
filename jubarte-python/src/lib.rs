@@ -790,15 +790,6 @@ fn record_plan(
         })
 }
 
-/// Why the flags `given` cannot go with `--plan plan`: `recording` is
-/// `--plan` with operation flags, otherwise the plan is applied. `None`
-/// when they can.
-#[pyfunction]
-fn plan_flag_conflict(recording: bool, given: Vec<String>, plan: &str) -> Option<String> {
-    let given: Vec<&str> = given.iter().map(String::as_str).collect();
-    jubarte::edit::record::plan_flag_conflict(recording, &given, plan)
-}
-
 /// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
 /// view `edit` and `add` print; `accepted` reads its accepted text.
 #[pyfunction]
@@ -1046,7 +1037,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
     m.add_function(wrap_pyfunction!(flag_plan, m)?)?;
     m.add_function(wrap_pyfunction!(record_plan, m)?)?;
-    m.add_function(wrap_pyfunction!(plan_flag_conflict, m)?)?;
     m.add_function(wrap_pyfunction!(changed_view, m)?)?;
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;

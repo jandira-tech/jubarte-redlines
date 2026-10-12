@@ -294,39 +294,12 @@ def _print_refusal(exc: EditPlanError) -> None:
     print(f"error: plan refused: {exc}", file=sys.stderr)
 
 
-def _given_flags(args: argparse.Namespace) -> list[str]:
-    """The ``--plan``-sensitive flags the command line holds, as the binary names them."""
-    flags = {
-        "--consume": getattr(args, "consume", False),
-        "--out-dir": args.out_dir is not None,
-        "--force": args.force,
-        "--editing-mode": args.editing_mode,
-        "--suggesting-mode": args.suggesting_mode,
-        "--pdf": getattr(args, "pdf", False),
-        "--png": getattr(args, "png", False),
-        "--author": args.author != "Modified User",
-        "--datetime": args.datetime is not None,
-        "--existing-revisions": args.existing_revisions != "auto",
-    }
-    return [flag for flag, given in flags.items() if given]
-
-
-def _plan_conflict(args: argparse.Namespace, recording: bool) -> None:
-    """Exit 2 when a flag cannot go with ``--plan`` this way (shared wording)."""
-    from . import _native
-
-    message = _native.plan_flag_conflict(recording, _given_flags(args), str(args.plan))
-    if message is not None:
-        print(f"error: {message}", file=sys.stderr)
-        raise SystemExit(EXIT_USAGE)
-
-
 def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
     """``--plan PLAN.json`` with operation flags: record them into the plan,
-    checked against FILE first; a refusal leaves PLAN.json as it was."""
+    checked against FILE first; a refusal leaves PLAN.json as it was. The
+    shared parser has refused the flags that do not go with ``--plan``."""
     from . import _native
 
-    _plan_conflict(args, recording=True)
     plan_path = Path(args.plan)
     try:
         held: str | None = plan_path.read_text(encoding="utf-8")
@@ -362,11 +335,15 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
         for note in recorded["notes"]:
             print(f"note: {note}")
     if not dry_run:
-        partial = plan_path.with_name(plan_path.name + ".partial")
-        _write(partial, recorded["json"])
+        # Through a symbolic link to the file it names; via a hidden partial
+        # file named for this process, removed if the write fails.
+        target = Path(os.path.realpath(plan_path))
+        partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
         try:
-            os.replace(partial, plan_path)
+            partial.write_text(recorded["json"], encoding="utf-8")
+            os.replace(partial, target)
         except OSError as exc:
+            partial.unlink(missing_ok=True)
             raise CliError(f"writing {args.plan}: {exc}") from exc
     if not args.quiet:
         print(recorded["summary"])
@@ -375,14 +352,31 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
 
 def _run_edit(args: argparse.Namespace, verb: str) -> int:
     doc = _read(args.file)
-    if getattr(args, "plan", None) is not None:
-        if args.operations:
-            return _record(args, verb, doc)
-        _plan_conflict(args, recording=False)
-    code = _apply_edit(args, verb, doc)
-    if code == EXIT_OK and getattr(args, "consume", False) and not getattr(args, "dry_run", False):
+    if getattr(args, "plan", None) is not None and args.operations:
+        return _record(args, verb, doc)
+    # What --consume deletes once the edit is written: the plan file as it
+    # was read, never a link to it or an output written over it.
+    consumed: bytes | None = None
+    if getattr(args, "consume", False) and not getattr(args, "dry_run", False):
+        plan_path = Path(args.plan)
+        if plan_path.is_symlink():
+            print(f"error: --consume deletes {args.plan}, a symbolic link; pass the file it names", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
         try:
-            Path(args.plan).unlink()
+            consumed = plan_path.read_bytes()
+        except OSError as exc:
+            raise CliError(f"reading {args.plan}: {exc}") from exc
+    code = _apply_edit(args, verb, doc)
+    if code == EXIT_OK and consumed is not None:
+        plan_path = Path(args.plan)
+        try:
+            current: bytes | None = plan_path.read_bytes()
+        except OSError:
+            current = None
+        if current != consumed:
+            raise CliError(f"the plan was applied, but {args.plan} was not deleted: it no longer holds the plan (an output was written over it?)")
+        try:
+            plan_path.unlink()
         except OSError as exc:
             raise CliError(f"the plan was applied, but {args.plan} was not deleted: {exc}") from exc
     return code

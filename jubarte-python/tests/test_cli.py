@@ -417,6 +417,8 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
         (["-p", "p0", "--delete", "--out-dir", "d"], "--out-dir takes effect when the plan is applied"),
         (["--author", "Bob"], "--author belongs to recorded operations"),
         (["-p", "p0", "--delete", "--author", "Bob"], 'the plan\'s author is "Modified User"'),
+        (["-p", "p0", "--delete", "--revisions", "word"], "--revisions takes effect when the plan is applied"),
+        (["--author", "Modified User"], "--author belongs to recorded operations"),
     ):
         with pytest.raises(SystemExit) as exit_info:
             main(["edit", str(letter), "--plan", str(plan), *args])
@@ -429,6 +431,13 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
     assert plan.read_text() == held, "a refused or dry recording keeps the plan"
     assert main(["edit", str(letter), "--plan", str(plan), "--consume", "--dry-run"]) == 0
     assert plan.exists(), "a dry run consumes nothing"
+    link = tmp_path / "link.json"
+    link.symlink_to(plan)
+    with pytest.raises(SystemExit) as exit_info:
+        main(["edit", str(letter), "--plan", str(link), "--consume"])
+    assert exit_info.value.code == 2
+    assert "a symbolic link; pass the file it names" in capsys.readouterr().err
+    assert plan.read_text() == held and not list(tmp_path.glob(".*.partial"))
     capsys.readouterr()
     assert main(["edit", str(letter), "--plan", str(plan), "--consume", "--out-dir", str(tmp_path / "o")]) == 0
     assert not plan.exists(), "--consume deletes the applied plan"
