@@ -50,6 +50,26 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **Breaking: `validate` and `audit` are one command.** `validate --rules`
+  takes rule sets (`word`, the default; `edits`, which needs `--original`
+  and `--author` and is added by them; `a11y`, `style`, `structure`) or
+  audit codes, comma-separated; `--strict` fails on warnings too. A word
+  or edits finding fails the run (exit 2), and so does any error; an
+  a11y/style/structure warning fails only under `--strict`, as `audit` did.
+  An unknown rule, or `edits` without `--original`, exits 2 (`audit` exited
+  1 on an unknown rule). Every finding has one shape, in the library
+  (`validate::Finding`), JSON Lines, Python and WASM: `code`, `set`,
+  `severity`, `part`, `location` (was `path`), `message`, `word_fatal`,
+  `repairable`; and one text line, `* CODE\tSEVERITY\tPART#LOCATION\tMESSAGE`
+  (`  CODE\tSEVERITY\tLOCATION\tMESSAGE` for the audit sets), closed by
+  `N finding(s): E error, W warning, I info`. `validate --repair` prints
+  `repaired N finding(s)` and then the repaired package's findings; its
+  `wrote` line is on stderr. `audit FILE` is now
+  `validate FILE --rules a11y,style,structure`. Python's CLI and MCP `docx_validate` take `rules` too, and
+  `capabilities` lists `validate_rules`. Library: `validate_with`,
+  `findings_text`, `fails`, `RULE_SETS`, `audit::word_layout`,
+  `audit::is_rule`, `From<AuditFinding> for Finding`; `ValidateError`
+  gains `Usage` and `Layout`.
 - **`diff` writes text only.** It prints the paragraph patch, a text
   view (`--format github|word|normal|context|side-by-side`) or, for two
   Markdown documents, `--format critic`'s CriticMarkup, on stdout or in
