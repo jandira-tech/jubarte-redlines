@@ -1003,22 +1003,11 @@ enum Mode {
     Editing,
 }
 
-/// `<dir>/<stem>.edit` next to the source.
-fn default_out_dir(file: &Path) -> PathBuf {
-    let stem = file.file_stem().map_or_else(
-        || "document".to_string(),
-        |s| s.to_string_lossy().into_owned(),
-    );
-    match file.parent().filter(|p| !p.as_os_str().is_empty()) {
-        Some(dir) => dir.join(format!("{stem}.edit")),
-        None => PathBuf::from(format!("{stem}.edit")),
-    }
-}
-
 /// Options for `edit` and `add`.
 struct EditJob<'a> {
     file: &'a Path,
-    out_dir: &'a Path,
+    /// One document, or the bundle directory.
+    target: &'a EditTarget,
     mode: Mode,
     dry_run: bool,
     force: bool,
@@ -1072,21 +1061,42 @@ fn run_edit(
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
     if !job.dry_run {
-        if job.out_dir.exists() && !job.force {
-            return Err(fail(format!(
-                "output directory '{}' already exists (use --force to replace its files)",
-                job.out_dir.display()
-            )));
-        }
-        let input_dir = job
-            .file
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        if same_dir(job.out_dir, input_dir) {
-            return Err(fail(
-                "--out-dir must not be the input's own directory".into(),
-            ));
+        match job.target {
+            EditTarget::Bundle(dir) => {
+                if dir.exists() && !job.force {
+                    return Err(fail(format!(
+                        "output directory '{}' already exists (use --force to replace its files)",
+                        dir.display()
+                    )));
+                }
+                let input_dir = job
+                    .file
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                if same_dir(dir, input_dir) {
+                    return Err(fail(
+                        "--out-dir must not be the input's own directory".into(),
+                    ));
+                }
+            }
+            EditTarget::Single(path) => {
+                if same_path(path, job.file) {
+                    return Err((
+                        EXIT_USAGE,
+                        format!(
+                            "-o {} is FILE itself; edit never modifies its source",
+                            path.display()
+                        ),
+                    ));
+                }
+                let pdf = job.pdf.then(|| path.with_extension("pdf"));
+                for taken in std::iter::once(path.clone()).chain(pdf) {
+                    if taken.exists() && !job.force {
+                        return Err(taken_output(&taken));
+                    }
+                }
+            }
         }
     }
     if job.dry_run {
@@ -1094,6 +1104,10 @@ fn run_edit(
         return write_stdout(report.to_jsonl()).map_err(fail);
     }
     let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
+    let out_dir = match job.target {
+        EditTarget::Single(path) => return write_edited(job, path, &result, notes),
+        EditTarget::Bundle(dir) => dir.as_path(),
+    };
     let mut jsonl = result.report.to_jsonl();
     // Render (one layout pass per document) before creating the directory,
     // so a failed render leaves no partial bundle.
@@ -1147,8 +1161,8 @@ fn run_edit(
         });
         insert_before_summary(&mut jsonl, &render_line.to_string());
     }
-    std::fs::create_dir_all(job.out_dir)
-        .map_err(|e| fail(format!("creating {}: {e}", job.out_dir.display())))?;
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| fail(format!("creating {}: {e}", out_dir.display())))?;
     let name = job.file.file_name().map_or_else(
         || job.file.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -1192,14 +1206,15 @@ fn run_edit(
     }
     let mut saved = Vec::new();
     for (name, bytes) in &outputs {
-        let path = job.out_dir.join(name);
+        let path = out_dir.join(name);
         std::fs::write(&path, bytes)
             .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
         saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
     }
-    let save_line = serde_json::json!({"ev": "save", "dir": job.out_dir.display().to_string(), "outputs": saved});
+    let save_line =
+        serde_json::json!({"ev": "save", "dir": out_dir.display().to_string(), "outputs": saved});
     insert_before_summary(&mut jsonl, &save_line.to_string());
-    std::fs::write(job.out_dir.join("report.jsonl"), &jsonl)
+    std::fs::write(out_dir.join("report.jsonl"), &jsonl)
         .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
     if job.quiet {
         return Ok(());
@@ -1213,25 +1228,12 @@ fn run_edit(
         .collect();
     outln!(
         "wrote {} ({} files: {})",
-        job.out_dir.display(),
+        out_dir.display(),
         names.len(),
         names.join(", ")
     );
-    for note in notes {
-        outln!("note: {note}");
-    }
-    for outcome in &result.report.operations {
-        if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
-            let why = if jubarte::markdown::plain_anchor(given) == *read_as {
-                "Markdown marks are not document text"
-            } else {
-                "matched as it reads: spaces, quotes and hyphens as the paragraph has them"
-            };
-            outln!(
-                "note: {}: anchor {given:?} read as {read_as:?} ({why})",
-                outcome.id
-            );
-        }
+    for note in edit_notes(notes, &result) {
+        outln!("{note}");
     }
     // The changed blocks, as the agent view reads them back: the tracked
     // redline, or in editing mode its accepted text.
@@ -1245,7 +1247,137 @@ fn run_edit(
         &result.redline,
         &result.report.author,
         job.mode == Mode::Editing,
-        Some(&job.out_dir.join(shown).display().to_string()),
+        Some(&out_dir.join(shown).display().to_string()),
+    ) {
+        Ok(view) => write_stdout(&view).map_err(fail),
+        Err(e) => {
+            eprintln!("warning: the changed blocks cannot be shown: {e}");
+            Ok(())
+        }
+    }
+}
+
+/// An existing output of `edit` or `add` without --force: exit 2.
+fn taken_output(path: &Path) -> (u8, String) {
+    (
+        EXIT_USAGE,
+        format!(
+            "output '{}' already exists (use --force to overwrite)",
+            path.display()
+        ),
+    )
+}
+
+/// The `note:` lines of an applied edit: the flags' notes, then each
+/// anchor that matched as the paragraph reads rather than as typed.
+fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<String> {
+    let mut lines: Vec<String> = notes.iter().map(|note| format!("note: {note}")).collect();
+    for outcome in &result.report.operations {
+        if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
+            let why = if jubarte::markdown::plain_anchor(given) == *read_as {
+                "Markdown marks are not document text"
+            } else {
+                "matched as it reads: spaces, quotes and hyphens as the paragraph has them"
+            };
+            lines.push(format!(
+                "note: {}: anchor {given:?} read as {read_as:?} ({why})",
+                outcome.id
+            ));
+        }
+    }
+    lines
+}
+
+/// `edit` and `add` without --out-dir: the redline (in editing mode, the
+/// result) as one .docx at `path`, its PDF and PNG pages beside it, the
+/// `wrote` lines and notes on stderr, and the changed blocks' view of that
+/// file on stdout.
+fn write_edited(
+    job: &EditJob<'_>,
+    path: &Path,
+    result: &jubarte::edit::EditResult,
+    notes: &[String],
+) -> Result<(), (u8, String)> {
+    let fail = |m: String| (1u8, m);
+    let document = match job.mode {
+        Mode::Suggesting => &result.redline,
+        Mode::Editing => &result.clean,
+    };
+    let mut outputs: Vec<(PathBuf, &[u8])> = vec![(path.to_path_buf(), document)];
+    // Render before writing, so a failed render writes nothing.
+    let rendered = if job.pdf || job.png {
+        let options = jubarte::convert::PdfOptions {
+            compress: true,
+            revisions: job.revisions,
+            ..jubarte::convert::PdfOptions::default()
+        };
+        let request = jubarte::convert::RenderRequest {
+            pdf: job.pdf,
+            png_dpi: job.png.then_some(job.dpi),
+            pages: None,
+        };
+        Some(
+            jubarte::convert::render(document, options, request)
+                .map_err(|e| fail(format!("rendering {}: {e}", path.display())))?,
+        )
+    } else {
+        None
+    };
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map_or_else(PathBuf::new, Path::to_path_buf);
+    let stem = path.file_stem().map_or_else(
+        || "document".to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    let (mut pdf_pages, mut png_count) = (None, 0);
+    if let Some(rendered) = &rendered {
+        if let Some(pdf) = &rendered.pdf {
+            outputs.push((path.with_extension("pdf"), pdf));
+            pdf_pages = Some(rendered.report.page_count);
+        }
+        png_count = rendered.pngs.len();
+        for (i, png) in rendered.pngs.iter().enumerate() {
+            outputs.push((dir.join(png_name(&stem, i, png_count)), png));
+        }
+    }
+    // The PNG names are known only now: nothing is written over a file.
+    if !job.force
+        && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.exists())
+    {
+        return Err(taken_output(taken));
+    }
+    for (output, bytes) in &outputs {
+        std::fs::write(output, bytes)
+            .map_err(|e| fail(format!("writing {}: {e}", output.display())))?;
+    }
+    if job.quiet {
+        return Ok(());
+    }
+    eprintln!("{}", wrote_line(path, Format::Docx, document.len(), None));
+    if let Some(pages) = pdf_pages {
+        let pdf = path.with_extension("pdf");
+        let bytes = outputs
+            .iter()
+            .find(|(p, _)| *p == pdf)
+            .map_or(0, |(_, b)| b.len());
+        eprintln!("{}", wrote_line(&pdf, Format::Pdf, bytes, Some(pages)));
+    }
+    if png_count > 0 {
+        let pattern = dir.join(format!("{stem}-page-NN.png"));
+        eprintln!("{}", wrote_png_line(&pattern, png_count, job.dpi));
+    }
+    for note in edit_notes(notes, result) {
+        eprintln!("{note}");
+    }
+    // The file is written: a view that cannot be read back is a warning,
+    // not a failed edit.
+    match jubarte::markdown::changed_view(
+        &result.redline,
+        &result.report.author,
+        job.mode == Mode::Editing,
+        Some(&path.display().to_string()),
     ) {
         Ok(view) => write_stdout(&view).map_err(fail),
         Err(e) => {
@@ -1310,14 +1442,10 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     {
         return Err((EXIT_USAGE, message.to_string()));
     }
-    let out_dir = flags
-        .options
-        .out_dir
-        .clone()
-        .unwrap_or_else(|| default_out_dir(flags.file));
+    let target = flags.options.target(flags.file);
     let job = EditJob {
         file: flags.file,
-        out_dir: &out_dir,
+        target: &target,
         mode: if flags.options.editing_mode {
             Mode::Editing
         } else {
