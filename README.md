@@ -377,8 +377,8 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte diff` | Review differences as GitHub, word, normal, context or side-by-side text |
 | `jubarte inspect` | Inspect document facts, paragraphs, styles and tables |
 | `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids [alias: text] |
-| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes clean copy, redline, patch and report, then prints the changed paragraphs as the agent view (refusal: exit 3) |
-| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes the same files as edit and prints the changed paragraphs as the agent view |
+| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (refusal: exit 3) |
+| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent view |
 | `jubarte capabilities` | What this binary can do, for agents choosing an operation |
 | `jubarte self-update` | Check or install a release from GitHub |
 | `jubarte debug` | Diagnose a Word package, or compare package structures |

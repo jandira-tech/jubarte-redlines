@@ -50,6 +50,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **`edit` and `add` write one file, `FILE_modified.docx`**, beside FILE:
+  the redline, or in `--editing-mode` the result. `-o FILE.docx` names
+  it (another extension exits 2, naming `read`/`convert`); `--pdf` and
+  `--png` write `FILE_modified.pdf` and `FILE_modified-page-NN.png`
+  beside it. `--out-dir [DIR]` writes the bundle as before (clean,
+  redline, `patch.diff`, `report.jsonl`), DIR defaulting to
+  `<stem>.edit`; it excludes `-o`. The view names the file it read
+  (`source: FILE_modified.docx`) and the `wrote` line and notes go to
+  stderr. A FILE already named `X_modified.docx` keeps its name, so
+  editing it again needs `--force`. An existing output exits 2 without
+  `--force`. `parse_cli_json`/`parseCli` hand the hosts the resolved
+  `output` or `out_dir`; the Python and npm CLIs do the same.
 - **`compare A B` prints the redline's agent view**, as `jubarte A B`
   does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
   moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
@@ -104,6 +116,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `CompareArgs` gains `reference_doc`, `critic`, `resource_path`,
   `render` and `read`. `cli::top_level_command()` is the model whose
   `--help` lists the tasks only.
+- `cli::EditOptions` gains `output`; `out_dir` is
+  `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
+  `EditOptions::target(file)` gives the `EditTarget` (`Single` or
+  `Bundle`) a host writes.
 
 ## [0.12.0] - 2026-10-11
 
