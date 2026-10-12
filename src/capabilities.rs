@@ -79,7 +79,7 @@ pub struct Operations {
     #[serde(default)]
     pub patch: bool,
     /// Which pages of two documents differ, pixel for pixel, with overlays
-    /// of the changed region (`jubarte diff-render`).
+    /// of the changed region (`jubarte visual-diff`).
     #[serde(default)]
     pub diff_render: bool,
     /// Rasterize selected pages after one layout pass of the whole

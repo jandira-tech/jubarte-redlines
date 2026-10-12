@@ -5,7 +5,10 @@
 //! Deterministic shared CLI parsing, with no document or platform I/O.
 #![cfg(feature = "cli")]
 
-use jubarte::cli::{Cli, Command, Format, PatchFormat, Task, output_format, parse_json};
+use jubarte::cli::{
+    Cli, Command, Format, PatchFormat, Task, output_format, parse_json, retired_note,
+    retired_spellings,
+};
 use serde_json::Value;
 use std::path::Path;
 
@@ -374,10 +377,10 @@ fn facade_serializes_native_names_canonical_enums_and_nested_subcommands() {
 #[test]
 fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
     for dpi in ["0", "-1", "NaN", "inf", "1201"] {
-        for command in ["convert", "edit", "diff-render"] {
+        for command in ["convert", "edit", "visual-diff"] {
             let base = match command {
                 "edit" => vec!["edit", "a", "--plan", "p", "--out-dir", "d"],
-                "diff-render" => vec!["diff-render", "a", "b"],
+                "visual-diff" => vec!["visual-diff", "a", "b"],
                 _ => vec!["convert", "a", "--png"],
             };
             assert_eq!(
@@ -822,6 +825,8 @@ fn shorthand_forwards_each_read_option_like_the_explicit_read_task() {
         assert_eq!(pair["exit_code"], 0, "{pair}");
         let mut expected = explicit["args"].clone();
         expected.as_object_mut().unwrap().remove("file");
+        // -q is the whole command's, not the view's.
+        expected.as_object_mut().unwrap().remove("quiet");
         assert_eq!(pair["args"]["view"], expected);
     }
 }
@@ -1135,4 +1140,100 @@ fn every_output_flag_has_a_row_in_the_table() {
             );
         }
     }
+}
+
+#[test]
+fn diff_render_is_visual_diff_with_a_note() {
+    let old = parse(&["diff-render", "a.docx", "b.docx"], &[]);
+    assert_eq!(old["exit_code"], 0, "{old}");
+    assert_eq!(old["command"], "visual-diff");
+    assert_eq!(
+        old["notes"][0],
+        "note: diff-render is now visual-diff; diff-render is removed in 0.14"
+    );
+    assert_eq!(old["notes"].as_array().unwrap().len(), 1);
+    let new = parse(&["visual-diff", "a.docx", "b.docx"], &[]);
+    assert_eq!(new["command"], "visual-diff");
+    assert_eq!(new["notes"], serde_json::json!([]));
+    // An adapter lists the canonical name; the old one follows it.
+    let facade = parse(&["diff-render", "a", "b"], &["visual-diff"]);
+    assert_eq!(facade["command"], "visual-diff", "{facade}");
+}
+
+#[test]
+fn quiet_is_global_and_goes_after_the_task() {
+    for argv in [
+        &["compare", "a", "b", "-q"][..],
+        &["a.docx", "b.docx", "--quiet"],
+        &["edit", "a", "--plan", "p", "-q"],
+        &["append", "a", "b", "-o", "c.docx", "-q"],
+        &["read", "a.docx", "-q"],
+        &["a.docx", "-q"],
+    ] {
+        let parsed = parse(argv, &[]);
+        assert_eq!(parsed["exit_code"], 0, "{argv:?}: {parsed}");
+        assert_eq!(parsed["args"]["quiet"], true, "{argv:?}: {parsed}");
+    }
+    let loud = parse(&["compare", "a", "b"], &[]);
+    assert_eq!(loud["args"]["quiet"], false);
+    // A facade without compare still takes the global flag.
+    let facade = parse(&["edit", "a", "--plan", "p", "-q"], &["edit"]);
+    assert_eq!(facade["args"]["quiet"], true, "{facade}");
+    // Before the task, -q makes clap read the task as a document.
+    let early = parse(&["-q", "read", "a.docx"], &[]);
+    assert_eq!(early["exit_code"], 2);
+    assert!(
+        early["text"]
+            .as_str()
+            .unwrap()
+            .contains("options go after the task"),
+        "{early}"
+    );
+    assert_eq!(parse(&["-q", "compare", "a", "b"], &[])["exit_code"], 2);
+}
+
+#[test]
+fn retired_spellings_are_scoped_and_listed_once() {
+    let notes = |argv: &[&str]| retired_spellings(argv.iter().copied());
+    assert_eq!(notes(&["edit", "a", "--plan", "p", "--pdf"]), vec![]);
+    assert_eq!(notes(&["visual-diff", "a", "b"]), vec![]);
+    assert_eq!(
+        notes(&["diff-render", "a", "b", "--json"]),
+        vec![("diff-render", "visual-diff")]
+    );
+    // Only the task position names a task.
+    assert_eq!(notes(&["read", "diff-render"]), vec![]);
+    assert_eq!(notes(&["--", "diff-render"]), vec![]);
+    // 0.12's cell form, as a -p value of edit or add, in every spelling.
+    let cell = vec![("tN.rR.cC", "tN.rowR.cellC")];
+    for argv in [
+        &["edit", "a", "-p", "t0.r1.c2", "--content", "x"][..],
+        &["edit", "a", "-pt0.r1.c2.p1", "--content", "x"],
+        &[
+            "add",
+            "a",
+            "--location=t1.r0.c0",
+            "--comment",
+            "--content",
+            "x",
+        ],
+        &["add", "a", "--location", "t1.r0.c0", "-p", "t2.r1.c1"],
+    ] {
+        assert_eq!(notes(argv), cell, "{argv:?}");
+    }
+    assert_eq!(
+        notes(&["edit", "a", "-p", "t0.row1.cell2", "--content", "x"]),
+        vec![]
+    );
+    assert_eq!(notes(&["read", "a", "-p", "t0.r1.c2"]), vec![]);
+    assert_eq!(
+        retired_note("diff-render", "visual-diff"),
+        "note: diff-render is now visual-diff; diff-render is removed in 0.14"
+    );
+    let parsed = parse(&["edit", "a", "-p", "t0.r1.c2", "--content", "x"], &[]);
+    assert_eq!(parsed["exit_code"], 0, "{parsed}");
+    assert_eq!(
+        parsed["notes"][0],
+        "note: tN.rR.cC is now tN.rowR.cellC; tN.rR.cC is removed in 0.14"
+    );
 }

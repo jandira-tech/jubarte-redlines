@@ -29,6 +29,11 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    /// Print nothing on success (files are still written; warnings and
+    /// errors still print).
+    #[arg(short = 'q', long, global = true, help_heading = None::<&str>)]
+    pub quiet: bool,
+
     /// Inputs and settings for the shorthand document comparison.
     #[command(flatten)]
     #[serde(flatten)]
@@ -148,9 +153,6 @@ pub struct EditOptions {
     /// Replace an existing output directory's files.
     #[arg(long)]
     pub force: bool,
-    /// Print nothing on success (the files are still written).
-    #[arg(short = 'q', long)]
-    pub quiet: bool,
 }
 
 /// `--existing-revisions` of `edit` and `add`.
@@ -303,10 +305,6 @@ pub struct CompareArgs {
     /// Overwrite the output file if it already exists.
     #[arg(long)]
     pub force: bool,
-
-    /// Do not print the success message.
-    #[arg(short = 'q', long)]
-    pub quiet: bool,
 
     /// Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15].
     #[arg(long, value_name = "RATIO", value_parser = parse_threshold)]
@@ -831,15 +829,19 @@ pub enum Command {
         context: usize,
     },
     /// Compare rendered pages pixel by pixel (different pages: exit 5).
-    #[command(after_help = "Examples:\n  \
-        jubarte diff-render before.docx after.docx                  changed pages on stdout\n  \
-        jubarte diff-render before.docx after.docx --out-dir diff   PNGs of the changed pages and diff.json\n  \
-        jubarte diff-render a.docx b.docx --json                    the diff.json document on stdout\n\n\
+    #[command(
+        name = "visual-diff",
+        alias = "diff-render",
+        after_help = "Examples:\n  \
+        jubarte visual-diff before.docx after.docx                  changed pages on stdout\n  \
+        jubarte visual-diff before.docx after.docx --out-dir diff   PNGs of the changed pages and diff.json\n  \
+        jubarte visual-diff a.docx b.docx --json                    the diff.json document on stdout\n\n\
         With --out-dir, each page that differs is written as a-page-NN.png,\n\
         b-page-NN.png and diff-page-NN.png (b's page with the changed pixels\n\
         magenta and boxed); diff.json lists every page with its changed_ratio,\n\
-        bbox and, for a page only one side has, only_in.")]
-    DiffRender {
+        bbox and, for a page only one side has, only_in."
+    )]
+    VisualDiff {
         /// The document before.
         #[arg(value_name = "A")]
         a: PathBuf,
@@ -906,9 +908,6 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
-        /// Print nothing on success.
-        #[arg(short, long)]
-        quiet: bool,
     },
     /// Check or repair Word validity (findings: exit 2; unreadable: exit 1).
     #[command(after_help = "Examples:\n  \
@@ -1375,6 +1374,80 @@ pub fn output_format(
     } else {
         Err(task.cannot_write(format))
     }
+}
+
+/// A spelling 0.13 still accepts, with a note, and 0.14 removes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retired {
+    /// What the command line says (`diff-render`, `--pdf`).
+    pub old: &'static str,
+    /// What to say instead.
+    pub now: &'static str,
+    /// `None`: `old` is a task name. `Some(task)`: `old` is a flag retired on
+    /// that task only (another task may keep it).
+    pub on: Option<&'static str>,
+}
+
+/// Every retired task name and flag (D13).
+pub const RETIRED: &[Retired] = &[Retired {
+    old: "diff-render",
+    now: "visual-diff",
+    on: None,
+}];
+
+/// The note 0.12's cell id form earns (`t0.r1.c2`, Task 2).
+const RETIRED_CELL: (&str, &str) = ("tN.rR.cC", "tN.rowR.cellC");
+
+/// The retired spellings in `argv` (the arguments after the program name),
+/// each once, in the order they first appear. The task is the first token
+/// before `--` that is not an option; a retired flag counts only on the task
+/// it is retired on, and a `-p`/`--location` value of `edit` or `add` in
+/// 0.12's cell form counts as [`RETIRED_CELL`]. Pure: no I/O.
+pub fn retired_spellings<'a>(
+    argv: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, &'static str)> {
+    let argv: Vec<&str> = argv.into_iter().take_while(|t| *t != "--").collect();
+    let mut found = Vec::new();
+    let Some(task) = argv.iter().copied().find(|t| !t.starts_with('-')) else {
+        return found;
+    };
+    let task = match RETIRED.iter().find(|r| r.on.is_none() && r.old == task) {
+        Some(retired) => {
+            found.push((retired.old, retired.now));
+            retired.now
+        }
+        None => task,
+    };
+    // `--flag=value`.
+    let long_value = |token: &'a str, long: &str| token.strip_prefix(long)?.strip_prefix('=');
+    for (i, &token) in argv.iter().enumerate() {
+        for retired in RETIRED.iter().filter(|r| r.on == Some(task)) {
+            if token == retired.old || long_value(token, retired.old).is_some() {
+                found.push((retired.old, retired.now));
+            }
+        }
+        if matches!(task, "edit" | "add") {
+            let value = match token {
+                "-p" | "--location" => argv.get(i + 1).copied(),
+                _ => long_value(token, "--location").or_else(|| {
+                    // `-pVALUE` and `-p=VALUE`.
+                    let value = token.strip_prefix("-p").filter(|v| !v.is_empty())?;
+                    Some(value.strip_prefix('=').unwrap_or(value))
+                }),
+            };
+            if value.is_some_and(crate::ids::is_retired_cell) {
+                found.push(RETIRED_CELL);
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|spelling| seen.insert(*spelling));
+    found
+}
+
+/// The stderr line a retired spelling prints once.
+pub fn retired_note(old: &str, now: &str) -> String {
+    format!("note: {old} is now {now}; {old} is removed in 0.14")
 }
 
 /// `--track-changes`, pandoc's values.
@@ -2105,7 +2178,9 @@ fn error_json(error: &clap::Error) -> String {
 ///
 /// `supported` contains canonical command names; empty enables every command.
 /// Aliases follow their canonical command. Unsupported commands are absent
-/// from help and rejected. Success contains `{exit_code, command, args}` with
+/// from help and rejected. Success contains `{exit_code, command, args,
+/// notes}`: `args.quiet` is the global `-q`, and `notes` holds the
+/// [`retired_note`] of each retired spelling used. `args` has
 /// native snake_case field names, flattened Args groups, canonical enum strings,
 /// string paths, defaults and null optional fields. Nested subcommands use
 /// `{command, args}`. Compare inputs include resolved named-over-positional
@@ -2138,7 +2213,10 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             .args_conflicts_with_subcommands(true)
             .subcommand_negates_reqs(true);
     } else {
-        command = command.subcommand_required(true);
+        // The global options (-q) still apply to every task.
+        command = command
+            .args(model.get_arguments().filter(|a| a.is_global_set()).cloned())
+            .subcommand_required(true);
     }
     let examples: Vec<String> = [
         ("compare", "compare old.docx new.docx -o redline.docx"),
@@ -2156,9 +2234,11 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         examples.join("\n")
     ));
     let argv = std::iter::once(program.to_string()).chain(arguments.iter().cloned());
+    let mut quiet = false;
     let result = (|| {
         let matches = command.try_get_matches_from_mut(argv)?;
         validate_matches(&matches, &mut command)?;
+        quiet = matches.get_flag("quiet");
         if matches.subcommand().is_some() {
             let mut task = Command::from_arg_matches(&matches)?;
             fill_flag_operations(&mut task, &matches, &mut command)?;
@@ -2190,7 +2270,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 .expect("format");
             }
             value["exit_code"] = 0.into();
-            Ok(value.to_string())
+            Ok(value)
         } else {
             let compare = CompareArgs::from_arg_matches(&matches)?;
             if compare
@@ -2221,10 +2301,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                     compare.original.as_ref().or(compare.original_pos.as_ref()),
                 )
                 .expect("UTF-8 path");
-                return Ok(
-                    serde_json::json!({"exit_code": 0, "command": "read", "args": args})
-                        .to_string(),
-                );
+                return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
             }
             let mut args = compare_json(&compare);
             // Without -o the redline is printed as the read view, which an
@@ -2238,8 +2315,18 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                     "this task is not supported by this adapter",
                 ));
             }
-            Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}).to_string())
+            Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))
         }
     })();
-    result.unwrap_or_else(|error| error_json(&error))
+    match result {
+        Ok(mut value) => {
+            value["args"]["quiet"] = quiet.into();
+            value["notes"] = retired_spellings(arguments.iter().map(String::as_str))
+                .into_iter()
+                .map(|(old, now)| retired_note(old, now))
+                .collect();
+            value.to_string()
+        }
+        Err(error) => error_json(&error),
+    }
 }
