@@ -79,7 +79,8 @@ test("redline writes a Word redline and refuses to overwrite it", () => {
   const out = path.join(tmp, "redline.docx");
   const r = run("redline", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out, "--author", "Legal");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /^wrote .*redline\.docx \(\d+ bytes\)\n$/);
+  assert.equal(r.out, "");
+  assert.match(r.err, /^wrote .*redline\.docx \(docx, \d+ bytes\)\n$/);
   assert.deepEqual([...fs.readFileSync(out).subarray(0, 2)], [0x50, 0x4b]);
   const changes = run("changes", out, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
   assert.ok(changes.length > 0 && changes.every((c) => c.author === "Legal"));
@@ -673,7 +674,8 @@ test("compare reports the bytes a Markdown redline takes (integration)", () => {
   assert.equal(result.code, 0, result.err);
   const size = fs.statSync(out).size;
   assert.ok(size > fs.readFileSync(out, "utf8").length);
-  assert.equal(result.out, `wrote ${out} (${size} bytes)\n`);
+  assert.equal(result.out, "");
+  assert.equal(result.err, `wrote ${out} (md, ${size} bytes)\n`);
 });
 
 test("diff, compare and convert follow the native input and output contract (integration)", () => {
@@ -814,6 +816,18 @@ test("agent shorthand reads an in-memory redline without touching an existing de
   assert.equal(written.code, 1);
   assert.match(written.err, /already exists/);
   assert.deepEqual(fs.readFileSync(fallback), sentinel);
+  // Two Markdown documents written to a .md are CriticMarkup, which view
+  // options cannot shape; the host reads that from the bytes, as natively.
+  const plainA = path.join(tmp, "sentinel-old"), plainB = path.join(tmp, "sentinel-new.json");
+  fs.copyFileSync(a, plainA);
+  fs.copyFileSync(b, plainB);
+  const critic = path.join(tmp, "sentinel-critic.md");
+  const made = run("compare", plainA, plainB, "-o", critic);
+  assert.equal(made.code, 0, made.err);
+  assert.match(fs.readFileSync(critic, "utf8"), /\{~~30~>45~~\}/);
+  const refused = run("compare", plainA, plainB, "-o", path.join(tmp, "sentinel-h.md"), "--head", "1");
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /two Markdown documents write CriticMarkup/);
 });
 
 test("agent editing mode rejects keep before creating output even in dry run", () => {

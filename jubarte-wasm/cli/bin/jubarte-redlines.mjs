@@ -122,18 +122,25 @@ const COMMANDS = {
     run(name, [original, modified], o) {
       const fallback = path.join(path.dirname(original), `${stem(original)}_v_${stem(modified)}.docx`);
       const [a, b] = [read(original, o.old_format), read(modified, o.new_format)];
-      // The shorthand `A B` without -o prints the redline's agent view.
-      if (o.output == null && o.view != null) {
+      // Without -o, compare (and the shorthand `A B`) prints the redline's
+      // agent view.
+      if (o.output == null) {
         return void printView(wasm.redlineDocuments(a, b, o.author, o.date), o.view, `${fallback} (not written; -o keeps it)`);
       }
-      const output = o.output ?? fallback;
-      if (o.output_format === "md") markdownNeedsBoth([[original, kindOf(original, a, o.old_format)], [modified, kindOf(modified, b, o.new_format)]]);
+      const output = o.output;
+      if (o.output_format === "md") {
+        // A .md of two Markdown documents is CriticMarkup; of anything else,
+        // the redline's view, which the engine's writer brings here later.
+        const kinds = [kindOf(original, a, o.old_format), kindOf(modified, b, o.new_format)];
+        if (kinds.some((kind) => kind !== "md")) throw new UsageError("-o FILE.md of a Word redline is not supported by the npm CLI yet");
+        if (o.view_given) throw new UsageError("read options shape the view; two Markdown documents write CriticMarkup to a .md");
+      }
       ensureWritable(output, o.force);
       const redline = o.output_format === "md"
         ? wasm.diffDocumentsCritic(a, b, o.author, o.date)
         : wasm.redlineDocuments(a, b, o.author, o.date);
       write(output, redline);
-      if (!o.quiet) console.log(`wrote ${output} (${Buffer.byteLength(redline)} bytes)`);
+      if (!o.quiet) console.error(`wrote ${output} (${o.output_format}, ${Buffer.byteLength(redline)} bytes)`);
     },
   },
   diff: {
@@ -510,9 +517,8 @@ function validateHost(name, o) {
   }
   if (name === "read" && o.output != null) throw new UsageError("read -o is not supported by the npm CLI yet");
   if (name === "convert" && o.output_format === "json") throw new UsageError("-o FILE.json is not supported by the npm CLI yet");
-  if (name === "compare" && o.output != null) {
-    if (["pdf", "png", "json"].includes(o.output_format)) throw new UsageError(`-o FILE.${o.output_format} is not supported by the npm CLI yet`);
-    if (o.view != null) throw new UsageError("-o FILE.md of a Word redline is not supported by the npm CLI yet");
+  if (name === "compare" && ["pdf", "png", "json"].includes(o.output_format)) {
+    throw new UsageError(`-o FILE.${o.output_format} is not supported by the npm CLI yet`);
   }
   if (name === "compare") for (const flag of ["reference_doc", "critic", "resource_path"]) if (o[flag] != null && o[flag] !== false) reject(flag);
   if (name === "read" && o.json && (o.paragraphs != null || o.head != null || o.tail != null || o.changed || o.by != null)) {
