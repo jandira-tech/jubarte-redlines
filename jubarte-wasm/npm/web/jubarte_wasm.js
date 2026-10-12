@@ -1339,6 +1339,50 @@ export function readView(docx, options_json) {
 }
 
 /**
+ * `edit`/`add --plan PLAN.json` with operation flags: the operations
+ * recorded into `held` (PLAN.json's text, absent before the first
+ * recording), as JSON `{ok: true, recorded: {plan, json, notes,
+ * summary}}`: preview `plan`, write `json`, print `notes` and `summary`.
+ * On failure `{ok: false, usage, message}`: a usage error (exit 2), or
+ * `held` is not a plan (exit 3). Options (JSON): `author`, `date`,
+ * `existingRevisions`, `file`, `plan`, `dryRun`.
+ *
+ * Mirrors `jubarte::edit::record::record`.
+ * @param {string} verb
+ * @param {string} operations_json
+ * @param {Uint8Array} docx
+ * @param {string} options_json
+ * @param {string | null} [held]
+ * @returns {string}
+ */
+export function recordPlan(verb, operations_json, docx, options_json, held) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(operations_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(held) ? 0 : passStringToWasm0(held, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len4 = WASM_VECTOR_LEN;
+        wasm.recordPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred6_0 = r0;
+        deferred6_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
  * @param {Uint8Array} old
  * @param {Uint8Array} next

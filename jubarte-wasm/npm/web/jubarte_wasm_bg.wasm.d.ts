@@ -42,6 +42,7 @@ export const parseCli: (a: number, b: number, c: number, d: number, e: number, f
 export const pdfPageCount: (a: number, b: number) => number;
 export const previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
 export const readView: (a: number, b: number, c: number, d: number, e: number) => void;
+export const recordPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
 export const redlineDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const rejectChanges: (a: number, b: number, c: number, d: number, e: number) => void;
 export const rejectRevisions: (a: number, b: number, c: number) => void;
