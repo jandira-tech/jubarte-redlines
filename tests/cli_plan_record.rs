@@ -493,4 +493,58 @@ fn plan_without_a_value_is_file_plan_json() {
         err.contains("put FILE before --out-dir, or write --out-dir=DIR"),
         "{err}"
     );
+    // zcode-13c F2/F5, pi-13c F1: the `=` spelling without FILE, and a
+    // name that is all extension.
+    for swallowed in [
+        &["edit", "--plan=d/a.docx", "-p", "p1", "--content", "X."][..],
+        &[
+            "edit",
+            "d/a.docx",
+            "--plan=.docx",
+            "-p",
+            "p1",
+            "--content",
+            "X.",
+        ][..],
+        &["add", "--out-dir=d/a.docx", "-p", "p2", "--content", "X."][..],
+    ] {
+        let (code, _, err) = run(dir, swallowed);
+        assert_eq!(code, 2, "{swallowed:?}: {err}");
+        assert!(
+            err.contains("names a Word document"),
+            "{swallowed:?}: {err}"
+        );
+    }
+    // zcode-13c F1/F4: help, an unknown flag and `--` keep clap's own answer.
+    let (code, out, _) = run(dir, &["edit", "--plan", "d/a.docx", "--help"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Usage: jubarte edit"), "{out}");
+    for other in [
+        &["edit", "--plan", "d/a.docx", "--bogus"][..],
+        &["edit", "--", "--plan", "d/a.docx"][..],
+    ] {
+        let (code, _, err) = run(dir, other);
+        assert_eq!(code, 2, "{other:?}: {err}");
+        assert!(!err.contains("names a Word document"), "{other:?}: {err}");
+    }
+    // zcode-13c F3: a bare --plan while recording reads bare in the refusal.
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "d/a.docx",
+            "--plan",
+            "--out-dir",
+            "o",
+            "-p",
+            "p1",
+            "--content",
+            "X.",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("(jubarte edit FILE --plan), and is not recorded"),
+        "{err}"
+    );
 }

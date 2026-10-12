@@ -346,11 +346,12 @@ fn resolve_plan(task: &mut Command) {
 /// A Word document's name, by extension: what an optional value swallowed
 /// when it should have been FILE.
 fn names_word_document(path: &Path) -> bool {
-    path.extension().is_some_and(|e| {
-        matches!(
-            e.to_string_lossy().to_ascii_lowercase().as_str(),
-            "docx" | "docm" | "dotx" | "dotm" | "doc"
-        )
+    // By name, so a bare `.docx` (no stem, no extension to Path) counts.
+    path.file_name().is_some_and(|name| {
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        [".docx", ".docm", ".dotx", ".dotm", ".doc"]
+            .iter()
+            .any(|ext| name.ends_with(ext))
     })
 }
 
@@ -365,22 +366,51 @@ fn swallowed_file(flag: &str, value: &Path) -> String {
 }
 
 /// `edit --plan a.docx -p p1 …`: clap reads the document as the plan and
-/// then misses FILE. The raw tokens show it, so the error says so instead.
-fn swallowed_file_error(command: &clap::Command, tokens: &[String]) -> Option<clap::Error> {
-    let at = tokens.iter().skip(1).position(|t| !t.starts_with('-'))? + 1;
-    let name = tokens[at].as_str();
-    if !matches!(name, "edit" | "add") {
-        return None;
+/// then misses FILE. The raw tokens show it, so that error says so instead;
+/// any other error (help, an unknown flag, …) is clap's own.
+fn swallowed_file_error(
+    command: &clap::Command,
+    tokens: &[String],
+    error: clap::Error,
+) -> clap::Error {
+    if error.kind() != clap::error::ErrorKind::MissingRequiredArgument {
+        return error;
     }
-    let message = tokens[at + 1..].windows(2).find_map(|pair| {
-        (matches!(pair[0].as_str(), "--plan" | "--out-dir")
-            && !pair[1].starts_with('-')
-            && names_word_document(Path::new(&pair[1])))
-        .then(|| swallowed_file(&pair[0], Path::new(&pair[1])))
-    })?;
-    let mut task = command.find_subcommand(name)?.clone();
+    let Some(at) = tokens.iter().skip(1).position(|t| !t.starts_with('-')) else {
+        return error;
+    };
+    let name = tokens[at + 1].as_str();
+    let Some(sub) = command
+        .find_subcommand(name)
+        .filter(|_| matches!(name, "edit" | "add"))
+    else {
+        return error;
+    };
+    // `--plan VALUE` or `--plan=VALUE`, before `--` ends the options.
+    let options = tokens[at + 2..].iter().take_while(|t| *t != "--");
+    let mut previous: Option<&str> = None;
+    let mut found = None;
+    for token in options {
+        let pair = match token.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => Some((flag, value)),
+            _ => previous.map(|flag| (flag, token.as_str())),
+        };
+        if let Some((flag, value)) = pair
+            && matches!(flag, "--plan" | "--out-dir")
+            && !value.starts_with('-')
+            && names_word_document(Path::new(value))
+        {
+            found = Some(swallowed_file(flag, Path::new(value)));
+            break;
+        }
+        previous = Some(token.as_str()).filter(|t| matches!(*t, "--plan" | "--out-dir"));
+    }
+    let Some(message) = found else {
+        return error;
+    };
+    let mut task = sub.clone();
     task.set_bin_name(format!("{} {name}", command.get_name()));
-    Some(task.error(clap::error::ErrorKind::ArgumentConflict, message))
+    task.error(clap::error::ErrorKind::ArgumentConflict, message)
 }
 
 /// Groups the flag operations of `edit` and `add` into their `operations`
@@ -2700,7 +2730,7 @@ impl Cli {
                     .iter()
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect();
-                swallowed_file_error(&command, &tokens).unwrap_or(e)
+                swallowed_file_error(&command, &tokens, e)
             })?;
         validate_matches(&matches, &mut command)?;
         let mut cli = Self::from_arg_matches(&matches)?;
@@ -2861,7 +2891,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         let tokens: Vec<String> = argv.collect();
         let matches = command
             .try_get_matches_from_mut(tokens.clone())
-            .map_err(|e| swallowed_file_error(&command, &tokens).unwrap_or(e))?;
+            .map_err(|e| swallowed_file_error(&command, &tokens, e))?;
         validate_matches(&matches, &mut command)?;
         quiet = matches.get_flag("quiet");
         if matches.subcommand().is_some() {

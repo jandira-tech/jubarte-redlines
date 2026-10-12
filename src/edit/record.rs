@@ -39,8 +39,14 @@ const RECORD_ONLY: &[&str] = &["--author", "--datetime", "--existing-revisions"]
 pub fn plan_flag_conflict(recording: bool, given: &[&str], plan: &str) -> Option<String> {
     if recording {
         let flag = APPLY_ONLY.iter().find(|f| given.contains(f))?;
+        // A bare --plan (D16) is still unresolved here: spell it bare.
+        let apply = if plan.is_empty() {
+            "--plan".to_string()
+        } else {
+            format!("--plan {plan}")
+        };
         Some(format!(
-            "{flag} takes effect when the plan is applied (jubarte edit FILE --plan {plan}), and is not recorded"
+            "{flag} takes effect when the plan is applied (jubarte edit FILE {apply}), and is not recorded"
         ))
     } else {
         let flag = RECORD_ONLY.iter().find(|f| given.contains(f))?;
