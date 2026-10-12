@@ -173,7 +173,7 @@ test("read (alias text), inspect, capabilities and convert", () => {
   // The engine writes a task's view, snapshot or PDF; this CLI, Word only.
   for (const args of [
     ["accept", tracked, "-o", path.join(tmp, "a.pdf")],
-    ["scrub", tracked, "-o", path.join(tmp, "s.md")],
+    ["reject", tracked, "-o", path.join(tmp, "s.md")],
     ["read", untracked, "-o", path.join(tmp, "v.md")],
     [untracked, "-o", path.join(tmp, "v.json")],
     ["convert", tracked, "-o", path.join(tmp, "c.json")],
