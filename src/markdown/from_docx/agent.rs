@@ -1690,7 +1690,8 @@ fn has_mark_clause(line: &str) -> bool {
         })
 }
 
-/// The selected blocks of `body` joined back, and the `range:` text. A
+/// The selected blocks of `body` joined back, the `range:` text, and the
+/// body paragraphs the kept blocks span (`pN` numbers, ascending). A
 /// `Select::Changed` author arrives resolved: `@AC` for a known handle, the
 /// text as given otherwise (no block holds an unknown author's marks).
 /// `notes` (the `[^1]: …` definitions) keeps those the kept blocks cite,
@@ -1702,7 +1703,7 @@ pub(crate) fn select_blocks(
     select: &Select,
     last: Option<usize>,
     comment_handles: &HashMap<String, String>,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, Vec<usize>), String> {
     let blocks = blocks_of(body);
     let keep: Vec<bool>;
     let mut changed_notes: Vec<String> = Vec::new();
@@ -1870,7 +1871,16 @@ pub(crate) fn select_blocks(
             changed_notes.iter().any(|l| l == label) || out.contains(&format!("[^{label}]"))
         })
     });
-    Ok((out, range))
+    let mut paragraphs: Vec<usize> = blocks
+        .iter()
+        .zip(&keep)
+        .filter(|(_, keep)| **keep)
+        .filter_map(|(block, _)| block.span)
+        .flat_map(|(a, z)| a..=z)
+        .collect();
+    paragraphs.sort_unstable();
+    paragraphs.dedup();
+    Ok((out, range, paragraphs))
 }
 
 /// The label of a note definition, `1` for `[^1]: …`. A note inserted or

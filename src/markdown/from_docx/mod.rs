@@ -74,6 +74,9 @@ impl std::fmt::Display for ConvertError {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Converted {
     pub(crate) markdown: String,
+    /// The body paragraphs a selection kept (`pN` numbers, ascending);
+    /// `None` without [`Options::select`].
+    pub(crate) selected: Option<Vec<usize>>,
     /// Pictures by file name, under [`Options::media_dir`].
     pub(crate) media: BTreeMap<String, Vec<u8>>,
 }
@@ -370,6 +373,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         markdown = crate::markdown::paginate(&markdown, &pages);
     }
     let mut range = None;
+    let mut kept = None;
     let mut stories_changed = false;
     if let Some(select) = options.select.as_ref().filter(|_| options.ids) {
         let select = match select {
@@ -389,7 +393,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             .iter()
             .filter_map(|(id, c)| Some((id.clone(), handles.of(c.attr("author"))?.to_string())))
             .collect();
-        let (selected, described) = agent::select_blocks(
+        let (selected, described, paragraphs) = agent::select_blocks(
             &markdown,
             &mut defs,
             &select,
@@ -399,6 +403,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .map_err(ooxml::invalid)?;
         markdown = selected;
         range = Some(described);
+        kept = Some(paragraphs);
     }
     if let Some(original) = &original {
         let body = original.child("body").unwrap_or(original);
@@ -714,6 +719,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
 
     Ok(Converted {
         markdown,
+        selected: kept,
         media: writer.media.into_files(),
     })
 }

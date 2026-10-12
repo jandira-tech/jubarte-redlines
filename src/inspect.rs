@@ -138,6 +138,27 @@ pub struct Snapshot {
     pub tables: Vec<Table>,
     /// Content controls (`w:sdt`) in the body, in document order.
     pub controls: Vec<ContentControl>,
+    /// Tracked changes, as [`crate::changes::list_changes`] lists them.
+    pub changes: Vec<crate::changes::Change>,
+    /// Comments, as [`crate::comments::list_comments`] lists them.
+    pub comments: Vec<crate::comments::CommentRecord>,
+}
+
+impl Snapshot {
+    /// Keep the body paragraphs numbered in `body_paragraphs` (`N` of
+    /// `body:p:N`), and the changes and comments sitting in one of them.
+    /// `summary`, `stories`, `tables` and `controls` stay whole.
+    pub fn retain(&mut self, body_paragraphs: &[usize]) {
+        let kept: BTreeSet<String> = body_paragraphs
+            .iter()
+            .map(|n| format!("body:p:{n}"))
+            .collect();
+        self.paragraphs.retain(|p| kept.contains(&p.id));
+        let in_kept =
+            |paragraph: &Option<String>| paragraph.as_ref().is_some_and(|p| kept.contains(p));
+        self.changes.retain(|c| in_kept(&c.paragraph));
+        self.comments.retain(|c| in_kept(&c.paragraph));
+    }
 }
 
 /// A header, footer or notes part an edit plan can address. Its paragraph
@@ -267,11 +288,17 @@ pub fn tables(docx: &[u8]) -> Result<Vec<Table>, InspectError> {
     Ok(tables::body_tables(&opened.dom, opened.body))
 }
 
-/// The full snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-/// `paragraphs`, `stories`, `tables`, `controls`).
-pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
+/// The full snapshot: `schema_version`, `source_sha256`, `summary`,
+/// `paragraphs`, `stories`, `tables`, `controls`, `changes` and `comments`.
+pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
     let opened = Opened::open(docx)?;
-    let snapshot = Snapshot {
+    let changes =
+        crate::changes::list_changes(docx).map_err(|e| InspectError::Invalid(e.to_string()))?;
+    let comments = crate::comments::list_comments(docx).map_err(|e| match e {
+        crate::comments::CommentError::Admission(refused) => InspectError::Admission(refused),
+        crate::comments::CommentError::Package(m) => InspectError::Package(m),
+    })?;
+    Ok(Snapshot {
         schema_version: SCHEMA_VERSION,
         source_sha256: source_sha256(docx),
         summary: opened.summary()?,
@@ -279,8 +306,58 @@ pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
         stories: opened.stories()?,
         tables: tables::body_tables(&opened.dom, opened.body),
         controls: collect_controls(&opened.dom, opened.body),
-    };
-    serde_json::to_string(&snapshot).map_err(|e| InspectError::Invalid(e.to_string()))
+        changes,
+        comments,
+    })
+}
+
+/// [`snapshot`] as JSON.
+pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
+    serde_json::to_string(&snapshot(docx)?).map_err(|e| InspectError::Invalid(e.to_string()))
+}
+
+/// Tables as `read --tables` prints them: a `table N: RxC header_rows=H
+/// widths=W` line per table, then a line per row of tab-separated
+/// `ids=text` cells (`-` for a cell with no paragraph; `\`, newlines and
+/// tabs escaped), or `no tables`. Every line ends with a newline.
+pub fn tables_text(tables: &[Table]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    if tables.is_empty() {
+        out.push_str("no tables\n");
+    }
+    for table in tables {
+        let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
+        let widths: Vec<String> = table.widths_dxa.iter().map(u32::to_string).collect();
+        let _ = writeln!(
+            out,
+            "table {}: {}x{columns} header_rows={} widths={}",
+            table.index,
+            table.rows.len(),
+            table.header_rows,
+            widths.join(",")
+        );
+        for row in &table.rows {
+            let cells: Vec<String> = row
+                .iter()
+                .map(|cell| {
+                    let ids = if cell.paragraph_ids.is_empty() {
+                        "-".to_string()
+                    } else {
+                        cell.paragraph_ids.join(",")
+                    };
+                    let text = cell
+                        .text
+                        .replace('\\', "\\\\")
+                        .replace('\n', "\\n")
+                        .replace('\t', "\\t");
+                    format!("{ids}={text}")
+                })
+                .collect();
+            let _ = writeln!(out, "{}", cells.join("\t"));
+        }
+    }
+    out
 }
 
 /// Markdown rendering of already inspected paragraphs.
