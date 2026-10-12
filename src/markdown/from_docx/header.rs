@@ -124,7 +124,8 @@ fn kv(out: &mut String, key_value: &str, comment: Option<&str>) {
 
 /// `value` as a YAML scalar: plain when every YAML reader, 1.1 or 1.2, takes
 /// it back as the same string, else double-quoted (a JSON string is a valid YAML one).
-/// `flow` values sit inside `{…}`, where `,`, `[`, `]`, `{` and `}` end them.
+/// `flow` values sit inside `{…}` or `[…]`, where `,`, `[`, `]`, `{` and `}`
+/// end them, and where libyaml refuses any `:` and a `?` (`@??`).
 pub(crate) fn scalar(value: &str, flow: bool) -> String {
     const RESERVED: [&str; 12] = [
         "true", "false", "yes", "no", "on", "off", "y", "n", "null", "~", ".nan", ".inf",
@@ -139,7 +140,7 @@ pub(crate) fn scalar(value: &str, flow: bool) -> String {
         && !value.contains(": ")
         && !value.contains(" #")
         && !value.ends_with(':')
-        && !(flow && value.contains([',', '[', ']', '{', '}']))
+        && !(flow && value.contains([',', '[', ']', '{', '}', ':', '?']))
         && !RESERVED.contains(&value.to_ascii_lowercase().as_str())
         // One word that opens with a digit, `+` or `.` may be a number, a
         // time (`12:30`, base 60 in YAML 1.1) or a date to some reader.
@@ -980,7 +981,14 @@ fn part_two(out: &mut String, f: &Facts) {
     if !f.unplaced.is_empty() {
         kv(
             out,
-            &format!("unplaced: [{}]", f.unplaced.join(", ")),
+            &format!(
+                "unplaced: [{}]",
+                f.unplaced
+                    .iter()
+                    .map(|e| scalar(e, true))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Some("changes no other line shows (text boxes, Word's Fallback copies)"),
         );
     }

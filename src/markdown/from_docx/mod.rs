@@ -146,14 +146,19 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .flatten();
     let handles = if options.ids {
         // An author whose only changes sit in a header or the styles gets a
-        // handle too, so `--by` takes it.
+        // handle too, so `--by` takes it; the styles' come after the comment
+        // authors', whose handles stay as they were.
         let stories: Vec<&Element> = note_roots
             .iter()
             .map(|(_, root)| root)
             .chain(&story_roots)
-            .chain(&styles_root)
             .collect();
-        agent::handles(&document, &stories, comments_root.as_ref())
+        agent::handles(
+            &document,
+            &stories,
+            comments_root.as_ref(),
+            styles_root.as_ref(),
+        )
     } else {
         agent::Handles::default()
     };
@@ -669,7 +674,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         // text to tag) is named on the header's `unplaced:` line.
         if accept.is_none() && facts.range.is_none() {
             let printed =
-                agent::printed_change_ids(&format!("{head}\n{markdown}\n{}", defs.join("\n")));
+                agent::printed_change_ids(&head, &format!("{markdown}\n{}", defs.join("\n")));
             // A change inside another (a cell's text in an inserted row)
             // reads from its container's tag: resolving one takes both.
             let by_id: HashMap<&str, &crate::changes::Change> =

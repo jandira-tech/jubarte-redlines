@@ -27,7 +27,8 @@ pub(crate) struct Handles {
     /// Author name as stored → handle (`Ann Counsel` → `AC`).
     pub by_author: HashMap<String, String>,
     /// Authors in first-appearance order: revision authors in document
-    /// order, then comment-only authors in part order.
+    /// order, then comment-only authors in part order, then authors only the
+    /// styles' changes name.
     pub order: Vec<String>,
     /// Author → every `w:date` on their marks and comments.
     pub dates: HashMap<String, BTreeSet<String>>,
@@ -474,7 +475,9 @@ fn walk_revision_authors(
     out: &mut Vec<String>,
     dates: &mut HashMap<String, BTreeSet<String>>,
 ) {
-    if (is_revision(e.local()) || e.local().ends_with("PrChange"))
+    // Every kind `jubarte changes` lists: marks, cell merges, and
+    // formatting (`*PrChange`, `numberingChange`, `tblGridChange`).
+    if (is_revision(e.local()) || e.local() == "cellMerge" || e.local().ends_with("Change"))
         && let Some(author) = e.attr("author")
     {
         if !out.iter().any(|a| a == author) {
@@ -493,13 +496,14 @@ fn walk_revision_authors(
 }
 
 /// Authors of revisions (document order, then the other stories: footnotes,
-/// endnotes, headers and footers) then of comments (comment order),
-/// each with a handle: the comment `w:initials` that author wrote, else the
+/// endnotes, headers and footers) then of comments (comment order), then of
+/// the styles' changes, each with a handle: the comment `w:initials` that author wrote, else the
 /// uppercase initials of the name's words; a collision appends 2, 3, ….
 pub(crate) fn handles(
     document: &Element,
     stories: &[&Element],
     comments: Option<&Element>,
+    styles: Option<&Element>,
 ) -> Handles {
     let mut order = Vec::new();
     let mut dates: HashMap<String, BTreeSet<String>> = HashMap::new();
@@ -528,6 +532,9 @@ pub(crate) fn handles(
                     .or_insert_with(|| i.to_string());
             }
         }
+    }
+    if let Some(styles) = styles {
+        walk_revision_authors(styles, &mut order, &mut dates);
     }
     let mut by_author = HashMap::new();
     let mut taken: HashSet<String> = HashSet::new();
@@ -669,21 +676,93 @@ fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
     printed
 }
 
-/// The long ids (`body:rev:12`) of every change `text` prints a tag for:
-/// an id, or ids joined by `+`, followed by an `@` handle, wherever it sits
-/// (a note, an id line, a table line, the header).
-pub(crate) fn printed_change_ids(text: &str) -> HashSet<String> {
-    let words: Vec<&str> = text
-        .split(|c: char| c.is_whitespace() || ",;{}<>()\"".contains(c))
-        .filter(|w| !w.is_empty())
-        .collect();
-    words
-        .windows(2)
-        .filter(|pair| pair[1].len() > 1 && pair[1].starts_with('@'))
-        .filter_map(|pair| crate::ids::parse_change_ids(pair[0]).ok())
-        .flatten()
-        .map(|id| id.long())
-        .collect()
+/// The long ids (`body:rev:12`) of every change the view prints a tag for:
+/// an id, or ids joined by `+`, followed by an `@` handle. Only where the
+/// writer prints tags: the body's `{>>…<<}` notes (not a comment's, which
+/// holds the author's words) and `<!-- … -->` lines, and the header without
+/// its headers' and footers' `text:` values. Document text that reads like
+/// a tag (`ping r5 @ops`) prints no change.
+pub(crate) fn printed_change_ids(head: &str, body: &str) -> HashSet<String> {
+    let mut spans: Vec<String> = Vec::new();
+    tag_spans(body, true, &mut spans);
+    for line in head.lines() {
+        let (rest, texts) = split_story_text(line);
+        spans.push(rest);
+        for text in texts {
+            tag_spans(&text, false, &mut spans);
+        }
+    }
+    let mut printed = HashSet::new();
+    for span in &spans {
+        let words: Vec<&str> = span
+            .split(|c: char| c.is_whitespace() || ",;{}<>()[]\"".contains(c))
+            .filter(|w| !w.is_empty())
+            .collect();
+        printed.extend(
+            words
+                .windows(2)
+                .filter(|pair| pair[1].len() > 1 && pair[1].starts_with('@'))
+                .filter_map(|pair| crate::ids::parse_change_ids(pair[0]).ok())
+                .flatten()
+                .map(|id| id.long()),
+        );
+    }
+    printed
+}
+
+/// The tag notes (`{>>r5 @AC<<}`, a comment's skipped) in `text`, and with
+/// `lines` its `<!-- … -->` lines' contents.
+fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
+    let pairs: &[(&str, &str)] = if lines {
+        &[("{>>", "<<}"), ("<!-- ", " -->")]
+    } else {
+        &[("{>>", "<<}")]
+    };
+    for &(open, close) in pairs {
+        let mut rest = text;
+        while let Some(at) = rest.find(open) {
+            let after = &rest[at + open.len()..];
+            let end = after.find(close).unwrap_or(after.len());
+            let span = &after[..end];
+            let comment =
+                open == "{>>" && comment_word(span.split(' ').next().unwrap_or("")).is_some();
+            if !comment {
+                out.push(span.to_string());
+            }
+            rest = &after[end..];
+        }
+    }
+}
+
+/// A header line without its `text: …` values (a header's or footer's own
+/// words, which keep their tag notes), and those values: a plain value runs
+/// to the next `,` or `}`, a quoted one to its closing quote.
+fn split_story_text(line: &str) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(line.len());
+    let mut texts = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.find("text: ") {
+        out.push_str(&rest[..at]);
+        let value = &rest[at + "text: ".len()..];
+        let end = if let Some(quoted) = value.strip_prefix('"') {
+            let mut escaped = false;
+            let close = quoted
+                .char_indices()
+                .find(|&(_, c)| {
+                    let done = c == '"' && !escaped;
+                    escaped = c == '\\' && !escaped;
+                    done
+                })
+                .map_or(quoted.len(), |(i, _)| i + 1);
+            1 + close
+        } else {
+            value.find([',', '}']).unwrap_or(value.len())
+        };
+        texts.push(value[..end].to_string());
+        rest = &value[end..];
+    }
+    out.push_str(rest);
+    (out, texts)
 }
 
 /// A change on the header's `unplaced:` line: `r3 @AC in p0`.
@@ -714,7 +793,9 @@ pub(crate) fn story_unshown(
             let local = child.local();
             if matches!(local, "ins" | "del" | "moveFrom" | "moveTo") {
                 out.push((false, child));
-            } else if local.ends_with("PrChange") || local == "tblGridChange" {
+            } else if local.ends_with("PrChange")
+                || matches!(local, "tblGridChange" | "numberingChange")
+            {
                 out.push((true, child));
                 continue;
             } else if matches!(local, "cellIns" | "cellDel" | "cellMerge") {
@@ -1957,7 +2038,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:bookmarkStart w:id="9" w:name="_b"/><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t> u </w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -1971,7 +2052,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>a</w:t></w:r></w:ins><w:r><w:t> </w:t></w:r><w:del w:id="1" w:author="John Doe"><w:r><w:delText>b</w:delText></w:r></w:del></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         assert_eq!(handles.by_author["Ann Counsel"], "AC");
         assert_eq!(handles.by_author["John Doe"], "JD");
         let p = d.child("body").unwrap().child("p").unwrap();
@@ -2015,7 +2096,7 @@ mod tests {
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/><w:ins w:id="1" w:author="Al Cooper" w:date="2026-10-02T08:00:00Z"/><w:ins w:id="2" w:author="Al Cooper" w:date="2026-10-03T08:30:00Z"/></w:p>"#,
         );
         let comments = parse_xml(format!(r#"<w:comments {W}><w:comment w:id="5" w:author="Arthur Souza Rodrigues" w:initials="AS" w:date="2026-10-09T16:13:00Z"/><w:comment w:id="6" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:comments>"#).as_bytes()).unwrap();
-        let handles = handles(&d, &[], Some(&comments));
+        let handles = handles(&d, &[], Some(&comments), None);
         assert_eq!(
             handles.order,
             ["Ann Counsel", "Al Cooper", "Arthur Souza Rodrigues"]
@@ -2040,7 +2121,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permStart w:id="30"/><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permEnd w:id="30"/></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -2059,7 +2140,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:pPr><w:pPrChange w:id="1" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="2" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         assert_eq!(format_change_tags(p, &handles), ["1@AC", "2@AC"]);
     }
