@@ -152,7 +152,9 @@ test("agent shorthand forwards every view option and preserves explicit compare"
     assert.deepEqual(single, explicit);
     const pair = parse(["a.docx", "b.docx", ...flags]);
     assert.equal(pair.exit_code, 0, JSON.stringify(pair));
-    const { file, ...view } = explicit.args;
+    // -q is the whole command's, not the view's.
+    const { file, quiet, ...view } = explicit.args;
+    assert.equal(quiet, false);
     assert.equal(file, "a.docx");
     assert.deepEqual(pair.args.view, view);
   }
