@@ -1782,6 +1782,8 @@ struct DiffJob<'a> {
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
     patch: Option<usize>,
+    /// `-q`: say nothing of what was written.
+    quiet: bool,
 }
 
 /// Unified text diff uses the shared core directly, with no redline/render pass.
@@ -1939,10 +1941,12 @@ fn write_diff_output(
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
             std::fs::write(&path, out).map_err(|e| format!("writing {}: {e}", path.display()))?;
-            say(
-                patch_on_stdout,
-                format_args!("wrote {} ({} bytes)", path.display(), out.len()),
-            );
+            if !job.quiet {
+                say(
+                    patch_on_stdout,
+                    format_args!("wrote {} ({} bytes)", path.display(), out.len()),
+                );
+            }
             Ok(())
         }
         (Format::Pdf | Format::Png, output) => run_convert(&ConvertJob {
@@ -1957,7 +1961,7 @@ fn write_diff_output(
             report: None,
             pages: job.pages,
             fail_on_substitution: false,
-            quiet: false,
+            quiet: job.quiet,
         })
         .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
@@ -2554,6 +2558,7 @@ fn cli_main() -> ExitCode {
                 dpi: render.dpi,
                 pages: selected.as_deref(),
                 patch: (format == PatchFormat::Patch).then_some(columns),
+                quiet,
             }));
         }
         Some(Command::Inspect { file, json, tables }) => {

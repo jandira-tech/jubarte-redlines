@@ -436,9 +436,11 @@ pub enum Command {
         /// Word 97-2003 .doc (read into a .docx first).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Output path (default: `<stem>.pdf` next to a .docx, `<stem>.docx`
-        /// next to Markdown; Markdown output goes to stdout). PNG pages are
-        /// named `<stem>-page-NN.png` beside it.
+        /// Output path; its extension picks the format: .docx, .md, .pdf,
+        /// .png (pages named `<stem>-page-NN.png` beside it) or .json (the
+        /// snapshot of the result). Without it: `<stem>.pdf` next to a
+        /// .docx, `<stem>.docx` next to Markdown, `<stem>.json` for
+        /// `--to json`; Markdown output goes to stdout.
         #[arg(short = 'o', long, value_name = "FILE")]
         output: Option<PathBuf>,
         /// Overwrite the output file if it already exists.
@@ -1210,9 +1212,7 @@ pub enum Format {
     /// PNG pages.
     Png,
     /// The JSON snapshot (`read --json`'s object): written, never read.
-    /// Hidden until a task writes it; `-o x.json` and `--to json` exit 2
-    /// meanwhile (`json_not_yet`).
-    #[value(hide = true)]
+    /// `compare` and `diff` refuse it until they write it (`json_not_yet`).
     Json,
 }
 
@@ -2064,9 +2064,10 @@ const READ_OPTION_IDS: [&str; 11] = [
     "tables",
 ];
 
-/// Until a task writes the JSON snapshot (Tasks 11-13), its `-o x.json` and
-/// `--to json` are refused here, so the binary and both bindings exit 2
-/// alike instead of writing a document or a patch into a `.json`.
+/// Until `compare` and `diff` write the JSON snapshot (Task 13), their
+/// `-o x.json` and `--to json` are refused here, so the binary and both
+/// bindings exit 2 alike instead of writing a document or a patch into a
+/// `.json`.
 fn json_not_yet(matches: &clap::ArgMatches, task: Task) -> Option<String> {
     let to = matches.try_get_one::<Format>("to").ok().flatten().copied();
     let said = matches

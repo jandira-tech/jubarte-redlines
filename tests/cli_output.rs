@@ -82,6 +82,9 @@ fn every_writing_task_writes_what_its_output_names() {
             );
         }
     }
+    // A convert's Markdown of Markdown is its text with the changes kept.
+    let md = std::fs::read_to_string(dir.path().join("convert-md.md")).unwrap();
+    assert_eq!(md, DRAFT);
     // A convert's Markdown of a Word document is its text, with no header.
     let md = std::fs::read_to_string(dir.path().join("convert-docx.md")).unwrap();
     assert!(!md.starts_with("---\nsource:"), "{md}");
@@ -119,6 +122,9 @@ fn png_pages_and_quiet() {
         &["reject", "d.docx", "-o", "q.pdf", "-q"],
         &["read", "d.docx", "-o", "q.json", "-q"],
         &["scrub", "d.docx", "-o", "q.md", "--quiet"],
+        &[
+            "diff", "d.docx", "d.docx", "-t", "pdf", "-o", "q2.pdf", "-q",
+        ],
     ] {
         let out = jubarte(dir.path(), args);
         assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
