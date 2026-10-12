@@ -558,6 +558,22 @@ author's: a handle or a full name), `source` (the name printed as
 
 Mirrors `jubarte::markdown::read`.
 
+### `recordPlan`
+
+```typescript
+recordPlan(verb: string, operations_json: string, docx: Uint8Array, options_json: string, held?: string | null): string
+```
+
+`edit`/`add --plan PLAN.json` with operation flags: the operations
+recorded into `held` (PLAN.json's text, absent before the first
+recording), as JSON `{ok: true, recorded: {plan, json, notes,
+summary}}`: preview `plan`, write `json`, print `notes` and `summary`.
+On failure `{ok: false, usage, message}`: a usage error (exit 2), or
+`held` is not a plan (exit 3). Options (JSON): `author`, `date`,
+`existingRevisions`, `file`, `plan`, `dryRun`.
+
+Mirrors `jubarte::edit::record::record`.
+
 ### `redlineDocuments`
 
 ```typescript
@@ -690,10 +706,10 @@ Tasks:
   inspect       Inspect document facts, paragraphs, styles and tables
   read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
                 comments with ids [alias: text]
-  edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve
-                or --style (several -p per command), or a JSON plan. Writes clean copy,
-                redline, patch and report, then prints the changed paragraphs as the
-                agent view (refusal: exit 3)
+  edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
+                --reply, --accept, --reject or --style (several -p per command), or a
+                JSON plan. Writes clean copy, redline, patch and report, then prints the
+                changed paragraphs as the agent view (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
                 -p per command). Writes the same files as edit and prints the changed
                 paragraphs as the agent view
@@ -914,7 +930,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change (`body:rev:12`, as `jubarte changes` lists it). Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
+          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -952,7 +969,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change (`body:rev:12`, as `jubarte changes` lists it). Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
+          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1330,8 +1348,8 @@ $ jubarte-redlines read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
 A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
-is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>#12
-@AC<<}`) and comments with theirs (`{>>#c5 @AC: …<<}`).
+is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
+@AC<<}`) and comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte-redlines read [OPTIONS] <FILE>
 
@@ -1392,9 +1410,10 @@ Read options:
 
 ```text
 $ jubarte-redlines edit --help
-Edit a document: -p WHERE with --anchor, --content, --delete, --resolve or --style
-(several -p per command), or a JSON plan. Writes clean copy, redline, patch and report,
-then prints the changed paragraphs as the agent view (refusal: exit 3)
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
+--accept, --reject or --style (several -p per command), or a JSON plan. Writes clean
+copy, redline, patch and report, then prints the changed paragraphs as the agent view
+(refusal: exit 3)
 
 Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
@@ -1405,11 +1424,17 @@ Arguments:
 Options:
       --plan <PLAN.json>
           Edit plan JSON: batches and the other operation kinds (see `jubarte
-          capabilities --json`). Excludes the operation flags
+          capabilities --json`). Alone, it is applied to FILE; with operation flags,
+          they are recorded into it (created on first use) and FILE is left as it is
+
+      --consume
+          Delete PLAN.json once it has been applied and the outputs are written (with
+          --plan and no operation flags)
 
   -p, --location <WHERE>
-          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a comment. Each -p starts
-          an operation; the flags after it belong to it
+          Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment) or r12 (a
+          revision, with --accept or --reject). Each -p starts an operation; the flags
+          after it belong to it
 
       --anchor <TEXT>
           Text inside WHERE the operation applies to (must occur once)
@@ -1423,6 +1448,15 @@ Options:
 
       --resolve
           Resolve comment c5 (with -p c5)
+
+      --reply <TEXT>
+          Reply to comment c5 (with -p c5), as `add -p c5 --content`
+
+      --accept
+          Accept revision r12 (with -p r12; r1+2 for several)
+
+      --reject
+          Reject revision r12 (with -p r12; r1+2 for several)
 
       --style <SPEC>
           Formatting for the anchored text: bold, italic, underline, strike, caps,
@@ -1507,10 +1541,15 @@ Examples:
   jubarte edit a.docx -p p3 --content "The parties agree as follows."    rewrite
   jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
   jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
+  jubarte edit a.docx -p c5 --reply "Agreed, will fix."
+  jubarte edit a.docx -p r3 --accept -p header1.r1 --reject
   jubarte edit a.docx --plan plan.json --out-dir review
+  jubarte edit a.docx --plan plan.json -p p3 --content "New."   record into plan.json
+  jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
-WHERE is an id from `jubarte read`: p12, header1, footer2.p1, t0.r1.c2,
-c5 (a comment), or a long id (body:p:12).
+WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
+t0.row1.cell2, c5 (a comment), r12 (a revision), or a long id
+(body:p:12).
 ```
 
 #### `jubarte-redlines add`
@@ -1520,22 +1559,34 @@ $ jubarte-redlines add --help
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
 Writes the same files as edit and prints the changed paragraphs as the agent view
 
-Usage: jubarte-redlines add [OPTIONS] --location <WHERE> <FILE>
+Usage: jubarte-redlines add [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
           The source document (.docx). Never modified
 
 Options:
+      --plan <PLAN.json>
+          Edit plan JSON. With operation flags, they are recorded into it (created on
+          first use) and FILE is left as it is; alone, it is applied to FILE, as `edit
+          --plan` does
+
+      --consume
+          Delete PLAN.json once it has been applied and the outputs are written (with
+          --plan and no operation flags)
+
   -p, --location <WHERE>
-          Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a reply. Each -p starts
-          an operation; the flags after it belong to it
+          Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply. Each -p
+          starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
           Text inside WHERE to comment on (must occur once)
 
       --content <TEXT>
           The paragraph, comment or reply text
+
+      --reply <TEXT>
+          Reply to comment c5 (with -p c5); the same as --content there
 
       --before
           A new paragraph before WHERE instead of after it
@@ -1597,6 +1648,9 @@ Examples:
   jubarte add a.docx -p p5 --anchor "monthly fee" --content "Net of taxes?"   a comment
   jubarte add a.docx -p p5 --comment --content "Whole clause needs a cap."
   jubarte add a.docx -p c5 --content "Agreed, will fix."           a reply
+  jubarte add a.docx -p c5 --reply "Agreed, will fix."             the same reply
+  jubarte add a.docx --plan plan.json -p p5 --comment --content "Cap?"   record into
+  plan.json
 ```
 
 #### `jubarte-redlines capabilities`
