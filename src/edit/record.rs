@@ -116,12 +116,20 @@ impl Recorded {
 /// Where a recording is written: the file a symbolic link names (the link
 /// stays a link), else `plan` itself.
 pub fn plan_target(plan: &Path) -> PathBuf {
-    std::fs::canonicalize(plan).unwrap_or_else(|_| plan.to_path_buf())
+    if let Ok(real) = std::fs::canonicalize(plan) {
+        return real;
+    }
+    // A link to a plan not written yet names where it goes.
+    match std::fs::read_link(plan) {
+        Ok(to) => plan.parent().unwrap_or(Path::new("")).join(to),
+        Err(_) => plan.to_path_buf(),
+    }
 }
 
 /// The temporary file a recording is written to before it replaces
-/// `target`: hidden, beside it, and named for this process, so it neither
-/// names another plan or document nor races another recording's.
+/// `target`: hidden, beside it, and named for this process, so it names no
+/// other plan or document. Two recordings into one plan at once are not
+/// serialized: the later rename wins.
 pub fn partial_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
@@ -224,6 +232,13 @@ pub fn record_json(
         serde_json::from_str(operations).map_err(|e| usage(format!("operations: {e}")))?;
     let options: RecordOptions =
         serde_json::from_str(options).map_err(|e| usage(format!("options: {e}")))?;
+    // The CLI's --datetime is checked by its parser; the bindings' is here.
+    let date = options
+        .date
+        .as_deref()
+        .map(crate::cli::parse_datetime)
+        .transpose()
+        .map_err(|e| usage(format!("date: {e}")))?;
     let existing = match options.existing_revisions.as_deref().unwrap_or("auto") {
         "auto" => None,
         "keep" => Some(ExistingRevisions::Keep),
@@ -237,15 +252,7 @@ pub fn record_json(
         }
     };
     let author = options.author.as_deref().unwrap_or("Modified User");
-    let recorded = record(
-        verb,
-        &ops,
-        author,
-        options.date.as_deref(),
-        existing,
-        source,
-        held,
-    )?;
+    let recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
     Ok(serde_json::json!({
         "plan": serde_json::to_string(&recorded.plan).expect("a plan serializes"),
         "json": recorded.json(),
@@ -390,6 +397,20 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(left.len(), 2, "{left:?}");
+        // A link to a plan not written yet creates the file it names.
+        #[cfg(unix)]
+        {
+            let dangling = dir.path().join("next.json");
+            std::os::unix::fs::symlink("plans-v4.json", &dangling).unwrap();
+            write_plan(&dangling, "[2]\n").unwrap();
+            assert!(dangling.symlink_metadata().unwrap().is_symlink());
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("plans-v4.json")).unwrap(),
+                "[2]\n"
+            );
+            std::fs::remove_file(&dangling).unwrap();
+            std::fs::remove_file(dir.path().join("plans-v4.json")).unwrap();
+        }
         // A plan in a directory that is gone fails and leaves nothing.
         assert!(write_plan(&dir.path().join("gone/plan.json"), "x").is_err());
         assert!(
@@ -423,6 +444,21 @@ mod tests {
             EditPlan::from_json(v["json"].as_str().unwrap()).unwrap(),
             plan
         );
+        for (ops, options) in [
+            (
+                r#"[{"at":"p1","comment":true,"content":"Why?"}]"#,
+                r#"{"date":"yesterday","file":"a","plan":"p"}"#,
+            ),
+            (
+                r#"[{"at":"p1","comment":true,"content":"Why?","style":["bold"]}]"#,
+                r#"{"file":"a","plan":"p"}"#,
+            ),
+        ] {
+            assert!(matches!(
+                record_json("add", ops, b"doc", None, options),
+                Err(RecordError::Usage(_))
+            ));
+        }
         assert!(matches!(
             record_json("move", "[]", b"", None, r#"{"file":"a","plan":"p"}"#),
             Err(RecordError::Usage(m)) if m.contains("edit or add")

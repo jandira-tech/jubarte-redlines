@@ -19,7 +19,7 @@ use crate::ids::Location;
 
 /// One operation as the flags describe it, grouped by its `-p`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct FlagOp {
     /// The `-p` value: `p12`, `header1`, `t0.row1.cell2`, `c5`, or a long id.
     pub at: String,
@@ -513,6 +513,9 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
             "the plan was recorded against another document (sha256 {pinned}); this one is {source}"
         ));
     }
+    if plan.author.is_empty() {
+        return Err("the plan names no author, so it cannot be applied; start a new plan".into());
+    }
     if plan.author != more.author {
         return Err(format!(
             "the plan's author is {:?}; pass --author {:?}, or start a new plan",
@@ -541,11 +544,7 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
         .operations
         .iter()
         .filter_map(|op| op.id.as_deref())
-        .find(|id| {
-            id.strip_prefix("op-")
-                .and_then(|n| n.parse::<usize>().ok())
-                .is_some_and(|n| added.contains(&n))
-        })
+        .find(|id| added.clone().any(|n| *id == format!("op-{n}")))
     {
         return Err(format!(
             "the plan names an operation {id}, the id a recorded operation takes; rename it, or start a new plan"
@@ -553,6 +552,14 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
     }
     if let Some(more) = more.resolve_revisions {
         let resolve = plan.resolve_revisions.get_or_insert_with(Default::default);
+        // Every id in long form, as recorded ones are, so `r1` and
+        // `body:rev:1` are one id; a malformed one is left for the preview
+        // to report.
+        for side in [&mut resolve.accept, &mut resolve.reject] {
+            if let Some(normal) = side.as_ref().and_then(|f| f.normalized().ok()) {
+                *side = Some(normal);
+            }
+        }
         join_ids(&mut resolve.accept, more.accept, "accept")?;
         join_ids(&mut resolve.reject, more.reject, "reject")?;
         let (accept, reject) = (filter_ids(&resolve.accept), filter_ids(&resolve.reject));
@@ -824,6 +831,37 @@ mod tests {
         assert_eq!(
             record_into(Some(named), more).unwrap_err(),
             "the plan names an operation op-2, the id a recorded operation takes; rename it, or start a new plan"
+        );
+    }
+
+    /// pi review 06c: id spellings, string op ids, an empty author.
+    #[test]
+    fn recording_reads_ids_and_names_as_the_plan_spells_them() {
+        let mut short = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        short.resolve_revisions = Some(ResolveRevisions {
+            accept: Some(ChangeFilter::ids(["r1"])),
+            reject: None,
+        });
+        let again = recorded(Verb::Edit, &[revision("r1", true)], "Ann", "aa");
+        let plan = record_into(Some(short.clone()), again).unwrap();
+        let accept = plan.resolve_revisions.unwrap().accept.unwrap().ids.unwrap();
+        assert_eq!(accept, ["body:rev:1"]);
+        let reject = recorded(Verb::Edit, &[revision("r1", false)], "Ann", "aa");
+        assert_eq!(
+            record_into(Some(short), reject).unwrap_err(),
+            "body:rev:1 is both accepted and rejected"
+        );
+        let mut padded = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        padded.operations[0].id = Some("op-02".into());
+        let more = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Ann", "aa");
+        assert!(record_into(Some(padded), more).is_ok());
+        let mut nobody = recorded(Verb::Edit, &[rewrite("p1", "One.")], "", "aa");
+        nobody.author = String::new();
+        let more = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "", "aa");
+        assert!(
+            record_into(Some(nobody), more)
+                .unwrap_err()
+                .starts_with("the plan names no author")
         );
     }
 

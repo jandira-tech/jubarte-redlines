@@ -1433,7 +1433,7 @@ fn styles() -> clap::builder::Styles {
 /// A revision timestamp: an xsd:dateTime as Word writes `w:date`
 /// (`2026-10-01T09:00:00Z`, optional fraction and offset of at most 14:00).
 /// xsd's `24:00:00` and leap second `:60` are refused: Word writes neither.
-fn parse_datetime(value: &str) -> Result<String, String> {
+pub(crate) fn parse_datetime(value: &str) -> Result<String, String> {
     let bad = || "expected an ISO 8601 date and time such as 2026-10-01T09:00:00Z".to_string();
     let b = value.as_bytes();
     let digits = |from: usize, to: usize| -> Option<u32> {
