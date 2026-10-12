@@ -289,8 +289,93 @@ function planKeepsRevisions(plan) {
   }
 }
 
+/** The `--plan`-sensitive flags the command line holds, as the binary names them. */
+function givenFlags(o) {
+  const flags = {
+    "--consume": o.consume, "--out-dir": o.out_dir != null, "--force": o.force,
+    "--editing-mode": o.editing_mode, "--suggesting-mode": o.suggesting_mode,
+    "--pdf": o.pdf, "--png": o.png, "--author": o.author !== "Modified User",
+    "--datetime": o.datetime != null, "--existing-revisions": (o.existing_revisions ?? "auto") !== "auto",
+  };
+  return Object.keys(flags).filter((flag) => flags[flag]);
+}
+
+/** A usage error when a flag cannot go with `--plan` this way (shared wording). */
+function planConflict(o, recording) {
+  const message = wasm.planFlagConflict(recording, JSON.stringify(givenFlags(o)), o.plan);
+  if (message != null) throw new UsageError(message);
+}
+
+/** A refused plan's per-operation report on stdout, the error on stderr. */
+function printRefusal(result) {
+  const error = JSON.parse(result.json);
+  (error.outcomes ?? []).forEach((outcome, i) => {
+    const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
+    for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
+      if (outcome[field] != null) row[key] = outcome[field];
+    }
+    console.log(JSON.stringify(row));
+  });
+  console.log(JSON.stringify({ ev: "summary", status: "failed", code: error.code, operation: error.operation, message: error.message }));
+  console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
+  return EXIT_PLAN_REFUSED;
+}
+
+/** `--plan PLAN.json` with operation flags: record them into the plan,
+ * checked against FILE first; a refusal leaves PLAN.json as it was. */
+function recordPlan(verb, file, docx, o) {
+  planConflict(o, true);
+  let held;
+  try {
+    held = fs.readFileSync(o.plan, "utf8");
+  } catch (e) {
+    if (e.code !== "ENOENT") throw new CliError(`reading ${o.plan}: ${e.message}`);
+  }
+  const options = {
+    author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
+    file, plan: o.plan, dryRun: Boolean(o.dry_run),
+  };
+  const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
+  if (!answer.ok) {
+    if (answer.usage) throw new UsageError(answer.message);
+    console.error(`error: ${o.plan}: ${answer.message}`);
+    return EXIT_PLAN_REFUSED;
+  }
+  const { recorded } = answer;
+  const preview = wasm.previewEditPlan(docx, recorded.plan);
+  if (!preview.ok) return printRefusal(preview);
+  if (!o.quiet) for (const note of recorded.notes) console.log(`note: ${note}`);
+  if (!o.dry_run) {
+    const partial = `${o.plan}.partial`;
+    write(partial, recorded.json);
+    try {
+      fs.renameSync(partial, o.plan);
+    } catch (e) {
+      throw new CliError(`writing ${o.plan}: ${e.message}`);
+    }
+  }
+  if (!o.quiet) console.log(recorded.summary);
+  return EXIT_OK;
+}
+
 function runEdit(verb, file, o) {
   const docx = read(file);
+  if (o.plan != null) {
+    if (o.operations?.length) return recordPlan(verb, file, docx, o);
+    planConflict(o, false);
+  }
+  const code = applyEdit(verb, file, docx, o);
+  if ((code ?? EXIT_OK) === EXIT_OK && o.consume && !o.dry_run) {
+    try {
+      fs.unlinkSync(o.plan);
+    } catch (e) {
+      throw new CliError(`the plan was applied, but ${o.plan} was not deleted: ${e.message}`);
+    }
+  }
+  return code;
+}
+
+function applyEdit(verb, file, docx, o) {
   const { plan, notes } = editPlan(verb, docx, o);
   const editing = Boolean(o.editing_mode);
   if (editing && planKeepsRevisions(plan)) {
@@ -306,19 +391,7 @@ function runEdit(verb, file, o) {
     }
   }
   const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan);
-  if (!result.ok) {
-    const error = JSON.parse(result.json);
-    (error.outcomes ?? []).forEach((outcome, i) => {
-      const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
-      for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
-        if (outcome[field] != null) row[key] = outcome[field];
-      }
-      console.log(JSON.stringify(row));
-    });
-    console.log(JSON.stringify({ ev: "summary", status: "failed", code: error.code, operation: error.operation, message: error.message }));
-    console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
-    return EXIT_PLAN_REFUSED;
-  }
+  if (!result.ok) return printRefusal(result);
   const jsonl = wasm.editReportJsonl(result.json);
   if (o.dry_run) return void process.stdout.write(jsonl);
   const lines = jsonl.trimEnd().split("\n");
