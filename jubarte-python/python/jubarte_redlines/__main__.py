@@ -330,6 +330,7 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
         "existingRevisions": args.existing_revisions,
         "file": _spelled(args, "file"),
         "plan": plan,
+        "defaultPlan": bool(getattr(args, "plan_default", False)),
         "dryRun": dry_run,
     }
     try:
