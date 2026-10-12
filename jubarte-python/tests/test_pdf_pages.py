@@ -99,10 +99,10 @@ def test_cli_convert_passes_both_flags(tmp_path: Path, capsys: pytest.CaptureFix
     capsys.readouterr()
 
 
-@pytest.mark.parametrize("flag", ["--move-comments", "--changed-only"])
-def test_cli_refuses_both_flags_for_word_output(tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str) -> None:
+@pytest.mark.parametrize(("flag", "named"), [("--move-comments", "--move-comments"), ("--changed-pages", "--changed-pages"), ("--changed-only", "--changed-pages")])
+def test_cli_refuses_both_flags_for_word_output(tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, named: str) -> None:
     source = tmp_path / "draft.md"
     source.write_text("# Draft\n")
     assert main(["convert", str(source), flag]) == 1
-    assert f"{flag} applies to PDF or PNG output only" in capsys.readouterr().err
+    assert f"{named} applies to PDF or PNG output only" in capsys.readouterr().err
     assert not (tmp_path / "draft.docx").exists()

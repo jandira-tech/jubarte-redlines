@@ -117,7 +117,7 @@ def test_cli_convert_pages_names_files_by_page_number(tmp_path: Path, capsys: py
         (["--png", "--pages", "1,,2"], "empty item"),
         (["--png", "--pages", "x"], "not a page number"),
         (["--png", "--pages", "\u00b2"], "not a page number"),
-        (["--pages", "1"], "add --png"),
+        (["-o", "out.md", "--pages", "1"], "--pages applies to PDF or PNG output only"),
         (["--png", "--pages", "9"], "page 9 is out of range"),
     ],
 )

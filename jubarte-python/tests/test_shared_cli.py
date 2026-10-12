@@ -143,11 +143,11 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
     capsys.readouterr()
 
     # Page flags with a text result are refused by the shared parser.
-    for flag in ("--move-comments", "--changed-only"):
+    for flag, named in (("--move-comments", "--move-comments"), ("--changed-pages", "--changed-pages"), ("--changed-only", "--changed-pages")):
         with pytest.raises(SystemExit) as exit:
             main(["diff", str(a), str(b), flag])
         assert exit.value.code == 2
-        assert f"{flag} applies to PDF or PNG output only" in capsys.readouterr().err
+        assert f"{named} applies to PDF or PNG output only" in capsys.readouterr().err
 
     # Markdown output needs both documents in Markdown, in diff and compare.
     for argv in (["diff", str(word), str(b), "-o", str(tmp_path / "d.md")],
