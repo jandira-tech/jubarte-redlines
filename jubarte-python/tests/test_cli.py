@@ -276,16 +276,17 @@ def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[s
 
 @pytest.mark.parametrize("flag", ["--report", "--font-report"])
 @pytest.mark.parametrize("target", ["input", "output"])
-def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path, capsys, flag, target):
-    output = tmp_path / "result.pdf"
+@pytest.mark.parametrize("ext", ["pdf", "png"])
+def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path, capsys, flag, target, ext):
+    output = tmp_path / f"result.{ext}"
     original = letter.read_bytes()
     side = letter if target == "input" else output
     assert main(["convert", str(letter), "-o", str(output), flag, str(side), "--force"]) == 1
     # Native's wording: the one file the side file would replace.
-    name = "input" if target == "input" else "PDF output"
+    name = "input" if target == "input" else f"{ext.upper()} output"
     assert f"error: {flag} '{side}' is the same file as the {name}" in capsys.readouterr().err.splitlines()
     assert letter.read_bytes() == original
-    assert not output.exists()
+    assert list(tmp_path.glob("result*")) == []
 
 
 @pytest.mark.parametrize("flag", ["--report", "--font-report"])

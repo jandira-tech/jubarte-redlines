@@ -41,6 +41,8 @@ def test_render_pages_rasterizes_and_reports_only_the_selection() -> None:
     assert len(out.pngs) == 1
     assert out.report.page_count == 1
     assert [(p.index, p.number, p.text.strip()) for p in out.report.pages] == [(0, 2, "B")]
+    # The engine's report JSON carries the document's own page count.
+    assert out.report.document_pages == 3
     assert out.pdf is not None and b"/Count 1" in out.pdf
 
 
