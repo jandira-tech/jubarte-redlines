@@ -561,7 +561,7 @@ fn parse_pages(spec: &str) -> Result<Vec<usize>, String> {
     Ok(pages)
 }
 
-/// What `diff-render` compares and where it writes.
+/// What `visual-diff` compares and where it writes.
 struct DiffRenderJob<'a> {
     a: &'a Path,
     b: &'a Path,
@@ -582,7 +582,7 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
         ..jubarte::convert::DiffOptions::default()
     };
     let diff = jubarte::convert::diff_render(&a, &b, &options)
-        .map_err(|e| format!("diff-render failed: {e}"))?;
+        .map_err(|e| format!("visual-diff failed: {e}"))?;
     let changed: Vec<&jubarte::convert::PageDiff> =
         diff.pages.iter().filter(|p| p.differs()).collect();
     /// `diff.json`. Serialized directly (not through `serde_json::Value`)

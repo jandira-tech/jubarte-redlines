@@ -1398,17 +1398,93 @@ pub const RETIRED: &[Retired] = &[Retired {
 /// The note 0.12's cell id form earns (`t0.r1.c2`, Task 2).
 const RETIRED_CELL: (&str, &str) = ("tN.rR.cC", "tN.rowR.cellC");
 
+/// One option as `argv` spells it: `-p`, `--location` (a long's `=value`
+/// split off), with the value it takes.
+struct Spelled<'a> {
+    name: String,
+    /// The [`clap::Arg`] id, when `cmd` knows the option.
+    id: Option<String>,
+    value: Option<&'a str>,
+}
+
+/// The options of `tokens` (read with `cmd`'s arguments: which take a value)
+/// up to the first token that is not an option, and the index of that one.
+/// A short cluster (`-qp t0`) is split; an option `cmd` does not know takes
+/// no value.
+fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<'a>>, usize) {
+    let takes_value = |arg: &clap::Arg| arg.get_action().takes_values();
+    let mut found = Vec::new();
+    let mut i = 0;
+    while let Some(&token) = tokens.get(i) {
+        i += 1;
+        if let Some(long) = token.strip_prefix("--") {
+            let (name, inline) = match long.split_once('=') {
+                Some((name, value)) => (name, Some(value)),
+                None => (long, None),
+            };
+            let arg = cmd.get_arguments().find(|a| {
+                a.get_long() == Some(name)
+                    || a.get_visible_aliases().is_some_and(|v| v.contains(&name))
+            });
+            let value = match (inline, arg) {
+                (Some(value), _) => Some(value),
+                (None, Some(arg)) if takes_value(arg) => {
+                    i += 1;
+                    tokens.get(i - 1).copied()
+                }
+                _ => None,
+            };
+            found.push(Spelled {
+                name: format!("--{name}"),
+                id: arg.map(|a| a.get_id().to_string()),
+                value,
+            });
+        } else if let Some(cluster) = token.strip_prefix('-').filter(|c| !c.is_empty()) {
+            for (at, short) in cluster.char_indices() {
+                let arg = cmd.get_arguments().find(|a| a.get_short() == Some(short));
+                let id = arg.map(|a| a.get_id().to_string());
+                let name = format!("-{short}");
+                if !arg.is_some_and(takes_value) {
+                    found.push(Spelled {
+                        name,
+                        id,
+                        value: None,
+                    });
+                    continue;
+                }
+                // The rest of the cluster is the value (`-pt0`, `-p=t0`),
+                // else the next token is.
+                let rest = &cluster[at + short.len_utf8()..];
+                let value = if rest.is_empty() {
+                    i += 1;
+                    tokens.get(i - 1).copied()
+                } else {
+                    Some(rest.strip_prefix('=').unwrap_or(rest))
+                };
+                found.push(Spelled { name, id, value });
+                break;
+            }
+        } else {
+            return (found, i - 1);
+        }
+    }
+    (found, i)
+}
+
 /// The retired spellings in `argv` (the arguments after the program name),
 /// each once, in the order they first appear. The task is the first token
-/// before `--` that is not an option; a retired flag counts only on the task
-/// it is retired on, and a `-p`/`--location` value of `edit` or `add` in
-/// 0.12's cell form counts as [`RETIRED_CELL`]. Pure: no I/O.
+/// before `--` that is neither an option nor an option's value; a retired
+/// flag counts only on the task it is retired on, and a `-p`/`--location`
+/// value of `edit` or `add` in 0.12's cell form counts as [`RETIRED_CELL`].
+/// Pure: no I/O.
 pub fn retired_spellings<'a>(
     argv: impl IntoIterator<Item = &'a str>,
 ) -> Vec<(&'static str, &'static str)> {
     let argv: Vec<&str> = argv.into_iter().take_while(|t| *t != "--").collect();
+    let model = Cli::command();
     let mut found = Vec::new();
-    let Some(task) = argv.iter().copied().find(|t| !t.starts_with('-')) else {
+    let (_, at) = spelled_options(&model, &argv);
+    let Some(&task) = argv.get(at) else {
         return found;
     };
     let task = match RETIRED.iter().find(|r| r.on.is_none() && r.old == task) {
@@ -1418,27 +1494,28 @@ pub fn retired_spellings<'a>(
         }
         None => task,
     };
-    // `--flag=value`.
-    let long_value = |token: &'a str, long: &str| token.strip_prefix(long)?.strip_prefix('=');
-    for (i, &token) in argv.iter().enumerate() {
-        for retired in RETIRED.iter().filter(|r| r.on == Some(task)) {
-            if token == retired.old || long_value(token, retired.old).is_some() {
-                found.push((retired.old, retired.now));
+    let Some(sub) = model.find_subcommand(task) else {
+        return found;
+    };
+    let task = sub.get_name();
+    // Options and positionals interleave after the task.
+    let mut rest = &argv[at + 1..];
+    while !rest.is_empty() {
+        let (options, next) = spelled_options(sub, rest);
+        for option in options {
+            for retired in RETIRED.iter().filter(|r| r.on == Some(task)) {
+                if option.name == retired.old {
+                    found.push((retired.old, retired.now));
+                }
             }
-        }
-        if matches!(task, "edit" | "add") {
-            let value = match token {
-                "-p" | "--location" => argv.get(i + 1).copied(),
-                _ => long_value(token, "--location").or_else(|| {
-                    // `-pVALUE` and `-p=VALUE`.
-                    let value = token.strip_prefix("-p").filter(|v| !v.is_empty())?;
-                    Some(value.strip_prefix('=').unwrap_or(value))
-                }),
-            };
-            if value.is_some_and(crate::ids::is_retired_cell) {
+            if matches!(task, "edit" | "add")
+                && option.id.as_deref() == Some("location")
+                && option.value.is_some_and(crate::ids::is_retired_cell)
+            {
                 found.push(RETIRED_CELL);
             }
         }
+        rest = rest.get(next + 1..).unwrap_or_default();
     }
     let mut seen = std::collections::HashSet::new();
     found.retain(|spelling| seen.insert(*spelling));
@@ -2216,6 +2293,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         // The global options (-q) still apply to every task.
         command = command
             .args(model.get_arguments().filter(|a| a.is_global_set()).cloned())
+            .args_conflicts_with_subcommands(true)
             .subcommand_required(true);
     }
     let examples: Vec<String> = [
