@@ -24,11 +24,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `-q`/`--quiet` is one global option that goes after the task
   (`jubarte compare a.docx b.docx -q`); `jubarte -q read a.docx` exits 2.
 - `diff-render` is `visual-diff`.
+- `convert` and `diff` share one Rendering group (`--revisions`,
+  `--revision-palette`, `--dpi`, `--move-comments`, `--changed-pages`,
+  `--pages`), refused with any output that is not a PDF or PNG. `-o`'s
+  extension (or `--to`) picks the one format convert writes: `-o X.png`
+  writes PNG pages only, and convert no longer writes a PDF and PNGs in
+  one run. `--pages` narrows a PDF too, and each PNG is named by its
+  document page (`X-page-03.png`), also under `--changed-pages`.
 
 ### Deprecated
 
-- `diff-render`, and 0.12's cell id `t0.r1.c2` as an `edit`/`add` `-p`
-  value, keep working and print `note: X is now Y; X is removed in 0.14` on
+- `diff-render`, `--changed-only` (now `--changed-pages`), convert's
+  `--pdf` and `--png` (now `--to pdf`/`--to png`; together they exit 2),
+  and 0.12's cell id `t0.r1.c2` as an `edit`/`add` `-p` value, keep working and print `note: X is now Y; X is removed in 0.14` on
   stderr. The shared parser's JSON carries those notes as `notes`, and
   `args.quiet` on every task.
 
@@ -38,7 +46,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   report as well as the PNGs (an empty list writes no PDF).
   `ConvertError::PageNotKept` names a page `changed_only` dropped;
   `PageOutOfRange` reads "the document has N pages". `PageText` gains
-  `number`, and the report JSON's pages carry it.
+  `number`, and the report JSON's pages carry it. `RenderReport` gains
+  `document_pages` (also in the report JSON). `cli::PageOptions` is
+  `cli::RenderArgs`, which `convert` and `diff` flatten.
 
 ## [0.12.0] - 2026-10-11
 

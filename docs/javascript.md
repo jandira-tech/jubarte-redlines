@@ -718,6 +718,10 @@ Tasks:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -747,9 +751,6 @@ Compare options:
 
       --force
           Overwrite the output file if it already exists
-
-  -q, --quiet
-          Do not print the success message
 
       --detail-threshold <RATIO>
           Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
@@ -867,9 +868,6 @@ Options:
       --force
           Overwrite the output file if it already exists
 
-  -q, --quiet
-          Do not print the success message
-
       --detail-threshold <RATIO>
           Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
 
@@ -886,6 +884,10 @@ Options:
 
       --powertools-faithful
           Same as --mode powertools
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -907,8 +909,10 @@ Arguments:
   <FILE>  The document (.docx)
 
 Options:
-      --json  Emit one JSON object per line
-  -h, --help  Print help
+      --json   Emit one JSON object per line
+  -q, --quiet  Print nothing on success (files are still written; warnings and errors
+               still print)
+  -h, --help   Print help
 ```
 
 #### `jubarte-redlines accept`
@@ -945,6 +949,10 @@ Options:
           - deletion:   Deleted text or structural elements
           - move:       Content moved between document locations
           - formatting: Changes to text or paragraph formatting
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -985,6 +993,10 @@ Options:
           - move:       Content moved between document locations
           - formatting: Changes to text or paragraph formatting
 
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -1011,12 +1023,6 @@ Options:
       --force
           Overwrite the output file if it already exists
 
-      --pdf
-          Write the PDF (the default when neither --pdf nor --png is given)
-
-      --png
-          Rasterize every page to PNG (`<stem>-page-NN.png`)
-
       --report <FILE>
           Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`)
 
@@ -1028,16 +1034,6 @@ Options:
       --font-report <FILE>
           Write a JSON font-resolution report (`[{requested, step, physical, bold,
           italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
-
-      --move-comments
-          List the comments after the last page instead of in balloons beside the text.
-          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
-          their own width
-
-      --changed-only
-          Keep only the pages a tracked change touches. The whole document is laid out
-          first, so page numbers stay the document's; a document without changes keeps
-          its first page. --pages counts the kept pages
 
       --track-changes <CHOICE>
           Keep tracked changes (all), or write the document with every change accepted
@@ -1086,53 +1082,12 @@ Options:
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
           pass that places them
 
-      --pages <SPEC>
-          Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs
-          over the whole document. Needs PNG output
-
-      --fail-on-substitution
-          Exit 4 when a requested font was substituted (listed on stderr and in
-          --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
-          requested font was substituted
-
-      --update-fields
-          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
-          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
-          --track-changes. Field codes stay, so Word can update them again; page numbers
-          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
-          per field; --report writes `{page_count, fields}`
-
-      --timeout <SECONDS>
-          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
-          written. An output being written at that moment may be left partial
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
-
-Rendering:
-      --dpi <DPI>
-          PNG resolution in dots per inch (1-1200)
-
-          [default: 96]
-
-Revision marks:
-      --revisions <REVISIONS>
-          How tracked changes are painted: `conventional` (deletions red struck through,
-          insertions blue underlined, moves green: double-struck where they left,
-          double-underlined where they landed), `word` (what Microsoft Word's Save as
-          PDF paints), or `custom` (see --revision-palette)
-
-          Possible values:
-          - conventional: Red strike, blue underline, green double marks for moves
-          - word:         Microsoft Word's own markup
-          - custom:       --revision-palette
-
-          [default: conventional]
-
-      --revision-palette <SPEC>
-          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
-          inserted, moved-from, moved-to and lines strike, double-strike, underline,
-          double-underline, plain. Kinds left out keep their conventional mark
 
 Formats:
   -f, --from <FORMAT>
@@ -1151,6 +1106,61 @@ Formats:
             CriticMarkup
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
+
+Rendering (-o FILE.pdf or FILE.png):
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
+
+      --fail-on-substitution
+          Exit 4 when a requested font was substituted (listed on stderr and in
+          --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
+          requested font was substituted
+
+      --update-fields
+          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
+          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
+          --track-changes. Field codes stay, so Word can update them again; page numbers
+          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
+          per field; --report writes `{page_count, fields}`
+
+      --timeout <SECONDS>
+          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
+          written. An output being written at that moment may be left partial
 
 Examples:
   jubarte convert contract.docx                   PDF, Word-style layout
@@ -1183,15 +1193,9 @@ Arguments:
           The new document: .docx or Markdown
 
 Options:
-      --move-comments
-          List the comments after the last page instead of in balloons beside the text.
-          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
-          their own width
-
-      --changed-only
-          Keep only the pages a tracked change touches. The whole document is laid out
-          first, so page numbers stay the document's; a document without changes keeps
-          its first page. --pages counts the kept pages
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1289,9 +1293,12 @@ Word redline:
           Where images named by the Markdown are found [default: each Markdown file's
           directory]
 
-Revision marks:
+Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
-          How tracked changes are painted in PDF or PNG output (see `convert --help`)
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
 
           Possible values:
           - conventional: Red strike, blue underline, green double marks for moves
@@ -1301,7 +1308,29 @@ Revision marks:
           [default: conventional]
 
       --revision-palette <SPEC>
-          Marks for --revisions custom (see `convert --help`)
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
 
 Examples:
   jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout
@@ -1334,6 +1363,8 @@ Options:
       --tables  Print each body table as a grid instead of the paragraphs: a `table N:
                 ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
                 tab-separated `ids=text` cells
+  -q, --quiet   Print nothing on success (files are still written; warnings and errors
+                still print)
   -h, --help    Print help
 ```
 
@@ -1354,6 +1385,10 @@ Arguments:
           The document (.docx) to read
 
 Options:
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1495,14 +1530,15 @@ Options:
       --force
           Replace an existing output directory's files
 
-  -q, --quiet
-          Print nothing on success (the files are still written)
-
       --dry-run
           Resolve and report only; write nothing
 
       --pdf
           Also write redline.pdf and clean.pdf
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
       --png
           Also write redline-page-NN.png and clean-page-NN.png
@@ -1632,7 +1668,8 @@ Options:
           Replace an existing output directory's files
 
   -q, --quiet
-          Print nothing on success (the files are still written)
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1658,8 +1695,10 @@ What this binary can do, for agents choosing an operation
 Usage: jubarte-redlines capabilities [OPTIONS]
 
 Options:
-      --json  Emit JSON (the default output is JSON too; the flag documents intent)
-  -h, --help  Print help
+      --json   Emit JSON (the default output is JSON too; the flag documents intent)
+  -q, --quiet  Print nothing on success (files are still written; warnings and errors
+               still print)
+  -h, --help   Print help
 ```
 <!-- gen:cli-npm:end -->
 
