@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `RenderRequest.pages`: one layout pass for the whole document, PNGs only
-//! for the pages asked for.
+//! `RenderRequest.pages`: one layout pass for the whole document; the PDF,
+//! the PNGs and the report hold only the document pages asked for.
 
 mod common;
 
@@ -31,7 +31,7 @@ fn pngs_of(pages: Option<Vec<usize>>) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn only_the_requested_pages_are_rasterized_but_the_report_covers_all() {
+fn only_the_requested_pages_are_rasterized_and_reported() {
     let out = render(
         &three_pages(),
         PdfOptions::default(),
@@ -42,9 +42,39 @@ fn only_the_requested_pages_are_rasterized_but_the_report_covers_all() {
         },
     )
     .unwrap();
-    assert_eq!(out.report.page_count, 3);
+    assert_eq!(out.report.page_count, 1);
     assert_eq!(out.pngs.len(), 1);
-    assert_eq!(out.report.pages[2].text.trim(), "C");
+    assert_eq!(out.report.pages[0].number, 3);
+    assert_eq!(out.report.pages[0].text.trim(), "C");
+}
+
+#[test]
+fn the_pdf_carries_only_the_selected_pages() {
+    let pdf = |pages| {
+        render(
+            &three_pages(),
+            PdfOptions::default(),
+            RenderRequest {
+                pdf: true,
+                png_dpi: None,
+                pages,
+            },
+        )
+        .unwrap()
+    };
+    let all = pdf(None);
+    assert_eq!(
+        jubarte::convert::pdf_page_count(all.pdf.as_ref().unwrap()),
+        3
+    );
+    let two = pdf(Some(vec![2, 0]));
+    assert_eq!(
+        jubarte::convert::pdf_page_count(two.pdf.as_ref().unwrap()),
+        2
+    );
+    let texts: Vec<&str> = two.report.pages.iter().map(|p| p.text.trim()).collect();
+    assert_eq!(texts, ["A", "C"]);
+    assert!(pdf(Some(Vec::new())).pdf.is_none(), "no page, no PDF");
 }
 
 #[test]

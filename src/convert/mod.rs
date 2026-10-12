@@ -455,15 +455,15 @@ pub struct RenderRequest {
     /// `PdfOptions::changed_only` keeps, then the listing pages of
     /// `CommentPlacement::End`. A page it dropped is
     /// [`ConvertError::PageNotKept`]; one past the last is
-    /// [`ConvertError::PageOutOfRange`]. Layout always covers the whole
-    /// document.
+    /// [`ConvertError::PageOutOfRange`]; an empty list writes no page and
+    /// no PDF. Layout always covers the whole document.
     pub pages: Option<Vec<usize>>,
 }
 
 /// Output of [`render`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rendered {
-    /// PDF bytes when requested.
+    /// PDF bytes when requested and at least one page is written.
     pub pdf: Option<Vec<u8>>,
     /// One PNG per page when requested (page order), or one per selected
     /// page in ascending order when [`RenderRequest::pages`] is set.
@@ -501,7 +501,8 @@ pub fn render(
                     .into_iter()
                     .map(|i| &pages[i])
                     .collect();
-                let pdf = want_pdf.then(|| pdf::emit(fonts, &written, options));
+                let pdf =
+                    (want_pdf && !written.is_empty()).then(|| pdf::emit(fonts, &written, options));
                 let pngs: Vec<Vec<u8>> = match png_dpi {
                     Some(dpi) => written
                         .iter()
