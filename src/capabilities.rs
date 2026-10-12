@@ -197,6 +197,8 @@ pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
     ("reject", &["docx", "md", "pdf", "png", "json"]),
     ("append", &["docx", "md", "pdf", "png", "json"]),
     ("scrub", &["docx", "md", "pdf", "png", "json"]),
+    ("edit", &["docx"]),
+    ("add", &["docx"]),
 ];
 
 /// The manifest for `runtime`.

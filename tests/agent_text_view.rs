@@ -2577,6 +2577,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         &[
             "edit",
             "base.docx",
+            "--out-dir",
             "-p",
             "p1",
             "--anchor",
@@ -2600,7 +2601,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     for name in ["clean.docx", "redline.docx", "patch.diff", "report.jsonl"] {
         assert!(
             dir.path().join("base.edit").join(name).is_file(),
-            "default out dir holds {name}"
+            "--out-dir's default holds {name}"
         );
     }
     assert!(out.contains("\nsource: base.edit/redline.docx\n"), "{out}");
@@ -2637,6 +2638,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         &[
             "edit",
             "base.docx",
+            "--out-dir",
             "-p",
             "p1",
             "--anchor",
