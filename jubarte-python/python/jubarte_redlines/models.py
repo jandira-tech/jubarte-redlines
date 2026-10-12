@@ -1416,6 +1416,9 @@ class RenderReport:
     page_count: int
     pages: tuple[PageText, ...]
     fonts: tuple[FontResolution, ...]
+    #: The document's pages (every page laid out, plus a moved-comment
+    #: listing), whichever were written.
+    document_pages: int = 0
 
     @property
     def substitutions(self) -> tuple[FontResolution, ...]:
@@ -1438,6 +1441,7 @@ def _decode_render_report(payload: str) -> RenderReport:
         page_count=data["page_count"],
         pages=tuple(PageText(**p) for p in data["pages"]),
         fonts=tuple(FontResolution(**f) for f in data["fonts"]),
+        document_pages=data.get("document_pages", data["page_count"]),
     )
 
 
