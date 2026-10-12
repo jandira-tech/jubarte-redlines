@@ -350,7 +350,8 @@ jubarte read FILE                      the view (alias: text); jubarte FILE is t
   --track-changes accept|reject   --comments none   --dates   --no-page-markers
 jubarte A B                            accept both sides' changes, compare, print the redline's view
                                        (read options apply; -o FILE writes the file instead)
-jubarte compare A B                    as before: writes <A>_v_<B>.docx
+jubarte compare A B                    the same; -o FILE writes the redline (.docx, .pdf, .png, .md)
+jubarte diff A B                       the paragraph patch (text only; -o FILE.patch keeps it)
 
 jubarte edit FILE -p WHERE --anchor FIND --content WITH        replace FIND (an insertion when WITH keeps FIND at its start or end)
 jubarte edit FILE -p WHERE --content TEXT                      rewrite the paragraph
