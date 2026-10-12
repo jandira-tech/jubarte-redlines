@@ -133,6 +133,7 @@ tracked change and comment. The ids are the ones `edit`, `accept --id`,
 ```text
 ---
 source: received.docx
+sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
 revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
@@ -238,6 +239,10 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 `in t0.row1.cell2` for a row's or cell's), with `--comments none`
 `comments c9 in p11`, and `in c5` for a comment range open across it.
 `tN` counts top-level body tables.
+
+`sha256:` is the SHA-256 of the bytes the view read: the file, or for
+`jubarte A B` the redline it prints in memory. Compare it with the file on
+disk before editing to know the view is current.
 
 Every change `jubarte changes` lists prints its tag somewhere in the
 tracked view, so an agent can name it. Changes with no body text show in

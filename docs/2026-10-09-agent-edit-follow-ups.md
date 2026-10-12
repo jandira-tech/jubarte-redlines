@@ -147,71 +147,29 @@ git commit -m "feat(cli): --nth selects a repeated anchor in edit and add"
 
 ---
 
-### Task 3: The view carries a digest; `edit --digest` refuses a changed file
+### Task 3: `edit --digest` refuses a changed file
 
-The header gains `digest: <first 16 hex of the file's SHA-256>` right after `source:`. `edit` and `add` take `--digest HEX` (8 or more hex characters) and refuse with `STALE_SOURCE` (exit 3) when the file's digest does not start with it. The compare shorthand's view digests the in-memory redline it prints; `edit`'s printed view digests the file it wrote.
+The header's `sha256:` line (cli-std Task 6, after `source:`) is the
+SHA-256 of the bytes the view read: the file, or the compare shorthand's
+in-memory redline; `edit`'s printed view digests the file it wrote. What is
+left here: `edit` and `add` take `--digest HEX` (8 or more hex characters,
+a prefix of that line) and refuse with `STALE_SOURCE` (exit 3) when the
+file's SHA-256 does not start with it.
 
 **Files:**
-- Modify: `src/markdown/mod.rs` (`MarkdownOptions.digest` or computed in `convert`), `src/markdown/from_docx/header.rs` (`Facts.digest`, `render`), `src/markdown/from_docx/mod.rs` (`convert`), `src/cli.rs` (`EditOptions.digest`), `src/bin/jubarte.rs` (`run_edit` callers), the four goldens
+- Modify: `src/cli.rs` (`EditOptions.digest`), `src/bin/jubarte.rs` (`run_edit` callers)
 - Test: `tests/agent_text_view.rs`
 
-- [ ] **Step 1: Goldens and failing tests**
-
-`tests/fixtures/agent-view/received.docx` has SHA-256 `e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68` (check: `shasum -a 256 tests/fixtures/agent-view/received.docx`). In each of the four goldens insert, after the `source: received.docx` line, exactly:
-
-```
-digest: e42d9d7cec67a3ce           # sha256, first 16 hex; edit --digest refuses a changed file
-```
-
-(`kv` padding: the key is 24 characters, padded to 35, then `# `.) Add to `tests/agent_text_view.rs`:
-
-```rust
-#[test]
-fn digest_in_the_header_guards_an_edit() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
-    let view = ok(&["read", "base.docx", "--no-page-markers"], dir.path());
-    let digest = captures(&view, r"\ndigest: ([0-9a-f]{16}) ")[0].to_string();
-    let expected = jubarte::inspect::source_sha256(&docx(BASE));
-    assert!(expected.starts_with(&digest), "{digest} vs {expected}");
-    ok(&["edit", "base.docx", "-p", "p1", "--anchor", "thirty", "--content", "forty-five", "--digest", &digest, "--out-dir", "a"], dir.path());
-    ok(&["edit", "base.docx", "-p", "p1", "--anchor", "thirty", "--content", "forty-five", "--digest", &digest[..8].to_uppercase(), "--out-dir", "b"], dir.path());
-    std::fs::write(dir.path().join("base.docx"), docx(&BASE.replace("thirty", "sixty"))).unwrap();
-    let out = jubarte(&["edit", "base.docx", "-p", "p1", "--anchor", "sixty", "--content", "forty-five", "--digest", &digest, "--out-dir", "c"], dir.path());
-    assert_eq!(out.status.code(), Some(3));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("STALE_SOURCE") && stderr.contains(&digest), "{stderr}");
-    assert!(!dir.path().join("c").exists(), "nothing written");
-    let bad = jubarte(&["edit", "base.docx", "-p", "p1", "--anchor", "sixty", "--content", "x", "--digest", "xyz"], dir.path());
-    assert!(!bad.status.success(), "a digest is 8 or more hex characters");
-    let edited = ok(&["edit", "base.docx", "-p", "p1", "--anchor", "sixty", "--content", "forty-five", "--out-dir", "d"], dir.path());
-    let redline = std::fs::read(dir.path().join("d/redline.docx")).unwrap();
-    assert!(edited.contains(&format!("\ndigest: {} ", &jubarte::inspect::source_sha256(&redline)[..16])), "{edited}");
-}
-```
-
-(`jubarte::inspect::source_sha256` is public, `src/inspect.rs:219`.)
-
-- [ ] **Step 2: Run them**
-
-Run: `cargo test --test agent_text_view digest received_docx`
-Expected: FAIL (no `digest:` line; `--digest` unknown).
-
-- [ ] **Step 3: Implement**
-
-- `src/markdown/from_docx/mod.rs`, `convert`: in the agent branch compute `crate::inspect::source_sha256(bytes)[..16]` from the input bytes it already holds and put it in `Facts.digest: String`; `header::render` prints `kv("digest: …", "sha256, first 16 hex; edit --digest refuses a changed file")` right after the `source:` line (nothing when `source` is `None`, as today's rule for that line). The compare shorthand and `edit` call `docx_to_markdown` on the bytes they print, so no option is needed.
-- `src/cli.rs`, `EditOptions`: `/// Refuse unless FILE's SHA-256 starts with this (the view's digest line). #[arg(long, value_name = "HEX", value_parser = parse_digest)] pub digest: Option<String>` with `fn parse_digest(s: &str) -> Result<String, String>`: 8 or more ASCII hex characters, lower-cased, else "a digest is 8 or more hex characters".
-- `src/bin/jubarte.rs`: in the shared closure of the `Edit`/`Add` arms, right after `read_document`: `if let Some(expected) = &options.digest { let actual = jubarte::inspect::source_sha256(&source); if !actual.starts_with(expected) { return Err((EXIT_PLAN_REFUSED, format!("STALE_SOURCE: {} changed since it was read (digest {}…, expected {expected}…)", file.display(), &actual[..16]))); } }` before any directory is created.
-
-- [ ] **Step 4: Run, whole suite, commit**
-
-Run: `cargo test`
-Expected: PASS (the four golden tests included).
-
-```bash
-git add src/markdown src/cli.rs src/bin/jubarte.rs tests/fixtures/agent-view tests/agent_text_view.rs
-git commit -m "feat(read,edit): digest line in the header; edit --digest refuses a changed file"
-```
+- [ ] **Step 1: Failing test** `digest_in_the_header_guards_an_edit`: read
+  `base.docx`, take the first 16 hex of its `sha256:` line; `edit … --digest
+  <16 hex>` and `--digest <8 hex, upper-cased>` succeed; after rewriting the
+  file, the same edit exits 3 with `STALE_SOURCE` and the digest on stderr,
+  and writes nothing; `--digest xyz` is refused; an edit's printed view
+  carries the redline's own `sha256:`.
+- [ ] **Step 2: Implement**
+  - `src/cli.rs`, `EditOptions`: `/// Refuse unless FILE's SHA-256 starts with this (the view's sha256 line). #[arg(long, value_name = "HEX", value_parser = parse_digest)] pub digest: Option<String>`; `parse_digest`: 8 or more ASCII hex characters, lower-cased, else "a digest is 8 or more hex characters".
+  - `src/bin/jubarte.rs`, the shared closure of the `Edit`/`Add` arms, right after `read_document` and before any directory is created: compare `jubarte::inspect::source_sha256(&source)` with the prefix; refuse with `EXIT_PLAN_REFUSED` and `STALE_SOURCE: {file} changed since it was read (sha256 {first 16}…, expected {prefix}…)`.
+- [ ] **Step 3: Whole suite, commit** `feat(edit): --digest refuses a file changed since its view`.
 
 ---
 
