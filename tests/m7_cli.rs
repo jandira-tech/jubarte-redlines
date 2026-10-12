@@ -50,6 +50,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
         .arg("compare")
         .arg(&a)
         .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z"])
         .output()
         .unwrap();
     assert!(
@@ -70,7 +71,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
         .arg("compare")
         .arg(&a)
         .arg(&b)
-        .arg("-o")
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&expected)
         .output()
         .unwrap();
@@ -100,7 +101,7 @@ fn explicit_flags_output_author_and_quiet() {
         .arg(&b)
         .args(["-o"])
         .arg(&out_path)
-        .args(["--author", "Legal", "--quiet"])
+        .args(["-d", "1970-01-01T00:00:00Z", "--author", "Legal", "--quiet"])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -120,7 +121,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
     let first = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .output()
         .unwrap();
@@ -129,7 +130,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
     let second = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .output()
         .unwrap();
@@ -139,7 +140,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
     let third = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .arg("--force")
         .output()
@@ -212,7 +213,7 @@ fn make_redline(dir: &Path, author: &str) -> PathBuf {
     let out = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .args(["--author", author, "--quiet"])
         .output()
@@ -276,7 +277,7 @@ fn changes_subcommand_json_escapes_quotes_in_author() {
     let cmp = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .args(["--author", "Legal \"Team\"", "--quiet"])
         .output()
@@ -427,7 +428,7 @@ fn run_cli(out_path: &Path, extra: &[&str]) -> Vec<u8> {
     let out = Command::new(BIN)
         .arg(ORIG)
         .arg(MOD)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(out_path)
         .arg("--quiet")
         .args(extra)

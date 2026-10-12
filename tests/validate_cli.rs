@@ -139,7 +139,16 @@ fn validate_audits_tracked_edits_against_an_original() {
 
     let (code, _, _) = run(
         dir.path(),
-        &["a.docx", "b.docx", "-o", "r.docx", "--author", "Legal"],
+        &[
+            "a.docx",
+            "b.docx",
+            "-o",
+            "r.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "--author",
+            "Legal",
+        ],
     );
     assert_eq!(code, 0);
     let (code, out, _) = run(
