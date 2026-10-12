@@ -1121,10 +1121,10 @@ struct EditFlags<'a> {
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     let source = read_document(flags.file).map_err(|m| (1u8, m))?;
-    if let Some(path) = flags.plan {
-        if !flags.operations.is_empty() {
-            return record_plan(flags, path, &source);
-        }
+    if let Some(path) = flags.plan
+        && !flags.operations.is_empty()
+    {
+        return record_plan(flags, path, &source);
     }
     // What --consume deletes once the edit is written: the plan file as it
     // was read, never a link to it or an output written over it.
