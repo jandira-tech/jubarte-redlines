@@ -590,6 +590,115 @@ pub(crate) struct LineFacts<'a> {
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 empty, break-ins r3 @AC -->`.
     pub empty: bool,
+    /// Tracked view: the paragraph's changes its text prints no tag for
+    /// (see [`unshown_tags`]).
+    pub unshown: &'a [String],
+}
+
+/// The tags of the insertions, deletions and moves in paragraph `p` whose
+/// id no note in `shown` (the paragraph's rendered text) prints: a deleted
+/// object, break, field character or empty mark has no text to wrap. The
+/// tracked view's id line names them (`rev r12 @AC`), so every change
+/// reads from the view. The paragraph mark's own changes (`break-ins`,
+/// `break-del`) and formatting (`fmt`) have their own clauses; a text box
+/// renders its own blocks, and Word's Fallback copy is the Choice's twin.
+pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<String> {
+    fn walk(e: &Element, handles: &Handles, out: &mut Vec<(String, String)>) {
+        for child in shown_children(e) {
+            match child.local() {
+                "pPr" | "txbxContent" => {}
+                "ins" | "del" | "moveFrom" | "moveTo" => {
+                    if let Some(id) = child.attr("id") {
+                        out.push((id.to_string(), tag_of(child, handles)));
+                    }
+                    walk(child, handles, out);
+                }
+                _ => walk(child, handles, out),
+            }
+        }
+    }
+    let mut carriers = Vec::new();
+    walk(p, handles, &mut carriers);
+    if carriers.is_empty() {
+        return Vec::new();
+    }
+    let printed = printed_wids(shown, "body");
+    let mut unshown: Vec<String> = Vec::new();
+    for (id, tag) in carriers {
+        if !printed.contains(&id) && !unshown.contains(&tag) {
+            unshown.push(tag);
+        }
+    }
+    unshown
+}
+
+/// The `w:id`s of `story`'s changes the tag notes in `shown` print
+/// (`{>>r12 @AC<<}`, `{>>header1.r1+2 @AC<<}`); a comment's note holds the
+/// author's words and no tag.
+fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
+    let mut printed = HashSet::new();
+    for (at, _) in shown.match_indices("{>>") {
+        let note = &shown[at + 3..];
+        let note = &note[..note.find("<<}").unwrap_or(note.len())];
+        if comment_word(note.split(' ').next().unwrap_or("")).is_some() {
+            continue;
+        }
+        for tag in note.split("; ") {
+            let token = tag.split(' ').next().unwrap_or("");
+            if let Ok(ids) = crate::ids::parse_change_ids(token) {
+                printed.extend(
+                    ids.into_iter()
+                        .filter(|id| id.story == story)
+                        .map(|id| id.wid),
+                );
+            }
+        }
+    }
+    printed
+}
+
+/// A whole story part's changes (a header, a footer, one note) whose id
+/// `shown` prints no tag for, as printed tags: insertions, deletions and
+/// moves (`rev`), then formatting (`fmt`). The view shows a header by one
+/// paragraph and a note by its text, so these name the rest.
+pub(crate) fn story_unshown(
+    root: &Element,
+    story: &str,
+    shown: &str,
+    handles: &Handles,
+) -> (Vec<String>, Vec<String>) {
+    fn walk<'e>(e: &'e Element, out: &mut Vec<(bool, &'e Element)>) {
+        for child in shown_children(e) {
+            let local = child.local();
+            if matches!(local, "ins" | "del" | "moveFrom" | "moveTo") {
+                out.push((false, child));
+            } else if local.ends_with("PrChange") || local == "tblGridChange" {
+                out.push((true, child));
+                continue;
+            } else if matches!(local, "cellIns" | "cellDel" | "cellMerge") {
+                out.push((false, child));
+            }
+            walk(child, out);
+        }
+    }
+    let mut carriers = Vec::new();
+    walk(root, &mut carriers);
+    let printed = printed_wids(shown, story);
+    let (mut rev, mut fmt): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for (formatting, carrier) in carriers {
+        let Some(id) = carrier.attr("id") else {
+            continue;
+        };
+        if printed.contains(id) {
+            continue;
+        }
+        let tag = format_tag(&format!("{story}#{}", tag_of(carrier, handles)));
+        let list = if formatting { &mut fmt } else { &mut rev };
+        if !list.contains(&tag) {
+            list.push(tag);
+        }
+    }
+    (rev, fmt)
 }
 
 /// An empty paragraph that still says something the `pN empty` run would
@@ -900,6 +1009,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
+    if !f.resolved && !f.unshown.is_empty() {
+        clauses.push(format!("rev {}", format_tags(f.unshown)));
+    }
     if f.resolved {
         let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();
         if !tags.is_empty() {
@@ -1017,6 +1129,22 @@ pub(crate) fn table_line(
             let at = format!(" in t{t}.row{r}");
             changes_in(tr.child("trPr"), &at, &mut fmt);
             changes_in(tr.child("tblPrEx"), &at, &mut fmt);
+            // A row's insertion or deletion tags its cells' text; a row
+            // with no text names it here.
+            let mut texts = Vec::new();
+            for name in ["t", "delText", "instrText", "delInstrText"] {
+                tr.find_all(name, &mut texts);
+            }
+            if texts.is_empty() {
+                for mark in tr
+                    .child("trPr")
+                    .into_iter()
+                    .flat_map(|e| e.elements())
+                    .filter(|e| matches!(e.local(), "ins" | "del"))
+                {
+                    revs.push(format!("{}{at}", format_tag(&tag_of(mark, handles))));
+                }
+            }
         }
         for (c, tc) in super::row_cells(tr).enumerate() {
             if resolved {

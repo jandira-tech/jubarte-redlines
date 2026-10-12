@@ -207,9 +207,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   its `w:pPr` holds `w:sectPr`.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
-- `rev`: in the accept and reject views only, every revision the paragraph
+- `rev`: in the accept and reject views, every revision the paragraph
   held before resolution, formatting changes and paragraph marks included.
-  A paragraph joined into the one before it hands its revisions over.
+  A paragraph joined into the one before it hands its revisions over. In
+  the tracked view, the insertions, deletions and moves its text has no
+  tag for: a deleted picture, break, field character or empty run.
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
 - `in c5`: with comments inline, the comment threads whose range runs on
@@ -230,11 +232,23 @@ A table gets one line: `<!-- t0 center 3x2, cells p8-p13 by row, header row
 repeats -->`, `cells t0.row0 p8-p10 t0.row1 p11-p14` when a cell holds other
 than one paragraph, then `merged cells`, `break-ins r12 @AC in p9`,
 `break-del …`, `rev … in pN` (resolved views; `rev r5 @AC in t0.row1.cell2`
-for a cell's own insertion, deletion or merge in the tracked view),
+for a cell's own insertion, deletion or merge in the tracked view, and
+`rev r6 @AC in t0.row1` for an inserted or deleted row with no text),
 `fmt r12 @AS` for the table's own property changes (`in t0.row1`,
 `in t0.row1.cell2` for a row's or cell's), with `--comments none`
 `comments c9 in p11`, and `in c5` for a comment range open across it.
 `tN` counts top-level body tables.
+
+Every change `jubarte changes` lists prints its tag somewhere in the
+tracked view, so an agent can name it. Changes with no body text show in
+the header: a section's own change on `page:` (`page: Letter portrait; fmt
+r9 @AC`) or as `fmt:` in its `sections:` entry; style changes under
+`styles:` as `changes: {Normal: styles.r3 @AS}`; a header's or footer's
+changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
+notes no definition shows (Word's separators) as `notes: {fmt: …}`. A
+note's own changes its text cannot show close its definition line:
+`[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
+prints as `first: {…, inactive}` when different-first-page is off.
 
 The header's `comments:` line counts open and resolved threads, and apart
 from them a comment no story anchors (no range or reference in the body or

@@ -668,6 +668,165 @@ fn a_header_change_is_visible_on_the_headers_line() {
     );
 }
 
+/// Task 5b: a change whose text the view cannot show still prints its id
+/// once: a section's `w:sectPrChange` on `page:`, a style's change under
+/// `styles: changes:`, a header's formatting on its `headers:` entry, and a
+/// footnote's formatting on its definition line. The resolved views print
+/// none of them.
+#[test]
+fn changes_without_text_name_their_ids() {
+    let rpr_change = |id: u32| {
+        format!(
+            r#"<w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr>"#
+        )
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r>{}<w:t>Title</w:t></w:r></w:p></w:hdr>"#,
+        rpr_change(4)
+    );
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1"><w:p><w:r>{}<w:t>Source</w:t></w:r></w:p></w:footnote></w:footnotes>"#,
+        rpr_change(7)
+    );
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>{}</w:style></w:styles>"#,
+        rpr_change(9)
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &footnotes,
+            },
+            Part {
+                name: "word/styles.xml",
+                content_type: STYLES_CT,
+                rel_type: STYLES_REL,
+                xml: &styles,
+            },
+        ],
+        r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/><w:sectPrChange w:id="2" w:author="Ann Counsel"><w:sectPr/></w:sectPrChange></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("page: ") && l.ends_with("; fmt r2 @AC")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  changes: {Normal: styles.r9 @AC}")),
+        "{out}"
+    );
+    assert!(
+        lines.contains(&"  default: {id: header1, text: Title, fmt: header1.r4 @AC}"),
+        "{out}"
+    );
+    assert!(
+        out.contains("[^1]: **Source** <!-- fmt footnotes.r7 @AC -->"),
+        "{out}"
+    );
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    for id in [
+        "body:rev:2",
+        "styles:rev:9",
+        "header1:rev:4",
+        "footnotes:rev:7",
+    ] {
+        assert!(listed.iter().any(|l| l == id), "{id} not in {listed:?}");
+    }
+    for view in [TrackChanges::Accept, TrackChanges::Reject] {
+        let resolved = agent_with(&bytes, view, true);
+        for tag in ["r2 @AC", "styles.r9", "header1.r4", "footnotes.r7"] {
+            assert!(!resolved.contains(tag), "{tag} in {resolved}");
+        }
+    }
+}
+
+/// Task 5b, from Word redlines: an empty row's deletion has no text to tag,
+/// a first-page header still exists when different-first-page is off, and
+/// Word's footnote separators carry formatting changes no note shows.
+#[test]
+fn rows_inactive_headers_and_separators_name_their_changes() {
+    let cell = |text: &str| {
+        format!(
+            r#"<w:tc><w:p>{}</w:p></w:tc>"#,
+            if text.is_empty() {
+                String::new()
+            } else {
+                format!("<w:r><w:t>{text}</w:t></w:r>")
+            }
+        )
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr>{}</w:tr><w:tr><w:trPr><w:del w:id="6" w:author="Ann Counsel"/></w:trPr>{}</w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+        cell("Kept"),
+        cell("")
+    );
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="4" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>Cover</w:t></w:r></w:p></w:hdr>"#
+    );
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0"/><w:pPrChange w:id="9" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote></w:footnotes>"#
+    );
+    let bytes = common::docx::docx_with_sect(
+        &body,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &footnotes,
+            },
+        ],
+        r#"<w:headerReference w:type="first" r:id="rIdX0"/>"#,
+    );
+    let out = agent(&bytes);
+    assert!(
+        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev r6 @AC in t0.row1 -->"),
+        "{out}"
+    );
+    let lines = header_lines(&out);
+    assert!(
+        lines.iter().any(|l| l
+            .starts_with("  first: {id: header1, text: Cover, inactive, fmt: header1.r4 @AC}")
+            && l.ends_with("# defined, but different first page is off")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("notes: {fmt: footnotes.r9 @AC}")),
+        "{out}"
+    );
+    let accepted = agent_with(&bytes, TrackChanges::Accept, true);
+    for tag in ["r6 @AC", "header1.r4", "footnotes.r9"] {
+        assert!(!accepted.contains(tag), "{tag} in {accepted}");
+    }
+}
+
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own
 /// way, moves included, and the tracked view escapes document text that
 /// reads like a mark.

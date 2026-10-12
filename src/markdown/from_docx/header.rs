@@ -42,6 +42,10 @@ pub(crate) struct StoryFact {
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
     pub active: bool,
+    /// Tracked view: the part's insertions, deletions and moves `text` prints
+    /// no tag for (`header1.r3 @AC`), then its formatting changes.
+    pub rev: Vec<String>,
+    pub fmt: Vec<String>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -95,6 +99,9 @@ pub(crate) struct Facts<'a> {
     pub table_styles: Vec<String>,
     /// The body's sections in order; the first one is described in full.
     pub sections: Vec<SectionFact>,
+    /// Tracked view: the changes (`rev`, `fmt`) of the notes no definition
+    /// line shows, such as Word's footnote separators.
+    pub note_changes: (Vec<String>, Vec<String>),
 }
 
 /// `key: value` padded to 35 columns then `# comment`; a key/value longer
@@ -723,6 +730,11 @@ fn entry(s: &StoryFact) -> String {
     if !s.active {
         inner.push_str(", inactive");
     }
+    for (key, tags) in [("rev", &s.rev), ("fmt", &s.fmt)] {
+        if !tags.is_empty() {
+            inner.push_str(&format!(", {key}: {}", scalar(&tags.join("; "), true)));
+        }
+    }
     format!("{{{inner}}}")
 }
 
@@ -753,6 +765,15 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
                 ),
             }
         }
+        if !section.title_page
+            && let Some(s) = find("first")
+        {
+            kv(
+                out,
+                &format!("  first: {}", entry(s)),
+                Some("defined, but different first page is off"),
+            );
+        }
         match find("default") {
             Some(s) => kv(out, &format!("  default: {}", entry(s)), None),
             None => kv(out, "  default: none", None),
@@ -773,13 +794,21 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
 
 /// `{p2-p3, headers: {default: {…}}, columns: 2}`: what a later section
 /// changes against the one before it (page setup against the first).
-fn section_entry(section: &SectionFact, previous: &SectionFact, first: &SectionFact) -> String {
+fn section_entry(
+    section: &SectionFact,
+    previous: &SectionFact,
+    first: &SectionFact,
+    handles: Option<&Handles>,
+) -> String {
     let mut parts = vec![format!("p{}-p{}", section.first, section.last)];
     let setup = |s: &SectionFact| s.sect_pr.as_ref().map(page_setup);
     if setup(section) != setup(first)
         && let Some(page) = setup(section)
     {
         parts.push(format!("page: {page}"));
+    }
+    if let Some(tags) = handles.and_then(|h| section_changes(section, h)) {
+        parts.push(format!("fmt: {}", scalar(&tags, true)));
     }
     for kind in ["header", "footer"] {
         let changed: Vec<String> = section
@@ -804,9 +833,72 @@ fn section_entry(section: &SectionFact, previous: &SectionFact, first: &SectionF
     format!("{{{}}}", parts.join(", "))
 }
 
+/// The tracked view's tags for a section's own changes (`w:sectPrChange`):
+/// `r9 @AC`.
+fn section_changes(section: &SectionFact, handles: &Handles) -> Option<String> {
+    let sect = section.sect_pr.as_ref()?;
+    let tags: Vec<String> = sect
+        .children_named("sectPrChange")
+        .map(|change| super::agent::tag_of(change, handles))
+        .collect();
+    (!tags.is_empty()).then(|| super::agent::format_tags(&tags))
+}
+
+/// `Normal: styles.r0 @AS, Heading1: styles.r3 @AS`: the styles part's
+/// tracked changes by the style that holds them (`docDefaults` for the
+/// document defaults), in the tracked view.
+fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for holder in styles.elements() {
+        let name = match holder.local() {
+            "docDefaults" => "docDefaults".to_string(),
+            "style" => match holder.attr("styleId") {
+                Some(id) => id.to_string(),
+                None => continue,
+            },
+            _ => continue,
+        };
+        let mut carriers = Vec::new();
+        collect(holder, &mut carriers);
+        let mut tags: Vec<String> = Vec::new();
+        for carrier in carriers {
+            let tag = format!("styles#{}", super::agent::tag_of(carrier, handles));
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+        if !tags.is_empty() {
+            found.push((name, super::agent::format_tags(&tags)));
+        }
+    }
+    found
+}
+
+/// The elements under `e` that record a tracked change.
+fn collect<'e>(e: &'e Element, out: &mut Vec<&'e Element>) {
+    for child in e.elements() {
+        let local = child.local();
+        if (local.ends_with("Change") || matches!(local, "ins" | "del"))
+            && child.attr("id").is_some()
+        {
+            out.push(child);
+            continue;
+        }
+        collect(child, out);
+    }
+}
+
 fn part_two(out: &mut String, f: &Facts) {
-    if let Some(sect) = f.sections.first().and_then(|s| s.sect_pr.as_ref()) {
-        kv(out, &format!("page: {}", page_setup(sect)), None);
+    if let Some(first) = f.sections.first()
+        && let Some(sect) = first.sect_pr.as_ref()
+    {
+        let mut page = page_setup(sect);
+        if f.resolved.is_none()
+            && let Some(tags) = section_changes(first, f.handles)
+        {
+            page.push_str(&format!("; fmt {tags}"));
+        }
+        kv(out, &format!("page: {page}"), None);
     }
     out.push_str("styles:\n");
     let default = f.default_style.unwrap_or("Normal");
@@ -853,6 +945,35 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         ),
     }
+    if f.resolved.is_none()
+        && let Some(styles) = f.styles
+    {
+        let changes = style_changes(styles, f.handles);
+        if !changes.is_empty() {
+            let list: Vec<String> = changes
+                .iter()
+                .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
+                .collect();
+            kv(
+                out,
+                &format!("  changes: {{{}}}", list.join(", ")),
+                Some("tracked changes to the styles"),
+            );
+        }
+    }
+    let (rev, fmt) = &f.note_changes;
+    let clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]
+        .into_iter()
+        .filter(|(_, tags)| !tags.is_empty())
+        .map(|(key, tags)| format!("{key}: {}", scalar(&tags.join("; "), true)))
+        .collect();
+    if !clauses.is_empty() {
+        kv(
+            out,
+            &format!("notes: {{{}}}", clauses.join(", ")),
+            Some("changes in notes the body does not show (separators)"),
+        );
+    }
     if let Some(first) = f.sections.first() {
         first_section_stories(out, first);
         if f.sections.len() > 1 {
@@ -863,7 +984,12 @@ fn part_two(out: &mut String, f: &Facts) {
                     &format!(
                         "  {}: {}",
                         i + 1,
-                        section_entry(section, &f.sections[i - 1], first)
+                        section_entry(
+                            section,
+                            &f.sections[i - 1],
+                            first,
+                            f.resolved.is_none().then_some(f.handles)
+                        )
                     ),
                     None,
                 );

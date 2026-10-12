@@ -306,6 +306,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     writer.hidden_ranges.clear();
     let mut index = 0;
     let mut defs = Vec::new();
+    // The notes a definition line shows.
+    let mut defined: HashSet<(bool, String)> = HashSet::new();
     while index < writer.note_refs.len() {
         let key = writer.note_refs[index].clone();
         // A note whose reference was inserted or deleted was inserted or
@@ -330,10 +332,30 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             })
             .collect();
         writer.revisions = around;
-        writer.story = None;
+        let story = writer.story.take();
         // Still set: no paragraph had text, so there is no note.
         if writer.lead.take().is_none() {
-            defs.push(critic::join_marked(parts, " "));
+            let mut def = critic::join_marked(parts, " ");
+            // The tracked view names the note's changes its text cannot
+            // show: formatting, a deleted reference mark, an empty run.
+            if writer.agent
+                && !writer.resolved
+                && let Some(story) = story
+            {
+                let (rev, fmt) = agent::story_unshown(note, &story, &def, &writer.handles);
+                let mut clauses = Vec::new();
+                if !rev.is_empty() {
+                    clauses.push(format!("rev {}", rev.join("; ")));
+                }
+                if !fmt.is_empty() {
+                    clauses.push(format!("fmt {}", fmt.join("; ")));
+                }
+                if !clauses.is_empty() {
+                    def.push_str(&format!(" <!-- {} -->", clauses.join(", ")));
+                }
+            }
+            defs.push(def);
+            defined.insert(key);
         }
     }
     let mut markdown = blocks.finish();
@@ -540,16 +562,18 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         })
                         .find(|(_, text, _)| !text.is_empty())
                         .unwrap_or((0, String::new(), None));
+                    let (rev, fmt) = if accept.is_none() && options.ids {
+                        agent::story_unshown(&root, &stem, &text, &handles)
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
                     // The id is the part stem (`header2` for `header2.xml`), Word's
                     // own numbering; a paragraph other than the first adds `.pN`.
+                    // A stem with no short spelling prints long (`Header_1:p:0`).
                     stories.push(header::StoryFact {
                         kind,
                         ty,
-                        id: if index == 0 {
-                            stem.to_string()
-                        } else {
-                            format!("{stem}.p{index}")
-                        },
+                        id: crate::ids::short_paragraph(&format!("{stem}:p:{index}")),
                         text,
                         align,
                         active: match ty {
@@ -557,6 +581,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             "even" => even_odd,
                             _ => true,
                         },
+                        rev,
+                        fmt,
                     });
                 }
                 // A type a section does not name is inherited from the one before.
@@ -588,7 +614,28 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             }
             sections
         };
+        // The changes of notes no definition line shows (Word's separators,
+        // a note nothing references): the header's `notes:` names them.
+        let mut note_changes = (Vec::new(), Vec::new());
+        if accept.is_none() {
+            for (name, root) in &note_roots {
+                let endnote = *name == "endnote";
+                let Some(story) = note_stories.get(&endnote) else {
+                    continue;
+                };
+                for note in root.children_named(name) {
+                    let id = note.attr("id").unwrap_or_default().to_string();
+                    if defined.contains(&(endnote, id)) {
+                        continue;
+                    }
+                    let (rev, fmt) = agent::story_unshown(note, story, "", &handles);
+                    note_changes.0.extend(rev);
+                    note_changes.1.extend(fmt);
+                }
+            }
+        }
         let facts = header::Facts {
+            note_changes,
             source: options.source.as_deref().unwrap_or("(bytes)"),
             resolved: accept,
             comments_inline: options.comments,
@@ -1258,6 +1305,7 @@ impl Writer<'_> {
         let open_before = self.open_ranges().to_vec();
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
+        let inline = inline.into_inline();
         // Comment threads whose range runs past this paragraph, for its id
         // line: their highlight repeats here with the note elsewhere.
         let mut spans = self.threads_of(&open_before);
@@ -1308,9 +1356,15 @@ impl Writer<'_> {
             spans.retain(|id| !comments.contains(id));
             let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
             let numbered = heading_marker.is_some() || list_marker.is_some();
+            let unshown = if self.resolved {
+                Vec::new()
+            } else {
+                agent::unshown_tags(p, &inline.render(true), &self.handles)
+            };
             if empty
                 && !numbered
                 && comments.is_empty()
+                && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
             {
                 if self.page_sections.is_none() && agent::has_rendered_page_break(p) {
@@ -1351,11 +1405,11 @@ impl Writer<'_> {
                 comments: &comments,
                 spans: &spans,
                 empty,
+                unshown: &unshown,
             };
             blocks.push_line(&agent::id_line(p, &facts, &self.handles));
         }
         if written {
-            let inline = inline.into_inline();
             let edges = inline.edges();
             if let Some(level) = heading {
                 list.reset();
