@@ -423,8 +423,9 @@ export function sourceSha256(docx: Uint8Array): string;
 export function updateFields(docx: Uint8Array): FieldsOutput;
 
 /**
- * Word-validity findings beyond the schema as a JSON array (`code`,
- * `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+ * Word-validity findings beyond the schema as a JSON array (`code`, `set`,
+ * `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+ * `[]` is a pass.
  *
  * Mirrors `jubarte::validate::validate`.
  */
