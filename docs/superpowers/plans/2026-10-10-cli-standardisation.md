@@ -1141,6 +1141,25 @@ The `jubarte` on PATH is 0.11.2, so always pass `JUBARTE`. Verify with `scripts/
 
 ---
 
+## Phase 6: comparer parity found along the way (Arthur, 2026-10-12)
+
+### Task 22: Word's table alignment on `3d4318d7e9` (aeb0ace263 vs 1000537d17)
+Found while checking 06d's table records against Word. Word's redline is `tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/aeb0ace263__vs__1000537d17_redline_3d4318d7e9.docx`. The sources are in the bench's `corpus/data/documents.parquet` (`word/clean/docx/aeb0ace263_793bb9c3….docx`, `1000537d17_8d9cfd6b….docx`), and Word's PDF is in `results/redlines_0929_full/oracle_pdf/`.
+
+**What differs** (first seen on a pair rebuilt by rejecting and accepting Word's redline; confirm on the real sources before any code):
+- **First table:** Word aligns the old 3-row table's rows with the new 21-row table: 21 rows, 18 inserted, 0 deleted, the new 10-column grid, and one `tblPrChange`/`tblGridChange`. Ours deletes the 3 old rows and inserts all 21: 24 rows on a 13-column union grid.
+- **Second table:** Word splits it into six adjacent tables, each on its own grid (16, 6, 21, 6, 9 and 6 columns). Old rows with no partner become whole deleted tables (6, 1 and 3 rows); matched rows stay in fragments that carry their own `tblPrChange`/`tblGridChange`. Ours keeps one 30-row table (11 inserted, 19 deleted) on a 44-column union grid.
+- **Totals:** Word has 8 tables with 4 `tblPrChange` and 4 `tblGridChange`; ours has 3 tables with 2 of each.
+
+**Steps:**
+1. Extract the two sources and compare them. Run `jubarte debug diff ours.docx word.docx` and `jubarte debug ours.docx word.docx --check render`. Write down Word's row-matching rule (which old rows pair with which new rows) and when it splits a table (at a change of grid? at an unmatched run of old rows?).
+2. Copy the pair into `tests/corpus` (REUSE entry), and add a red test pinning Word's table count, each table's grid width and its inserted/deleted rows.
+3. Fix the row alignment and the table split in `src/comparer` (`lcs_table.rs`, and `produce.rs`'s table block from 06d).
+4. Check that the other two 06d pairs (`485599b4e9`, `cbd854cb68`) still match Word's 6/6, run the holdout gate (`hold.sh`) and a bench sample for redline fidelity. Run the gate.
+- [ ] Commit: `fix(comparer): Word's row alignment and table split on mismatched grids`.
+
+---
+
 ## Verification (end to end)
 
 1. **Engine:**
