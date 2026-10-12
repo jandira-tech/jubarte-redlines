@@ -481,43 +481,32 @@ fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
     assert_eq!(pdf["args"]["pages"], "1");
 }
 
+/// Task 14: diff writes text, so it takes no rendering flag; a Word, PDF or
+/// PNG output names compare.
 #[test]
-fn diff_revision_marks_apply_to_rendered_output_only() {
-    let palette = [
-        "--revisions",
-        "custom",
-        "--revision-palette",
-        "deleted=#000000",
-    ];
-    for output in [
-        &[][..],
-        &["-o", "r.docx"],
-        &["--to", "docx"],
-        &["-o", "r.md"],
+fn diff_has_no_rendering_flags() {
+    for flags in [
+        &["--revisions", "word"][..],
+        &["--revision-palette", "deleted=#000000"],
+        &["--mode", "redline"],
+        &["--detail-threshold", "0.5"],
+        &["--reference-doc", "r.docx"],
+        &["--critic"],
+        &["--resource-path", "."],
+        &["--move-comments"],
+        &["--dpi", "96"],
     ] {
-        for marks in [&["--revisions", "word"][..], &palette] {
-            let result = parse(
-                &[&["diff", "a.md", "b.md"][..], output, marks].concat(),
-                &[],
-            );
-            assert_eq!(result["exit_code"], 2, "{output:?} {marks:?}: {result}");
-            assert!(
-                result["text"]
-                    .as_str()
-                    .unwrap()
-                    .contains("--revisions applies to PDF or PNG output only"),
-                "{result}"
-            );
-        }
+        let result = parse(&[&["diff", "a.md", "b.md"][..], flags].concat(), &[]);
+        assert_eq!(result["exit_code"], 2, "{flags:?}: {result}");
     }
-    for output in [["-o", "r.pdf"], ["-o", "r.png"], ["--to", "pdf"]] {
-        for marks in [&["--revisions", "word"][..], &palette] {
-            let result = parse(
-                &[&["diff", "a.md", "b.md"][..], &output, marks].concat(),
-                &[],
-            );
-            assert_eq!(result["exit_code"], 0, "{output:?} {marks:?}: {result}");
-        }
+    for output in ["r.docx", "r.pdf", "r.png"] {
+        let result = parse(&["diff", "a.md", "b.md", "-o", output], &[]);
+        assert_eq!(result["exit_code"], 2, "{output}: {result}");
+        let text = result["text"].as_str().unwrap();
+        assert!(
+            text.contains(&format!("`compare OLD NEW -o {output}`")),
+            "{text}"
+        );
     }
 }
 
@@ -661,7 +650,8 @@ fn text_views_options_and_host_metadata_share_clap() {
     );
     assert_eq!(result["args"]["old_format"], "md");
     assert_eq!(result["args"]["new_format"], "md");
-    assert!(result["args"]["output_format"].is_null());
+    // An unknown extension is diff's usual text.
+    assert_eq!(result["args"]["output_format"], "md");
 }
 
 #[test]
@@ -696,7 +686,7 @@ fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
         ),
         (
             vec![
-                "diff",
+                "compare",
                 "a.docx",
                 "b.docx",
                 "-o",
@@ -917,7 +907,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
                 date,
             ],
             vec!["convert", "a.md", "-t", "docx", "--date", date],
-            vec!["diff", "a.docx", "b.docx", "-o", "out.docx", "--date", date],
+            vec!["diff", "a.md", "b.md", "--date", date],
         ] {
             let result = parse(&args, &[]);
             assert_eq!(
@@ -1351,10 +1341,16 @@ fn the_output_rule_is_one_table() {
         assert_eq!(
             rule(Task::Diff, Some(&format!("d.{ext}")), None),
             Err(format!(
-                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o c.{ext}` writes the redline as {ext}"
+                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o d.{ext}` writes the redline as {ext}"
             ))
         );
     }
+    // The advice names the path as typed.
+    assert!(
+        rule(Task::Diff, Some("out/changes.pdf"), None)
+            .unwrap_err()
+            .contains("`compare OLD NEW -o out/changes.pdf`")
+    );
     assert_eq!(
         rule(Task::Diff, Some("d.json"), None),
         Err("diff does not write .json yet".to_string())

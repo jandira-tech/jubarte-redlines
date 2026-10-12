@@ -1541,16 +1541,22 @@ impl Task {
         Format::of_path(path)
     }
 
-    /// The refusal for a format this task cannot write.
-    fn cannot_write(self, format: Format) -> String {
+    /// The refusal for a format this task cannot write; the advice names
+    /// the file as typed (`c.EXT`/`v.EXT` when `--to` said the format).
+    fn cannot_write(self, format: Format, typed: Option<&str>) -> String {
         let ext = format.name();
+        let named = |stem: &str| typed.map_or_else(|| format!("{stem}.{ext}"), str::to_string);
         match (self, format) {
             (Self::Diff, Format::Json) => "diff does not write .json yet".to_string(),
             (Self::Diff, _) => format!(
-                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o c.{ext}` writes the redline as {ext}"
+                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o {}` writes the redline as {ext}",
+                named("c")
             ),
             (Self::Read, _) => {
-                format!("read writes .md or .json; `convert FILE -o v.{ext}` writes {ext}")
+                format!(
+                    "read writes .md or .json; `convert FILE -o {}` writes {ext}",
+                    named("v")
+                )
             }
             _ => format!("{} does not write .{ext}", self.name()),
         }
@@ -1568,13 +1574,15 @@ pub fn output_format(
     to: Option<Format>,
 ) -> Result<Option<Format>, String> {
     let said = output.and_then(|path| task.known(path));
-    if let (Some(path), Some(said), Some(to)) = (output, said, to)
-        && said != to
-    {
-        let name = path.file_name().map_or_else(
+    let name = output.map(|path| {
+        path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
-        );
+        )
+    });
+    if let (Some(name), Some(said), Some(to)) = (&name, said, to)
+        && said != to
+    {
         return Err(format!(
             "-o {name} says {} and --to says {}: drop one",
             said.name(),
@@ -1593,7 +1601,11 @@ pub fn output_format(
     if task.allowed().contains(&format) {
         Ok(Some(format))
     } else {
-        Err(task.cannot_write(format))
+        // The typed name only when it said the format; `--to` names its own.
+        let typed = output
+            .filter(|_| said == Some(format))
+            .map(|path| path.display().to_string());
+        Err(task.cannot_write(format, typed.as_deref()))
     }
 }
 
@@ -1646,6 +1658,11 @@ pub const RETIRED: &[Retired] = &[
         old: "--changed-only",
         now: "--changed-pages",
         on: Some("convert"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("compare"),
     },
     Retired {
         old: "--pdf",
