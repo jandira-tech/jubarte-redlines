@@ -22027,9 +22027,18 @@ fn collect_hf_rev(
         let outer = std::mem::take(scan);
         let instr = attr_any(dom, node, "instr").unwrap_or("");
         scan.result = true;
+        scan.kind = numeric_field_kind(instr);
         scan.styleref = styleref_target(instr, Some(&sheet.by_id)).map(std::rc::Rc::new);
         for idx in 0..dom.child_count(node) {
             collect_hf_rev(dom, dom.child_at(node, idx), base, sheet, scan, runs, mark);
+        }
+        // No cached result: the page still fills the number in.
+        if !scan.emitted
+            && let Some(kind) = scan.kind
+        {
+            let mut run = field_run(String::new(), base);
+            run.field = kind;
+            runs.push(run);
         }
         *scan = outer;
     } else {
@@ -22040,6 +22049,19 @@ fn collect_hf_rev(
         if scan.result && run.styleref.is_none() {
             run.styleref.clone_from(&scan.styleref);
         }
+    }
+}
+
+/// The number a header or footer field computes, from its instruction.
+/// The field's name is its first word: an INCLUDEPICTURE of
+/// ".../page1image1105008" or a PAGEREF is no PAGE (2566689f0f painted
+/// "111" over its header).
+fn numeric_field_kind(instr: &str) -> Option<FieldKind> {
+    match field_first_token(instr).to_ascii_uppercase().as_str() {
+        "NUMPAGES" => Some(FieldKind::NumPages),
+        "NUMWORDS" => Some(FieldKind::NumWords),
+        "PAGE" => Some(FieldKind::Page),
+        _ => None,
     }
 }
 
@@ -22057,16 +22079,7 @@ fn collect_hf_rev_runs(
     if dom.name_is(node, &W::instr_text()) || dom.name_is(node, &W::del_instr_text()) {
         let raw = element_text(dom, node);
         scan.instr.push_str(&raw);
-        // The field's name is its first word: an INCLUDEPICTURE of
-        // ".../page1image1105008" or a PAGEREF is no PAGE (2566689f0f
-        // painted "111" over its header).
-        let name = field_first_token(&scan.instr).to_ascii_uppercase();
-        scan.kind = match name.as_str() {
-            "NUMPAGES" => Some(FieldKind::NumPages),
-            "NUMWORDS" => Some(FieldKind::NumWords),
-            "PAGE" => Some(FieldKind::Page),
-            _ => None,
-        };
+        scan.kind = numeric_field_kind(&scan.instr);
         return;
     }
     if skip_non_text(dom, node) {
@@ -57203,6 +57216,43 @@ mod rendering_uncovered_contract_tests {
                 assert!(scan.kind.is_none());
                 assert!(!scan.result);
                 assert!(!scan.emitted);
+            }
+        }
+    }
+
+    /// A simple field (`w:fldSimple`, which jubarte's Markdown writer emits
+    /// for `{PAGE}`) is computed like a complex one: its cached `1` is not
+    /// what the page shows.
+    #[test]
+    fn numeric_header_simple_fields_are_computed_not_cached() {
+        for (name, kind) in [
+            ("PAGE", FieldKind::Page),
+            ("NUMPAGES", FieldKind::NumPages),
+            ("NUMWORDS", FieldKind::NumWords),
+        ] {
+            for cached in [None, Some("1")] {
+                let result = cached.map_or(String::new(), |v| {
+                    format!("<w:r><w:rPr><w:b/></w:rPr><w:t>{v}</w:t></w:r>")
+                });
+                let (dom, root) = xml(&format!(
+                    r#"<w:p><w:fldSimple w:instr=" {name} ">{result}</w:fldSimple><w:r><w:t> tail</w:t></w:r></w:p>"#
+                ));
+                let mut runs = Vec::new();
+                let mut scan = FieldScan::default();
+                collect_hf_rec(
+                    &dom,
+                    root,
+                    &Defaults::word().run,
+                    &sheet(),
+                    &mut scan,
+                    &mut runs,
+                );
+                assert_eq!(runs.len(), 2, "{name} {cached:?}");
+                assert!(runs[0].field == kind, "{name} {cached:?}");
+                assert_eq!(runs[0].text, cached.unwrap_or(""));
+                assert!(runs[1].field == FieldKind::None);
+                assert_eq!(runs[1].text, " tail");
+                assert!(scan.kind.is_none());
             }
         }
     }
