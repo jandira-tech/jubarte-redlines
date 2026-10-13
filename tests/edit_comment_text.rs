@@ -168,7 +168,7 @@ fn a_repeated_anchor_is_unique_inside_c0_text() {
     let edited = apply_plan(
         &source,
         &plan(
-            r#"{"schema_version":1,"author":"Bob","existing_revisions":"keep","operations":[
+            r#"{"schema_version":1,"author":"Bob","operations":[
             {"kind":"replace","paragraph":"c0.text","find":"ten","replacement":"nine"}]}"#,
         ),
     )
