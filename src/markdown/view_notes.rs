@@ -190,6 +190,8 @@ pub(super) struct IdLine {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+    /// The paragraph holds a page break (`page-break`).
+    pub page_break: bool,
 }
 
 /// The id line of one paragraph (`pN`, not a range); `None` for any
@@ -237,7 +239,8 @@ impl IdLine {
                     "justify" => Some("both"),
                     "left" => Some("left"),
                     _ => self.align,
-                }
+                };
+                self.page_break |= clause == "page-break";
             }
             Some(("first-line", v)) => self.first_line = twips(v),
             Some(("hanging", v)) => self.hanging = twips(v),

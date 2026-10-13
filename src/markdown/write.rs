@@ -205,6 +205,8 @@ struct Writer<'o, 'a> {
     comment: Option<Comment>,
     /// What the last id line says, for the paragraph after it.
     id_line: Option<view_notes::IdLine>,
+    /// The open paragraph ends in a page break (`page-break`).
+    page_break_due: bool,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
     authors: HashMap<String, view_notes::Author>,
 
@@ -253,6 +255,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             comment_anchor: None,
             pending_highlights: Vec::new(),
             id_line: None,
+            page_break_due: false,
             run_after_close: false,
             highlight: None,
             groups: 0,
@@ -553,22 +556,38 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     /// The agent view's id lines: an `empty` one (`<!-- p2-p4 empty -->`)
     /// stands for the empty paragraphs it numbers, which have no text of
-    /// their own to carry them; any other names the text after it.
+    /// their own to carry them; any other names the text after it, or,
+    /// with no text before the next line (`<!-- p7 page-break -->`), a
+    /// paragraph of its own.
     fn id_lines(&mut self, html: &str) {
         if self.cell.is_some() || self.comment.is_some() || self.target.is_some() {
             return;
         }
         for line in html.lines() {
-            let Some(count) = view_notes::empty_paragraphs(line) else {
-                self.id_line = view_notes::id_line(line);
+            // A page marker sits between blocks: it ends no paragraph.
+            if line.trim_start().starts_with("<!-- page ") {
                 continue;
-            };
-            self.end_paragraph();
-            for _ in 0..count {
-                let story = self.story();
-                story.push(Item::Paragraph(Paragraph::default()));
-                story.push(Item::ParagraphEnd);
             }
+            self.textless_paragraph();
+            if let Some(count) = view_notes::empty_paragraphs(line) {
+                self.end_paragraph();
+                for _ in 0..count {
+                    let story = self.story();
+                    story.push(Item::Paragraph(Paragraph::default()));
+                    story.push(Item::ParagraphEnd);
+                }
+            } else {
+                self.id_line = view_notes::id_line(line);
+            }
+        }
+    }
+
+    /// The paragraph of an id line no text followed.
+    fn textless_paragraph(&mut self) {
+        if self.id_line.is_some() {
+            self.end_paragraph();
+            self.begin_paragraph();
+            self.end_paragraph();
         }
     }
 
@@ -614,6 +633,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 paragraph.outline = self.heading.map(|level| level - 1);
             }
             paragraph.align = line.align.or(paragraph.align);
+            self.page_break_due = line.page_break;
             paragraph.ind = Indent {
                 first_line: line.first_line,
                 hanging: line.hanging,
@@ -650,6 +670,14 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some(index) = self.paragraph.take() else {
             return;
         };
+        if std::mem::take(&mut self.page_break_due) {
+            self.story().push(Item::Run(Run {
+                content: Content::PageBreak,
+                format: RunFormat::default(),
+                change: None,
+                highlight: None,
+            }));
+        }
         if let Some(comment) = &mut self.comment {
             comment.paragraphs.push(String::new());
         }
@@ -1158,6 +1186,7 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     fn finish(mut self) -> Document {
         self.end_paragraph();
+        self.textless_paragraph();
         if let Some(comment) = self.comment.take() {
             // An unclosed comment cannot happen with complete spans; keep
             // its text anyway.

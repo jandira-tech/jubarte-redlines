@@ -68,3 +68,17 @@ fn a_heading_keeps_its_level_under_the_style_its_id_line_names() {
               <!-- p2 -->\nBody text.\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+#[test]
+fn a_paragraph_without_text_comes_back_from_its_id_line() {
+    // (A textless paragraph with nothing but a style prints `empty`.)
+    let md = "<!-- p0 -->\nOne\n\n<!-- p1 page-break -->\n\n<!-- p2 empty -->\n\n\
+              <!-- p3 -->\nTwo\n\n<!-- p4 page-break -->\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn a_page_break_comes_back_after_its_text() {
+    let md = "<!-- p0 page-break -->\nBefore the break\n\n<!-- p1 -->\nAfter it\n";
+    assert_eq!(round_trip(md), md.trim());
+}

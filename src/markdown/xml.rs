@@ -37,6 +37,8 @@ pub(super) struct RunFormat {
 pub(super) enum Content {
     Text(String),
     Break,
+    /// A page break (`w:br w:type="page"`).
+    PageBreak,
     Tab,
     /// A footnote reference, by the footnote's position (1-based).
     NoteReference(u32),
@@ -511,6 +513,7 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
             );
         }
         Content::Break => out.push_str("<w:br/>"),
+        Content::PageBreak => out.push_str("<w:br w:type=\"page\"/>"),
         Content::Tab => out.push_str("<w:tab/>"),
         Content::NoteReference(position) => {
             let _ = write!(
