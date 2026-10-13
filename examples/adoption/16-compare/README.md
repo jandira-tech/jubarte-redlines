@@ -97,11 +97,9 @@ neither.
 Discrepancies with the adoption pages: none in what ran —
 `docs/adoption/openai-doc-skill.md` says `jubarte a.docx b.docx -o
 redline.docx --author "Name"` compares two versions; that command
-worked exactly as written (exit 0, redline written). Two footguns the
-pages do not mention, recorded here because we hit them: `jubarte
-diff` defaults its author to `git config user.name` and its date to
-now (pin `-a`/`-d` for reproducible patches, or the patch header leaks
-the machine's user name), and it silently also writes a default
-`<old>_v_<new>.docx` redline beside the old file — which then fails
-the next run with "output already exists (use --force)" unless you
-pass `--force` or delete it.
+worked exactly as written (exit 0, redline written). One footgun the
+pages do not mention: `jubarte diff` stamps its patch header with the
+author `Redline` and the current time, so pin `-a`/`-d` for
+reproducible patches. (Earlier builds took the author from `git config
+user.name` and also wrote a `<old>_v_<new>.docx` redline beside the old
+file; neither happens any more: `diff` writes only the text it prints.)
