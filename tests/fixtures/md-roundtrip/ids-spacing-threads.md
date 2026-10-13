@@ -73,7 +73,7 @@ A small table with a header row:
 
 <!-- t0 center 5x4, cells p19-p38 by row -->
 |Region|Q1|Q2|Q3|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |North|$120k|$135k|$150k|
 |South|$98k|$110k|$128k|
 |East|$143k|$151k|$162k|
@@ -164,7 +164,7 @@ _— end of sample —_
 
 <!-- t1 center 5x4, cells p67-p86 by row -->
 |{++Region++}{>>r20 @ASR<<}|{++Q1++}{>>r21 @ASR<<}|{++Q2++}{>>r22 @ASR<<}|{++Q3++}{>>r23 @ASR<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++North++}{>>r24 @ASR<<}|{++$120k++}{>>r25 @ASR<<}|{++$135k++}{>>r26 @ASR<<}|{++$150k++}{>>r27 @ASR<<}|
 |{++South++}{>>r28 @ASR<<}|{++$98k++}{>>r29 @ASR<<}|{++$110k++}{>>r30 @ASR<<}|{++$128k++}{>>r31 @ASR<<}|
 |{++East++}{>>r32 @ASR<<}|{++$143k++}{>>r33 @ASR<<}|{++$151k++}{>>r34 @ASR<<}|{++$162k++}{>>r35 @ASR<<}|

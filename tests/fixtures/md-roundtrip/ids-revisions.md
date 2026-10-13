@@ -219,9 +219,9 @@ footers:
 <!-- p68 center, break-del r137 @AB -->
 {--**GCSE PE – Year 10**--}{>>r138 @AB<<}
 
-<!-- t0 11x5, cells t0.row0 p69-p77 t0.row1 p78-p86 t0.row2 p87-p92 t0.row3 p93-p96 t0.row4 p97-p99 t0.row5 p100-p103 t0.row6 p104-p105 t0.row7 p106-p109 t0.row8 p110-p115 t0.row9 p116-p134 t0.row10 p135-p142, merged t0.row0.cell1 across 4; t0.row1.cell1 across 4; t0.row2.cell1 across 4; t0.row3.cell1 across 3; t0.row4.cell1 across 3; t0.row5.cell1 across 3; t0.row6.cell1 across 3; t0.row8.cell1 across 3; t0.row9.cell1 across 3; t0.row10.cell1 across 3, break-del r148 @AB in p70; r151 @AB in p71; r153 @AB in p72; r155 @AB in p73; r157 @AB in p74; r159 @AB in p75; r160 @AB in p76; r171 @AB in p79; r174 @AB in p80; r176 @AB in p81; r178 @AB in p82; r180 @AB in p83; r182 @AB in p84; r183 @AB in p85; r194 @AB in p88; r197 @AB in p89; r198 @AB in p90; r200 @AB in p91; r210 @AB in p94; r213 @AB in p95; r223 @AB in p98; r235 @AB in p101; r238 @AB in p102; r274 @AB in p111; r277 @AB in p112; r278 @AB in p113; r279 @AB in p114; r289 @AB in p117; r292 @AB in p118; r294 @AB in p119; r296 @AB in p120; r298 @AB in p121; r300 @AB in p122; r301 @AB in p123; r303 @AB in p124; r305 @AB in p125; r307 @AB in p126; r308 @AB in p127; r310 @AB in p128; r312 @AB in p129; r314 @AB in p130; r315 @AB in p131; r317 @AB in p132; r318 @AB in p133; r330 @AB in p136; r333 @AB in p137; r334 @AB in p138; r336 @AB in p139; r337 @AB in p140; r339 @AB in p141, fmt r139 @AB; r140 @??; r141 @AB in t0.row0; r142 @AB in t0.row0.cell0; r143 @AB in p69; r144 @AB in p69; r147 @AB in t0.row0.cell1; r162 @AB in p77; r163 @AB in p77; r164 @AB in t0.row1; r165 @AB in t0.row1.cell0; r166 @AB in p78; r167 @AB in p78; r170 @AB in t0.row1.cell1; r185 @AB in p86; r186 @AB in p86; r187 @AB in t0.row2; r188 @AB in t0.row2.cell0; r189 @AB in p87; r190 @AB in p87; r193 @AB in t0.row2.cell1; r201 @AB in p92; r202 @AB in p92; r203 @AB in t0.row3; r204 @AB in t0.row3.cell0; r205 @AB in p93; r206 @AB in p93; r209 @AB in t0.row3.cell1; r214 @AB in p96; r215 @AB in p96; r216 @AB in t0.row4; r217 @AB in t0.row4.cell0; r218 @AB in p97; r219 @AB in p97; r222 @AB in t0.row4.cell1; r226 @AB in p99; r227 @AB in p99; r228 @AB in t0.row5; r229 @AB in t0.row5.cell0; r230 @AB in p100; r231 @AB in p100; r234 @AB in t0.row5.cell1; r239 @AB in p103; r240 @AB in p103; r241 @AB in t0.row6; r242 @AB in t0.row6.cell0; r243 @AB in p104; r244 @AB in p104; r247 @AB in t0.row6.cell1; r248 @AB in p105; r249 @AB in p105; r252 @AB in t0.row7; r253 @AB in t0.row7.cell0; r254 @AB in p106; r255 @AB in p106; r258 @AB in t0.row7.cell1; r259 @AB in p107; r260 @AB in p107; r263 @AB in t0.row7.cell2; r265 @AB in t0.row7.cell3; r267 @AB in t0.row8; r268 @AB in t0.row8.cell0; r269 @AB in p110; r270 @AB in p110; r273 @AB in t0.row8.cell1; r280 @AB in p115; r281 @AB in p115; r282 @AB in t0.row9; r283 @AB in t0.row9.cell0; r284 @AB in p116; r285 @AB in p116; r288 @AB in t0.row9.cell1; r320 @AB in p134; r321 @AB in p134; r323 @AB in t0.row10; r324 @AB in t0.row10.cell0; r325 @AB in p135; r326 @AB in p135; r329 @AB in t0.row10.cell1; r340 @AB in p142; r341 @AB in p142 -->
+<!-- t0 11x5, cells t0.row0 p69-p77 t0.row1 p78-p86 t0.row2 p87-p92 t0.row3 p93-p96 t0.row4 p97-p99 t0.row5 p100-p103 t0.row6 p104-p105 t0.row7 p106-p109 t0.row8 p110-p115 t0.row9 p116-p134 t0.row10 p135-p142, p70 center, p71 center, p72 center, p73 center, p74 center, p75 center, p76 center, p79 center, p80 center, p81 center, p82 center, p83 center, p84 center, p85 center, p118 justify, p119 justify, p120 justify, p121 justify, p124 justify, p125 justify, p128 justify, p129 justify, p133 justify, merged t0.row0.cell1 across 4; t0.row1.cell1 across 4; t0.row2.cell1 across 4; t0.row3.cell1 across 3; t0.row4.cell1 across 3; t0.row5.cell1 across 3; t0.row6.cell1 across 3; t0.row8.cell1 across 3; t0.row9.cell1 across 3; t0.row10.cell1 across 3, break-del r148 @AB in p70; r151 @AB in p71; r153 @AB in p72; r155 @AB in p73; r157 @AB in p74; r159 @AB in p75; r160 @AB in p76; r171 @AB in p79; r174 @AB in p80; r176 @AB in p81; r178 @AB in p82; r180 @AB in p83; r182 @AB in p84; r183 @AB in p85; r194 @AB in p88; r197 @AB in p89; r198 @AB in p90; r200 @AB in p91; r210 @AB in p94; r213 @AB in p95; r223 @AB in p98; r235 @AB in p101; r238 @AB in p102; r274 @AB in p111; r277 @AB in p112; r278 @AB in p113; r279 @AB in p114; r289 @AB in p117; r292 @AB in p118; r294 @AB in p119; r296 @AB in p120; r298 @AB in p121; r300 @AB in p122; r301 @AB in p123; r303 @AB in p124; r305 @AB in p125; r307 @AB in p126; r308 @AB in p127; r310 @AB in p128; r312 @AB in p129; r314 @AB in p130; r315 @AB in p131; r317 @AB in p132; r318 @AB in p133; r330 @AB in p136; r333 @AB in p137; r334 @AB in p138; r336 @AB in p139; r337 @AB in p140; r339 @AB in p141, fmt r139 @AB; r140 @??; r141 @AB in t0.row0; r142 @AB in t0.row0.cell0; r143 @AB in p69; r144 @AB in p69; r147 @AB in t0.row0.cell1; r162 @AB in p77; r163 @AB in p77; r164 @AB in t0.row1; r165 @AB in t0.row1.cell0; r166 @AB in p78; r167 @AB in p78; r170 @AB in t0.row1.cell1; r185 @AB in p86; r186 @AB in p86; r187 @AB in t0.row2; r188 @AB in t0.row2.cell0; r189 @AB in p87; r190 @AB in p87; r193 @AB in t0.row2.cell1; r201 @AB in p92; r202 @AB in p92; r203 @AB in t0.row3; r204 @AB in t0.row3.cell0; r205 @AB in p93; r206 @AB in p93; r209 @AB in t0.row3.cell1; r214 @AB in p96; r215 @AB in p96; r216 @AB in t0.row4; r217 @AB in t0.row4.cell0; r218 @AB in p97; r219 @AB in p97; r222 @AB in t0.row4.cell1; r226 @AB in p99; r227 @AB in p99; r228 @AB in t0.row5; r229 @AB in t0.row5.cell0; r230 @AB in p100; r231 @AB in p100; r234 @AB in t0.row5.cell1; r239 @AB in p103; r240 @AB in p103; r241 @AB in t0.row6; r242 @AB in t0.row6.cell0; r243 @AB in p104; r244 @AB in p104; r247 @AB in t0.row6.cell1; r248 @AB in p105; r249 @AB in p105; r252 @AB in t0.row7; r253 @AB in t0.row7.cell0; r254 @AB in p106; r255 @AB in p106; r258 @AB in t0.row7.cell1; r259 @AB in p107; r260 @AB in p107; r263 @AB in t0.row7.cell2; r265 @AB in t0.row7.cell3; r267 @AB in t0.row8; r268 @AB in t0.row8.cell0; r269 @AB in p110; r270 @AB in p110; r273 @AB in t0.row8.cell1; r280 @AB in p115; r281 @AB in p115; r282 @AB in t0.row9; r283 @AB in t0.row9.cell0; r284 @AB in p116; r285 @AB in p116; r288 @AB in t0.row9.cell1; r320 @AB in p134; r321 @AB in p134; r323 @AB in t0.row10; r324 @AB in t0.row10.cell0; r325 @AB in p135; r326 @AB in p135; r329 @AB in t0.row10.cell1; r340 @AB in p142; r341 @AB in p142 -->
 |{~~ Theory Topics~>English Words  ~~}{>>r146+145 @AB<<}|{~~Applied anatomy and Physiology~>Yoruba Words  ~~}{>>r150+149 @AB<<}{--<br>Movement analysis--}{>>r152 @AB<<}{--<br>Physical training--}{>>r154 @AB<<}{--<br>Use of data--}{>>r156 @AB<<}{--<br>Sports Psychology--}{>>r158 @AB<<}<br>{--<br>Topics are worked through in the order provided by the exam boards specification. Pupils will be moved onto a new topic when the class teacher is happy with the level of understanding. This is made possible the amount of time available within the life of the course.--}{>>r161 @AB<<}<br>|||
-|-|-|-|-|
+|:-|-|:-:|-|
 |{~~Practical Topics~>You  ~~}{>>r169+168 @AB<<}|{~~Athletics~>Onise ~~}{>>r173+172 @AB<<}{--<br>Handball--}{>>r175 @AB<<}{--<br>Badminton--}{>>r177 @AB<<}{--<br>Football--}{>>r179 @AB<<}{--<br>Netball--}{>>r181 @AB<<}<br>{--<br>Pupils are free to be assessed in any sport that is covered by the exam boards specification, but these are the sports that are routinely covered in lessons. --}{>>r184 @AB<<}<br>|||
 |{~~Assessment~>Awesome ~~}{>>r192+191 @AB<<}|{~~Written end of topic test for each unit~>Iyanu ~~}{>>r196+195 @AB<<}<br>{--<br>Ongoing practical assessment in each sport covered--}{>>r199 @AB<<}<br><br>|||
 |{~~Building on Prior Learning~>Eyes  ~~}{>>r208+207 @AB<<}|{~~All practical activities taught are those activities that were taught at KS3. Sports mentioned above have been historically strong for our students, however, they are subject to change dependent on student needs. Key terminology that have been drip fed to pupils at KS3 are used and explored in greater detail. ~> ~~}{>>r212+211 @AB<<}<br><br>|||
@@ -237,7 +237,7 @@ footers:
 
 <!-- t1 9x2, cells p144-p161 by row, break-ins r346 @AB in p144; r348 @AB in p145; r351 @AB in p146; r353 @AB in p147; r356 @AB in p148; r358 @AB in p149; r361 @AB in p150; r363 @AB in p151; r366 @AB in p152; r368 @AB in p153; r371 @AB in p154; r373 @AB in p155; r376 @AB in p156; r378 @AB in p157; r381 @AB in p158; r383 @AB in p159; r386 @AB in p160; r388 @AB in p161 -->
 |{++English Sentences  ++}{>>r345 @AB<<}|{++Yoruba Sentences (Repeated) ++}{>>r345 @AB<<}|
-|-|-|
+|:-|:-|
 |{++You are the God of awesome wonder ++}{>>r350 @AB<<}|{++OniseIyanu ++}{>>r350 @AB<<}|
 |{++I have tasted of your power ++}{>>r355 @AB<<}|{++OniseIyanu ++}{>>r355 @AB<<}|
 |{++You have shown me so much mercy… ++}{>>r360 @AB<<}|{++OniseIyanu ++}{>>r360 @AB<<}|
@@ -254,7 +254,7 @@ footers:
 
 <!-- t2 12x4, cells p164-p211 by row, break-ins r395 @AB in p164; r397 @AB in p165; r399 @AB in p166; r401 @AB in p167; r404 @AB in p168; r406 @AB in p169; r408 @AB in p170; r410 @AB in p171; r413 @AB in p172; r415 @AB in p173; r417 @AB in p174; r419 @AB in p175; r422 @AB in p176; r424 @AB in p177; r426 @AB in p178; r428 @AB in p179; r431 @AB in p180; r433 @AB in p181; r435 @AB in p182; r437 @AB in p183; r440 @AB in p184; r442 @AB in p185; r444 @AB in p186; r446 @AB in p187; r449 @AB in p188; r451 @AB in p189; r453 @AB in p190; r455 @AB in p191; r458 @AB in p192; r460 @AB in p193; r462 @AB in p194; r464 @AB in p195; r467 @AB in p196; r469 @AB in p197; r471 @AB in p198; r473 @AB in p199; r476 @AB in p200; r478 @AB in p201; r480 @AB in p202; r482 @AB in p203; r485 @AB in p204; r487 @AB in p205; r489 @AB in p206; r491 @AB in p207; r494 @AB in p208; r496 @AB in p209; r498 @AB in p210; r500 @AB in p211 -->
 |{++Nouns  ++}{>>r394 @AB<<}|{++Verbs  ++}{>>r394 @AB<<}|{++Adjectives ++}{>>r394 @AB<<}|{++Adverbs ++}{>>r394 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++God ++}{>>r403 @AB<<}|{++Are  ++}{>>r403 @AB<<}|{++Awesome ++}{>>r403 @AB<<}|{++So ++}{>>r403 @AB<<}|
 |{++Power ++}{>>r412 @AB<<}|{++Tasted ++}{>>r412 @AB<<}|{++Outstretched  ++}{>>r412 @AB<<}|{++Much ++}{>>r412 @AB<<}|
 |{++Mercy ++}{>>r421 @AB<<}|{++Have  ++}{>>r421 @AB<<}|{++ ++}{>>r421 @AB<<}|{++ ++}{>>r421 @AB<<}|
@@ -312,7 +312,7 @@ footers:
 
 <!-- t3 9x2, cells p227-p244 by row, break-ins r533 @AB in p227; r535 @AB in p228; r538 @AB in p229; r540 @AB in p230; r543 @AB in p231; r545 @AB in p232; r548 @AB in p233; r550 @AB in p234; r553 @AB in p235; r555 @AB in p236; r558 @AB in p237; r560 @AB in p238; r563 @AB in p239; r565 @AB in p240; r568 @AB in p241; r570 @AB in p242; r573 @AB in p243; r575 @AB in p244 -->
 |{++English Words  ++}{>>r532 @AB<<}|{++Hausa Words ++}{>>r532 @AB<<}|
-|-|-|
+|:-|:-|
 |{++I ++}{>>r537 @AB<<}|{++Mai ++}{>>r537 @AB<<}|
 |{++Will ++}{>>r542 @AB<<}|{++Girma ++}{>>r542 @AB<<}|
 |{++Lift ++}{>>r547 @AB<<}|{++Ne kai ++}{>>r547 @AB<<}|
@@ -330,7 +330,7 @@ footers:
 
 <!-- t4 5x4, cells p248-p267 by row, break-ins r584 @AB in p248; r586 @AB in p249; r588 @AB in p250; r590 @AB in p251; r593 @AB in p252; r595 @AB in p253; r597 @AB in p254; r599 @AB in p255; r602 @AB in p256; r604 @AB in p257; r606 @AB in p258; r608 @AB in p259; r611 @AB in p260; r613 @AB in p261; r615 @AB in p262; r617 @AB in p263; r620 @AB in p264; r622 @AB in p265; r624 @AB in p266; r626 @AB in p267 -->
 |{++Nouns  ++}{>>r583 @AB<<}|{++Verbs  ++}{>>r583 @AB<<}|{++Adjectives  ++}{>>r583 @AB<<}|{++Adverb ++}{>>r583 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++Sun ++}{>>r592 @AB<<}|{++Rising  ++}{>>r592 @AB<<}|{++Nil  ++}{>>r592 @AB<<}|{++Nil ++}{>>r592 @AB<<}|
 |{++Voice  ++}{>>r601 @AB<<}|{++Setting  ++}{>>r601 @AB<<}|{++ ++}{>>r601 @AB<<}|{++ ++}{>>r601 @AB<<}|
 |{++Mercies  ++}{>>r610 @AB<<}|{++Will  ++}{>>r610 @AB<<}|{++ ++}{>>r610 @AB<<}|{++ ++}{>>r610 @AB<<}|
@@ -340,7 +340,7 @@ footers:
 
 <!-- t5 6x2, cells p269-p280 by row, break-ins r631 @AB in p269; r633 @AB in p270; r636 @AB in p271; r638 @AB in p272; r641 @AB in p273; r643 @AB in p274; r646 @AB in p275; r648 @AB in p276; r651 @AB in p277; r653 @AB in p278; r656 @AB in p279; r658 @AB in p280 -->
 |{++English Sentence(s) ++}{>>r630 @AB<<}|{++Hausa Sentences  ++}{>>r630 @AB<<}|
-|-|-|
+|:-|:-|
 |{++I will lift ++}{>>r635 @AB<<}|{++Babu wanikamar kai ++}{>>r635 @AB<<}|
 |{++ ++}{>>r640 @AB<<}|{++Karbasujada ++}{>>r640 @AB<<}|
 |{++ ++}{>>r645 @AB<<}|{++Karbadaukaka ++}{>>r645 @AB<<}|
@@ -351,7 +351,7 @@ footers:
 
 <!-- t6 3x2, cells p282-p287 by row, break-ins r663 @AB in p282; r665 @AB in p283; r668 @AB in p284; r670 @AB in p285; r673 @AB in p286; r675 @AB in p287 -->
 |{++Prepositional phrases  ++}{>>r662 @AB<<}|{++Preposition  ++}{>>r662 @AB<<}|
-|-|-|
+|:-|:-|
 |{++From the rising of the sun  ++}{>>r667 @AB<<}|{++From, of  ++}{>>r667 @AB<<}|
 |{++To the setting of the same ++}{>>r672 @AB<<}|{++To, of  ++}{>>r672 @AB<<}|
 
@@ -393,7 +393,7 @@ footers:
 
 <!-- t7 6x4, cells p301-p324 by row, break-ins r704 @AB in p301; r706 @AB in p302; r708 @AB in p303; r710 @AB in p304; r713 @AB in p305; r715 @AB in p306; r717 @AB in p307; r719 @AB in p308; r722 @AB in p309; r724 @AB in p310; r726 @AB in p311; r728 @AB in p312; r731 @AB in p313; r733 @AB in p314; r735 @AB in p315; r737 @AB in p316; r740 @AB in p317; r742 @AB in p318; r744 @AB in p319; r746 @AB in p320; r749 @AB in p321; r751 @AB in p322; r753 @AB in p323; r755 @AB in p324 -->
 |{++English words  ++}{>>r703 @AB<<}|{++Igbo Words ++}{>>r703 @AB<<}|{++Hausa words  ++}{>>r703 @AB<<}|{++Yoruba Words ++}{>>r703 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++My ++}{>>r712 @AB<<}|{++Isi  ++}{>>r712 @AB<<}|{++Seriki ++}{>>r712 @AB<<}|{++Kabiyeosi ++}{>>r712 @AB<<}|
 |{++Trust  ++}{>>r721 @AB<<}|{++Iyi ++}{>>r721 @AB<<}|{++Duniya ++}{>>r721 @AB<<}|{++Oyigi ++}{>>r721 @AB<<}|
 |{++Put  ++}{>>r730 @AB<<}|{++Nke ++}{>>r730 @AB<<}|{++ ++}{>>r730 @AB<<}|{++Yigi ++}{>>r730 @AB<<}|
@@ -404,7 +404,7 @@ footers:
 
 <!-- t8 11x4, cells p326-p369 by row, break-ins r760 @AB in p326; r762 @AB in p327; r764 @AB in p328; r766 @AB in p329; r769 @AB in p330; r771 @AB in p331; r773 @AB in p332; r775 @AB in p333; r778 @AB in p334; r780 @AB in p335; r782 @AB in p336; r784 @AB in p337; r787 @AB in p338; r789 @AB in p339; r791 @AB in p340; r793 @AB in p341; r796 @AB in p342; r798 @AB in p343; r800 @AB in p344; r802 @AB in p345; r805 @AB in p346; r807 @AB in p347; r809 @AB in p348; r811 @AB in p349; r814 @AB in p350; r816 @AB in p351; r818 @AB in p352; r820 @AB in p353; r823 @AB in p354; r825 @AB in p355; r827 @AB in p356; r829 @AB in p357; r832 @AB in p358; r834 @AB in p359; r836 @AB in p360; r838 @AB in p361; r841 @AB in p362; r843 @AB in p363; r845 @AB in p364; r847 @AB in p365; r850 @AB in p366; r852 @AB in p367; r854 @AB in p368; r856 @AB in p369 -->
 |{++Nouns  ++}{>>r759 @AB<<}|{++Verbs ++}{>>r759 @AB<<}|{++Adjectives  ++}{>>r759 @AB<<}|{++Adverbs  ++}{>>r759 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++Lion  ++}{>>r768 @AB<<}|{++Is  ++}{>>r768 @AB<<}|{++Ancient  ++}{>>r768 @AB<<}|{++Nil  ++}{>>r768 @AB<<}|
 |{++Judge  ++}{>>r777 @AB<<}|{++Am ++}{>>r777 @AB<<}|{++Miracle  ++}{>>r777 @AB<<}|{++Nil  ++}{>>r777 @AB<<}|
 |{++Days  ++}{>>r786 @AB<<}|{++Put ++}{>>r786 @AB<<}|{++ ++}{>>r786 @AB<<}|{++ ++}{>>r786 @AB<<}|
@@ -478,7 +478,7 @@ footers:
 
 <!-- t9 6x2, cells p391-p402 by row, break-ins r901 @AB in p391; r903 @AB in p392; r906 @AB in p393; r908 @AB in p394; r911 @AB in p395; r913 @AB in p396; r916 @AB in p397; r918 @AB in p398; r921 @AB in p399; r923 @AB in p400; r926 @AB in p401; r928 @AB in p402 -->
 |{++English Words  ++}{>>r900 @AB<<}|{++Yoruba Words ++}{>>r900 @AB<<}|
-|-|-|
+|:-|:-|
 |{++Heavens  ++}{>>r905 @AB<<}|{++Iwo  ++}{>>r905 @AB<<}|
 |{++You  ++}{>>r910 @AB<<}|{++L’aseda ++}{>>r910 @AB<<}|
 |{++Reign  ++}{>>r915 @AB<<}|{++Anugbo ++}{>>r915 @AB<<}|
@@ -491,7 +491,7 @@ footers:
 
 <!-- t10 9x4, cells p405-p440 by row, break-ins r935 @AB in p405; r937 @AB in p406; r939 @AB in p407; r941 @AB in p408; r944 @AB in p409; r946 @AB in p410; r948 @AB in p411; r950 @AB in p412; r953 @AB in p413; r955 @AB in p414; r957 @AB in p415; r959 @AB in p416; r962 @AB in p417; r964 @AB in p418; r966 @AB in p419; r968 @AB in p420; r971 @AB in p421; r973 @AB in p422; r975 @AB in p423; r977 @AB in p424; r980 @AB in p425; r982 @AB in p426; r984 @AB in p427; r986 @AB in p428; r989 @AB in p429; r991 @AB in p430; r993 @AB in p431; r995 @AB in p432; r998 @AB in p433; r1000 @AB in p434; r1002 @AB in p435; r1004 @AB in p436; r1007 @AB in p437; r1009 @AB in p438; r1011 @AB in p439; r1013 @AB in p440 -->
 |{++Nouns  ++}{>>r934 @AB<<}|{++Verbs  ++}{>>r934 @AB<<}|{++Adjectives  ++}{>>r934 @AB<<}|{++Adverbs  ++}{>>r934 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++Heavens  ++}{>>r943 @AB<<}|{++Praised  ++}{>>r943 @AB<<}|{++Holy ++}{>>r943 @AB<<}|{++greatly ++}{>>r943 @AB<<}|
 |{++Power  ++}{>>r952 @AB<<}|{++Declare  ++}{>>r952 @AB<<}|{++Righteousness  ++}{>>r952 @AB<<}|{++ ++}{>>r952 @AB<<}|
 |{++Royalty ++}{>>r961 @AB<<}|{++Reign  ++}{>>r961 @AB<<}|{++Justice  ++}{>>r961 @AB<<}|{++ ++}{>>r961 @AB<<}|
@@ -509,7 +509,7 @@ footers:
 
 <!-- t11 4x2, cells t11.row0 p444-p445 t11.row1 p446-p450 t11.row2 p451-p454 t11.row3 p455-p458, break-ins r1022 @AB in p444; r1024 @AB in p445; r1027 @AB in p446; r1029 @AB in p447; r1031 @AB in p448; r1033 @AB in p449; r1035 @AB in p450; r1038 @AB in p451; r1040 @AB in p452; r1042 @AB in p453; r1044 @AB in p454; r1047 @AB in p455; r1049 @AB in p456; r1051 @AB in p457; r1053 @AB in p458 -->
 |{++English Sentences  ++}{>>r1021 @AB<<}|{++Yoruba sentences  ++}{>>r1021 @AB<<}|
-|-|-|
+|:-|:-|
 |{++He who all praise belongs to, we <br>welcome you in <br> ++}{>>r1026 @AB<<}|{++Iwo l’oniiyin, kaabo, kaabo <br> ++}{>>r1026 @AB<<}|
 |{++You are the creator of all creatures, He who knows the created <br> ++}{>>r1037 @AB<<}|{++Iwo l’aseda, l’awoneda, l’ameda oh! <br> ++}{>>r1037 @AB<<}|
 |{++He who knows the created <br> ++}{>>r1046 @AB<<}|{++Iwo l’oniiyin, kaabo, kaabo <br> ++}{>>r1046 @AB<<}|
@@ -568,7 +568,7 @@ footers:
 
 <!-- t12 7x3, cells p478-p498 by row, break-ins r1094 @AB in p478; r1096 @AB in p479; r1098 @AB in p480; r1101 @AB in p481; r1103 @AB in p482; r1105 @AB in p483; r1108 @AB in p484; r1110 @AB in p485; r1112 @AB in p486; r1115 @AB in p487; r1117 @AB in p488; r1119 @AB in p489; r1122 @AB in p490; r1124 @AB in p491; r1126 @AB in p492; r1129 @AB in p493; r1131 @AB in p494; r1133 @AB in p495; r1136 @AB in p496; r1138 @AB in p497; r1140 @AB in p498 -->
 |{++English words ++}{>>r1093 @AB<<}|{++Hausa words ++}{>>r1093 @AB<<}|{++Idoma words ++}{>>r1093 @AB<<}|
-|-|-|-|
+|:-|:-|:-|
 |{++Hold  ++}{>>r1100 @AB<<}|{++Kai  ++}{>>r1100 @AB<<}|{++Ondu ++}{>>r1100 @AB<<}|
 |{++Close  ++}{>>r1107 @AB<<}|{++Ka ++}{>>r1107 @AB<<}|{++Me ++}{>>r1107 @AB<<}|
 |{++Feel ++}{>>r1114 @AB<<}|{++Masoyina ++}{>>r1114 @AB<<}|{++Ada  ++}{>>r1114 @AB<<}|
@@ -580,7 +580,7 @@ footers:
 
 <!-- t13 11x4, cells p500-p543 by row, break-ins r1145 @AB in p500; r1147 @AB in p501; r1149 @AB in p502; r1151 @AB in p503; r1154 @AB in p504; r1156 @AB in p505; r1158 @AB in p506; r1160 @AB in p507; r1163 @AB in p508; r1165 @AB in p509; r1167 @AB in p510; r1169 @AB in p511; r1172 @AB in p512; r1174 @AB in p513; r1176 @AB in p514; r1178 @AB in p515; r1181 @AB in p516; r1183 @AB in p517; r1185 @AB in p518; r1187 @AB in p519; r1190 @AB in p520; r1192 @AB in p521; r1194 @AB in p522; r1196 @AB in p523; r1199 @AB in p524; r1201 @AB in p525; r1203 @AB in p526; r1205 @AB in p527; r1208 @AB in p528; r1210 @AB in p529; r1212 @AB in p530; r1214 @AB in p531; r1217 @AB in p532; r1219 @AB in p533; r1221 @AB in p534; r1223 @AB in p535; r1226 @AB in p536; r1228 @AB in p537; r1230 @AB in p538; r1232 @AB in p539; r1235 @AB in p540; r1237 @AB in p541; r1239 @AB in p542; r1241 @AB in p543 -->
 |{++Nouns  ++}{>>r1144 @AB<<}|{++Verbs  ++}{>>r1144 @AB<<}|{++Adjectives  ++}{>>r1144 @AB<<}|{++Adverbs  ++}{>>r1144 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++Foot  ++}{>>r1153 @AB<<}|{++Hold  ++}{>>r1153 @AB<<}|{++Mortal  ++}{>>r1153 @AB<<}|{++So  ++}{>>r1153 @AB<<}|
 |{++Presence  ++}{>>r1162 @AB<<}|{++Feel ++}{>>r1162 @AB<<}|{++Awesome ++}{>>r1162 @AB<<}|{++Graced  ++}{>>r1162 @AB<<}|
 |{++Mind  ++}{>>r1171 @AB<<}|{++Said  ++}{>>r1171 @AB<<}|{++Divine  ++}{>>r1171 @AB<<}|{++Blessed  ++}{>>r1171 @AB<<}|
@@ -625,7 +625,7 @@ footers:
 
 <!-- t14 8x2, cells p555-p570 by row, break-ins r1266 @AB in p555; r1268 @AB in p556; r1271 @AB in p557; r1273 @AB in p558; r1276 @AB in p559; r1278 @AB in p560; r1281 @AB in p561; r1283 @AB in p562; r1286 @AB in p563; r1288 @AB in p564; r1291 @AB in p565; r1293 @AB in p566; r1296 @AB in p567; r1298 @AB in p568; r1301 @AB in p569; r1303 @AB in p570 -->
 |{++English words  ++}{>>r1265 @AB<<}|{++Hausa words  ++}{>>r1265 @AB<<}|
-|-|-|
+|:-|:-|
 |{++When  ++}{>>r1270 @AB<<}|{++Yesu ++}{>>r1270 @AB<<}|
 |{++Thought  ++}{>>r1275 @AB<<}|{++Kai kai de  ++}{>>r1275 @AB<<}|
 |{++Come  ++}{>>r1280 @AB<<}|{++Neke so ++}{>>r1280 @AB<<}|
@@ -638,7 +638,7 @@ footers:
 
 <!-- t15 10x4, cells p572-p611 by row, break-ins r1308 @AB in p572; r1310 @AB in p573; r1312 @AB in p574; r1314 @AB in p575; r1317 @AB in p576; r1319 @AB in p577; r1321 @AB in p578; r1323 @AB in p579; r1326 @AB in p580; r1328 @AB in p581; r1330 @AB in p582; r1332 @AB in p583; r1335 @AB in p584; r1337 @AB in p585; r1339 @AB in p586; r1341 @AB in p587; r1344 @AB in p588; r1346 @AB in p589; r1348 @AB in p590; r1350 @AB in p591; r1353 @AB in p592; r1355 @AB in p593; r1357 @AB in p594; r1359 @AB in p595; r1362 @AB in p596; r1364 @AB in p597; r1366 @AB in p598; r1368 @AB in p599; r1371 @AB in p600; r1373 @AB in p601; r1375 @AB in p602; r1377 @AB in p603; r1380 @AB in p604; r1382 @AB in p605; r1384 @AB in p606; r1386 @AB in p607; r1389 @AB in p608; r1391 @AB in p609; r1393 @AB in p610; r1395 @AB in p611 -->
 |{++Nouns  ++}{>>r1307 @AB<<}|{++Verbs  ++}{>>r1307 @AB<<}|{++Adjectives  ++}{>>r1307 @AB<<}|{++Adverbs  ++}{>>r1307 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++Ways  ++}{>>r1316 @AB<<}|{++Thought  ++}{>>r1316 @AB<<}|{++Enough  ++}{>>r1316 @AB<<}|{++Nil  ++}{>>r1316 @AB<<}|
 |{++Glimpse  ++}{>>r1325 @AB<<}|{++Knew  ++}{>>r1325 @AB<<}|{++More  ++}{>>r1325 @AB<<}|{++ ++}{>>r1325 @AB<<}|
 |{++Lord  ++}{>>r1334 @AB<<}|{++Come  ++}{>>r1334 @AB<<}|{++ ++}{>>r1334 @AB<<}|{++ ++}{>>r1334 @AB<<}|
@@ -764,7 +764,7 @@ footers:
 
 <!-- t16 3x4, cells p651-p662 by row, break-ins r1476 @AB in p651; r1478 @AB in p652; r1480 @AB in p653; r1482 @AB in p654; r1485 @AB in p655; r1487 @AB in p656; r1489 @AB in p657; r1491 @AB in p658; r1493 @AB in p659; r1495 @AB in p660; r1497 @AB in p661; r1499 @AB in p662 -->
 |{++English Words  ++}{>>r1475 @AB<<}|{++Intra-Occurrence  ++}{>>r1475 @AB<<}|{++English (continue) ++}{>>r1475 @AB<<}|{++Words ++}{>>r1475 @AB<<}|
-|-|-|-|-|
+|:-|:-|:-|:-|
 |{++We go  ++}{>>r1484 @AB<<}|{++dey (Pidgin) ++}{>>r1484 @AB<<}|{++hail your name  ++}{>>r1484 @AB<<}||
 |{++We go  ++}{>>r1492 @AB<<}|{++dey (Pidgin) ++}{>>r1492 @AB<<}|{++hail your name  ++}{>>r1492 @AB<<}||
 
@@ -813,7 +813,7 @@ footers:
 
 <!-- t17 5x3, cells t17.row0 p678-p681 t17.row1 p682-p684 t17.row2 p685-p687 t17.row3 p688-p690 t17.row4 p691-p693, break-ins r1531 @AB in p678; r1533 @AB in p679; r1535 @AB in p680; r1537 @AB in p681; r1540 @AB in p682; r1542 @AB in p683; r1544 @AB in p684; r1547 @AB in p685; r1549 @AB in p686; r1551 @AB in p687; r1554 @AB in p688; r1556 @AB in p689; r1558 @AB in p690; r1561 @AB in p691; r1563 @AB in p692; r1565 @AB in p693 -->
 |{++English Words  ++}{>>r1530 @AB<<}|{++Intra-Occurrence  ++}{>>r1530 @AB<<}|{++English Words <br>(continue) ++}{>>r1530 @AB<<}|
-|-|-|-|
+|:-|:-|:-|
 |{++As all of ++}{>>r1539 @AB<<}|{++Us dey go  ++}{>>r1539 @AB<<}|{++Our separate ways  ++}{>>r1539 @AB<<}|
 |{++When we see again ++}{>>r1546 @AB<<}|{++Of how God don bless me ++}{>>r1546 @AB<<}|{++And bless you too ++}{>>r1546 @AB<<}|
 |{++And even if ++}{>>r1553 @AB<<}|{++I far  ++}{>>r1553 @AB<<}|{++from you ++}{>>r1553 @AB<<}|
