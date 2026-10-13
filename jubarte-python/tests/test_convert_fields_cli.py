@@ -78,15 +78,16 @@ def test_field_report_and_console_preserve_unicode_and_escape_control_characters
     assert "Seção" in args.report.read_text(encoding="utf-8")
     captured = capsys.readouterr()
     lines = captured.out.splitlines()
-    assert len(lines) == 3  # Embedded newlines in field values stay on one output line.
+    assert len(lines) == 2  # Embedded newlines in field values stay on one output line.
     for line, field in zip(lines[:2], refreshed.fields):
         paragraph, kind, change = line.split("\t")
         old, new = change.split(" -> ")
         assert (paragraph, kind, json.loads(old), json.loads(new)) == (
             field.paragraph, field.kind, field.old, field.new,
         )
-    assert lines[-1] == f"wrote {args.output} ({len(refreshed.document.to_bytes.return_value)} bytes)"
-    assert captured.err == "2 field(s) written; 2 page(s)\n"
+    size = len(refreshed.document.to_bytes.return_value)
+    # Status lines on stderr, as the binary prints them.
+    assert captured.err == f"2 field(s) written; 2 page(s)\nwrote {args.output} (docx, {size} bytes)\n"
     assert args.output.read_bytes() == refreshed.document.to_bytes.return_value
 
 
@@ -106,8 +107,8 @@ def test_field_free_document_is_written_with_an_empty_report(args, refreshed, ca
     else:
         assert not report.exists()
     captured = capsys.readouterr()
-    assert captured.err == "0 field(s) written; 1 page(s)\n"
-    assert captured.out.startswith("wrote ")
+    assert captured.err.startswith("0 field(s) written; 1 page(s)\nwrote ")
+    assert captured.out == ""
 
 
 @pytest.mark.parametrize("existing", ["output", "report"])
@@ -165,7 +166,7 @@ def test_report_write_failure_prevents_document_write(args, refreshed, capsys):
 
     assert not args.output.exists()
     refreshed.document.to_bytes.assert_not_called()
-    assert "wrote " not in capsys.readouterr().out
+    assert "wrote " not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("suffix", [".md", ".markdown", ".MD", ".MARKDOWN"])

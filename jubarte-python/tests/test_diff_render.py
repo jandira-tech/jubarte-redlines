@@ -106,9 +106,10 @@ def test_capabilities_report_both() -> None:
 def test_cli_convert_pages_names_files_by_page_number(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     src = tmp_path / "in.docx"
     src.write_bytes(pages("A", "B", "C"))
-    assert main(["convert", str(src), "--png", "--dpi", "20", "--pages", "1,3"]) == 0
+    assert main(["convert", str(src), "-o", str(tmp_path / "in.png"), "--dpi", "20", "--pages", "1,3"]) == 0
     assert sorted(p.name for p in tmp_path.iterdir()) == ["in-page-01.png", "in-page-03.png", "in.docx"]
-    assert "wrote 2 PNG pages" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == f"wrote {tmp_path / 'in-page-NN.png'} (png, 2 pages, 20 dpi)\n"
 
 
 @pytest.mark.parametrize(

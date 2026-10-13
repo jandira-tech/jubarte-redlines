@@ -287,6 +287,16 @@ def _spelled(args: argparse.Namespace, key: str) -> str:
     return getattr(args, "spelled", {}).get(key) or str(getattr(args, key))
 
 
+def _wrote(args: argparse.Namespace, path: Path, format: str, size: int, pages: int | None = None) -> None:
+    """The engine's ``wrote`` line on stderr, unless ``-q``; ``-o`` as typed."""
+    from . import _native
+
+    if getattr(args, "quiet", False):
+        return
+    shown = _spelled(args, "output") if getattr(args, "output", None) == path else str(path)
+    print(_native.wrote_line(shown, format, size, pages), file=sys.stderr)
+
+
 def _read_plan_text(plan: str) -> str | None:
     """PLAN.json's text, strictly UTF-8 as the binary reads it; ``None``
     when there is no such file."""
@@ -576,7 +586,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
             _ensure_writable(docx_out, args.force)
-            print(f"wrote {docx_out} ({_write(docx_out, doc.to_bytes())} bytes)")
+            _wrote(args, docx_out, "docx", _write(docx_out, doc.to_bytes()))
             return EXIT_OK
     else:
         if args.output_format == "docx" and not args.update_fields:
@@ -611,11 +621,15 @@ def cmd_convert(args: argparse.Namespace) -> int:
         _ensure_writable(path, args.force)
     if rendered.pdf is not None:
         _write(output, rendered.pdf)
-        print(f"wrote {output} ({len(rendered.pdf)} bytes, {pages} page{'' if pages == 1 else 's'})")
+        _wrote(args, output, "pdf", len(rendered.pdf), pages)
     if png:
+        from . import _native
+
         for path, image in zip(png_paths, rendered.pngs):
             _write(path, image)
-        print(f"wrote {len(rendered.pngs)} PNG page{'' if len(rendered.pngs) == 1 else 's'} ({output.parent / output.stem}-page-NN.png, {args.dpi} dpi)")
+        if not args.quiet:
+            pattern = output.parent / f"{output.stem}-page-NN.png"
+            print(_native.wrote_png_line(pattern, len(rendered.pngs), args.dpi), file=sys.stderr)
     if args.font_report is not None:
         _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
     if args.report is not None:
@@ -638,7 +652,7 @@ def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
         _write(args.report, json.dumps({"page_count": updated.page_count, "fields": [asdict(f) for f in updated.fields]}, ensure_ascii=False))
     data = updated.document.to_bytes()
     _write(output, data)
-    print(f"wrote {output} ({len(data)} bytes)")
+    _wrote(args, output, "docx", len(data))
     return EXIT_OK
 
 
@@ -790,8 +804,9 @@ def _resolution(args: argparse.Namespace, accept: bool) -> int:
     _ensure_writable(args.output, args.force)
     selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
     result = doc.accept(**selection) if accept else doc.reject(**selection)
-    _write(args.output, result.to_bytes())
-    print(f"wrote {args.output} ({len(result.to_bytes())} bytes)")
+    data = result.to_bytes()
+    _write(args.output, data)
+    _wrote(args, args.output, "docx", len(data))
     return EXIT_OK
 
 

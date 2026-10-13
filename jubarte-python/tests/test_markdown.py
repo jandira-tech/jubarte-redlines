@@ -93,7 +93,7 @@ def test_cli_convert_writes_markdown_as_a_docx_beside_it(tmp_path: Path, capsys:
     source.write_text(DRAFT, encoding="utf-8")
     assert main(["convert", str(source), "--page", "a4", "--author", "Legal"]) == 0
     out = tmp_path / "draft.docx"
-    assert f"wrote {out}" in capsys.readouterr().out
+    assert f"wrote {out} (docx, " in capsys.readouterr().err
     data = out.read_bytes()
     assert page_width(data) == "11906"
     assert 'w:author="Legal"' in document_xml(data)
@@ -141,7 +141,7 @@ def test_cli_convert_sniffs_markdown_whose_name_does_not_say_so(
     source.write_text(DRAFT, encoding="utf-8")
     out = tmp_path / f"{name}.docx" if named_output else source.with_suffix(".docx")
     assert main(["convert", str(source), *(["-o", str(out)] if named_output else [])]) == 0
-    assert f"wrote {out}" in capsys.readouterr().out
+    assert f"wrote {out} (docx, " in capsys.readouterr().err
     assert "<w:ins " in document_xml(out.read_bytes())
 
 

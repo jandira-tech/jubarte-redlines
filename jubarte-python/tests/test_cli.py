@@ -418,7 +418,8 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     )
     out = tmp_path / "out.docx"
     assert main(["reject", str(source), "-o", str(out), "--author", "b", "--kind", "insertion"]) == 0
-    capsys.readouterr()
+    written = capsys.readouterr()
+    assert written.out == "" and written.err == f"wrote {out} (docx, {out.stat().st_size} bytes)\n"
     assert main(["changes", str(out)]) == 0
     assert capsys.readouterr().out.splitlines()[-2:] == ['r1\tdeletion\ttext\ta\tp0\t"gone"', "1 change(s)"]
     assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "body:rev:9"]) == 1
