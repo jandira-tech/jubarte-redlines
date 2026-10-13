@@ -36,8 +36,12 @@ original with `read --json` of the round-tripped docx. `view` is our Markdown (`
 | comments (author, date, text, thread) | 54% | 77% |
 | Markdown fixed point (md1 = md3) | **0%** | 42% |
 
-Our own dialect round-trips worse than the poorer one, because the Markdown reader does not read
-what the view writes:
+This is not a reader regression: `convert -o X.md` round-trips the same in 0.11.2, 0.12.0 and
+today (9 of 9 changes, 3 of 3 comments on `received.docx`), and the reader has lost no code. The
+agent view (`from_docx/agent.rs`, 2026-10-09, shipped in 0.12.0) replaced the full-name notes
+`{>>Ann Counsel (2026-10-01T09:00:00Z)<<}`, which the reader parses, with handles `{>>r0 @AC<<}`, a
+YAML header and id lines, and the reader was never taught them. Our own dialect round-trips worse
+than the poorer one, because the Markdown reader does not read what the view writes:
 
 - `{>>r0 @AC<<}` (a revision's note) is read as a new comment by "Redline" whose text is `r0 @AC`.
 - `@AC` is never resolved through the YAML `authors:` table; dates fall back to the epoch.
@@ -66,6 +70,10 @@ B, a key prefix (`p3F2A`: stable across edits, but no order and hard to read), a
 guard (`p12~3F2A`: re-finds a moved element by its key); C can still be added later without
 breaking A. Numbering stays 0-based. A stale positional id is caught by the view's `sha256:` pin
 (`STALE_SOURCE`); the long id carries stability.
+
+**Decided (Arthur, 2026-10-13): a shift is reported.** An edit that adds or removes a block prints
+a `note:` naming the ids that moved, e.g. `note: inserted p5; p5-p40 are now p6-p41`, so a caller
+holding ids from before the edit knows they shifted.
 
 One grammar, one parser (`src/ids.rs`), every option that takes a location, printed and accepted
 alike. Positions count the drafter's real structure.
