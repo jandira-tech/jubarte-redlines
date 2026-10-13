@@ -843,14 +843,15 @@ pub enum Command {
         jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2\n  \
         jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
         jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\"\n  \
+        jubarte edit a.docx -p c5.text --content \"net 30\"   the text c5 covers\n  \
         jubarte edit a.docx -p r3 --accept -p header1.r1 --reject\n  \
         jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf\n  \
         jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/\n  \
         jubarte edit a.docx --plan plan.json -p p3 --content \"New.\"   record into plan.json\n  \
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
-        t0.row1.cell2, c5 (a comment), r12 (a revision), or a long id\n\
-        (body:p:12).")]
+        t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12\n\
+        (a revision), or a long id (body:p:12).")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
@@ -869,9 +870,10 @@ pub enum Command {
         /// written (with --plan and no operation flags).
         #[arg(long, requires = "plan")]
         consume: bool,
-        /// Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment) or
-        /// r12 (a revision, with --accept or --reject). Each -p starts an
-        /// operation; the flags after it belong to it.
+        /// Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment),
+        /// c5.text (the text c5 covers) or r12 (a revision, with --accept or
+        /// --reject). Each -p starts an operation; the flags after it belong
+        /// to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
         /// Text inside WHERE the operation applies to (must occur once).
