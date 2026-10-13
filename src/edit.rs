@@ -13,7 +13,7 @@
 //! the clean copy, the redline and a per-operation [`EditReport`].
 //!
 //! Text coordinates are the visible projection of [`crate::inspect`]: what
-//! `jubarte inspect` prints is what a plan anchors to. Replacement text is
+//! `jubarte read --json` prints is what a plan anchors to. Replacement text is
 //! inserted into the run that held the anchor, so it inherits that run's
 //! formatting; the plan never carries raw OOXML.
 

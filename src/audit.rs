@@ -7,7 +7,7 @@
 //!
 //! Every rule reads the admitted package through [`crate::inspect`]'s read
 //! model, so a finding's `location` is the same `body:p:N` (or story
-//! paragraph id) that `jubarte inspect` prints and an edit plan targets.
+//! paragraph id) that `jubarte read --json` prints and an edit plan targets.
 //! When a finding has no paragraph (a document-wide setting), the location
 //! is the part name.
 //!

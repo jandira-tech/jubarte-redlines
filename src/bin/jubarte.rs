@@ -30,7 +30,7 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
-/// `println!` for the listings: a reader that stops early (`jubarte inspect
+/// `println!` for the listings: a reader that stops early (`jubarte read
 /// FILE | head`) ends the process quietly, as `write_stdout` ends a view.
 macro_rules! outln {
     ($($arg:tt)*) => {
