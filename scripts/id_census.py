@@ -213,7 +213,7 @@ def census(path):
         except Exception:
             continue
         if story in ("header", "footer"):
-            c[("header/footer part", "id")] += 1
+            c["header/footer part", "id"] += 1
         for el in root.iter():
             k = kind_of(el, story)
             if not k:
@@ -227,7 +227,7 @@ def census(path):
                 reach = "none"
             else:
                 reach = "id"
-            c[(kind, reach)] += 1
+            c[kind, reach] += 1
     for k in {k for k, _ in c}:
         docs[k] = 1
     return c, docs
