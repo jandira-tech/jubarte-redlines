@@ -127,7 +127,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   fill it themselves. MCP `docx_compare` without `date` follows the CLI. The
   library default (`document_comparer::DEFAULT_DATE`, Python
   `Document.compare`, WASM `redlineDocuments`) stays the epoch, and
-  `convert`'s Markdown-to-Word date is unchanged. `cli::CompareArgs::date`
+  `convert`'s Markdown-to-Word date is unchanged. `cli::CompareArgs::datetime`
   is `Option<String>`.
 - **Breaking: the timestamp flag is `-d, --datetime` everywhere** (`edit`,
   `add`, `compare`, `diff`, `convert`'s Markdown-to-Word date), with
