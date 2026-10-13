@@ -94,10 +94,29 @@ docs and `capabilities` stop advertising bare numbers.
   types; value types come from there too (`w14:paraId` is 8 hex digits, `w:id` a decimal).
 - Which attributes are unique keys is a short hand-written list (the schema does not say).
 - A cell is its row's key plus `.cellN`; a table is its first row's key.
-- jubarte stamps a `w14:paraId` on every `w:p` and `w:tr` that lacks one whenever it writes a
-  file, as Word does on save. Before shipping, a Word check that the stamped file opens cleanly.
-- A repeated key exits 2 and lists the candidates (D7's rule for change ids).
 - Long ids appear in JSON, machine hints and `--long-id`; text output prints short ids (D7).
+
+**Decided (Arthur, 2026-10-13): synthetic keys, the same in the JSON and in every docx jubarte
+writes.** A `w:p` or `w:tr` without a `w14:paraId` (about 3% of real-world elements) gets one
+computed, not invented:
+
+- Deterministic: a hash of the source's sha256, the part and the element's structural path
+  (`document › body › tbl[2] › tr[3]`), so reading a file twice gives the same ids, and the docx
+  jubarte writes stamps exactly the ids `read --json` already printed.
+- Docx-compatible: 8 uppercase hex digits in 1..0x7FFFFFFF (MS-DOCX refuses 0 and values from
+  0x80000000). A value already used in the document is re-hashed with a counter until free.
+- Marked: the JSON gives every keyed element `"key": "xml"` or `"key": "synthetic"`, so an id
+  never claims an attribute the file does not hold. `--long-id` takes a synthetic id on the
+  unstamped source by recomputing it. A synthetic id is stable only while the file is unchanged;
+  after jubarte writes the file it is real XML.
+- Repeated keys (0.3%): the first holder keeps its value, later ones get a synthetic key, as Word
+  does on save. A paragraph of `comments.xml` whose paraId `commentsExtended.xml` (`w15:paraId`)
+  or `commentsIds.xml` names is re-keyed on both sides or not at all: a thread must not break.
+- Namespaces: stamping a part also declares `xmlns:w14` and `xmlns:mc` and lists `w14` in
+  `mc:Ignorable` on its root; a `w14` attribute without them is a Word-invalid shape (a new
+  Ring-1 check in `jubarte validate`, with a broken probe).
+- Gate before shipping: stamp the unkeyed corpus files (Docxodus fixtures included), then the
+  OOXML validator, `jubarte validate` and Word (`word_pdf.py`, no repair prompt) on each.
 
 Coverage on `tests/corpus` (1,195 documents, 146,300 addressable elements): 92.2% named by this
 syntax as is (78.2% directly, 14.1% through a row key), 0.3% under a repeated key, 7.5% with no key.
