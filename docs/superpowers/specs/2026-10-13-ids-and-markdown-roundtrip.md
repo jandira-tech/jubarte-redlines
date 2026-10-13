@@ -151,7 +151,7 @@ computed, not invented:
   never claims an attribute the file does not hold. `--long-id` takes a synthetic id on the
   unstamped source by recomputing it. A synthetic id is stable only while the file is unchanged;
   after jubarte writes the file it is real XML.
-- Repeated keys (0.3%): the first holder keeps its value, later ones get a synthetic key, as Word
+- Repeated keys (0.008% once `mc:Fallback` copies are skipped): the first holder keeps its value, later ones get a synthetic key, as Word
   does on save. A paragraph of `comments.xml` whose paraId `commentsExtended.xml` (`w15:paraId`)
   or `commentsIds.xml` names is re-keyed on both sides or not at all: a thread must not break.
 - Namespaces: stamping a part also declares `xmlns:w14` and `xmlns:mc` and lists `w14` in
@@ -159,6 +159,35 @@ computed, not invented:
   Ring-1 check in `jubarte validate`, with a broken probe).
 - Gate before shipping: stamp the unkeyed corpus files (Docxodus fixtures included), then the
   OOXML validator, `jubarte validate` and Word (`word_pdf.py`, no repair prompt) on each.
+
+**Relationships in the JSON (feasibility study, 2026-10-13; `jubarte-loop/relations-check/REPORT.md`,
+all 1,195 corpus files): feasible with conditions.** Everything below is computed from the file bytes on
+each read; nothing is stored.
+
+- Each keyed element carries `long_id`, `short_id`, `key` (`attribute`, `value`, `origin`: `xml`,
+  `synthetic` or `rekeyed`), `path` (`body>tbl[2]>tr[3]>tc[1]>p[0]`), `parent` (the row's or story's
+  long id), `referenced_by` (who names it) and `references` (what it names: style, numbering, comment,
+  relationship), each with `dangling: true|false`. The block is versioned (`schema`, `algo`).
+- Only the comment family names a paragraph by `w14:paraId` (`commentsExtended` `w15:paraId` and
+  `w15:paraIdParent`, `commentsIds` `w16cid:paraId`, `commentsExtensible` through `durableId`), and only
+  paragraphs of `comments.xml`. A re-key updates exactly those, in the same pass, and a post-write
+  check refuses any dangling family reference.
+- Canonical tree: `mc:Choice` only (the walker already skips `mc:Fallback`). 175 of the 180 repeated
+  paraIds in the corpus are a text box counted twice (Choice and its VML Fallback copy); real repeats
+  are 5 values in 2 documents (0.008% of keyed elements, not 0.3%), none referenced by the comment
+  family, none across parts.
+- First holder is decided document-wide in a fixed part order: `document`, headers, then footers by
+  part name, `footnotes`, `endnotes`, `comments`, `glossary`. Zip entry order never matters.
+- Revision `w:id` (11 repeated values) and bookmark `w:name` (17 repeated) get the same first-holder
+  rule. Word renames `_Toc*`/`_Ref*` bookmarks when it updates a TOC or field, so such names are
+  marked `unstable` in `references`.
+- Read tolerates, never repairs: 58 `w15:paraId`, 53 `w16cid:paraId` and 22 `paraIdParent` references
+  dangle in files Word opens (mostly comment-family parts left behind after every comment was deleted).
+- Never keys: `w14:textId` (1,415 repeated values within a part), `wp14:editId`, `w:rsid*`, timestamps.
+- 518 paraIds above 0x7FFFFFFF (193 files, mostly Google-Docs-style exports) are read as they are and
+  rewritten only when a file is stamped anyway; the stamping gate checks Word on them.
+- Coverage of `w:p` + `w:tr` in every story: 87.5% keyed corpus-wide (footnotes 62.8%, glossary 0%),
+  97.7% in real-world bodies.
 
 Coverage on `tests/corpus` (1,195 documents, 146,300 addressable elements): 92.2% named by this
 syntax as is (78.2% directly, 14.1% through a row key), 0.3% under a repeated key, 7.5% with no key.
