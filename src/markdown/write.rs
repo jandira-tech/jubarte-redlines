@@ -10,12 +10,12 @@ use std::collections::{HashMap, HashSet};
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use super::critic::{self, Piece, Pieces, Token};
-use super::view_notes;
 use super::xml::{
     Comment, Content, Document, Indent, Item, Kind, Label, LabelUse, Link, List, Note, Paragraph,
     Picture, Run, RunFormat,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
+use super::{view_notes, view_stories};
 
 /// Writes Markdown as a `.docx`: CommonMark with GitHub's tables,
 /// strikethrough, task lists and footnotes, and CriticMarkup as tracked
@@ -1555,6 +1555,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// `title:` and `author:` from a YAML front matter block.
     fn metadata(&mut self, text: &str) {
         self.authors = view_notes::authors(text);
+        self.document
+            .stories
+            .insert(1, view_stories::first_section(text));
         let mut key_above = "";
         for line in text.lines() {
             // A YAML comment (`  # …`) is no part of the value.
@@ -1563,9 +1566,15 @@ impl<'o, 'a> Writer<'o, 'a> {
                 key_above = line.split(':').next().unwrap_or("").trim();
             } else if key_above == "sections"
                 && let Some((number, page)) = view_notes::section_page(line)
-                && let Some(page) = page
             {
-                self.document.pages.insert(number, page);
+                if let Some(page) = page {
+                    self.document.pages.insert(number, page);
+                }
+                if let Some((_, entry)) = line.trim().split_once(": ") {
+                    self.document
+                        .stories
+                        .insert(number, view_stories::section(entry));
+                }
             }
             let Some((key, value)) = line.split_once(':') else {
                 continue;

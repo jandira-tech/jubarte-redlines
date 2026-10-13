@@ -132,8 +132,12 @@ pub(super) fn assemble(
 
     let num_ids = numbering(&mut package, &main, document);
     let label_nums = label_numbering(&mut package, &main, document);
-    // A view's YAML header names its sections' pages.
-    let section = document.section(document.section_breaks() + 1, &section);
+    // A view's YAML header names its sections' pages, headers and footers.
+    let sections = document.section_breaks() + 1;
+    let section_stories =
+        super::view_stories::write(&mut package, &main, &document.stories, sections);
+    let default_section = section.clone();
+    let section = section_stories.apply(sections, &document.section(sections, &section));
     let text_width = text_width(&section);
     let next_drawing = max_drawing_id(&package) + 1;
     let mut context = Context {
@@ -154,7 +158,8 @@ pub(super) fn assemble(
         next_drawing,
         text_width,
         sections_ended: 0,
-        default_section: section.clone(),
+        default_section,
+        section_stories,
     };
     let mut media = Media::default();
 
@@ -228,7 +233,7 @@ pub(crate) fn styles_part(package: &mut PartFs, main: &str) -> String {
 }
 
 /// The part next to `main` named `name` (`word/` + `name`).
-fn sibling(main: &str, name: &str) -> String {
+pub(super) fn sibling(main: &str, name: &str) -> String {
     match main.rsplit_once('/') {
         Some((dir, _)) => format!("{dir}/{name}"),
         None => name.to_string(),
@@ -236,7 +241,7 @@ fn sibling(main: &str, name: &str) -> String {
 }
 
 /// The part `main` relates to with the relationship type ending in `kind`.
-fn related(package: &PartFs, main: &str, kind: &str) -> Option<String> {
+pub(super) fn related(package: &PartFs, main: &str, kind: &str) -> Option<String> {
     let rels = package.read_rels_for(main)?;
     let rel = rels
         .items

@@ -218,6 +218,9 @@ pub(super) struct Document {
     /// Each section's page the view's YAML header names, by section number
     /// from 1 (`page:` the first, `sections:` the others).
     pub pages: BTreeMap<usize, super::view_notes::PageSetup>,
+    /// Each section's headers and footers the view's YAML header names, by
+    /// section number from 1.
+    pub stories: BTreeMap<usize, super::view_stories::Stories>,
 }
 
 impl Document {
@@ -312,6 +315,8 @@ pub(super) struct Context<'d> {
     /// ending one takes when the view names no page.
     pub sections_ended: usize,
     pub default_section: String,
+    /// The headers and footers each section's `w:sectPr` references.
+    pub section_stories: super::view_stories::SectionStories,
 }
 
 impl Context<'_> {
@@ -586,10 +591,9 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     }
     if paragraph.section_break {
         context.sections_ended += 1;
-        let section = context
-            .document
-            .section(context.sections_ended, &context.default_section);
-        properties.push_str(&section);
+        let number = context.sections_ended;
+        let section = context.document.section(number, &context.default_section);
+        properties.push_str(&context.section_stories.apply(number, &section));
     }
     if !properties.is_empty() {
         let _ = write!(out, "<w:pPr>{properties}</w:pPr>");

@@ -39,6 +39,7 @@ mod patch;
 mod redline;
 mod unified;
 mod view_notes;
+mod view_stories;
 mod write;
 pub(crate) mod xml;
 
