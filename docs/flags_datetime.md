@@ -107,7 +107,7 @@ Accept all tracked changes, or select by ID, author or kind
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to accept |
 | `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
-| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable |
+| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
@@ -127,7 +127,7 @@ Reject all tracked changes, or select by ID, author or kind
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to reject |
 | `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
-| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable |
+| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |

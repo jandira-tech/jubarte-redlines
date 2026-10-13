@@ -121,7 +121,7 @@ Options:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
+  -d, --datetime <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
           output
 
@@ -304,8 +304,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
-          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it),
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -387,8 +387,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
-          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it),
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -512,8 +512,9 @@ Options:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
-          Markdown to Word: their date (ISO 8601); pinned for reproducible output
+  -d, --datetime <ISO8601>
+          Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible
+          output
 
           [default: 1970-01-01T00:00:00Z]
 
@@ -699,8 +700,9 @@ Paragraph patch:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
-          When (ISO 8601) [default: now, UTC]; pin it for reproducible output
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
 Formats:
   -t, --to <FORMAT>
@@ -877,8 +879,9 @@ Options:
 
           [default: Redline]
 
-      --datetime <ISO8601>
-          Their timestamp (ISO 8601) [default: now, UTC]
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
       --suggesting-mode
           The edits are tracked changes (the default): the file written is the redline
@@ -1023,8 +1026,9 @@ Options:
 
           [default: Redline]
 
-      --datetime <ISO8601>
-          Their timestamp (ISO 8601) [default: now, UTC]
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
       --suggesting-mode
           The edits are tracked changes (the default): the file written is the redline
@@ -1320,7 +1324,7 @@ Accept every tracked revision (package-wide) → clean DOCX bytes.
 ### `compare_documents`
 
 ```python
-compare_documents(original, modified, author='jubarte', date=None, *, input_limits=None)
+compare_documents(original, modified, author='Redline', date=None, *, input_limits=None)
 ```
 
 Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
@@ -2601,6 +2605,7 @@ Finding(
     message: str,
     word_fatal: bool,
     repairable: bool,
+    ref: str | None = None,
 )
 ```
 
@@ -2611,7 +2616,8 @@ One thing wrong with a package, from ``Document.validate``.
 ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
 ``warning`` or ``info``. ``part`` is the package part and ``location``
 the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
-id (``body:p:3``), or empty for a package-level finding.
+id (``body:p:3``), or empty for a package-level finding. ``ref`` is the
+short id the CLI prints for ``location`` (``p3`` for ``body:p:3``).
 ``word_fatal`` is true when Word refuses or repairs the file for it,
 ``repairable`` when ``Document.repair`` fixes it.
 
