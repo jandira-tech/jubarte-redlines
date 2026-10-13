@@ -4,11 +4,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Write every id the `jubarte` CLI prints or takes to docs/locations.md.
 
-Four sections, each from the binary itself (`target/debug/jubarte`, built
+Four sections:
+
+1. Where the Rust source accepts an id (`scripts/cli_id_sources.py`, read
+   from `src/`, not from `--help`): the clap fields whose value is an id and
+   the functions that read them, every id parser with its doc and refusals,
+   every function that calls a parser, and the call chains from each flag
+   to its parsers.
+
+The other three come from the binary itself (`target/debug/jubarte`, built
 first):
 
-1. The options that take an id (`-p` on read, edit and add, `--id` on accept
-   and reject, ...), with their help text, from each task's `--help`.
 2. The grammar `capabilities --json` advertises.
 3. Every id the CLI prints for the committed fixtures below (the view, the
    YAML header, `read --tables`, `read --json`, `changes`, `comments`),
@@ -43,6 +49,8 @@ import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
+
+import cli_id_sources
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = ROOT / "docs" / "locations.md"
@@ -147,51 +155,6 @@ def cell(text: str) -> str:
 
 def shape(token: str) -> str:
     return re.sub(r"\d+", "N", token)
-
-
-# ---------------------------------------------------------------- section 1
-
-
-def tasks(binary: Path) -> list[str]:
-    _, out, _ = run(binary, ["--help"], ROOT)
-    names, inside = [], False
-    for line in out.splitlines():
-        if line.startswith("Tasks:"):
-            inside = True
-            continue
-        if inside:
-            if not line.startswith("  "):
-                break
-            match = re.match(r"  (\S+)\s", line + " ")
-            if match and line[2] != " " and match.group(1) != "help":
-                names.append(match.group(1))
-    # `debug` is hidden from `jubarte --help` but takes `-p`.
-    return [*names, "debug"]
-
-
-ID_WORD = re.compile(r"\b(?:p\d+|r\d+|c\d+|t\d+|header\d+|footnotes)\b")
-
-
-def id_options(binary: Path) -> list[tuple[str, str, str]]:
-    """(task, option line, help) for every option whose help names an id."""
-    rows = []
-    for task in tasks(binary):
-        _, out, _ = run(binary, [task, "--help"], ROOT)
-        blocks: list[list[str]] = []
-        for line in out.splitlines():
-            if re.match(r"^  {1,6}(-\w, )?--?[\w-]+", line) and not line.startswith("          "):
-                blocks.append([line.strip()])
-            elif blocks and line.strip():
-                blocks[-1].append(line.strip())
-            elif blocks:
-                blocks.append([])
-        for block in blocks:
-            if not block or not block[0].startswith("-"):
-                continue
-            head, help_text = block[0], " ".join(block[1:])
-            if ID_WORD.search(help_text) or "<WHERE>" in head or "<ID>" in head:
-                rows.append((task, head, help_text))
-    return rows
 
 
 # ---------------------------------------------------------------- section 3
@@ -380,13 +343,8 @@ def render(binary: Path) -> str:
         "do not edit by hand. `scripts/cli_locations.py --check` fails when this file no "
         "longer matches the source.",
         "",
-        "## Options that take an id",
-        "",
-        "| Task | Option | Help |",
-        "|-|-|-|",
+        *cli_id_sources.section(ROOT, cell),
     ]
-    for task, head, help_text in id_options(binary):
-        lines.append(f"| {task} | `{cell(head)}` | {cell(help_text)} |")
 
     _, manifest, _ = run(binary, ["capabilities", "--json"], ROOT)
     ids = json.loads(manifest).get("ids", {})
@@ -462,7 +420,7 @@ def render(binary: Path) -> str:
         section.append(f"| {bucket} | {cell(where)} | {shown} |")
     if not DEPRECATED.hits:
         section.append("| (none) | | |")
-    intro_end = lines.index("## Options that take an id")
+    intro_end = lines.index("## Where the source accepts an id")
     lines[intro_end:intro_end] = [*section, ""]
     return "\n".join(lines) + "\n"
 

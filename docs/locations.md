@@ -24,22 +24,67 @@ Long ids (`body:p:12`, `header1:rev:3`) and 0.12's retired spellings (`#12`, `#c
 | printed in JSON (kept by D7) | read --json | `body:p:0`, `body:p:1`, `body:p:2`, `body:p:3` +136 more |
 | printed in text | read --tables | `body:p:1`, `body:p:2`, `body:p:3`, `body:p:4` +12 more |
 
-## Options that take an id
+## Where the source accepts an id
 
-| Task | Option | Help |
+Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with no `value_parser` reaches its parser after clap; the chains below show which.
+
+### Id flags (src/cli.rs)
+
+| Owner | Field | Flag | Value | value_parser | Read by (CLI layer) | Doc |
+|-|-|-|-|-|-|-|
+| ReadArgs | `paragraphs` | `-p, --paragraphs` | SPEC | (none) | `bin::jubarte::selection` | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated. |
+| Command::Edit | `location` | `-p, --location` | WHERE | (none) | `cli::flag_operations`, `cli::retired_spellings` | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept or --reject). Each -p starts an operation; the flags after it belong to it. |
+| Command::Add | `location` | `-p, --location` | WHERE | (none) | `cli::flag_operations`, `cli::retired_spellings` | Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply. Each -p starts an operation; the flags after it belong to it. |
+| Selection | `ids` | `--id` | ID | (none) | `bin::jubarte::Selection::filter`, `bin::jubarte::refused`, `cli::validate_matches` | Only this change: `r12` (as the view and `jubarte changes` print it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable. |
+
+### Id parsers
+
+Every public function that reads an id token: in `src/ids.rs` a `&str` in and a `Result`, `Option` or `bool` out (or a serde `_de`); elsewhere, any function that refuses a token with an id message. Doc and refusals come from the source.
+
+| Parser | Signature | Doc | Refusals | Reached from an id flag |
+|-|-|-|-|-|
+| `ids::ChangeId::from_long` | `pub fn from_long(long: &str) -> Option<Self>` | The change a long id names; `None` when `long` is not one. Everything after the story's `:rev:` is the `w:id` as the document spells it (`body:rev:007` names a `w:id="007"`, not `r7`; `body:rev:1+2` one `w:id="1+2"`), so every id [`ChangeId::short`] prints reads back. The short forms keep one spelling per number. |  | **no** |
+| `ids::cell_path` | `pub fn cell_path(token: &str) -> Option<(usize, usize, usize, Option<usize>)>` | A cell's paragraph: `t0.row1.cell2[.p1]`, or 0.12's `t0.r1.c2[.p1]`, as `(table, row, cell, paragraph)`. The two forms do not mix. |  | **no** |
+| `ids::comment_id_de` | `pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error>` | A serde `deserialize_with` for a comment id: a number, or a string [`parse_comment_id`] reads. |  | **no** |
+| `ids::comment_text_id` | `pub fn comment_text_id(token: &str) -> Option<u32>` | `c5.text` (or `#c5.text`) → 5: the comment whose covered text a `-p` or a plan's `paragraph` names. |  | **no** |
+| `ids::is_retired_cell` | `pub fn is_retired_cell(token: &str) -> bool` | Whether `token` is a cell in 0.12's retired form (`t0.r1.c2`). |  | yes |
+| `ids::is_story` | `pub fn is_story(stem: &str) -> bool` | Whether `stem` can be a short story id: `[a-z][a-z0-9]*`, neither a bare `p`, `t`, `c` or `r` nor shaped like `p12`, `t0`, `c5`, `r1`, `row1` or `cell1`. Syntactic only; the document decides whether the story exists. |  | **no** |
+| `ids::paragraph_number` | `pub fn paragraph_number(token: &str) -> Option<usize>` | The body paragraph `p12` or `12` names. |  | **no** |
+| `ids::parse_change_ids` | `pub fn parse_change_ids(token: &str) -> Result<Vec<ChangeId>, IdError>` | The changes a change id names: `r12`, `12`, `#12`, `r1+2`, `header1.r1`, `header1.r1+2`, `body:rev:12`. A story is checked only syntactically. | expected a change id such as r12, header1.r1 or body:rev:12 | **no** |
+| `ids::parse_comment_id` | `pub fn parse_comment_id(token: &str) -> Result<u32, IdError>` | The comment a comment id names: `c27`, `27`, or 0.12's `#c27`. | expected a comment id such as c27 or 27 | **no** |
+| `ids::parse_location` | `pub fn parse_location(token: &str) -> Result<Location, IdError>` | What a `-p` value names (see the module doc). The first matching form wins: a comment, a change, a bare number (a body paragraph), a body paragraph, a table cell, a story paragraph, a long paragraph id. | -p takes a paragraph (p12 or 12), a story paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5), the text a comment covers (c5.text) or a revision (r12) / a row or cell needs its table, as t0.row1.cell2 / a table id needs a row and a cell, as t0.row1.cell2 | **no** |
+| `ids::short_number` | `pub fn short_number(text: &str, prefix: char) -> Option<usize>` | The number after `prefix` in a part of a short id (`p12`, `t0`): ASCII digits without leading zeros. |  | **no** |
+| `ids::table_number` | `pub fn table_number(token: &str) -> Option<usize>` | The table `t0` names. |  | **no** |
+| `markdown::Select::parse` | `pub fn parse(spec: &str) -> Result<Self, String>` | `p2, p5-p7, 12, p17-, -p1, t0`: comma-separated picks; a bare number is a paragraph. | {item}: expected pN, pN-pM or tN | yes |
+
+### Where each parser is called
+
+Every non-test function that calls an id parser directly: the places the source accepts an id value.
+
+| Parser | Called from |
+|-|-|
+| `ids::ChangeId::from_long` | `changes::short_of`, `ids::change_ids` |
+| `ids::cell_path` | `edit::origin::Ids::long_id`, `ids::is_retired_cell`, `ids::parse_location` |
+| `ids::comment_id_de` | `edit::OperationKind` (attribute) |
+| `ids::comment_text_id` | `edit::comment_text_of` |
+| `ids::is_retired_cell` | `cli::retired_spellings` |
+| `ids::is_story` | `edit::origin::Ids::long_id`, `ids::ChangeId::short`, `ids::change_ids`, `ids::parse_location`, `ids::short_paragraph` |
+| `ids::paragraph_number` | `edit::origin::Ids::long_id` |
+| `ids::parse_change_ids` | `changes::ChangeFilter::normalized`, `markdown::from_docx::agent::printed_change_ids`, `markdown::from_docx::agent::printed_wids` |
+| `ids::parse_comment_id` | `ids::comment_id_de`, `ids::comment_text_id`, `ids::parse_location` |
+| `ids::parse_location` | `edit::flags::comment_number`, `edit::flags::revision_group`, `edit::origin::Ids::long_id` |
+| `ids::short_number` | `edit::origin::Ids::long_id`, `ids::cell_path`, `ids::is_retired_cell`, `ids::paragraph_number`, `ids::parse_location`, `ids::table_number` |
+| `ids::table_number` | (nothing) |
+| `markdown::Select::parse` | `markdown::Select::from_flags` |
+
+### From each id flag to its parsers
+
+The shortest call chain from each function that reads the flag down to each id parser it reaches. Static: a value carried in a struct (`FlagOp.at`, `ChangeFilter.ids`) and read later, or passed through a closure or a trait object, is not followed; the table above has those callers.
+
+| Flag | Parser | Chain |
 |-|-|-|
-| compare | `-p, --paragraphs <SPEC>` | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
-| accept | `--id <ID>` | Only this change: `r12` (as the view and `jubarte changes` print it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable |
-| reject | `--id <ID>` | Only this change: `r12` (as the view and `jubarte changes` print it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable |
-| read | `-p, --paragraphs <SPEC>` | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
-| edit | `-p, --location <WHERE>` | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept or --reject). Each -p starts an operation; the flags after it belong to it |
-| edit | `--content <TEXT>` | New text: replaces the anchor; rewrites the paragraph without one; on c5, the comment's new text |
-| edit | `--resolve` | Resolve comment c5 (with -p c5) |
-| edit | `--reply <TEXT>` | Reply to comment c5 (with -p c5), as `add -p c5 --content` |
-| edit | `--accept` | Accept revision r12 (with -p r12; r1+2 for several) |
-| edit | `--reject` | Reject revision r12 (with -p r12; r1+2 for several) |
-| add | `-p, --location <WHERE>` | Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply. Each -p starts an operation; the flags after it belong to it |
-| add | `--reply <TEXT>` | Reply to comment c5 (with -p c5); the same as --content there |
+| `-p, --paragraphs` | `markdown::Select::parse` | `bin::jubarte::selection` → `markdown::Select::from_flags` → `markdown::Select::parse` |
+| `-p, --location` | `ids::is_retired_cell` | `cli::retired_spellings` → `ids::is_retired_cell` |
 
 ## Advertised grammar (`capabilities --json`)
 
