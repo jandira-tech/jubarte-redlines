@@ -70,7 +70,7 @@ def test_diff_usage_errors_precede_io(tmp_path, capsys, extra):
 
 @pytest.mark.integration
 def test_unsupported_native_flags_precede_io(tmp_path):
-    for argv in (["inspect", "missing.docx", "--tables"], ["compare", "a", "b", "--mode", "powertools"], ["compare", "a", "b", "--detail-threshold", "0"], ["convert", "missing.docx", "--timeout", "1"]):
+    for argv in (["read", "missing.docx", "--tables"], ["compare", "a", "b", "--mode", "powertools"], ["compare", "a", "b", "--detail-threshold", "0"], ["convert", "missing.docx", "--timeout", "1"]):
         with pytest.raises(SystemExit) as exit:
             main(argv)
         assert exit.value.code == 2
