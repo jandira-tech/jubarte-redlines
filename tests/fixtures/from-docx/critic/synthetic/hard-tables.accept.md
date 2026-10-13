@@ -1,7 +1,7 @@
 # Tables and text boxes
 
 |Merged header||C|
-|-|-|-|
+|:-|:-|:-|
 |Line one<br>line two|Para<br>Added para|noted|
 |in nested|||
 
