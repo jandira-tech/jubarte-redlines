@@ -188,6 +188,12 @@ def _parse_pages(spec: str) -> list[int]:
 
 def _print_view(docx: bytes, options: dict, source: str) -> int:
     """The agent view of ``docx`` with the read options ``options``."""
+    sys.stdout.write(_view_text(docx, options, source))
+    return EXIT_OK
+
+
+def _view_text(docx: bytes, options: dict, source: str) -> str:
+    """:func:`_print_view`'s Markdown, its warnings said on stderr."""
     from . import _native
 
     markdown, warnings = _native.read_view(
@@ -205,8 +211,48 @@ def _print_view(docx: bytes, options: dict, source: str) -> int:
     )
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    sys.stdout.write(markdown)
-    return EXIT_OK
+    return markdown
+
+
+def _selection(options: dict) -> dict:
+    """The read options that select paragraphs, as ``read_json`` takes them."""
+    return {
+        "paragraphs": options.get("paragraphs"),
+        "head": options.get("head"),
+        "tail": options.get("tail"),
+        "changed": bool(options.get("changed")),
+        "by": options.get("by"),
+    }
+
+
+def _write_result(args: argparse.Namespace, data: bytes, *, source: str, view: dict | None = None) -> None:
+    """``-o`` in the format its extension names, as the binary's writer: the
+    Word package, its agent view (.md, headed ``source``), its snapshot
+    (.json) or its drawing (.pdf, .png). ``view`` is read's options; the
+    defaults elsewhere."""
+    from . import _native
+
+    output: Path = args.output
+    kind = args.output_format or "docx"
+    view = view or {}
+    if kind in ("pdf", "png"):
+        _render_to(args, Document(data, output.name), output)
+        return
+    _ensure_writable(output, args.force)
+    if kind == "md":
+        text: bytes | str = _view_text(data, view, source)
+    elif kind == "json":
+        text = _native.read_json(data, **_selection(view)) + "\n"
+    else:
+        text = data
+    _wrote(args, output, kind, _write(output, text))
+
+
+def _not_written(args: argparse.Namespace) -> str:
+    """The name a task's .md view gives the Word file it did not write: -o
+    as typed, with .docx for its extension."""
+    stem, _ = os.path.splitext(_spelled(args, "output"))
+    return f"{stem}.docx (not written)"
 
 
 def cmd_read(args: argparse.Namespace) -> int:
@@ -214,6 +260,9 @@ def cmd_read(args: argparse.Namespace) -> int:
 
     if args.tables:
         sys.stdout.write(_native.tables_text(_read(args.file).to_bytes()))
+        return EXIT_OK
+    if args.output is not None:
+        _write_result(args, _read(args.file).to_bytes(), source=args.file.name, view=vars(args))
         return EXIT_OK
     if args.json:
         snapshot = _native.read_json(
@@ -579,8 +628,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
         if args.update_fields:
             raise CliError("--update-fields needs a Word document in")
         doc = _from_markdown(args, source)
-        # Markdown goes to Word unless a PDF or PNG is asked for.
-        if args.output_format not in ("pdf", "png"):
+        # Markdown goes to Word unless a PDF, PNG or snapshot is asked for.
+        if args.output_format not in ("pdf", "png", "json"):
             for given, flag in ((args.move_comments, "--move-comments"), (args.changed_pages, "--changed-pages"), (args.pages is not None, "--pages")):
                 if given:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
@@ -600,10 +649,19 @@ def cmd_convert(args: argparse.Namespace) -> int:
             doc = doc.reject()
         if args.update_fields:
             return _write_updated_fields(args, doc)
-    output: Path = args.output or args.file.with_suffix(".pdf")
+    if args.output_format == "json":
+        _write_result(args, doc.to_bytes(), source=args.file.name)
+        return EXIT_OK
+    _render_to(args, doc, args.output or args.file.with_suffix(".pdf"))
+    return EXIT_OK
+
+
+def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
+    """Draw ``doc`` as ``output`` (a PDF), or as PNG pages named after it
+    when ``-o`` names a .png; the render flags are the task's own."""
     png = args.output_format == "png"
     want_pdf = not png
-    for side, flag in ((args.font_report, "--font-report"), (args.report, "--report")):
+    for side, flag in ((getattr(args, "font_report", None), "--font-report"), (getattr(args, "report", None), "--report")):
         if side is not None:
             named = "PNG output" if png else "PDF output"
             _check_side_file(side, flag, ((output, named), (args.file, "input")), args.force)
@@ -630,12 +688,11 @@ def cmd_convert(args: argparse.Namespace) -> int:
         if not args.quiet:
             pattern = output.parent / f"{output.stem}-page-NN.png"
             print(_native.wrote_png_line(pattern, len(rendered.pngs), args.dpi), file=sys.stderr)
-    if args.font_report is not None:
+    if getattr(args, "font_report", None) is not None:
         _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
-    if args.report is not None:
+    if getattr(args, "report", None) is not None:
         report = {"page_count": pages, "document_pages": rendered.report.document_pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
         _write(args.report, json.dumps(report, ensure_ascii=False))
-    return EXIT_OK
 
 
 def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
@@ -720,22 +777,20 @@ def cmd_compare(args: argparse.Namespace) -> int:
         redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
         return _print_view(redline, args.view, f"{default} (not written; -o keeps it)")
     output: Path = args.output
-    if args.output_format == "md":
+    if args.output_format == "md" and isinstance(original, str) and isinstance(modified, str):
         # A .md of two Markdown documents is CriticMarkup; of anything else,
-        # the redline's view, which the engine's writer brings here later.
-        if not (isinstance(original, str) and isinstance(modified, str)):
-            print("error: -o FILE.md of a Word redline is not supported by the Python CLI yet", file=sys.stderr)
-            raise SystemExit(EXIT_USAGE)
+        # the redline's view.
         if args.view_given:
             print("error: read options shape the view; two Markdown documents write CriticMarkup to a .md", file=sys.stderr)
             raise SystemExit(EXIT_USAGE)
-    _ensure_writable(output, args.force)
-    redline = (diff(original, modified, format="critic", author=args.author, date=args.date).text
-               if args.output_format == "md" else
-               _native.redline_documents(original, modified, author=args.author, date=args.date))
-    size = _write(output, redline)
-    if not args.quiet:
-        print(f"wrote {output} ({args.output_format}, {size} bytes)", file=sys.stderr)
+        _ensure_writable(output, args.force)
+        critic = diff(original, modified, format="critic", author=args.author, date=args.date).text
+        _wrote(args, output, "md", _write(output, critic))
+        return EXIT_OK
+    if args.output_format != "png":
+        _ensure_writable(output, args.force)
+    redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+    _write_result(args, redline, source=f"{default} (not written; -o keeps it)", view=getattr(args, "view", None))
     return EXIT_OK
 
 
@@ -804,9 +859,7 @@ def _resolution(args: argparse.Namespace, accept: bool) -> int:
     _ensure_writable(args.output, args.force)
     selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
     result = doc.accept(**selection) if accept else doc.reject(**selection)
-    data = result.to_bytes()
-    _write(args.output, data)
-    _wrote(args, args.output, "docx", len(data))
+    _write_result(args, result.to_bytes(), source=_not_written(args))
     return EXIT_OK
 
 
@@ -906,17 +959,6 @@ class SharedParser:
                 self.error("--detail-threshold is not supported by the Python CLI")
             if values.get("no_paragraph_merge"):
                 self.error("--no-paragraph-merge is not supported by the Python CLI")
-        # The engine's -o writer (view, snapshot, PDF of a result) comes to
-        # this CLI with Task 19; until then it writes Word only.
-        written = values.get("output_format")
-        if command in ("accept", "reject", "append", "scrub") and written not in (None, "docx"):
-            self.error(f"-o FILE.{written} is not supported by the Python CLI yet")
-        if command == "read" and values.get("output") is not None:
-            self.error("read -o is not supported by the Python CLI yet")
-        if command == "convert" and written == "json":
-            self.error("-o FILE.json is not supported by the Python CLI yet")
-        if command == "compare" and written in ("pdf", "png", "json"):
-            self.error(f"-o FILE.{written} is not supported by the Python CLI yet")
         if command == "compare":
             for key in ("reference_doc", "critic", "resource_path"):
                 if values.get(key) not in (None, False):

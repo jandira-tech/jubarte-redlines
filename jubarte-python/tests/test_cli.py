@@ -48,21 +48,27 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     # The grid: a document without tables prints none.
     assert main(["read", str(letter), "--tables"]) == 0
     assert capsys.readouterr().out == "no tables\n"
-    # The engine writes a task's view, snapshot or PDF; this CLI, Word only.
-    for argv in (
-        ["accept", str(letter), "-o", str(letter.with_name("a.pdf"))],
-        ["reject", str(letter), "-o", str(letter.with_name("s.md"))],
-        ["read", str(letter), "-o", str(letter.with_name("v.md"))],
-        [str(letter), "-o", str(letter.with_name("v.json"))],
-        ["convert", str(letter), "-o", str(letter.with_name("c.json"))],
-        ["compare", str(letter), str(letter), "-o", str(letter.with_name("r.pdf"))],
-        ["compare", str(letter), str(letter), "-o", str(letter.with_name("r.json"))],
-        ["compare", str(letter), str(letter), "-o", str(letter.with_name("v.md"))],
-    ):
-        with pytest.raises(SystemExit) as refused:
-            main(argv)
-        assert refused.value.code == 2, argv
-        assert "not supported by the Python CLI yet" in capsys.readouterr().err
+    # -o writes what its extension names, as the binary's writer: a task's
+    # view (.md), snapshot (.json) or drawing (.pdf, .png).
+    def written(argv: list[str], name: str, kind: str) -> bytes:
+        out = letter.with_name(name)
+        assert main([*argv, "-o", str(out)]) == 0, argv
+        assert capsys.readouterr().err.startswith(f"wrote {out} ({kind}, "), argv
+        return out.read_bytes()
+
+    assert written(["accept", str(letter)], "a.pdf", "pdf").startswith(b"%PDF")
+    view = written(["reject", str(letter)], "s.md", "md").decode()
+    assert view.startswith(f"---\nsource: {letter.with_name('s.docx')} (not written)\n"), view
+    assert written(["read", str(letter)], "v.md", "md").decode().startswith(f"---\nsource: {letter.name}\n")
+    assert json.loads(written([str(letter)], "v.json", "json")) == snapshot
+    assert json.loads(written(["convert", str(letter)], "c.json", "json")) == snapshot
+    redline = f"{letter.with_name('letter_v_letter.docx')} (not written; -o keeps it)"
+    assert written(["compare", str(letter), str(letter)], "r.pdf", "pdf").startswith(b"%PDF")
+    assert json.loads(written(["compare", str(letter), str(letter)], "r.json", "json"))["summary"]["paragraphs"] == 3
+    assert written(["compare", str(letter), str(letter)], "r.md", "md").decode().startswith(f"---\nsource: {redline}\n")
+    assert main(["accept", str(letter), "-o", str(letter.with_name("p.png")), "--dpi", "20"]) == 0
+    assert capsys.readouterr().err == f"wrote {letter.with_name('p-page-NN.png')} (png, 1 page, 20 dpi)\n"
+    assert letter.with_name("p-page-01.png").read_bytes().startswith(b"\x89PNG")
     # `inspect` is `read` now, with a note.
     assert main(["inspect", str(letter), "--no-page-markers"]) == 0
     captured = capsys.readouterr()
