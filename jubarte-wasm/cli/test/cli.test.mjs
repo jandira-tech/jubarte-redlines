@@ -310,6 +310,10 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   const quiet = run(...edit, "--force", "-q");
   assert.equal(quiet.code, 0, quiet.err);
   assert.equal(quiet.out + quiet.err, "");
+  // -q also goes before the task.
+  const quietFirst = run("-q", ...edit, "--force");
+  assert.equal(quietFirst.code, 0, quietFirst.err);
+  assert.equal(quietFirst.out + quietFirst.err, "");
   // -o names the one .docx; any other extension, or -o with --out-dir, is a usage error.
   const named = path.join(tmp, "single-named.docx");
   assert.equal(run(...edit, "-o", named).code, 0);
