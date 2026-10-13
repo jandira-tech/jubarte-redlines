@@ -287,7 +287,7 @@ important first:
   balloons (screenshot through `scripts/word_pdf.py`), `jubarte changes
   --json` listing both authors, and the two invariant commands (`jubarte
   accept --author Me` equals clean, `jubarte reject --author Me` equals the
-  source) with their `jubarte text` outputs.
+  source) with their `jubarte read` outputs.
 - [ ] **OOXML validator on keep redlines**: run `tools/validate-docx` on the
   redlines `tests/edit_keep_revisions.rs` writes (text, marks, tables, lists,
   threads). Only the Ring-1 checks have run so far; the session that built
