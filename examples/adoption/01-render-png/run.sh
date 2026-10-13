@@ -22,7 +22,7 @@ fi
 
 # --- jubarte: one command, no LibreOffice, no poppler ------------------------
 rm -f render_page_1_jubarte.png pages.json page_count_jubarte.txt input-page-*.png
-"$JUBARTE" convert input.docx --png --dpi 72 --report pages.json --force
+"$JUBARTE" convert input.docx -o input.png --dpi 72 --report pages.json --force
 cp input-page-01.png render_page_1_jubarte.png
 python3 -c 'import json; print("Pages:           %d" % json.load(open("pages.json"))["page_count"])' \
   > page_count_jubarte.txt

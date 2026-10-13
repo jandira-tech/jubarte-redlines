@@ -30,13 +30,13 @@ fi
 
 # --- jubarte: one command, rasterizes only pages 2-3 -------------------------
 rm -f range_page_*_jubarte.png pages.json page_count_jubarte.txt input-page-*.png
-"$JUBARTE" convert input.docx --png --pages 2-3 --dpi 72 --report pages.json --force
+"$JUBARTE" convert input.docx -o input.png --pages 2-3 --dpi 72 --report pages.json --force
 cp input-page-02.png range_page_2_jubarte.png
 cp input-page-03.png range_page_3_jubarte.png
 python3 -c 'import json; print("Pages:           %d" % json.load(open("pages.json"))["page_count"])' \
   > page_count_jubarte.txt
 # Out-of-range behaviour, measured here: jubarte refuses and exits 1.
 rc=0
-"$JUBARTE" convert input.docx --png --pages 2-4 --dpi 72 --force >/dev/null 2>&1 || rc=$?
+"$JUBARTE" convert input.docx -o input.png --pages 2-4 --dpi 72 --force >/dev/null 2>&1 || rc=$?
 echo "jubarte --pages 2-4 exit=$rc" >> out_of_range.txt
 rm -f input-page-*.png

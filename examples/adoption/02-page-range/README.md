@@ -23,7 +23,7 @@ One command; only pages 2 and 3 are rasterized and written (layout still
 runs over the whole document):
 
 ```sh
-jubarte convert input.docx --png --pages 2-3 --dpi 72 --report pages.json
+jubarte convert input.docx -o input.png --pages 2-3 --dpi 72 --report pages.json
 # writes input-page-02.png, input-page-03.png and pages.json
 ```
 
