@@ -54,6 +54,7 @@ themselves.
 | `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline |
 | `<b>`/`<strong>`, `<i>`/`<em>`, `<s>`/`<del>`, `<code>`, `<mark>` | bold, italic, strike, `VerbatimChar`, yellow highlight; attributes and case do not matter, a tag left open closes with its block, and any other tag keeps its text and is named once in a warning |
 | `x ^2^`, `x ~2~` | superscript, subscript, at word edges only (pulldown-cmark opens neither inside a word: `H~2~O` is text) |
+| `$x^2$`, `$$\frac{a}{b}$$` | an equation (`m:oMath`; display math in an `m:oMathPara`), see below |
 
 Images are read relative to the Markdown file, or to `--resource-path`;
 URLs are not fetched.
@@ -85,6 +86,36 @@ const docx = markdownToDocx("Due in {~~30~>45~~} days.", JSON.stringify({ page: 
 `python -m jubarte_redlines convert draft.md` writes `draft.docx` with the
 same flags. Neither binding reads image files: pictures are written as
 their alt text.
+
+### Equations
+
+LaTeX between `$` (inline) or `$$` (display) becomes Word's own equation,
+and the reader prints Word's equations back in the same LaTeX, so an
+equation round-trips: Word's own files (`tests/fixtures/math`) come back
+with every structure Word wrote.
+
+| LaTeX | Word |
+| --- | --- |
+| `\frac{a}{b}`, `\binom{n}{k}`, `\sqrt[3]{x}` | fraction, bar-less fraction in brackets, radical |
+| `x^2`, `x_i`, `x_i^2`, `\prescript{a}{b}{X}` | scripts; a script's base is the character, group or structure before it |
+| `(…)`, `[…]`, `\{…\}`; `\left⟨ a \middle\| b \right.` | a delimiter: balanced brackets build one, as Word builds `f(x)`; `\left` names any other |
+| `\sin x`, `\lim_{n\to\infty} a_n`, `\operatorname{argmax}_x f` | a function, its limit under it |
+| `\sum_{i=1}^n x_i`, `\int_0^1`, `\iint`, `\bigcup` … | n-ary operator; it applies to the next character or group and its scripts |
+| `\hat`, `\tilde`, `\bar`, `\dot`, `\ddot`, `\vec`; `\overline`, `\underline` | accent; bar |
+| `\underbrace{x}_{n}`, `\overbrace{x}^{n}`, `\underset{a}{b}`, `\overset{a}{b}` | brace and limit, stacked limit |
+| `\begin{matrix}`, `pmatrix`, `bmatrix` …; `aligned`, `cases` | matrix; equation array |
+| `\mathrm`, `\mathbf`, `\boldsymbol`, `\mathbb`, `\mathcal`, `\text` | the run's math style, script or ordinary text |
+| `\alpha` … `\Omega`, `\pm`, `\le`, `\to`, `\infty` … | the character itself |
+| `\lparen`, `\lbrack`, `\lbrace`, `\backslash` | a bracket or backslash that is text |
+
+A top-level `\\` breaks the equation into lines of an equation array:
+Word draws the equations of one paragraph side by side. Spaces inside
+text stay, as Word keeps them; at an argument's edges they go, as LaTeX
+ignores them. An unknown command stays as its text. Inside the math,
+`{++…++}` and `{--…--}` mark the runs they hold as inserted or deleted,
+the way Word marks a change inside an equation; an equation inserted or
+deleted whole reads as `{++$E=mc^2$++}`. Every run is set in Cambria
+Math, as Word sets it.
 
 ## CriticMarkup
 
@@ -575,7 +606,9 @@ them accepted.
 - `jubarte diff --format critic` needs two Markdown documents; with a
   Word side it exits 1, and `jubarte compare OLD NEW` prints the redline
   as the agent view, CriticMarkup included.
-- Markdown math, definition lists and raw HTML blocks are not written.
+- Definition lists and raw HTML blocks are not written.
+- The PDF renderer sets an equation's text on one line: fractions,
+  radicals, matrices and limits are not laid out yet.
 - Changes have one author and date; CriticMarkup has no syntax for more.
 
 Related: [CSHARP_MARKDOWN_PROJECTION_MAPPING.md](CSHARP_MARKDOWN_PROJECTION_MAPPING.md)

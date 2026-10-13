@@ -18,7 +18,7 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | `<u>u</u>` `<sup>2</sup>` `<sub>2</sub>` `<br>` | underline, superscript, subscript, line break | what the reader prints |
 | `<b>` `<i>` `<s>` `<code>` `<mark>` (and `<strong>` `<em>` `<del>`) | bold, italic, strike, code, highlight | read only; other tags warn |
 | `x ^2^`, `x ~2~` | superscript, subscript | word edges only: `H~2~O` stays text |
-| `$x$`, `$$x$$` | text today | Word equations read out as LaTeX; not yet written back |
+| `$x$`, `$$x$$` | equation (`m:oMath`, `m:oMathPara`) | LaTeX both ways; `{++…++}` inside marks a change in the math; see MARKDOWN.md, Equations |
 | `#`–`######` | `Heading1`–`Heading6` | or the `styles:` legend's heading style |
 | `- a` `* a` `+ a` / `1. a` `1) a` / `- [ ] a` | bullets / numbers (start kept) / task | `ListParagraph` |
 | `> q`, fenced code | `Quote`, `SourceCode` | |
