@@ -155,8 +155,9 @@ pub struct EditOptions {
     /// its own).
     #[arg(long, value_name = "NAME", default_value = "Redline")]
     pub author: String,
-    /// Their timestamp (ISO 8601) [default: now, UTC].
-    #[arg(long, value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
+    /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
+    /// reproducible output.
+    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
     pub datetime: Option<String>,
     /// The edits are tracked changes (the default): the file written is
     /// the redline and the view shows the marks.
@@ -364,8 +365,8 @@ fn fill_date(date: &mut Option<String>) {
 /// [`fill_date`] for the task that dates its revisions.
 fn fill_task_date(task: &mut Command) {
     match task {
-        Command::Compare(compare) => fill_date(&mut compare.date),
-        Command::Diff { date, .. } => fill_date(date),
+        Command::Compare(compare) => fill_date(&mut compare.datetime),
+        Command::Diff { datetime: date, .. } => fill_date(date),
         _ => {}
     }
 }
@@ -526,8 +527,8 @@ pub struct CompareArgs {
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
     // The parser fills now when absent (D17), so every host shares it.
-    #[arg(short = 'd', long, value_name = "ISO8601", value_parser = parse_datetime)]
-    pub date: Option<String>,
+    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
+    pub datetime: Option<String>,
 
     /// Overwrite the output file if it already exists.
     #[arg(long)]
@@ -817,16 +818,17 @@ pub enum Command {
             help_heading = "Paragraph patch"
         )]
         author: String,
-        /// When (ISO 8601) [default: now, UTC]; pin it for reproducible
-        /// output.
+        /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
+        /// reproducible output.
         #[arg(
             short = 'd',
-            long,
+            long = "datetime",
             value_name = "ISO8601",
+            alias = "date",
             value_parser = parse_datetime,
             help_heading = "Paragraph patch"
         )]
-        date: Option<String>,
+        datetime: Option<String>,
     },
     /// Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
     ///
@@ -924,7 +926,7 @@ pub enum Command {
         /// other value is a paragraph style (Heading2).
         #[arg(long, value_name = "SPEC", action = clap::ArgAction::Append)]
         style: Vec<String>,
-        /// Author, date, mode and output options.
+        /// Author, datetime, mode and output options.
         #[command(flatten)]
         #[serde(flatten)]
         options: EditOptions,
@@ -1005,7 +1007,7 @@ pub enum Command {
         /// highlight=yellow) or its paragraph style (Heading2).
         #[arg(long, value_name = "SPEC", action = clap::ArgAction::Append)]
         style: Vec<String>,
-        /// Author, date, mode and output options.
+        /// Author, datetime, mode and output options.
         #[command(flatten)]
         #[serde(flatten)]
         options: EditOptions,
@@ -1757,6 +1759,31 @@ pub const RETIRED: &[Retired] = &[
         now: "--to png",
         on: Some("convert"),
     },
+    Retired {
+        old: "--date",
+        now: "--datetime",
+        on: Some("compare"),
+    },
+    Retired {
+        old: "--date",
+        now: "--datetime",
+        on: Some("diff"),
+    },
+    Retired {
+        old: "--date",
+        now: "--datetime",
+        on: Some("convert"),
+    },
+    Retired {
+        old: "--date",
+        now: "--datetime",
+        on: Some("edit"),
+    },
+    Retired {
+        old: "--date",
+        now: "--datetime",
+        on: Some("add"),
+    },
 ];
 
 /// The note 0.12's cell id form earns (`t0.r1.c2`, Task 2).
@@ -2065,16 +2092,17 @@ pub struct MarkdownArgs {
     /// Markdown to Word: author of the tracked changes and comments.
     #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
     pub author: String,
-    /// Markdown to Word: their date (ISO 8601); pinned for reproducible
-    /// output.
+    /// Markdown to Word: revision timestamp (ISO 8601); pin it for
+    /// reproducible output.
     #[arg(
         short = 'd',
-        long,
+        long = "datetime",
         value_name = "ISO8601",
+        alias = "date",
         value_parser = parse_datetime,
         default_value = crate::document_comparer::DEFAULT_DATE
     )]
-    pub date: String,
+    pub datetime: String,
     /// Markdown to Word: the page size when there is no --reference-doc
     /// (one-inch margins either way); a reference's page setup wins.
     #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
@@ -2610,14 +2638,14 @@ fn validate_matches(
             .get_one::<PatchFormat>("format")
             .expect("default format");
         let (text_view, theirs) = if format.is_text_view() {
-            (true, &["columns", "author", "date"][..])
+            (true, &["columns", "author", "datetime"][..])
         } else {
             (false, &["context", "accept_changes", "full_lines"][..])
         };
         // CriticMarkup carries no owner and is not wrapped: the patch's
         // flags would be dropped silently (pi-14 C3).
         let patch_only: &[&str] = if format == PatchFormat::Critic {
-            &["columns", "author", "date"]
+            &["columns", "author", "datetime"]
         } else {
             &[]
         };
@@ -2699,7 +2727,7 @@ fn validate_matches(
 /// them.
 const COMPARE_ONLY: [&str; 9] = [
     "author",
-    "date",
+    "datetime",
     "detail_threshold",
     "mode",
     "powertools_faithful",
@@ -2751,7 +2779,7 @@ impl Cli {
             apply_retired(task, &retired_spellings(typed.iter().map(String::as_str)));
             fill_task_date(task);
         } else {
-            fill_date(&mut cli.compare.date);
+            fill_date(&mut cli.compare.datetime);
         }
         match (cli.command.as_mut(), matches.subcommand()) {
             (Some(Command::Compare(compare)), Some((_, args))) => {
@@ -3017,7 +3045,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             Ok(value)
         } else {
             let mut compare = CompareArgs::from_arg_matches(&matches)?;
-            fill_date(&mut compare.date);
+            fill_date(&mut compare.datetime);
             if compare
                 .original_pos
                 .as_ref()
