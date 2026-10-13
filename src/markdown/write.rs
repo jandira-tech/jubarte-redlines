@@ -12,7 +12,8 @@ use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEn
 use super::critic::{self, Piece, Pieces, Token};
 use super::view_notes;
 use super::xml::{
-    Comment, Content, Document, Item, Kind, Link, List, Note, Paragraph, Picture, Run, RunFormat,
+    Comment, Content, Document, Indent, Item, Kind, Link, List, Note, Paragraph, Picture, Run,
+    RunFormat,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 
@@ -202,8 +203,8 @@ struct Writer<'o, 'a> {
     groups: usize,
     anchor: Option<Anchor>,
     comment: Option<Comment>,
-    /// The style the last id line names, for the paragraph after it.
-    id_style: Option<String>,
+    /// What the last id line says, for the paragraph after it.
+    id_line: Option<view_notes::IdLine>,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
     authors: HashMap<String, view_notes::Author>,
 
@@ -251,7 +252,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             substituted: None,
             comment_anchor: None,
             pending_highlights: Vec::new(),
-            id_style: None,
+            id_line: None,
             run_after_close: false,
             highlight: None,
             groups: 0,
@@ -559,7 +560,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         for line in html.lines() {
             let Some(count) = view_notes::empty_paragraphs(line) else {
-                self.id_style = view_notes::id_line_style(line);
+                self.id_line = view_notes::id_line(line);
                 continue;
             };
             self.end_paragraph();
@@ -602,12 +603,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some(align) = self.cell {
             paragraph.align = align;
         }
-        // The style the id line before it names.
-        if let Some(style) = self.id_style.take()
+        // What the id line before it says.
+        if let Some(line) = self.id_line.take()
             && self.cell.is_none()
             && self.target.is_none()
         {
-            paragraph.style = Some(style.into());
+            if let Some(style) = line.style {
+                paragraph.style = Some(style.into());
+            }
+            paragraph.align = line.align.or(paragraph.align);
+            paragraph.ind = Indent {
+                first_line: line.first_line,
+                hanging: line.hanging,
+                left: line.left,
+                right: line.right,
+            };
         }
         match &paragraph.style {
             Some(Cow::Borrowed(style)) => {

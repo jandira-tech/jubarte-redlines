@@ -179,18 +179,73 @@ const CLAUSE_WORDS: [&str; 17] = [
     "in",
 ];
 
-/// The style an id line names: `<!-- p5 TitlePage center -->` names
-/// `TitlePage`; `<!-- p5 center -->` none.
-pub(super) fn id_line_style(line: &str) -> Option<String> {
+/// What a paragraph's id line says about it (`<!-- p5 TitlePage center,
+/// first-line 0.5in -->`): its style, alignment (`w:jc`) and indents in
+/// twips.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct IdLine {
+    pub style: Option<String>,
+    pub align: Option<&'static str>,
+    pub first_line: Option<i64>,
+    pub hanging: Option<i64>,
+    pub left: Option<i64>,
+    pub right: Option<i64>,
+}
+
+/// The id line of one paragraph (`pN`, not a range); `None` for any
+/// other line.
+pub(super) fn id_line(line: &str) -> Option<IdLine> {
     let inner = line
         .trim()
         .strip_prefix("<!--")?
         .strip_suffix("-->")?
         .trim();
-    let (id, rest) = inner.split_once(' ')?;
+    let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
     crate::ids::short_number(id, 'p')?;
-    let word = rest.split([' ', ',']).next()?;
-    (!word.is_empty() && !CLAUSE_WORDS.contains(&word)).then(|| word.to_string())
+    let mut parsed = IdLine::default();
+    let mut clauses = rest.split(", ").filter(|c| !c.is_empty()).peekable();
+    // The style is the head's second word: `p5 TitlePage[ clause]`.
+    if let Some(first) = clauses.peek().copied() {
+        let (word, tail) = first.split_once(' ').unwrap_or((first, ""));
+        if !CLAUSE_WORDS.contains(&word) {
+            parsed.style = Some(word.to_string());
+            clauses.next();
+            if !tail.is_empty() {
+                parsed.clause(tail);
+            }
+        }
+    }
+    for clause in clauses {
+        parsed.clause(clause);
+    }
+    Some(parsed)
+}
+
+impl IdLine {
+    fn clause(&mut self, clause: &str) {
+        let twips = |value: &str| {
+            let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
+            let twips = (inches * 1440.0).round();
+            // `as` cannot overflow: the bound is checked first.
+            (twips.is_finite() && twips.abs() <= 31_680.0).then_some(twips as i64)
+        };
+        match clause.split_once(' ') {
+            None => {
+                self.align = match clause {
+                    "center" => Some("center"),
+                    "right" => Some("right"),
+                    "justify" => Some("both"),
+                    "left" => Some("left"),
+                    _ => self.align,
+                }
+            }
+            Some(("first-line", v)) => self.first_line = twips(v),
+            Some(("hanging", v)) => self.hanging = twips(v),
+            Some(("left", v)) => self.left = twips(v),
+            Some(("right", v)) => self.right = twips(v),
+            Some(_) => {}
+        }
+    }
 }
 
 /// The head of `text` and the comment text after it.
@@ -238,6 +293,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn id_lines_carry_alignment_and_indents() {
+        let line =
+            id_line("<!-- p0 BodyText center, first-line 0.5in, left -0.25in, right 1in -->")
+                .unwrap();
+        assert_eq!(line.align, Some("center"));
+        assert_eq!(line.first_line, Some(720));
+        assert_eq!(line.left, Some(-360));
+        assert_eq!(line.right, Some(1440));
+        assert_eq!(line.hanging, None);
+        let line = id_line("<!-- p1 justify, hanging 0.3in -->").unwrap();
+        assert_eq!(
+            (line.style, line.align, line.hanging),
+            (None, Some("both"), Some(432))
+        );
+        // Out of Word's range, or not inches: no indent.
+        let line = id_line("<!-- p2 left 99in, right 3cm, first-line NaNin -->").unwrap();
+        assert_eq!((line.left, line.right, line.first_line), (None, None, None));
+        assert_eq!(id_line("<!-- p2-p4 empty -->"), None);
+    }
+
+    #[test]
     fn id_lines_name_their_style() {
         for (line, style) in [
             ("<!-- p5 TitlePage -->", Some("TitlePage")),
@@ -246,6 +322,7 @@ mod tests {
                 Some("TitlePage"),
             ),
             ("<!-- p5 BodyText, page-break -->", Some("BodyText")),
+            ("<!-- p5 BodyText right 1in -->", Some("BodyText")),
             ("<!-- p5 center -->", None),
             ("<!-- p5 left 0.5in -->", None),
             ("<!-- p5 -->", None),
@@ -254,7 +331,8 @@ mod tests {
             ("<!-- page 3 of 9 -->", None),
             ("p5 TitlePage", None),
         ] {
-            assert_eq!(id_line_style(line).as_deref(), style, "{line}");
+            let named = id_line(line).and_then(|l| l.style);
+            assert_eq!(named.as_deref(), style, "{line}");
         }
     }
 

@@ -63,6 +63,9 @@ pub(super) struct Paragraph {
     /// A numbering instance (index into [`Document::lists`]) and level.
     pub numbering: Option<(usize, u32)>,
     pub indent: Option<u32>,
+    /// The indents an id line names, in twips (`first-line 0.5in`); its
+    /// `left` wins over `indent`.
+    pub ind: Indent,
     pub align: Option<&'static str>,
     /// A thematic break: a bottom border on an empty paragraph.
     pub rule: bool,
@@ -72,6 +75,15 @@ pub(super) struct Paragraph {
     pub mark_by: Option<u32>,
     /// `mark` was set because the paragraph's whole text is one change.
     pub whole: bool,
+}
+
+/// A paragraph's `w:ind`, side by side, in twips.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Indent {
+    pub first_line: Option<i64>,
+    pub hanging: Option<i64>,
+    pub left: Option<i64>,
+    pub right: Option<i64>,
 }
 
 /// A hyperlink's target.
@@ -412,8 +424,21 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
             "<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>",
         );
     }
-    if let Some(indent) = paragraph.indent {
-        let _ = write!(properties, "<w:ind w:left=\"{indent}\"/>");
+    let ind = paragraph.ind;
+    let left = ind.left.or(paragraph.indent.map(i64::from));
+    if left.is_some() || ind.right.is_some() || ind.first_line.is_some() || ind.hanging.is_some() {
+        properties.push_str("<w:ind");
+        for (name, value) in [
+            ("left", left),
+            ("right", ind.right),
+            ("firstLine", ind.first_line),
+            ("hanging", ind.hanging),
+        ] {
+            if let Some(value) = value {
+                let _ = write!(properties, " w:{name}=\"{value}\"");
+            }
+        }
+        properties.push_str("/>");
     }
     if let Some(align) = paragraph.align {
         let _ = write!(properties, "<w:jc w:val=\"{align}\"/>");

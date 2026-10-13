@@ -51,3 +51,13 @@ fn an_id_line_style_comes_back_on_its_paragraph() {
               <!-- p2 TitlePage -->\nOf Ann Counsel\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+#[test]
+fn id_line_alignment_and_indents_come_back() {
+    let md = "<!-- p0 BodyText center, first-line 0.5in, left 0.25in, right 1in -->\nCentered\n\n\
+              <!-- p1 justify, hanging 0.3in, left 0.3in -->\nJustified\n\n\
+              <!-- p2 right -->\nRight\n\n\
+              <!-- p3 left -->\nLeft\n\n\
+              <!-- p4 left -0.25in -->\nOutdented\n";
+    assert_eq!(round_trip(md), md.trim());
+}
