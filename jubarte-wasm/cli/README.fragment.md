@@ -14,15 +14,18 @@ engine: no Word, no LibreOffice, no network.
 npx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
 npx jubarte-redlines changes redline.docx
 npx jubarte-redlines accept redline.docx -o clean.docx --kind formatting
-npx jubarte-redlines reject redline.docx -o original-again.docx
+npx jubarte-redlines reject redline.docx -o original-again.docx --id r12
 npx jubarte-redlines convert redline.docx --revisions word
-npx jubarte-redlines text contract.docx
+npx jubarte-redlines read contract.docx
+npx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty"
 npx jubarte-redlines edit contract.docx --plan plan.json --out-dir review
 npx jubarte-redlines --help
 ```
 
-`redline` is an alias of `compare`. `inspect` (paragraph ids and package
-facts) and `capabilities` (what this build can do) are also available. The
+`redline` is an alias of `compare`, which prints the redline as the agent
+view without `-o`. `read --json` (paragraph ids and package facts, changes
+and comments with their short ids) and `capabilities` (what this build can
+do; `--json` the manifest) are also available. The
 command set, messages and exit codes match `uvx jubarte-redlines` (Python)
 and the `jubarte` binary (Rust): 0 success, 1 error, 2 usage, 3 edit plan
 refused; flags differ per surface, and the render-side/PDF-producing ones
