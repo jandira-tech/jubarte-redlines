@@ -817,15 +817,35 @@ fn table_cell(value: &str, escaped: bool) -> String {
 }
 
 /// The alignment most of a column's cell paragraphs have, as its delimiter
-/// row writes it: none on a tie, for justified text, or when most have none.
-fn majority(tally: &HashMap<Option<&'static str>, usize>) -> Option<&'static str> {
-    let most = tally.values().copied().max()?;
-    let mut winners = tally.iter().filter(|(_, count)| **count == most);
+/// row writes it: none on a tie, for justified text, or when most have
+/// none. Left and none count together; the column is `left` only when
+/// explicit left outnumbers none among them.
+fn majority(aligns: impl Iterator<Item = Option<&'static str>>) -> Option<&'static str> {
+    let mut tally: Vec<(Option<&'static str>, usize)> = Vec::new();
+    let (mut left, mut none) = (0, 0);
+    for align in aligns {
+        match align {
+            Some("left") => left += 1,
+            None => none += 1,
+            _ => {}
+        }
+        let key = align.filter(|a| *a != "left");
+        match tally.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, count)) => *count += 1,
+            None => tally.push((key, 1)),
+        }
+    }
+    let most = tally.iter().map(|(_, count)| *count).max()?;
+    let mut winners = tally.iter().filter(|(_, count)| *count == most);
     let (align, _) = winners.next()?;
     if winners.next().is_some() {
         return None;
     }
-    align.filter(|a| *a != "justify")
+    match align {
+        None => (left > none).then_some("left"),
+        Some("justify") => None,
+        other => *other,
+    }
 }
 
 /// Rows as a Markdown pipe table; the first row is the header, and the
@@ -1297,6 +1317,7 @@ impl Writer<'_> {
                     if self.agent
                         && let Some(line) = agent::table_line(
                             child,
+                            &self.column_alignments(child).1,
                             self.resolved,
                             (!self.comments_inline).then_some(&self.comments),
                             &spans,
@@ -2070,8 +2091,6 @@ impl Writer<'_> {
 
     fn table(&mut self, table: &Element) -> String {
         let mut rows = Vec::new();
-        // How many of each column's cell paragraphs have each alignment.
-        let mut tallies: Vec<HashMap<Option<&'static str>, usize>> = Vec::new();
         for tr in table_rows(table) {
             let mut row = Vec::new();
             let row_marks = tr
@@ -2085,13 +2104,6 @@ impl Writer<'_> {
                 .unwrap_or(0);
             row.extend(std::iter::repeat_n(String::new(), before.min(64)));
             for tc in row_cells(tr) {
-                let column = row.len();
-                if tallies.len() <= column {
-                    tallies.resize_with(column + 1, HashMap::new);
-                }
-                for p in tc.children_named("p") {
-                    *tallies[column].entry(self.alignment(p)).or_default() += 1;
-                }
                 row.push(self.cell_text(&row_marks, tc));
                 let span = tc
                     .path(&["tcPr", "gridSpan"])
@@ -2117,10 +2129,57 @@ impl Writer<'_> {
         for row in &mut rows {
             row.truncate(width);
         }
-        let aligns: Vec<Option<&'static str>> = (0..width)
-            .map(|column| tallies.get(column).and_then(majority))
-            .collect();
+        let (mut aligns, _) = self.column_alignments(table);
+        aligns.resize(width, None);
         markdown_table(&rows, &aligns, self.agent)
+    }
+
+    /// Each grid column's alignment, as most of its cell paragraphs have
+    /// it ([`majority`]), and the cell paragraphs aligned against their
+    /// column, as the table line names them (`p5 center`). Left and no
+    /// alignment look alike: neither is an exception to the other.
+    fn column_alignments(&self, table: &Element) -> (Vec<Option<&'static str>>, Vec<String>) {
+        let mut columns: Vec<Vec<(Option<&str>, Option<&'static str>)>> = Vec::new();
+        for tr in table_rows(table) {
+            let mut column = tr
+                .path(&["trPr", "gridBefore"])
+                .and_then(|g| g.attr("val"))
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0)
+                .min(64);
+            for tc in row_cells(tr) {
+                if columns.len() <= column {
+                    columns.resize_with(column + 1, Vec::new);
+                }
+                for p in tc.children_named("p") {
+                    columns[column].push((p.attr(agent::INDEX), self.alignment(p)));
+                }
+                column += tc
+                    .path(&["tcPr", "gridSpan"])
+                    .and_then(|g| g.attr("val"))
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(1)
+                    .clamp(1, 64);
+            }
+        }
+        let leftish = |a: Option<&str>| a.is_none_or(|a| a == "left");
+        let mut aligns = Vec::new();
+        let mut exceptions = Vec::new();
+        for cells in &columns {
+            let align = majority(cells.iter().map(|(_, a)| *a));
+            aligns.push(align);
+            for (index, own) in cells {
+                let differs = if leftish(align) {
+                    !leftish(*own)
+                } else {
+                    *own != align
+                };
+                if differs && let Some(index) = index {
+                    exceptions.push(format!("p{index} {}", own.unwrap_or("left")));
+                }
+            }
+        }
+        (aligns, exceptions)
     }
 
     /// A paragraph's alignment: its own `w:jc`, else its style's; `None`

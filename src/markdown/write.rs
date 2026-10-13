@@ -93,6 +93,8 @@ struct TablePlan {
     rows: Vec<RowPlan>,
     /// The cell paragraphs' mark changes, by paragraph number.
     marks: HashMap<usize, (bool, view_notes::Tag)>,
+    /// Cell paragraphs aligned against their column, by paragraph number.
+    aligns: HashMap<usize, &'static str>,
 }
 
 /// One row of a [`TablePlan`].
@@ -256,6 +258,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         align: line.align,
         rows,
         marks: line.marks,
+        aligns: line.aligns,
     }
 }
 
@@ -1062,6 +1065,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             && let Some(at) = self.cell_paragraph
         {
             self.cell_paragraph = Some(at + 1);
+            if let Some(align) = self
+                .table_plan
+                .as_ref()
+                .and_then(|plan| plan.aligns.get(&at).copied())
+            {
+                paragraph.align = Some(align);
+            }
             let mark = self.table_plan.as_ref().and_then(|plan| {
                 let (inserted, tag) = plan.marks.get(&at)?;
                 let kind = if *inserted {

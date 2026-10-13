@@ -158,6 +158,9 @@ pub(super) struct TableLine {
     /// The merged cells by row and cell (`merged t0.row0.cell1 across 2
     /// down 3`): the grid columns each spans and the rows it covers.
     pub merges: HashMap<(usize, usize), (usize, usize)>,
+    /// Cell paragraphs aligned against their column (`p5 center`), as
+    /// Word's `jc` value, by paragraph.
+    pub aligns: HashMap<usize, &'static str>,
 }
 
 /// The most grid columns a table has, and rows one merged cell reaches: a
@@ -181,8 +184,23 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         columns: None,
         align: None,
         merges: HashMap::new(),
+        aligns: HashMap::new(),
     };
     for (i, clause) in rest.split(", ").enumerate() {
+        // `p5 center`: a cell paragraph aligned against its column.
+        if let Some((at, word)) = clause.split_once(' ')
+            && let Some(at) = crate::ids::short_number(at, 'p')
+            && let Some(jc) = match word {
+                "left" => Some("left"),
+                "center" => Some("center"),
+                "right" => Some("right"),
+                "justify" => Some("both"),
+                _ => None,
+            }
+        {
+            parsed.aligns.insert(at, jc);
+            continue;
+        }
         if clause == "header row repeats" {
             parsed.header_repeats = true;
         }

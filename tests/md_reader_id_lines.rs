@@ -561,3 +561,19 @@ fn table_column_alignment_comes_back() {
     let view = round_trip("| L | C | R | N |\n| :--- | :---: | ---: | --- |\n| a | b | c | d |\n");
     assert!(view.contains("|:-|:-:|-:|-|"), "{view}");
 }
+
+#[test]
+fn a_cell_aligned_against_its_column_is_named_on_the_table_line() {
+    // Most of a column decides its marker; a cell paragraph that differs
+    // is an exception on the table line (`p4 center`), and it comes back.
+    let source = "<!-- t0 3x2, cells p0-p5 by row, p4 center -->\n\
+                  |A|B|\n|:-|-:|\n|a|b|\n|c|d|\n";
+    let view = round_trip(source);
+    assert!(view.contains("|:-|-:|"), "{view}");
+    assert!(view.contains("by row, p4 center"), "{view}");
+    // A tie prints `-`, and the cell that is not left is named; left and
+    // no alignment look alike, so neither is an exception to the other.
+    let tie = round_trip("<!-- t0 2x1, cells p0-p1 by row, p1 center -->\n|A|\n|:-|\n|a|\n");
+    assert!(tie.contains("|-|"), "{tie}");
+    assert!(tie.contains("by row, p1 center"), "{tie}");
+}

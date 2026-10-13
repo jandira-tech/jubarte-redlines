@@ -1231,12 +1231,14 @@ fn merged_cells(t: &str, grid: &[Vec<(usize, usize, Option<bool>)>]) -> Vec<Stri
     out
 }
 
-/// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
+/// `<!-- t0 center 3x3, cells p8-p16 by row, p9 center, header row repeats -->`
+/// (`aligned`: the cell paragraphs aligned against their column);
 /// `None` for a nested table (not numbered). With `comments` (comments
 /// hidden) the cells' comment ids print as `comments c9 in p3`; `spans`
 /// are the comment threads whose range runs through the table (`in c5`).
 pub(crate) fn table_line(
     tbl: &Element,
+    aligned: &[String],
     resolved: bool,
     comments: Option<&HashMap<String, Element>>,
     spans: &[String],
@@ -1424,6 +1426,7 @@ pub(crate) fn table_line(
             .collect();
         clauses.push(format!("cells {}", rows.join(" ")));
     }
+    clauses.extend(aligned.iter().cloned());
     if rows
         .first()
         .is_some_and(|tr| tr.path(&["trPr", "tblHeader"]).is_some())
