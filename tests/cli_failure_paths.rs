@@ -537,19 +537,22 @@ fn debug_diff_disambiguates_duplicate_stems_and_duplicate_paths() {
 }
 
 #[test]
-fn inspect_prose_exposes_paragraph_flags_and_long_unicode_previews() {
+fn read_json_exposes_paragraph_flags_and_long_unicode_text() {
     let dir = tempfile::tempdir().unwrap();
     let long = "é".repeat(81);
     let body = format!(
         r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:pageBreakBefore/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:br w:type="page"/><w:t>{long}</w:t></w:r></w:p>"#
     );
     std::fs::write(dir.path().join("input.docx"), docx(&body)).unwrap();
-    let text = success(&run(dir.path(), &["inspect", "input.docx"]));
-    assert!(text.contains("Heading1,numbered,page-break"), "{text}");
-    assert!(text.contains(&format!("{}…", "é".repeat(80))), "{text}");
-    assert!(!text.contains(&long));
+    let json = success(&run(dir.path(), &["read", "input.docx", "--json"]));
+    let snapshot: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let paragraph = &snapshot["paragraphs"][0];
+    assert_eq!(paragraph["style"], "Heading1", "{paragraph}");
+    assert_eq!(paragraph["numbered"], true, "{paragraph}");
+    assert_eq!(paragraph["page_break"], true, "{paragraph}");
+    assert_eq!(paragraph["text"], long.as_str(), "{paragraph}");
     assert_eq!(
-        success(&run(dir.path(), &["inspect", "input.docx", "--tables"])),
+        success(&run(dir.path(), &["read", "input.docx", "--tables"])),
         "no tables\n"
     );
 }
