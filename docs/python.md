@@ -56,9 +56,8 @@ Tasks:
   reject        Reject all tracked changes, or select by ID, author or kind
   convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
   diff          Review differences as GitHub, word, normal, context or side-by-side text
-  inspect       Inspect document facts, paragraphs, styles and tables
   read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
-                comments with ids [alias: text]
+                comments with ids
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
@@ -82,7 +81,7 @@ Options:
 Examples:
   jubarte-redlines compare old.docx new.docx -o redline.docx
   jubarte-redlines contract.docx
-  jubarte-redlines inspect contract.docx --json
+  jubarte-redlines read contract.docx --json
   jubarte-redlines diff old.docx new.docx --format github
   jubarte-redlines convert contract.docx -o contract.pdf
 
@@ -728,29 +727,6 @@ GIT:
   git difftool -t jubarte -y -- '*.md'
 ```
 
-#### `jubarte-redlines inspect`
-
-```text
-$ jubarte-redlines inspect --help
-Inspect document facts, paragraphs, styles and tables
-
-Usage: jubarte-redlines inspect [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  The document (.docx) to read
-
-Options:
-      --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-                `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`)
-                instead of a human summary
-      --tables  Print each body table as a grid instead of the paragraphs: a `table N:
-                ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
-                tab-separated `ids=text` cells
-  -q, --quiet   Print nothing on success (files are still written; warnings and errors
-                still print)
-  -h, --help    Print help
-```
-
 #### `jubarte-redlines read`
 
 ```text
@@ -935,12 +911,12 @@ Options:
           report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
           and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
 
-      --force
-          Replace an existing output (the bundle directory's files)
-
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
+
+      --force
+          Replace an existing output (the bundle directory's files)
 
       --dry-run
           Resolve and report only; write nothing
