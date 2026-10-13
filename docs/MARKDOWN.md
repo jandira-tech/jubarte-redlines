@@ -186,7 +186,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r1+2 @AC -->
 ```
 
@@ -203,9 +203,14 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   level 2) gets no label, and no list indent, from Word: the view shows
   a plain paragraph. `bullet` is a
   bulleted item. Labels are not document text, and a list body keeps its
-  Markdown marker (`1.`).
+  Markdown marker (`1.`). `level 1` (to `level 8`) follows the label of a
+  paragraph past its list's first level (Word's `w:ilvl`): every list
+  paragraph has its own id line, which ends the Markdown list, so the view
+  prints no list indentation (past one level it would read as code).
 - `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
-  its `w:pPr` holds `w:sectPr`.
+  its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
+  the YAML header names for its section (`page:` for the first,
+  `sections:` for the others).
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
 - `rev`: in the accept and reject views, every revision the paragraph

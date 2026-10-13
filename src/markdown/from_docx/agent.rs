@@ -595,6 +595,10 @@ pub(crate) struct LineFacts<'a> {
     pub heading: Option<usize>,
     /// The list marker the converter computed (`1.`, `(a)`, `-`).
     pub marker: Option<&'a str>,
+    /// The list level Word gives the paragraph (`ilvl`): `level 1`. The
+    /// view prints no list indentation, since each id line ends the
+    /// Markdown list.
+    pub level: usize,
     pub page_break: bool,
     /// Accept-all or reject-all view: print the `rev` tags.
     pub resolved: bool,
@@ -1114,6 +1118,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
             label.replace('\\', "\\\\").replace('"', "\\\"")
         )),
         None => {}
+    }
+    if f.marker.is_some() && f.level > 0 {
+        clauses.push(format!("level {}", f.level));
     }
     if f.page_break {
         clauses.push("page-break".to_string());

@@ -3920,21 +3920,22 @@ fn id_line_number_is_the_label_word_prints() {
     ]
     .concat();
     let out = body(&agent(&common::docx::docx_with(&body_xml, &[numbering]))).to_string();
-    for (p, label) in [
-        (0, "1)"),
-        (1, "a)"),
-        (2, "b)"),
-        (3, "2)"),
-        (4, "a)"),
-        (5, "i)"),
-        (6, "2.A"),
+    // The level past the first is a clause of its own (`level 1`).
+    for (p, clauses) in [
+        (0, r#""1)""#),
+        (1, r#""a)", level 1"#),
+        (2, r#""b)", level 1"#),
+        (3, r#""2)""#),
+        (4, r#""a)", level 1"#),
+        (5, r#""i)", level 2"#),
+        (6, r#""2.A", level 3"#),
         // pi review r392b tests F5: a quote or backslash in the label is
         // escaped, so the clause still parses.
-        (7, r#"\"Ch\\\" 01"#),
+        (7, r#""\"Ch\\\" 01", level 4"#),
     ] {
         assert!(
-            out.contains(&format!("<!-- p{p} num \"{label}\" -->")),
-            "p{p} {label}:\n{out}"
+            out.contains(&format!("<!-- p{p} num {clauses} -->")),
+            "p{p} {clauses}:\n{out}"
         );
     }
     assert!(out.contains("1. one\n"), "{out}");

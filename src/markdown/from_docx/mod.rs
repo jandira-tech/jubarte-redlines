@@ -1425,10 +1425,11 @@ impl Writer<'_> {
                 None
             };
         // A heading's number is text, so it reads as Word prints it.
-        let heading_marker: Option<String> = if self.agent && heading.is_some() {
-            num.clone()
-                .and_then(|(id, ilvl)| self.list_marker(&id, ilvl.min(8)))
-                .map(|(_, label)| label)
+        let heading_marker: Option<(String, usize)> = if self.agent && heading.is_some() {
+            num.clone().and_then(|(id, ilvl)| {
+                self.list_marker(&id, ilvl.min(8))
+                    .map(|(_, label)| (label, ilvl))
+            })
         } else {
             None
         };
@@ -1489,15 +1490,20 @@ impl Writer<'_> {
             {
                 self.break_due = true;
             }
-            let marker = heading_marker
-                .as_deref()
-                .or(list_marker.as_ref().map(|(_, label, _)| label.as_str()));
+            let (marker, level) = heading_marker
+                .as_ref()
+                .map(|(label, ilvl)| (label.as_str(), *ilvl))
+                .or(list_marker
+                    .as_ref()
+                    .map(|(_, label, ilvl)| (label.as_str(), *ilvl)))
+                .map_or((None, 0), |(label, ilvl)| (Some(label), ilvl.min(8)));
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
                 default_style: self.default_style.as_deref(),
                 heading,
                 marker,
+                level,
                 page_break,
                 resolved: self.resolved,
                 comments: &comments,
@@ -1512,14 +1518,16 @@ impl Writer<'_> {
             if let Some(level) = heading {
                 list.reset();
                 let mut text = inline.render(false).replace('\n', " ");
-                if let Some(label) = &heading_marker {
+                if let Some((label, _)) = &heading_marker {
                     text = format!("{label} {text}");
                 }
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
             } else if let Some(marker) = list_marker {
                 let (marker, _, ilvl) = marker;
                 let text = self.block_text(inline.render(true));
-                let item = list.item(ilvl, &marker, &hard_breaks(&text));
+                // The agent view prints the level on the id line.
+                let level = if self.agent { 0 } else { ilvl };
+                let item = list.item(level, &marker, &hard_breaks(&text));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
             } else {
