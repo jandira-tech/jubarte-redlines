@@ -31,7 +31,7 @@ headers:
 
 <!-- p7 empty -->
 
-<!-- t0 10x4, cells p8-p38 by row, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
+<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
 |Centro:||Código de Centro:||
 |-|-|-|-|
 |Dirección:||Provincia:||
@@ -51,7 +51,7 @@ headers:
 
 <!-- p41 empty -->
 
-<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70 -->
+<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center -->
 |<br>Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|<br>Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
 |-|-|-|-|-|-|
 |Ed Primaria||||||

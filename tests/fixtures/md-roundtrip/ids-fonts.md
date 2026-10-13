@@ -140,7 +140,7 @@ This sentence has **red bold character style** and _blue italic character style_
 <!-- p41 -->
 Below is a table demonstrating borders, shading, and cell formatting:
 
-<!-- t0 4x3, cells p42-p53 by row, header row repeats -->
+<!-- t0 4x3, cells p42-p53 by row, p42 center, p43 center, p44 center, header row repeats -->
 |**Feature**|**Description**|**Example**|
 |-|-|-|
 |Bold|Makes text bold|**Bold text**|

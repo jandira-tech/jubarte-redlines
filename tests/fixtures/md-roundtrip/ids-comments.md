@@ -27,7 +27,7 @@ Either party may end this agreement with ninety days{== written notice{++ withou
 
 <!-- t0 5x3, cells p3-p17 by row -->
 |Clause|Change|Status|
-|-|-|-|
+|:-|:-|:-|
 |Late payments{++ as reasonably required++}{>>r5 @BC<<}{== carry interest.==}{>>c2 @AL: Client asked for this.<<}|Each {~~party~>sixty~~}{>>r6 @CD<<}{>>r7 @AL<<} keeps {~~the~>supplier~~}{>>r8 @DP<<}{>>r9 @AL<<}.|{~~The~>sixty~~}{>>r10 @BC<<}{>>r11 @CD<<} warranty{== period is.==}{>>c3 @DP: Client asked for this.<<}{>>c4 @DP: Legal to review.<<}|
 |The {~~supplier~>written~~}{>>r12 @BC<<}{>>r13 @DP<<}{== keeps{++ promptly++}{>>r14 @DP<<} title.==}{>>c5 @DP: Agreed.<<}|{==The supplier{-- shall--}{>>r15 @CD<<}==}{>>c6 @BC: Legal to review.<<} {~~deliver~>vendor~~}{>>r16 @AL<<}{>>r17 @CD<<}.|The warranty period is.|
 |Payment is due {~~on~>written~~}{>>r18 @DP<<}{>>r19 @CD<<}.{>>c7 @CD: Check the defined term.<<}|The supplier{== shall deliver.==}{>>c8 @BC: Client asked for this.<<}{>>c9 @AL: Is this consistent with the master agreement?<<}|Late payments{== carry interest.==}{>>c10 @AL: Too broad, narrow it down.<<}|
