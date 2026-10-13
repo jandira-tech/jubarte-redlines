@@ -55,7 +55,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - `changes --json` and `comments --json` lines, and the snapshot's
   `changes` and `comments`, carry `ref`, the short id (`r12`, `c5`), beside
   the long `id`; a change also names its `paragraph`, and the `changes`
-  text listing gains a paragraph column.
+  text listing gains a paragraph column. `validate --json` lines carry
+  `ref`, the short id (`p5`) beside the long `location` (`body:p:5`);
+  Python's `Finding` gains `ref`, and MCP `docx_validate` returns it
+  (as `docx_changes`/`docx_comments` already return `Change`/`Comment`
+  `ref`).
 - `c5.text` names the text comment c5 covers, for `edit -p` and a plan's
   `paragraph`. `edit X -p c5.text --content "new"` replaces it as one
   tracked substitution inside the comment (a range over two paragraphs
@@ -115,6 +119,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `w:id`, and a text box's `mc:Fallback` copy. Marks in `comments.xml` and
   `numbering.xml` no longer count.
 - **Breaking: `edit -p 6` means `p6`**; it was refused as an unknown id.
+- **Breaking: `read --tables` and `validate` print short ids.** A table
+  cell that read `body:p:1=Item\tbody:p:2=Qty` now reads
+  `p1=Item\tp2=Qty` (a cell's `p3,p4`, via `ids::short_paragraph`, the id
+  the agent view prints for the same paragraph); the snapshot's tables keep
+  the long ids. A finding that read `word/document.xml#body:p:5` (or
+  `body:p:0` for the audit sets) now reads `word/document.xml#p5` (or
+  `p0`); JSON keeps the long `location` and adds `ref`.
 - Python: `Document.accept`/`reject` raise `ValueError` for an id that is no
   change id or names two changes (it was `JubarteError`), and the CLI exits
   2 for it, as the binary does; a resolution that fails otherwise says

@@ -1580,7 +1580,8 @@ class Finding:
     ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
     ``warning`` or ``info``. ``part`` is the package part and ``location``
     the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
-    id (``body:p:3``), or empty for a package-level finding.
+    id (``body:p:3``), or empty for a package-level finding. ``ref`` is the
+    short id the CLI prints for ``location`` (``p3`` for ``body:p:3``).
     ``word_fatal`` is true when Word refuses or repairs the file for it,
     ``repairable`` when ``Document.repair`` fixes it.
     """
@@ -1593,6 +1594,7 @@ class Finding:
     message: str
     word_fatal: bool
     repairable: bool
+    ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1616,6 +1618,7 @@ class _FindingRow(TypedDict):
     message: str
     word_fatal: bool
     repairable: bool
+    ref: NotRequired[str]
 
 
 def _decode_findings(rows: list[_FindingRow]) -> tuple[Finding, ...]:
@@ -1629,6 +1632,7 @@ def _decode_findings(rows: list[_FindingRow]) -> tuple[Finding, ...]:
             message=row["message"],
             word_fatal=bool(row["word_fatal"]),
             repairable=bool(row["repairable"]),
+            ref=row.get("ref"),
         )
         for row in rows
     )
