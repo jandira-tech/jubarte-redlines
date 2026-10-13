@@ -161,9 +161,10 @@ test("read (alias text), inspect, capabilities and convert", () => {
     assert.match(view.out, /\n<!-- p0[ -]/);
   }
   assert.notEqual(run("read", untracked, "--head", "1", "--tail", "1").code, 0);
-  const summary = run("inspect", untracked);
-  assert.match(summary.out, /^sha256: [0-9a-f]{64}\nparagraphs: \d+ /);
-  assert.match(summary.out, /\nbody:p:0\t\[/);
+  // `inspect` is `read` now, with a note.
+  const retired = run("inspect", untracked);
+  assert.equal(retired.out, run("read", untracked).out);
+  assert.equal(retired.err, "note: inspect is now read; inspect is removed in 0.14\n");
   const snapshot = JSON.parse(run("inspect", untracked, "--json").out);
   assert.equal(snapshot.schema_version, 1);
   assert.ok(Array.isArray(snapshot.changes) && Array.isArray(snapshot.comments));
@@ -215,7 +216,7 @@ test("convert --move-comments and --changed-only", () => {
 });
 
 test("edit writes the bundle, and a refused plan exits 3", () => {
-  const first = run("inspect", untracked, "--json");
+  const first = run("read", untracked, "--json");
   const para = JSON.parse(first.out).paragraphs.find((p) => p.text.length > 3);
   const word = para.text.split(" ")[0];
   const plan = path.join(tmp, "plan.json");
@@ -244,7 +245,7 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
 });
 
 test("edit and add by flags print the changed blocks, as the binary does", () => {
-  const para = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   const word = para.text.split(" ")[0];
   const dir = path.join(tmp, "flags");
   const r = run("edit", untracked, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed", "--author", "Ann Counsel", "--out-dir", dir);
@@ -269,7 +270,7 @@ test("edit and add by flags print the changed blocks, as the binary does", () =>
 });
 
 test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
-  const para = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   const word = para.text.split(" ")[0];
   const file = copy(untracked, "single.docx");
   const written = path.join(tmp, "single_modified.docx");
@@ -314,7 +315,7 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
 });
 
 test("a bare --plan is FILE_plan.json, as the binary has it (D16)", () => {
-  const para = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   const file = copy(untracked, "bare.docx");
   const plan = path.join(tmp, "bare_plan.json");
   const recorded = run("edit", file, "--plan", "-p", `p${para.index}`, "--content", "Changed.");
@@ -330,7 +331,7 @@ test("a bare --plan is FILE_plan.json, as the binary has it (D16)", () => {
 });
 
 test("edit and add --plan record into one plan that --consume deletes once applied", () => {
-  const paras = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.filter((p) => p.text.length > 3);
+  const paras = JSON.parse(run("read", untracked, "--json").out).paragraphs.filter((p) => p.text.length > 3);
   const [para, other, third] = paras;
   const word = para.text.split(" ")[0];
   const file = copy(untracked, "record.docx");
@@ -435,7 +436,7 @@ test("format contradictions and unsupported flags fail before I/O (integration)"
     assert.doesNotMatch(result.err, /reading/);
     assert.ok(!fs.existsSync(output));
   }
-  for (const args of [["inspect", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
+  for (const args of [["read", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
     const result = run(...args);
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading/);
@@ -662,7 +663,7 @@ test("comparison refuses Markdown output of Word inputs and sniffs unknown input
 
 test("edit previews write nothing and quiet application still writes its report (integration)", () => {
   const plan = path.join(tmp, "coverage-edit-plan.json");
-  const paragraph = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const paragraph = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Legal", date: "2026-01-02T03:04:05Z", operations: [{ id: "replace", kind: "replace", paragraph: { index: paragraph.index }, find: paragraph.text.split(" ")[0], replacement: "Readers" }] }));
   const dir = path.join(tmp, "coverage-preview");
   const preview = run("edit", untracked, "--plan", plan, "--out-dir", dir, "--dry-run");
@@ -808,7 +809,7 @@ test("edit keeps its files when the view cannot be read back", () => {
     `const wasm = require(${JSON.stringify(path.join(cliDir, "node_modules", "jubarte-wasm"))});\n` +
       `wasm.changedView = () => { throw new Error("read back failed"); };\n`,
   );
-  const first = run("inspect", untracked, "--json");
+  const first = run("read", untracked, "--json");
   const para = JSON.parse(first.out).paragraphs.find((p) => p.text.length > 3);
   const plan = path.join(tmp, "plan-broken-view.json");
   fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Claude", date: "2026-09-25T12:00:00Z", operations: [{ kind: "replace", paragraph: { index: para.index }, find: para.text.split(" ")[0], replacement: "Changed" }] }));

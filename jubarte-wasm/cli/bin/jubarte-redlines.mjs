@@ -188,26 +188,6 @@ const COMMANDS = {
       printView(read(file), o, path.basename(file));
     },
   },
-  inspect: {
-    run(_, [file], o) {
-      const json = wasm.inspectDocument(read(file));
-      if (o.json) return console.log(json);
-      const snap = JSON.parse(json);
-      const s = snap.summary;
-      console.log(`sha256: ${snap.source_sha256}`);
-      console.log(
-        `paragraphs: ${s.paragraphs}  tables: ${s.tables}  fields: ${s.fields}  sections: ${s.sections}  ` +
-          `comments: ${s.comments}  revisions: ${s.revisions}  footnotes: ${s.footnotes}  endnotes: ${s.endnotes}  ` +
-          `headers: ${s.headers}  footers: ${s.footers}  images: ${s.images}  numbering: ${s.list_numbering}  ` +
-          `track_changes: ${s.track_changes}`,
-      );
-      for (const p of snap.paragraphs) {
-        const flags = [p.style, p.numbered && "numbered", p.in_table && "table", p.page_break && "page-break", ...p.limitations].filter(Boolean);
-        const chars = [...p.text];
-        console.log(`${p.id}\t[${flags.join(",")}]\t${chars.slice(0, 80).join("")}${chars.length > 80 ? "…" : ""}`);
-      }
-    },
-  },
   convert: {
     run(_, [file], o) {
       const palette = paletteOf(o);
@@ -510,7 +490,7 @@ function validateHost(name, o) {
     if (o.detail_threshold != null) reject("detail_threshold");
     if (o.no_paragraph_merge) reject("no_paragraph_merge");
   }
-  if (["inspect", "read"].includes(name) && o.tables) reject("tables");
+  if (name === "read" && o.tables) reject("tables");
   // The engine's -o writer (view, snapshot, PDF of a result) comes to this
   // CLI with Task 19; until then it writes Word only.
   if (["accept", "reject", "append", "scrub"].includes(name) && o.output_format != null && o.output_format !== "docx") {
