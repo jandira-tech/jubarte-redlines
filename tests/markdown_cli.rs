@@ -585,7 +585,15 @@ fn compare_writes_the_redline_markdown_asks_for() {
         ]
     );
     wrote(&jubarte(
-        &["compare", "old.md", "new.md", "-d", "1970-01-01T00:00:00Z", "-o", "changes.pdf"],
+        &[
+            "compare",
+            "old.md",
+            "new.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "changes.pdf",
+        ],
         dir.path(),
     ));
     assert!(
@@ -719,7 +727,14 @@ fn diff_and_compare_take_word_against_markdown() {
     ));
     assert_word_valid_package(&std::fs::read(dir.path().join("old_v_new.docx")).unwrap());
     ok(&jubarte(
-        &["old.md", "new.md", "-d", "1970-01-01T00:00:00Z", "-o", "changes.md"],
+        &[
+            "old.md",
+            "new.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "changes.md",
+        ],
         dir.path(),
     ));
     assert!(
@@ -937,7 +952,15 @@ fn diff_reads_critic_markup_and_compare_takes_a_reference() {
     assert_word_valid_package(&docx);
     assert!(common::docx::part_string(&docx, "word/header1.xml").is_some());
     wrote(&jubarte(
-        &["compare", "old.md", "new.md", "-d", "1970-01-01T00:00:00Z", "-o", "old_v_new.png"],
+        &[
+            "compare",
+            "old.md",
+            "new.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "old_v_new.png",
+        ],
         dir.path(),
     ));
     assert!(dir.path().join("old_v_new-page-01.png").exists());

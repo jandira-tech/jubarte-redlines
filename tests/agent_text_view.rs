@@ -3123,7 +3123,10 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         docx(&BASE.replace("thirty", "forty-five")),
     )
     .unwrap();
-    let out = ok(&["old.docx", "new.docx", "-d", "1970-01-01T00:00:00Z"], dir.path());
+    let out = ok(
+        &["old.docx", "new.docx", "-d", "1970-01-01T00:00:00Z"],
+        dir.path(),
+    );
     assert!(
         out.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"),
         "{out}"
@@ -3144,7 +3147,14 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         "nothing written without -o"
     );
     let written = jubarte(
-        &["old.docx", "new.docx", "-d", "1970-01-01T00:00:00Z", "-o", "r.docx"],
+        &[
+            "old.docx",
+            "new.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "r.docx",
+        ],
         dir.path(),
     );
     assert!(written.status.success());
@@ -3174,7 +3184,13 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     let view = std::fs::read_to_string(dir.path().join("v.md")).unwrap();
     assert!(view.contains("\nrange: "), "{view}");
     let changed = ok(
-        &["old.docx", "new.docx", "-d", "1970-01-01T00:00:00Z", "--changed"],
+        &[
+            "old.docx",
+            "new.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "--changed",
+        ],
         dir.path(),
     );
     assert!(

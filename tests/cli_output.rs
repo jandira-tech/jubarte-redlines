@@ -125,7 +125,15 @@ fn compare_writes_criticmarkup_for_two_markdown_documents() {
     .unwrap();
     let out = jubarte(
         dir.path(),
-        &["compare", "a.md", "b.md", "-d", "1970-01-01T00:00:00Z", "-o", "c.md"],
+        &[
+            "compare",
+            "a.md",
+            "b.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "c.md",
+        ],
     );
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
@@ -138,7 +146,15 @@ fn compare_writes_criticmarkup_for_two_markdown_documents() {
     std::fs::copy(dir.path().join("b.md"), dir.path().join("b.json")).unwrap();
     let out = jubarte(
         dir.path(),
-        &["compare", "a", "b.json", "-d", "1970-01-01T00:00:00Z", "-o", "n.md"],
+        &[
+            "compare",
+            "a",
+            "b.json",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "n.md",
+        ],
     );
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
@@ -215,7 +231,16 @@ fn png_pages_and_quiet() {
         &["reject", "d.docx", "-o", "q.pdf", "-q"],
         &["read", "d.docx", "-o", "q.json", "-q"],
         &["scrub", "d.docx", "-o", "q.md", "--quiet"],
-        &["compare", "d.docx", "d.docx", "-d", "1970-01-01T00:00:00Z", "-o", "q3.png", "-q"],
+        &[
+            "compare",
+            "d.docx",
+            "d.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "q3.png",
+            "-q",
+        ],
         &[
             "d.docx",
             "d.docx",

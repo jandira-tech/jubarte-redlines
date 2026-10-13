@@ -1327,7 +1327,14 @@ fn cli_compare_passes_page_options_to_pdf_rendering() {
         String::from_utf8_lossy(&baseline.stderr)
     );
     let result = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .args(["compare", "-d", "1970-01-01T00:00:00Z", "--move-comments", "--changed-pages", "-o"])
+        .args([
+            "compare",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "--move-comments",
+            "--changed-pages",
+            "-o",
+        ])
         .arg(&pdf)
         .arg(&old)
         .arg(&new)
