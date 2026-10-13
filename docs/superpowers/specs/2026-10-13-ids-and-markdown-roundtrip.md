@@ -61,10 +61,14 @@ Rules:
   used against a changed file (`STALE_SOURCE`). Stability is the long id's job.
 - **Decided: shifts are reported.** An edit that adds or removes a block prints a `note:` naming the
   ids that moved: `note: inserted p5; p5-p40 are now p6-p41`.
-- **Decided: bare numbers are deprecated.** Today `12` is a paragraph on `-p`, a change on `--id`, a
-  comment in plan JSON. A bare number is accepted with a `note:` naming the prefixed spelling (`p12`,
-  `r12`, `c12`) through 0.13 and refused in 0.14. A suggestion is printed only when it parses
-  (`05` suggests `c5`, never `c05`). Help, docs and `capabilities` stop advertising bare numbers.
+- **Decided (Arthur, 2026-10-13, superseding the deprecation period): only the settled ids parse.**
+  "We should strictly have the settled short IDs or long IDs. Everything else should be expired."
+  The short ids of this table and the long ids of §4 are the whole grammar. Expired, refused now:
+  bare numbers (`12`), 0.12's `#12`, `#c27`, `#c27.text` and `t0.r1.c2`, and the old long ids
+  `body:rev:12` and `body:p:12`. The refusal names the settled spelling when one is clear (`12` →
+  `p12`, `r12` or `c12` by the option; `body:rev:12` → `r12`; `t0.r1.c2` → `t0.row1.cell2`), and
+  only a spelling that parses (`05` suggests nothing). Help, docs and `capabilities` list only the
+  settled spellings.
 
 ### 2.1 One set of types (Arthur, 2026-10-13: "Don't forget about creating centralized types")
 

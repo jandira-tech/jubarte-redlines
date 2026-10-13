@@ -30,6 +30,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer};
 
+mod short;
+pub use short::{SHORT_EXPECTED, ShortId, Step, Story};
+
 /// Why a change id was refused.
 pub const CHANGE_EXPECTED: &str = "expected a change id such as r12, header1.r1 or body:rev:12";
 /// Why a comment id was refused.
