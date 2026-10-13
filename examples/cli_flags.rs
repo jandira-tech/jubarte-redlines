@@ -109,14 +109,27 @@ fn row(task: &str, cmd: &Command, arg: &Arg) -> Row {
     if let Some(heading) = arg.get_help_heading() {
         notes.push(format!("under \"{heading}\""));
     }
-    let conflicts: Vec<String> = cmd
+    // Both ways: the conflicts `arg` declares and the args that declare a
+    // conflict with it (clap reports only the first).
+    let mut conflicts: Vec<String> = cmd
         .get_arg_conflicts_with(arg)
-        .iter()
+        .into_iter()
+        .chain(
+            cmd.get_arguments()
+                .filter(|other| other.get_id() != arg.get_id())
+                .filter(|other| {
+                    cmd.get_arg_conflicts_with(other)
+                        .iter()
+                        .any(|c| c.get_id() == arg.get_id())
+                }),
+        )
         .map(|other| match other.get_long() {
             Some(long) => format!("--{long}"),
             None => other.get_id().as_str().to_string(),
         })
         .collect();
+    conflicts.sort();
+    conflicts.dedup();
     if !conflicts.is_empty() {
         notes.push(format!("conflicts {}", conflicts.join(" ")));
     }
@@ -197,7 +210,17 @@ fn main() {
         if cmd.is_hide_set() {
             flags.push("hidden task".to_string());
         }
-        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        let visible: Vec<&str> = cmd.get_visible_aliases().collect();
+        let aliases: Vec<String> = cmd
+            .get_all_aliases()
+            .map(|alias| {
+                if visible.contains(&alias) {
+                    alias.to_string()
+                } else {
+                    format!("{alias} (hidden)")
+                }
+            })
+            .collect();
         if !aliases.is_empty() {
             flags.push(format!("aliases: {}", aliases.join(", ")));
         }
@@ -238,10 +261,18 @@ fn main() {
     }
 
     // One long name across tasks: the shorts, values and defaults it takes.
+    // Every accepted long spelling, aliases included, so `--date` lists the
+    // tasks that take it as an alias of `--datetime`.
     let mut by_long: BTreeMap<&str, Vec<&Row>> = BTreeMap::new();
     for r in &rows {
         if let Some(long) = &r.long {
             by_long.entry(long).or_default().push(r);
+        }
+        for alias in &r.aliases {
+            if let Some(name) = alias.strip_prefix("--") {
+                let name = name.strip_suffix(" (hidden)").unwrap_or(name);
+                by_long.entry(name).or_default().push(r);
+            }
         }
     }
     let _ = writeln!(out, "## Flags by long name\n");
@@ -255,8 +286,12 @@ fn main() {
         let mut shapes: BTreeMap<String, Vec<&str>> = BTreeMap::new();
         for r in uses {
             let short = r.short.map(|s| format!("-{s} ")).unwrap_or_default();
+            let alias_of = match &r.long {
+                Some(canonical) if canonical != long => format!(" alias of --{canonical}"),
+                _ => String::new(),
+            };
             let shape = format!(
-                "{short}{} default={} values={}",
+                "{short}{} default={} values={}{alias_of}",
                 r.value, r.default, r.possible
             );
             shapes.entry(shape).or_default().push(display_task(&r.task));
@@ -325,6 +360,10 @@ fn main() {
     // Timestamp flags (the `-d, --datetime` rule): every flag whose name,
     // alias or help speaks of a date or a time.
     let _ = writeln!(out, "## Timestamp flags\n");
+    let _ = writeln!(
+        out,
+        "Every flag whose name, alias or help has a word starting with date, time, clock or now.\n"
+    );
     let _ = writeln!(out, "| Task | Flag | Aliases | Help |");
     let _ = writeln!(out, "|-|-|-|-|");
     for r in &rows {
@@ -355,7 +394,7 @@ fn main() {
     let _ = writeln!(out, "## Retired spellings\n");
     let _ = writeln!(
         out,
-        "Refused with a pointer to the new spelling (`jubarte::cli::RETIRED`).\n"
+        "Still accepted, with a note naming the new spelling; removed in 0.14 (`jubarte::cli::RETIRED`).\n"
     );
     let _ = writeln!(out, "| Retired | Say instead | On |");
     let _ = writeln!(out, "|-|-|-|");
