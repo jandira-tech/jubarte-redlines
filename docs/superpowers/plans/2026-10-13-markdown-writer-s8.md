@@ -10,6 +10,24 @@ No code changed. All change points were read in the tree on branch `cli-std/25a-
 
 Repo constraints honored throughout: test-first (red then green); no `#[allow]`; `clippy -D warnings`; `cargo nextest`, one cargo process at a time; Word only via the bench scripts; Microsoft Word parity, never LibreOffice.
 
+## Arthur's decisions (2026-10-13)
+
+Asked as eight choices with three alternatives each; his answer: "1a 2a but the cli should be able to override 3a 4a 5a 6a 7c 8c (probably, investigate, i dropped a few fixtures with the scenarios)".
+
+1. **Columns** (A): a `page:` clause on the section line (`columns 2, column gap 0.5in`). Done (48f667ab).
+2. **`track_changes`** (A + override): the writer honours the YAML key; a CLI flag on `jubarte convert … -t docx` overrides it (on or off) whatever the header says. Task 2 carries the flag.
+3. **Checklist mixed with plain bullets** (A): numbering per paragraph. Task items take the checklist numbering, plain items the bullet numbering, in the same list.
+4. **Intraword `H~2~O`** (A): left as pulldown-cmark parses it (no subscript inside a word); documented in `docs/MARKDOWN.md`.
+5. **Paragraph spacing** (A): a spacing clause on the id line only when the paragraph differs from its style.
+6. **A footnote referenced twice** (A): two notes, as today (Word ties one reference to one note).
+7. **`#link` with no target** (C): the writer warns on stderr and writes the link anyway.
+8. **`cN.text`** (C, pending investigation): deprecate it; any edit may change commented text. The anchor moves when the range's ends survive; the comment is dropped, and reported on stderr, when they do not. The Word evidence is in `jubarte-loop/cli-std/comment-scenarios/` (Arthur's fixtures); the rule is settled from them before any code.
+
+   **What Word did with Arthur's fixtures** (word_pdfs/ rendered by Word; report `comment-scenarios/empryo_comments.md`). This corrects the "drop" half of 8C:
+   - *Tracked* deletion never removes a comment. The start, the end, both ends, or all of the covered text: `commentRangeStart`, `commentRangeEnd` and the reference run stay outside every `w:del`. A deletion that crosses a marker is split there (`deletedendcomment.docx`: one `w:del` before `commentRangeEnd`, one after the reference run). Deleting everything leaves `commentRangeStart w:del… commentRangeEnd`, and Word still draws both balloons.
+   - *Untracked* deletion of all the covered text (`deletedallcomment(2).docx`) removes the markers, the comments and the whole comment-part family.
+   - So jubarte keeps the comment on every tracked edit, with markers outside the `w:del`. It drops the comment, and reports that on stderr, only when an untracked edit empties the range. The Task 23 comparer bug (`w:del` escaping the range on a whole-range replace, `src/comparer/comments.rs` `map_range`) is the one tracked shape that is wrong today.
+
 ## Task 0 — Crate survey for item 1 (decision, no code)
 
 **Decision: write a small hand parser; depend on nothing.**
@@ -48,7 +66,7 @@ Repo constraints honored throughout: test-first (red then green); no `#[allow]`;
 
 ## Task 2 — Honor `track_changes` (item 5, track_changes only; columns already done)
 
-**Goal.** The YAML key the reader prints controls `w:trackRevisions`; revisions alone never turn tracking on.
+**Goal.** The YAML key the reader prints controls `w:trackRevisions`; revisions alone never turn tracking on. A CLI flag overrides the key (decision 2).
 
 - Markdown in: `---\ntrack_changes: on\n---\n\nText.\n` (and `off`).
 - XML out (`word/settings.xml`): on → `<w:trackRevisions/>` present (same element the reader keys on, `src/markdown/from_docx/header.rs:299-310`); off → absent. With a reference doc, its settings kept (`src/markdown/package.rs:52-67` `KEPT`) then forced to the key.
