@@ -478,6 +478,16 @@ fn patterns() -> &'static Patterns {
 }
 
 /// Splits the view into its YAML header and its body.
+/// A note definition's id line: `<!-- footnotes.p0 -->`, `<!-- endnotes.p2-p3 -->`.
+fn is_note_id_line(line: &str) -> bool {
+    line.strip_prefix("<!-- ")
+        .and_then(|rest| {
+            rest.strip_prefix("footnotes.p")
+                .or_else(|| rest.strip_prefix("endnotes.p"))
+        })
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+}
+
 fn split_view(view: &str) -> (&str, &str) {
     let mut parts = view.splitn(3, "---\n");
     let _ = parts.next();
@@ -594,9 +604,11 @@ fn printed(view: &str) -> Printed {
             continue;
         }
         // A note's definition (`[^1]: …`, or wrapped in the change that
-        // deleted its reference: `{--[^1]: …--}`) closes the paragraph's text.
-        if pat.definition.is_match(line) {
+        // deleted its reference: `{--[^1]: …--}`) closes the paragraph's text,
+        // and so does the definition's own id line (`<!-- footnotes.p0 -->`).
+        if pat.definition.is_match(line) || is_note_id_line(line) {
             current = None;
+            continue;
         }
         if let Some((_, _, Some(text))) = current.and_then(|i| out.paragraphs.get_mut(i)) {
             if !text.is_empty() {
