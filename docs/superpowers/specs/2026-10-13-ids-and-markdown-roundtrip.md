@@ -90,6 +90,29 @@ alike. Positions count the drafter's real structure.
 | Change | `r12`, `header1.r1`, pair `r1+2` | |
 | Comment | `c5`; the text it covers `c5.text` | |
 | Range | `p3-p7` | wherever several blocks are accepted (read, accept, reject) |
+| Section | `s0` … `sN` | in body order; the last is the body's own `w:sectPr` |
+| Table of contents | `toc0` | a TOC field, or the TOC content control around one, counted once |
+| Content control | `cc0` (block), `p12.cc0` (inline) | |
+| Bookmark | `p12.bm0`, or `bm:_Ref123` by name | a bookmark outside any paragraph has only the name |
+| Field | `p12.field0` | TOC fields are `tocN` |
+| Hyperlink | `p12.link0` | |
+| Picture | `p12.img0` | DrawingML, VML and OLE objects |
+| Equation | `p12.eq0`; `eq0` at body level | |
+
+**Decided (Arthur, 2026-10-13): inline objects are Markdown first.** Hyperlinks `[text](url)` and
+`[text](#bookmark)`, pictures `![alt](media/…)`, equations `$$…$$`, note references `[^n]`,
+bookmarks `<a id="NAME"></a>` and fields `{PAGE}` are paragraph content: the view prints them and
+the reader reads them back, and anchored mode keeps what Markdown cannot say (a picture's size and
+wrap, a field's switches, a link's tooltip) from the source. The positional names above address the
+same objects for `read -p`, `edit` and `--long-id`. Runs get no id: Word splits and merges them on
+save, and their text and formatting are the Markdown.
+
+Coverage (`tests/corpus`, 1,195 documents, 286,500 objects, each counted once): 152,953 named by a
+short id, 470 bookmarks by name only (body- or row-level, 461 of them in the Docxodus fixtures),
+133,076 runs and note references carried by the Markdown; one body-level equation
+(`math-body-level.docx`) needs `eq0`. Every object other than runs and note references has a name.
+Today's view drops pictures, bookmarks and internal links (`[text](#name)` prints as underlined
+text) and prints body fields as their result only; those are reader/writer work items.
 
 **Decided (A): bare numbers are deprecated.** Today `12` is a paragraph on `-p`, a change on `--id`,
 a comment in plan JSON. From now on a bare number is accepted with a `note:` naming the prefixed
