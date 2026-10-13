@@ -214,6 +214,10 @@ Each item is a test: write, read back, compare.
   `w:br`), read back as paragraphs.
 - YAML `headers:`/`footers:`/`page:`/`styles:` rebuild those parts.
 - Everything in §3, endnotes included.
+- A change inside a change: the view prints an insertion a second author deleted as
+  `{++{--x--}{>>r47 @A<<}++}{>>r46 @A<<}`; the reader must read it back as `w:ins` holding `w:del`.
+  Today it nests no change in a change, so `r47 @A` becomes a comment and `{--x--}` literal text
+  (pi review of #462; `RP001-Tracked-Revisions-01.docx`, `file_176.docx`).
 
 ### 5.3 Two modes
 
@@ -301,8 +305,11 @@ their result only, and the reader has no endnotes.
 | table of contents | 67 | 67 | `toc0` |
 | nested table | 11 | 9 | `t0.row1.cell2.t0` |
 
-Short ids reach 142,194 objects (49.6%), the Markdown 144,306 (50.4%), nothing is left over.
-Real-world: 52.6% and 47.4%; Docxodus: 30.2% and 69.8%.
+`scripts/id_census.py` as shipped (re-run in the pi review of #462): short ids reach 152,953
+objects (53.39%), the Markdown 133,076 (46.45%), and one equation reaches neither. The script counts
+an object inside a paragraph that a short id names among the short ids, which an earlier hand count
+(142,194 and 144,306) did not. Real-world (`neurotic_docx_bench`): 56.84% and 43.16%; Docxodus:
+32.72% (plus 0.95% by bookmark name) and 66.32%.
 
 ### 6.3 How often an element already has its key
 

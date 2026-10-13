@@ -145,7 +145,9 @@ def measure_one(docx: Path) -> dict:
         shutil.copyfile(docx, src)
         original = snapshot(src, work)
         if original is None:
-            return {"skipped": "read --json failed on the source"}
+            # A jubarte failure scores zero, never a skip (AGENTS.md).
+            failed = {d: "read --json failed on the source" for d in [*DIMENSIONS, "md fixed point"]}
+            return {dialect: dict(failed) for dialect in DIALECTS}
         want = dimensions(original)
         for dialect in DIALECTS:
             row = {}
@@ -175,6 +177,14 @@ def measure_one(docx: Path) -> dict:
     return result
 
 
+def positive(text: str) -> int:
+    """An --every of 1 or more."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("--every takes 1 or more")
+    return value
+
+
 def documents(paths: list[str], every: int) -> list[Path]:
     """Every Nth document of each folder, so the sample does not depend on argument order."""
     found = set()
@@ -189,7 +199,7 @@ def documents(paths: list[str], every: int) -> list[Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="+", help="docx files or folders")
-    parser.add_argument("--every", type=int, default=1, help="take every Nth document (sorted)")
+    parser.add_argument("--every", type=positive, default=1, help="take every Nth document (sorted)")
     parser.add_argument("--details", action="store_true", help="list the first difference per document")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     args = parser.parse_args()
@@ -202,11 +212,9 @@ def main() -> int:
         except HarnessError as error:
             print(f"harness error: {error}", file=sys.stderr)
             return 1
-    measured = {d: r for d, r in results.items() if "skipped" not in r}
-    print(f"# docx -> md -> docx -> md: {len(measured)} documents ({len(docs) - len(measured)} skipped)\n")
-    for doc, r in sorted(results.items()):
-        if "skipped" in r and args.details:
-            print(f"- skipped {doc.name}: {r['skipped']}")
+    # Every document counts: a source jubarte cannot read scores zero on every dimension.
+    measured = results
+    print(f"# docx -> md -> docx -> md: {len(measured)} documents\n")
     print("Share of documents that keep each dimension.\n")
     print("| Dimension | " + " | ".join(DIALECTS) + " |")
     print("|-|" + "-|" * len(DIALECTS))
