@@ -21,11 +21,13 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 5. **Paragraph spacing** (A): a spacing clause on the id line only when the paragraph differs from its style.
 6. **A footnote referenced twice** (A): two notes, as today (Word ties one reference to one note).
 7. **`#link` with no target** (C): the writer warns on stderr and writes the link anyway.
-8. **`cN.text`** (C, pending investigation): deprecate it; any edit may change commented text. The anchor moves when the range's ends survive; the comment is dropped, and reported on stderr, when they do not. The Word evidence is in `jubarte-loop/cli-std/comment-scenarios/` (Arthur's fixtures); the rule is settled from them before any code.
+8. **`cN.text`** (C, pending investigation): deprecate it; any edit may change commented text. As Arthur first put it: the anchor moves when the range's ends survive; the comment is dropped, and reported on stderr, when they do not. The fixtures below refine this. The Word evidence is in `jubarte-loop/cli-std/comment-scenarios/` (Arthur's fixtures); the rule is settled from them before any code.
 
    **What Word did with Arthur's fixtures** (word_pdfs/ rendered by Word; report `comment-scenarios/empryo_comments.md`). This corrects the "drop" half of 8C:
    - *Tracked* deletion never removes a comment. The start, the end, both ends, or all of the covered text: `commentRangeStart`, `commentRangeEnd` and the reference run stay outside every `w:del`. A deletion that crosses a marker is split there (`deletedendcomment.docx`: one `w:del` before `commentRangeEnd`, one after the reference run). Deleting everything leaves `commentRangeStart w:del… commentRangeEnd`, and Word still draws both balloons.
    - *Untracked* deletion of all the covered text (`deletedallcomment(2).docx`) removes the markers, the comments and the whole comment-part family.
+   - The markers never move. A tracked partial deletion leaves `commentRangeStart` and `commentRangeEnd` where they were, with the deleted text still between them (`deletedstartcomment.docx`: `commentRangeStart`, `w:del("<start>lorem i")`, `"psum …"`, `commentRangeEnd`). The range shrinks only when the deletion is accepted; rejecting restores it.
+   - Not yet evidenced: an *untracked* partial deletion (expected: markers stay, the range covers less), and insertions typed at either edge (inside or outside the range?). Both need a fixture from Arthur.
    - So jubarte keeps the comment on every tracked edit, with markers outside the `w:del`. It drops the comment, and reports that on stderr, only when an untracked edit empties the range. The Task 23 comparer bug (`w:del` escaping the range on a whole-range replace, `src/comparer/comments.rs` `map_range`) is the one tracked shape that is wrong today.
 
 ## Task 0 — Crate survey for item 1 (decision, no code)
