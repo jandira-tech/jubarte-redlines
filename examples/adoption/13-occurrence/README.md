@@ -21,7 +21,7 @@ jubarte 0.11.2:
 
 ```bash
 jubarte edit input.docx --plan plan-occurrence-2.json --out-dir review --png --dpi 72
-jubarte text  review/clean.docx          # **The Custodian shall tag**: bold kept
+jubarte read  review/clean.docx          # **The Custodian shall tag**: bold kept
 jubarte edit input.docx --plan plan-ambiguous.json --out-dir refused   # exit 3
 ```
 
@@ -35,7 +35,7 @@ to 1..=3` (exit 3, nothing written; see `refusal.txt`). Leaving
 first-match default.
 
 Tool versions used here: jubarte 0.11.2, python-docx 1.2.0, pandoc 3.11.
-Both page-1 renders come from `jubarte convert --png --dpi 72`.
+Both page-1 renders come from `jubarte convert -o x.png --dpi 72`.
 
 ## Outputs
 
@@ -48,7 +48,7 @@ Both page-1 renders come from `jubarte convert --png --dpi 72`.
 | `occurrence_page_1_pydocx.png` | page 1: the sentence is there, the bold is not |
 | `plan-occurrence-2.json` | the jubarte plan with `"occurrence": 2` |
 | `review/` | `jubarte edit` output; the redline marks `Advisor`→`Custodian` on the 2nd hit only |
-| `read_jubarte.md` | `jubarte text review/clean.docx`: `**The Custodian shall tag**` |
+| `read_jubarte.md` | `jubarte read review/clean.docx`: `**The Custodian shall tag**` |
 | `occurrence_page_1_jubarte.png` | page 1 of the redline: strike/insert on the bold occurrence |
 | `plan-ambiguous.json`, `refusal.txt` | the same plan without `occurrence`, refused `AMBIGUOUS_ANCHOR`, exit 3 |
 

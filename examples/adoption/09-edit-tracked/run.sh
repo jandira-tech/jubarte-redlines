@@ -22,7 +22,7 @@ if command -v python3 >/dev/null && python3 -c 'import docx' >/dev/null 2>&1; th
   python3 edit_pydocx.py
   # Render page 1 of the python-docx result with jubarte convert (same
   # renderer for both sides, so only the content differs).
-  "$JUBARTE" convert edit_pydocx.docx --png --dpi 72 --force
+  "$JUBARTE" convert edit_pydocx.docx -o edit_pydocx.png --dpi 72 --force
   mv edit_pydocx-page-01.png edit_page_1_pydocx.png
 
   if command -v pandoc >/dev/null; then

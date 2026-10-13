@@ -1,17 +1,45 @@
-[body:p:0 Heading1] Records Handling Addendum
+---
+source: clean.docx
+sha256: bf70cd1bacb4ad8e8a399122c4a14eedf42717ba2ac2ae836bb10caac7535d65
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 0
+comments: 0
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+body: p0-p8, 0 tables, 1 page      # pages from layout
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+---
 
-[body:p:1] This Addendum governs the handling of Records under the Master Services Agreement between the parties.
+<!-- page 1 of 1 -->
 
-[body:p:2 Heading2] Handling Rules
+<!-- p0 -->
+# Records Handling Addendum
 
-[body:p:3] The Advisor shall store the Records in a secure facility. **The Custodian shall tag** each Record with its classification level before storage. The Advisor shall log every access in the access register.
+<!-- p1 -->
+This Addendum governs the handling of Records under the Master Services Agreement between the parties.
 
-[body:p:4 Heading2] Register Entries
+<!-- p2 -->
+## Handling Rules
 
-[body:p:5] Each register entry records:
+<!-- p3 -->
+The Advisor shall store the Records in a secure facility. **The Custodian shall tag** each Record with its classification level before storage. The Advisor shall log every access in the access register.
 
-[body:p:6 ListParagraph] the Record's identifier and classification level
+<!-- p4 -->
+## Register Entries
 
-[body:p:7 ListParagraph] who accessed it, and when
+<!-- p5 -->
+Each register entry records:
 
-[body:p:8 ListParagraph] the custody chain for transferred Records
+<!-- p6 ListParagraph bullet -->
+- the Record's identifier and classification level
+
+<!-- p7 ListParagraph bullet -->
+- who accessed it, and when
+
+<!-- p8 ListParagraph bullet -->
+- the custody chain for transferred Records
