@@ -70,7 +70,11 @@ const KEPT: [&str; 14] = [
 /// Word keys both by the `w14:paraId` of a comment's last paragraph, in
 /// `commentsExtended.xml`. A resolved thread's replies are resolved too, as
 /// Word resolves a thread whole; the view marks only its first comment.
-fn threads(package: &mut PartFs, main: &str, comments: &[xml::Comment]) -> Result<(), MarkdownError> {
+fn threads(
+    package: &mut PartFs,
+    main: &str,
+    comments: &[xml::Comment],
+) -> Result<(), MarkdownError> {
     if !comments.iter().any(|c| c.parent.is_some() || c.done) {
         return Ok(());
     }

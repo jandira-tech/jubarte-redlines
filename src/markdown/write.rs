@@ -1176,7 +1176,10 @@ fn renumber_comments(document: &mut Document) {
     for id in document.slots.iter_mut().flatten() {
         *id = ids[id];
     }
-    let notes = document.notes.iter_mut().flat_map(|note| note.items.iter_mut());
+    let notes = document
+        .notes
+        .iter_mut()
+        .flat_map(|note| note.items.iter_mut());
     for item in document.body.iter_mut().chain(notes) {
         if let Item::RangeEnd(id) | Item::CommentReference(id) = item {
             *id = ids[id];
