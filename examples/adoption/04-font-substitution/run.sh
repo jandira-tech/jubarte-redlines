@@ -24,7 +24,7 @@ fi
 
 # --- jubarte: font report + --fail-on-substitution ----------------------------
 rc=0
-"$JUBARTE" convert input.docx --png --dpi 72 --report pages.json \
+"$JUBARTE" convert input.docx -o input.png --dpi 72 --report pages.json \
     --font-report fonts_jubarte.json --fail-on-substitution --force \
     > jubarte_run.log 2>&1 || rc=$?
 {

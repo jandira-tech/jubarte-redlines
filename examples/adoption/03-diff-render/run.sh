@@ -54,8 +54,8 @@ fi
 # --- jubarte: one command renders, diffs and reports -------------------------
 rm -rf diff
 rc=0
-"$JUBARTE" diff-render before.docx after.docx --out-dir diff --dpi 72 --force || rc=$?
-echo "jubarte diff-render exit=$rc (0 same, 5 a page differs)" >> exit_codes.txt
+"$JUBARTE" visual-diff before.docx after.docx --out-dir diff --dpi 72 --force || rc=$?
+echo "jubarte visual-diff exit=$rc (0 same, 5 a page differs)" >> exit_codes.txt
 for p in diff/diff-page-*.png; do
   n=${p#diff/diff-page-}; n=${n%.png}
   n=$((10#$n))
