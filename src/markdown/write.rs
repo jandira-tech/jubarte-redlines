@@ -259,14 +259,46 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
     }
 }
 
-/// `<br>` or `<br/>`, as the view and authors write a line break.
+/// `<br>`, `<br/>` or `<br class="x">`, as the view and authors write a
+/// line break.
 fn is_line_break(html: &str) -> bool {
-    let tag: String = html
+    html_tag(html).is_some_and(|tag| !tag.closing && tag.name == "br")
+}
+
+/// One inline HTML tag, as CommonMark names it.
+struct HtmlTag {
+    /// Lowercase, hyphens and all (`code-of-conduct`).
+    name: String,
+    /// `</b>`.
+    closing: bool,
+    /// `<b/>`: opens and closes at once.
+    empty: bool,
+}
+
+/// The tag `html` is, if it is one: a comment, a declaration or a
+/// processing instruction is none.
+fn html_tag(html: &str) -> Option<HtmlTag> {
+    let inner = html.trim().strip_prefix('<')?.strip_suffix('>')?.trim();
+    if inner.starts_with(['!', '?']) {
+        return None;
+    }
+    let (closing, inner) = match inner.strip_prefix('/') {
+        Some(rest) => (true, rest.trim_start()),
+        None => (false, inner),
+    };
+    let name: String = inner
         .chars()
-        .filter(|c| !c.is_whitespace())
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
         .collect::<String>()
         .to_ascii_lowercase();
-    matches!(tag.as_str(), "<br>" | "<br/>")
+    if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    Some(HtmlTag {
+        name,
+        closing,
+        empty: inner.ends_with('/'),
+    })
 }
 
 /// The Markdown extensions jubarte reads, for the writer and for
@@ -1545,34 +1577,26 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn inline_html(&mut self, html: &str) {
-        let Some(inner) = html
-            .trim()
-            .strip_prefix('<')
-            .and_then(|t| t.strip_suffix('>'))
+        let Some(HtmlTag {
+            name,
+            closing,
+            empty,
+        }) = html_tag(html)
         else {
             return;
         };
-        // A comment or a declaration is no tag.
-        if inner.starts_with('!') || inner.starts_with('?') {
+        if name == "br" {
+            if !closing {
+                self.line_break();
+            }
             return;
         }
-        let (closing, inner) = match inner.trim_start().strip_prefix('/') {
-            Some(rest) => (true, rest),
-            None => (false, inner),
-        };
-        let name = inner
-            .trim_start()
-            .chars()
-            .take_while(char::is_ascii_alphanumeric)
-            .collect::<String>()
-            .to_ascii_lowercase();
+        // `<b/>` formats nothing; a comment's text is plain, so a tag in it
+        // must not format the body after it.
+        if empty || self.comment.is_some() {
+            return;
+        }
         let counter = match name.as_str() {
-            "br" => {
-                if !closing {
-                    self.line_break();
-                }
-                return;
-            }
             "b" | "strong" => &mut self.bold,
             "i" | "em" => &mut self.italic,
             "s" | "del" | "strike" => &mut self.strike,
@@ -1582,7 +1606,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             "code" => &mut self.code,
             "mark" => &mut self.mark,
             _ => {
-                if !name.is_empty() && !self.dropped_html.contains(&name) {
+                if !self.dropped_html.contains(&name) {
                     self.document.warnings.push(format!(
                         "inline HTML <{name}> dropped: its text is kept, its markup is not"
                     ));
@@ -1680,11 +1704,21 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .insert(number, view_stories::section(entry));
                 }
             }
+            // A key under another (`options:` then `  track_changes: on`)
+            // is that key's, not the document's.
+            if line.starts_with([' ', '\t']) {
+                continue;
+            }
             let Some((key, value)) = line.split_once(':') else {
                 continue;
             };
             let value = value.trim().trim_matches(|c| c == '"' || c == '\'').trim();
             if value.is_empty() {
+                if key.trim() == "track_changes" {
+                    self.document
+                        .warnings
+                        .push("track_changes: with no value ignored: it is on or off".into());
+                }
                 continue;
             }
             match key.trim() {
@@ -2632,5 +2666,21 @@ mod memory_picture_import_contract_tests {
             ["image 'owned.png' was written as its alt text"]
         );
         assert!(missing.pictures.is_empty());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod html_tag_tests {
+    use super::*;
+
+    #[test]
+    fn a_line_break_is_br_by_name_with_or_without_attributes() {
+        for br in ["<br>", "<br/>", "<BR />", "<br class=\"x\">", "< br >"] {
+            assert!(is_line_break(br), "{br}");
+        }
+        for not in ["</br>", "<bra>", "<br-x>", "<b>"] {
+            assert!(!is_line_break(not), "{not}");
+        }
     }
 }

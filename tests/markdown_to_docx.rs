@@ -936,3 +936,54 @@ fn a_link_to_no_heading_is_written_and_warned_once() {
     assert!(links[0].contains("#gone"), "{links:?}");
     assert!(links[1].contains("#nowhere"), "{links:?}");
 }
+
+#[test]
+fn a_self_closing_tag_formats_nothing() {
+    let xml = document_xml(&write("plain <b/> after <mark/> more <u/> end\n"));
+    assert!(!xml.contains("<w:b/>"), "{xml}");
+    assert!(!xml.contains("<w:highlight"), "{xml}");
+    assert!(!xml.contains("<w:u "), "{xml}");
+}
+
+#[test]
+fn a_hyphenated_tag_is_its_own_name() {
+    let written = markdown_to_docx(
+        "A <i-am-not>x</i-am-not> and <code-of-conduct>y</code-of-conduct>.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(!xml.contains("<w:i/>"), "{xml}");
+    assert!(!xml.contains("VerbatimChar"), "{xml}");
+    let html: Vec<&String> = written
+        .warnings
+        .iter()
+        .filter(|w| w.contains("HTML"))
+        .collect();
+    assert_eq!(html.len(), 2, "{:?}", written.warnings);
+    assert!(html[0].contains("<i-am-not>"), "{html:?}");
+    assert!(html[1].contains("<code-of-conduct>"), "{html:?}");
+}
+
+#[test]
+fn a_tag_inside_a_comment_never_formats_the_body() {
+    let docx = write("before {>>a comment with <b>bold words<<} after\n");
+    let xml = document_xml(&docx);
+    assert!(!xml.contains("<w:b/>"), "{xml}");
+}
+
+#[test]
+fn only_a_top_level_track_changes_key_counts() {
+    let docx = write("---\ntitle: N\noptions:\n  track_changes: on\n---\n\nText.\n");
+    assert!(!tracks(&docx));
+    let written = markdown_to_docx(
+        "---\ntrack_changes:\n---\n\nText.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        written.warnings.iter().any(|w| w.contains("track_changes")),
+        "{:?}",
+        written.warnings
+    );
+}
