@@ -308,17 +308,6 @@ pub fn resolution_text(source: &[u8], resolved: &ResolvedRevisions) -> Result<St
     Ok(out)
 }
 
-/// The lines for a report JSON (what the hosts hold): the report's
-/// `resolved_revisions` read from `report_json`.
-pub fn resolution_text_from_report_json(
-    source: &[u8],
-    report_json: &str,
-) -> Result<String, String> {
-    let report: crate::edit::EditReport =
-        serde_json::from_str(report_json).map_err(|e| format!("invalid report: {e}"))?;
-    resolution_text(source, &report.resolved_revisions).map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
