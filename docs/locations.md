@@ -22,7 +22,6 @@ Long ids (`body:p:12`, `header1:rev:3`) and 0.12's retired spellings (`#12`, `#c
 | accepted or printed by a task | edit --location (stdout) | `body:p:5`, `body:p:12`, `body:rev:2`, `body:rev:4` +8 more |
 | accepted or printed by a task | edit --location accepts it | `#0`, `#c5`, `#1+2`, `body:p:0` +5 more |
 | printed in JSON (kept by D7) | read --json | `body:p:0`, `body:p:1`, `body:p:2`, `body:p:3` +136 more |
-| printed in text | read --tables | `body:p:1`, `body:p:2`, `body:p:3`, `body:p:4` +12 more |
 
 ## Where the source accepts an id
 
@@ -104,9 +103,7 @@ Fixtures: `tests/fixtures/agent-view/received.docx`, `tests/fixtures/from-docx/c
 
 | Shape | Examples | Names | Printed by |
 |-|-|-|-|
-| `body:p:N` | `body:p:0`, `body:p:1`, `body:p:2` | body paragraph; body table cell paragraph | read --json changes[].paragraph; read --json comments[].paragraph; read --json paragraphs[].id; read --tables |
-| `body:p:N,body:p:N` | `body:p:6,body:p:7` |  | read --tables |
-| `body:p:N,body:p:N,body:p:N` | `body:p:3,body:p:4,body:p:5` |  | read --tables |
+| `body:p:N` | `body:p:0`, `body:p:1`, `body:p:2` | body paragraph; body table cell paragraph | read --json changes[].paragraph; read --json comments[].paragraph; read --json paragraphs[].id |
 | `body:rev:N` | `body:rev:0`, `body:rev:1`, `body:rev:2` | change (deletion, paragraph_mark); change (deletion, text); change (insertion, text) | read --json changes[].id |
 | `cN` | `c0`, `c5`, `c6` | comment | comments (id); comments (reply to); read --json comments[].ref; view note; view note (reply to) |
 | `endnotes` | `endnotes` | endnotes story | read --json stories[].id |
@@ -124,7 +121,9 @@ Fixtures: `tests/fixtures/agent-view/received.docx`, `tests/fixtures/from-docx/c
 | `footnotes:rev:N` | `footnotes:rev:2`, `footnotes:rev:3` | change (deletion, text); change (insertion, text) | read --json changes[].id |
 | `headerN` | `header1`, `header2` | header story | read --json stories[].id; view header |
 | `headerN:p:N` | `header1:p:0`, `header1:p:1`, `header2:p:0` | header paragraph | read --json stories[].paragraphs[].id |
-| `pN` | `p0`, `p1`, `p2` |  | changes (paragraph); comments (paragraph); view id line |
+| `pN` | `p0`, `p1`, `p2` |  | changes (paragraph); comments (paragraph); read --tables; view id line |
+| `pN,pN` | `p6,p7` |  | read --tables |
+| `pN,pN,pN` | `p3,p4,p5` |  | read --tables |
 | `pN-pN` | `p108-p109` |  | view id line |
 | `rN` | `r0`, `r1`, `r2` | change (deletion, paragraph_mark); change (deletion, text); change (insertion, text) | changes (id); read --json changes[].ref; view note |
 | `rN+N` | `r1+2`, `r3+4`, `r7+8` |  | view note |
@@ -137,8 +136,6 @@ One id of each printed shape, given back to the tasks that take an id (`--paragr
 | Id | Fixture | read -p (picked) | edit -p (picked) | add -p (picked) | accept --id (picked) |
 |-|-|-|-|-|-|
 | `body:p:0` | received.docx | 1 error: body:p:0: expected pN, pN-pM or tN | 0 → p0; +r12 +r13 | 0 → p1; +r13 +r12 | 2 error: body:p:0: expected a change id such as r12, header1.r1 or body:rev:12 |
-| `body:p:6,body:p:7` | hard-tables.docx | 1 error: body:p:6: expected pN, pN-pM or tN | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown story "body:p:6,body"; this document has body | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown story "body:p:6,body"; this document has body | 2 error: body:p:6,body:p:7: expected a change id such as r12, header1.r1 or body:rev:12 |
-| `body:p:3,body:p:4,body:p:5` | hard-tables.docx | 1 error: body:p:3: expected pN, pN-pM or tN | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown story "body:p:3,body:p:4,body"; this document has body | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown story "body:p:3,body:p:4,body"; this document has body | 2 error: body:p:3,body:p:4,body:p:5: expected a change id such as r12, header1.r1 or body:rev:12 |
 | `body:rev:0` | received.docx | 1 error: body:rev:0: expected pN, pN-pM or tN | 0 → p3 p5 p7 t0 p18; -r0 | 2 error: -p body:rev:0: add resolves no revision; use edit -p r12 --accept or --reject | 0 → -r0 |
 | `c0` | hard-notes.docx | 1 error: c0: expected pN, pN-pM or tN | 0 → p5 footnotes.p3 | 0 → p5 footnotes.p3 | 2 error: c0: expected a change id such as r12, header1.r1 or body:rev:12 |
 | `endnotes` | received.docx | 1 error: endnotes: expected pN, pN-pM or tN | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): paragraph index 0 does not exist in endnotes (0 paragraphs) | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): paragraph index 0 does not exist in endnotes (0 paragraphs) | 2 error: endnotes: expected a change id such as r12, header1.r1 or body:rev:12 |
@@ -157,6 +154,8 @@ One id of each printed shape, given back to the tasks that take an id (`--paragr
 | `header1` | received.docx | 1 error: header1: expected pN, pN-pM or tN | 0 → p3 p5 p7 t0 p18; +header1.r12 +header1.r13 | 0 → p3 p5 p7 t0 p18; +header1.r13 +header1.r12 | 2 error: header1: expected a change id such as r12, header1.r1 or body:rev:12 |
 | `header1:p:0` | received.docx | 1 error: header1:p:0: expected pN, pN-pM or tN | 0 → p3 p5 p7 t0 p18; +header1.r12 +header1.r13 | 0 → p3 p5 p7 t0 p18; +header1.r13 +header1.r12 | 2 error: header1:p:0: expected a change id such as r12, header1.r1 or body:rev:12 |
 | `p0` | received.docx | 0 → p0 | 0 → p0; +r12 +r13 | 0 → p1; +r13 +r12 | 2 error: p0: expected a change id such as r12, header1.r1 or body:rev:12 |
+| `p6,p7` | hard-tables.docx | 0 → t0 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown paragraph id p6,p7 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown paragraph id p6,p7 | 2 error: p6,p7: expected a change id such as r12, header1.r1 or body:rev:12 |
+| `p3,p4,p5` | hard-tables.docx | 0 → t0 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown paragraph id p3,p4,p5 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown paragraph id p3,p4,p5 | 2 error: p3,p4,p5: expected a change id such as r12, header1.r1 or body:rev:12 |
 | `p108-p109` | hf_a.docx | 0 → p108-p109 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown paragraph id p108-p109 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): unknown paragraph id p108-p109 | 2 error: p108-p109: expected a change id such as r12, header1.r1 or body:rev:12 |
 | `r0` | received.docx | 1 error: r0: expected pN, pN-pM or tN | 0 → p3 p5 p7 t0 p18; -r0 | 2 error: -p r0: add resolves no revision; use edit -p r12 --accept or --reject | 0 → -r0 |
 | `r1+2` | received.docx | 1 error: r1+2: expected pN, pN-pM or tN | 0 → p3 p5 p7 t0 p18; -r1 -r2 | 2 error: -p r1+2: add resolves no revision; use edit -p r12 --accept or --reject | 0 → -r1 -r2 |
