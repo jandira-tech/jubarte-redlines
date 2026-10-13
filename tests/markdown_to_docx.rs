@@ -576,6 +576,35 @@ fn inline_html_bold_italic_strike_code_and_mark() {
 }
 
 #[test]
+fn double_equals_is_a_highlight() {
+    // `==x==` is a highlight (spec §3), the run property `<mark>` writes; it
+    // may hold emphasis. An `==` with spaces on both sides, one inside code
+    // or one escaped is text, and `{==x==}` stays CriticMarkup.
+    let docx = write("Pay ==**now**== and ==later==, a == b, `c==d`, e=\\=f.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(
+        xml.matches("<w:highlight w:val=\"yellow\"/>").count(),
+        2,
+        "{xml}"
+    );
+    assert!(xml.contains("<w:b/><w:bCs/><w:highlight"), "{xml}");
+    assert_eq!(texts(&docx), ["Pay now and later, a == b, c==d, e==f."]);
+    let comment = document_xml(&write("A {==range==}{>>note<<} here.\n"));
+    assert!(!comment.contains("w:highlight"), "{comment}");
+    assert!(comment.contains("commentRangeStart"), "{comment}");
+}
+
+#[test]
+fn an_unclosed_highlight_is_text() {
+    // An `==` without its partner in the paragraph is text, as an unclosed
+    // `~~` is.
+    let docx = write("Only ==one here.\n\nNext ==para== ok.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight").count(), 1, "{xml}");
+    assert_eq!(texts(&docx), ["Only ==one here.", "Next para ok."]);
+}
+
+#[test]
 fn an_unclosed_inline_tag_ends_with_its_block() {
     // `<b>` without `</b>` formats the rest of its paragraph, cell or
     // heading, never the blocks after it.

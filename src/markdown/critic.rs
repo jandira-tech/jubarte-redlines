@@ -41,10 +41,14 @@ pub(crate) enum Token {
     CommentStart,
     /// `<<}`
     CommentEnd,
+    /// `==` opening a highlight run (`==x==`), not CriticMarkup
+    MarkStart,
+    /// `==` closing a highlight run
+    MarkEnd,
 }
 
 /// Every delimiter with its stand-in (Supplemental Punctuation, all Po).
-const STAND_INS: [(Token, char); 11] = [
+const STAND_INS: [(Token, char); 13] = [
     (Token::InsertStart, '\u{2E0E}'),
     (Token::InsertEnd, '\u{2E0F}'),
     (Token::DeleteStart, '\u{2E10}'),
@@ -56,6 +60,8 @@ const STAND_INS: [(Token, char); 11] = [
     (Token::HighlightEnd, '\u{2E16}'),
     (Token::CommentStart, '\u{2E18}'),
     (Token::CommentEnd, '\u{2E19}'),
+    (Token::MarkStart, '\u{2E1B}'),
+    (Token::MarkEnd, '\u{2E1E}'),
 ];
 
 /// Put before a stand-in character (or itself) that was in the source.
@@ -262,12 +268,57 @@ fn encode_range(
                 at = after;
             }
             None => {
+                if allowed != 0
+                    && let Some(close) = mark_close(source, at, range.end)
+                {
+                    out.push(stand_in(Token::MarkStart));
+                    encode_range(source, closers, at + 2..close, allowed, false, out);
+                    out.push(stand_in(Token::MarkEnd));
+                    at = close + 2;
+                    continue;
+                }
                 let c = rest.chars().next().unwrap_or_default();
                 push_escaped(out, &rest[..c.len_utf8()]);
                 at += c.len_utf8();
             }
         }
     }
+}
+
+/// Where the `==` that closes a highlight opened at `at` sits, if `at`
+/// opens one: `==` touching text on its inner side and not part of `{==`,
+/// `==}` or a longer run of `=`, closed by such an `==` in the same
+/// paragraph (before `until` and any blank line).
+fn mark_close(source: &str, at: usize, until: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let is = |i: usize, b: u8| i < bytes.len() && bytes[i] == b;
+    let blank = |i: usize| i >= bytes.len() || bytes[i].is_ascii_whitespace();
+    let opens = source[at..until].starts_with("==")
+        && !escaped(source, at)
+        && !(at > 0 && (is(at - 1, b'=') || is(at - 1, b'{')))
+        && !is(at + 2, b'=')
+        && !is(at + 2, b'}')
+        && !blank(at + 2);
+    if !opens {
+        return None;
+    }
+    let end = source[at + 2..until]
+        .find("\n\n")
+        .map_or(until, |blank_line| at + 2 + blank_line);
+    let mut from = at + 3;
+    while let Some(found) = source.get(from..end)?.find("==") {
+        let close = from + found;
+        let fits = !blank(close - 1)
+            && !is(close - 1, b'=')
+            && !is(close + 2, b'=')
+            && !is(close + 2, b'}')
+            && !escaped(source, close);
+        if fits {
+            return Some(close);
+        }
+        from = close + 1;
+    }
+    None
 }
 
 /// The footnote label that starts `text` with the spaces after it
@@ -326,6 +377,7 @@ pub(crate) fn delimiter(token: Token) -> &'static str {
         Token::HighlightEnd => "==}",
         Token::CommentStart => "{>>",
         Token::CommentEnd => "<<}",
+        Token::MarkStart | Token::MarkEnd => "==",
     }
 }
 
@@ -456,6 +508,19 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 removed_text = true;
             }
             let opened = match token {
+                // A highlight run is Markdown, not a change: it stays.
+                Token::MarkStart | Token::MarkEnd => {
+                    let shown = match state {
+                        In::Text => true,
+                        In::Inserted | In::New => accept,
+                        In::Deleted | In::Old => !accept,
+                        In::Comment => false,
+                    };
+                    if shown {
+                        out.push_str(delimiter(token));
+                    }
+                    None
+                }
                 Token::InsertStart => Some(In::Inserted),
                 Token::DeleteStart => Some(In::Deleted),
                 Token::SubstituteStart => Some(In::Old),

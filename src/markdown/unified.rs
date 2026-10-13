@@ -595,6 +595,17 @@ fn segments(critic: &str) -> Vec<Segment> {
             }
         }
         Piece::Token(token) => match token {
+            // A highlight run is Markdown text, not a change.
+            Token::MarkStart | Token::MarkEnd => {
+                let text = critic::delimiter(token);
+                if let Some(note) = &mut note {
+                    note.push_str(text);
+                } else if let Some(edit) = &mut edit {
+                    edit.push(side, text, false);
+                } else {
+                    push_same(&mut out, text);
+                }
+            }
             Token::InsertStart | Token::DeleteStart | Token::SubstituteStart => {
                 edit = Some(Edit::default());
                 side = if token == Token::InsertStart {

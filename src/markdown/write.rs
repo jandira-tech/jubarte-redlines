@@ -1433,6 +1433,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Token::CommentStart => self.begin_comment(),
             Token::CommentEnd => {}
+            Token::MarkStart => self.mark += 1,
+            Token::MarkEnd => self.mark = self.mark.saturating_sub(1),
         }
     }
 
