@@ -63,7 +63,7 @@ Notes: `<!-- footnotes.p0 -->`. Pages: `<!-- page 2 of 5 -->`.
 ```yaml
 authors:
   AC: Ann Counsel                    # the handle tags name
-page:      Letter portrait, margins 1in, header/footer 0.5in
+page:      Letter portrait, margins 1in, header/footer 0.5in   # columns 2, column gap 0.25in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left   # default style
   "#": Heading1, Calibri bold 16pt, before 12pt, keep-next

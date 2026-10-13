@@ -211,7 +211,8 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
   its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
   the YAML header names for its section (`page:` for the first,
-  `sections:` for the others).
+  `sections:` for the others). A page's text columns are its clauses
+  too: `columns 2`, and `column gap 0.25in` when not Word's 0.5in.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
 - `rev`: in the accept and reject views, every revision the paragraph

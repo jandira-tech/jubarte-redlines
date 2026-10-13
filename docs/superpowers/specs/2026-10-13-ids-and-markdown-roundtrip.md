@@ -432,3 +432,55 @@ The step-by-step plan is `docs/superpowers/plans/2026-10-13-ids-consolidation.md
 11. Anchored mode, automatic, with `--standalone`.
 12. Long ids: grammar, escaping, keys, relationships in `read --json`, `--long-id`.
 13. Stamping, behind the Word gate (§4.6).
+
+## 8. The Markdown writer: what to take from remark-docx and mdast2docx
+
+Arthur, 2026-10-13: eight agents compared jubarte with
+[remark-docx](https://github.com/inokawa/remark-docx) and
+[mdast2docx](https://github.com/md2docx/mdast2docx) file by file
+(`jubarte-loop/cli-std/remarkdocx/CONSOLIDATED.md` and the per-slice
+reports beside it). Ranked:
+
+1. **LaTeX → OMML writer** (all four math reports). Turn on `ENABLE_MATH`,
+   give `Content` a math arm, and write the inverse of the reader's
+   OMML→LaTeX table (`from_docx/mod.rs:2302-2448`). Display =
+   `m:oMathPara` (both TS libraries get this wrong). Turns `math.md` green.
+2. **Heading bookmarks** (empryo inline, empryo three-way, crush core).
+   Done on branch 25a (9eafa752): a heading a link names gets the GitHub
+   slug as its bookmark; unnamed headings get none; names over 40
+   characters are cut and names that start with no letter take `_`, both
+   checked in Word. Open from pi's review: duplicates must follow
+   github-slugger (retry the suffixed name: `Intro`, `Intro`, `Intro 1` →
+   `intro`, `intro-1`, `intro-1-1`), combining marks stay, a no-break space
+   is dropped (only U+0020 becomes `-`), an empty heading gets no bookmark.
+3. **Task items as Word's own checklist** (crush core and empryo
+   three-way named mdast2docx's `w14:checkbox` content control; pi preferred
+   numbering glyphs). Arthur's Word sample
+   (`tests/fixtures/agent-view/word-checklist.docx`, Word's PDF beside it in
+   the reports folder) settles it, to be mimicked exactly: a bullet
+   `w:abstractNum` whose nine levels are all `w:lvlText` U+F0A8 in
+   Wingdings (`w:ind` left 720·(level+1), hanging 360), on `ListParagraph`
+   items; a checked item is `<w:strike/>` on the paragraph mark's `w:rPr`
+   and on every run (the box takes the mark's formatting, so it is struck
+   too); no `w:sdt`, no ☐/☑ text. The reader prints `- [ ]` / `- [x]` from
+   that list and the struck mark, and the strikes of a checked item print no
+   `~~`. Today the writer prints `☒ ` text after a bullet and the reader
+   prints the sample as plain bullets, dropping the strike (`w:val="1"`).
+4. **Inline HTML breadth**: `<b>/<strong>`, `<i>/<em>`, `<s>/<del>`,
+   `<code>`, `<mark>` on the existing counters; warn when HTML is dropped.
+5. **Tracking and columns.** The element is `w:trackRevisions` (there is no
+   `trackChanges`): the reader already prints `track_changes: on|off`, the
+   writer ignores it; honour the key rather than turn tracking on for every
+   output with revisions. Columns: done on branch 25a — `columns 2` and
+   `column gap 0.25in` are `page:` clauses written as `w:cols`.
+6. **Smaller**: `wp:docPr title` for a picture's title; linked
+   `FootnoteTextChar`; a code span inside a link keeps its code face
+   (`xml.rs:608` lets `link` mask `code`); fuller core properties from
+   front matter; `fontTable` entries for legend fonts; remark-docx's fixture
+   shapes (headings in lists and quotes, notes inside links/bold/quotes,
+   reference links, fence info strings, nested tasks, an HTML zoo) as new
+   tests.
+
+Not adopted: one footnote id for two references to `[^n]` (Word gives a
+note one reference; a second mention is a `NOTEREF` field), remark-docx's
+quote indent on headings, mdast2docx's `emphasisMark` beside a highlight.
