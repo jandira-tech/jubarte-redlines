@@ -14,6 +14,14 @@ everything else follows from the evidence in §6 and from rules already agreed (
 prints short ids; the hierarchy rule: position and depth come from the real structure, never from
 marker names). Nothing here is implemented unless §7 says so.
 
+## 0. The rule above the rules
+
+**Decided (Arthur, 2026-10-13): docx → md → docx → md is as lossless as possible, and nothing that has
+a short id is ever lost.** Ids exist so jubarte can rebuild the docx the user expects (the JSON and
+the Markdown already name what the docx will hold). When an id must be regenerated, what matters is
+that the docx reflects the content the user sees: a regenerated id never drops or changes content,
+and content without a good key is kept (its key is synthetic and marked), never tossed.
+
 ## 1. The model in one paragraph
 
 A document has three layers of names. **Short ids** (`p12`, `t0.row1.cell2`, `r5`, `c3`) are
