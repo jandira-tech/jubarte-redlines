@@ -1812,8 +1812,8 @@ fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<
 /// each once, in the order they first appear. The task is the first token
 /// before `--` that is neither an option nor an option's value, compare
 /// when that is no task (the shorthand); a retired flag counts only on the
-/// task it is retired on, and a `-p`/`--location`
-/// value of `edit` or `add` in 0.12's cell form counts as [`RETIRED_CELL`].
+/// task it is retired on, and a `-p`/`--location` value of `edit` or `add`
+/// in 0.12's cell form (`t0.r1.c1`) counts as a retired spelling.
 /// Pure: no I/O.
 pub fn retired_spellings<'a>(
     argv: impl IntoIterator<Item = &'a str>,
