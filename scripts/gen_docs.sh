@@ -9,6 +9,7 @@
 #   - the Rust `jubarte` CLI reference (built from source, clap help)
 #   - the Python `jubarte-redlines` CLI reference and API reference
 #   - the npm `jubarte-redlines` CLI reference and the jubarte-wasm API
+#   - docs/flags_datetime.md (every flag) and docs/locations.md (every id)
 #
 # `scripts/gen_docs.sh --check` regenerates and exits non-zero when the
 # committed pages drifted (what the CI docs job runs).
@@ -29,7 +30,7 @@ fi
 
 GENERATED_DOCS=(docs/rust.md docs/python.md docs/javascript.md README.md
   README.crates.md jubarte-python/README.md jubarte-wasm/npm/README.md
-  jubarte-wasm/cli/README.md)
+  jubarte-wasm/cli/README.md docs/flags_datetime.md docs/locations.md)
 
 # --- Rust CLI ----------------------------------------------------------------
 # Build the binary so the reference quotes the flags of this source tree. In
@@ -49,6 +50,9 @@ python3 scripts/gen_cli_docs.py \
 python3 scripts/gen_cli_docs.py --summary \
   --runner "$ROOT/target/debug/jubarte" \
   --display jubarte --file README.md --marker cli-summary
+# Every flag (clap's model) and every id the CLI prints or takes.
+scripts/cli_flags.sh
+python3 scripts/cli_locations.py
 
 # --- Python CLI + API ---------------------------------------------------------
 PY=$ROOT/jubarte-python/.venv/bin/python
