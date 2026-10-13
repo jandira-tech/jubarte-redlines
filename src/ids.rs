@@ -2,28 +2,27 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The one grammar of the ids jubarte prints and reads.
+//! The one grammar of the ids jubarte prints and reads: [`ShortId`]
+//! (`src/ids/short.rs`, spec 2026-10-13 §2 and §2.1). The functions here are
+//! the options' views of it: a change (`r12`, `r1+2`, `header1.r1`), a
+//! comment (`c27`), the text a comment covers (`c27.text`), and what `-p`
+//! takes (a paragraph `p12`, a story `header1` or its paragraph
+//! `header1.p2`, a cell `t0.row1.cell2[.p1]`, a comment, or changes).
 //!
-//! - **Revisions** (tracked changes): `r12`, `12`, `r1+2` (both), `header1.r1`,
-//!   `footnotes.r3`, the long `body:rev:12`; 0.12's printed `#12` and `#1+2`
-//!   still parse.
-//! - **Comments:** `c27`, `27`; 0.12's `#c27` still parses. `c27.text` is
-//!   the text comment 27 covers, for `edit` (`#c27.text` parses, never
-//!   printed).
-//! - **Paragraphs:** `p12`, `12`, `header1` (its first paragraph),
-//!   `header1.p2`, `footnotes.p3`, a cell's `t0.row1.cell2[.p1]`, the long
-//!   `body:p:12`; 0.12's cell form `t0.r1.c2[.p1]` still parses.
+//! Arthur, 2026-10-13: "We should strictly have the settled short IDs or long
+//! IDs. Everything else should be expired." Bare numbers (`12`), 0.12's
+//! `#12`, `#c27` and `t0.r1.c2` are refused, naming the settled spelling.
+//! The long ids `read --json` still prints (`body:rev:12`, `body:p:12`) parse
+//! until the settled long ids (spec §4) replace them in the JSON; they expire
+//! with that change, so jubarte never prints an id it refuses.
 //!
 //! This module reads syntax only. Whether a story, paragraph, change or
 //! comment exists is decided against a document by `edit` (`-p`) and
 //! [`crate::changes`] (`--id`). Every number has one spelling: ASCII digits
-//! without leading zeros, so two tokens never name one element; a long
-//! change id carries the `w:id` as the document spells it, so a change whose
-//! `w:id` the short form cannot spell (`007`) is still named. Every short
-//! id it prints uses only `[a-z0-9.+:-]` and never starts with `#`, `=`, `~`
-//! or `-`, so it is safe unquoted in bash, csh and zsh; a long id carries
-//! the story and `w:id` the document gives it. `body.r12` and `body.p2`
-//! parse (the body is a story too) but are never printed.
+//! without leading zeros. A long change id carries the `w:id` as the
+//! document spells it, so a change whose `w:id` the short form cannot spell
+//! (`007`) is still named. Every short id is safe unquoted in bash, csh and
+//! zsh.
 
 use std::fmt;
 use std::str::FromStr;
@@ -34,39 +33,33 @@ mod short;
 pub use short::{SHORT_EXPECTED, ShortId, Step, Story};
 
 /// Why a change id was refused.
-pub const CHANGE_EXPECTED: &str = "expected a change id such as r12, header1.r1 or body:rev:12";
+pub const CHANGE_EXPECTED: &str = "expected a change id such as r12, r1+2 or header1.r1";
 /// Why a comment id was refused.
-pub const COMMENT_EXPECTED: &str = "expected a comment id such as c27 or 27";
+pub const COMMENT_EXPECTED: &str = "expected a comment id such as c27";
 /// Why a `-p` value was refused, when no narrower reason applies.
-pub const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12 or 12), a story paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5), the text a comment covers (c5.text) or a revision (r12)";
+pub const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12), a story or its paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5), the text a comment covers (c5.text) or a revision (r12)";
+/// Why a settled id `-p` cannot edit yet was refused.
+pub const LOCATION_NOT_YET: &str = "a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet";
 /// Why a table id without its row and cell was refused.
 pub const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row1.cell2";
 /// Why a row or cell without its table was refused.
 pub const CELL_NEEDS_TABLE: &str = "a row or cell needs its table, as t0.row1.cell2";
 
-/// The change spellings the manifest advertises.
-pub const CHANGE_SPELLINGS: &[&str] = &[
-    "r12",
-    "12",
-    "r1+2",
-    "header1.r1",
-    "footnotes.r3",
-    "body:rev:12",
-];
+/// The change spellings the manifest advertises: the settled ones only;
+/// the long ids the JSON prints parse but are not advertised (module doc).
+pub const CHANGE_SPELLINGS: &[&str] = &["r12", "r1+2", "header1.r1", "footnotes.r3"];
 /// The comment spellings the manifest advertises.
-pub const COMMENT_SPELLINGS: &[&str] = &["c27", "27"];
+pub const COMMENT_SPELLINGS: &[&str] = &["c27"];
 /// The spellings of the text a comment covers the manifest advertises.
 pub const COMMENT_TEXT_SPELLINGS: &[&str] = &["c27.text"];
 /// The paragraph spellings the manifest advertises.
 pub const PARAGRAPH_SPELLINGS: &[&str] = &[
     "p12",
-    "12",
     "header1",
     "header1.p2",
     "footnotes.p3",
     "t0.row1.cell2",
     "t0.row1.cell2.p1",
-    "body:p:12",
 ];
 
 /// The table spellings the manifest advertises (rows and cells sit under
@@ -133,17 +126,16 @@ impl ChangeId {
 
     /// The id the view and listings print: `r12` in the body,
     /// `header1.r1` elsewhere, the long id when the story or the `w:id`
-    /// has no short spelling.
+    /// has no short spelling ([`ShortId`] decides: what is printed parses).
     pub fn short(&self) -> String {
-        if number::<u32>(&self.wid).is_none() {
-            return self.long();
-        }
-        if self.story == "body" {
+        let short = if self.story == "body" {
             format!("r{}", self.wid)
-        } else if is_story(&self.story) {
-            format!("{}.r{}", self.story, self.wid)
         } else {
-            self.long()
+            format!("{}.r{}", self.story, self.wid)
+        };
+        match short.parse::<ShortId>() {
+            Ok(ShortId::Change { .. }) => short,
+            _ => self.long(),
         }
     }
 
@@ -199,72 +191,60 @@ fn word_number(text: &str, prefix: &str) -> Option<usize> {
     number(text.strip_prefix(prefix)?)
 }
 
-/// Whether `stem` can be a short story id: `[a-z][a-z0-9]*`, neither a bare
-/// `p`, `t`, `c` or `r` nor shaped like `p12`, `t0`, `c5`, `r1`, `row1` or
-/// `cell1`. Syntactic only; the document decides whether the story exists.
-pub fn is_story(stem: &str) -> bool {
-    let mut bytes = stem.bytes();
-    let well_formed = bytes.next().is_some_and(|b| b.is_ascii_lowercase())
-        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-    well_formed
-        && !["p", "t", "c", "r"].contains(&stem)
-        && !["p", "t", "c", "r", "row", "cell"]
-            .iter()
-            .any(|prefix| digit_shaped(stem, prefix))
-}
-
-/// `1+2+3` → the `w:id`s, each a canonical `u32`.
-fn plus_list(text: &str) -> Option<Vec<String>> {
-    text.split('+')
-        .map(|part| number::<u32>(part).map(|n| n.to_string()))
-        .collect()
-}
-
-/// The changes a change id names: `r12`, `12`, `#12`, `r1+2`, `header1.r1`,
-/// `header1.r1+2`, `body:rev:12`. A story is checked only syntactically.
+/// The changes a change id names: `r12`, `r1+2`, `header1.r1`, and the
+/// long `body:rev:12` the JSON still prints. A story is checked only
+/// syntactically.
 pub fn parse_change_ids(token: &str) -> Result<Vec<ChangeId>, IdError> {
-    change_ids(token).ok_or_else(|| IdError::new(token, CHANGE_EXPECTED))
-}
-
-fn change_ids(token: &str) -> Option<Vec<ChangeId>> {
     if token.contains(":rev:") {
-        return ChangeId::from_long(token).map(|id| vec![id]);
+        return ChangeId::from_long(token)
+            .map(|id| vec![id])
+            .ok_or_else(|| IdError::new(token, CHANGE_EXPECTED));
     }
-    let body = |wids: Vec<String>| wids.into_iter().map(|w| ChangeId::new("body", w)).collect();
-    if let Some(rest) = token.strip_prefix('#') {
-        return plus_list(rest).map(body);
+    match token.parse::<ShortId>() {
+        Ok(ShortId::Change { story, wids }) => Ok(wids
+            .into_iter()
+            .map(|wid| ChangeId::new(story.to_string(), wid.to_string()))
+            .collect()),
+        Ok(_) => Err(IdError::new(token, CHANGE_EXPECTED)),
+        Err(e) => Err(IdError {
+            hint: settled_as(token, 'r').or(e.hint),
+            ..IdError::new(token, CHANGE_EXPECTED)
+        }),
     }
-    if let Some(wids) = plus_list(token) {
-        return Some(body(wids));
-    }
-    if let Some(wids) = token.strip_prefix('r').and_then(plus_list) {
-        return Some(body(wids));
-    }
-    let (story, rest) = token.split_once('.')?;
-    let wids = plus_list(rest.strip_prefix('r')?)?;
-    is_story(story).then(|| wids.into_iter().map(|w| ChangeId::new(story, w)).collect())
 }
 
-/// The comment a comment id names: `c27`, `27`, or 0.12's `#c27`.
+/// The comment a comment id names: `c27`.
 pub fn parse_comment_id(token: &str) -> Result<u32, IdError> {
-    let digits = token
-        .strip_prefix("#c")
-        .or_else(|| token.strip_prefix('c'))
-        .unwrap_or(token);
-    number(digits).ok_or_else(|| IdError::new(token, COMMENT_EXPECTED))
+    match token.parse::<ShortId>() {
+        Ok(ShortId::Comment(n)) => Ok(n),
+        Ok(_) => Err(IdError::new(token, COMMENT_EXPECTED)),
+        Err(e) => Err(IdError {
+            hint: settled_as(token, 'c').or(e.hint),
+            ..IdError::new(token, COMMENT_EXPECTED)
+        }),
+    }
 }
 
-/// `c5.text` (or `#c5.text`) → 5: the comment whose covered text a `-p`
-/// or a plan's `paragraph` names.
+/// The settled spelling of bare numbers where the option says what they
+/// name (spec §2, "by the option"): `--id 12` → `r12`, `--id 1+2` → `r1+2`,
+/// a comment's `27` → `c27`; only when that spelling parses.
+fn settled_as(token: &str, prefix: char) -> Option<String> {
+    let bare = !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit() || b == b'+');
+    let id = format!("{prefix}{token}");
+    (bare && id.parse::<ShortId>().is_ok()).then_some(id)
+}
+
+/// `c5.text` → 5: the comment whose covered text a `-p` or a plan's
+/// `paragraph` names.
 pub fn comment_text_id(token: &str) -> Option<u32> {
-    let head = token.strip_suffix(".text")?;
-    (digit_shaped(head, "c") || digit_shaped(head, "#c"))
-        .then(|| parse_comment_id(head).ok())
-        .flatten()
+    match token.parse::<ShortId>() {
+        Ok(ShortId::CommentText(n)) => Some(n),
+        _ => None,
+    }
 }
 
-/// A serde `deserialize_with` for a comment id: a number, or a string
-/// [`parse_comment_id`] reads.
+/// A serde `deserialize_with` for a comment id: a JSON number (a typed
+/// value, not a spelling), or a string [`parse_comment_id`] reads (`"c27"`).
 pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -278,110 +258,12 @@ pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, 
     }
 }
 
-/// A cell's paragraph: `t0.row1.cell2[.p1]`, or 0.12's `t0.r1.c2[.p1]`, as
-/// `(table, row, cell, paragraph)`. The two forms do not mix.
-pub fn cell_path(token: &str) -> Option<(usize, usize, usize, Option<usize>)> {
-    let parts: Vec<&str> = token.split('.').collect();
-    let (table, row, cell, paragraph) = match parts.as_slice() {
-        [t, r, c] => (*t, *r, *c, None),
-        [t, r, c, p] => (*t, *r, *c, Some(*p)),
-        _ => return None,
-    };
-    let table = short_number(table, 't')?;
-    let (row, cell) = match (word_number(row, "row"), word_number(cell, "cell")) {
-        (Some(row), Some(cell)) => (row, cell),
-        _ => (short_number(row, 'r')?, short_number(cell, 'c')?),
-    };
-    let paragraph = match paragraph {
-        Some(p) => Some(short_number(p, 'p')?),
-        None => None,
-    };
-    Some((table, row, cell, paragraph))
-}
-
-/// Whether `token` is a cell in 0.12's retired form (`t0.r1.c2`).
-pub fn is_retired_cell(token: &str) -> bool {
-    cell_path(token).is_some()
-        && token
-            .split('.')
-            .nth(1)
-            .is_some_and(|row| short_number(row, 'r').is_some())
-}
-
-/// What a `-p` value names (see the module doc). The first matching form
-/// wins: a comment, a change, a bare number (a body paragraph), a body
-/// paragraph, a table cell, a story paragraph, a long paragraph id.
+/// What a `-p` value names (see the module doc).
 pub fn parse_location(token: &str) -> Result<Location, IdError> {
     let refuse = |why| Err(IdError::new(token, why));
-    if let Some(head) = token.strip_suffix(".text")
-        && (digit_shaped(head, "c") || digit_shaped(head, "#c"))
-    {
-        return match parse_comment_id(head) {
-            Ok(id) => Ok(Location::CommentText(id)),
-            Err(_) => refuse(LOCATION_EXPECTED),
-        };
-    }
-    if digit_shaped(token, "c") || digit_shaped(token, "#c") {
-        return match parse_comment_id(token) {
-            Ok(id) => Ok(Location::Comment(id)),
-            Err(_) => refuse(LOCATION_EXPECTED),
-        };
-    }
-    let change_shaped = token.starts_with('#')
-        || token.contains(":rev:")
-        || token
-            .strip_prefix('r')
-            .is_some_and(|rest| plus_list(rest).is_some())
-        || token.split_once('.').is_some_and(|(story, rest)| {
-            is_story(story)
-                && rest
-                    .strip_prefix('r')
-                    .is_some_and(|r| plus_list(r).is_some())
-        });
-    if change_shaped {
-        return match change_ids(token) {
-            Some(ids) => Ok(Location::Changes(ids)),
-            None => refuse(LOCATION_EXPECTED),
-        };
-    }
-    if let Some(n) = number::<usize>(token) {
-        return Ok(Location::Paragraph(format!("p{n}")));
-    }
-    if short_number(token, 'p').is_some() {
-        return Ok(Location::Paragraph(token.to_string()));
-    }
-    let head = token.split('.').next().unwrap_or(token);
-    if short_number(head, 't').is_some() {
-        if cell_path(token).is_some() {
-            return Ok(Location::Paragraph(token.to_string()));
-        }
-        // Only a table, or a table and a row, lacks its cell.
-        let missing_cell = match token.split('.').collect::<Vec<_>>().as_slice() {
-            [_] => true,
-            [_, row] => word_number(row, "row").is_some() || short_number(row, 'r').is_some(),
-            _ => false,
-        };
-        return refuse(if missing_cell {
-            TABLE_NEEDS_CELL
-        } else {
-            LOCATION_EXPECTED
-        });
-    }
-    let rest_follows = token.len() > head.len();
-    if word_number(head, "row").is_some()
-        || word_number(head, "cell").is_some()
-        || (rest_follows
-            && (short_number(head, 'r').is_some() || short_number(head, 'c').is_some()))
-    {
-        return refuse(CELL_NEEDS_TABLE);
-    }
-    if is_story(head) {
-        let rest: Vec<&str> = token.split('.').skip(1).collect();
-        return match rest.as_slice() {
-            [] => Ok(Location::Paragraph(token.to_string())),
-            [p] if short_number(p, 'p').is_some() => Ok(Location::Paragraph(token.to_string())),
-            _ => refuse(LOCATION_EXPECTED),
-        };
+    // The long ids the JSON still prints (module doc).
+    if token.contains(":rev:") {
+        return parse_change_ids(token).map(Location::Changes);
     }
     if let Some((story, n)) = token.split_once(":p:")
         && !story.is_empty()
@@ -390,7 +272,44 @@ pub fn parse_location(token: &str) -> Result<Location, IdError> {
     {
         return Ok(Location::Paragraph(token.to_string()));
     }
-    refuse(LOCATION_EXPECTED)
+    let head = token.split('.').next().unwrap_or(token);
+    if word_number(head, "row").is_some() || word_number(head, "cell").is_some() {
+        return refuse(CELL_NEEDS_TABLE);
+    }
+    let id = match token.parse::<ShortId>() {
+        Ok(id) => id,
+        Err(e) => {
+            return Err(IdError {
+                hint: e.hint,
+                ..IdError::new(token, LOCATION_EXPECTED)
+            });
+        }
+    };
+    match id {
+        ShortId::Comment(n) => Ok(Location::Comment(n)),
+        ShortId::CommentText(n) => Ok(Location::CommentText(n)),
+        ShortId::Change { .. } => parse_change_ids(token).map(Location::Changes),
+        ShortId::Block { story, path } => match (&story, path.as_slice()) {
+            (Story::Body, [Step::Paragraph(_)]) | (Story::Part(_), [] | [Step::Paragraph(_)]) => {
+                Ok(Location::Paragraph(token.to_string()))
+            }
+            (Story::Body, [Step::Table(_), Step::Row(_), Step::Cell(_)])
+            | (
+                Story::Body,
+                [
+                    Step::Table(_),
+                    Step::Row(_),
+                    Step::Cell(_),
+                    Step::Paragraph(_),
+                ],
+            ) => Ok(Location::Paragraph(token.to_string())),
+            (Story::Body, [Step::Table(_)] | [Step::Table(_), Step::Row(_)]) => {
+                refuse(TABLE_NEEDS_CELL)
+            }
+            _ => refuse(LOCATION_NOT_YET),
+        },
+        _ => refuse(LOCATION_NOT_YET),
+    }
 }
 
 /// The short form of a long paragraph id: `body:p:12` → `p12`,
@@ -400,22 +319,16 @@ pub fn short_paragraph(long: &str) -> String {
     let Some((story, n)) = long.split_once(":p:") else {
         return long.to_string();
     };
-    match number::<usize>(n) {
+    let short = match number::<usize>(n) {
         Some(n) if story == "body" => format!("p{n}"),
-        Some(0) if is_story(story) => story.to_string(),
-        Some(n) if is_story(story) => format!("{story}.p{n}"),
+        Some(0) => story.to_string(),
+        Some(n) => format!("{story}.p{n}"),
+        None => return long.to_string(),
+    };
+    match short.parse::<ShortId>() {
+        Ok(ShortId::Block { .. }) => short,
         _ => long.to_string(),
     }
-}
-
-/// The body paragraph `p12` or `12` names.
-pub fn paragraph_number(token: &str) -> Option<usize> {
-    short_number(token, 'p').or_else(|| number(token))
-}
-
-/// The table `t0` names.
-pub fn table_number(token: &str) -> Option<usize> {
-    short_number(token, 't')
 }
 
 #[cfg(test)]
@@ -428,7 +341,9 @@ mod tests {
 
     #[test]
     fn every_change_spelling_names_the_same_change() {
-        for token in ["r12", "#12", "12", "body:rev:12", "body.r12"] {
+        // The long id the JSON prints parses until the settled long ids
+        // replace it (module doc).
+        for token in ["r12", "body:rev:12"] {
             assert_eq!(parse_change_ids(token), Ok(vec![body("12")]), "{token}");
         }
         for token in ["header1.r1", "header1:rev:1"] {
@@ -438,7 +353,7 @@ mod tests {
                 "{token}"
             );
         }
-        for token in ["r1+2", "#1+2", "1+2"] {
+        for token in ["r1+2"] {
             assert_eq!(
                 parse_change_ids(token),
                 Ok(vec![body("1"), body("2")]),
@@ -447,10 +362,18 @@ mod tests {
         }
         let pair = parse_change_ids("header1.r1+2").unwrap();
         assert_eq!(pair[1].long(), "header1:rev:2");
-        assert_eq!(
-            parse_change_ids("bogus.r1"),
-            Ok(vec![ChangeId::new("bogus", "1")])
-        );
+        for (expired, hint) in [
+            ("#12", Some("r12")),
+            ("12", Some("r12")),
+            ("#1+2", Some("r1+2")),
+            ("1+2", Some("r1+2")),
+            ("01", None),
+            ("body.r12", None),
+            ("bogus.r1", None),
+        ] {
+            let refused = parse_change_ids(expired).unwrap_err();
+            assert_eq!(refused.hint.as_deref(), hint, "{expired}");
+        }
         assert_eq!(
             parse_change_ids("Header_1:rev:x9"),
             Ok(vec![ChangeId::new("Header_1", "x9")])
@@ -518,10 +441,8 @@ mod tests {
             "a:b:rev:1",
         ] {
             let err = parse_change_ids(token).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                format!("{token}: expected a change id such as r12, header1.r1 or body:rev:12")
-            );
+            assert_eq!(err.given, token);
+            assert_eq!(err.expected, CHANGE_EXPECTED, "{token}");
         }
         assert_eq!(
             parse_change_ids("r4294967295"),
@@ -530,9 +451,11 @@ mod tests {
     }
 
     #[test]
-    fn comment_ids_take_three_spellings() {
-        for token in ["c27", "#c27", "27"] {
-            assert_eq!(parse_comment_id(token), Ok(27), "{token}");
+    fn comment_ids_take_one_spelling() {
+        assert_eq!(parse_comment_id("c27"), Ok(27));
+        for (expired, hint) in [("#c27", "c27"), ("27", "c27")] {
+            let refused = parse_comment_id(expired).unwrap_err();
+            assert_eq!(refused.hint.as_deref(), Some(hint), "{expired}");
         }
         assert_eq!(parse_comment_id("c4294967295"), Ok(u32::MAX));
         for token in [
@@ -546,9 +469,10 @@ mod tests {
             "c 5",
             "c5.p1",
         ] {
+            let err = parse_comment_id(token).unwrap_err();
             assert_eq!(
-                parse_comment_id(token).unwrap_err().to_string(),
-                format!("{token}: expected a comment id such as c27 or 27")
+                (err.given.as_str(), err.expected),
+                (token, COMMENT_EXPECTED)
             );
         }
     }
@@ -560,23 +484,28 @@ mod tests {
             #[serde(deserialize_with = "comment_id_de")]
             comment_id: u32,
         }
-        for json in [
-            r#"{"comment_id":5}"#,
-            r#"{"comment_id":"c5"}"#,
-            r##"{"comment_id":"#c5"}"##,
-            r#"{"comment_id":"5"}"#,
-        ] {
+        // A JSON number is a typed value, not a spelling; a string is an id.
+        for json in [r#"{"comment_id":5}"#, r#"{"comment_id":"c5"}"#] {
             let op: Op = serde_json::from_str(json).unwrap();
             assert_eq!(op.comment_id, 5, "{json}");
         }
-        let err = serde_json::from_str::<Op>(r#"{"comment_id":"p5"}"#)
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(
-            err.contains("p5: expected a comment id such as c27 or 27"),
-            "{err}"
-        );
+        for (json, message) in [
+            (
+                r#"{"comment_id":"p5"}"#,
+                "p5: expected a comment id such as c27",
+            ),
+            (
+                r##"{"comment_id":"#c5"}"##,
+                "#c5: expected a comment id such as c27; the settled spelling is c5",
+            ),
+            (
+                r#"{"comment_id":"5"}"#,
+                "5: expected a comment id such as c27; the settled spelling is c5",
+            ),
+        ] {
+            let err = serde_json::from_str::<Op>(json).err().unwrap().to_string();
+            assert!(err.contains(message), "{err}");
+        }
     }
 
     #[test]
@@ -584,47 +513,65 @@ mod tests {
         use Location::*;
         let ok = |token: &str| parse_location(token).unwrap();
         assert_eq!(ok("c5"), Comment(5));
-        assert_eq!(ok("#c5"), Comment(5));
         assert_eq!(ok("c5.text"), CommentText(5));
-        assert_eq!(ok("#c5.text"), CommentText(5));
         assert_eq!(ok("r12"), Changes(vec![body("12")]));
-        assert_eq!(ok("#12"), Changes(vec![body("12")]));
         assert_eq!(ok("r1+2"), Changes(vec![body("1"), body("2")]));
         assert_eq!(
             ok("header1.r1"),
             Changes(vec![ChangeId::new("header1", "1")])
         );
         assert_eq!(ok("body:rev:3"), Changes(vec![body("3")]));
-        assert_eq!(ok("27"), Paragraph("p27".into()));
-        assert_eq!(ok("0"), Paragraph("p0".into()));
         for token in [
             "p51000",
             "t0.row1.cell2",
             "t0.row1.cell2.p1",
-            "t0.r1.c2",
-            "t0.r1.c2.p1",
             "header1",
             "header1.p2",
             "footnotes.p3",
             "endnotes.p0",
             "body:p:3",
-            "header",
-            "rows",
         ] {
             assert_eq!(ok(token), Paragraph(token.into()), "{token}");
+        }
+        // Arthur, 2026-10-13: everything but the settled ids is expired,
+        // and refused with the settled spelling.
+        for (expired, hint) in [
+            ("#c5", "c5"),
+            ("#c5.text", "c5.text"),
+            ("#12", "r12"),
+            ("27", "p27, r27 or c27"),
+            ("0", "p0, r0 or c0"),
+            ("t0.r1.c2", "t0.row1.cell2"),
+            ("t0.r1.c2.p1", "t0.row1.cell2.p1"),
+        ] {
+            let refused = parse_location(expired).unwrap_err();
+            assert_eq!(refused.hint.as_deref(), Some(hint), "{expired}");
+            assert!(refused.to_string().contains(LOCATION_EXPECTED), "{refused}");
+        }
+        // Settled ids -p does not edit yet.
+        for token in [
+            "p3-p7",
+            "t0.row1.cell2.box0.p0",
+            "p14.box0.p0",
+            "cc0",
+            "s0",
+            "toc0",
+        ] {
+            let refused = parse_location(token).unwrap_err();
+            assert_eq!(refused.expected, LOCATION_NOT_YET, "{token}");
         }
     }
 
     #[test]
     fn refused_locations_say_why() {
         let why = |token: &str| parse_location(token).unwrap_err().to_string();
-        for token in ["t0", "t0.row1", "t0.r1", "t12"] {
+        for token in ["t0", "t0.row1", "t12"] {
             assert_eq!(
                 why(token),
                 format!("{token}: a table id needs a row and a cell, as t0.row1.cell2")
             );
         }
-        for token in ["row1", "row1.cell2", "cell2", "cell2.p1", "r1.c2", "c2.p1"] {
+        for token in ["row1", "row1.cell2", "cell2", "cell2.p1"] {
             assert_eq!(
                 why(token),
                 format!("{token}: a row or cell needs its table, as t0.row1.cell2"),
@@ -632,7 +579,12 @@ mod tests {
         }
         for token in [
             "1+2",
-            "p5-p7",
+            "t0.r1",
+            "r1.c2",
+            "c2.p1",
+            "header",
+            "rows",
+            "bogus.p1",
             "p5-",
             "-p7",
             "5-7",
@@ -651,7 +603,11 @@ mod tests {
             "t0.row01.cell2",
             "t0.row1.cell2.p1.p2",
         ] {
-            assert_eq!(why(token), format!("{token}: {LOCATION_EXPECTED}"));
+            assert!(
+                why(token).starts_with(&format!("{token}: {LOCATION_EXPECTED}")),
+                "{}",
+                why(token)
+            );
         }
     }
 
@@ -701,22 +657,6 @@ mod tests {
         ] {
             assert!(parse_location(token).is_err(), "{token}");
         }
-        assert_eq!(paragraph_number("p012"), None);
-        assert_eq!(paragraph_number("p0"), Some(0));
-    }
-
-    #[test]
-    fn cell_paths_read_both_forms_and_never_mix_them() {
-        let want = Some((0, 1, 2, Some(1)));
-        assert_eq!(cell_path("t0.row1.cell2.p1"), want);
-        assert_eq!(cell_path("t0.r1.c2.p1"), want);
-        assert_eq!(cell_path("t11.row119.cell11"), Some((11, 119, 11, None)));
-        assert_eq!(cell_path("t0.row1.c2"), None);
-        assert_eq!(cell_path("t0.r1.cell2"), None);
-        assert!(is_retired_cell("t0.r1.c2"));
-        assert!(is_retired_cell("t0.r1.c2.p1"));
-        assert!(!is_retired_cell("t0.row1.cell2"));
-        assert!(!is_retired_cell("t0.r1"));
     }
 
     #[test]
@@ -729,36 +669,13 @@ mod tests {
             ("footnotes:p:3", "footnotes.p3"),
             ("Header_1:p:2", "Header_1:p:2"),
             ("body:p:012", "body:p:012"),
+            // A story ShortId does not name keeps its long id: what is
+            // printed parses.
+            ("hdr:p:2", "hdr:p:2"),
+            ("styles:p:2", "styles:p:2"),
             ("p12", "p12"),
         ] {
             assert_eq!(short_paragraph(long), short, "{long}");
-        }
-        assert_eq!(paragraph_number("p12"), Some(12));
-        assert_eq!(paragraph_number("12"), Some(12));
-        assert_eq!(paragraph_number("p"), None);
-        assert_eq!(table_number("t0"), Some(0));
-        assert_eq!(table_number("t"), None);
-    }
-
-    #[test]
-    fn story_stems() {
-        for stem in [
-            "header1",
-            "footnotes",
-            "styles",
-            "hdr",
-            "body",
-            "row",
-            "cell",
-            "rows",
-        ] {
-            assert!(is_story(stem), "{stem}");
-        }
-        for stem in [
-            "", "Header1", "header_1", "1header", "p1", "t0", "c5", "r1", "row1", "cell2", "p01",
-            "p", "t", "c", "r",
-        ] {
-            assert!(!is_story(stem), "{stem}");
         }
     }
 

@@ -1786,16 +1786,10 @@ pub const RETIRED: &[Retired] = &[
     },
 ];
 
-/// The note 0.12's cell id form earns (`t0.r1.c2`, Task 2).
-const RETIRED_CELL: (&str, &str) = ("tN.rR.cC", "tN.rowR.cellC");
-
 /// One option as `argv` spells it: `-p`, `--location` (a long's `=value`
-/// split off), with the value it takes.
-struct Spelled<'a> {
+/// split off). The value it takes is skipped, not kept.
+struct Spelled {
     name: String,
-    /// The [`clap::Arg`] id, when `cmd` knows the option.
-    id: Option<String>,
-    value: Option<&'a str>,
 }
 
 /// How many values `arg` takes after it: `None` for a flag (an option `cmd`
@@ -1832,15 +1826,14 @@ fn short_arg(cmd: &clap::Command, short: char) -> Option<&clap::Arg> {
 /// up to the first token that is not an option, and the index of that one.
 /// A short cluster (`-qp t0`) is split; an option `cmd` does not know takes
 /// no value.
-fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<'a>>, usize) {
-    // The next token as a value, unless an optional value meets an option.
-    let next = |i: &mut usize, optional: bool| {
+fn spelled_options(cmd: &clap::Command, tokens: &[&str]) -> (Vec<Spelled>, usize) {
+    // Skip the next token as a value, unless an optional value meets an
+    // option.
+    let skip_value = |i: &mut usize, optional: bool| {
         let value = tokens.get(*i).copied();
-        if optional && value.is_none_or(|v| v.starts_with('-')) {
-            return None;
+        if !(optional && value.is_none_or(|v| v.starts_with('-'))) {
+            *i += 1;
         }
-        *i += 1;
-        value
     };
     let mut found = Vec::new();
     let mut i = 0;
@@ -1851,39 +1844,27 @@ fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<
                 Some((name, value)) => (name, Some(value)),
                 None => (long, None),
             };
-            let arg = long_arg(cmd, name);
-            let value = match (inline, value_taken(arg)) {
-                (Some(value), _) => Some(value),
-                (None, Some(optional)) => next(&mut i, optional),
-                (None, None) => None,
-            };
+            if inline.is_none()
+                && let Some(optional) = value_taken(long_arg(cmd, name))
+            {
+                skip_value(&mut i, optional);
+            }
             found.push(Spelled {
                 name: format!("--{name}"),
-                id: arg.map(|a| a.get_id().to_string()),
-                value,
             });
         } else if let Some(cluster) = token.strip_prefix('-').filter(|c| !c.is_empty()) {
             for (at, short) in cluster.char_indices() {
-                let arg = short_arg(cmd, short);
-                let id = arg.map(|a| a.get_id().to_string());
                 let name = format!("-{short}");
-                let Some(optional) = value_taken(arg) else {
-                    found.push(Spelled {
-                        name,
-                        id,
-                        value: None,
-                    });
+                let Some(optional) = value_taken(short_arg(cmd, short)) else {
+                    found.push(Spelled { name });
                     continue;
                 };
                 // The rest of the cluster is the value (`-pt0`, `-p=t0`),
                 // else the next token is.
-                let rest = &cluster[at + short.len_utf8()..];
-                let value = if rest.is_empty() {
-                    next(&mut i, optional)
-                } else {
-                    Some(rest.strip_prefix('=').unwrap_or(rest))
-                };
-                found.push(Spelled { name, id, value });
+                if cluster[at + short.len_utf8()..].is_empty() {
+                    skip_value(&mut i, optional);
+                }
+                found.push(Spelled { name });
                 break;
             }
         } else {
@@ -1897,8 +1878,8 @@ fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<
 /// each once, in the order they first appear. The task is the first token
 /// before `--` that is neither an option nor an option's value, compare
 /// when that is no task (the shorthand); a retired flag counts only on the
-/// task it is retired on, and a `-p`/`--location` value of `edit` or `add`
-/// in 0.12's cell form (`t0.r1.c1`) counts as a retired spelling.
+/// task it is retired on. Expired ids (`12`, `#12`, `t0.r1.c2`) are not
+/// notes: the id parsers refuse them, naming the settled spelling.
 /// Pure: no I/O.
 pub fn retired_spellings<'a>(
     argv: impl IntoIterator<Item = &'a str>,
@@ -1928,12 +1909,6 @@ pub fn retired_spellings<'a>(
                 if option.name == retired.old {
                     found.push((retired.old, retired.now));
                 }
-            }
-            if matches!(task, "edit" | "add")
-                && option.id.as_deref() == Some("location")
-                && option.value.is_some_and(crate::ids::is_retired_cell)
-            {
-                found.push(RETIRED_CELL);
             }
         }
         rest = rest.get(next + 1..).unwrap_or_default();
