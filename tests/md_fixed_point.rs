@@ -26,6 +26,10 @@ use regex::Regex;
 
 const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 
+/// The Markdown fixtures written by hand, in the view's dialect; every other
+/// one is a view of a docx listed in `views.txt`.
+const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
+
 fn jubarte(dir: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
         .args(args)
@@ -50,11 +54,21 @@ fn view(dir: &Path, docx: &str) -> Result<String, String> {
 }
 
 fn comparable(markdown: &str) -> String {
-    markdown
-        .lines()
-        .filter(|l| !l.starts_with("source: ") && !l.starts_with("sha256: "))
-        .map(|l| format!("{l}\n"))
-        .collect()
+    // Only the YAML header's own source:/sha256: lines name the file; a body
+    // paragraph that happens to start with those words is content.
+    let mut front_matter = false;
+    let mut out = String::new();
+    for (i, line) in markdown.lines().enumerate() {
+        if line == "---" {
+            front_matter = i == 0;
+        }
+        if front_matter && (line.starts_with("source: ") || line.starts_with("sha256: ")) {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
@@ -174,15 +188,18 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
 /// docx → md → docx → md must print the same Markdown twice.
 fn docx_case(dir: &Path, path: &Path) -> Case {
     let name = format!("docx -> md -> docx -> md   {}", path.display());
-    let copy = dir.join("source.docx");
-    let first = std::fs::copy(path, &copy)
+    // The source sits apart from the Markdown: once anchoring is automatic
+    // (spec §5.3), a Markdown beside its source would keep everything and
+    // measure nothing.
+    let first = std::fs::create_dir_all(dir.join("source"))
+        .and_then(|()| std::fs::copy(path, dir.join("source/source.docx")))
         .map_err(|e| format!("{}: {e}", path.display()))
-        .and_then(|_| view(dir, "source.docx"));
+        .and_then(|_| view(dir, "source/source.docx"));
     match first {
         Ok(first) => {
             let written = to_docx(dir, &first, "back");
             let docx = match &written {
-                Ok(written) => docx_verdicts(dir, "source.docx", written),
+                Ok(written) => docx_verdicts(dir, "source/source.docx", written),
                 Err(_) => Vec::new(),
             };
             let got = written.and_then(|docx| view(dir, &docx));
@@ -410,11 +427,20 @@ fn markdown_and_docx_round_trip_exactly() {
     let mut markdown: Vec<PathBuf> = std::fs::read_dir(FIXTURES)
         .unwrap()
         .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")))
         .collect();
     markdown.sort();
     assert!(!markdown.is_empty(), "no Markdown fixtures in {FIXTURES}");
     let sources = view_sources();
+    let unlisted: Vec<String> = markdown
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+        .filter(|f| !sources.contains_key(f) && !HAND_WRITTEN.contains(&f.as_str()))
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "every Markdown fixture is a view listed in views.txt or hand-written (HAND_WRITTEN): {unlisted:?}"
+    );
     for path in &markdown {
         let dir = tempfile::tempdir().unwrap();
         let file = path.file_name().unwrap().to_string_lossy().to_string();

@@ -59,7 +59,7 @@ Payments go to the account in [the payment portal](https://pay.example.com/north
 |Deliverable|Due|Owner|
 |-|-|-|
 |Route report|Day {~~10~>15~~}{>>r6+7 @JD<<}|Provider|
-|Cost review|Quarterly|*Both*|
+|Cost review|Quarterly|_Both_|
 
 <!-- p22 -->
 ## 4. Term

@@ -86,7 +86,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Every failing test binary, not just the first.
-      - run: cargo test --all-features --no-fail-fast
+      # The strict Markdown round trip is red until the reader work lands
+      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
+      # keeps reporting every other test.
+      - run: cargo test --all-features --no-fail-fast -- --skip markdown_and_docx_round_trip_exactly
 
   coverage:
     name: coverage
@@ -112,7 +115,7 @@ jobs:
       - name: Generate coverage (lcov)
         # Run every test, including doctests. Only cfg(test) implementation
         # is excluded from instrumentation; all production code is counted.
-        run: cargo llvm-cov --all-features --workspace --branch --doctests --lcov --output-path lcov.info
+        run: cargo llvm-cov --all-features --workspace --branch --doctests --lcov --output-path lcov.info -- --skip markdown_and_docx_round_trip_exactly
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -155,7 +158,10 @@ jobs:
       # and dev-dependencies and test-only code are exactly what a compile
       # check of the library skips. One Linux run on the declared
       # `rust-version` (Cargo.toml) beside the three stable runs above.
-      - run: cargo test --all-features --no-fail-fast
+      # The strict Markdown round trip is red until the reader work lands
+      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
+      # keeps reporting every other test.
+      - run: cargo test --all-features --no-fail-fast -- --skip markdown_and_docx_round_trip_exactly
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
