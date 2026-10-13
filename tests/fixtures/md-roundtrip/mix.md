@@ -53,7 +53,7 @@ _file\__{~~**14**~>_15_~~}{>>r8+7 @ASR<<}_.docx_
 <!-- p12 empty, break-del r32 @ASR -->
 
 <!-- t1 1x1, cells t1.row0 p13-p23, break-del r34 @ASR in p13; r36 @ASR in p14; r38 @ASR in p15; r39 @ASR in p16; r41 @ASR in p17; r43 @ASR in p18; r45 @ASR in p19; r47 @ASR in p20; r49 @ASR in p21; r51 @ASR in p22; r53 @ASR in p23 -->
-|{--import { DocxEditor } from '@eigenpal/docx-js-editor'               <br>import '@eigenpal/docx-js-editor/styles.css'               <br>function App({ file }: { file: ArrayBuffer }) {               <br>return (               <br>\<DocxEditor               <br>documentBuffer={file}               <br>onSave={(buffer) => uploadToServer(buffer)}               <br>/>               <br>)               <br>}               --}{>>r33 @ASR<<}|
+|{--import { DocxEditor } from '@eigenpal/docx-js-editor'               <br>import '@eigenpal/docx-js-editor/styles.css'               --}{>>r33 @ASR<<}<br>{--<br>function App({ file }: { file: ArrayBuffer }) {               <br>return (               <br>\<DocxEditor               <br>documentBuffer={file}               <br>onSave={(buffer) => uploadToServer(buffer)}               <br>/>               <br>)               <br>}               --}{>>r33 @ASR<<}|
 |-|
 
 <!-- p24 empty, break-del r55 @ASR -->
@@ -127,7 +127,7 @@ _file\__{~~**14**~>_15_~~}{>>r8+7 @ASR<<}_.docx_
 {--**Ref methods**         --}{>>r164 @ASR<<}
 
 <!-- t3 1x1, cells t3.row0 p79-p85, break-del r166 @ASR in p79; r168 @ASR in p80; r169 @ASR in p81; r171 @ASR in p82; r173 @ASR in p83; r175 @ASR in p84; r177 @ASR in p85 -->
-|{--const ref = useRef\<DocxEditorRef>(null)               <br>await ref.current.save() // ArrayBuffer of the .docx               <br>ref.current.getDocument() // current document object               <br>ref.current.setZoom(1.5) // set zoom to 150%               <br>ref.current.scrollToPage(3) // scroll to page 3               <br>ref.current.print() // print               --}{>>r165 @ASR<<}|
+|{--const ref = useRef\<DocxEditorRef>(null)               --}{>>r165 @ASR<<}<br>{--<br>await ref.current.save() // ArrayBuffer of the .docx               <br>ref.current.getDocument() // current document object               <br>ref.current.setZoom(1.5) // set zoom to 150%               <br>ref.current.scrollToPage(3) // scroll to page 3               <br>ref.current.print() // print               --}{>>r165 @ASR<<}|
 |-|
 
 <!-- p86 empty, break-del r179 @ASR -->
@@ -172,7 +172,7 @@ _file\__{~~**14**~>_15_~~}{>>r8+7 @ASR<<}_.docx_
 <!-- p101 empty, break-del r206 @ASR -->
 
 <!-- t5 1x2, cells t5.row0 p102-p109, break-del r208 @ASR in p102; r210 @ASR in p103; r212 @ASR in p104; r213 @ASR in p105; r215 @ASR in p106; r217 @ASR in p107; r219 @ASR in p108; r220 @ASR in p109 -->
-|{--**EigenPal**               <br>Maintainer · eigenpal.com               <br>signature · date               --}{>>r207 @ASR<<}|{--**Contributor**               <br>on behalf of the community               <br>signature · date               --}{>>r207 @ASR<<}|
+|{--**EigenPal**               <br>Maintainer · eigenpal.com               --}{>>r207 @ASR<<}<br>{--<br>signature · date               --}{>>r207 @ASR<<}|{--**Contributor**               <br>on behalf of the community               --}{>>r207 @ASR<<}<br>{--<br>signature · date               --}{>>r207 @ASR<<}|
 |-|-|
 
 <!-- p110 empty -->

@@ -53,7 +53,7 @@ file\_{~~**176**~>177~~}{>>r8+7 @AS<<}.docx
 <!-- p12 empty, break-del r34 @AS, in c16 -->
 
 <!-- t1 1x1, cells t1.row0 p13-p23, break-del r36 @AS in p13; r38 @AS in p14; r40 @AS in p15; r41 @AS in p16; r43 @AS in p17; r45 @AS in p18; r47 @AS in p19; r49 @AS in p20; r51 @AS in p21; r53 @AS in p22; r55 @AS in p23, in c16 -->
-|{--{==import { DocxEditor } from '@eigenpal/docx-js-editor'               ==}<br>{==import '@eigenpal/docx-js-editor/styles.css'               ==}<br>{==function App({ file }: { file: ArrayBuffer }) {               ==}<br>{==return (               ==}<br>{==\<DocxEditor               ==}<br>{==documentBuffer={file}               ==}<br>{==onSave={(buffer) => uploadToServer(buffer)}               ==}<br>{==/>               ==}<br>{==)               ==}<br>{==}               ==}--}{>>r35 @AS<<}|
+|{--{==import { DocxEditor } from '@eigenpal/docx-js-editor'               ==}<br>{==import '@eigenpal/docx-js-editor/styles.css'               ==}--}{>>r35 @AS<<}<br>{--<br>{==function App({ file }: { file: ArrayBuffer }) {               ==}<br>{==return (               ==}<br>{==\<DocxEditor               ==}<br>{==documentBuffer={file}               ==}<br>{==onSave={(buffer) => uploadToServer(buffer)}               ==}<br>{==/>               ==}<br>{==)               ==}<br>{==}               ==}--}{>>r35 @AS<<}|
 |-|
 
 <!-- p24 break-del r57 @AS, rev r58 @AS -->
@@ -128,7 +128,7 @@ file\_{~~**176**~>177~~}{>>r8+7 @AS<<}.docx
 {--**Ref methods**         --}{>>r167 @AS<<}
 
 <!-- t3 1x1, cells t3.row0 p79-p85, break-del r169 @AS in p79; r171 @AS in p80; r172 @AS in p81; r174 @AS in p82; r176 @AS in p83; r178 @AS in p84; r180 @AS in p85 -->
-|{--const ref = useRef\<DocxEditorRef>(null)               <br>await ref.current.save() // ArrayBuffer of the .docx               <br>ref.current.getDocument() // current document object               <br>ref.current.setZoom(1.5) // set zoom to 150%               <br>ref.current.scrollToPage(3) // scroll to page 3               <br>ref.current.print() // print               --}{>>r168 @AS<<}|
+|{--const ref = useRef\<DocxEditorRef>(null)               --}{>>r168 @AS<<}<br>{--<br>await ref.current.save() // ArrayBuffer of the .docx               <br>ref.current.getDocument() // current document object               <br>ref.current.setZoom(1.5) // set zoom to 150%               <br>ref.current.scrollToPage(3) // scroll to page 3               <br>ref.current.print() // print               --}{>>r168 @AS<<}|
 |-|
 
 <!-- p86 empty, break-del r182 @AS -->
@@ -191,7 +191,7 @@ file\_{~~**176**~>177~~}{>>r8+7 @AS<<}.docx
 <!-- p108 empty, break-del r225 @AS, in c207 -->
 
 <!-- t6 1x1, cells t6.row0 p109-p119, break-del r227 @AS in p109; r229 @AS in p110; r231 @AS in p111; r232 @AS in p112; r234 @AS in p113; r236 @AS in p114; r238 @AS in p115; r240 @AS in p116; r242 @AS in p117; r244 @AS in p118; r246 @AS in p119, in c207 -->
-|{--{==import { DocxEditor } from '@eigenpal/docx-js-editor'               ==}<br>{==import '@eigenpal/docx-js-editor/styles.css'               ==}<br>{==function App({ file }: { file: ArrayBuffer }) {               ==}<br>{==return (               ==}<br>{==\<DocxEditor               ==}<br>{==documentBuffer={file}               ==}<br>{==onSave={(buffer) => uploadToServer(buffer)}               ==}<br>{==/>               ==}<br>{==)               ==}<br>{==}               ==}--}{>>r226 @AS<<}|
+|{--{==import { DocxEditor } from '@eigenpal/docx-js-editor'               ==}<br>{==import '@eigenpal/docx-js-editor/styles.css'               ==}--}{>>r226 @AS<<}<br>{--<br>{==function App({ file }: { file: ArrayBuffer }) {               ==}<br>{==return (               ==}<br>{==\<DocxEditor               ==}<br>{==documentBuffer={file}               ==}<br>{==onSave={(buffer) => uploadToServer(buffer)}               ==}<br>{==/>               ==}<br>{==)               ==}<br>{==}               ==}--}{>>r226 @AS<<}|
 |-|
 
 <!-- p120 break-del r248 @AS, rev r249 @AS -->
@@ -266,7 +266,7 @@ file\_{~~**176**~>177~~}{>>r8+7 @AS<<}.docx
 {--**Ref methods**         --}{>>r358 @AS<<}
 
 <!-- t8 1x1, cells t8.row0 p175-p181, break-del r360 @AS in p175; r362 @AS in p176; r363 @AS in p177; r365 @AS in p178; r367 @AS in p179; r369 @AS in p180; r371 @AS in p181 -->
-|{--const ref = useRef\<DocxEditorRef>(null)               <br>await ref.current.save() // ArrayBuffer of the .docx               <br>ref.current.getDocument() // current document object               <br>ref.current.setZoom(1.5) // set zoom to 150%               <br>ref.current.scrollToPage(3) // scroll to page 3               <br>ref.current.print() // print               --}{>>r359 @AS<<}|
+|{--const ref = useRef\<DocxEditorRef>(null)               --}{>>r359 @AS<<}<br>{--<br>await ref.current.save() // ArrayBuffer of the .docx               <br>ref.current.getDocument() // current document object               <br>ref.current.setZoom(1.5) // set zoom to 150%               <br>ref.current.scrollToPage(3) // scroll to page 3               <br>ref.current.print() // print               --}{>>r359 @AS<<}|
 |-|
 
 <!-- p182 empty, break-del r373 @AS -->
@@ -311,7 +311,7 @@ file\_{~~**176**~>177~~}{>>r8+7 @AS<<}.docx
 <!-- p197 empty, break-del r400 @AS -->
 
 <!-- t10 1x2, cells t10.row0 p198-p205, break-del r402 @AS in p198; r404 @AS in p199; r406 @AS in p200; r407 @AS in p201; r409 @AS in p202; r411 @AS in p203; r413 @AS in p204; r414 @AS in p205 -->
-|{--**EigenPal**               <br>Maintainer · eigenpal.com               <br>signature · date               --}{>>r401 @AS<<}|{--**Contributor**               <br>on behalf of the community               <br>signature · date               --}{>>r401 @AS<<}|
+|{--**EigenPal**               <br>Maintainer · eigenpal.com               --}{>>r401 @AS<<}<br>{--<br>signature · date               --}{>>r401 @AS<<}|{--**Contributor**               <br>on behalf of the community               --}{>>r401 @AS<<}<br>{--<br>signature · date               --}{>>r401 @AS<<}|
 |-|-|
 
 <!-- p206 empty, break-del r416 @AS -->
@@ -324,7 +324,7 @@ file\_{~~**176**~>177~~}{>>r8+7 @AS<<}.docx
 <!-- p209 empty, break-del r420 @AS -->
 
 <!-- t11 1x2, cells t11.row0 p210-p217, break-del r422 @AS in p210; r424 @AS in p211; r426 @AS in p212; r427 @AS in p213; r429 @AS in p214; r431 @AS in p215; r433 @AS in p216; r434 @AS in p217 -->
-|{--**EigenPal**               <br>Maintainer · eigenpal.com               <br>signature · date               --}{>>r421 @AS<<}|{--**Contributor**               <br>on behalf of the community               <br>signature · date               --}{>>r421 @AS<<}|
+|{--**EigenPal**               <br>Maintainer · eigenpal.com               --}{>>r421 @AS<<}<br>{--<br>signature · date               --}{>>r421 @AS<<}|{--**Contributor**               <br>on behalf of the community               --}{>>r421 @AS<<}<br>{--<br>signature · date               --}{>>r421 @AS<<}|
 |-|-|
 
 <!-- p218 empty -->
