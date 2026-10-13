@@ -121,6 +121,42 @@ pub(super) struct CommentHead {
     pub resolved: bool,
 }
 
+/// The most empty paragraphs one id line stands for: a bound on what a
+/// hand-edited range (`p0-p4294967295 empty`) can make the reader write.
+const MOST_EMPTY: usize = 100_000;
+
+/// How many empty paragraphs an id line stands for: `<!-- p2 empty -->`
+/// one, `<!-- p2-p4 BodyText empty -->` three; `None` for any other line.
+pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
+    let count = match id.split_once('-') {
+        Some((first, last)) => {
+            let first = crate::ids::short_number(first, 'p')?;
+            let last = crate::ids::short_number(last, 'p')?;
+            last.checked_sub(first)? + 1
+        }
+        None => {
+            crate::ids::short_number(id, 'p')?;
+            1
+        }
+    };
+    // `empty` is a clause of its own, or the first clause after the style
+    // name (`BodyText empty`).
+    let empty = rest.split(", ").enumerate().any(|(i, clause)| {
+        clause == "empty"
+            || (i == 0
+                && clause
+                    .split_once(' ')
+                    .is_some_and(|(_, tail)| tail == "empty"))
+    });
+    (empty && count <= MOST_EMPTY).then_some(count)
+}
+
 /// The head of `text` and the comment text after it.
 pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
     let (head, body) = text.split_once(": ").or_else(|| {
@@ -164,6 +200,29 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_id_lines_count_their_paragraphs() {
+        for (line, count) in [
+            ("<!-- p2 empty -->", Some(1)),
+            ("<!-- p2-p4 empty -->", Some(3)),
+            ("<!-- p2-p4 BodyText empty -->", Some(3)),
+            ("<!-- p7 empty, page-break -->", Some(1)),
+            ("  <!-- p0 empty -->  ", Some(1)),
+            ("<!-- p2 -->", None),
+            ("<!-- p2 BodyText center -->", None),
+            ("<!-- p2 Empty -->", None),
+            ("<!-- p2 BodyText, empty -->", Some(1)),
+            ("<!-- p4-p2 empty -->", None),
+            ("<!-- p02 empty -->", None),
+            ("<!-- t0 empty -->", None),
+            ("<!-- p0-p100000 empty -->", None),
+            ("<!-- p0-p99999 empty -->", Some(100_000)),
+            ("p2 empty", None),
+        ] {
+            assert_eq!(empty_paragraphs(line), count, "{line}");
+        }
+    }
 
     #[test]
     fn the_authors_table_names_each_handle() {

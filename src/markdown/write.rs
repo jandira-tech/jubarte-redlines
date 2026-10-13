@@ -277,7 +277,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Event::InlineMath(text) | Event::DisplayMath(text) => self.text(&text),
             Event::InlineHtml(html) => self.inline_html(&html),
-            Event::Html(_) => {}
+            Event::Html(html) => self.id_lines(&html),
             Event::FootnoteReference(label) => self.note_reference(&label),
             Event::SoftBreak => self.text(" "),
             Event::HardBreak => {
@@ -543,6 +543,26 @@ impl<'o, 'a> Writer<'o, 'a> {
             && let Some(Item::Row { change, .. }) = self.story().get_mut(index)
         {
             *change = Some(row_change);
+        }
+    }
+
+    /// The agent view's id lines: an `empty` one (`<!-- p2-p4 empty -->`)
+    /// stands for the empty paragraphs it numbers, which have no text of
+    /// their own to carry them; any other names the text after it.
+    fn id_lines(&mut self, html: &str) {
+        if self.cell.is_some() || self.comment.is_some() || self.target.is_some() {
+            return;
+        }
+        for line in html.lines() {
+            let Some(count) = view_notes::empty_paragraphs(line) else {
+                continue;
+            };
+            self.end_paragraph();
+            for _ in 0..count {
+                let story = self.story();
+                story.push(Item::Paragraph(Paragraph::default()));
+                story.push(Item::ParagraphEnd);
+            }
         }
     }
 
