@@ -855,7 +855,7 @@ Options:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
+  -d, --datetime <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
           output
 
@@ -1038,8 +1038,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
-          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it),
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1121,8 +1121,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
-          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it),
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1246,8 +1246,9 @@ Options:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
-          Markdown to Word: their date (ISO 8601); pinned for reproducible output
+  -d, --datetime <ISO8601>
+          Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible
+          output
 
           [default: 1970-01-01T00:00:00Z]
 
@@ -1433,8 +1434,9 @@ Paragraph patch:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
-          When (ISO 8601) [default: now, UTC]; pin it for reproducible output
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
 Formats:
   -t, --to <FORMAT>
@@ -1611,8 +1613,9 @@ Options:
 
           [default: Redline]
 
-      --datetime <ISO8601>
-          Their timestamp (ISO 8601) [default: now, UTC]
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
       --suggesting-mode
           The edits are tracked changes (the default): the file written is the redline
@@ -1757,8 +1760,9 @@ Options:
 
           [default: Redline]
 
-      --datetime <ISO8601>
-          Their timestamp (ISO 8601) [default: now, UTC]
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
       --suggesting-mode
           The edits are tracked changes (the default): the file written is the redline

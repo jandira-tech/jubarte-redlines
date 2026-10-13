@@ -158,7 +158,7 @@ test("invalid short selectors return useful refusals without output documents", 
     ["t0", "t0: a table id needs a row and a cell, as t0.row1.cell2"],
     // 0.12's cell form is expired: refused with its settled spelling.
     ["t0.r1.c1", "the settled spelling is t0.row1.cell1"],
-    ["p+0", "unknown paragraph id p+0"],
+    ["p+0", "p+0: expected a short id such as p12"],
     ["header1", "header1 is not a story of this document (stories: body)"],
   ]) {
     const result = wasm.applyEditPlan(docx, plan([{ kind: "replace", paragraph: id, find: "Intro", replacement: "Changed" }]));
