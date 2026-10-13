@@ -11,8 +11,8 @@ Every option of every command is listed in [`../help-cli.md`](../help-cli.md).
 
 An agent has three kinds of eyes:
 
-- **Text views** (`text`, `convert -t md`, `diff`, `changes`, `comments`,
-  `inspect`): cheap, exact, greppable, and carry the IDs edit plans need.
+- **Text views** (`read`, `convert -t md`, `diff`, `changes`, `comments`):
+  cheap, exact, greppable, and carry the IDs edits need.
 - **Page views** (`convert -o x.png`/`x.pdf`, `edit --png`, `compare -o x.png`):
   what a person sees in Word, for layout, balloons and revision colours.
 - **Machine views** (`--json` everywhere, `--report`, `visual-diff --json`):
@@ -33,10 +33,10 @@ or more.
 
 ### 1.1 Read it as text
 
-The edit view: Markdown with the `[body:p:N]` IDs an edit plan names. Revisions show as their current text.
+The agent view: a YAML header (the file's `sha256:`, counts, authors and their handles, page setup, styles, headers and footers), then Markdown with the `<!-- pN -->` IDs an edit names, and every tracked change and comment as CriticMarkup with its ID (`r1+2`, `c5`).
 
 ```console
-$ jubarte text out/received.docx
+$ jubarte read out/received.docx
 ---
 source: received.docx
 sha256: 569c088c60325538e72d5264acea8c548a3fde313cd0e678e069eebb08ffcd4a
@@ -80,57 +80,10 @@ Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r4+5 @AC<<} days
 … (16 more lines)
 ```
 
-`--track-changes all`: the tracked changes and comments as CriticMarkup, with author and date.
+`--track-changes accept`: the text as it reads once every change is accepted; the ID lines list what changed.
 
 ```console
-$ jubarte text out/received.docx --track-changes all
----
-source: received.docx
-sha256: 569c088c60325538e72d5264acea8c548a3fde313cd0e678e069eebb08ffcd4a
-view: tracked                      # revisions as CriticMarkup, comments inline
-track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
-comments: 2 threads open           # 2 comments: c0, c1
-authors:
-  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
-  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-body: p0-p18, 1 table, 1 page      # pages from layout
-page: Letter portrait, margins 1in, header/footer 0.5in
-styles:
-  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
-  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
-  table: TableGrid, all borders 0.5pt
----
-
-<!-- page 1 of 1 -->
-
-<!-- p0 -->
-# Consulting Agreement
-
-<!-- p1 -->
-This Consulting Agreement (the "Agreement") is made between Harbor Point Analytics LLC ("Consultant") and Juniper Freight Co. ("Client").
-
-<!-- p2 -->
-## 1. Services
-
-<!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r1 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r2+3 @AC<<} review call.
-
-<!-- p4 -->
-## 2. Fees
-
-<!-- p5 -->
-Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r4+5 @AC<<} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
-
-<!-- p6 -->
-… (16 more lines)
-```
-
-`--track-changes accept`: the text as it reads once every change is accepted.
-
-```console
-$ jubarte text out/received.docx --track-changes accept
+$ jubarte read out/received.docx --track-changes accept
 ---
 source: received.docx
 sha256: 569c088c60325538e72d5264acea8c548a3fde313cd0e678e069eebb08ffcd4a
@@ -177,7 +130,7 @@ Client shall pay each invoice within forty-five days of receipt. {==Late amounts
 `--track-changes reject`: the text as it read before the changes.
 
 ```console
-$ jubarte text out/received.docx --track-changes reject
+$ jubarte read out/received.docx --track-changes reject
 ---
 source: received.docx
 sha256: 569c088c60325538e72d5264acea8c548a3fde313cd0e678e069eebb08ffcd4a
@@ -219,6 +172,42 @@ Client shall pay each invoice within thirty days of receipt. {==Late amounts acc
 
 <!-- p6 -->
 … (16 more lines)
+```
+
+`-p` reads only some blocks (`p3`, `p5-p7`, `t0`); `--comments none` moves the comment IDs onto the ID lines.
+
+```console
+$ jubarte read out/received.docx -p p5\,t0 --comments none
+---
+source: received.docx
+sha256: 569c088c60325538e72d5264acea8c548a3fde313cd0e678e069eebb08ffcd4a
+view: tracked, comments hidden     # 2 threads open (2 comments); carrying paragraphs are marked
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
+comments: 2 threads open           # 2 comments: c0, c1
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
+body: p0-p18, 1 table, 1 page      # pages from layout
+range: p5, t0 of p0-p18
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+  table: TableGrid, all borders 0.5pt
+---
+
+<!-- page 1 of 1 -->
+
+<!-- p5 comments c0 -->
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r4+5 @AC<<} days of receipt. Late amounts accrue interest at one percent per month.
+
+<!-- t0 3x3, cells p8-p16 by row, header row repeats -->
+|Deliverable|Due|Owner|
+|-|-|-|
+|Route-cost report|{~~Day 10~>Day 15~~}{>>r8+9 @AC<<}|Consultant|
+|Review call|Monthly|Both|
 ```
 
 ### 1.2 Read it as Markdown with pages
@@ -287,7 +276,7 @@ Each party shall keep the other's Confidential Information secret.
 
 ### 1.3 List what changed and who said what
 
-`changes`: one line per tracked change, with the `body:rev:N` IDs that `accept`, `reject` and edit plans select.
+`changes`: one line per tracked change, with the IDs (`r3`) that `accept --id`, `reject --id`, `edit -p r3 --accept` and edit plans select.
 
 ```console
 $ jubarte changes out/received.docx
@@ -303,7 +292,7 @@ r9	insertion	text	Ann Counsel	p12	"Day 15"
 9 change(s)
 ```
 
-`changes --json`: the same as JSON lines.
+`changes --json`: the same as JSON lines, with the long `id` and the short `ref`.
 
 ```console
 $ jubarte changes out/received.docx --json
@@ -335,46 +324,19 @@ $ jubarte comments out/received.docx --json --author Ann\ Counsel
 {"id":1,"ref":"c1","author":"Ann Counsel","initials":"AC","date":"2026-10-01T09:00:00Z","text":"Add a three-year survival period?","done":false,"paragraph":"body:p:18","anchor_text":"","before":"Each party shall keep the other's Confidential Information secret","after":"."}
 ```
 
-### 1.4 Inspect the structure
+### 1.4 Read the structure as data
 
-`inspect`: document facts, paragraph styles and tables.
-
-```console
-$ jubarte inspect out/received.docx
-sha256: 569c088c60325538e72d5264acea8c548a3fde313cd0e678e069eebb08ffcd4a
-paragraphs: 19  tables: 1  fields: 0  sections: 1  comments: 2  revisions: 9  footnotes: 0  endnotes: 0  headers: 0  footers: 0  images: 0  numbering: false  track_changes: false
-body:p:0	[Heading1]	Consulting Agreement
-body:p:1	[]	This Consulting Agreement (the "Agreement") is made between Harbor Point Analyti…
-body:p:2	[Heading2]	1. Services
-body:p:3	[revision]	Consultant will deliver the services in each Statement of Work, including quarte…
-body:p:4	[Heading2]	2. Fees
-body:p:5	[revision]	Client shall pay each invoice within forty-five days of receipt. Late amounts ac…
-body:p:6	[Heading2]	3. Term
-body:p:7	[revision]	This Agreement begins on March 1, 2026 and continues until either party ends it …
-body:p:8	[table]	Deliverable
-body:p:9	[table]	Due
-body:p:10	[table]	Owner
-body:p:11	[table]	Route-cost report
-body:p:12	[table,revision]	Day 15
-body:p:13	[table]	Consultant
-body:p:14	[table]	Review call
-body:p:15	[table]	Monthly
-body:p:16	[table]	Both
-body:p:17	[Heading2]	4. Confidentiality
-body:p:18	[]	Each party shall keep the other's Confidential Information secret.
-```
-
-`inspect --tables`: each table as a grid, with cell IDs.
+`read --tables`: each table as a grid, with cell IDs.
 
 ```console
-$ jubarte inspect out/received.docx --tables
+$ jubarte read out/received.docx --tables
 table 0: 3x3 header_rows=1 widths=3120,3120,3120
 body:p:8=Deliverable	body:p:9=Due	body:p:10=Owner
 body:p:11=Route-cost report	body:p:12=Day 15	body:p:13=Consultant
 body:p:14=Review call	body:p:15=Monthly	body:p:16=Both
 ```
 
-`inspect --json` writes the full snapshot (`schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`): [`out/inspect.json`](out/inspect.json). Its `source_sha256` is the value an edit plan pins.
+`read --json` (or `-o FILE.json`) writes the full snapshot (`schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`): [`out/read.json`](out/read.json). Its `source_sha256` is the value an edit plan pins.
 
 `debug --check render`: what each story should put on the page (tables, fonts and what replaces them, revisions, sections).
 
@@ -438,7 +400,7 @@ wrote out/received-endnotes-page-NN.png (png, 2 pages, 60 dpi)
 
 ![received.docx, the comment listing](out/received-endnotes-page-02.png)
 
-`-o x.pdf` (the default for Word) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-pages` keeps only pages a tracked change touches.
+`-o x.pdf` (the default for Word) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-pages` keeps only the pages a change or a comment touches.
 
 ```console
 $ jubarte convert out/received.docx --compress -o out/received-compressed.pdf --force
@@ -461,11 +423,11 @@ $ jubarte validate out/received.docx
 no findings
 ```
 
-`audit`: accessibility, style and structure findings (findings: exit 2).
+`validate --rules a11y,style,structure`: accessibility, style and structure findings (an error: exit 2).
 
 ```console
-$ jubarte audit out/received.docx
-0 findings: 0 error, 0 warning, 0 info (9 rules, with layout)
+$ jubarte validate out/received.docx --rules a11y\,style\,structure
+no findings
 ```
 
 ## 2. Edit a document that already has tracked changes and comments
@@ -613,10 +575,10 @@ c3	p3	Agent	"Do the reports cover cross-border lanes?"	on "route-cost reports"
 3 comment(s)
 ```
 
-`text --track-changes all` on the redline: the whole document with every change and comment.
+`read --changed --by Agent` on the redline: only the blocks carrying the agent's changes and comments.
 
 ```console
-$ jubarte text out/edited/redline.docx --track-changes all
+$ jubarte read out/edited/redline.docx --changed --by Agent
 ---
 source: redline.docx
 sha256: 363bb06c2fb1eac22296a408ad46a2136157732dc823a4b91afd5b0555a32ee1
@@ -629,6 +591,7 @@ authors:
   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
   A: Agent                         # 3 revisions, 2 comments, 2026-10-02T15:00:00Z
 body: p0-p18, 1 table, 1 page      # pages from layout
+range: changed by @A (p3, p5, p7, p18) of p0-p18
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
@@ -639,25 +602,17 @@ styles:
 
 <!-- page 1 of 1 -->
 
-<!-- p0 -->
-# Consulting Agreement
-
-<!-- p1 -->
-This Consulting Agreement (the "Agreement") is made between Harbor Point Analytics LLC ("Consultant") and Juniper Freight Co. ("Client").
-
-<!-- p2 -->
-## 1. Services
-
 <!-- p3 -->
 Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r1 @AC<<} {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a {~~weekly~>monthly~~}{>>r2+3 @AC<<} review call.
-
-<!-- p4 -->
-## 2. Fees
 
 <!-- p5 -->
 Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r4+5 @AC<<} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}{>>c2 @A re c0: Delaware has no cap for commercial contracts; one percent stands.<<}
 
-… (17 more lines)
+<!-- p7 -->
+This Agreement begins on {~~March 1, 2026~>April 1, 2026~~}{>>r10+11 @A<<} and continues until either party ends it with {~~ninety days~>sixty days~~}{>>r6+7 @AC<<} written notice.
+
+<!-- p18 -->
+Each party shall keep the other's Confidential Information secret{++ for three years after this Agreement ends++}{>>r12 @A<<}{>>c1 @AC resolved: Add a three-year survival period?<<}.
 ```
 
 ### 2.2 What the edit did, as pages
@@ -1115,14 +1070,14 @@ wrote out/from-markdown.docx (docx, 10245 bytes)
 
 | View | Command | Options that change what is shown |
 |---|---|---|
-| Edit view with IDs | `text FILE` | `--track-changes all\|accept\|reject` (CriticMarkup, no IDs) |
+| Agent view with IDs | `read FILE` | `--track-changes accept\|reject`, `--comments none`, `-p`, `--head`, `--tail`, `--changed`, `--by`, `-o FILE.md` |
 | Markdown with pages | `convert FILE -t md` | `--no-page-markers`, `--track-changes all\|accept\|reject`, `-o FILE` |
 | Tracked changes | `changes FILE` | `--json` |
 | Comments | `comments FILE` | `--json`, `--author NAME`, `--latest` |
-| Structure | `inspect FILE` | `--json`, `--tables` |
+| Structure | `read FILE --json` / `--tables` | `-o FILE.json` |
 | Render triage | `debug FILE --check render` | `--check text\|runs\|xml\|changes\|…`, two files print only differences |
 | Pages | `convert FILE -o x.png` / `x.pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-pages`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout` |
-| Validity | `validate FILE`, `audit FILE` | `validate --repair`, `--json` (see `--help`) |
+| Validity | `validate FILE` | `--rules word,a11y,style,structure`, `--strict`, `--repair`, `--json` (see `--help`) |
 | Edit result | `edit FILE --plan P --out-dir D` | `--dry-run`, `--pdf`, `--png`, `--dpi`, `--revisions`, `--revision-palette`, `--quiet`; writes `patch.diff`, `report.jsonl`, `clean.*`, `redline.*` |
 | Text diff | `diff OLD NEW` | `--format patch\|critic\|github\|word\|normal\|context\|side-by-side`, `-U N`, `--accept-changes`, `--full-lines`, `--columns N`, `-f md\|docx`, `-o FILE.md\|.txt\|.patch\|.diff` |
 | Word redline | `compare OLD NEW -o x.docx` | `--mode word\|powertools`, `--detail-threshold`, `-a`, `-d`, `--reference-doc` |
@@ -1132,7 +1087,7 @@ wrote out/from-markdown.docx (docx, 10245 bytes)
 
 Which to reach for:
 
-- To decide what to edit: `text` (IDs) and `changes`/`comments` (revision
+- To decide what to edit: `read` (IDs) and `changes`/`comments` (revision
   and comment IDs).
 - To check an edit: `edit`'s `report.jsonl` (status), `patch.diff` (just the
   touched paragraphs), then `visual-diff` (did the layout move, exit 5).
