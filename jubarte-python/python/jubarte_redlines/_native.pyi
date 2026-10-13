@@ -13,7 +13,7 @@ class JubarteError(Exception):
 def compare_documents(
     original: bytes,
     modified: bytes,
-    author: str = "jubarte",
+    author: str = "Redline",
     date: str | None = None,
     *,
     input_limits: Mapping[str, int] | None = None,

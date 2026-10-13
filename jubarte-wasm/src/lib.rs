@@ -901,9 +901,8 @@ pub fn diff_documents_critic(
 ) -> Result<String, JsValue> {
     let (old, next) = (side(old)?, side(next)?);
     let mut options = jubarte::markdown::RedlineOptions::default();
-    if let Some(author) = author {
-        options.settings.author_for_revisions = author;
-    }
+    // The CLI's default author (D12), not the comparer's legacy one.
+    options.settings.author_for_revisions = author.unwrap_or_else(|| "Redline".to_string());
     if let Some(date) = date {
         options.settings.date_time_for_revisions = date;
     }
@@ -1884,6 +1883,14 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn the_critic_view_s_default_author_is_redline() {
+        let (old, new) = (word("Due in 30 days.\n"), word("Due in 45 days.\n"));
+        let view = diff_documents_critic(&old, &new, None, None).unwrap();
+        assert!(view.contains("Redline"), "{view}");
+        assert!(!view.contains("Open-Xml-PowerTools"), "{view}");
     }
 
     #[test]
