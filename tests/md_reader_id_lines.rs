@@ -316,3 +316,13 @@ fn a_tables_alignment_comes_back() {
         assert_eq!(round_trip(md), md.trim());
     }
 }
+
+#[test]
+fn an_inserted_row_stays_one_change_when_a_cell_holds_paragraphs() {
+    // The row's insertion tags every cell's text, across the `<br>` that
+    // ends a cell paragraph too.
+    let body = "<!-- p0 -->\nBefore.\n\n\
+                <!-- t0 2x2, cells t0.row0 p1-p3 t0.row1 p4-p5, break-ins r5 @AC in p1 -->\n\
+                |{++A<br>B++}{>>r2 @AC<<}|{++C++}{>>r2 @AC<<}|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+}

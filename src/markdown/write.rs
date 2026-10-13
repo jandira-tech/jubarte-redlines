@@ -1071,8 +1071,18 @@ impl<'o, 'a> Writer<'o, 'a> {
                 _ => (None, false),
             },
         };
+        // In a cell, a change opened at or before the paragraph's start and
+        // open or just closed at its end covers it whole, across the `<br>`
+        // that ends a cell paragraph (`{++A<br>B++}`).
+        let covered = self.span_start.and_then(|span| {
+            let starts = span.paragraph != self.paragraph_serial || span.at_start;
+            let ends = self.change == Some((span.kind, span.serial))
+                || (self.closed == Some(span.serial) && !self.run_after_close);
+            (starts && ends).then_some((span.kind, span.serial))
+        });
+        let whole_in_cell = if whole { mark } else { covered };
         if self.cell.is_some() && self.paragraph_runs > 0 {
-            self.row_cells = match (self.row_cells, whole.then_some(mark).flatten()) {
+            self.row_cells = match (self.row_cells, whole_in_cell) {
                 (RowCells::Empty, Some((kind, serial))) => RowCells::Whole(kind, serial),
                 (RowCells::Whole(before, serial), Some((kind, _))) if before == kind => {
                     RowCells::Whole(kind, serial)
