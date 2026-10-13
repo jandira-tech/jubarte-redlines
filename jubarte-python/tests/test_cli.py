@@ -831,3 +831,16 @@ def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, caps
     assert "{=={--his or her--}{>>r1 @R<<}{++their++}{>>r2 @R<<}==}" in capsys.readouterr().out
     assert main(["edit", str(commented), "-p", "c0.text", "--anchor", "signs", "--content", "x", "-o", str(tmp_path / "no.docx")]) == 3
     assert "not in the text c0 covers" in capsys.readouterr().err
+
+def test_edit_accept_reject_prints_the_resolved_changes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    received = Path(__file__).parents[2] / "tests" / "fixtures" / "agent-view" / "received.docx"
+    src = tmp_path / "received.docx"
+    shutil.copy(received, src)
+    out = tmp_path / "out.docx"
+    assert main(["edit", str(src), "-p", "r0", "--accept", "-o", str(out), "--datetime", "2026-10-11T00:00:00Z"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == 'accepted r0 in p3: "{++quarterly++}" > "quarterly"\n', captured.out
+    assert captured.err.startswith(f"wrote {out} (docx, "), captured.err
+    assert main(["edit", str(src), "-p", "r1+2", "--accept", "-o", str(tmp_path / "pair.docx"), "--datetime", "2026-10-11T00:00:00Z"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == 'accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"\n', captured.out
