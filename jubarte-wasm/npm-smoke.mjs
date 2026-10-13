@@ -25,7 +25,7 @@ const original = readFileSync(new URL("original.docx", FIX));
 const modified = readFileSync(new URL("modified.docx", FIX));
 
 for (const [name, mod] of [["full", full], ["slim", slim]]) {
-  for (const fn of ["compareDocuments", "acceptRevisions", "rejectRevisions", "getRevisions", "listChanges", "acceptChanges", "rejectChanges", "initPanicHook", "diffDocumentsUnified", "diffDocumentsView", "parseCli", "diffDocumentsCritic", "redlineDocuments", "documentMarkdownWithChanges"]) {
+  for (const fn of ["compareDocuments", "acceptRevisions", "rejectRevisions", "getRevisions", "listChanges", "acceptChanges", "rejectChanges", "initPanicHook", "diffDocumentsUnified", "diffDocumentsView", "parseCli", "diffDocumentsCritic", "redlineDocuments", "documentMarkdownWithChanges", "changesText", "commentsText", "tablesText", "readJson", "wroteLine", "changeFilter"]) {
     assert.equal(typeof mod[fn], "function", `${name} build must export ${fn}`);
   }
   const oldText = new TextEncoder().encode("Due 30 days.\n");
@@ -43,6 +43,8 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   assert.equal(JSON.parse(mod.getRevisions(mod.rejectRevisions(redline))).length, 0, `${name}: reject drains revisions`);
   const changes = JSON.parse(mod.listChanges(redline));
   assert.ok(changes.length > 1 && changes[0].id.startsWith("body:rev:"), `${name}: changes listed by id`);
+  assert.match(changes[0].ref, /^r\d+$/, `${name}: the short ref`);
+  assert.ok(mod.changesText(redline).startsWith(`${changes[0].ref}\t`), `${name}: the listing leads with the short ref`);
   const kept = JSON.parse(mod.listChanges(mod.acceptChanges(redline, JSON.stringify({ ids: [changes[0].id] }))));
   assert.ok(!kept.some((c) => c.id === changes[0].id) && kept.length > 0, `${name}: accepting one change keeps the rest`);
   assert.equal(JSON.parse(mod.listChanges(mod.rejectChanges(redline, "{}"))).length, 0, `${name}: {} rejects every change`);
