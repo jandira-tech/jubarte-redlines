@@ -19,7 +19,7 @@ Setting up the received redline (both sides start from this file):
 jubarte convert input.md -o input.docx --force
 jubarte convert edited.md -o edited.docx --force
 jubarte input.docx edited.docx -o received.docx --author Counterparty \
-  --date 2026-10-01T09:00:00Z --force
+  --datetime 2026-10-01T09:00:00Z --force
 ```
 
 Substituted tool (python-docx 1.2.0):
