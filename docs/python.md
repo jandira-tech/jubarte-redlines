@@ -1087,7 +1087,7 @@ What this binary can do, for agents choosing an operation
 Usage: jubarte-redlines capabilities [OPTIONS]
 
 Options:
-      --json   Emit JSON (the default output is JSON too; the flag documents intent)
+      --json   The manifest as JSON instead of the text summary
   -q, --quiet  Print nothing on success (files are still written; warnings and errors
                still print)
   -h, --help   Print help
@@ -1660,7 +1660,7 @@ Document.audit(self, rules: 'Sequence[str] | str | None' = None) -> 'tuple[Audit
 Accessibility, style and structure findings, each located by
 paragraph id. ``rules`` names rule sets (``a11y``, ``style``,
 ``structure``) or codes, as a sequence or a comma-separated string;
-``None`` runs every rule. ``jubarte audit --help`` lists the codes.
+``None`` runs every rule. ``jubarte validate --help`` lists the codes.
 
 ### `read`
 
