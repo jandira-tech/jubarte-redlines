@@ -80,7 +80,10 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// among its same-named siblings, root excluded), stable across runs, or a
 /// paragraph id (`body:p:3`); empty for a package-level finding. For the
 /// audit sets it is the paragraph id (`body:p:N`, `header1:p:0`) or, when
-/// no paragraph applies, the part name.
+/// no paragraph applies, the part name. `ref` is the short id the text
+/// listing prints for `location` (`body:p:5` → `p5`), via
+/// [`crate::ids::short_paragraph`]; any other location (an element chain,
+/// a part name, empty) keeps its text there too.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     /// Stable code (`TEXT_INSIDE_DELETION`, `MC_UNBOUND_PREFIX`, ...).
@@ -94,6 +97,9 @@ pub struct Finding {
     pub part: String,
     /// Where in the part (see the type's doc), or empty.
     pub location: String,
+    /// The short id the text listing prints for [`Finding::location`].
+    #[serde(default, rename = "ref")]
+    pub r#ref: String,
     /// Human-readable detail.
     pub message: String,
     /// True when Word refuses or repairs the file for this (Ring-1 and
@@ -117,12 +123,15 @@ impl Finding {
         message: impl Into<String>,
     ) -> Self {
         let (word_fatal, repairable) = traits(code);
+        let location = location.into();
+        let r#ref = crate::ids::short_paragraph(&location);
         Finding {
             code: code.to_string(),
             set: "word".to_string(),
             severity: if word_fatal { "error" } else { "warning" }.to_string(),
             part: part.to_string(),
-            location: location.into(),
+            location,
+            r#ref,
             message: message.into(),
             word_fatal,
             repairable,
@@ -342,18 +351,21 @@ pub fn fails(findings: &[Finding], strict: bool) -> bool {
 }
 
 /// One line per finding, then a summary. A line is `* CODE\tSEVERITY\t
-/// PART#LOCATION\tMESSAGE` for `word` and `edits` (`*` marks Word-fatal, a
-/// space otherwise) and `  CODE\tSEVERITY\tLOCATION\tMESSAGE` for the audit
-/// sets. The summary is `no findings` or `N finding(s): E error, W warning,
-/// I info`.
+/// PART#REF\tMESSAGE` for `word` and `edits` (`*` marks Word-fatal, a
+/// space otherwise) and `  CODE\tSEVERITY\tREF\tMESSAGE` for the audit
+/// sets, where `REF` is the short id [`Finding::r#ref`] prints for the long
+/// [`Finding::location`] (a paragraph id `body:p:5` prints as `p5`; any
+/// other location keeps its text). The summary is `no findings` or
+/// `N finding(s): E error, W warning, I info`.
 pub fn findings_text(findings: &[Finding]) -> String {
     let mut out = String::new();
     for f in findings {
         let star = if f.word_fatal { '*' } else { ' ' };
+        let short = crate::ids::short_paragraph(&f.location);
         let place = if matches!(f.set.as_str(), "word" | "edits") {
-            format!("{}#{}", f.part, f.location)
+            format!("{}#{short}", f.part)
         } else {
-            f.location.clone()
+            short
         };
         out.push_str(&format!(
             "{star} {}\t{}\t{place}\t{}\n",
@@ -385,12 +397,14 @@ impl From<crate::audit::AuditFinding> for Finding {
         } else {
             f.location.clone()
         };
+        let r#ref = crate::ids::short_paragraph(&f.location);
         Finding {
             code: f.code,
             set: f.rule_set,
             severity: f.severity,
             part,
             location: f.location,
+            r#ref,
             message: f.message,
             word_fatal: false,
             repairable: false,
@@ -2425,6 +2439,7 @@ mod public_memory_validator_owner_boundary_tests {
             severity: "error".into(),
             part: "customXml/source-owned.opaque".into(),
             location: String::new(),
+            r#ref: String::new(),
             message: "part 'customXml/source-owned.opaque' has no content type".into(),
             word_fatal: true,
             repairable: false,
@@ -2482,7 +2497,7 @@ mod public_memory_validator_owner_boundary_tests {
                 .filter(|finding| finding.code == "PARA_ID_OUT_OF_RANGE")
                 .cloned()
                 .collect::<Vec<_>>();
-            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),set:"word".into(),severity:"warning".into(),part:"word/comments.xml".into(),location:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:false,repairable:true});
+            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),set:"word".into(),severity:"warning".into(),part:"word/comments.xml".into(),location:String::new(),r#ref:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:false,repairable:true});
             assert_eq!(range, expected_range);
             let result = repair(&bytes).unwrap();
             assert!(
