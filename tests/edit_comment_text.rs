@@ -508,6 +508,73 @@ fn a_point_comment_covers_no_text_to_rewrite() {
     );
 }
 
+/// A settled view numbers each note's paragraphs as the settled story does,
+/// so the printed id is the one `edit -p` takes on the settled document.
+#[test]
+fn note_definitions_carry_settled_ids_in_settled_views() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = "tests/fixtures/from-docx/critic/synthetic/hard-notes.docx";
+    std::fs::copy(source, dir.path().join("notes.docx")).unwrap();
+    let ids_of = |args: &[&str]| -> Vec<String> {
+        let out = jubarte(args, dir.path());
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                line.starts_with("<!-- footnotes.") || line.starts_with("<!-- endnotes.")
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    for choice in ["accept", "reject"] {
+        let settled = format!("settled-{choice}.docx");
+        let done = jubarte(&[choice, "notes.docx", "-o", &settled], dir.path());
+        assert!(
+            done.status.success(),
+            "{choice}: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+        assert_eq!(
+            ids_of(&["read", "notes.docx", "--track-changes", choice]),
+            ids_of(&["read", &settled]),
+            "{choice}: the settled view and the settled file agree"
+        );
+    }
+    // The printed id is actionable: the rejected file's "Still here" is
+    // footnotes.p1 in its own view.
+    let edited = jubarte(
+        &[
+            "edit",
+            "settled-reject.docx",
+            "-p",
+            "footnotes.p1",
+            "--anchor",
+            "Still",
+            "--content",
+            "STILL",
+            "-o",
+            "edited.docx",
+            "--force",
+        ],
+        dir.path(),
+    );
+    assert!(
+        edited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&edited.stderr)
+    );
+    let view = ids_of(&["read", "edited.docx"]);
+    assert!(
+        view.contains(&"<!-- footnotes.p1 -->".to_string()),
+        "{view:?}"
+    );
+}
+
 /// `read` names each note's paragraphs on the line before its definition,
 /// numbered as `edit -p` takes them (separator notes are not numbered).
 #[test]
