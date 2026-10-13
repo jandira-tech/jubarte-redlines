@@ -375,18 +375,16 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte reject` | Reject all tracked changes, or select by ID, author or kind |
 | `jubarte convert` | Convert Word or Markdown to DOCX, PDF, PNG or Markdown |
 | `jubarte diff` | Review differences as GitHub, word, normal, context or side-by-side text |
-| `jubarte inspect` | Inspect document facts, paragraphs, styles and tables |
-| `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids [alias: text] |
+| `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids |
 | `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (refusal: exit 3) |
 | `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent view |
 | `jubarte capabilities` | What this binary can do, for agents choosing an operation |
-| `jubarte self-update` | Check or install a release from GitHub |
-| `jubarte debug` | Diagnose a Word package, or compare package structures |
 | `jubarte visual-diff` | Compare rendered pages pixel by pixel (different pages: exit 5) |
 | `jubarte comments` | List comments, threads and the text they annotate |
 | `jubarte append` | Join documents in order, preserving images, styles, lists and notes |
 | `jubarte validate` | Check Word validity, tracked edits, accessibility, style and structure; or repair Word validity |
 | `jubarte scrub` | Remove authors, editing IDs, metadata and comments before sharing |
+| `jubarte self-update` | Check or install a release from GitHub |
 <!-- gen:cli-summary:end -->
 
 ### Compare
