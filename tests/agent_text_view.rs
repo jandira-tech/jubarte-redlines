@@ -158,6 +158,20 @@ fn select_parses_single_paragraphs_ranges_lists_and_tables() {
         Select::parse("-").unwrap_err(),
         "-: expected pN, pN-pM or tN"
     );
+    // A range's hint is the whole range, settled; none when it would run
+    // backwards.
+    assert_eq!(
+        Select::parse("p2-3").unwrap_err(),
+        "p2-3: expected pN, pN-pM or tN; the settled spelling is p2-p3"
+    );
+    assert_eq!(
+        Select::parse("2-").unwrap_err(),
+        "2-: expected pN, pN-pM or tN; the settled spelling is p2-"
+    );
+    assert_eq!(
+        Select::parse("2-1").unwrap_err(),
+        "2-1: expected pN, pN-pM or tN"
+    );
 }
 
 #[test]
@@ -4461,15 +4475,12 @@ fn selection_parser_rejects_backwards_ranges_in_all_number_spellings() {
             Err(format!("{item}: the range runs backwards"))
         );
     }
-    // A bare number at either end is expired, refused with its settled
-    // spelling.
+    // A bare number at either end is expired. The settled range would run
+    // backwards too, so no spelling is suggested.
     for item in ["2-1", "p2-1", "2-p1"] {
-        let refused = Select::parse(item).unwrap_err();
-        assert!(
-            refused.starts_with(&format!(
-                "{item}: expected pN, pN-pM or tN; the settled spelling is p"
-            )),
-            "{refused}"
+        assert_eq!(
+            Select::parse(item),
+            Err(format!("{item}: expected pN, pN-pM or tN"))
         );
     }
 }

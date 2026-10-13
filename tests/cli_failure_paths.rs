@@ -785,3 +785,17 @@ fn png_conversion_projects_requested_revision_side_before_its_page_report() {
         original
     );
 }
+
+#[test]
+fn read_refuses_an_expired_selection_as_a_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        docx("<w:p><w:r><w:t>One</w:t></w:r></w:p>"),
+    )
+    .unwrap();
+    let out = run(dir.path(), &["read", "input.docx", "-p", "12"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("the settled spelling is p12"), "{stderr}");
+}

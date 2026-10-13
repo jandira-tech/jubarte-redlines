@@ -365,10 +365,52 @@ impl Select {
                 _ => Err(refused(item, None)),
             }
         };
+        // The settled spelling of a whole range whose ends are expired
+        // (`2-3` is `p2-p3`): `None` when an end has none, or the range
+        // would run backwards.
+        let settled_range = |from: &str, to: &str| {
+            let settle = |text: &str| -> Option<Option<usize>> {
+                let text = text.trim();
+                if text.is_empty() {
+                    return Some(None);
+                }
+                let spelled = match text.parse::<ShortId>() {
+                    Ok(_) => text.to_string(),
+                    Err(e) => crate::ids::hint_where(e.hint, |id| {
+                        matches!(
+                            id,
+                            ShortId::Block {
+                                story: Story::Body,
+                                ..
+                            }
+                        )
+                    })?,
+                };
+                match spelled.parse::<ShortId>() {
+                    Ok(ShortId::Block {
+                        story: Story::Body,
+                        path,
+                    }) => match path[..] {
+                        [Step::Paragraph(n)] => Some(Some(n)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            };
+            let (from, to) = (settle(from)?, settle(to)?);
+            if from.is_none() && to.is_none() || matches!((from, to), (Some(a), Some(b)) if b < a) {
+                return None;
+            }
+            let spell = |n: Option<usize>| n.map_or_else(String::new, |n| format!("p{n}"));
+            Some(format!("{}-{}", spell(from), spell(to)))
+        };
         let mut picks = Vec::new();
         for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             if let Some((from, to)) = item.split_once('-') {
-                let (from, to) = (end(item, from)?, end(item, to)?);
+                let (Ok(from_end), Ok(to_end)) = (end(item, from), end(item, to)) else {
+                    return Err(refused(item, settled_range(from, to)));
+                };
+                let (from, to) = (from_end, to_end);
                 if from.is_none() && to.is_none() {
                     return Err(refused(item, None));
                 }
