@@ -97,7 +97,7 @@ fn edit_and_add_record_into_one_plan_that_edit_applies_and_consumes() {
     let recorded = plan(dir);
     assert_eq!(recorded["operations"].as_array().unwrap().len(), 2);
     assert_eq!(recorded["source_sha256"], source_sha256(&before));
-    assert_eq!(recorded["author"], "Modified User");
+    assert_eq!(recorded["author"], "Redline");
 
     let (code, _, err) = run(
         dir,
@@ -222,7 +222,7 @@ fn a_recording_refuses_what_applies_later_and_what_the_plan_names_otherwise() {
     let (code, _, err) = record(&["--author", "Bob"], "letter.docx");
     assert_eq!(code, 2);
     assert!(
-        err.contains(r#"the plan's author is "Modified User"; pass --author "Modified User""#),
+        err.contains(r#"the plan's author is "Redline"; pass --author "Redline""#),
         "{err}"
     );
     let (code, _, err) = record(&[], "other.docx");
@@ -349,7 +349,7 @@ fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
             "--plan",
             "plan.json",
             "--author",
-            "Modified User",
+            "Redline",
         ],
     );
     assert_eq!(code, 2);
