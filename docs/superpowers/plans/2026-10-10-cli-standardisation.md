@@ -1266,6 +1266,26 @@ He asked for D15 and D16, and asked again for compare to print instead of writin
 | Q16 | compare's printed authors line reads `R: Redline … 1970-01-01T00:00:00Z` (the pinned default date). | Arthur: date them now; `-d` pins (D17, Task 18b) |
 | Q17 | Naming the text a comment covers (Task 23): the id `c0.text`, or a flag on `-p c0`? | Open: `c0.text` recommended, so `-p c0` keeps one meaning |
 
+## Choices open with Arthur (2026-10-13)
+
+Raised by the catalogues of PR #458 (`docs/flags_datetime.md`, `docs/locations.md`) and the CLI audit (`jubarte-loop/cli-audit/FINDINGS.md`).
+
+| Q | Question | Facts | Recommendation |
+|---|---|---|---|
+| Q18 | Typed ids: one Rust type per id kind, parsed by clap? | No id flag has a `value_parser` today: `--id`, `-p/--location` and `-p/--paragraphs` reach `String` fields and are parsed after clap, by three parsers (`ids::parse_change_ids`, `ids::parse_location`, `markdown::Select::parse`). So a bad id exits 1 on `read -p` and 2 elsewhere, and each parser has its own message. A newtype per kind (`ChangeRef`, `CommentRef`, `Location`, `BlockSpec`) that implements `FromStr`, used as the field type, makes clap refuse a bad id at parse time with its own error and exit 2, in the binary, Python and npm alike (they share `parse_json`). | Yes. The types live in `src/ids.rs`; `read -p` joins the one grammar (the audit's A1/E1/G2). |
+| Q19 | `--id` for the short, intuitive id (`p3`, `c5`, `footnotes.r2`, `t0.row1.cell2`) and `--long-id` for one that strictly mimics the docx? | The long ids mimic the XML only in part. `body:rev:12` is the story (the part's file stem) plus the change's own `w:id`, as the XML spells it. `body:p:12` is the story plus the paragraph's position: no XML attribute holds it, and it shifts when a paragraph is inserted before it. No long id is a UUID. Word's only per-paragraph id is the optional `w14:paraId` (8 hex digits, Word 2010+). Word rewrites it on some edits and does not guarantee it unique. Footnotes have their own `w:id`, but `footnotes.p3` counts paragraphs across the whole part, not notes. Arthur also asked (2026-10-13) to treat long ids as deprecated; a `--long-id` flag keeps them alive. | Decide first whether long ids stay. If they stay: `--long-id` takes `story:rev:WID` and `story:comment:WID` (true XML ids), plus `story:para:PARAID` from `w14:paraId` where the document has one, and refuses the positional `body:p:12`. If they go: they stay only in JSON and machine hints (D7), and the CLI accepts short ids only. |
+| Q20 | Deprecate `cN.text` (Task 23) and let any edit change commented text: keep the comment and move its anchor when the range's boundaries survive, drop the comment when they do not? | Today `-p p1 --anchor …` inside a comment's range already works; replacing the whole range leaves the deletion outside the comment (the Task 23 bug). Dropping a comment deletes a reviewer's words, so it should be reported on stderr, never silent. Arthur expects Word's behaviour to depend on the end of the range. | Investigate Word first (below), then decide. |
+
+**Q20 investigation: what Word does to a comment range when the text it covers changes.** Use the bench scripts only (`word_redline.py`; Word Compare of each pair, then read where Word puts `commentRangeStart`, `commentRangeEnd` and `commentReference` in its redline). Pairs (original → modified), each on a paragraph whose comment covers "ten dollars":
+1. the whole range replaced ("twelve euros");
+2. the first word replaced; the last word replaced;
+3. text typed just before the start and just after the end;
+4. the whole range deleted;
+5. a range spanning two paragraphs, with the second paragraph's text deleted;
+6. the range's end deleted together with the text after it.
+
+Record for each: whether the comment survives, where its start and end land (around the `w:del`, the `w:ins` or both), and whether the reference follows the end. Then, after accept all and after reject all, record what the comment covers. Record the results in `docs/WORD_COMPARE_RULES.md`. Settle Q20 from them.
+
 ## How this plan ships (Arthur, 2026-10-11)
 
 - Stacked PRs, one per task or small group of tasks, each based on the one before; Arthur merges.
