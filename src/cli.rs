@@ -1432,7 +1432,7 @@ pub enum Format {
     /// PNG pages.
     Png,
     /// The JSON snapshot (`read --json`'s object): written, never read.
-    /// `compare` and `diff` refuse it until they write it (`json_not_yet`).
+    /// `diff` refuses it (`json_not_yet`).
     Json,
 }
 
