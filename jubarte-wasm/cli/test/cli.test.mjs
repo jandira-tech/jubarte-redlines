@@ -606,6 +606,16 @@ test("a redline's PDF forwards page options; diff writes none (integration)", ()
   assert.match(refused.err, /`compare OLD NEW -o .*diff-refused\.pdf`/);
   const redline = path.join(tmp, "page-options-redline.docx");
   assert.equal(run("compare", a, b, "-d", "1970-01-01T00:00:00Z", "-o", redline).code, 0);
+  // Without -d the revisions are dated now (D17): the shared parser fills it.
+  const stamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const before = stamp();
+  const dated = path.join(tmp, "page-options-now.docx");
+  assert.equal(run("compare", a, b, "-o", dated).code, 0);
+  const after = stamp();
+  const dates = run("changes", dated, "--json").out.trim().split("\n").map((line) => JSON.parse(line).date);
+  assert.ok(dates.length > 0 && dates.every((d) => before <= d && d <= after), `${before} ${dates} ${after}`);
+  const pinned = run("changes", redline, "--json").out.trim().split("\n").map((line) => JSON.parse(line).date);
+  assert.deepEqual([...new Set(pinned)], ["1970-01-01T00:00:00Z"]);
   const all = path.join(tmp, "diff-all.pdf"), kept = path.join(tmp, "diff-kept.pdf");
   for (const [output, flags] of [[all, []], [kept, ["--changed-only"]]]) {
     const result = run("convert", redline, "-o", output, ...flags);

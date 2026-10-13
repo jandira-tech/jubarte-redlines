@@ -153,7 +153,7 @@ const COMMANDS = {
           acceptChanges: o.accept_changes, fullLines: o.full_lines, oldFormat, newFormat,
         }));
       } else {
-        const date = o.date ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+        const date = o.date; // the shared parser dated the run (D17)
         if (o.format === "critic") {
           if (oldFormat !== "md" || newFormat !== "md") {
             throw new CliError("--format critic needs both documents in Markdown; `jubarte compare OLD NEW` prints their redline as the agent view");
