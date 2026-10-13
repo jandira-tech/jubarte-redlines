@@ -1773,6 +1773,16 @@ struct TocSpec {
 /// error with the outcome so far.
 type Resolution<T> = Result<(T, EditOutcome), Box<(EditError, EditOutcome)>>;
 
+/// The text a comment covers: from `start` in paragraph `first` to `end` in
+/// paragraph `last` (projection offsets; global paragraph indexes).
+#[derive(Clone, Copy, Debug)]
+struct Covered {
+    first: usize,
+    start: usize,
+    last: usize,
+    end: usize,
+}
+
 struct Transaction<'p> {
     plan: &'p EditPlan,
     source_sha256: String,
@@ -1795,6 +1805,10 @@ struct Transaction<'p> {
     origin: Option<origin::Origin>,
     outcomes: Vec<EditOutcome>,
     resolved: Vec<(usize, Resolved)>,
+    /// While an operation naming `cN.text` resolves: `N` and the span of
+    /// its paragraph's projection the comment covers. Anchors are looked
+    /// up there only.
+    anchor_window: std::cell::Cell<Option<(u32, usize, usize)>>,
     comments: Vec<(u32, String)>,
     /// `(comment id, operation)` of each commented paragraph deletion.
     deletion_comments: Vec<(u32, usize)>,
@@ -1932,6 +1946,7 @@ impl<'p> Transaction<'p> {
             origin,
             outcomes: Vec::new(),
             resolved: Vec::new(),
+            anchor_window: std::cell::Cell::new(None),
             comments: Vec::new(),
             deletion_comments: Vec::new(),
             preset_comment_ids: Vec::new(),
@@ -1950,9 +1965,18 @@ impl<'p> Transaction<'p> {
         })
     }
 
-    /// Whether the plan edits only text and comments, and one of its text
-    /// edits replaces exactly the text a comment covers with new text.
+    /// Whether the plan names a comment's text (`cN.text`), or edits only
+    /// text and comments and one of its text edits replaces exactly the
+    /// text a comment covers with new text.
     fn edits_a_comment_range(&self) -> bool {
+        let names_comment_text = self
+            .plan
+            .operations
+            .iter()
+            .any(|op| selector_of(&op.kind).and_then(comment_text_of).is_some());
+        if names_comment_text {
+            return true;
+        }
         let text_only = self
             .resolved
             .iter()
@@ -1975,11 +1999,25 @@ impl<'p> Transaction<'p> {
     /// The `(start, end)` projection offsets of each comment whose range
     /// opens and closes in paragraph `para`.
     fn comment_ranges(&self, para: usize) -> Vec<(usize, usize)> {
+        let mut open: Vec<(String, usize)> = Vec::new();
+        let mut ranges = Vec::new();
+        for (id, starts, offset) in self.comment_marks(para) {
+            if starts {
+                open.push((id, offset));
+            } else if let Some(at) = open.iter().position(|(o, _)| *o == id) {
+                ranges.push((open.remove(at).1, offset));
+            }
+        }
+        ranges
+    }
+
+    /// Each comment range marker of paragraph `para`, in document order:
+    /// its `w:id`, whether it opens the range, and its projection offset.
+    fn comment_marks(&self, para: usize) -> Vec<(String, bool, usize)> {
         let dom = &self.opened.dom;
         let segments = &self.projections[para].segments;
         let mut offset = 0;
-        let mut open: Vec<(&str, usize)> = Vec::new();
-        let mut ranges = Vec::new();
+        let mut marks = Vec::new();
         for node in dom.descendants(self.paragraph_nodes[para], None) {
             let end = segments.iter().find_map(|s| match s.piece {
                 Piece::Text { t: n, .. } | Piece::Glyph { element: n, .. } if n == node => {
@@ -1994,20 +2032,154 @@ impl<'p> Transaction<'p> {
             let Some(name) = dom.name(node).filter(|n| n.namespace_name() == W::URI) else {
                 continue;
             };
-            let Some(id) = dom.attribute(node, &W::id()) else {
-                continue;
+            let starts = match name.local_name() {
+                "commentRangeStart" => true,
+                "commentRangeEnd" => false,
+                _ => continue,
             };
-            match name.local_name() {
-                "commentRangeStart" => open.push((id, offset)),
-                "commentRangeEnd" => {
-                    if let Some(at) = open.iter().position(|&(o, _)| o == id) {
-                        ranges.push((open.remove(at).1, offset));
-                    }
-                }
-                _ => {}
+            if let Some(id) = dom.attribute(node, &W::id()) {
+                marks.push((id.to_string(), starts, offset));
             }
         }
-        ranges
+        marks
+    }
+
+    /// The text comment `n` covers (`cN.text`), from its range start to
+    /// its range end.
+    fn comment_text(&self, n: u32) -> Result<Covered, origin::Miss> {
+        let id = n.to_string();
+        let mut opened: Option<(usize, usize)> = None;
+        for para in 0..self.paragraph_nodes.len() {
+            for (mark, starts, offset) in self.comment_marks(para) {
+                if mark != id {
+                    continue;
+                }
+                match opened {
+                    None if starts => opened = Some((para, offset)),
+                    Some((first, start)) if !starts => {
+                        return Ok(Covered {
+                            first,
+                            start,
+                            last: para,
+                            end: offset,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err((
+            "ANCHOR_NOT_FOUND".into(),
+            format!("no comment c{n} covers text in this document"),
+            0,
+        ))
+    }
+
+    /// `cN.text` rewritten as `new_text` (empty: deleted): one tracked
+    /// substitution inside the comment. A range over two paragraphs that
+    /// follow each other also deletes the mark between them, as Word does.
+    fn resolve_comment_text(
+        &self,
+        n: u32,
+        new_text: &str,
+        outcome: &mut EditOutcome,
+    ) -> Result<Vec<Resolved>, (String, String)> {
+        let covered = self.comment_text(n).map_err(|(code, message, matches)| {
+            outcome.matches = matches;
+            (code, message)
+        })?;
+        let Covered {
+            first,
+            start,
+            last,
+            end,
+        } = covered;
+        outcome.paragraph = Some(self.paragraph_id(first));
+        if first == last && start == end {
+            return Err((
+                "INVALID_EDIT".into(),
+                format!(
+                    "c{n} covers no text; edit its paragraph ({}) instead",
+                    crate::ids::short_paragraph(&self.paragraph_id(first))
+                ),
+            ));
+        }
+        check_run_text(new_text).map_err(|m| ("INVALID_EDIT".to_string(), m))?;
+        let structure = |m| ("UNSUPPORTED_STRUCTURE".to_string(), m);
+        outcome.matches = 1;
+        let text = &self.projections[first].text;
+        if first == last {
+            self.check_range(&self.projections[first], start, end)
+                .map_err(structure)?;
+            outcome.context = Some(context(
+                text,
+                start,
+                end,
+                &format!("{{{}→{}}}", &text[start..end], new_text),
+            ));
+            return Ok(vec![Resolved::Text {
+                para: first,
+                start,
+                end,
+                replacement: new_text.to_string(),
+                comment: None,
+                attach_before: false,
+                format: None,
+            }]);
+        }
+        let dom = &self.opened.dom;
+        let adjacent = last == first + 1
+            && self.paragraph_story[first].0 == self.paragraph_story[last].0
+            && dom.next_element(self.paragraph_nodes[first]) == Some(self.paragraph_nodes[last]);
+        if !adjacent {
+            return Err(structure(format!(
+                "c{n} covers text from {} to {}; cN.text edits one paragraph, or two that follow each other",
+                crate::ids::short_paragraph(&self.paragraph_id(first)),
+                crate::ids::short_paragraph(&self.paragraph_id(last))
+            )));
+        }
+        let first_end = text.len();
+        self.check_range(&self.projections[first], start, first_end)
+            .map_err(structure)?;
+        self.check_range(&self.projections[last], 0, end)
+            .map_err(structure)?;
+        outcome.context = Some(context(
+            text,
+            start,
+            first_end,
+            &format!(
+                "{{{}¶{}→{}}}",
+                &text[start..],
+                &self.projections[last].text[..end],
+                new_text
+            ),
+        ));
+        let mut resolved = vec![Resolved::Text {
+            para: first,
+            start,
+            end: first_end,
+            replacement: new_text.to_string(),
+            comment: None,
+            attach_before: start == first_end,
+            format: None,
+        }];
+        if end > 0 {
+            resolved.push(Resolved::Text {
+                para: last,
+                start: 0,
+                end,
+                replacement: String::new(),
+                comment: None,
+                attach_before: false,
+                format: None,
+            });
+        }
+        resolved.push(Resolved::MergeParagraphs {
+            para: first,
+            next: last,
+            separator: String::new(),
+        });
+        Ok(resolved)
     }
 
     fn report(&self, ok: bool) -> EditReport {
@@ -2044,9 +2216,25 @@ impl<'p> Transaction<'p> {
         for (i, op) in self.plan.operations.iter().enumerate() {
             let id = op.id.clone().unwrap_or_else(|| format!("op-{}", i + 1));
             let kind = kind_name(&op.kind).to_string();
+            let window = selector_of(&op.kind)
+                .and_then(comment_text_of)
+                .and_then(|n| {
+                    self.comment_text(n)
+                        .ok()
+                        .filter(|c| c.first == c.last)
+                        .map(|c| (n, c.start, c.end))
+                });
+            self.anchor_window.set(window);
             let result = match &op.kind {
                 OperationKind::Rewrite { paragraph, text } => {
                     self.resolve_rewrite(&id, paragraph, text)
+                }
+                // `-p cN.text --delete`: the covered text goes.
+                OperationKind::DeleteParagraph {
+                    paragraph,
+                    comment: None,
+                } if comment_text_of(paragraph).is_some() => {
+                    self.resolve_rewrite(&id, paragraph, "")
                 }
                 OperationKind::List {
                     paragraphs,
@@ -2143,6 +2331,7 @@ impl<'p> Transaction<'p> {
                     .resolve_one(&id, other)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
             };
+            self.anchor_window.set(None);
             match result {
                 Ok((resolved, mut outcome)) => {
                     outcome.id = id;
@@ -2266,6 +2455,34 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
+        if let Some(n) = comment_text_of(selector) {
+            let paragraph_level = matches!(
+                kind,
+                OperationKind::InsertParagraph { .. }
+                    | OperationKind::FormatParagraph { .. }
+                    | OperationKind::MergeParagraphs { .. }
+                    | OperationKind::InsertTable { .. }
+                    | OperationKind::InsertToc { .. }
+                    | OperationKind::InsertImage { .. }
+            );
+            let message = if matches!(kind, OperationKind::DeleteParagraph { .. }) {
+                Some(format!("deleting c{n}.text takes no comment"))
+            } else if paragraph_level {
+                Some(format!(
+                    "c{n}.text names text, not a paragraph; use the paragraph's id ({})",
+                    crate::ids::short_paragraph(&self.paragraph_id(para))
+                ))
+            } else if self.anchor_window.get().is_none() {
+                Some(format!(
+                    "c{n} covers text in more than one paragraph; give the anchor with a paragraph id, or rewrite c{n}.text whole"
+                ))
+            } else {
+                None
+            };
+            if let Some(message) = message {
+                return Err(fail("INVALID_EDIT", message, outcome));
+            }
+        }
         // `occurrence` picks a hit of an anchor; with no anchor it would be
         // silently ignored.
         let anchorless = matches!(
@@ -2432,11 +2649,17 @@ impl<'p> Transaction<'p> {
                     }
                     (None, None, Some(Edge::Start)) => {
                         outcome.matches = 1;
-                        (0, false)
+                        (
+                            self.anchor_window.get().map_or(0, |(_, from, _)| from),
+                            false,
+                        )
                     }
                     (None, None, Some(Edge::End)) => {
                         outcome.matches = 1;
-                        (text.len(), true)
+                        (
+                            self.anchor_window.get().map_or(text.len(), |(_, _, to)| to),
+                            true,
+                        )
                     }
                     _ => {
                         return Err(fail(
@@ -2519,11 +2742,19 @@ impl<'p> Transaction<'p> {
                 // A comment edits nothing: its range may cross a tab, a
                 // symbol, a hyperlink, a field or a revision.
                 let (start, end) = match find {
-                    Some(find) => locate(projection, find, *occurrence, &mut outcome)
-                        .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
+                    Some(find) => locate(
+                        projection,
+                        find,
+                        *occurrence,
+                        &mut outcome,
+                        self.anchor_window.get(),
+                    )
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
                     None => {
                         outcome.matches = 1;
-                        (0, text.len())
+                        self.anchor_window
+                            .get()
+                            .map_or((0, text.len()), |(_, from, to)| (from, to))
                     }
                 };
                 outcome.context = Some(context(
@@ -3093,6 +3324,12 @@ impl<'p> Transaction<'p> {
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
         };
+        if let Some(n) = comment_text_of(paragraph) {
+            return match self.resolve_comment_text(n, new_text, &mut outcome) {
+                Ok(resolved) => Ok((resolved, outcome)),
+                Err((code, message)) => Err(fail(&code, message, outcome)),
+            };
+        }
         let para = match self.select(paragraph, false) {
             Ok(p) => p,
             Err((code, msg, matches)) => {
@@ -3101,10 +3338,10 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
+        let projection = &self.projections[para];
         // The paragraph's symbols may be copied into the text; they stay.
         check_run_text(&new_text.replace('\u{FFFC}', ""))
             .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
-        let projection = &self.projections[para];
         let text = &projection.text;
         let symbols = |s: &str| s.matches('\u{FFFC}').count();
         if symbols(new_text) > symbols(text) {
@@ -3378,6 +3615,9 @@ impl<'p> Transaction<'p> {
     /// `merged_ok` (an edit that finds its text there). Text selectors read
     /// the settled text.
     fn select(&self, selector: &Selector, merged_ok: bool) -> Result<usize, origin::Miss> {
+        if let Some(n) = comment_text_of(selector) {
+            return self.comment_text(n).map(|covered| covered.first);
+        }
         let story_index = match &self.origin {
             Some(origin) => match origin.ids().position(selector)? {
                 Ok(source) => {
@@ -3504,7 +3744,13 @@ impl<'p> Transaction<'p> {
         occurrence: Option<usize>,
         outcome: &mut EditOutcome,
     ) -> Result<(usize, usize), (String, String)> {
-        let (start, end) = locate(projection, find, occurrence, outcome)?;
+        let (start, end) = locate(
+            projection,
+            find,
+            occurrence,
+            outcome,
+            self.anchor_window.get(),
+        )?;
         self.check_range(projection, start, end)
             .map_err(|m| ("UNSUPPORTED_STRUCTURE".to_string(), m))?;
         Ok((start, end))
@@ -4909,6 +5155,36 @@ fn kind_name(kind: &OperationKind) -> &'static str {
 
 /// The operation edits or comments text it finds in its paragraph, so it
 /// may follow a paragraph into the one it merged with.
+/// The comment `N` a selector `cN.text` names.
+fn comment_text_of(selector: &Selector) -> Option<u32> {
+    match selector {
+        Selector::Name(name) | Selector::Id { id: name } => crate::ids::comment_text_id(name),
+        _ => None,
+    }
+}
+
+/// The paragraph an operation names, when it names one.
+fn selector_of(kind: &OperationKind) -> Option<&Selector> {
+    match kind {
+        OperationKind::Replace { paragraph, .. }
+        | OperationKind::Insert { paragraph, .. }
+        | OperationKind::Delete { paragraph, .. }
+        | OperationKind::Comment { paragraph, .. }
+        | OperationKind::InsertParagraph { paragraph, .. }
+        | OperationKind::DeleteParagraph { paragraph, .. }
+        | OperationKind::FormatParagraph { paragraph, .. }
+        | OperationKind::MergeParagraphs { paragraph, .. }
+        | OperationKind::Rewrite { paragraph, .. }
+        | OperationKind::InsertTable { paragraph, .. }
+        | OperationKind::InsertToc { paragraph, .. }
+        | OperationKind::FormatRun { paragraph, .. }
+        | OperationKind::InsertFootnote { paragraph, .. }
+        | OperationKind::InsertImage { paragraph, .. }
+        | OperationKind::Redact { paragraph, .. } => Some(paragraph),
+        _ => None,
+    }
+}
+
 fn finds_text(kind: &OperationKind) -> bool {
     match kind {
         OperationKind::Replace { .. }
@@ -5027,6 +5303,7 @@ fn locate(
     find: &str,
     occurrence: Option<usize>,
     outcome: &mut EditOutcome,
+    window: Option<(u32, usize, usize)>,
 ) -> Result<(usize, usize), (String, String)> {
     if find.is_empty() {
         return Err(("INVALID_EDIT".into(), "find must be nonempty".into()));
@@ -5038,11 +5315,29 @@ fn locate(
             .filter(|&i| text[i..].starts_with(needle))
             .collect()
     };
+    // Under `cN.text`, only hits inside the text the comment covers count.
+    let outside = std::cell::Cell::new(false);
+    let inside = |hits: Vec<(usize, usize)>| -> Vec<(usize, usize)> {
+        let Some((_, from, to)) = window else {
+            return hits;
+        };
+        let kept: Vec<_> = hits
+            .iter()
+            .copied()
+            .filter(|&(s, e)| from <= s && e <= to)
+            .collect();
+        if kept.len() < hits.len() {
+            outside.set(true);
+        }
+        kept
+    };
     let exact = |needle: &str| -> Vec<(usize, usize)> {
-        hits_of(needle)
-            .into_iter()
-            .map(|i| (i, i + needle.len()))
-            .collect()
+        inside(
+            hits_of(needle)
+                .into_iter()
+                .map(|i| (i, i + needle.len()))
+                .collect(),
+        )
     };
     let mut hits = exact(find);
     // An anchor copied out of the agent view can carry Markdown marks
@@ -5057,9 +5352,9 @@ fn locate(
         if let Some(plain) = &plain {
             tries.push(exact(plain));
         }
-        tries.push(anchor::reading_hits(text, find));
+        tries.push(inside(anchor::reading_hits(text, find)));
         if let Some(plain) = &plain {
-            tries.push(anchor::reading_hits(text, plain));
+            tries.push(inside(anchor::reading_hits(text, plain)));
         }
         if let Some(found) = tries.into_iter().find(|t| !t.is_empty()) {
             let read_as: String = text[found[0].0..found[0].1].to_string();
@@ -5076,7 +5371,13 @@ fn locate(
         ([], _) => {
             return Err((
                 "ANCHOR_NOT_FOUND".into(),
-                format!("{shown} does not occur in the paragraph"),
+                match window {
+                    Some((n, ..)) if outside.get() => {
+                        format!("{shown} is not in the text c{n} covers")
+                    }
+                    Some((n, ..)) => format!("{shown} does not occur in the text c{n} covers"),
+                    None => format!("{shown} does not occur in the paragraph"),
+                },
             ));
         }
         (_, Some(0)) => {

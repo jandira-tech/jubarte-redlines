@@ -61,6 +61,9 @@ pub struct Ids {
     pub change: Vec<String>,
     /// Comments (`edit`/`add -p`, a plan's `comment_id`).
     pub comment: Vec<String>,
+    /// The text a comment covers (`edit -p`, a plan's `paragraph`).
+    #[serde(default)]
+    pub comment_text: Vec<String>,
     /// Paragraphs (`edit`/`add -p`, a plan's anchors); `read -p` takes only
     /// `pN`, `pN-pM` and `tN`.
     pub paragraph: Vec<String>,
@@ -398,6 +401,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
         ids: Ids {
             change: strings(crate::ids::CHANGE_SPELLINGS),
             comment: strings(crate::ids::COMMENT_SPELLINGS),
+            comment_text: strings(crate::ids::COMMENT_TEXT_SPELLINGS),
             paragraph: strings(crate::ids::PARAGRAPH_SPELLINGS),
             table: strings(crate::ids::TABLE_SPELLINGS),
             note: IDS_NOTE.to_string(),
@@ -462,9 +466,10 @@ pub fn capabilities_text(c: &Capabilities) -> String {
         .collect();
     out.push_str(&format!("formats: {}\n", formats.join("; ")));
     out.push_str(&format!(
-        "ids: revisions {}; comments {}; paragraphs {}; tables {}\n",
+        "ids: revisions {}; comments {}; comment text {}; paragraphs {}; tables {}\n",
         c.ids.change.join(", "),
         c.ids.comment.join(", "),
+        c.ids.comment_text.join(", "),
         c.ids.paragraph.join(", "),
         c.ids.table.join(", ")
     ));

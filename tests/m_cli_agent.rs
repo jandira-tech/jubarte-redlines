@@ -599,6 +599,7 @@ fn capabilities_describe_the_built_binary() {
     );
     // 0.12's `#c27` still parses but is not advertised.
     assert_eq!(v["ids"]["comment"], serde_json::json!(["c27", "27"]));
+    assert_eq!(v["ids"]["comment_text"], serde_json::json!(["c27.text"]));
     assert_eq!(v["ids"]["table"], serde_json::json!(["t0"]));
     assert!(v["ids"]["note"].as_str().unwrap().contains("safe unquoted"));
 }
@@ -632,7 +633,10 @@ fn capabilities_print_a_text_summary_by_default() {
         );
     }
     assert!(text.contains("; read .md .json; diff .md .markdown .txt .patch .diff;"));
-    assert!(text.contains("; comments c27, 27; "), "{text}");
+    assert!(
+        text.contains("; comments c27, 27; comment text c27.text; "),
+        "{text}"
+    );
     assert_eq!(lines.last(), Some(&"run with --json for the manifest"));
 
     // The text says what the manifest says: every operation with its value,
