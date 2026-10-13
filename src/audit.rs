@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `jubarte audit`: accessibility, style and structure findings with the
-//! paragraph id an agent can act on.
+//! `jubarte validate --rules a11y,style,structure`: accessibility, style and
+//! structure findings with the paragraph id an agent can act on.
 //!
 //! Every rule reads the admitted package through [`crate::inspect`]'s read
 //! model, so a finding's `location` is the same `body:p:N` (or story

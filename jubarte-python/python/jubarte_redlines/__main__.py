@@ -822,10 +822,11 @@ def cmd_reject(args: argparse.Namespace) -> int:
 def cmd_validate(args: argparse.Namespace) -> int:
     from . import _native
 
-    docx = _read(args.file).to_bytes()
+    doc = _read(args.file)
+    docx = doc.to_bytes()
     if args.repair is not None:
         _ensure_writable(args.repair, args.force)
-        repaired = _read(args.file).repair()
+        repaired = doc.repair()
         docx = repaired.document.to_bytes()
         size = _write(args.repair, docx)
         if not args.json:
