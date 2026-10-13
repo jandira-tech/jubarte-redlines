@@ -760,62 +760,8 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
     format!("{stem}-page-{:0width$}.png", index + 1)
 }
 
-fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = read_document(file)?;
-    if json {
-        outln!(
-            "{}",
-            jubarte::inspect::inspect_json(&bytes).map_err(|e| e.to_string())?
-        );
-        return Ok(());
-    }
-    let summary = jubarte::inspect::summary(&bytes).map_err(|e| e.to_string())?;
-    let paragraphs = jubarte::inspect::paragraphs(&bytes).map_err(|e| e.to_string())?;
-    outln!(
-        "sha256: {}\nparagraphs: {}  tables: {}  fields: {}  sections: {}  comments: {}  revisions: {}  footnotes: {}  endnotes: {}  headers: {}  footers: {}  images: {}  numbering: {}  track_changes: {}",
-        jubarte::inspect::source_sha256(&bytes),
-        summary.paragraphs,
-        summary.tables,
-        summary.fields,
-        summary.sections,
-        summary.comments,
-        summary.revisions,
-        summary.footnotes,
-        summary.endnotes,
-        summary.headers,
-        summary.footers,
-        summary.images,
-        summary.list_numbering,
-        summary.track_changes
-    );
-    for p in &paragraphs {
-        let mut flags = Vec::new();
-        if let Some(style) = &p.style {
-            flags.push(style.clone());
-        }
-        if p.numbered {
-            flags.push("numbered".into());
-        }
-        if p.in_table {
-            flags.push("table".into());
-        }
-        if p.page_break {
-            flags.push("page-break".into());
-        }
-        flags.extend(p.limitations.iter().cloned());
-        let preview: String = p.text.chars().take(80).collect();
-        let more = if p.text.chars().count() > 80 {
-            "…"
-        } else {
-            ""
-        };
-        outln!("{}\t[{}]\t{preview}{more}", p.id, flags.join(","));
-    }
-    Ok(())
-}
-
-/// `inspect --tables` and `read --tables`: each body table as a grid.
-fn run_inspect_tables(file: &Path) -> Result<(), String> {
+/// `read --tables`: each body table as a grid.
+fn run_read_tables(file: &Path) -> Result<(), String> {
     let bytes = read_document(file)?;
     let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
     write_stdout(jubarte::inspect::tables_text(&tables))
@@ -832,7 +778,7 @@ fn run_text(
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
     if args.tables {
-        return Ok(run_inspect_tables(file)?);
+        return Ok(run_read_tables(file)?);
     }
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if let Some(path) = output {
@@ -2522,13 +2468,6 @@ fn cli_main() -> ExitCode {
                 return convert_exit_code(run_text_diff(&job, &options));
             }
             return convert_exit_code(run_diff(&job));
-        }
-        Some(Command::Inspect { file, json, tables }) => {
-            return exit_code(if tables {
-                run_inspect_tables(&file)
-            } else {
-                run_inspect(&file, json)
-            });
         }
         Some(Command::Read {
             file,

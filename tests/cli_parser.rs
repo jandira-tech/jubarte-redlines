@@ -343,13 +343,14 @@ fn github_output_contract_is_checked_before_documents_exist() {
 
 #[test]
 fn facade_restricts_help_acceptance_aliases_and_shorthand() {
-    let supported = ["inspect", "diff"];
+    let supported = ["read", "diff"];
     let help = parse(&["--help"], &supported);
     assert_eq!(help["exit_code"], 0);
     assert_eq!(help["stream"], "stdout");
     let text = help["text"].as_str().unwrap();
     assert!(text.contains("jubarte-python"));
-    assert!(text.contains("inspect") && text.contains("diff"));
+    assert!(text.contains("read") && text.contains("diff"));
+    assert!(!text.contains("inspect"), "{text}");
     assert!(!text.contains("\n  self-update ") && !text.contains("\n  compare "));
     assert!(!text.contains('\u{1b}'));
     for args in [
@@ -385,9 +386,29 @@ fn facade_restricts_help_acceptance_aliases_and_shorthand() {
         0
     );
     assert_eq!(parse(&["--version"], &supported)["stream"], "stdout");
+    let inspect = parse(&["inspect", "a", "--json"], &supported);
+    assert_eq!(inspect["command"], "read", "{inspect}");
+    assert_eq!(inspect["args"]["json"], true);
     assert_eq!(
-        parse(&["inspect", "a", "--json"], &supported)["args"]["json"],
-        true
+        inspect["notes"][0],
+        "note: inspect is now read; inspect is removed in 0.14"
+    );
+    assert_eq!(
+        parse(&["read", "a"], &supported)["notes"],
+        serde_json::json!([])
+    );
+    let audit = parse(&["audit", "a"], &[]);
+    assert_eq!(audit["command"], "validate", "{audit}");
+    assert_eq!(
+        audit["args"]["rules"],
+        serde_json::json!(["a11y", "style", "structure"])
+    );
+    // Rules given to the alias win.
+    let audit = parse(&["audit", "a", "--rules", "style"], &[]);
+    assert_eq!(audit["args"]["rules"], serde_json::json!(["style"]));
+    assert_eq!(
+        parse(&["validate", "a"], &[])["args"]["rules"],
+        serde_json::json!([])
     );
 }
 
@@ -580,7 +601,7 @@ fn help_explains_tasks_and_critic_markup() {
 #[test]
 fn supported_compare_never_accepts_a_disabled_task_as_filenames() {
     for command in ["convert", "self-update", "debug", "validate"] {
-        let result = parse(&[command, "a.docx"], &["compare", "inspect"]);
+        let result = parse(&[command, "a.docx"], &["compare", "read"]);
         assert_eq!(result["exit_code"], 2, "{result}");
         assert_eq!(result["stream"], "stderr");
     }
@@ -1347,6 +1368,7 @@ fn the_output_rule_is_one_table() {
     }
     assert_eq!(Task::of_name("redline"), Some(Task::Compare));
     assert_eq!(Task::of_name("text"), Some(Task::Read));
+    assert_eq!(Task::of_name("inspect"), Some(Task::Read));
     assert_eq!(Task::of_name("edit"), None);
     for task in [
         Task::Compare,
