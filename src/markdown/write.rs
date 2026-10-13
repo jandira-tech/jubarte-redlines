@@ -927,6 +927,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 Some(spec) => Cow::Owned(spec.id.clone()),
                 None => HEADINGS[level - 1].into(),
             });
+            paragraph.heading = true;
         } else if self.code_block {
             paragraph.style = Some("SourceCode".into());
             paragraph.indent = list_indent;
@@ -1690,6 +1691,44 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         let mut body = std::mem::take(&mut self.body);
         finish_story(&mut body);
+        let targets: HashSet<&str> = body
+            .iter()
+            .chain(self.definitions.values().flatten())
+            .filter_map(|item| match item {
+                Item::LinkStart(Link::Anchor(name)) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let headings = heading_bookmarks(&body, &targets);
+        // Slugs Word cannot take as names, and the names they get instead.
+        let mut renamed: HashMap<String, String> = HashMap::new();
+        let mut used: HashSet<String> = headings
+            .iter()
+            .filter(|(_, slug)| word_takes(slug))
+            .map(|(_, slug)| slug.clone())
+            .collect();
+        for (at, slug) in headings {
+            let name = bookmark_name(&slug, &used);
+            if name != slug {
+                used.insert(name.clone());
+                renamed.insert(slug, name.clone());
+            }
+            if let Item::Paragraph(paragraph) = &mut body[at] {
+                paragraph.bookmark = Some(name);
+            }
+        }
+        if !renamed.is_empty() {
+            for item in body
+                .iter_mut()
+                .chain(self.definitions.values_mut().flatten())
+            {
+                if let Item::LinkStart(Link::Anchor(anchor)) = item
+                    && let Some(name) = renamed.get(anchor.as_str())
+                {
+                    anchor.clone_from(name);
+                }
+            }
+        }
         self.document.body = body;
         for (label, change) in std::mem::take(&mut self.references) {
             let mut items = self.definitions.get(&label).cloned().unwrap_or_default();
@@ -1716,6 +1755,97 @@ impl<'o, 'a> Writer<'o, 'a> {
         renumber_comments(&mut self.document);
         self.document
     }
+}
+
+/// The longest bookmark name Word's schema takes.
+const MOST_BOOKMARK: usize = 40;
+
+/// Word keeps a bookmark named `slug`: one that starts with a letter, of
+/// at most 40 characters.
+fn word_takes(slug: &str) -> bool {
+    slug.starts_with(char::is_alphabetic) && slug.chars().count() <= MOST_BOOKMARK
+}
+
+/// The bookmark name for `slug`: the slug itself when Word takes it; else
+/// `_` before a slug that starts with no letter (hidden, like Word's own
+/// `_Toc` bookmarks), cut to its first 40 characters, or fewer and `-1`,
+/// `-2`, … when that cut is `used`.
+fn bookmark_name(slug: &str, used: &HashSet<String>) -> String {
+    if word_takes(slug) {
+        return slug.to_string();
+    }
+    let slug = if slug.starts_with(char::is_alphabetic) {
+        Cow::Borrowed(slug)
+    } else {
+        Cow::Owned(format!("_{slug}"))
+    };
+    if slug.chars().count() <= MOST_BOOKMARK && !used.contains(slug.as_ref()) {
+        return slug.into_owned();
+    }
+    (0..)
+        .map(|n| {
+            let suffix = if n == 0 {
+                String::new()
+            } else {
+                format!("-{n}")
+            };
+            let head: String = slug.chars().take(MOST_BOOKMARK - suffix.len()).collect();
+            head + &suffix
+        })
+        .find(|name| !used.contains(name))
+        .unwrap_or_default()
+}
+
+/// The headings a link names (`[x](#the-intro)`), by position in `body`,
+/// each with the slug GitHub gives its text: lowercase, spaces to hyphens,
+/// other punctuation dropped, a repeat `-1`, `-2`, …. Deleted text is no
+/// part of it.
+fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, String)> {
+    let mut found = Vec::new();
+    if targets.is_empty() {
+        return found;
+    }
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for (at, item) in body.iter().enumerate() {
+        let Item::Paragraph(paragraph) = item else {
+            continue;
+        };
+        if !paragraph.heading {
+            continue;
+        }
+        let text: String = body[at + 1..]
+            .iter()
+            .take_while(|item| !matches!(item, Item::ParagraphEnd))
+            .filter_map(|item| match item {
+                Item::Run(Run {
+                    content: Content::Text(text),
+                    change,
+                    ..
+                }) if !matches!(change, Some((Kind::Delete, _))) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        let slug: String = text
+            .trim()
+            .to_lowercase()
+            .chars()
+            .filter_map(|c| match c {
+                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+                c if c.is_whitespace() => Some('-'),
+                _ => None,
+            })
+            .collect();
+        let repeats = seen.entry(slug.clone()).or_insert(0);
+        let name = match *repeats {
+            0 => slug,
+            n => format!("{slug}-{n}"),
+        };
+        *repeats += 1;
+        if targets.contains(name.as_str()) {
+            found.push((at, name));
+        }
+    }
+    found
 }
 
 /// The `w:id`s of each of `serials` changes a revision note names: one

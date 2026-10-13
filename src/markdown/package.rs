@@ -155,6 +155,7 @@ pub(super) fn assemble(
         label_nums,
         note_base: 0,
         next_drawing,
+        next_bookmark: 0,
         text_width,
         sections_ended: 0,
         default_section,

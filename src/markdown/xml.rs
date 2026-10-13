@@ -88,6 +88,10 @@ pub(super) struct Paragraph {
     pub mark_fixed: bool,
     /// The paragraph ends a section (an id line's `section-break`).
     pub section_break: bool,
+    /// The paragraph is a `#` heading: a link may name it by its slug.
+    pub heading: bool,
+    /// The bookmark a link to the heading jumps to (`the-intro`).
+    pub bookmark: Option<String>,
 }
 
 /// A paragraph's `w:ind`, side by side, in twips.
@@ -311,6 +315,8 @@ pub(super) struct Context<'d> {
     /// Added to a footnote's position to make its `w:id`.
     pub note_base: u32,
     pub next_drawing: u32,
+    /// The next bookmark's `w:id`.
+    pub next_bookmark: u32,
     /// Width available to a table, in twentieths of a point.
     pub text_width: u32,
     /// The body's sections ended so far, and the section a paragraph
@@ -390,6 +396,8 @@ pub(super) fn story(
     let mut open: Option<Change> = None;
     let mut first_paragraph = note.is_some();
     let mut columns: Vec<Option<&'static str>> = Vec::new();
+    // The bookmark the open paragraph ends.
+    let mut bookmark: Option<u32> = None;
     let close = |out: &mut String, open: &mut Option<Change>| {
         if let Some((kind, _)) = open.take() {
             out.push_str(match kind {
@@ -406,6 +414,16 @@ pub(super) fn story(
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
                 paragraph_properties(context, paragraph, &mut out);
+                if let Some(name) = &paragraph.bookmark {
+                    let id = context.next_bookmark;
+                    context.next_bookmark += 1;
+                    let _ = write!(
+                        out,
+                        "<w:bookmarkStart w:id=\"{id}\" w:name=\"{}\"/>",
+                        escape(name)
+                    );
+                    bookmark = Some(id);
+                }
                 if first_paragraph {
                     first_paragraph = false;
                     let change = note.flatten();
@@ -434,7 +452,12 @@ pub(super) fn story(
                     }
                 }
             }
-            Item::ParagraphEnd => out.push_str("</w:p>"),
+            Item::ParagraphEnd => {
+                if let Some(id) = bookmark.take() {
+                    let _ = write!(out, "<w:bookmarkEnd w:id=\"{id}\"/>");
+                }
+                out.push_str("</w:p>");
+            }
             Item::Run(run) => {
                 if open != run.change {
                     close(&mut out, &mut open);

@@ -445,6 +445,84 @@ fn caret_and_single_tilde_mark_superscript_and_subscript() {
 }
 
 #[test]
+fn a_link_to_a_heading_lands_on_its_bookmark() {
+    // `[x](#slug)` names a heading the way GitHub slugs it; the heading
+    // gets the bookmark Word's `w:anchor` jumps to. A second heading with
+    // the same text is `-1`; a heading no link names gets no bookmark.
+    let docx = write(
+        "# The Intro: part 1\n\nText.\n\n## Unlinked\n\n# The Intro: part 1\n\n\
+         See [the intro](#the-intro-part-1) and [again](#the-intro-part-1-1).\n",
+    );
+    let xml = document_xml(&docx);
+    let starts: Vec<&str> = xml
+        .match_indices("<w:bookmarkStart")
+        .map(|(at, _)| &xml[at..at + xml[at..].find("/>").unwrap() + 2])
+        .collect();
+    assert_eq!(
+        starts,
+        [
+            "<w:bookmarkStart w:id=\"0\" w:name=\"the-intro-part-1\"/>",
+            "<w:bookmarkStart w:id=\"1\" w:name=\"the-intro-part-1-1\"/>",
+        ],
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<w:t xml:space=\"preserve\">The Intro: part 1</w:t></w:r><w:bookmarkEnd w:id=\"0\"/></w:p>"),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("<w:bookmarkEnd").count(), 2, "{xml}");
+}
+
+#[test]
+fn a_bookmark_that_would_start_with_a_digit_starts_with_an_underscore() {
+    // Word drops a bookmark whose name starts with no letter; `_` keeps it,
+    // hidden like Word's own `_Toc` ones, and the link follows.
+    let docx = write("# 2026 plan: Q&A\n\n[plan](#2026-plan-qa)\n");
+    let xml = document_xml(&docx);
+    assert!(
+        xml.contains("<w:bookmarkStart w:id=\"0\" w:name=\"_2026-plan-qa\"/>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<w:hyperlink w:anchor=\"_2026-plan-qa\""),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_bookmark_name_keeps_to_forty_characters() {
+    // Word's schema caps a bookmark name at 40 characters: a longer slug
+    // is cut, a cut that repeats another gets `-1`, and the links follow.
+    let long = "a-rather-long-heading-that-runs-well-past-forty";
+    let docx = write(&format!(
+        "# A rather long heading that runs well past forty\n\n\
+         # A rather long heading that runs well past forty-two\n\n\
+         [one](#{long}) [two](#{long}-two)\n"
+    ));
+    let xml = document_xml(&docx);
+    let cut = &long[..40];
+    let cut_again = format!("{}-1", &long[..38]);
+    assert!(
+        xml.contains(&format!("<w:bookmarkStart w:id=\"0\" w:name=\"{cut}\"/>")),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!(
+            "<w:bookmarkStart w:id=\"1\" w:name=\"{cut_again}\"/>"
+        )),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!("<w:hyperlink w:anchor=\"{cut}\"")),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!("<w:hyperlink w:anchor=\"{cut_again}\"")),
+        "{xml}"
+    );
+}
+
+#[test]
 fn inline_html_quotes_code_in_lists_and_anchors() {
     let docx = write(
         "H<sub>2</sub>O and E=mc<sup>2</sup>, <u>underlined</u>, a<br>break, <span>kept</span>.\n\n\
