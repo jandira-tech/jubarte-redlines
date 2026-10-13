@@ -82,17 +82,18 @@ jubarte original.docx modified.docx \
 
 `redline.docx` contains native Word tracked changes.
 
-Without `-o`, Jubarte derives an output name beside the original document.
+Without `-o`, jubarte prints the redline as the agent view and writes
+nothing; `-o redline.pdf` renders it instead.
 
 ### Inspect and resolve tracked changes
 
 ```sh
-jubarte changes redline.docx --json
+jubarte changes redline.docx          # one change per line: r12, kind, author, paragraph, text
 
 # Resolve one specific change and leave the others tracked:
 jubarte accept redline.docx \
   -o partially-accepted.docx \
-  --id body:rev:12
+  --id r12
 
 # Or resolve everything:
 jubarte accept redline.docx -o final.docx
@@ -117,9 +118,9 @@ jubarte convert redline.docx \
   --revisions word \
   --compress
 
-# Page images
+# Page images: redline-page-01.png, redline-page-02.png, ...
 jubarte convert redline.docx \
-  --png \
+  -o redline.png \
   --dpi 120
 ```
 
@@ -136,7 +137,7 @@ flowchart LR
     E --> F[Accept / Reject]
     F --> G[resolved.docx]
 
-    H[DOCX] --> I[Inspect]
+    H[DOCX] --> I[Read]
     I --> J[JSON edit plan]
     J --> K[Edit]
     K --> L[clean.docx]
@@ -186,7 +187,7 @@ npx jubarte-redlines redline a.docx b.docx -o redline.docx
 ```
 
 Both runners speak the shared command set — `compare`/`redline`,
-`changes`, `accept`, `reject`, `inspect`, `text`, `edit`,
+`changes`, `accept`, `reject`, `read`, `edit`, `add`,
 `convert`, `capabilities` — but not the whole binary surface: the Python
 wheel and npm CLI now include `diff` and share the Rust clap parser for
 help, defaults, aliases and usage errors. Native-only tasks such as
@@ -209,7 +210,7 @@ npx jubarte-redlines diff a.docx b.docx --format github
 headers, footers, notes, comments, tables and text boxes. It extracts all content before display clipping and never caps the number of changes, and does not create an implicit
 DOCX. Header/footer part renumbering is paired by section role. This is a
 patch of extracted **text**, for review; it cannot patch a binary DOCX.
-Formatting and media differences belong to `compare`, `debug` or `diff-render`.
+Formatting and media differences belong to `compare`, `debug` or `visual-diff`.
 
 CriticMarkup keeps its existing role: representing a document's current
 content with its tracked marks and comments. `github` gives a separate
@@ -393,11 +394,21 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 jubarte ORIGINAL MODIFIED [OPTIONS]
 ```
 
-Without `-o`, `jubarte A B` prints the redline as the agent view (the
-`read` options apply) and writes nothing; `-o FILE` writes it, and
-`jubarte compare A B` writes `<A>_v_<B>.docx` as before. `jubarte FILE`
-alone is `jubarte read FILE`; a lone name without an extension is taken
-for a mistyped task, so read such a file with `jubarte read FILE`.
+Without `-o`, `jubarte A B` (or `jubarte compare A B`) prints the redline
+as the agent view (the `read` options apply) and writes nothing. With `-o`,
+the extension picks what is written:
+
+| `-o` | Writes |
+|---|---|
+| `.docx` (or no or an unknown extension) | the redline |
+| `.md`, `.markdown`, `.txt` | the agent view of the redline; CriticMarkup when both inputs are Markdown |
+| `.pdf` | the redline, rendered (`--revisions`, `--pages`, `--changed-pages` apply) |
+| `.png` | one `STEM-page-NN.png` per page |
+| `.json` | the snapshot of the redline, as `read --json` prints it |
+
+`jubarte FILE` alone is `jubarte read FILE`; a lone name without an
+extension is taken for a mistyped task, so read such a file with
+`jubarte read FILE`.
 
 Common options:
 
@@ -405,16 +416,19 @@ Common options:
 |---|---|
 | `-b, --original FILE` | Original document |
 | `-m, --modified FILE` | Modified document |
-| `-o, --output FILE` | Output tracked-changes DOCX |
-| `-a, --author NAME` | Revision author |
-| `-d, --date ISO8601` | Revision timestamp |
+| `-o, --output FILE` | Write the redline; the extension picks the format (above) |
+| `-a, --author NAME` | Revision author (default: `Redline`) |
+| `-d, --date ISO8601` | Revision timestamp (default: now, UTC) |
 | `--detail-threshold RATIO` | Comparison-detail tuning |
 | `--mode word|powertools` | Word-oriented or classic PowerTools comparison behavior |
 | `--force` | Replace an existing output |
-| `-q, --quiet` | Reduce CLI output |
+| `--reference-doc FILE`, `--critic`, `--resource-path DIR` | Markdown inputs |
+| `--revisions`, `--dpi`, `--pages`, `--changed-pages` | Rendering, for `-o FILE.pdf` or `.png` |
+| `-q, --quiet` | Print nothing on success |
 
-The default comparison date is deterministic rather than “now”, making
-identical inputs reproducible unless a date is explicitly supplied.
+The command line dates the revisions now; pin `-d 1970-01-01T00:00:00Z` for
+byte-identical output from identical inputs. The library calls keep the
+epoch as their default, so they stay deterministic.
 
 ### List tracked changes
 
@@ -425,6 +439,10 @@ jubarte changes FILE.docx --json
 
 `changes` is intended for individually addressable review operations and
 reports stable IDs while the corresponding tracked change remains present.
+The text listing prints short ids (`r12`, `header1.r1`, `footnotes.r3`);
+`--json` prints JSON Lines with the long `id` (`body:rev:12`) and the short
+`ref`. Every spelling works with `--id`: `r12`, `12`, `r1+2` (both marks of
+one change), `header1.r1`, `body:rev:12`.
 
 ### Accept or reject
 
@@ -436,13 +454,14 @@ jubarte reject FILE.docx -o OUTPUT.docx
 Optional selection filters:
 
 ```text
---id ID
+--id ID          r12, 12, r1+2, header1.r1, body:rev:12
 --author NAME
 --kind insertion|deletion|move|formatting
 ```
 
 Filters are repeatable. Categories combine, so a change must satisfy each
-category you supplied.
+category you supplied. `jubarte edit FILE -p r12 --accept` (or `--reject`)
+resolves one change and writes `FILE_modified.docx`.
 
 ### Convert to PDF / PNG
 
@@ -452,9 +471,7 @@ jubarte convert FILE.docx [OPTIONS]
 
 | Option | Purpose |
 |---|---|
-| `-o, --output FILE` | Output path |
-| `--pdf` | Request PDF output |
-| `--png` | Request page PNG output |
+| `-o, --output FILE` | Output path; the extension picks the format: `.docx`, `.md`, `.pdf`, `.png` (pages named `STEM-page-NN.png`) or `.json` (the snapshot) |
 | `--dpi DPI` | PNG resolution; default 96 |
 | `--compress` | Deflate PDF content streams |
 | `--revisions conventional|word|custom` | Tracked-change visualization |
@@ -463,18 +480,22 @@ jubarte convert FILE.docx [OPTIONS]
 | `--report FILE` | Write page/render report |
 | `--force` | Replace existing output |
 | `--fail-on-substitution` | Exit 4 when a requested font was substituted |
-| `--pages SPEC` | Only these pages, for example `1-3,7` |
+| `--pages SPEC` | Only these pages, for example `1-3,7`, in the PDF and the PNGs alike; PNGs keep the document's page numbers |
 | `--move-comments` | List comments after the last page; the text keeps its tint and a `[JR1]` marker |
-| `--changed-only` | Keep only the pages a tracked change touches (page numbers stay the document's) |
-| `-f, --from` / `-t, --to` | `docx`, `md`, `pdf` or `png`: Markdown in (CriticMarkup becomes tracked changes) or out ([`docs/MARKDOWN.md`](docs/MARKDOWN.md)) |
+| `--changed-pages` | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page a revised header or footer paints on (page numbers stay the document's) |
+| `-f, --from` / `-t, --to` | `docx`, `md`, `pdf`, `png` or `json`, when `-o` has no extension: Markdown in (CriticMarkup becomes tracked changes) or out ([`docs/MARKDOWN.md`](docs/MARKDOWN.md)) |
+
+Without `-o`, a `.docx` becomes `STEM.pdf` beside it and Markdown becomes
+`STEM.docx`; `-t md` prints to stdout.
 
 Examples:
 
 ```sh
 jubarte convert contract.docx
 jubarte convert redline.docx --revisions word
-jubarte convert redline.docx --png --dpi 144
-jubarte convert long.docx --png --pages 1-3,7
+jubarte convert redline.docx -o pages.png --dpi 144
+jubarte convert long.docx -o excerpt.pdf --pages 1-3,7
+jubarte convert redline.docx -o changed.pdf --changed-pages
 jubarte convert contract.docx --compress --font-report fonts.json
 ```
 
@@ -493,21 +514,30 @@ jubarte convert redline.docx \
   "deleted=#AA0000:strike,inserted=#0055FF:double-underline"
 ```
 
-### Inspect document structure
+### Read a document
 
 ```sh
-jubarte inspect contract.docx --json
-jubarte inspect contract.docx --tables   # each table as a grid of `ids=text` cells
-jubarte read contract.docx               # the agent view (alias: text)
+jubarte read contract.docx               # the agent view
+jubarte read contract.docx --json        # the snapshot: paragraphs, runs, tables, changes, comments
+jubarte read contract.docx --tables      # each table as a grid of `ids=text` cells
+jubarte read contract.docx -p p12,p40-p48 -o excerpt.md
 ```
 
-`inspect` exposes document metadata, story/paragraph coordinates, source
-hashes, runs and structural limitations.
+`read` prints the agent view: a YAML header (`sha256:` of the file, the
+revision and comment counts, authors and their handles, page setup,
+styles, headers, footers), then Markdown with an id line before every
+paragraph (`p12` is `body:p:12`; `12` means the same) and an id on every
+tracked change and comment (`r3+4` is `body:rev:3` and `body:rev:4`, `c5` is
+comment 5, `header1.r1` a change in a header). A table cell's paragraph is
+`t0.row1.cell2`, a footnote's `footnotes.p0`, and `c5.text` the text comment
+5 covers. No id needs quoting in bash, zsh or csh.
 
-`read` prints the agent view: a YAML header (authors and their handles,
-page setup, styles, headers, footers), then Markdown with an id line before
-every paragraph (`p12` is `body:p:12`) and an id on every tracked change and
-comment (`r3+4` is `body:rev:3` and `body:rev:4`, `c5` is comment 5):
+`--json` prints the snapshot instead: document metadata, story and
+paragraph coordinates, `source_sha256`, runs, structural limitations,
+tables, content controls, and the changes and comments with their short
+`ref`. The selection flags (`-p`, `--head`, `--tail`, `--changed`, `--by`)
+narrow it as they narrow the view. `-o FILE.md` or `-o FILE.json` writes
+either to a file.
 
 ```text
 <!-- p0 center -->
@@ -536,32 +566,30 @@ jubarte validate review/redline.docx --original contract.docx --author Claude
 
 `validate` lists what makes Word refuse or repair a file, beyond what an
 XSD sees: one line per finding (`code`, `part#path`, message, a `*` when
-it is Word-fatal), or one JSON object each with `--json`. Exit 0 is clean,
-2 has findings, 1 could not read the file. `--repair` writes a copy with
-every repairable finding fixed and lists what remains; `--original` with
-`--author` audits that every text change against the original is a
-revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`).
+it is Word-fatal), or one JSON object each with `--json`. `--repair` writes
+a copy with every repairable finding fixed and lists what remains;
+`--original` with `--author` audits that every text change against the
+original is a revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`).
+`--rules a11y,style,structure` adds accessibility, style and structure
+findings (heading skips, images without alt text, tables without a header
+row, literal bullets, stale caches), each located by paragraph id;
+`--rules` also takes single rule codes.
+
+Any `word` or `edits` finding exits 2, and so does any `error`; `--strict`
+fails on warnings too. A file that cannot be read exits 1.
 
 | Option | Purpose |
 |---|---|
 | `--json` | JSON Lines: one object per finding, nothing when there is none |
+| `--rules SETS` | `word` (the default), `edits`, `a11y`, `style`, `structure`, or rule codes, comma-separated |
+| `--strict` | Fail on warnings too |
 | `--repair FILE` | Write the repaired package; remaining findings still exit 2 |
 | `--original FILE` | Audit tracked edits against this original (needs `--author`) |
 | `--author NAME` | The author every change must carry |
 | `--force` | Replace an existing `--repair` output |
 
-### Audit
-
-```sh
-jubarte audit contract.docx
-jubarte audit contract.docx --rules a11y,structure --json
-jubarte audit contract.docx --strict
-```
-
-Accessibility, style and structure findings, each located by paragraph id.
-`--rules` takes rule sets (`a11y`, `style`, `structure`) or rule codes. Exit 0
-when nothing fails, 2 on any `error` finding (on any `warning` too with
-`--strict`).
+`jubarte audit FILE` still runs, as `validate --rules a11y,style,structure`
+with a note; it is removed in 0.14.
 
 ### Scrub
 
@@ -614,8 +642,8 @@ written with their old and new results.
 ### Compare rendered pages
 
 ```sh
-jubarte diff-render before.docx after.docx
-jubarte diff-render before.docx after.docx --out-dir pages --dpi 150 --json
+jubarte visual-diff before.docx after.docx
+jubarte visual-diff before.docx after.docx --out-dir pages --dpi 150 --json
 ```
 
 Lays out and rasterizes both documents at one resolution and compares them
@@ -624,10 +652,10 @@ differs; `--out-dir` writes the changed pages, overlays and `diff.json`.
 
 ### Apply an edit plan
 
-First inspect the source:
+First read the source:
 
 ```sh
-jubarte inspect contract.docx --json > inspect.json
+jubarte read contract.docx -o contract.json
 ```
 
 Create `plan.json`:
@@ -635,7 +663,7 @@ Create `plan.json`:
 ```json
 {
   "schema_version": 1,
-  "source_sha256": "<source_sha256 from inspect>",
+  "source_sha256": "<the sha256: line of jubarte read>",
   "author": "Reviewer",
   "operations": [
     {
@@ -735,8 +763,8 @@ for the full plan schema and a complete example.
 ### Capabilities
 
 ```sh
-jubarte capabilities
-jubarte capabilities --json
+jubarte capabilities          # one line per capability
+jubarte capabilities --json   # the manifest: formats, ids, validate rules, operation kinds
 ```
 
 Use this when an application or agent needs to discover the exact surface
@@ -771,7 +799,8 @@ jubarte debug diff A.docx B.docx
 jubarte debug diff A.docx B.docx C.docx --full
 ```
 
-Debug catalogs cover package structure, fields, bookmarks, IDs, styles,
+`debug` is hidden from `jubarte --help`: it is a diagnostic tool for
+engine work, not part of the stable surface. Debug catalogs cover package structure, fields, bookmarks, IDs, styles,
 text boxes, revision changes, numbering, normalized XML/text/runs and render
 information.
 
@@ -982,7 +1011,7 @@ password, and RTF with `UNSUPPORTED_PACKAGE`. Convert them to `.docx` first.
 | PDF layout differs from Word | Verify required fonts; inspect `--font-report`; read `docs/WORD_DIFFERENCES.md` |
 | Text is missing or wraps differently | Check font resolution and embedded/system font availability |
 | Edit exits with a refusal | Read `report.jsonl` / stdout for `STALE_SOURCE`, `ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR`, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, etc. |
-| `STALE_SOURCE` | Re-run `jubarte inspect` and regenerate the plan from the new `source_sha256` |
+| `STALE_SOURCE` | Re-run `jubarte read` and regenerate the plan from its new `sha256:` line |
 | `AMBIGUOUS_ANCHOR` | Use a paragraph ID or a more specific exact anchor |
 | Document already contains revisions | List them with `jubarte changes`; explicitly accept/reject them or set an edit-plan revision policy |
 | Comment is present in DOCX but missing from rendered markup | Check the documented comment-balloon limitations and `docs/WORD_COMMENT_BALLOONS.md` |
