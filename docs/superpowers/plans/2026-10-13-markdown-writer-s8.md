@@ -215,7 +215,8 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 - `{++…++}`/`{--…--}` inside `$…$` mark revisions inside the math. An equation inserted or deleted whole reads back as `{++$…$++}`.
 - The OpenXmlValidator flags `w:ins`/`w:del` inside `m:r`; it flags Word's own files the same way, and Word opens them. A validator false positive.
 - jubarte's PDF renderer still sets an equation on one line. A 2D math layout engine (OMML boxes, Cambria Math's OpenType MATH table through `ttf-parser`) is the next project: `cli-std/26-math-layout`. tectonic, mdbook-latex and rtex were reviewed for it and ruled out (TeX layout, C/C++ and runtime downloads, no wasm32, or no real layout).
-- Follow-ups: more LaTeX names from unicode-math's table (symbols and n-ary operators); `\big`-style sizing, `\phantom`, `\hspace`, `\xrightarrow`, `\not` and the hyperbolic arc functions are still kept as literal text.
+- Added: 267 AMS and unicode-math symbol names and 10 n-ary operators (`\iiiint`, `\fint`, `\bigsqcap`…; integrals by Unicode range keep their limits beside them). rtex's list was the checklist, unicode-math's table the source.
+- Follow-ups: `\big`-style sizing, `\phantom`, `\hspace`, `\xrightarrow`, `\not` and the hyperbolic arc functions are still kept as literal text.
 
 **Goal.** `$…$`/`$$…$$` become real equations; `math.md` turns green and round-trips.
 
