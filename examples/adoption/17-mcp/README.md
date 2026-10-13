@@ -64,7 +64,8 @@ What the session shows, concretely: `tools/list` returns
 `docx_reject`, `docx_validate`, `docx_comments`, `docx_audit` — read
 tools annotated with `readOnlyHint` — and `tools/call docx_text` on
 `input.docx` returns the letter's four paragraphs with their ids, the
-same text `jubarte text` prints.
+same text `jubarte read` prints, with `[body:p:N]` ids where `read`
+prints `<!-- pN -->` lines.
 
 ## Verdict
 

@@ -30,7 +30,7 @@ jubarte:
 ```sh
 jubarte v1.docx v2.docx -o redline_jubarte.docx --author Reviewer
 jubarte diff v1.docx v2.docx > diff_jubarte.patch   # patch on stdout
-jubarte convert redline_jubarte.docx --png --dpi 72 --pages 1
+jubarte convert redline_jubarte.docx -o redline_jubarte.png --dpi 72 --pages 1
 ```
 
 ## Tool versions (measured in this folder)

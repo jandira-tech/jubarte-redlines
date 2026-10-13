@@ -62,7 +62,7 @@ fi
 "$JUBARTE" changes redline_jubarte.docx > changes_jubarte.txt
 
 # ---------- render page 1 of the redline ---------------------------------------
-"$JUBARTE" convert redline_jubarte.docx --png --dpi 72 --pages 1 --force >/dev/null
+"$JUBARTE" convert redline_jubarte.docx -o redline_jubarte.png --dpi 72 --pages 1 --force >/dev/null
 mv redline_jubarte-page-01.png compare_page_1_jubarte.png
 
 if command -v soffice >/dev/null && command -v pdftoppm >/dev/null; then
