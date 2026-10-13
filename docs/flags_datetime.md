@@ -161,6 +161,7 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `-a, --author` |  | <NAME> | Redline |  |  | Markdown to Word: author of the tracked changes and comments |
 | `-d, --datetime` | --date (hidden) | <ISO8601> | 1970-01-01T00:00:00Z |  |  | Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible output |
 | `--page` |  | <SIZE> | letter | letter, a4 |  | Markdown to Word: the page size when there is no --reference-doc (one-inch margins either way); a reference's page setup wins |
+| `--tracking` |  | <SWITCH> |  | on, off |  | Markdown to Word: turn Word's Track Changes on or off in the .docx written, whatever the Markdown's `track_changes:` key says [default: the key; without one, the --reference-doc's setting, else off] |
 | `--no-page-markers` |  |  | false |  |  | Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
@@ -503,6 +504,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--timeout` | convert | `<SECONDS> default= values=` |
 | `--to` | convert, diff | `-t <FORMAT> default= values=docx, md=markdown, pdf, png, json` |
 | `--track-changes` | (shorthand), compare, convert, read | **differs**: `<CHOICE> default= values=all, accept, reject` on (shorthand), compare, read; `<CHOICE> default=all values=all, accept, reject` on convert |
+| `--tracking` | convert | `<SWITCH> default= values=on, off` |
 | `--update-fields` | convert | `default=false values=` |
 | `--yes` | self-update | `-y default=false values=` |
 

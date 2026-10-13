@@ -2134,6 +2134,9 @@ fn run_convert_any(
                 date: markdown.datetime.clone(),
                 images: Some(&loader),
                 page: markdown.page.into(),
+                tracking: markdown
+                    .tracking
+                    .map(|tracking| tracking == jubarte::cli::Tracking::On),
             };
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;

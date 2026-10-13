@@ -32,7 +32,11 @@ an id on every change and comment, for edit plans.
 (`-o` names another file, `-o draft.pdf` or `-t png` renders it). The
 Markdown is CommonMark with GitHub's tables, strikethrough, task lists and
 footnotes, and a YAML front matter's `title:` and `author:` become the
-document's properties.
+document's properties. Its `track_changes: on` (or `off`) sets Word's Track
+Changes switch in the output; `--tracking on|off` overrides the key. With
+neither, the output keeps the `--reference-doc`'s switch, else tracking is
+off. Tracked changes the Markdown holds never turn the switch on by
+themselves.
 
 | Markdown | Word |
 | --- | --- |
@@ -137,7 +141,7 @@ tracked change and comment. The ids are the ones `edit`, `accept --id`,
 source: received.docx
 sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: tracked                      # revisions as CriticMarkup, comments inline
-track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+track_changes: off                 # w:trackRevisions not set; convert writes it back (--tracking overrides)
 revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
 comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11
 authors:

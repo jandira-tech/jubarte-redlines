@@ -2082,10 +2082,25 @@ pub struct MarkdownArgs {
     /// (one-inch margins either way); a reference's page setup wins.
     #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
     pub page: Page,
+    /// Markdown to Word: turn Word's Track Changes on or off in the .docx
+    /// written, whatever the Markdown's `track_changes:` key says [default:
+    /// the key; without one, the --reference-doc's setting, else off].
+    #[arg(long, value_enum, value_name = "SWITCH")]
+    pub tracking: Option<Tracking>,
     /// Word to Markdown: leave out the `<!-- page N of M -->` lines, and the
     /// layout pass that places them.
     #[arg(long)]
     pub no_page_markers: bool,
+}
+
+/// `--tracking`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Tracking {
+    /// New edits in Word are tracked.
+    On,
+    /// New edits in Word are not tracked.
+    Off,
 }
 
 /// `--page`.
