@@ -61,3 +61,10 @@ fn id_line_alignment_and_indents_come_back() {
               <!-- p4 left -0.25in -->\nOutdented\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+#[test]
+fn a_heading_keeps_its_level_under_the_style_its_id_line_names() {
+    let md = "<!-- p0 DocumentTitle -->\n# Last Will\n\n<!-- p1 TextHeading2 center -->\n## Article One\n\n\
+              <!-- p2 -->\nBody text.\n";
+    assert_eq!(round_trip(md), md.trim());
+}

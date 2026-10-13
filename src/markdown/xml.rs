@@ -67,6 +67,9 @@ pub(super) struct Paragraph {
     /// `left` wins over `indent`.
     pub ind: Indent,
     pub align: Option<&'static str>,
+    /// A heading level (`w:outlineLvl`, 0 for `#`) the paragraph carries
+    /// itself, when its style is one an id line names.
+    pub outline: Option<usize>,
     /// A thematic break: a bottom border on an empty paragraph.
     pub rule: bool,
     /// The paragraph mark's tracked change.
@@ -442,6 +445,9 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     }
     if let Some(align) = paragraph.align {
         let _ = write!(properties, "<w:jc w:val=\"{align}\"/>");
+    }
+    if let Some(level) = paragraph.outline {
+        let _ = write!(properties, "<w:outlineLvl w:val=\"{level}\"/>");
     }
     if let Some(kind) = paragraph.mark {
         let mark = context.revision(kind, paragraph.mark_by);

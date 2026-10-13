@@ -610,6 +610,8 @@ impl<'o, 'a> Writer<'o, 'a> {
         {
             if let Some(style) = line.style {
                 paragraph.style = Some(style.into());
+                // `# Text` under its own style: the level goes with it.
+                paragraph.outline = self.heading.map(|level| level - 1);
             }
             paragraph.align = line.align.or(paragraph.align);
             paragraph.ind = Indent {
