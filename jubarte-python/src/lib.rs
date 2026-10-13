@@ -159,6 +159,125 @@ fn list_comments_json(
     .map_err(|e: String| err(e))
 }
 
+/// The listing `jubarte changes` prints: a line per tracked change with its
+/// short id (`r12`), kind, target, author, paragraph (`p3`) and text, then
+/// `N change(s)`.
+#[pyfunction]
+fn changes_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| {
+        jubarte::changes::list_changes(docx)
+            .map(|changes| jubarte::changes::changes_text(&changes))
+            .map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| err(e))
+}
+
+/// The listing `jubarte comments` prints: a line per comment with its short
+/// id (`c5`), paragraph, author, text and anchor, then `N comment(s)`.
+/// `author` and `latest` filter as in [`list_comments_json`].
+#[pyfunction]
+#[pyo3(signature = (docx, author = None, latest = false))]
+fn comments_text(
+    py: Python<'_>,
+    docx: &[u8],
+    author: Option<String>,
+    latest: bool,
+) -> PyResult<String> {
+    py.detach(|| {
+        let comments = jubarte::comments::list_comments(docx).map_err(|e| e.to_string())?;
+        let comments = jubarte::comments::select_comments(comments, author.as_deref(), latest);
+        Ok(jubarte::comments::comments_text(&comments))
+    })
+    .map_err(|e: String| err(e))
+}
+
+/// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
+/// body table, then a line per row of `ids=text` cells; `no tables` when
+/// there are none.
+#[pyfunction]
+fn tables_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| {
+        jubarte::inspect::tables(docx)
+            .map(|tables| jubarte::inspect::tables_text(&tables))
+            .map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| err(e))
+}
+
+/// The snapshot `jubarte read --json` prints, with its `changes` and
+/// `comments`. `paragraphs`, `head`, `tail`, `changed` and `by` select as in
+/// [`read_view`]; the snapshot keeps the selected paragraphs and their
+/// changes and comments.
+#[pyfunction]
+#[pyo3(signature = (
+    docx,
+    *,
+    paragraphs = None,
+    head = None,
+    tail = None,
+    changed = false,
+    by = None,
+    source = None,
+))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
+)]
+fn read_json(
+    py: Python<'_>,
+    docx: &[u8],
+    paragraphs: Option<&str>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    changed: bool,
+    by: Option<&str>,
+    source: Option<String>,
+) -> PyResult<String> {
+    let select =
+        jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
+    let options = jubarte::markdown::ReadOptions {
+        select,
+        source,
+        ..jubarte::markdown::ReadOptions::default()
+    };
+    py.detach(|| {
+        let snapshot =
+            jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
+        serde_json::to_string(&snapshot).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| err(e))
+}
+
+/// The line a writing task prints on stderr for a file it wrote:
+/// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`. `format` is `docx`, `md`,
+/// `pdf`, `png` or `json`; `pages` is a PDF's page count.
+#[pyfunction]
+#[pyo3(signature = (path, format, size, pages = None))]
+fn wrote_line(
+    path: std::path::PathBuf,
+    format: &str,
+    size: usize,
+    pages: Option<usize>,
+) -> PyResult<String> {
+    use jubarte::cli::Format;
+    let format = match format {
+        "docx" => Format::Docx,
+        "md" => Format::Md,
+        "pdf" => Format::Pdf,
+        "png" => Format::Png,
+        "json" => Format::Json,
+        other => return Err(err(format!("unknown format {other:?}"))),
+    };
+    Ok(jubarte::cli::wrote_line(&path, format, size, pages))
+}
+
+/// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
+/// `pattern` naming them all.
+#[pyfunction]
+fn wrote_png_line(pattern: std::path::PathBuf, pages: usize, dpi: f32) -> String {
+    jubarte::cli::wrote_png_line(&pattern, pages, dpi)
+}
+
 fn change_filter(filter_json: &str) -> PyResult<jubarte::changes::ChangeFilter> {
     serde_json::from_str(filter_json)
         .map_err(|e| JubarteError::new_err(format!("invalid change filter: {e}")))
@@ -1114,6 +1233,12 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(redline_documents, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
+    m.add_function(wrap_pyfunction!(changes_text, m)?)?;
+    m.add_function(wrap_pyfunction!(comments_text, m)?)?;
+    m.add_function(wrap_pyfunction!(tables_text, m)?)?;
+    m.add_function(wrap_pyfunction!(read_json, m)?)?;
+    m.add_function(wrap_pyfunction!(wrote_line, m)?)?;
+    m.add_function(wrap_pyfunction!(wrote_png_line, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
