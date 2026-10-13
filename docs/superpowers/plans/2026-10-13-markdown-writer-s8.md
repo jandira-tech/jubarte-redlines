@@ -30,6 +30,8 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
    - Not yet evidenced: an *untracked* partial deletion (expected: markers stay, the range covers less), and insertions typed at either edge (inside or outside the range?). Both need a fixture from Arthur.
    - So jubarte keeps the comment on every tracked edit, with markers outside the `w:del`. It drops the comment, and reports that on stderr, only when an untracked edit empties the range. The Task 23 comparer bug (`w:del` escaping the range on a whole-range replace, `src/comparer/comments.rs` `map_range`) is the one tracked shape that is wrong today.
 
+9. **A `{>>comment<<}` outside the body** (Arthur, 2026-10-13: Word lets no one comment in a header, footer or footnote, and shows a comment only from a reference in a main-story paragraph). In a footnote the comment moves to the note's reference mark in the body, with a warning; in a header or footer its text is kept, the comment dropped, with a warning. `jubarte validate` gains a non-fatal check: a comment marker outside the main story, which Word never shows. Today `[^1]: note {>>c<<}` opens in Word, shows nothing, and fails the OOXML validator (`Sem_MissingReferenceElement`).
+
 ## Task 0 — Crate survey for item 1 (decision, no code)
 
 **Decision: write a small hand parser; depend on nothing.**
