@@ -48,10 +48,10 @@ structure.
 | Cell | `t0.row1.cell2` | its first paragraph; `.p1` for the next |
 | Nested table | `t0.row1.cell2.t0.row0.cell0` | numbered inside its cell; `read --tables` uses the same numbering |
 | Text-box paragraph | `p14.box0.p0` | the box anchored in p14 |
-| Change | `r12`, `header1.r1`, pair `r1+2` | |
+| Change | `r12`, pair `r1+2`; in another part `header1.r1`, `footnotes.r1`, `styles.r0` | a change that spans blocks prints its note in each block; the copies are one change |
 | Comment | `c5`; the text it covers `c5.text` | |
 | Range | `p3-p7` | wherever several blocks are accepted (read, accept, reject) |
-| Section | `s0` … `sN` | in body order; the last is the body's own `w:sectPr` |
+| Section | `s0` … `sN` | in body order; the last is the body's own `w:sectPr`. Drift today: the YAML `sections:` map numbers from 1 and leaves out the first (`2:` is `s1`); it must print `s1:` |
 | Table of contents | `toc0` | a TOC field, or the TOC content control around one, counted once |
 | Content control | `cc0` (block), `p12.cc0` (inline) | the one inline object with no Markdown sibling |
 
@@ -66,6 +66,27 @@ Rules:
   `r12`, `c12`) through 0.13 and refused in 0.14. A suggestion is printed only when it parses
   (`05` suggests `c5`, never `c05`). Help, docs and `capabilities` stop advertising bare numbers.
 
+### 2.1 One set of types (Arthur, 2026-10-13: "Don't forget about creating centralized types")
+
+Every id is a value of one Rust type family in `src/ids.rs`, never a `String` passed around and
+re-parsed. This settles the plan's Q18.
+
+- `ShortId` is an enum with one variant per row of the table above (`Paragraph`, `StoryParagraph`,
+  `Table`, `Row`, `Cell`, `BoxParagraph`, `Change`, `Comment`, `CommentText`, `Range`, `Section`,
+  `Toc`, `ContentControl`). Nested positions are a path (`t0.row1.cell2.t0` is a list of steps), so
+  nesting needs no new variant.
+- The kinds an option takes are narrower types over the same values: `ChangeRef` (`--id`, `-p rN`),
+  `CommentRef` (`--reply`, `--resolve`), `BlockSpec` (`read -p`: blocks and ranges), `Location`
+  (`edit`/`add -p`). Each implements `FromStr` and is the clap field type (`value_parser`), so a bad
+  id exits 2 with one message in the binary, Python and npm alike.
+- `LongId` is the type of §4 (`part`, `element`, `attribute`, `value`, with the `-XX` escaping in
+  its `Display` and `FromStr`).
+- `Display` is the only printer: the view, JSON, hints and notes format an id through it, so what
+  jubarte prints is what it parses. A test parses every id the view prints for the corpus fixtures
+  and requires `parse(print(x)) == x` and `print(parse(s)) == s`.
+- The spelling lists (`CHANGE_SPELLINGS`, `PARAGRAPH_SPELLINGS`, …) and the error texts come from
+  these types, and the drift check (§5.4) compares them with this table and `docs/locations.md`.
+
 ## 3. Inline objects are Markdown content
 
 **Decided: inline objects are content, not ids.** Each has a Markdown sibling; the view prints it,
@@ -73,7 +94,7 @@ the reader reads it back, and it is edited by editing its paragraph.
 
 | Object | Markdown | Notes |
 |-|-|-|
-| Run | text, `**b**`, `*i*`, `<u>u</u>`, `==highlight==`, `~~strike~~` | no id: Word splits and merges runs on save |
+| Run | text, `**b**`, `_i_`, `<u>u</u>`, `==highlight==`, `~~strike~~`, `` `code` `` | no id: Word splits and merges runs on save. **Not true today** (Arthur, 2026-10-13, on potpourri's r16): the view writes only bold, italic and underline (`ooxml.rs`, the span merge keys on those three), so highlight, strike, a monospace font and text colour are dropped. **Decided (Arthur, 2026-10-13: "Simplify for now"):** `==x==` a highlight of any colour; `~~x~~` strike; `` `x` `` a run in a monospace font. Highlight colours other than yellow, text colour and font names wait |
 | Hyperlink | `[text](url "tooltip")` | the tooltip is the link title |
 | Internal link | `[text](#bookmark)` | |
 | Bookmark | `<a id="_Ref123"></a>` | the name is its identity |
@@ -233,11 +254,27 @@ opts out.
 
 ### 5.4 The gate
 
-`scripts/md_roundtrip.py` measures every dimension on a fixed sample (every Nth document of each
-folder, sorted). Each keep rate is a ratchet: it may only go up. The fixed point for the view dialect
-must reach 100% on documents whose content the dialect can express; a document that misses lists the
-construct it lacks. The harness keeps the source away from the Markdown, so automatic anchoring
-cannot make it measure nothing. Wiring it into CI is part of the work (§7).
+**Decided (Arthur, 2026-10-13): strict, "Fail fail fail until we fix".** No list of known failures,
+no ratchet. `tests/md_fixed_point.rs` (workflow `md-roundtrip.yml`) runs every case to the end and
+fails only then, printing a verdict for every id (Arthur: "I want the lots saying: this is wrong,
+that is wrong, this is correct"):
+
+- md → docx → md for every Markdown fixture in `tests/fixtures/md-roundtrip`, and docx → md → docx
+  → md for every docx in its `docx.txt`: each id-line block, each note (`r1+2`, `c5`) with the span
+  it follows, and each YAML entry is `✓ correct`, `✗ wrong` (with the first line that changed),
+  `✗ lost` or `✗ new`.
+- **The docx side as well.** A Markdown-to-Markdown comparison cannot see what the first docx → md
+  step drops: both views drop it alike (potpourri's highlight passed as "correct" that way). So the
+  docx jubarte writes is compared with the source docx through `jubarte debug A B --check render`
+  (highlights, colours, fonts, styles, tables, sections, parts); every line it lists is a `✗ docx`
+  verdict. A Markdown fixture listed in `views.txt` is compared with the docx it is the view of.
+- The `ids-*.md` fixtures are views of documents dense in one kind of id (paragraphs, tables,
+  revisions, comments, footnotes, endnotes); `committed_views_match_the_view` keeps every committed
+  view equal to what `jubarte read` prints today.
+
+`scripts/md_roundtrip.py` stays the corpus-wide measurement (every Nth document of each folder); its
+numbers go in §6, not in the gate. It keeps the source away from the Markdown, so automatic
+anchoring cannot make it measure nothing.
 
 ## 6. Evidence
 
@@ -329,16 +366,23 @@ With synthetic and re-keyed keys (§4.3) every element has a unique long id.
 
 ## 7. Order of work (PR over PR)
 
+The step-by-step plan is `docs/superpowers/plans/2026-10-13-ids-consolidation.md`.
+
 1. Reader: authors table, revision notes, comment heads. *(Done on branch 22b.)*
-2. Reader: comment threads and `resolved`; endnotes; id-line properties; empty paragraphs; cell
-   paragraphs.
-3. View and reader: pictures, bookmarks, internal links, body fields as code plus result, literal
+2. The strict gate (§5.4), red by design. *(Branch 22c.)*
+3. One set of id types (§2.1); every option's parser and printer goes through them; `read -p` joins
+   the grammar.
+4. Short-id grammar completion: rows, nested tables, text boxes, ranges, `sN` (and the YAML
+   `sections:` keys), `tocN`, `ccN`; shift notes; bare-number deprecation notes.
+5. The drift check: every id printed parses, the §2 table, `docs/locations.md` and the flag
+   catalogue agree with the types.
+6. View and reader, runs: highlight, strike, monospace, colour (§3, once Arthur picks the spelling).
+7. Reader: comment threads and `resolved`; endnotes; id-line properties; empty paragraphs; cell
+   paragraphs; a change printed in several blocks read back as one.
+8. View and reader: pictures, bookmarks, internal links, body fields as code plus result, literal
    brace escaping.
-4. Reader: YAML headers/footers/page/styles.
-5. `convert -o X.md` writes the view dialect; `--plain` for people.
-6. Anchored mode, automatic, with `--standalone`.
-7. Short-id grammar completion: rows, nested tables, text boxes, ranges, `sN`, `tocN`, `ccN`, one
-   parser for `read -p`; shift notes; bare-number deprecation notes.
-8. Long ids: grammar, escaping, keys, relationships in `read --json`, `--long-id`.
-9. Stamping, behind the Word gate (§4.6).
-10. `md_roundtrip.py` in CI as a ratchet.
+9. Reader: YAML headers/footers/page/styles.
+10. `convert -o X.md` writes the view dialect; `--plain` for people.
+11. Anchored mode, automatic, with `--standalone`.
+12. Long ids: grammar, escaping, keys, relationships in `read --json`, `--long-id`.
+13. Stamping, behind the Word gate (§4.6).
