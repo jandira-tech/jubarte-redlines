@@ -37,7 +37,8 @@ from .models import CompareOptions
 
 INSTRUCTIONS = (
     "jubarte reads and edits Word .docx files under the server root. "
-    "Read first: docx_text gives Markdown with [body:p:N] paragraph ids. "
+    "Read first: docx_text gives the agent view: Markdown with a <!-- pN --> "
+    "id line before each paragraph, revisions and comments with their ids. "
     "Edit with docx_edit: a JSON plan of exact, anchored operations; it writes "
     "a clean copy and a Word redline under out_dir and refuses the whole plan "
     "if any anchor fails. Check results with docx_render (PNG pages) and "
@@ -119,12 +120,18 @@ def build_server(*, root: Path) -> MCPServer:
 
     @mcp.tool(annotations=_READ)
     def docx_text(path: str) -> str:
-        """The document body as Markdown with a [body:p:N] id before each paragraph.
+        """The agent view `jubarte read` prints: a header (sha256, counts, page
+        setup), then Markdown with a <!-- pN --> id line before each paragraph
+        and every revision (r12) and comment (c5) with its id.
 
-        Those ids are the coordinates an edit plan uses. Read before you edit.
+        Those ids are the coordinates an edit plan uses (`p12` as written).
+        Read before you edit. Warnings follow the view, one per line.
         """
+        from . import _native
+
         doc = load(path)
-        return engine(doc.markdown)
+        markdown, warnings = engine(lambda: _native.read_view(doc.to_bytes(), source=Path(path).name))
+        return markdown + "".join(f"warning: {w}\n" for w in warnings)
 
     @mcp.tool(annotations=_READ)
     def docx_inspect(path: str) -> dict[str, Any]:

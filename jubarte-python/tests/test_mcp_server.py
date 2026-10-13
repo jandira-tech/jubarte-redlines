@@ -117,7 +117,11 @@ def test_text_reads_a_file_under_root_and_refuses_one_outside(tmp_path: Path) ->
         ("docx_text", {"path": str(outside)}),
         ("docx_text", {"path": str(root / ".." / "outside.docx")}),
     )
-    assert not ok.is_error and "[body:p:0] inside text" in ok.content[0].text
+    # docx_text is `read`'s agent view: the header, then `<!-- p0 -->` ids
+    # an edit plan takes as they are.
+    text = ok.content[0].text
+    assert not ok.is_error and text.startswith("---\nsource: in.docx\nsha256: "), text
+    assert "<!-- p0 -->\ninside text\n" in text and "[body:p:" not in text, text
     assert "outside root" in error_text(bad)
     assert "outside root" in error_text(dotted)
 
