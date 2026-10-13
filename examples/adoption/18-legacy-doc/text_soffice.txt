@@ -1,39 +1,57 @@
-[body:p:0 Heading1] Services Agreement
+---
+source: docx_soffice.docx
+sha256: a00568db62b892a45eb5f0116f3e8eb1e2a85bee46e380f086e06bc5ae691583
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 0
+comments: 0
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+body: p0-p19, 1 table, 1 page      # pages from layout
+page: Letter portrait, margins 1in, header/footer 0in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.07, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+---
 
-[body:p:1 Normal] This Agreement is made between **Acme Corp** and *Beta LLC*.
+<!-- page 1 of 1 -->
 
-[body:p:2 Heading2] 1. Fees
+<!-- p0 hanging 0in, left 0in -->
+# Services Agreement
 
-[body:p:3 Normal] The fee is $1,000 per month [net 30] and #2 applies; use a_b * c.
+<!-- p1 -->
+This Agreement is made between **Acme Corp** and _Beta LLC_.
 
-[body:p:4 Normal] Item
+<!-- p2 hanging 0in, left 0in -->
+## 1. Fees
 
-[body:p:5 Normal] Price
+<!-- p3 -->
+The fee is $1,000 per month [net 30] and #2 applies; use a_b \* c.
 
-[body:p:6 Normal] Notes
+<!-- t0 3x3, cells p4-p12 by row, header row repeats -->
+|Item|Price|Notes|
+|-|-|-|
+|Setup|500|one-off|
+|Support|100|monthly|
 
-[body:p:7 Normal] Setup
+<!-- p13 hanging 0in, left 0in -->
+## 2. Term
 
-[body:p:8 Normal] 500
+<!-- p14 ListParagraph bullet -->
+- First bullet
 
-[body:p:9 Normal] one-off
+<!-- p15 ListParagraph bullet -->
+  - Nested bullet
 
-[body:p:10 Normal] Support
+<!-- p16 ListParagraph bullet -->
+- Second bullet
 
-[body:p:11 Normal] 100
+<!-- p17 ListParagraph num "1." -->
+1. Notice in writing
 
-[body:p:12 Normal] monthly
+<!-- p18 ListParagraph num "1." -->
+1. Cure within **_ten_** days
 
-[body:p:13 Heading2] 2. Term
-
-[body:p:14 ListParagraph] First bullet
-
-[body:p:15 ListParagraph] Nested bullet
-
-[body:p:16 ListParagraph] Second bullet
-
-[body:p:17 ListParagraph] Notice in writing
-
-[body:p:18 ListParagraph] Cure within ***ten*** days
-
-[body:p:19 Normal] The term is twelve months.
+<!-- p19 left -->
+The term is twelve months.

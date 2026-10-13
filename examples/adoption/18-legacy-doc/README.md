@@ -26,18 +26,25 @@ again). No `.doc` saved by Microsoft Word is in the repository yet.
 
 | File | Tool | What it is |
 |---|---|---|
-| `docx_soffice.docx`, `text_soffice.txt`, `docx_page_1_soffice.png` | LibreOffice 26.8 | Its `.docx`, read back with `jubarte text`, page 1 drawn by jubarte |
+| `docx_soffice.docx`, `text_soffice.txt`, `docx_page_1_soffice.png` | LibreOffice 26.8 | Its `.docx`, read back with `jubarte read`, page 1 drawn by jubarte |
 | `docx_jubarte.docx`, `text_jubarte.txt`, `docx_page_1_jubarte.png` | jubarte | The same three for jubarte's `.docx` |
 | `read_jubarte.md` | jubarte | `convert input.doc -t md` |
-| `refusal_text.txt` | jubarte | `jubarte text input.doc` refusing, with the convert hint |
+| `refusal_text.txt` | jubarte | `jubarte read input.doc` refusing, with the convert hint |
 
 Both PNGs come from the same renderer (jubarte), so they compare the two
 `.docx` files, not two layout engines.
 
 ## Verdict (2026-10-04)
 
-- Same text, word for word. `diff text_soffice.txt text_jubarte.txt` differs
-  only in LibreOffice writing an explicit `Normal` style on every paragraph.
+- Same text, word for word: `jubarte diff docx_soffice.docx
+  docx_jubarte.docx` prints nothing. Reading both with `jubarte read`
+  (`text_soffice.txt`, `text_jubarte.txt`) shows where the two `.docx`
+  files differ: LibreOffice writes explicit zero indents and alignments,
+  header and footer distances of `0in` and line spacing 1.07, and it puts
+  the two numbered items in two separate lists (`w:numId` 4 and 3), so
+  the second reads `1.` where the source says `2.`. jubarte's `.docx`
+  keeps `1.`, `2.`. (Until 0.12 this folder compared `jubarte text`
+  outputs, which showed only LibreOffice's explicit `Normal` style.)
 - Both keep Heading 1 and 2, bold, italic, bold italic, the table, the
   bulleted list with its nested item, and the numbered list.
 - What jubarte reads is a minimum: text, paragraphs, Heading 1-9 and Title,
