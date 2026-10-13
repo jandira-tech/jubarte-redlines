@@ -1059,12 +1059,10 @@ pub fn scrub_document(docx: &[u8], options_json: Option<String>) -> Result<Vec<u
     jubarte::scrub::scrub(docx, &options).map_err(js_err)
 }
 
-/// What this build can do, as JSON (`runtime: "wasm"`): PDF and field
-/// refresh only in the full build, PNG never.
-///
-/// Mirrors `jubarte::capabilities::capabilities`.
-#[wasm_bindgen]
-pub fn capabilities() -> Result<String, JsValue> {
+/// This build's manifest (`runtime: "wasm"`): PDF and field refresh only
+/// in the full build, PNG never; the `-o` formats lose what the build
+/// cannot write.
+fn manifest() -> jubarte::capabilities::Capabilities {
     let mut manifest = jubarte::capabilities::capabilities("wasm");
     manifest.operations.pdf = cfg!(feature = "pdf");
     manifest.operations.png = false;
@@ -1074,7 +1072,27 @@ pub fn capabilities() -> Result<String, JsValue> {
             .audit_rules
             .retain(|code| code != "FONT_SUBSTITUTED");
     }
-    serde_json::to_string_pretty(&manifest).map_err(js_err)
+    for extensions in manifest.formats.values_mut() {
+        extensions.retain(|e| e != ".png" && (cfg!(feature = "pdf") || e != ".pdf"));
+    }
+    manifest
+}
+
+/// What this build can do, as JSON (`runtime: "wasm"`): PDF and field
+/// refresh only in the full build, PNG never.
+///
+/// Mirrors `jubarte::capabilities::capabilities`.
+#[wasm_bindgen]
+pub fn capabilities() -> Result<String, JsValue> {
+    serde_json::to_string_pretty(&manifest()).map_err(js_err)
+}
+
+/// [`capabilities`] as the text summary `jubarte capabilities` prints.
+///
+/// Mirrors `jubarte::capabilities::capabilities_text`.
+#[wasm_bindgen(js_name = capabilitiesText)]
+pub fn capabilities_text() -> String {
+    jubarte::capabilities::capabilities_text(&manifest())
 }
 
 /// `markdownToDocx`'s options (JSON, every field optional).

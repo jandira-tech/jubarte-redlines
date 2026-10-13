@@ -222,8 +222,9 @@ const COMMANDS = {
   edit: { run: (name, [file], o) => runEdit("edit", file, o) },
   add: { run: (name, [file], o) => runEdit("add", file, o) },
   capabilities: {
-    run() {
-      console.log(JSON.stringify(JSON.parse(wasm.capabilities()), null, 2));
+    run(_, __, o) {
+      if (o.json) return console.log(JSON.stringify(JSON.parse(wasm.capabilities()), null, 2));
+      process.stdout.write(wasm.capabilitiesText());
     },
   },
 };
