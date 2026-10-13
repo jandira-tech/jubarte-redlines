@@ -357,6 +357,23 @@ test("a bare --plan is FILE_plan.json, as the binary has it (D16)", () => {
   assert.match(swallowed.err, /names a Word document; put FILE before --plan/);
 });
 
+test("edit takes the text a comment covers (c0.text), and read names note paragraphs", () => {
+  const file = copy(untracked, "covered.docx");
+  const commented = path.join(tmp, "covered-c.docx");
+  const out = path.join(tmp, "covered-out.docx");
+  const add = run("add", file, "-p", "p8", "--anchor", "Last", "--content", "Check", "-o", commented);
+  assert.equal(add.code, 0, add.err);
+  const edit = run("edit", commented, "-p", "c0.text", "--content", "Final", "-o", out);
+  assert.equal(edit.code, 0, edit.err);
+  const view = run("read", out);
+  assert.equal(view.code, 0, view.err);
+  assert.match(view.out, /\{==\{~~Last~>Final~~\}/);
+  assert.match(view.out, /<!-- footnotes\.p0 -->\n\[\^1\]: The note text\./);
+  const outside = run("edit", commented, "-p", "c0.text", "--anchor", "paragraph", "--content", "x", "-o", path.join(tmp, "covered-no.docx"));
+  assert.equal(outside.code, 3, outside.err);
+  assert.match(outside.err + outside.out, /not in the text c0 covers/);
+});
+
 test("edit and add --plan record into one plan that --consume deletes once applied", () => {
   const paras = JSON.parse(run("read", untracked, "--json").out).paragraphs.filter((p) => p.text.length > 3);
   const [para, other, third] = paras;
