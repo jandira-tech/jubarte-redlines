@@ -4,7 +4,7 @@
 
 //! Markdown events to Word items, CriticMarkup to tracked changes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -868,8 +868,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.comment = Some(Comment {
             id,
             paragraphs: vec![String::new()],
-            by: None,
-            initials: None,
+            ..Comment::default()
         });
     }
 
@@ -976,6 +975,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             .and_then(|first| view_notes::comment_head(first.trim()))
             .map(|(head, text)| (head, text.to_string()));
         if let Some((head, text)) = head {
+            comment.number = Some(head.number);
+            comment.parent = head.reply_to;
+            comment.done = head.resolved;
             if let Some(handle) = &head.handle {
                 let (author, date) = self.view_author(handle, head.date.as_deref());
                 comment.by = Some((author, date));
@@ -1136,7 +1138,49 @@ impl<'o, 'a> Writer<'o, 'a> {
             finish_story(&mut items);
             self.document.notes.push(Note { items, change });
         }
+        renumber_comments(&mut self.document);
         self.document
+    }
+}
+
+/// Comments keep the number the view gives them (`c5` is `w:id="5"`), so
+/// a reply's `re c5` and every later `c5` still name the same comment; one
+/// with no number, or with a number an earlier comment took, gets the
+/// lowest free one. Replies then name their parent by its `w:id`.
+fn renumber_comments(document: &mut Document) {
+    let mut taken = HashSet::new();
+    let claimed: Vec<Option<u32>> = document
+        .comments
+        .iter()
+        .map(|c| c.number.filter(|&n| taken.insert(n)))
+        .collect();
+    let mut next = 0u32;
+    let mut ids = HashMap::new();
+    for (comment, claimed) in document.comments.iter().zip(&claimed) {
+        let id = claimed.unwrap_or_else(|| {
+            while taken.contains(&next) {
+                next += 1;
+            }
+            taken.insert(next);
+            next
+        });
+        ids.insert(comment.id, id);
+    }
+    let numbered: HashSet<u32> = claimed.iter().flatten().copied().collect();
+    for comment in &mut document.comments {
+        comment.id = ids[&comment.id];
+        comment.parent = comment
+            .parent
+            .filter(|p| numbered.contains(p) && *p != comment.id);
+    }
+    for id in document.slots.iter_mut().flatten() {
+        *id = ids[id];
+    }
+    let notes = document.notes.iter_mut().flat_map(|note| note.items.iter_mut());
+    for item in document.body.iter_mut().chain(notes) {
+        if let Item::RangeEnd(id) | Item::CommentReference(id) = item {
+            *id = ids[id];
+        }
     }
 }
 

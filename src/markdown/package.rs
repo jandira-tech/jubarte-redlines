@@ -10,6 +10,7 @@ use std::io::{Cursor, Write as _};
 
 use super::xml::{self, Context, Document, Relate, escape};
 use super::{DocxOptions, MarkdownError, PageSize};
+use crate::comments::CommentFamily;
 use crate::namespaces::W;
 use crate::opc::{PartFs, relative_rel_target};
 use crate::xmllinq::{Dom, serialize_element};
@@ -64,6 +65,25 @@ const KEPT: [&str; 14] = [
     "/glossaryDocument",
     "/people",
 ];
+
+/// Replies (`c6 @AS re c5`) and resolved comments (`c5 @AC resolved`):
+/// Word keys both by the `w14:paraId` of a comment's last paragraph, in
+/// `commentsExtended.xml`. A resolved thread's replies are resolved too, as
+/// Word resolves a thread whole; the view marks only its first comment.
+fn threads(package: &mut PartFs, main: &str, comments: &[xml::Comment]) -> Result<(), MarkdownError> {
+    if !comments.iter().any(|c| c.parent.is_some() || c.done) {
+        return Ok(());
+    }
+    let mut family = CommentFamily::load(package, main).map_err(err)?;
+    for comment in comments {
+        family.set_thread(comment.id, comment.parent, comment.done);
+    }
+    for comment in comments.iter().filter(|c| c.done && c.parent.is_none()) {
+        family.set_done(comment.id, true);
+    }
+    family.store(package, main);
+    Ok(())
+}
 
 fn err(message: impl std::fmt::Display) -> MarkdownError {
     MarkdownError::Package(message.to_string())
@@ -144,6 +164,7 @@ pub(super) fn assemble(
             &format!("{RELS}/comments"),
             &relative_rel_target(&main, &part),
         );
+        threads(&mut package, &main, &document.comments)?;
     }
     core_properties(&mut package, document);
     package.set_part(

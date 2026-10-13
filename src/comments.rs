@@ -738,6 +738,19 @@ impl CommentFamily {
         dom.add(comment, keep);
     }
 
+    /// Set comment `id`'s thread: the comment it replies to (it hangs off
+    /// that comment's thread root, Word threads being one level deep) and
+    /// whether it is resolved. A parent the family lacks is ignored.
+    pub(crate) fn set_thread(&mut self, id: u32, parent: Option<u32>, done: bool) {
+        let parent = parent
+            .filter(|p| *p != id && self.meta.contains_key(p))
+            .map(|p| self.thread_root(p));
+        if let Some(meta) = self.meta.get_mut(&id) {
+            meta.parent = parent.filter(|&p| p != id);
+            meta.done = done;
+        }
+    }
+
     /// Mark `id` and its replies resolved (or open again).
     pub(crate) fn set_done(&mut self, id: u32, done: bool) {
         for c in self.with_replies(id) {

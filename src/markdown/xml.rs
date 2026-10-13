@@ -142,6 +142,13 @@ pub(super) struct Comment {
     pub by: Option<(String, String)>,
     /// The initials the view names the author by (`c5 @AC: ...`).
     pub initials: Option<String>,
+    /// The number the view gives it (`c5`), kept as its `w:id`.
+    pub number: Option<u32>,
+    /// The comment it replies to (`c6 @AS re c5`): the view's number while
+    /// reading, its `w:id` once read.
+    pub parent: Option<u32>,
+    /// Resolved (`c5 @AC resolved`).
+    pub done: bool,
 }
 
 /// A Markdown document read into Word items.
