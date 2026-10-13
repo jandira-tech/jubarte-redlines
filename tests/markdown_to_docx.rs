@@ -857,3 +857,63 @@ fn comments_as_read_from_word_keep_their_ranges_and_authors() {
     );
     assert!(!xml.contains("<w:highlight "), "{xml}");
 }
+
+fn tracks(docx: &[u8]) -> bool {
+    part_string(docx, "word/settings.xml")
+        .unwrap()
+        .contains("<w:trackRevisions")
+}
+
+#[test]
+fn track_changes_key_writes_track_revisions() {
+    let on = write("---\ntrack_changes: on\n---\n\nText.\n");
+    assert!(tracks(&on), "on");
+    assert_word_valid_package(&on);
+    assert!(
+        !tracks(&write("---\ntrack_changes: off\n---\n\nText.\n")),
+        "off"
+    );
+    // Revisions alone never turn tracking on.
+    assert!(!tracks(&write("Due in {~~30~>45~~} days.\n")), "no key");
+}
+
+#[test]
+fn track_changes_key_overrides_reference_settings() {
+    let tracked = write("---\ntrack_changes: on\n---\n\nText.\n");
+    let with = |markdown: &str| {
+        write_with(
+            markdown,
+            &DocxOptions {
+                reference: Some(&tracked),
+                ..DocxOptions::default()
+            },
+        )
+    };
+    assert!(tracks(&with("Text.\n")), "the reference's setting is kept");
+    assert!(
+        !tracks(&with("---\ntrack_changes: off\n---\n\nText.\n")),
+        "off"
+    );
+}
+
+#[test]
+fn the_tracking_option_overrides_the_key() {
+    let with = |markdown: &str, tracking: bool| {
+        write_with(
+            markdown,
+            &DocxOptions {
+                tracking: Some(tracking),
+                ..DocxOptions::default()
+            },
+        )
+    };
+    assert!(!tracks(&with(
+        "---\ntrack_changes: on\n---\n\nText.\n",
+        false
+    )));
+    assert!(tracks(&with(
+        "---\ntrack_changes: off\n---\n\nText.\n",
+        true
+    )));
+    assert!(tracks(&with("Text.\n", true)));
+}

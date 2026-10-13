@@ -53,6 +53,17 @@ pub fn markdown_to_docx(
         TrackChanges::Reject => crate::document_comparer::reject_revisions(&docx)
             .map_err(|e| MarkdownError::Package(e.to_string()))?,
     };
+    let docx = match options.tracking.or(document.tracking) {
+        Some(on) => crate::settings::apply_settings_to_docx(
+            &docx,
+            &crate::settings::SettingsRequest {
+                track_revisions: Some(on),
+                ..Default::default()
+            },
+        )
+        .map_err(MarkdownError::Package)?,
+        None => docx,
+    };
     Ok(WrittenDocx { docx, warnings })
 }
 
@@ -1643,7 +1654,8 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
-    /// `title:` and `author:` from a YAML front matter block.
+    /// `title:`, `author:` and `track_changes:` from a YAML front matter
+    /// block.
     fn metadata(&mut self, text: &str) {
         self.authors = view_notes::authors(text);
         self.document
@@ -1678,6 +1690,14 @@ impl<'o, 'a> Writer<'o, 'a> {
             match key.trim() {
                 "title" => self.document.title = Some(critic::decode(value)),
                 "author" => self.document.author = Some(critic::decode(value)),
+                "track_changes" => match value {
+                    "on" => self.document.tracking = Some(true),
+                    "off" => self.document.tracking = Some(false),
+                    _ => self
+                        .document
+                        .warnings
+                        .push(format!("track_changes: {value} ignored: it is on or off")),
+                },
                 "view" => self.view = true,
                 "page" => {
                     if let Some(page) = view_notes::page_setup(value) {

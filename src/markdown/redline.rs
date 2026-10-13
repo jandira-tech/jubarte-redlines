@@ -85,6 +85,7 @@ pub fn redline(
                         date: options.settings.date_time_for_revisions.clone(),
                         images: options.images,
                         page: PageSize::Letter,
+                        tracking: None,
                     },
                 )?;
                 Ok(written.docx)

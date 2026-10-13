@@ -169,6 +169,11 @@ pub struct DocxOptions<'a> {
     /// its page setup wins and a page other than the default is reported in
     /// [`WrittenDocx::warnings`].
     pub page: PageSize,
+    /// Word's Track Changes switch (`w:trackRevisions`) in the output:
+    /// `Some` sets it whatever the Markdown's `track_changes:` key says;
+    /// `None` follows the key, and without one keeps the reference's
+    /// setting (off without a reference).
+    pub tracking: Option<bool>,
 }
 
 impl Default for DocxOptions<'_> {
@@ -181,6 +186,7 @@ impl Default for DocxOptions<'_> {
             date: crate::document_comparer::DEFAULT_DATE.to_string(),
             images: None,
             page: PageSize::Letter,
+            tracking: None,
         }
     }
 }
@@ -195,6 +201,7 @@ impl std::fmt::Debug for DocxOptions<'_> {
             .field("date", &self.date)
             .field("images", &self.images.is_some())
             .field("page", &self.page)
+            .field("tracking", &self.tracking)
             .finish()
     }
 }

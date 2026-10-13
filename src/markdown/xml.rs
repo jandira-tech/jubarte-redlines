@@ -211,6 +211,8 @@ pub(super) struct Document {
     pub named_styles: BTreeSet<String>,
     pub title: Option<String>,
     pub author: Option<String>,
+    /// The `track_changes:` key: Word's Track Changes switch.
+    pub tracking: Option<bool>,
     pub warnings: Vec<String>,
     /// Author and date of changes that name theirs, by serial.
     pub attributions: HashMap<u32, (String, String)>,
