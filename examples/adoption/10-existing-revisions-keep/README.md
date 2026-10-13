@@ -38,7 +38,7 @@ jubarte edit received.docx --plan plan-nokeep.json --out-dir refused         # r
 
 Tool versions used here: jubarte 0.11.2, python-docx 1.2.0. No
 LibreOffice, no pandoc in this folder; both page-1 renders come from
-`jubarte convert --png --dpi 72`.
+`jubarte convert -o x.png --dpi 72`.
 
 ## Outputs
 

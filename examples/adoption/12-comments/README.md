@@ -35,7 +35,7 @@ jubarte comments review-2/clean.docx --json
 ```
 
 Tool versions used here: jubarte 0.11.2, python-docx 1.2.0. Both page-1
-renders come from `jubarte convert --png --dpi 72`; comments are painted
+renders come from `jubarte convert -o x.png --dpi 72`; comments are painted
 (the comment-bearing renders are byte-different from the comment-free
 render of `input.docx`).
 

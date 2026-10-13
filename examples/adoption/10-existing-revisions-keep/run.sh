@@ -33,7 +33,7 @@ if command -v python3 >/dev/null && python3 -c 'import docx' >/dev/null 2>&1; th
   rm -f keep_pydocx.docx keep_pydocx-page-01.png keep_page_1_pydocx.png \
         pydocx_view.txt changes_pydocx.txt
   python3 edit_pydocx.py > pydocx_view.txt
-  "$JUBARTE" convert keep_pydocx.docx --png --dpi 72 --force
+  "$JUBARTE" convert keep_pydocx.docx -o keep_pydocx.png --dpi 72 --force
   mv keep_pydocx-page-01.png keep_page_1_pydocx.png
   # What is left of Counterparty's four tracked changes in the python-docx
   # output: counted with jubarte, the same reader used on jubarte's output.
