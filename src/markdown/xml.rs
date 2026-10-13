@@ -221,6 +221,8 @@ pub(super) struct Document {
     /// Each section's headers and footers the view's YAML header names, by
     /// section number from 1.
     pub stories: BTreeMap<usize, super::view_stories::Stories>,
+    /// The default and heading styles the view's `styles:` legend defines.
+    pub style_specs: Vec<super::view_styles::StyleSpec>,
 }
 
 impl Document {

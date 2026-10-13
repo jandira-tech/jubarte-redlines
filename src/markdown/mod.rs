@@ -40,6 +40,7 @@ mod redline;
 mod unified;
 mod view_notes;
 mod view_stories;
+mod view_styles;
 mod write;
 pub(crate) mod xml;
 

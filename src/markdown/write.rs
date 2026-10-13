@@ -15,7 +15,7 @@ use super::xml::{
     Picture, Run, RunFormat,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
-use super::{view_notes, view_stories};
+use super::{view_notes, view_stories, view_styles};
 
 /// Writes Markdown as a `.docx`: CommonMark with GitHub's tables,
 /// strikethrough, task lists and footnotes, and CriticMarkup as tracked
@@ -916,7 +916,14 @@ impl<'o, 'a> Writer<'o, 'a> {
         });
         let list_indent = list.map(|(_, level, _)| 720 * (level + 1));
         if let Some(level) = self.heading {
-            paragraph.style = Some(HEADINGS[level - 1].into());
+            // The legend's style for the level (`"#": Title1, …`).
+            let legend = self.document.style_specs.iter().find(|spec| {
+                spec.heading == u32::try_from(level).ok() && spec.id != HEADINGS[level - 1]
+            });
+            paragraph.style = Some(match legend {
+                Some(spec) => Cow::Owned(spec.id.clone()),
+                None => HEADINGS[level - 1].into(),
+            });
         } else if self.code_block {
             paragraph.style = Some("SourceCode".into());
             paragraph.indent = list_indent;
@@ -1408,6 +1415,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                         self.document.revision_ids.insert(*serial, ids.clone());
                     }
                 }
+                // One number after a substitution names its deleted side:
+                // the inserted side's tag may follow (`{>>r0 @AC<<}{>>r1
+                // @AS<<}` when two authors made them).
+                let numbers: usize = tags.iter().map(|tag| tag.ids.len()).sum();
+                anchor.attributed += 1;
+                if serials.len() == 2 && numbers == 1 {
+                    self.anchor = anchor.takes_attribution().then_some(anchor);
+                }
                 return;
             }
             if let Some((author, date)) = attribution(whole.trim()) {
@@ -1558,6 +1573,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.document
             .stories
             .insert(1, view_stories::first_section(text));
+        self.document.style_specs = view_styles::legend(text);
         let mut key_above = "";
         for line in text.lines() {
             // A YAML comment (`  # …`) is no part of the value.

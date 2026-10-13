@@ -124,10 +124,9 @@ pub(super) fn assemble(
     wanted.extend(document.styles.iter().copied());
     if let Some(styles) = package.part_string(&styles_part) {
         let styles = with_styles(&styles, &wanted);
-        package.set_part(
-            &styles_part,
-            with_named_styles(&styles, &document.named_styles).into_bytes(),
-        );
+        let styles = with_named_styles(&styles, &document.named_styles);
+        let styles = super::view_styles::apply(&styles, &document.style_specs);
+        package.set_part(&styles_part, styles.into_bytes());
     }
 
     let num_ids = numbering(&mut package, &main, document);
