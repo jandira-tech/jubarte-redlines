@@ -50,6 +50,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **Breaking: the default author of `edit` and `add` is `Redline`** (was
+  `Modified User`), so the agent view's handle is `@R`. A plan recorded
+  from operation flags (`--plan X -p …`), WASM `flagPlan` and the hosts'
+  record options default to it too, and Python's `jubarte.diff()` no
+  longer reads `git config user.name`: its owner is `Redline` unless
+  `author=` says otherwise.
 - **`capabilities` prints a text summary**: one line per operation, then
   limits, rule sets, formats and id spellings; `--json` prints the manifest.
   The manifest gains `formats` (the extensions each task writes) and `ids`

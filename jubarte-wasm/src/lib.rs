@@ -370,7 +370,7 @@ fn flag_plan_json(
     let (plan, notes) = jubarte::edit::flags::plan_from_flags_json(
         verb,
         operations_json,
-        options.author.as_deref().unwrap_or("Modified User"),
+        options.author.as_deref().unwrap_or("Redline"),
         options.date.as_deref(),
         options.existing_revisions.as_deref().unwrap_or("auto"),
         docx,
@@ -382,7 +382,7 @@ fn flag_plan_json(
 /// notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
 /// `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
 /// `operationsJson` the parsed command's `operations` array. Options (JSON,
-/// all optional): `author` (default `Modified User`), `date`,
+/// all optional): `author` (default `Redline`), `date`,
 /// `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
 /// An error is a usage error.
 ///

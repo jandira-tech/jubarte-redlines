@@ -145,7 +145,7 @@ pub enum CommentsArg {
 pub struct EditOptions {
     /// Author of the changes and comments (operation flags; a plan names
     /// its own).
-    #[arg(long, value_name = "NAME", default_value = "Modified User")]
+    #[arg(long, value_name = "NAME", default_value = "Redline")]
     pub author: String,
     /// Their timestamp (ISO 8601) [default: now, UTC].
     #[arg(long, value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]

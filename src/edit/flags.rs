@@ -1250,7 +1250,7 @@ mod tests {
                 content: Some("**Fees**".into()),
                 ..op("p0")
             }],
-            "Modified User",
+            "Redline",
             Some("2026-10-01T09:00:00Z"),
             Some(ExistingRevisions::Refuse),
             b"",
@@ -1260,7 +1260,7 @@ mod tests {
             plan.notes,
             ["op-1: content keeps its Markdown marks as text; use --style for formatting"]
         );
-        assert_eq!(plan.plan.author, "Modified User");
+        assert_eq!(plan.plan.author, "Redline");
     }
 
     fn with(at: &str, set: impl Fn(&mut FlagOp)) -> FlagOp {
