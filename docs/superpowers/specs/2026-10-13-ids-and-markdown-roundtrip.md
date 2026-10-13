@@ -42,7 +42,7 @@ structure.
 | Kind | Spelling | Notes |
 |-|-|-|
 | Body paragraph | `p12` | paragraphs in table cells are numbered in the same sequence |
-| Story paragraph | `header1.p0`, `footnotes.p3`, `endnotes.p0` | always with `.pN`. A bare `header1` names the part itself (the YAML `id:`); `edit -p header1` edits its first paragraph. The view prints `header1` for a header's first paragraph today: drift, fixed with the printers (plan task 3). Parts: `headerN`, `footerN`, `footnotes`, `endnotes`, `comments`, `styles`, `numbering` |
+| Story paragraph | `header1.p0`, `footnotes.p3`, `endnotes.p0` | always with `.pN`. A bare `header1` names the part itself (the YAML `id:`); `edit -p header1` edits its first paragraph. The view prints `header1` for a header's first paragraph today: drift, fixed with the printers (plan task 3). Parts: `headerN`, `footerN`, `footnotes`, `endnotes`, `comments`, `styles`, `numbering`; `styles` and `numbering` hold no blocks, so they are named only by themselves and their changes (`styles.r0`) |
 | Table | `t0` | top-level tables of a story, in order |
 | Row | `t0.row1` | |
 | Cell | `t0.row1.cell2` | its first paragraph, so `.p0` is never written; `.p1` for the next; the first paragraph's boxes and controls are `t0.row1.cell2.box0.p0`, `t0.row1.cell2.cc0` |
@@ -63,9 +63,11 @@ Rules:
   ids that moved: `note: inserted p5; p5-p40 are now p6-p41`.
 - **Decided (Arthur, 2026-10-13, superseding the deprecation period): only the settled ids parse.**
   "We should strictly have the settled short IDs or long IDs. Everything else should be expired."
-  The short ids of this table and the long ids of §4 are the whole grammar. Expired, refused now:
-  bare numbers (`12`), 0.12's `#12`, `#c27`, `#c27.text` and `t0.r1.c2`, and the old long ids
-  `body:rev:12` and `body:p:12`. The refusal names the settled spelling when one is clear (`12` →
+  The short ids of this table and the long ids of §4 are the whole grammar (§2.2 is the exact
+  contract). Expired, refused now: bare numbers (`12`), 0.12's `#12`, `#c27`, `#c27.text` and
+  `t0.r1.c2`. The old long ids `body:rev:12` and `body:p:12` are what `read --json` prints today,
+  so they parse, unadvertised, until the JSON prints the §4 long ids (plan task 12) and expire in
+  that same change: jubarte never prints an id it refuses. The refusal names the settled spelling when one is clear (`12` →
   `p12`, `r12` or `c12` by the option; `body:rev:12` → `r12`; `t0.r1.c2` → `t0.row1.cell2`), and
   only a spelling that parses (`05` suggests nothing). Help, docs and `capabilities` list only the
   settled spellings.
@@ -90,6 +92,46 @@ re-parsed. This settles the plan's Q18.
   and requires `parse(print(x)) == x` and `print(parse(s)) == s`.
 - The spelling lists (`CHANGE_SPELLINGS`, `PARAGRAPH_SPELLINGS`, …) and the error texts come from
   these types, and the drift check (§5.4) compares them with this table and `docs/locations.md`.
+
+### 2.2 The contract: every literal (Arthur, 2026-10-13: "I don't want examples, i want all literals")
+
+The only literals, besides digits: `p` `t` `row` `cell` `box` `cc` `r` `c` `s` `toc` `header`
+`footer` `footnotes` `endnotes` `comments` `styles` `numbering` `text` `.` `+` `-`.
+
+`N` is ASCII digits without a leading zero (`0`, or a nonzero digit then digits); `N1` is an `N`
+other than `0`. `r`, `c`, `header` and `footer` take a `u32`; the block steps take a `usize`.
+
+```
+id          = block | range | change | "c" N | "c" N ".text" | "s" N | "toc" N
+
+part        = "header" N | "footer" N | "footnotes" | "endnotes" | "comments"
+
+block       = item | part | part "." item | "styles" | "numbering"
+item        = para | table | "cc" N
+
+para        = "p" N [ "." para-tail ]
+para-tail   = "box" N "." box-item | "cc" N
+box-item    = para | table
+
+table       = "t" N [ "." "row" N [ "." "cell" N [ "." cell-tail ] ] ]
+cell-tail   = "p" N1 [ "." para-tail ] | table | "box" N "." box-item | "cc" N
+
+range       = ranged "-" W N
+change      = [ part "." | "styles" "." | "numbering" "." ] "r" N { "+" N }
+```
+
+- `ranged` is a `block` other than `part`, `styles` and `numbering`; `W` is the word of its last
+  step (`p`, `t`, `row`, `cell` or `cc`); the `N` after `-` is at least that step's number.
+- Order, as the grammar fixes it: a part word comes first, once; `row` only after `t`, `cell` only
+  after `row`; `box` only after `p` or `cell`, never last; `cc` always last; `p` after `cell` is
+  `N1` (the cell is its first paragraph); `+` only between a change's numbers; `-` once, only in a
+  range; `text` only in `c` `N` `.text`; `c`, `s` and `toc` take no part.
+- The grammar recurses at `cell-tail → table` and `box-item → para | table`, the drafter's real
+  nesting, so the set of ids is infinite while the kinds and their order are fixed.
+- Everything else is refused, naming the settled spelling when one is clear (§2). The old long ids
+  are the one temporary exception (§2).
+- `src/ids/short.rs` implements this grammar; the drift check (plan task 5) tests the parser
+  against it.
 
 ## 3. Inline objects are Markdown content
 
