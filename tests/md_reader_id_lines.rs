@@ -552,3 +552,12 @@ fn a_span_cut_at_the_right_edge_keeps_the_cells_after_it() {
               |A|\n|-|\n|B|\n\n<!-- p8 -->\nAfter.\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+#[test]
+fn table_column_alignment_comes_back() {
+    // The delimiter row's colons align a column's cells; Word holds them as
+    // each cell paragraph's `w:jc`, and the reader gives them back. A
+    // column with no alignment stays `-`.
+    let view = round_trip("| L | C | R | N |\n| :--- | :---: | ---: | --- |\n| a | b | c | d |\n");
+    assert!(view.contains("|:-|:-:|-:|-|"), "{view}");
+}

@@ -816,8 +816,21 @@ fn table_cell(value: &str, escaped: bool) -> String {
         .to_string()
 }
 
-/// Rows as a Markdown pipe table; the first row is the header.
-fn markdown_table(rows: &[Vec<String>], escaped: bool) -> String {
+/// The alignment most of a column's cell paragraphs have, as its delimiter
+/// row writes it: none on a tie, for justified text, or when most have none.
+fn majority(tally: &HashMap<Option<&'static str>, usize>) -> Option<&'static str> {
+    let most = tally.values().copied().max()?;
+    let mut winners = tally.iter().filter(|(_, count)| **count == most);
+    let (align, _) = winners.next()?;
+    if winners.next().is_some() {
+        return None;
+    }
+    align.filter(|a| *a != "justify")
+}
+
+/// Rows as a Markdown pipe table; the first row is the header, and the
+/// delimiter row aligns each column as `aligns` says.
+fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) -> String {
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
     if width == 0 {
         return String::new();
@@ -835,8 +848,13 @@ fn markdown_table(rows: &[Vec<String>], escaped: bool) -> String {
         out.push('\n');
         if index == 0 {
             out.push('|');
-            for _ in 0..width {
-                out.push_str("-|");
+            for column in 0..width {
+                out.push_str(match aligns.get(column).copied().flatten() {
+                    Some("left") => ":-|",
+                    Some("center") => ":-:|",
+                    Some("right") => "-:|",
+                    _ => "-|",
+                });
             }
             out.push('\n');
         }
@@ -853,6 +871,8 @@ struct Style {
     bold: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
+    /// `w:jc`, as Word writes it.
+    jc: Option<String>,
 }
 
 #[derive(Default)]
@@ -889,10 +909,21 @@ impl Styles {
                     bold: rpr.and_then(|r| r.toggle("b")),
                     italic: rpr.and_then(|r| r.toggle("i")),
                     underline: rpr.and_then(|r| r.child("u")).map(is_underlined),
+                    jc: ppr
+                        .and_then(|p| p.child("jc"))
+                        .and_then(|j| j.attr("val"))
+                        .map(str::to_string),
                 },
             );
         }
         Self { by_id }
+    }
+
+    /// The alignment a paragraph of style `id` has, nearest first.
+    fn jc(&self, id: &str) -> Option<&str> {
+        self.chain(id)
+            .into_iter()
+            .find_map(|style| style.jc.as_deref())
     }
 
     /// The style and its `basedOn` ancestors, nearest first.
@@ -2039,6 +2070,8 @@ impl Writer<'_> {
 
     fn table(&mut self, table: &Element) -> String {
         let mut rows = Vec::new();
+        // How many of each column's cell paragraphs have each alignment.
+        let mut tallies: Vec<HashMap<Option<&'static str>, usize>> = Vec::new();
         for tr in table_rows(table) {
             let mut row = Vec::new();
             let row_marks = tr
@@ -2052,6 +2085,13 @@ impl Writer<'_> {
                 .unwrap_or(0);
             row.extend(std::iter::repeat_n(String::new(), before.min(64)));
             for tc in row_cells(tr) {
+                let column = row.len();
+                if tallies.len() <= column {
+                    tallies.resize_with(column + 1, HashMap::new);
+                }
+                for p in tc.children_named("p") {
+                    *tallies[column].entry(self.alignment(p)).or_default() += 1;
+                }
                 row.push(self.cell_text(&row_marks, tc));
                 let span = tc
                     .path(&["tcPr", "gridSpan"])
@@ -2077,7 +2117,31 @@ impl Writer<'_> {
         for row in &mut rows {
             row.truncate(width);
         }
-        markdown_table(&rows, self.agent)
+        let aligns: Vec<Option<&'static str>> = (0..width)
+            .map(|column| tallies.get(column).and_then(majority))
+            .collect();
+        markdown_table(&rows, &aligns, self.agent)
+    }
+
+    /// A paragraph's alignment: its own `w:jc`, else its style's; `None`
+    /// when neither sets one. `left`, `center`, `right` or `justify`.
+    fn alignment(&self, p: &Element) -> Option<&'static str> {
+        let ppr = p.child("pPr");
+        let jc = ppr
+            .and_then(|pr| pr.child("jc"))
+            .and_then(|j| j.attr("val"))
+            .or_else(|| {
+                ppr.and_then(|pr| pr.child("pStyle"))
+                    .and_then(|s| s.attr("val"))
+                    .and_then(|id| self.styles.jc(id))
+            })?;
+        match jc {
+            "left" | "start" => Some("left"),
+            "center" => Some("center"),
+            "right" | "end" => Some("right"),
+            "both" | "distribute" => Some("justify"),
+            _ => None,
+        }
     }
 
     /// A cell's paragraphs joined with `<br>`, inside the tracked changes of its
