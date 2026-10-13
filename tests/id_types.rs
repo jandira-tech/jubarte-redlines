@@ -36,11 +36,19 @@ fn printed_ids(view: &str) -> Vec<String> {
     let mut lines = view.lines();
     if view.starts_with("---\n") {
         lines.next();
+        let mut authors = false;
         for line in lines.by_ref() {
             if line == "---" {
                 break;
             }
-            places.push(QUOTED.replace_all(line, " ").into_owned());
+            // The authors: table holds people's names (`document_owner:
+            // jharrop2`), not ids.
+            if !line.starts_with(' ') {
+                authors = line == "authors:";
+            }
+            if !authors {
+                places.push(QUOTED.replace_all(line, " ").into_owned());
+            }
         }
     }
     let body: Vec<&str> = lines.collect();

@@ -238,7 +238,8 @@ pub enum ShortId {
     Change {
         /// The story the changes are in.
         story: Story,
-        /// Their `w:id`s, at least one, none twice.
+        /// Their `w:id`s, at least one. A deletion and an insertion that
+        /// share one `w:id` (Word writes such pairs) print it twice: `r43+43`.
         wids: Vec<u32>,
     },
     /// A comment, by `w:id` (`c5`).
@@ -295,8 +296,7 @@ impl ShortId {
             .split('+')
             .map(number::<u32>)
             .collect::<Option<Vec<_>>>()?;
-        let distinct: std::collections::BTreeSet<_> = wids.iter().collect();
-        (distinct.len() == wids.len()).then_some(Self::Change { story, wids })
+        Some(Self::Change { story, wids })
     }
 
     /// `FIRST-N`: a block, then the number of its last step's last sibling.
@@ -415,7 +415,8 @@ mod tests {
             "t0.row1.cell2",
             "t0.row1.cell2.p1",
             "t0.row1.cell2.t0.row0.cell0",
-            "header1.t0.row0.cell0.p0",
+            "header1.t0.row0.cell0",
+            "r43+43",
             "p14.box0.p0",
             "p14.box0.p1.box0.p0",
             "cc0",
@@ -514,8 +515,6 @@ mod tests {
             "t0.row1.cell2-p1",
             "t0.row1.cell2.p0",
             "t0.row1.cell2.p0.box0.p0",
-            "r1+1",
-            "r2+2+3",
         ] {
             assert!(
                 token.parse::<ShortId>().is_err(),
