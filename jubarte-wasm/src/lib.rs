@@ -143,6 +143,51 @@ pub fn list_comments(
     serde_json::to_string(&comments).map_err(js_err)
 }
 
+/// The listing `jubarte changes` prints: a line per change with its short
+/// id (`r0`), kind, target, author, paragraph and text, then `N change(s)`.
+///
+/// Mirrors `jubarte::changes::changes_text`.
+#[wasm_bindgen(js_name = changesText)]
+pub fn changes_text(docx: &[u8]) -> Result<String, JsValue> {
+    let changes = jubarte::changes::list_changes(docx).map_err(js_err)?;
+    Ok(jubarte::changes::changes_text(&changes))
+}
+
+/// The listing `jubarte comments` prints: a line per comment with its short
+/// id (`c5`), paragraph, author, text and anchor, then `N comment(s)`.
+/// `author` and `latest` filter as in [`listComments`](list_comments).
+///
+/// Mirrors `jubarte::comments::comments_text`.
+#[wasm_bindgen(js_name = commentsText)]
+pub fn comments_text(
+    docx: &[u8],
+    author: Option<String>,
+    latest: Option<bool>,
+) -> Result<String, JsValue> {
+    let comments = jubarte::comments::list_comments(docx).map_err(js_err)?;
+    let comments =
+        jubarte::comments::select_comments(comments, author.as_deref(), latest.unwrap_or(false));
+    Ok(jubarte::comments::comments_text(&comments))
+}
+
+fn change_filter_of(filter_json: &str) -> Result<String, String> {
+    let filter: jubarte::changes::ChangeFilter =
+        serde_json::from_str(filter_json).map_err(|e| format!("invalid change filter: {e}"))?;
+    let filter = filter.normalized().map_err(|e| e.to_string())?;
+    serde_json::to_string(&filter).map_err(|e| e.to_string())
+}
+
+/// `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
+/// in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
+/// change id throws `jubarte-wasm: c5: expected a change id …`, which the
+/// binary reports as a usage error before reading the document.
+///
+/// Mirrors `jubarte::changes::ChangeFilter::normalized`.
+#[wasm_bindgen(js_name = changeFilter)]
+pub fn change_filter_json(filter_json: &str) -> Result<String, JsValue> {
+    change_filter_of(filter_json).map_err(js_err)
+}
+
 fn change_filter(filter_json: &str) -> Result<jubarte::changes::ChangeFilter, JsValue> {
     serde_json::from_str(filter_json).map_err(|e| js_err(format!("invalid change filter: {e}")))
 }
@@ -346,6 +391,62 @@ fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
 #[wasm_bindgen(js_name = readView)]
 pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
     read_view_json(docx, options_json.as_deref()).map_err(js_err)
+}
+
+/// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
+/// body table, then a line per row of `ids=text` cells; `no tables` when
+/// there are none.
+///
+/// Mirrors `jubarte::inspect::tables_text`.
+#[wasm_bindgen(js_name = tablesText)]
+pub fn tables_text(docx: &[u8]) -> Result<String, JsValue> {
+    let tables = jubarte::inspect::tables(docx).map_err(js_err)?;
+    Ok(jubarte::inspect::tables_text(&tables))
+}
+
+/// `readJson` options: the `read` command's selection.
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+struct ReadJsonOptions {
+    paragraphs: Option<String>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    changed: bool,
+    by: Option<String>,
+    source: Option<String>,
+}
+
+fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: ReadJsonOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("readJson options: {e}"))?,
+        None => ReadJsonOptions::default(),
+    };
+    let select = jubarte::markdown::Select::from_flags(
+        options.paragraphs.as_deref(),
+        options.head,
+        options.tail,
+        options.changed,
+        options.by.as_deref(),
+    )?;
+    let options = jubarte::markdown::ReadOptions {
+        select,
+        source: options.source,
+        ..jubarte::markdown::ReadOptions::default()
+    };
+    let snapshot = jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
+    serde_json::to_string(&snapshot).map_err(|e| e.to_string())
+}
+
+/// The snapshot `jubarte read --json` prints, with its `changes` and
+/// `comments`. Options (JSON, all optional) select as in
+/// [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
+/// `source` names the document. The snapshot keeps the selected paragraphs
+/// and their changes and comments.
+///
+/// Mirrors `jubarte::markdown::read_snapshot`.
+#[wasm_bindgen(js_name = readJson)]
+pub fn read_json(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
+    read_json_of(docx, options_json.as_deref()).map_err(js_err)
 }
 
 /// Options of [`flagPlan`](flag_plan).
@@ -1095,6 +1196,44 @@ pub fn capabilities_text() -> String {
     jubarte::capabilities::capabilities_text(&manifest())
 }
 
+fn wrote_line_of(
+    path: &str,
+    format: &str,
+    size: usize,
+    pages: Option<usize>,
+) -> Result<String, String> {
+    use jubarte::cli::Format;
+    let format = match format {
+        "docx" => Format::Docx,
+        "md" => Format::Md,
+        "pdf" => Format::Pdf,
+        "png" => Format::Png,
+        "json" => Format::Json,
+        other => return Err(format!("unknown format {other:?}")),
+    };
+    Ok(jubarte::cli::wrote_line(
+        std::path::Path::new(path),
+        format,
+        size,
+        pages,
+    ))
+}
+
+/// The line a writing task prints on stderr for the file it wrote:
+/// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`. `format` is `docx`, `md`,
+/// `pdf`, `png` or `json`; `pages` is a PDF's.
+///
+/// Mirrors `jubarte::cli::wrote_line`.
+#[wasm_bindgen(js_name = wroteLine)]
+pub fn wrote_line(
+    path: &str,
+    format: &str,
+    size: usize,
+    pages: Option<usize>,
+) -> Result<String, JsValue> {
+    wrote_line_of(path, format, size, pages).map_err(js_err)
+}
+
 /// `markdownToDocx`'s options (JSON, every field optional).
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1712,5 +1851,68 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn listings_are_the_binary_text() {
+        let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
+        let changes = changes_text(&docx).unwrap();
+        assert!(
+            changes.starts_with("r1\tdeletion\ttext\tRedline\tp0\t\"30\"\n"),
+            "{changes}"
+        );
+        assert!(
+            changes.contains("\"30\"") && changes.ends_with("2 change(s)\n"),
+            "{changes}"
+        );
+        let tables = tables_text(&docx).unwrap();
+        assert!(tables.starts_with("table 0: 2x2"), "{tables}");
+        assert_eq!(tables_text(&word("No grid.\n")).unwrap(), "no tables\n");
+        assert_eq!(comments_text(&docx, None, None).unwrap(), "0 comment(s)\n");
+    }
+
+    #[test]
+    fn read_json_selects_as_the_view_does() {
+        let docx = word("One.\n\nDue in {~~30~>45~~} days.\n");
+        let whole: serde_json::Value =
+            serde_json::from_str(&read_json_of(&docx, None).unwrap()).unwrap();
+        assert_eq!(whole["paragraphs"].as_array().unwrap().len(), 2);
+        assert_eq!(whole["changes"].as_array().unwrap().len(), 2);
+        let one: serde_json::Value = serde_json::from_str(
+            &read_json_of(&docx, Some(r#"{"paragraphs":"p0","source":"x.docx"}"#)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(one["paragraphs"].as_array().unwrap().len(), 1);
+        assert_eq!(one["changes"].as_array().unwrap().len(), 0);
+        assert!(
+            read_json_of(&docx, Some(r#"{"paragraphs":"c5"}"#))
+                .unwrap_err()
+                .contains("expected pN")
+        );
+        assert!(read_json_of(&docx, Some(r#"{"typo":1}"#)).is_err());
+    }
+
+    #[test]
+    fn wrote_lines_and_change_filters_are_the_binary_s() {
+        assert_eq!(
+            wrote_line_of("out/r.pdf", "pdf", 10, Some(3)).unwrap(),
+            "wrote out/r.pdf (pdf, 10 bytes, 3 pages)"
+        );
+        assert_eq!(
+            wrote_line_of("r.md", "md", 1, None).unwrap(),
+            "wrote r.md (md, 1 bytes)"
+        );
+        assert!(wrote_line_of("r.x", "tiff", 1, None).is_err());
+        assert_eq!(
+            change_filter_of(r#"{"ids":["r1+2"],"authors":["A"]}"#).unwrap(),
+            r#"{"ids":["body:rev:1","body:rev:2"],"authors":["A"]}"#
+        );
+        let bad = change_filter_of(r#"{"ids":["c5"]}"#).unwrap_err();
+        assert!(bad.starts_with("c5: expected a change id"), "{bad}");
+        assert!(
+            change_filter_of(r#"{"typo":[]}"#)
+                .unwrap_err()
+                .contains("invalid change filter")
+        );
     }
 }
