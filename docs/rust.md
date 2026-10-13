@@ -974,7 +974,7 @@ Options:
       --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: "Modified User"]
+          [default: Redline]
 
       --datetime <ISO8601>
           Their timestamp (ISO 8601) [default: now, UTC]
@@ -1119,7 +1119,7 @@ Options:
       --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: "Modified User"]
+          [default: Redline]
 
       --datetime <ISO8601>
           Their timestamp (ISO 8601) [default: now, UTC]

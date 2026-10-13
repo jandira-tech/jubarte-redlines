@@ -876,7 +876,7 @@ Options:
       --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: "Modified User"]
+          [default: Redline]
 
       --datetime <ISO8601>
           Their timestamp (ISO 8601) [default: now, UTC]
@@ -1021,7 +1021,7 @@ Options:
       --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: "Modified User"]
+          [default: Redline]
 
       --datetime <ISO8601>
           Their timestamp (ISO 8601) [default: now, UTC]
@@ -1683,7 +1683,7 @@ its ``body:p:N`` id in a Word document or ``line:N`` in Markdown, with
 Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
 or a path (``.md``/``.markdown`` read as Markdown, anything else as
 Word). ``author`` and ``date`` own the changes, shown once in the
-header [default: ``git config user.name``, else Redline; now].
+header [default: Redline; now].
 ``columns`` wraps the lines (0 does not). ``format="critic"`` gives the
 whole document as CriticMarkup instead, as ``jubarte diff --format
 critic`` does. ``github`` (aliases ``unified`` and ``text``) gives a Git
