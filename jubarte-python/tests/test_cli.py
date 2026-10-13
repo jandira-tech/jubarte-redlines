@@ -218,6 +218,8 @@ def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path:
     lines = [json.loads(l) for l in captured.out.splitlines()]
     assert [(l["id"], l["status"]) for l in lines if l["ev"] == "op"] == [("ok", "ok"), ("bad", "failed")]
     assert lines[-1]["status"] == "failed"
+    # The binary's lines: compact, keys sorted.
+    assert captured.out.splitlines()[-1].startswith('{"code":"ANCHOR_NOT_FOUND","ev":"summary","message":'), captured.out
     # Dry run reports and writes nothing.
     plan["operations"] = plan["operations"][:1]
     plan_path.write_text(json.dumps(plan))
@@ -583,7 +585,7 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
         assert exit_info.value.code == 2, args
         assert message in capsys.readouterr().err, args
     assert main(["edit", str(letter), "--plan", str(plan), "-p", "p1", "--anchor", "nowhere", "--content", "x"]) == 3
-    assert '"status": "failed"' in capsys.readouterr().out
+    assert '"status":"failed"' in capsys.readouterr().out
     assert main(["edit", str(letter), "--plan", str(plan), "--dry-run", "-p", "p0", "--delete"]) == 0
     assert capsys.readouterr().out.startswith(f"would record 1 operation in {plan}: 3 operations")
     assert plan.read_text() == held, "a refused or dry recording keeps the plan"

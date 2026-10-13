@@ -331,9 +331,15 @@ def _print_refusal(exc: EditPlanError) -> None:
         for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
             if value is not None:
                 row[key] = value
-        print(json.dumps(row, ensure_ascii=False))
-    print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}, ensure_ascii=False))
+        print(_jsonl(row))
+    print(_jsonl({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}))
+    sys.stdout.flush()
     print(f"error: plan refused: {exc}", file=sys.stderr)
+
+
+def _jsonl(row: dict) -> str:
+    """One JSON line as the binary prints it: compact, keys sorted."""
+    return json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _spelled(args: argparse.Namespace, key: str) -> str:
@@ -348,6 +354,7 @@ def _wrote(args: argparse.Namespace, path: Path, format: str, size: int, pages: 
     if getattr(args, "quiet", False):
         return
     shown = _spelled(args, "output") if getattr(args, "output", None) == path else str(path)
+    sys.stdout.flush()  # stdout's lines first when both streams share a pipe
     print(_native.wrote_line(shown, format, size, pages), file=sys.stderr)
 
 
@@ -507,14 +514,14 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
                 outputs.append((f"{name}.pdf", rendered.pdf))
             for i, image in enumerate(rendered.pngs):
                 outputs.append((_png_name(name, i, len(rendered.pngs)), image))
-        lines.append(json.dumps({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts}, ensure_ascii=False))
+        lines.append(_jsonl({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts}))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
     for name, data in outputs:
         _write(out_dir / name, data)
         saved.append({"f": name, "bytes": len(data), "sha256": _native.source_sha256(data)})
-    lines.append(json.dumps({"ev": "save", "dir": str(out_dir), "outputs": saved}, ensure_ascii=False))
+    lines.append(_jsonl({"ev": "save", "dir": str(out_dir), "outputs": saved}))
     lines.append(summary)
     _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
     if args.quiet:
@@ -522,6 +529,7 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     print(summary)
     # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
+    sys.stdout.flush()
     print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
     for note in _edit_notes(notes, result):
         print(note, file=sys.stderr)
@@ -898,7 +906,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         if not args.json:
             print(f"repaired {len(repaired.repaired)} finding(s)")
         if not args.quiet:
-            print(f"wrote {_spelled(args, 'repair')} (docx, {size} bytes)", file=sys.stderr)
+            sys.stdout.flush()  # stdout's lines first when both streams share a pipe
+            print(_native.wrote_line(_spelled(args, "repair"), "docx", size), file=sys.stderr)
     original = _read(args.original).to_bytes() if args.original is not None else None
     jsonl, text, failed = _native.validate_run(
         docx, rules=list(args.rules) or None, original=original, author=args.author, strict=args.strict
