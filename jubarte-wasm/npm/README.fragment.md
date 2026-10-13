@@ -80,7 +80,7 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`) |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`) |
 | `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf` / `pdfPageCount` (same export set as `node-slim`) |
 
 ## API
@@ -111,7 +111,8 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan: every operation kind `capabilities()` lists under `edit_operations` (text edits, paragraphs, tables, lists, comments and their threads, footnotes, images, page setup, TOC, watermark, content controls, redaction, settings). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |
 | `previewEditPlan` | `(docx, planJson) → EditOutput` | Resolve every operation without producing documents. |
 | `editReportJsonl` | `(reportJson) → string` | A report as JSON lines (`load`, one `op` per operation, `summary`). |
-| `capabilities` | `() → string` | What this build can do, as JSON (`runtime: "wasm"`, operations, edit kinds, input budgets). |
+| `capabilities` | `() → string` | What this build can do, as JSON (`runtime: "wasm"`, operations, edit kinds, input budgets, `formats`, `ids`). |
+| `capabilitiesText` | `() → string` | The same manifest as the text summary `jubarte capabilities` prints. |
 | `diffDocuments` | `(old, next, author, date, columns?, oldName?, newName?) → string` | The changed paragraphs as a patch, JSON `{text, hunks}`, each change `[-old-]{+new+}` at its `body:p:N` id (`line:N` in Markdown). Each side is a `.docx` or UTF-8 Markdown. |
 | `diffDocumentsUnified` | `(old, next, oldName?, newName?, context?) → string` | Complete Git unified patch of text snapshots, with no clipping. |
 | `diffDocumentsView` | `(old, next, optionsJson?) → string` | Review view: `github`, `word`, `normal`, `context` or `side-by-side`. Options include `context`, `acceptChanges`, `fullLines`, input labels and explicit `oldFormat`/`newFormat`. Word accepts **all** changes in both inputs before generating fresh CriticMarkup. Other views preserve the input marks by default. |
