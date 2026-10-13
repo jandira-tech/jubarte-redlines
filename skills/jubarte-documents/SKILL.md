@@ -47,7 +47,8 @@ an id line:
 **Confidentiality.** You will {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days ...
 ```
 
-`p12` is `body:p:12`, the coordinate an edit uses; `12` alone means the same.
+`p12` is `body:p:12`, the coordinate an edit uses. A bare `12` is refused, with
+the settled spelling named (`p12`, `r12` or `c12`, by what the option takes).
 A tracked change carries its id: `{++…++}{>>r12 @AC<<}` is `r12` for
 `accept --id`, `reject --id` and `edit -p r12 --accept`, and `r3+4` is two
 Word marks of one change. A header's change reads `header1.r1`, a

@@ -2123,8 +2123,7 @@ pub enum Revisions {
 /// Filters selecting individual tracked changes.
 pub struct Selection {
     /// Only this change: `r12` (as the view and `jubarte changes` print
-    /// it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`.
-    /// Repeatable.
+    /// it), `header1.r1`, or `r1+2` (both). Repeatable.
     #[arg(long = "id", value_name = "ID")]
     pub ids: Vec<String>,
     /// Only changes by this author. Repeatable.
