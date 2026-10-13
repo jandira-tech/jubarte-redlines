@@ -104,8 +104,8 @@ and is edited by editing its paragraph:
 | Bookmark | `<a id="_Ref123"></a>` | the name is its identity (unique in a document) |
 | Picture | `![alt](media/image1.png "title")` | size and wrap as an id-line clause: `<!-- p12 img0 2in x 1.5in, float right, wrap square -->` (`img0` only says which picture the clause describes) |
 | Equation | `$…$`, `$$…$$` (body-level too) | |
-| Note reference | `[^1]` | |
-| Field | `{PAGE}`, `{REF _Ref123 \h}`, then its result as text | switches are part of the code; literal braces in text print as `\{` so they never read back as a field |
+| Note | `[^1]` in the text, `[^1]: …` at the end under its id line `<!-- footnotes.p0 -->` / `<!-- endnotes.p0 -->` | the view does this today; the reader has no endnotes yet, so an endnote comes back as a footnote |
+| Field | `{PAGE}`, `{REF _Ref123 \h}`: the code, as the YAML `headers:`/`footers:` lines already print it | switches are part of the code; the body prints only a field's result today; literal braces in text print as `\{` so they never read back as a field |
 
 What the dialect still cannot say (crops, effects, rotation, exact anchor offsets, OLE payloads)
 anchored mode keeps from the source, byte for byte while the Markdown leaves the object alone. Runs
