@@ -244,7 +244,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 
 A table gets one line: `<!-- t0 center 3x2, cells p8-p13 by row, header row
 repeats -->`, `cells t0.row0 p8-p10 t0.row1 p11-p14` when a cell holds other
-than one paragraph, then `merged t0.row0.cell1 across 2; t0.row1.cell0
+than one paragraph, then `p10 center` for each cell paragraph aligned
+against its column (the delimiter row's `:-`, `:-:` or `-:` is the
+alignment most of a column's cell paragraphs have; left and none count
+alike, a tie or justified text prints `-`; the `center` or `right` after
+`t0` places the table itself on the page), then `merged t0.row0.cell1 across 2; t0.row1.cell0
 down 3` for a cell spanning grid columns or a vertical merge and the rows
 it covers (the view prints a span's other columns as empty cells, and
 leaves out empty columns at the right; the reader counts both back),
