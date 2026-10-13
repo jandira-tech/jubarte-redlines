@@ -612,32 +612,41 @@ fn to_json(value: &impl serde::Serialize) -> Result<String, JsValue> {
     serde_json::to_string(value).map_err(js_err)
 }
 
-/// Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline and
-/// the per-operation report.
+/// Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
+/// the patch of the plan's changes and the per-operation report. `name`
+/// (default `document.docx`) is the file the patch names; under
+/// `existing_revisions: keep` the patch shows the plan's own changes, not
+/// the other party's the redline also holds.
 ///
 /// Mirrors `jubarte::edit::apply_plan_json`.
 #[wasm_bindgen(js_name = applyEditPlan)]
-pub fn apply_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsValue> {
+pub fn apply_edit_plan(
+    docx: &[u8],
+    plan_json: &str,
+    name: Option<String>,
+) -> Result<EditOutput, JsValue> {
     Ok(match jubarte::edit::apply_plan_json(docx, plan_json) {
-        Ok(result) => EditOutput {
-            ok: true,
-            json: to_json(&result.report)?,
-            patch: Some(
-                jubarte::markdown::patch_redline(
-                    &result.redline,
-                    &patch_options(
-                        "document.docx",
-                        "document.docx",
-                        &result.report.author,
-                        &result.report.date,
-                    ),
-                )
-                .map_err(js_err)?
-                .to_string(),
-            ),
-            clean: Some(result.clean),
-            redline: Some(result.redline),
-        },
+        Ok(result) => {
+            let name = name.as_deref().unwrap_or("document.docx");
+            let patch_of =
+                if result.report.existing_revisions == jubarte::edit::ExistingRevisions::Keep {
+                    jubarte::markdown::patch_own_changes
+                } else {
+                    jubarte::markdown::patch_redline
+                };
+            let options = patch_options(name, name, &result.report.author, &result.report.date);
+            EditOutput {
+                ok: true,
+                json: to_json(&result.report)?,
+                patch: Some(
+                    patch_of(&result.redline, &options)
+                        .map_err(js_err)?
+                        .to_string(),
+                ),
+                clean: Some(result.clean),
+                redline: Some(result.redline),
+            }
+        }
         Err(error) => EditOutput {
             ok: false,
             clean: None,
@@ -1659,14 +1668,37 @@ mod tests {
         let source = word(OLD);
         let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
             {"kind":"replace","paragraph":{"index":1},"find":"30","replacement":"45"}]}"#;
-        let out = apply_edit_plan(&source, plan).unwrap();
+        let out = apply_edit_plan(&source, plan, None).unwrap();
         assert!(out.ok());
         assert_eq!(
             out.patch().unwrap(),
             "--- a/document.docx\n+++ b/document.docx\tClaude\t2026-09-25T12:00:00Z\n\
              @@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"
         );
+        // The bundle's patch names the edited file, as the binary's does.
+        let named = apply_edit_plan(&source, plan, Some("terms.docx".into())).unwrap();
+        assert!(
+            named
+                .patch()
+                .unwrap()
+                .starts_with("--- a/terms.docx\n+++ b/terms.docx\t")
+        );
         assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
+    }
+
+    #[test]
+    fn a_plan_that_keeps_revisions_patches_only_its_own_changes() {
+        let source = word("Due in {~~30~>45~~} days.\n\nOther terms.\n");
+        let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","existing_revisions":"keep","operations":[
+            {"kind":"replace","paragraph":{"index":1},"find":"Other","replacement":"Further"}]}"#;
+        let out = apply_edit_plan(&source, plan, None).unwrap();
+        assert!(out.ok(), "{}", out.json());
+        let patch = out.patch().unwrap();
+        assert!(patch.contains("[-Other-]{+Further+}"), "{patch}");
+        assert!(
+            !patch.contains("30"),
+            "the other party's change is not the plan's: {patch}"
+        );
     }
 
     #[test]
@@ -1765,6 +1797,7 @@ mod tests {
         let out = apply_edit_plan(
             b"not a zip",
             r#"{"schema_version":1,"author":"A","operations":[]}"#,
+            None,
         )
         .unwrap();
         assert!(!out.ok());
