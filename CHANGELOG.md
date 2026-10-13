@@ -180,6 +180,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
   `EditOptions::target(file)` gives the `EditTarget` (`Single` or
   `Bundle`) a host writes.
+- `validate::Finding` is `{code, set, severity, part, location, message,
+  word_fatal, repairable}` (`path` is `location`); `ValidateError` gains
+  `Usage` and `Layout`. `cli::Command::Audit` and `Command::Inspect` are
+  gone (`Validate` gains `rules` and `strict`; `audit` and `inspect` parse
+  as their aliases).
+- `capabilities::Capabilities` gains `validate_rules`, `formats` and `ids`
+  (`capabilities::Ids`), so a struct literal needs them; deserializing an
+  older manifest still works (`serde(default)`).
 
 ## [0.12.0] - 2026-10-11
 

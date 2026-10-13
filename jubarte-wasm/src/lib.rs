@@ -1373,6 +1373,18 @@ mod tests {
         assert_eq!(manifest["operations"]["pdf"], cfg!(feature = "pdf"));
         assert_eq!(manifest["operations"]["edit"], true);
         assert_eq!(manifest["operations"]["fields"], cfg!(feature = "pdf"));
+        let yes = |on: bool| if on { "yes" } else { "no" };
+        let text = capabilities_text();
+        assert!(text.starts_with("engine: jubarte "), "{text}");
+        assert!(text.contains(" (wasm)\n"), "{text}");
+        assert!(text.contains("\npng: no\n"), "{text}");
+        assert!(text.contains(&format!("\npdf: {}\n", yes(cfg!(feature = "pdf")))));
+        assert!(text.contains(&format!("\nfields: {}\n", yes(cfg!(feature = "pdf")))));
+        assert!(!text.contains(".png"), "{text}");
+        assert_eq!(text.contains(" .pdf"), cfg!(feature = "pdf"), "{text}");
+        let formats = manifest["formats"].to_string();
+        assert!(!formats.contains(".png"), "{formats}");
+        assert_eq!(formats.contains(".pdf"), cfg!(feature = "pdf"), "{formats}");
     }
 
     #[cfg(feature = "pdf")]

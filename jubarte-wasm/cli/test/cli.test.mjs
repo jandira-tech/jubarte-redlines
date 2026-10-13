@@ -193,6 +193,17 @@ test("read (alias text), inspect, capabilities and convert", () => {
   assert.match(summary, /^engine: jubarte \S+ \(wasm\)\ncompare: yes\n/);
   assert.match(summary, /\npng: no\n/);
   assert.match(summary, /run with --json for the manifest\n$/);
+  const lines = summary.split("\n");
+  const ops = Object.entries(manifest.operations);
+  assert.deepEqual(
+    lines.slice(1, ops.length + 1).sort(),
+    ops.map(([name, on]) => `${name}: ${on ? "yes" : "no"}`).sort(),
+  );
+  const formats = lines.find((line) => line.startsWith("formats: ")).slice("formats: ".length);
+  assert.deepEqual(
+    formats.split("; ").sort(),
+    Object.entries(manifest.formats).map(([task, ext]) => `${task} ${ext.join(" ")}`).sort(),
+  );
   const pdf = path.join(tmp, "out.pdf");
   const r = run("convert", tracked, "-o", pdf, "--revisions", "word", "--compress");
   assert.equal(r.code, 0, r.err);
