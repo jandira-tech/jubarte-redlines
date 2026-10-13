@@ -46,6 +46,11 @@ pub(super) enum Content {
     NoteReference(u32),
     /// A picture, by its index in [`Document::pictures`].
     Picture(usize),
+    /// An equation's LaTeX: display math (`$$…$$`) or inline (`$…$`).
+    Math {
+        latex: String,
+        display: bool,
+    },
 }
 
 /// A run: content, formatting, the change it belongs to and the highlight
@@ -462,6 +467,23 @@ pub(super) fn story(
                 }
                 out.push_str("</w:p>");
             }
+            Item::Run(Run {
+                content: Content::Math { latex, display },
+                change,
+                ..
+            }) => {
+                // Word marks a change inside the math, run by run.
+                close(&mut out, &mut open);
+                // A change inside the math has no serial: the document's
+                // author and date.
+                let change = *change;
+                let mut mark = |kind: Kind| {
+                    let by = change.filter(|(own, _)| *own == kind).map(|(_, by)| by);
+                    context.revision(kind, by)
+                };
+                let kind = change.map(|(kind, _)| kind);
+                out.push_str(&super::math::omml(latex, *display, kind, &mut mark));
+            }
             Item::Run(run) => {
                 if open != run.change {
                     close(&mut out, &mut open);
@@ -691,6 +713,8 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
                 context.note_base + position
             );
         }
+        // The story writes math outside any run.
+        Content::Math { .. } => {}
         Content::Picture(index) => {
             let id = relate.picture(*index);
             let drawing = context.next_drawing;

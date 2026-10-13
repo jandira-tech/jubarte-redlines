@@ -33,6 +33,7 @@ mod anchor;
 mod critic;
 mod diff;
 mod from_docx;
+mod math;
 pub(crate) mod package;
 mod pages;
 mod patch;

@@ -16,7 +16,7 @@ use super::xml::{
     Picture, Run, RunFormat,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
-use super::{view_notes, view_stories, view_styles};
+use super::{math, view_notes, view_stories, view_styles};
 
 /// Writes Markdown as a `.docx`: CommonMark with GitHub's tables,
 /// strikethrough, task lists and footnotes, and CriticMarkup as tracked
@@ -314,6 +314,7 @@ pub(super) fn parser_options() -> Options {
         | Options::ENABLE_SUBSCRIPT
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        | Options::ENABLE_MATH
 }
 
 const HEADINGS: [&str; 6] = [
@@ -564,7 +565,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.text(&text);
                 self.code -= 1;
             }
-            Event::InlineMath(text) | Event::DisplayMath(text) => self.text(&text),
+            Event::InlineMath(text) => self.math(&text, false),
+            Event::DisplayMath(text) => self.math(&text, true),
             Event::InlineHtml(html) => self.inline_html(&html),
             Event::Html(html) => match &mut self.html_block {
                 Some(block) => block.push_str(&html),
@@ -1276,6 +1278,31 @@ impl<'o, 'a> Writer<'o, 'a> {
                 Err(token) => self.token(token),
             }
         }
+    }
+
+    /// `$latex$` (or `$$latex$$` when `display`): an equation, or its
+    /// LaTeX as text where an equation cannot go (a comment, alt text).
+    fn math(&mut self, latex: &str, display: bool) {
+        if self.metadata.is_some() || self.image.is_some() || self.comment.is_some() {
+            let fence = if display { "$$" } else { "$" };
+            self.plain(&format!("{fence}{}{fence}", critic::restore(latex)));
+            return;
+        }
+        // An insertion or deletion inside the math (`$A={--π--}r^2$`) marks
+        // its runs; any other CriticMarkup there is text.
+        let mut source = String::with_capacity(latex.len());
+        Pieces::default().feed(latex, |piece| match piece {
+            Piece::Text(text) => source.push_str(text),
+            Piece::Token(Token::InsertStart) => source.push(math::INSERT_START),
+            Piece::Token(Token::InsertEnd) => source.push(math::INSERT_END),
+            Piece::Token(Token::DeleteStart) => source.push(math::DELETE_START),
+            Piece::Token(Token::DeleteEnd) => source.push(math::DELETE_END),
+            Piece::Token(token) => source.push_str(critic::delimiter(token)),
+        });
+        self.push(Content::Math {
+            latex: source,
+            display,
+        });
     }
 
     /// Text without CriticMarkup: into the open comment, or as runs, with
