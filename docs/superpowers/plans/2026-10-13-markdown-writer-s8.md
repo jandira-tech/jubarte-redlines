@@ -207,6 +207,8 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 
 ## Task 6 — LaTeX→OMML writer (item 1)
 
+**Agent survey (2026-10-13, Arthur's request; `jubarte-loop/cli-std/math/RECOMMENDATION.md`).** docxy (MIT) and rstex2word (MIT) compared by two grok and two muse runs (five reports). rstex2word is ruled out as a base (drops unknown commands, no `m:func`, `m:fPr` on every fraction). docxy's forward half has Word's core shapes but swallows the rest of the formula after a function or n-ary, puts `limLoc=subSup` on sums and lacks `acc`/`bar`/`m`/`eqArr`/`sPre`/`limLow`. Recommended: hand-write `src/markdown/math.rs` closed over the reader's grammar, docxy as a structural reference (any copied lines keep its MIT notice). Correction to the change points below: `tests/fixtures/agent-view/quadratic.docx` was written by jubarte, so it is not Word truth; Word's own math files put Cambria Math on every `m:r` and `m:ctrlPr`. Revisions go inside math (`tests/m463_math_internal_revision_marks.rs`), and the document root needs `xmlns:m`. The reader is lossy on binomials (`noBar`), U+2061 functions and `eqArr`; fix it in this task.
+
 **Goal.** `$…$`/`$$…$$` become real equations; `math.md` turns green and round-trips.
 
 - Markdown in: `` $x^2$ `` and `$$\\frac{−b±\\sqrt{b^2−4ac}}{2a}$$` (exact `tests/fixtures/md-roundtrip/math.md:20` display line).
