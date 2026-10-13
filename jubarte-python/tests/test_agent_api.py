@@ -409,6 +409,9 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
         doc.accept(ids="body:rev:1")  # type: ignore[arg-type]
     with pytest.raises(jubarte.JubarteError, match="no tracked change r9"):
         doc.accept(ids=["body:rev:9"])
+    # An id that is no change id is a bad argument.
+    with pytest.raises(ValueError, match="expected a change id"):
+        doc.accept(ids=["c5"])
 
 
 def test_a_plan_resolves_selected_changes_before_it_edits() -> None:

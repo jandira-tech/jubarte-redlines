@@ -58,11 +58,16 @@ class CliError(Exception):
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
+def _os(exc: OSError) -> str:
+    """An I/O error as Rust words it: ``No such file or directory (os error 2)``."""
+    return f"{exc.strerror} (os error {exc.errno})" if exc.errno is not None and exc.strerror else str(exc)
+
+
 def _read(path: Path) -> Document:
     try:
         doc = Document.read(path)
     except OSError as exc:
-        raise CliError(f"reading {path}: {exc}") from exc
+        raise CliError(f"reading {path}: {_os(exc)}") from exc
     if doc.to_bytes().startswith(OLE_MAGIC):
         raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
     if not doc.to_bytes().startswith(b"PK\x03\x04"):
@@ -75,7 +80,7 @@ def _read_side(path: Path, force_kind: str | None) -> bytes | str:
     try:
         data = path.read_bytes()
     except OSError as exc:
-        raise CliError(f"reading {path}: {exc}") from exc
+        raise CliError(f"reading {path}: {_os(exc)}") from exc
     if data.startswith(OLE_MAGIC):
         raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
     kind = force_kind or ("docx" if data.startswith(b"PK\x03\x04") else "md")
@@ -129,7 +134,7 @@ def _write(path: Path, data: bytes | str) -> int:
     try:
         path.write_bytes(raw)
     except OSError as exc:
-        raise CliError(f"writing {path}: {exc}") from exc
+        raise CliError(f"writing {path}: {_os(exc)}") from exc
     return len(raw)
 
 
@@ -855,10 +860,19 @@ def cmd_comments(args: argparse.Namespace) -> int:
 
 
 def _resolution(args: argparse.Namespace, accept: bool) -> int:
+    from . import _native
+
     doc = _read(args.file)
     _ensure_writable(args.output, args.force)
     selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
-    result = doc.accept(**selection) if accept else doc.reject(**selection)
+    try:
+        result = doc.accept(**selection) if accept else doc.reject(**selection)
+    except ValueError as exc:
+        # An id that is no change id, or names two: a usage error, as the binary's.
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE) from exc
+    except _native.JubarteError as exc:
+        raise CliError(f"{'accept' if accept else 'reject'} failed: {exc}") from exc
     _write_result(args, result.to_bytes(), source=_not_written(args))
     return EXIT_OK
 

@@ -429,7 +429,15 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     assert main(["changes", str(out)]) == 0
     assert capsys.readouterr().out.splitlines()[-2:] == ['r1\tdeletion\ttext\ta\tp0\t"gone"', "1 change(s)"]
     assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "body:rev:9"]) == 1
-    assert "no tracked change r9" in capsys.readouterr().err
+    assert capsys.readouterr().err == "error: accept failed: no tracked change r9\n"
+    # An id that is no change id is a usage error (exit 2), as the binary's.
+    with pytest.raises(SystemExit) as usage:
+        main(["reject", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "c5"])
+    assert usage.value.code == 2
+    assert capsys.readouterr().err == "error: c5: expected a change id such as r12, header1.r1 or body:rev:12\n"
+    assert main(["changes", str(tmp_path / "missing.docx")]) == 1
+    missing = tmp_path / "missing.docx"
+    assert capsys.readouterr().err == f"error: reading {missing}: No such file or directory (os error 2)\n"
 
 
 def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

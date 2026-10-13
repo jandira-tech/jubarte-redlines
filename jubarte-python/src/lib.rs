@@ -278,6 +278,19 @@ fn wrote_png_line(pattern: std::path::PathBuf, pages: usize, dpi: f32) -> String
     jubarte::cli::wrote_png_line(&pattern, pages, dpi)
 }
 
+/// A resolution's error: an id that is no change id, or names two changes,
+/// is a bad argument (`ValueError`, the binary's exit 2); the rest are
+/// `JubarteError`.
+fn change_err(e: jubarte::changes::ChangeError) -> PyErr {
+    use jubarte::changes::ChangeError;
+    match e {
+        ChangeError::InvalidId(_) | ChangeError::Ambiguous { .. } => {
+            pyo3::exceptions::PyValueError::new_err(e.to_string())
+        }
+        e => err(e),
+    }
+}
+
 fn change_filter(filter_json: &str) -> PyResult<jubarte::changes::ChangeFilter> {
     serde_json::from_str(filter_json)
         .map_err(|e| JubarteError::new_err(format!("invalid change filter: {e}")))
@@ -291,7 +304,7 @@ fn accept_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py
     let filter = change_filter(filter_json)?;
     let out = py
         .detach(|| jubarte::changes::accept_changes(docx, &filter))
-        .map_err(err)?;
+        .map_err(change_err)?;
     Ok(PyBytes::new(py, &out).unbind())
 }
 
@@ -302,7 +315,7 @@ fn reject_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py
     let filter = change_filter(filter_json)?;
     let out = py
         .detach(|| jubarte::changes::reject_changes(docx, &filter))
-        .map_err(err)?;
+        .map_err(change_err)?;
     Ok(PyBytes::new(py, &out).unbind())
 }
 
