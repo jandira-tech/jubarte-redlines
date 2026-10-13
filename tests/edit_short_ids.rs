@@ -794,6 +794,24 @@ fn the_cli_refuses_revision_and_reply_flags_on_the_wrong_location() {
             &["-p", "c5", "--reply", "x", "--resolve"][..],
             "-p c5: --reply takes no other flag",
         ),
+        // A bare number on -p is a paragraph (D7's -p column); the refusal
+        // says so and names the spelling that works.
+        (
+            &["-p", "1+2", "--accept"][..],
+            "-p 1+2: on -p a bare number names a paragraph; the revisions are r1+2",
+        ),
+        (
+            &["-p", "1", "--reject"][..],
+            "-p 1: on -p a bare number names a paragraph; the revision is r1",
+        ),
+        (
+            &["-p", "5", "--resolve"][..],
+            "-p 5: on -p a bare number names a paragraph; the comment is c5",
+        ),
+        (
+            &["-p", "5", "--reply", "x"][..],
+            "-p 5: on -p a bare number names a paragraph; the comment is c5",
+        ),
     ] {
         let out = edit_cli(dir.path(), &[&["received.docx"][..], args].concat());
         assert_eq!(out.status.code(), Some(2), "{args:?}");
