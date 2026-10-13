@@ -5,7 +5,7 @@
 //! The `.docx` package around the written items: built-in parts, or a
 //! reference document's styles, numbering, page setup, headers and footers.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Write as _};
 
 use super::xml::{self, Context, Document, Relate, escape};
@@ -137,7 +137,13 @@ pub(super) fn assemble(
         document,
         author: escape(&options.author).into_owned(),
         date: escape(&options.date).into_owned(),
-        next_revision: 1,
+        next_revision: document
+            .revision_ids
+            .values()
+            .flatten()
+            .max()
+            .map_or(1, |max| max.saturating_add(1)),
+        cursors: HashMap::new(),
         num_ids,
         note_base: 0,
         next_drawing,

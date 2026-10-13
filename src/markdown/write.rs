@@ -1000,6 +1000,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 } else {
                     anchor.serials[1..].iter().flatten().copied().collect()
                 };
+                let ids = mark_ids(&tags, serials.len());
                 for (i, serial) in serials.iter().enumerate() {
                     let tag = if tags.len() == 1 {
                         &tags[0]
@@ -1008,6 +1009,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                     };
                     let (author, date) = self.view_author(&tag.handle, tag.date.as_deref());
                     self.document.attributions.insert(*serial, (author, date));
+                    if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
+                        self.document.revision_ids.insert(*serial, ids.clone());
+                    }
                 }
                 return;
             }
@@ -1219,6 +1223,25 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         renumber_comments(&mut self.document);
         self.document
+    }
+}
+
+/// The `w:id`s of each of `serials` changes a revision note names: one
+/// tag names them all (`r1+2`: the deletion 1, the insertion 2; a change of
+/// several runs `r5+6`), each in turn and the last the rest; several tags
+/// (`r1 @AC; r2 @JD`) one change each.
+fn mark_ids(tags: &[view_notes::Tag], serials: usize) -> Vec<Vec<u32>> {
+    match tags {
+        [] => Vec::new(),
+        [tag] => (0..serials)
+            .map(|i| match i.cmp(&(serials - 1)) {
+                std::cmp::Ordering::Less => tag.ids.get(i).copied().into_iter().collect(),
+                _ => tag.ids.get(i..).map(<[u32]>::to_vec).unwrap_or_default(),
+            })
+            .collect(),
+        tags => (0..serials)
+            .map(|i| tags[i.min(tags.len() - 1)].ids.clone())
+            .collect(),
     }
 }
 
@@ -1565,6 +1588,27 @@ mod tests {
         ] {
             assert!(!is_date(text), "{text}");
         }
+    }
+
+    #[test]
+    fn a_revision_note_numbers_the_marks_of_its_changes() {
+        let tag = |ids: &[u32]| view_notes::Tag {
+            handle: "AC".into(),
+            date: None,
+            ids: ids.to_vec(),
+        };
+        // A substitution: the deletion, then the insertion.
+        assert_eq!(mark_ids(&[tag(&[1, 2])], 2), [vec![1], vec![2]]);
+        // One change of several runs takes every id.
+        assert_eq!(mark_ids(&[tag(&[5, 6])], 1), [vec![5, 6]]);
+        // The insertion of a substitution in two runs takes the rest.
+        assert_eq!(mark_ids(&[tag(&[1, 2, 3])], 2), [vec![1], vec![2, 3]]);
+        // Too few ids: the changes left over take none.
+        assert_eq!(mark_ids(&[tag(&[4])], 2), [vec![4], vec![]]);
+        // One tag per change.
+        assert_eq!(mark_ids(&[tag(&[1]), tag(&[2])], 2), [vec![1], vec![2]]);
+        assert!(mark_ids(&[], 2).is_empty());
+        assert!(mark_ids(&[tag(&[1])], 0).is_empty());
     }
 
     #[test]

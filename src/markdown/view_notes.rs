@@ -78,6 +78,8 @@ fn scalar_and_comment(text: &str) -> (String, Option<&str>) {
 pub(super) struct Tag {
     pub handle: String,
     pub date: Option<String>,
+    /// The `w:id`s it names, in order (`r1+2` → 1, 2); none for `noid`.
+    pub ids: Vec<u32>,
 }
 
 /// The tags of a revision note, `r1+2 @AC` or `r1 @AC; r2 @JD 2026-…`;
@@ -103,6 +105,9 @@ pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
             (id_ok && date_ok && !id.starts_with('#')).then(|| Tag {
                 handle: handle.to_string(),
                 date: date.map(str::to_string),
+                ids: crate::ids::parse_change_ids(id)
+                    .map(|ids| ids.iter().filter_map(|c| c.wid.parse().ok()).collect())
+                    .unwrap_or_default(),
             })
         })
         .collect()
@@ -387,25 +392,37 @@ mod tests {
 
     #[test]
     fn revision_notes_are_tags_and_nothing_else_is() {
-        let tag = |handle: &str, date: Option<&str>| Tag {
+        let tag = |handle: &str, date: Option<&str>, ids: &[u32]| Tag {
             handle: handle.into(),
             date: date.map(str::to_string),
+            ids: ids.to_vec(),
         };
-        assert_eq!(revision_tags("r0 @AC"), Some(vec![tag("AC", None)]));
-        assert_eq!(revision_tags("r1+2 @AC"), Some(vec![tag("AC", None)]));
+        assert_eq!(revision_tags("r0 @AC"), Some(vec![tag("AC", None, &[0])]));
+        assert_eq!(
+            revision_tags("r1+2 @AC"),
+            Some(vec![tag("AC", None, &[1, 2])])
+        );
         assert_eq!(
             revision_tags("r1 @AC; r2 @JD 2026-10-02T08:00:00Z"),
             Some(vec![
-                tag("AC", None),
-                tag("JD", Some("2026-10-02T08:00:00Z"))
+                tag("AC", None, &[1]),
+                tag("JD", Some("2026-10-02T08:00:00Z"), &[2])
             ])
         );
-        assert_eq!(revision_tags("header1.r4 @AC"), Some(vec![tag("AC", None)]));
+        assert_eq!(
+            revision_tags("header1.r4 @AC"),
+            Some(vec![tag("AC", None, &[4])])
+        );
         assert_eq!(
             revision_tags("Header_1:rev:4 @AC"),
-            Some(vec![tag("AC", None)])
+            Some(vec![tag("AC", None, &[4])])
         );
-        assert_eq!(revision_tags("noid @AC"), Some(vec![tag("AC", None)]));
+        // A long id's w:id need not be a number; `noid` names none.
+        assert_eq!(
+            revision_tags("body:rev:x9 @AC"),
+            Some(vec![tag("AC", None, &[])])
+        );
+        assert_eq!(revision_tags("noid @AC"), Some(vec![tag("AC", None, &[])]));
         for text in [
             "Ann Counsel (2026-10-01T09:00:00Z)",
             "r0 @AC: why?",

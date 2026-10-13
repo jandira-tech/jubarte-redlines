@@ -82,3 +82,13 @@ fn a_page_break_comes_back_after_its_text() {
     let md = "<!-- p0 page-break -->\nBefore the break\n\n<!-- p1 -->\nAfter it\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+const AUTHORS: &str =
+    "---\nauthors:\n  AC: Ann Counsel                  # 2026-10-01T09:00:00Z\n---\n\n";
+
+#[test]
+fn revisions_keep_the_numbers_their_tags_name() {
+    let body = "<!-- p0 -->\nPay {~~thirty~>forty~~}{>>r7+9 @AC<<} days {++from today++}{>>r12 @AC<<}.\n\n\
+                <!-- p1 -->\n{--Gone.--}{>>r3 @AC<<} Kept.\n";
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+}
