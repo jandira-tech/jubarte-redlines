@@ -10,6 +10,8 @@
 
 use std::collections::HashMap;
 
+use super::xml::Label;
+
 /// An author of the `authors:` table: the full name, and the timestamp
 /// every one of their changes and comments shares, when they share one.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,12 +108,21 @@ pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
                 handle: handle.to_string(),
                 date: date.map(str::to_string),
                 ids: crate::ids::parse_change_ids(id)
-                    .map(|ids| ids.iter().filter_map(|c| c.wid.parse().ok()).collect())
+                    .map(|ids| {
+                        ids.iter()
+                            .filter_map(|c| c.wid.parse().ok())
+                            .filter(|&id| id <= MOST_ID)
+                            .collect()
+                    })
                     .unwrap_or_default(),
             })
         })
         .collect()
 }
+
+/// The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a
+/// larger number a view names is left for a fresh one.
+pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
 
 /// A comment head the view writes: `c5 @AC: `, `c5 @AC 2026-…: `,
 /// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `.
@@ -197,6 +208,8 @@ pub(super) struct IdLine {
     pub right: Option<i64>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
+    /// The list label (`num "(a)"`, `bullet`).
+    pub label: Option<Label>,
     /// The paragraph mark's insertion (`break-ins r4 @AC`).
     pub break_ins: Option<Tag>,
     /// The paragraph mark's deletion (`break-del r6 @AC`).
@@ -214,6 +227,10 @@ pub(super) fn id_line(line: &str) -> Option<IdLine> {
     let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
     crate::ids::short_number(id, 'p')?;
     let mut parsed = IdLine::default();
+    // The label first: its quotes may hold `, `.
+    let (rest, label) = take_label(rest);
+    parsed.label = label.map(Label::Text);
+    let rest = rest.as_str();
     let mut clauses = rest.split(", ").filter(|c| !c.is_empty()).peekable();
     // The style is the head's second word: `p5 TitlePage[ clause]`.
     if let Some(first) = clauses.peek().copied() {
@@ -250,6 +267,9 @@ impl IdLine {
                     _ => self.align,
                 };
                 self.page_break |= clause == "page-break";
+                if clause == "bullet" {
+                    self.label = Some(Label::Bullet);
+                }
             }
             Some(("first-line", v)) => self.first_line = twips(v),
             Some(("hanging", v)) => self.hanging = twips(v),
@@ -261,6 +281,51 @@ impl IdLine {
             Some(_) => {}
         }
     }
+}
+
+/// The clauses without their `num "…"` one, and its label (`\\` and `\"`
+/// unescaped). The clause opens the line, follows `, `, or follows the
+/// style (`BodyText num "(a)"`).
+fn take_label(rest: &str) -> (String, Option<String>) {
+    let style_end = rest.find([' ', ',']);
+    let start = rest.match_indices("num \"").map(|(i, _)| i).find(|&i| {
+        i == 0
+            || rest[..i].ends_with(", ")
+            || style_end.is_some_and(|end| end + 1 == i && rest.as_bytes()[end] == b' ')
+    });
+    let Some(start) = start else {
+        return (rest.to_string(), None);
+    };
+    let mut label = String::new();
+    let mut chars = rest[start + 5..].char_indices();
+    let mut end = None;
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some((_, escaped)) => label.push(escaped),
+                None => break,
+            },
+            '"' => {
+                end = Some(start + 5 + i + 1);
+                break;
+            }
+            c => label.push(c),
+        }
+    }
+    let Some(end) = end else {
+        return (rest.to_string(), None);
+    };
+    let before = rest[..start].trim_end_matches(", ").trim_end();
+    let after = rest[end..].trim_start_matches(", ").trim_start();
+    let joined = match (before.is_empty(), after.is_empty()) {
+        (true, _) => after.to_string(),
+        (false, true) => before.to_string(),
+        // After the style the next clause joins with a space, as the
+        // view prints it; after a clause, with `, `.
+        (false, false) if rest[..start].ends_with(", ") => format!("{before}, {after}"),
+        (false, false) => format!("{before} {after}"),
+    };
+    (joined, Some(label))
 }
 
 fn first_tag(text: &str) -> Option<Tag> {

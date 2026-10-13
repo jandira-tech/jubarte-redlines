@@ -80,6 +80,9 @@ pub(super) struct Paragraph {
     pub mark_by: Option<u32>,
     /// `mark` was set because the paragraph's whole text is one change.
     pub whole: bool,
+    /// The label an id line names (`num "(a)"`): an index into
+    /// `Document::label_uses`.
+    pub label: Option<usize>,
     /// An id line said what the mark is (`break-ins r4 @AC`, or nothing):
     /// the text does not change it.
     pub mark_fixed: bool,
@@ -197,6 +200,26 @@ pub(super) struct Document {
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
     /// order (`{>>r5+6 @AB<<}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
+    /// The list labels id lines name (`num "(a)"`, `bullet`), each once.
+    pub labels: Vec<Label>,
+    /// Each paragraph's use of a label: one `w:num` each.
+    pub label_uses: Vec<LabelUse>,
+}
+
+/// A paragraph numbered with a label: which one, at which list level, and
+/// the number its list counts it (`2.` in `2. Text`), when it says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LabelUse {
+    pub label: usize,
+    pub level: u32,
+    pub start: Option<u32>,
+}
+
+/// A list label an id line names, written as it reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Label {
+    Bullet,
+    Text(String),
 }
 
 /// Text for XML content: markup escaped, characters XML 1.0 forbids dropped.
@@ -245,6 +268,8 @@ pub(super) struct Context<'d> {
     pub used_revisions: HashSet<u32>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
+    /// `w:numId` of each label use, by its index in `Document::label_uses`.
+    pub label_nums: Vec<u32>,
     /// Added to a footnote's position to make its `w:id`.
     pub note_base: u32,
     pub next_drawing: u32,
@@ -270,12 +295,17 @@ impl Context<'_> {
                 }
             }
         }
-        while !self.used_revisions.insert(self.next_revision) {
-            self.next_revision = self.next_revision.wrapping_add(1);
+        // Fresh ids stay within the `int` Word reads, past the view's own.
+        loop {
+            if self.next_revision > super::view_notes::MOST_ID {
+                self.next_revision = 0;
+            }
+            let id = self.next_revision;
+            self.next_revision += 1;
+            if self.used_revisions.insert(id) {
+                return id;
+            }
         }
-        let id = self.next_revision;
-        self.next_revision = self.next_revision.wrapping_add(1);
-        id
     }
 
     fn revision(&mut self, kind: Kind, by: Option<u32>) -> String {
@@ -455,6 +485,17 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         let _ = write!(
             properties,
             "<w:numPr><w:ilvl w:val=\"{level}\"/><w:numId w:val=\"{num}\"/></w:numPr>"
+        );
+    } else if let Some(i) = paragraph.label
+        && let (Some(num), Some(using)) = (
+            context.label_nums.get(i),
+            context.document.label_uses.get(i),
+        )
+    {
+        let _ = write!(
+            properties,
+            "<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{num}\"/></w:numPr>",
+            using.level
         );
     }
     if paragraph.rule {
@@ -726,6 +767,45 @@ pub(super) fn numbering(
         let abstract_id = if list.ordered { decimal } else { bullets };
         let start = list.ordered.then_some((list.level, list.start));
         nums.push_str(&num(id, abstract_id, start));
+    }
+    (abstracts, nums)
+}
+
+/// One list per label, every level's text the label itself (no `%1`),
+/// so Word prints it as written; and one `w:num` per use, restarting its
+/// level at the number the view gives it.
+pub(super) fn label_numbering(
+    labels: &[Label],
+    uses: &[LabelUse],
+    first_abstract: u32,
+    first_num: u32,
+) -> (String, String) {
+    let mut abstracts = String::new();
+    for (index, label) in (0u32..).zip(labels) {
+        let (format, text) = match label {
+            Label::Bullet => ("bullet", "\u{2022}"),
+            Label::Text(text) => ("decimal", text.as_str()),
+        };
+        let _ = write!(
+            abstracts,
+            "<w:abstractNum w:abstractNumId=\"{}\"><w:multiLevelType w:val=\"multilevel\"/>",
+            first_abstract + index
+        );
+        for level in 0..9 {
+            let _ = write!(
+                abstracts,
+                "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{format}\"/>\
+                 <w:lvlText w:val=\"{}\"/><w:lvlJc w:val=\"left\"/></w:lvl>",
+                escape(text)
+            );
+        }
+        abstracts.push_str("</w:abstractNum>");
+    }
+    let mut nums = String::new();
+    for (index, using) in (0u32..).zip(uses) {
+        let abstract_id = first_abstract + u32::try_from(using.label).unwrap_or(0);
+        let start = using.start.map(|start| (using.level, start));
+        nums.push_str(&num(first_num + index, abstract_id, start));
     }
     (abstracts, nums)
 }

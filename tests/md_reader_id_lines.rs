@@ -11,9 +11,19 @@ mod common;
 use common::validity::assert_word_valid_package;
 use jubarte::markdown::{DocxOptions, ReadOptions, markdown_to_docx, read};
 
-/// The view of the docx `markdown` reads into, without its YAML header.
+/// `markdown` under the view's YAML header (`view: tracked`), which makes
+/// the reader read its id lines.
+fn as_view(markdown: &str) -> String {
+    match markdown.strip_prefix("---\n") {
+        Some(rest) => format!("---\nview: tracked\n{rest}"),
+        None => format!("---\nview: tracked\n---\n\n{markdown}"),
+    }
+}
+
+/// The view of the docx `markdown` (read as a view) reads into, without
+/// its YAML header.
 fn round_trip(markdown: &str) -> String {
-    let docx = markdown_to_docx(markdown, &DocxOptions::default())
+    let docx = markdown_to_docx(&as_view(markdown), &DocxOptions::default())
         .expect("the view reads")
         .docx;
     assert_word_valid_package(&docx);
@@ -100,9 +110,12 @@ fn a_revision_number_is_written_once() {
     // take fresh ones, so no two marks share a `w:id`.
     let body = "<!-- p0 -->\n{++**Bold** plain++}{>>r4 @AC<<} and {++one++}{>>r5 @AC<<} \
                 {++two++}{>>r5 @AC<<}.\n";
-    let docx = markdown_to_docx(&format!("{AUTHORS}{body}"), &DocxOptions::default())
-        .expect("the view reads")
-        .docx;
+    let docx = markdown_to_docx(
+        &as_view(&format!("{AUTHORS}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
     assert_word_valid_package(&docx);
     let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
     for id in ["4", "5"] {
@@ -128,4 +141,94 @@ fn an_id_line_without_a_break_clause_leaves_the_mark_alone() {
     // naming no `break-ins`.
     let body = "<!-- p0 -->\n{++All new text.++}{>>r3 @AC<<}\n\n<!-- p1 -->\nNext.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+}
+
+#[test]
+fn a_numbered_paragraph_keeps_its_label() {
+    // As the view prints them: a list item under its label, numbered as its
+    // list counts it; a heading with its label before its text.
+    let md = "<!-- p0 num \"Article One\" -->\n# Article One The Trust\n\n\
+              <!-- p1 num \"Section One.05\" -->\n## Section One.05 Deep\n\n\
+              <!-- p2 num \"(a)\" -->\n1. First.\n\n<!-- p3 num \"(b)\" -->\n2. Second.\n\n\
+              <!-- p4 justify, num \"\\\"Q\\\" 1.\" -->\n1. Quoted label.\n\n\
+              <!-- p5 bullet -->\n- A bullet.\n\n<!-- p6 -->\nPlain.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn an_empty_id_line_keeps_its_style_and_label() {
+    let md =
+        "<!-- p0 -->\nOne\n\n<!-- p1 ListParagraph empty, num \"1.\" -->\n\n<!-- p2 -->\nTwo\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+/// The paragraph id lines of the view of `markdown`'s docx.
+fn paragraphs(markdown: &str) -> Vec<String> {
+    let docx = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("the Markdown reads")
+        .docx;
+    let view = read(&docx, &ReadOptions::default())
+        .expect("the docx reads")
+        .markdown;
+    view.lines()
+        .filter(|line| {
+            line.strip_prefix("<!-- p")
+                .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn html_comments_in_plain_markdown_write_nothing() {
+    // Without the view's header an HTML comment is the author's own: it
+    // makes no paragraph and gives none a style or an alignment.
+    let plain = "Hello\n\nWorld\n";
+    let expected = paragraphs(plain);
+    for markdown in [
+        "Hello\n\n<!-- p1 empty -->\n\nWorld\n",
+        "Hello\n\n<!-- p1 center -->\nWorld\n",
+        "Hello\n\n<div>\n<!-- p1 -->\n</div>\n\nWorld\n",
+    ] {
+        assert_eq!(paragraphs(markdown), expected, "{markdown}");
+    }
+}
+
+#[test]
+fn a_comment_inside_other_html_is_no_id_line_even_in_a_view() {
+    let md = as_view("<!-- p0 -->\nOne\n\n<div>\n<!-- p1 center -->\n</div>\n\n<!-- p1 -->\nTwo\n");
+    let lines = paragraphs(&md);
+    assert_eq!(lines, ["<!-- p0 -->", "<!-- p1 -->"], "{lines:?}");
+}
+
+#[test]
+fn a_number_word_cannot_read_takes_a_fresh_one() {
+    // `w:id` is an `int`: 2147483648 does not fit, so the change and the
+    // comment that name it are numbered afresh.
+    let body = "<!-- p0 -->\n{++Added++}{>>r2147483648 @AC<<} and \
+                {==this==}{>>c2147483648 @AC: Note.<<}.\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{AUTHORS}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    assert!(!document.contains("2147483648"), "{document}");
+}
+
+#[test]
+fn fresh_numbers_stay_within_what_word_reads() {
+    let body = "<!-- p0 -->\n{++One++}{>>r2147483647 @AC<<} and {++two++}{>>noid @AC<<}.\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{AUTHORS}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    assert!(document.contains("w:id=\"2147483647\""), "{document}");
+    assert!(!document.contains("2147483648"), "{document}");
 }

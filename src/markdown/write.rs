@@ -12,8 +12,8 @@ use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEn
 use super::critic::{self, Piece, Pieces, Token};
 use super::view_notes;
 use super::xml::{
-    Comment, Content, Document, Indent, Item, Kind, Link, List, Note, Paragraph, Picture, Run,
-    RunFormat,
+    Comment, Content, Document, Indent, Item, Kind, Label, LabelUse, Link, List, Note, Paragraph,
+    Picture, Run, RunFormat,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 
@@ -157,6 +157,14 @@ struct Writer<'o, 'a> {
     paragraph_serial: u64,
     paragraph_runs: usize,
     heading: Option<usize>,
+    /// What is left of a numbered heading's label at the start of its text.
+    label_prefix: Option<String>,
+    /// The YAML header says the text is an agent view (`view: tracked`):
+    /// its id lines describe paragraphs. In other Markdown an HTML comment
+    /// is the author's own and writes nothing.
+    view: bool,
+    /// The lines of the HTML block open here, read whole when it ends.
+    html_block: Option<String>,
     quote: u32,
     lists: Vec<OpenList>,
     bullets: Option<usize>,
@@ -225,6 +233,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             paragraph_serial: 0,
             paragraph_runs: 0,
             heading: None,
+            label_prefix: None,
+            view: false,
+            html_block: None,
             quote: 0,
             lists: Vec::new(),
             bullets: None,
@@ -285,7 +296,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Event::InlineMath(text) | Event::DisplayMath(text) => self.text(&text),
             Event::InlineHtml(html) => self.inline_html(&html),
-            Event::Html(html) => self.id_lines(&html),
+            Event::Html(html) => match &mut self.html_block {
+                Some(block) => block.push_str(&html),
+                None => self.id_lines(&html),
+            },
             Event::FootnoteReference(label) => self.note_reference(&label),
             Event::SoftBreak => self.text(" "),
             Event::HardBreak => {
@@ -425,10 +439,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
             }
             Tag::MetadataBlock(_) => self.metadata = Some(String::new()),
-            Tag::HtmlBlock
-            | Tag::DefinitionList
-            | Tag::DefinitionListTitle
-            | Tag::DefinitionListDefinition => {}
+            Tag::HtmlBlock => self.html_block = Some(String::new()),
+            Tag::DefinitionList | Tag::DefinitionListTitle | Tag::DefinitionListDefinition => {}
         }
     }
 
@@ -499,8 +511,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.metadata(&text);
                 }
             }
-            TagEnd::HtmlBlock
-            | TagEnd::DefinitionList
+            TagEnd::HtmlBlock => {
+                if let Some(block) = self.html_block.take() {
+                    self.id_lines(&block);
+                }
+            }
+            TagEnd::DefinitionList
             | TagEnd::DefinitionListTitle
             | TagEnd::DefinitionListDefinition => {}
         }
@@ -560,7 +576,16 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// with no text before the next line (`<!-- p7 page-break -->`), a
     /// paragraph of its own.
     fn id_lines(&mut self, html: &str) {
-        if self.cell.is_some() || self.comment.is_some() || self.target.is_some() {
+        if !self.view || self.cell.is_some() || self.comment.is_some() || self.target.is_some() {
+            return;
+        }
+        // The view writes id lines as blocks of their own: a comment inside
+        // other HTML (`<div>`) is the author's.
+        let comments_only = html
+            .lines()
+            .map(str::trim)
+            .all(|line| line.is_empty() || (line.starts_with("<!--") && line.ends_with("-->")));
+        if !comments_only {
             return;
         }
         for line in html.lines() {
@@ -635,6 +660,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             && self.cell.is_none()
             && self.target.is_none()
         {
+            let styled = line.style.is_some();
             if let Some(style) = line.style {
                 paragraph.style = Some(style.into());
                 // `# Text` under its own style: the level goes with it.
@@ -648,6 +674,28 @@ impl<'o, 'a> Writer<'o, 'a> {
                 left: line.left,
                 right: line.right,
             };
+            if let Some(label) = line.label {
+                // The label stands for the list's own number, and a heading
+                // prints it before its text.
+                if let (Some(_), Label::Text(text)) = (self.heading, &label) {
+                    self.label_prefix = Some(format!("{text} "));
+                }
+                let level = list.map_or(0, |(_, level, _)| level);
+                let start = list
+                    .filter(|&(_, _, first)| first)
+                    .and_then(|(instance, _, _)| self.document.lists.get(instance))
+                    .filter(|list| list.ordered)
+                    .map(|list| list.start);
+                paragraph.label = self.label_use(label, level, start);
+                if paragraph.label.is_some() {
+                    paragraph.numbering = None;
+                    paragraph.indent = None;
+                    // The view names a list paragraph's style when it has one.
+                    if !styled && list.is_some() {
+                        paragraph.style = None;
+                    }
+                }
+            }
             paragraph.mark_fixed = true;
             let mark = line
                 .break_ins
@@ -694,6 +742,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some(index) = self.paragraph.take() else {
             return;
         };
+        self.label_prefix = None;
         if std::mem::take(&mut self.page_break_due) {
             self.story().push(Item::Run(Run {
                 content: Content::PageBreak,
@@ -851,6 +900,21 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// Text without CriticMarkup: into the open comment, or as runs, with
     /// tabs and (in code blocks) line breaks as their own runs.
     fn plain(&mut self, text: &str) {
+        // A numbered heading's label, which its id line holds: not text.
+        let mut text = text;
+        if self.comment.is_none()
+            && let Some(prefix) = self.label_prefix.take()
+        {
+            if let Some(rest) = text.strip_prefix(prefix.as_str()) {
+                if rest.is_empty() {
+                    return;
+                }
+                text = rest;
+            } else if let Some(left) = prefix.strip_prefix(text) {
+                self.label_prefix = Some(left.to_string());
+                return;
+            }
+        }
         if text.is_empty() {
             return;
         }
@@ -1087,8 +1151,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             .and_then(|first| view_notes::comment_head(first.trim()))
             .map(|(head, text)| (head, text.to_string()));
         if let Some((head, text)) = head {
-            comment.number = Some(head.number);
-            comment.parent = head.reply_to;
+            comment.number = Some(head.number).filter(|&n| n <= view_notes::MOST_ID);
+            comment.parent = head.reply_to.filter(|&n| n <= view_notes::MOST_ID);
             comment.done = head.resolved;
             if let Some(handle) = &head.handle {
                 let (author, date) = self.view_author(handle, head.date.as_deref());
@@ -1196,9 +1260,39 @@ impl<'o, 'a> Writer<'o, 'a> {
             match key.trim() {
                 "title" => self.document.title = Some(critic::decode(value)),
                 "author" => self.document.author = Some(critic::decode(value)),
+                "view" => self.view = true,
                 _ => {}
             }
         }
+    }
+
+    /// A paragraph's use of `label` (added to the document's labels once):
+    /// its index in `Document::label_uses`; `None` for a label Word would
+    /// read a number into (`%1`).
+    fn label_use(&mut self, label: Label, level: u32, start: Option<u32>) -> Option<usize> {
+        if let Label::Text(text) = &label
+            && text
+                .as_bytes()
+                .windows(2)
+                .any(|pair| pair[0] == b'%' && (b'1'..=b'9').contains(&pair[1]))
+        {
+            return None;
+        }
+        let labels = &mut self.document.labels;
+        let label = labels
+            .iter()
+            .position(|known| *known == label)
+            .unwrap_or_else(|| {
+                labels.push(label);
+                labels.len() - 1
+            });
+        let uses = &mut self.document.label_uses;
+        uses.push(LabelUse {
+            label,
+            level: level.min(8),
+            start,
+        });
+        Some(uses.len() - 1)
     }
 
     /// The author a view handle names and the date for one of their notes:

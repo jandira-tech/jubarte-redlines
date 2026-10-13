@@ -131,6 +131,7 @@ pub(super) fn assemble(
     }
 
     let num_ids = numbering(&mut package, &main, document);
+    let label_nums = label_numbering(&mut package, &main, document);
     let text_width = text_width(&section);
     let next_drawing = max_drawing_id(&package) + 1;
     let mut context = Context {
@@ -146,6 +147,7 @@ pub(super) fn assemble(
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
         num_ids,
+        label_nums,
         note_base: 0,
         next_drawing,
         text_width,
@@ -473,6 +475,25 @@ fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> 
     (0..document.lists.len())
         .map(|i| first_num + u32::try_from(i).unwrap_or(0))
         .collect()
+}
+
+/// Adds a list for each label an id line names; returns each label's
+/// `w:numId`.
+fn label_numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> {
+    if document.label_uses.is_empty() {
+        return Vec::new();
+    }
+    let Some((_, first_num)) = append_numbering(package, main, |first_abstract, first_num| {
+        xml::label_numbering(
+            &document.labels,
+            &document.label_uses,
+            first_abstract,
+            first_num,
+        )
+    }) else {
+        return Vec::new();
+    };
+    (first_num..).take(document.label_uses.len()).collect()
 }
 
 /// Appends `w:abstractNum`s and `w:num`s to `main`'s numbering part, making
