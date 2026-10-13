@@ -796,19 +796,32 @@ pub(crate) type Part = (String, Option<Change>, (bool, bool));
 /// Joins paragraphs, each paired with the tracked change on the paragraph mark
 /// that ends it. A blank paragraph drops the pending change: its own break stays.
 pub(crate) fn join_marked(parts: Vec<Part>, separator: &str) -> String {
+    join_paragraphs(parts, separator, false)
+}
+
+/// [`join_marked`], keeping a separator for each empty paragraph when
+/// `keep_empty` (the agent view, whose table line counts every paragraph).
+pub(crate) fn join_paragraphs(parts: Vec<Part>, separator: &str, keep_empty: bool) -> String {
     let mut out = String::new();
     let mut pending = None;
     let mut trailing = false;
     // The first paragraph, while it is the only one and wholly one change.
     let mut first = None;
-    for (part, mark, (leading, ends_in_space)) in parts {
+    for (i, (part, mark, (leading, ends_in_space))) in parts.into_iter().enumerate() {
         if part.trim().is_empty() {
             pending = None;
+            if keep_empty && i > 0 {
+                first = None;
+                out.push_str(separator);
+            }
             continue;
         }
         if out.is_empty() {
             first = whole_change(&part);
-            out = part;
+            if keep_empty && i > 0 {
+                out.push_str(separator);
+            }
+            out.push_str(&part);
         } else {
             // A break with no change of its own goes with a paragraph that is
             // wholly one change, which leaves no stray break once resolved.

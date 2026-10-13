@@ -2090,7 +2090,7 @@ impl Writer<'_> {
         let mut parts = Vec::new();
         self.cell_parts(cell, &mut parts);
         self.revisions.truncate(depth);
-        critic::join_marked(parts, "<br>").replace('\n', "<br>")
+        critic::join_paragraphs(parts, "<br>", self.agent).replace('\n', "<br>")
     }
 
     /// Paragraph texts in a cell, each with the tracked change on its mark.

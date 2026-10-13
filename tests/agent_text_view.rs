@@ -443,6 +443,26 @@ fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_m
 }
 
 #[test]
+fn a_cells_empty_paragraphs_keep_their_breaks() {
+    // Each paragraph of a cell after its first starts with a `<br>`, an
+    // empty one too: the table line counts them all.
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let tbl = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}<w:p/>{}</w:tc><w:tc>{}<w:p/></w:tc></w:tr></w:tbl>"#,
+        p("a"),
+        p("b"),
+        p("c")
+    );
+    let out = body(&agent(&docx(&tbl))).to_string();
+    assert!(
+        out.starts_with(
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells t0.row0 p0-p4 -->\n|a<br><br>b|c<br>|\n"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
 fn table_line_names_each_merged_cell_and_how_far_it_reaches() {
     // A vertical merge names its first cell and the rows it covers; a cell
     // spanning columns names how many.
