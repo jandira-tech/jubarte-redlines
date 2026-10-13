@@ -83,6 +83,7 @@ def test_cli_comments_matches_the_binary(tmp_path: Path, capsys: pytest.CaptureF
     second = first.clean.edit(jubarte.EditPlan(author="Bob").reply_comment(0, text="Agreed"))
     path = tmp_path / "threaded.docx"
     path.write_bytes(second.clean.to_bytes())
+    assert [c.ref for c in second.clean.comments()] == ["c0", "c1"]
     assert main(["comments", str(path), "--json"]) == 0
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [row["text"] for row in rows] == ["Too low", "Agreed"]

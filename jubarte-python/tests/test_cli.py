@@ -411,7 +411,16 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     ]
     assert main(["changes", str(source), "--json"]) == 0
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert rows[0] == {"id": "body:rev:1", "kind": "deletion", "target": "text", "author": "a", "date": "2020-01-01T00:00:00Z", "text": "gone"}
+    assert rows[0] == {
+        "id": "body:rev:1",
+        "kind": "deletion",
+        "target": "text",
+        "author": "a",
+        "date": "2020-01-01T00:00:00Z",
+        "text": "gone",
+        "ref": "r1",
+        "paragraph": "body:p:0",
+    }
     out = tmp_path / "out.docx"
     assert main(["reject", str(source), "-o", str(out), "--author", "b", "--kind", "insertion"]) == 0
     capsys.readouterr()

@@ -201,7 +201,9 @@ class Change:
     ``table_cell``, ``properties``). Both sides of a move share
     ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
     ``inside`` names the change whose content holds this one: resolving that
-    one so its content goes takes this one along.
+    one so its content goes takes this one along. ``ref`` is the short id the
+    CLI prints and ``-p``/``--id`` take (``r12``, ``header1.r3``);
+    ``paragraph`` is the id of the paragraph the change is in (``body:p:3``).
     """
 
     id: str
@@ -213,6 +215,8 @@ class Change:
     move_name: str | None
     move_side: Literal["from", "to"] | None
     inside: str | None
+    ref: str | None = None
+    paragraph: str | None = None
 
 
 class _ChangeRow(TypedDict):
@@ -227,6 +231,8 @@ class _ChangeRow(TypedDict):
     move_name: NotRequired[str]
     move_side: NotRequired[Literal["from", "to"]]
     inside: NotRequired[str]
+    ref: NotRequired[str]
+    paragraph: NotRequired[str]
 
 
 def _decode_changes(payload: str) -> tuple[Change, ...]:
@@ -242,6 +248,8 @@ def _decode_changes(payload: str) -> tuple[Change, ...]:
             move_name=row.get("move_name"),
             move_side=row.get("move_side"),
             inside=row.get("inside"),
+            ref=row.get("ref"),
+            paragraph=row.get("paragraph"),
         )
         for row in rows
     )
@@ -257,7 +265,8 @@ class Comment:
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
     is the paragraph id where the range starts (``body:p:12``);
     ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
-    up to 80 characters ``before`` and ``after`` it.
+    up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
+    the CLI prints and ``-p`` takes (``c5``).
     """
 
     id: int
@@ -271,6 +280,7 @@ class Comment:
     anchor_text: str
     before: str
     after: str
+    ref: str | None = None
 
 
 class _CommentRow(TypedDict):
@@ -287,6 +297,7 @@ class _CommentRow(TypedDict):
     anchor_text: str
     before: str
     after: str
+    ref: NotRequired[str]
 
 
 def _decode_comments(payload: str) -> tuple[Comment, ...]:
@@ -304,6 +315,7 @@ def _decode_comments(payload: str) -> tuple[Comment, ...]:
             anchor_text=row["anchor_text"],
             before=row["before"],
             after=row["after"],
+            ref=row.get("ref"),
         )
         for row in rows
     )
