@@ -330,12 +330,14 @@ def probe_table(binary: Path, pairs: list[tuple[str, str]], scratch: Path, tag: 
 
 
 def render(binary: Path) -> str:
+    # REUSE-IgnoreStart (the header written into the generated file, not this script's)
     lines = [
         "<!--",
         "SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC",
         "",
         "SPDX-License-Identifier: AGPL-3.0-only",
         "-->",
+        # REUSE-IgnoreEnd
         "",
         "# jubarte ids and locations",
         "",
