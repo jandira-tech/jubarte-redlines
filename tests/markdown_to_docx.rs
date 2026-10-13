@@ -917,3 +917,22 @@ fn the_tracking_option_overrides_the_key() {
     )));
     assert!(tracks(&with("Text.\n", true)));
 }
+
+#[test]
+fn a_link_to_no_heading_is_written_and_warned_once() {
+    let written = markdown_to_docx(
+        "# Intro\n\n[a](#intro) [b](#nowhere) [c](#nowhere) [d](#gone)\n\n{--\n# Gone\n--}\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(xml.contains("w:anchor=\"nowhere\""), "the link is kept");
+    let links: Vec<&String> = written
+        .warnings
+        .iter()
+        .filter(|w| w.contains("link"))
+        .collect();
+    assert_eq!(links.len(), 2, "{:?}", written.warnings);
+    assert!(links[0].contains("#gone"), "{links:?}");
+    assert!(links[1].contains("#nowhere"), "{links:?}");
+}

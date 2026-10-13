@@ -47,7 +47,7 @@ themselves.
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
 | table | table in `TableGrid`, header row repeated, column alignment kept |
-| `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none |
+| `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning |
 | `[^note]` | footnote |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
 | `---` | a paragraph with a bottom border |

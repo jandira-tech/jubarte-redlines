@@ -1792,6 +1792,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             })
             .collect();
         let headings = heading_bookmarks(&body, &targets);
+        // A link whose heading is missing still goes in; Word's jump goes
+        // nowhere, so say so, once per name.
+        let landed: HashSet<&str> = headings.iter().map(|(_, slug)| slug.as_str()).collect();
+        let mut missing: Vec<&str> = targets.difference(&landed).copied().collect();
+        missing.sort_unstable();
+        for name in missing {
+            self.document.warnings.push(format!(
+                "link to #{name} names no heading: Word writes it, but it leads nowhere"
+            ));
+        }
         // Slugs Word cannot take as names, and the names they get instead.
         let mut renamed: HashMap<String, String> = HashMap::new();
         let mut used: HashSet<String> = headings
