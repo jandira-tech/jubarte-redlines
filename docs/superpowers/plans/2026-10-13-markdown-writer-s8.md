@@ -126,14 +126,15 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 
 ## Task 4 — Small wins (item 6, split in two commits)
 
-**Goal.** Six remark-docx gaps, each tiny, each Word-exact.
+**Goal.** Six remark-docx gaps and the table alignment the reader drops, each tiny, each Word-exact.
 
 1. `wp:docPr title` for a picture's title — Markdown in `![alt](f.png "title")`; XML out `<wp:docPr … descr="alt" title="title"/>` (today `descr` twice, no `title`: `src/markdown/xml.rs:704-724`).
 2. Linked `FootnoteTextChar` — character style linked to `FootnoteText` (today `FootnoteText` at `src/markdown/xml.rs:1001-1009` has no link; cf. `FootnoteReference` char style nearby).
 3. Code-in-link keeps code face — `` [`c`](url) `` keeps `VerbatimChar` and `Hyperlink` (today `link` masks `code`: `src/markdown/xml.rs:631-636`).
 4. Fuller core properties from front matter — beyond `title:`/`author:` (`src/markdown/write.rs:1606-1608`, `src/markdown/package.rs:634-670`); scope: `description`, `keywords`, `category` (front-matter keys to agree; Word shows them in File → Info).
 5. `fontTable` entries for legend fonts — default template (`src/markdown/package.rs:735-808`) has no `fontTable`; legend fonts (`src/markdown/view_styles.rs:153-193`, applied at `src/markdown/package.rs:122-130`) must have `w:fonts` entries or Word substitutes.
-6. Fixture shapes as new tests (`tests/markdown_to_docx.rs` + `tests/fixtures/md-roundtrip/`): headings in lists/quotes, notes inside links/bold/quotes, reference links, fence info strings, nested tasks, HTML zoo (exact list in `crush_capabilities.md:195-211`).
+6. Table column alignment read back (Arthur, 2026-10-13). The writer already keeps `| :--- | :---: | ---: |` (each cell paragraph gets `<w:jc w:val="left|center|right"/>`, `src/markdown/write.rs:634-636`, `alignment()` at :2268). The reader drops it: the delimiter row is always `|-|-|…|` (`src/markdown/from_docx/mod.rs:836-841`). Probe: `| Left | Center | Right | None |` round-tripped to `|-|-|-|-|`. Rule: a column whose every cell paragraph has the same effective alignment (direct `w:jc`, else the paragraph style's, else the table style's) prints `:-` (left/start), `:-:` (center) or `-:` (right/end); `both`/`distribute`, or cells that disagree, print `-`, and each paragraph that differs from its style gets an alignment clause on its id line (decision 5A). A column with no alignment anywhere stays `-` (Word's default left is not written back as `:-`). Test: `tests/md_reader_id_lines.rs::table_column_alignment_comes_back` (md → docx → read gives the same delimiter row, including a mixed column); gate `tests/md_fixed_point.rs` (committed views with aligned tables regenerate via `jubarte read SRC --no-page-markers`).
+7. Fixture shapes as new tests (`tests/markdown_to_docx.rs` + `tests/fixtures/md-roundtrip/`): headings in lists/quotes, notes inside links/bold/quotes, reference links, fence info strings, nested tasks, HTML zoo (exact list in `crush_capabilities.md:195-211`).
 
 **Failing tests first.**
 
@@ -142,6 +143,7 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 - `tests/markdown_to_docx.rs::footnote_text_char_is_linked` (styles part).
 - `tests/markdown_to_docx.rs::front_matter_writes_full_core_properties`.
 - `tests/markdown_to_docx.rs::legend_fonts_have_font_table_entries`.
+- `tests/md_reader_id_lines.rs::table_column_alignment_comes_back`.
 - New fixtures: `tests/fixtures/md-roundtrip/remark-shapes.md` (+ entries if docx-backed: `docx.txt`/`views.txt`).
 
 **Change points.**
