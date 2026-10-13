@@ -252,7 +252,7 @@ pub fn record_json(
     let date = options
         .date
         .as_deref()
-        .map(crate::cli::parse_datetime)
+        .map(crate::util::datetime::parse_datetime)
         .transpose()
         .map_err(|e| usage(format!("date: {e}")))?;
     let existing = match options.existing_revisions.as_deref().unwrap_or("auto") {

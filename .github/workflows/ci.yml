@@ -48,6 +48,9 @@ jobs:
             jubarte-rust-inproc
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
+      # The library without the `cli` feature (clap) must still build: a
+      # library path once called into src/cli.rs and only --all-features ran.
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
 
       # `--workspace` would not reach the bindings (see the cache note), so
       # each is linted from its own directory, which also makes cargo read
