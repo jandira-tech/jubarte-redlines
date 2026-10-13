@@ -21,7 +21,7 @@ pip install 'jubarte-redlines[mcp]' && jubarte-mcp --root .
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `docx_capabilities` | | the engine's capability manifest |
-| `docx_text` | `path` | Markdown with a `[body:p:N]` id before each paragraph |
+| `docx_text` | `path` | The agent view `jubarte read` prints: a header, then a `<!-- pN -->` id line before each paragraph, revisions (`r12`) and comments (`c5`) with their ids (0.12 printed `[body:p:N]` ids) |
 | `docx_inspect` | `path` | the engine snapshot, as `jubarte read --json` prints it (`summary`, `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`) |
 | `docx_edit` | `path`, `plan`, `out_dir`, `pdf=false`, `png_dpi=null`, `overwrite=false` | paths of `clean.docx`, `redline.docx`, `patch.diff`, `report.json` (and `redline.pdf`, `redline-page-NN.png`), plus the report (the CLI writes the same report as `report.jsonl`) |
 | `docx_render` | `path`, `out_dir`, `dpi=96`, `pages=null`, `pdf=false`, `overwrite=false` | paths of `page-NN.png` (and `render.pdf`), page count, page text, fonts |

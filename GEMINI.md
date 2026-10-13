@@ -11,8 +11,9 @@ compare, resolve and render Word `.docx` files. Every path must sit under the
 workspace; outputs are written as files there, and no tool replaces an
 existing file unless you pass `overwrite: true`.
 
-- **Read before you edit.** `docx_text` prints the body as Markdown with a
-  `[body:p:N]` id before each paragraph. `docx_inspect` gives the same
+- **Read before you edit.** `docx_text` prints the agent view `jubarte read`
+  prints: a header, then Markdown with a `<!-- pN -->` id line before each
+  paragraph and every revision and comment with its id. `docx_inspect` gives the same
   paragraphs as data, with styles, runs and the ranges an edit will refuse.
 - **Edit with a plan.** `docx_edit` takes `{"schema_version": 1, "author":
   "...", "operations": [...]}`; each operation names a paragraph id and exact

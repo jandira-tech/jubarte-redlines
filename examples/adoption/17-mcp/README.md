@@ -29,7 +29,8 @@ sends newline-delimited JSON-RPC over its stdin:
    protocol);
 3. `tools/list` — answered with 12 tools;
 4. `tools/call` of `docx_text` on `input.docx` — answered with the
-   document as Markdown, one `[body:p:N]` id per paragraph.
+   document as Markdown, one `[body:p:N]` id per paragraph (the released
+   0.12 package; see below).
 
 Every message sent and received is appended to `mcp_session.jsonl`,
 one JSON object per line with a `dir` of `send` or `recv`.
@@ -65,7 +66,10 @@ What the session shows, concretely: `tools/list` returns
 tools annotated with `readOnlyHint` — and `tools/call docx_text` on
 `input.docx` returns the letter's four paragraphs with their ids, the
 same text `jubarte read` prints, with `[body:p:N]` ids where `read`
-prints `<!-- pN -->` lines.
+prints `<!-- pN -->` lines. That is the released 0.12 package the session
+ran (`uvx --from 'jubarte-redlines[mcp]'`); from the next release
+`docx_text` returns `read`'s agent view itself, header and `<!-- pN -->`
+ids included.
 
 ## Verdict
 
