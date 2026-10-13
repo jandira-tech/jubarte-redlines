@@ -103,7 +103,9 @@ Find the cause in the files before changing layout code.
 - Unpack the docx and read the XML behind each difference, especially what
   Word chose to render or to leave out (a dead comment range, a hidden or
   vanished run, an `mc:Fallback`, a zero-size frame). Start from the
-  `jubarte debug FILE --check …` views.
+  `jubarte debug FILE --check …` views. `debug` is hidden from
+  `jubarte --help` (it is a maintainer tool), but it works and
+  `jubarte debug --help` documents it.
 - Run the code-driven checks on every low scorer. Tables and fills are the
   usual losers.
   - `jubarte debug FILE --check render` lists what should reach the page,
