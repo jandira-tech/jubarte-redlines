@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
 use super::xml::{
@@ -1796,10 +1797,38 @@ fn bookmark_name(slug: &str, used: &HashSet<String>) -> String {
         .unwrap_or_default()
 }
 
+/// The slug github-slugger gives a heading's text: lowercase, then every
+/// character dropped that is no letter, mark, decimal or letter number,
+/// connector punctuation (`_`) or `-`, and each plain space made `-`.
+fn github_slug(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            '-' => Some(c),
+            c if c.is_alphabetic() => Some(c),
+            c => match c.general_category_group() {
+                GeneralCategoryGroup::Letter | GeneralCategoryGroup::Mark => Some(c),
+                GeneralCategoryGroup::Number
+                    if c.general_category() != GeneralCategory::OtherNumber =>
+                {
+                    Some(c)
+                }
+                GeneralCategoryGroup::Punctuation
+                    if c.general_category() == GeneralCategory::ConnectorPunctuation =>
+                {
+                    Some(c)
+                }
+                _ => None,
+            },
+        })
+        .collect()
+}
+
 /// The headings a link names (`[x](#the-intro)`), by position in `body`,
-/// each with the slug GitHub gives its text: lowercase, spaces to hyphens,
-/// other punctuation dropped, a repeat `-1`, `-2`, …. Deleted text is no
-/// part of it.
+/// each with the slug GitHub gives its text ([`github_slug`], a repeat
+/// `-1`, `-2`, …). Deleted text is no part of it; an empty slug names
+/// nothing.
 fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, String)> {
     let mut found = Vec::new();
     if targets.is_empty() {
@@ -1825,22 +1854,20 @@ fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, Stri
                 _ => None,
             })
             .collect();
-        let slug: String = text
-            .trim()
-            .to_lowercase()
-            .chars()
-            .filter_map(|c| match c {
-                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
-                c if c.is_whitespace() => Some('-'),
-                _ => None,
-            })
-            .collect();
-        let repeats = seen.entry(slug.clone()).or_insert(0);
-        let name = match *repeats {
-            0 => slug,
-            n => format!("{slug}-{n}"),
-        };
-        *repeats += 1;
+        let slug = github_slug(&text);
+        // github-slugger: a repeat retries its suffixed name against every
+        // name given out (`Intro`, `Intro`, `Intro 1`: `intro`, `intro-1`,
+        // `intro-1-1`).
+        let mut name = slug.clone();
+        while seen.contains_key(&name) {
+            let repeats = seen.entry(slug.clone()).or_insert(0);
+            *repeats += 1;
+            name = format!("{slug}-{repeats}");
+        }
+        seen.insert(name.clone(), 0);
+        if slug.is_empty() {
+            continue;
+        }
         if targets.contains(name.as_str()) {
             found.push((at, name));
         }

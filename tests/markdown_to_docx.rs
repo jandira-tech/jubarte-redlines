@@ -474,6 +474,36 @@ fn a_link_to_a_heading_lands_on_its_bookmark() {
 }
 
 #[test]
+fn heading_slugs_follow_github_slugger() {
+    // github-slugger: a repeat retries its suffixed name against every name
+    // given out; combining marks stay; a no-break space and an em dash go;
+    // only a plain space becomes `-`. An empty heading gets no bookmark.
+    let docx = write(
+        "# Intro\n\n# Intro\n\n# Intro 1\n\n# e\u{301}cole math\n\n\
+         # Foo\u{a0}Bar \u{2014} em\u{2014}dash\n\n#\n\n\
+         [a](#intro) [b](#intro-1) [c](#intro-1-1) [d](#e\u{301}cole-math) \
+         [e](#foobar--emdash) [f](#)\n",
+    );
+    let xml = document_xml(&docx);
+    let names: Vec<&str> = xml
+        .split("<w:bookmarkStart ")
+        .skip(1)
+        .filter_map(|tag| tag.split("w:name=\"").nth(1)?.split('"').next())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "intro",
+            "intro-1",
+            "intro-1-1",
+            "e\u{301}cole-math",
+            "foobar--emdash"
+        ],
+        "{xml}"
+    );
+}
+
+#[test]
 fn a_bookmark_that_would_start_with_a_digit_starts_with_an_underscore() {
     // Word drops a bookmark whose name starts with no letter; `_` keeps it,
     // hidden like Word's own `_Toc` ones, and the link follows.
