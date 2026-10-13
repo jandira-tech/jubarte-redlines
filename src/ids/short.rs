@@ -111,12 +111,31 @@ impl Step {
 /// The settled spelling of an expired id, when one is clear (spec §2):
 /// `12` → `p12, r12 or c12`, `#12` → `r12`, `#c27` → `c27`, `t0.r1.c2` →
 /// `t0.row1.cell2`, `body:rev:12` → `r12`, `header1:rev:4` → `header1.r4`,
-/// `body:p:12` → `p12`, `header1:p:2` → `header1.p2`. A suggestion is given
-/// only when it parses (`05` suggests nothing).
+/// `body:p:12` → `p12`, `header1:p:2` → `header1.p2`, `1+2` → `r1+2` (only
+/// a change id joins numbers), `t0.row1.cell2.p0` → `t0.row1.cell2` (a cell
+/// is its first paragraph). A suggestion is given only when every spelling
+/// it names parses (`05` suggests nothing; pi review of #464: the bare
+/// number's three alternatives skipped that gate).
 fn settled_spelling(token: &str) -> Option<String> {
     if !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit()) {
         let n = number::<u32>(token)?;
-        return Some(format!("p{n}, r{n} or c{n}"));
+        let each = [format!("p{n}"), format!("r{n}"), format!("c{n}")];
+        return each
+            .iter()
+            .all(|s| ShortId::parse(s).is_some())
+            .then(|| format!("{}, {} or {}", each[0], each[1], each[2]));
+    }
+    let settled = |id: String| ShortId::parse(&id).is_some().then_some(id);
+    if token.contains('+') && token.bytes().all(|b| b.is_ascii_digit() || b == b'+') {
+        return settled(format!("r{token}"));
+    }
+    if let Some(cell) = token.strip_suffix(".p0")
+        && cell
+            .rsplit('.')
+            .next()
+            .is_some_and(|l| l.starts_with("cell"))
+    {
+        return settled(cell.to_string());
     }
     let suggestion = if let Some(rest) = token.strip_prefix("#c") {
         format!("c{rest}")
@@ -139,13 +158,18 @@ fn settled_spelling(token: &str) -> Option<String> {
         };
         let (r, c) = (r.strip_prefix('r')?, c.strip_prefix('c')?);
         let mut s = format!("{t}.row{r}.cell{c}");
+        // 0.12 spelled a cell's first paragraph `.p0`; it is the cell now.
+        let rest = match rest {
+            ["p0"] => &[][..],
+            rest => rest,
+        };
         for part in rest {
             s.push('.');
             s.push_str(part);
         }
         s
     };
-    ShortId::parse(&suggestion).is_some().then_some(suggestion)
+    settled(suggestion)
 }
 
 impl fmt::Display for Step {
@@ -182,8 +206,14 @@ fn part_stem(head: &str) -> bool {
 /// (`t0.row1.cell2.box0.p0`, `t0.row1.cell2.cc0`), and `.p0` after a cell is
 /// refused: that paragraph has one spelling. A part may be named by itself
 /// (`header1`, the part; its first paragraph is `header1.p0`); the body may
-/// not.
+/// not. `styles` and `numbering` hold no blocks (pi review of #464:
+/// `styles.p0` parsed): they are named only by themselves and their changes.
 fn valid_path(story: &Story, path: &[Step]) -> bool {
+    if let Story::Part(stem) = story
+        && matches!(stem.as_str(), "styles" | "numbering")
+    {
+        return path.is_empty();
+    }
     #[derive(Clone, Copy, PartialEq)]
     enum At {
         Story,
@@ -463,6 +493,8 @@ mod tests {
             "t0.r1.c2",
             "body:rev:12",
             "body:p:12",
+            "styles.p0",
+            "numbering.t0",
             "body.p2",
             "body.r12",
             "p",
@@ -545,6 +577,12 @@ mod tests {
             ("body:p:12", Some("p12")),
             ("header1:p:2", Some("header1.p2")),
             ("05", None),
+            ("4294967296", None),
+            ("1+2", Some("r1+2")),
+            ("1+", None),
+            ("t0.row1.cell2.p0", Some("t0.row1.cell2")),
+            ("t0.r1.c2.p0", Some("t0.row1.cell2")),
+            ("p3.p0", None),
             ("body:rev:007", None),
             ("Header_1:rev:4", None),
             ("nonsense", None),
