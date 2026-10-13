@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use super::critic::{self, Piece, Pieces, Token};
+use super::view_notes;
 use super::xml::{
     Comment, Content, Document, Item, Kind, Link, List, Note, Paragraph, Picture, Run, RunFormat,
 };
@@ -200,6 +201,8 @@ struct Writer<'o, 'a> {
     groups: usize,
     anchor: Option<Anchor>,
     comment: Option<Comment>,
+    /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
+    authors: HashMap<String, view_notes::Author>,
 
     document: Document,
 }
@@ -250,6 +253,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             groups: 0,
             anchor: None,
             comment: None,
+            authors: HashMap::new(),
             document: Document::default(),
         }
     }
@@ -865,6 +869,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             id,
             paragraphs: vec![String::new()],
             by: None,
+            initials: None,
         });
     }
 
@@ -910,6 +915,25 @@ impl<'o, 'a> Writer<'o, 'a> {
         };
         if let Some(mut anchor) = self.comment_anchor.take() {
             let whole = comment.paragraphs.join("\n");
+            // The view's tag note: `r1+2 @AC` names both sides, `r1 @AC;
+            // r2 @JD` each side in turn.
+            if let Some(tags) = view_notes::revision_tags(&whole) {
+                let serials: Vec<u32> = if anchor.attributed == 0 {
+                    anchor.serials.iter().flatten().copied().collect()
+                } else {
+                    anchor.serials[1..].iter().flatten().copied().collect()
+                };
+                for (i, serial) in serials.iter().enumerate() {
+                    let tag = if tags.len() == 1 {
+                        &tags[0]
+                    } else {
+                        &tags[i.min(tags.len() - 1)]
+                    };
+                    let (author, date) = self.view_author(&tag.handle, tag.date.as_deref());
+                    self.document.attributions.insert(*serial, (author, date));
+                }
+                return;
+            }
             if let Some((author, date)) = attribution(whole.trim()) {
                 let author = author.unwrap_or_else(|| self.options.author.clone());
                 let serials = if anchor.attributed == 0 {
@@ -944,8 +968,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         {
             comment.paragraphs.pop();
         }
+        // The view's head (`c5 @AC: text`, `c6 @AS re c5: text`), else
         // `Name (date): text`, or `Name (date)` for a comment with no text.
-        if let Some(first) = comment.paragraphs.first_mut()
+        let head = comment
+            .paragraphs
+            .first()
+            .and_then(|first| view_notes::comment_head(first.trim()))
+            .map(|(head, text)| (head, text.to_string()));
+        if let Some((head, text)) = head {
+            if let Some(handle) = &head.handle {
+                let (author, date) = self.view_author(handle, head.date.as_deref());
+                comment.by = Some((author, date));
+                comment.initials = Some(handle.clone());
+            }
+            comment.paragraphs[0] = text;
+        } else if let Some(first) = comment.paragraphs.first_mut()
             && let Some((Some(author), date, rest)) = named(first.trim())
             && let Some(text) = rest.strip_prefix(':').or((rest.is_empty()).then_some(""))
         {
@@ -1028,6 +1065,7 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     /// `title:` and `author:` from a YAML front matter block.
     fn metadata(&mut self, text: &str) {
+        self.authors = view_notes::authors(text);
         for line in text.lines() {
             let Some((key, value)) = line.split_once(':') else {
                 continue;
@@ -1042,6 +1080,19 @@ impl<'o, 'a> Writer<'o, 'a> {
                 _ => {}
             }
         }
+    }
+
+    /// The author a view handle names and the date for one of their notes:
+    /// the note's own, else the one the `authors:` table gives them all,
+    /// else the conversion's date. An unknown handle stands for itself.
+    fn view_author(&self, handle: &str, date: Option<&str>) -> (String, String) {
+        let known = self.authors.get(handle);
+        let author = known.map_or_else(|| handle.to_string(), |a| a.name.clone());
+        let date = date
+            .map(str::to_string)
+            .or_else(|| known.and_then(|a| a.date.clone()))
+            .unwrap_or_else(|| self.options.date.clone());
+        (author, date)
     }
 
     fn finish(mut self) -> Document {
@@ -1205,7 +1256,7 @@ pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
 
 /// `YYYY-MM-DDTHH:MM`, then optional seconds and fraction, then an
 /// optional `Z` or `+HH:MM` offset.
-fn is_date(text: &str) -> bool {
+pub(super) fn is_date(text: &str) -> bool {
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let Some((day, time)) = text.split_once('T') else {
         return false;

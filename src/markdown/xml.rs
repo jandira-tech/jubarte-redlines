@@ -140,6 +140,8 @@ pub(super) struct Comment {
     pub paragraphs: Vec<String>,
     /// Author and date the comment names (`Ana (2026-01-02T03:04:00Z): ...`).
     pub by: Option<(String, String)>,
+    /// The initials the view names the author by (`c5 @AC: ...`).
+    pub initials: Option<String>,
 }
 
 /// A Markdown document read into Word items.
@@ -525,10 +527,12 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
     for comment in comments {
         match &comment.by {
             Some((author, date)) => {
-                let initials: String = author
-                    .split_whitespace()
-                    .filter_map(|word| word.chars().next())
-                    .collect();
+                let initials: String = comment.initials.clone().unwrap_or_else(|| {
+                    author
+                        .split_whitespace()
+                        .filter_map(|word| word.chars().next())
+                        .collect()
+                });
                 let _ = write!(
                     out,
                     "<w:comment w:id=\"{}\" w:author=\"{}\" w:date=\"{}\" w:initials=\"{}\">",

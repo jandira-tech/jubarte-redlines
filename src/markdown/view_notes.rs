@@ -1,0 +1,257 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! The view's own notes read back: the YAML `authors:` table
+//! (`AC: Ann Counsel  # 9 revisions, 2026-10-01T09:00:00Z`), a revision's
+//! tag note (`r1+2 @AC`, `r1 @AC; r2 @JD`, `header1.r4 @AC 2026-…`) and a
+//! comment's head (`c5 @AC: `, `c6 @AS re c5: `, `c7 @AC resolved: `).
+//! `jubarte read` writes them (`from_docx::agent`, `from_docx::header`).
+
+use std::collections::HashMap;
+
+/// An author of the `authors:` table: the full name, and the timestamp
+/// every one of their changes and comments shares, when they share one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Author {
+    pub name: String,
+    pub date: Option<String>,
+}
+
+/// The `authors:` table of a YAML header, by handle. `document_owner` is
+/// not an author.
+pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
+    let mut table = HashMap::new();
+    let mut inside = false;
+    for line in yaml.lines() {
+        if !line.starts_with(' ') {
+            inside = line.trim_end() == "authors:";
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let Some((handle, rest)) = line.trim_start().split_once(':') else {
+            continue;
+        };
+        if handle == "document_owner" || !is_handle(handle) {
+            continue;
+        }
+        let (value, comment) = scalar_and_comment(rest.trim_start());
+        if value.is_empty() {
+            continue;
+        }
+        let date = comment
+            .and_then(|c| c.rsplit(',').next())
+            .map(str::trim)
+            .filter(|d| super::write::is_date(d))
+            .map(str::to_string);
+        table.insert(handle.to_string(), Author { name: value, date });
+    }
+    table
+}
+
+/// Letters and digits: the view's handles (`from_docx::agent`).
+fn is_handle(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(char::is_alphanumeric)
+}
+
+/// A YAML scalar as `header::scalar` writes it (plain, or a JSON-quoted
+/// string), and the `# comment` after it.
+fn scalar_and_comment(text: &str) -> (String, Option<&str>) {
+    if text.starts_with('"') {
+        let mut de = serde_json::Deserializer::from_str(text).into_iter::<String>();
+        if let Some(Ok(value)) = de.next() {
+            let rest = text[de.byte_offset()..].trim_start();
+            return (value, rest.strip_prefix('#').map(str::trim));
+        }
+        return (String::new(), None);
+    }
+    match text.split_once(" #") {
+        Some((value, comment)) => (value.trim().to_string(), Some(comment.trim())),
+        None => (text.trim().to_string(), None),
+    }
+}
+
+/// One tag of a revision note: who and, when the note says, when.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Tag {
+    pub handle: String,
+    pub date: Option<String>,
+}
+
+/// The tags of a revision note, `r1+2 @AC` or `r1 @AC; r2 @JD 2026-…`;
+/// `None` for any other comment text. Each id part must be a change id
+/// (`crate::ids`), or `noid` for a mark without a `w:id`.
+pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
+    text.trim()
+        .split("; ")
+        .map(|tag| {
+            let mut words = tag.split(' ');
+            let id = words.next()?;
+            let handle = words.next()?.strip_prefix('@')?;
+            let date = words.next();
+            if words.next().is_some() || !is_handle(handle) {
+                return None;
+            }
+            let id_ok = id == "noid"
+                || id.strip_suffix(".noid").is_some()
+                || crate::ids::parse_change_ids(id).is_ok();
+            let date_ok = date.is_none_or(super::write::is_date);
+            (id_ok && date_ok && !id.starts_with('#')).then(|| Tag {
+                handle: handle.to_string(),
+                date: date.map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// A comment head the view writes: `c5 @AC: `, `c5 @AC 2026-…: `,
+/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CommentHead {
+    /// The comment's number in the source (`c5` → 5).
+    pub number: u32,
+    pub handle: Option<String>,
+    pub date: Option<String>,
+    /// The number of the comment this one replies to.
+    pub reply_to: Option<u32>,
+    pub resolved: bool,
+}
+
+/// The head of `text` and the comment text after it.
+pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
+    let (head, body) = text.split_once(": ").or_else(|| {
+        // A comment with no text: `c5 @AC:` at the end.
+        text.strip_suffix(':').map(|head| (head, ""))
+    })?;
+    let mut words = head.split(' ').peekable();
+    let number = crate::ids::parse_comment_id(words.next()?).ok()?;
+    let mut parsed = CommentHead {
+        number,
+        handle: None,
+        date: None,
+        reply_to: None,
+        resolved: false,
+    };
+    if let Some(handle) = words.peek().and_then(|w| w.strip_prefix('@')) {
+        if !is_handle(handle) {
+            return None;
+        }
+        parsed.handle = Some(handle.to_string());
+        words.next();
+    }
+    if let Some(date) = words.peek().filter(|w| super::write::is_date(w)) {
+        parsed.date = Some((*date).to_string());
+        words.next();
+    }
+    match (words.next(), words.next(), words.next()) {
+        (None, ..) => {}
+        (Some("resolved"), None, _) => parsed.resolved = true,
+        (Some("re"), Some(root), None) => {
+            parsed.reply_to = Some(crate::ids::parse_comment_id(root).ok()?);
+        }
+        _ => return None,
+    }
+    Some((parsed, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_authors_table_names_each_handle() {
+        let yaml = "source: r.docx\nauthors:\n  document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy\n  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z\n  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z\n  JD: \"Jo #1 Doe\"  # 2 revisions, 2026-10-01..2026-10-02\n  R: Redline\nbody: p0-p20\n  XX: not an author\n";
+        let table = authors(yaml);
+        assert_eq!(table.len(), 4, "{table:?}");
+        assert_eq!(
+            table["AC"],
+            Author {
+                name: "Ann Counsel".into(),
+                date: Some("2026-10-01T09:00:00Z".into())
+            }
+        );
+        assert_eq!(table["AS"].date.as_deref(), Some("2026-10-09T16:13:00Z"));
+        assert_eq!(
+            table["JD"],
+            Author {
+                name: "Jo #1 Doe".into(),
+                date: None
+            }
+        );
+        assert_eq!(table["R"].date, None);
+    }
+
+    #[test]
+    fn revision_notes_are_tags_and_nothing_else_is() {
+        let tag = |handle: &str, date: Option<&str>| Tag {
+            handle: handle.into(),
+            date: date.map(str::to_string),
+        };
+        assert_eq!(revision_tags("r0 @AC"), Some(vec![tag("AC", None)]));
+        assert_eq!(revision_tags("r1+2 @AC"), Some(vec![tag("AC", None)]));
+        assert_eq!(
+            revision_tags("r1 @AC; r2 @JD 2026-10-02T08:00:00Z"),
+            Some(vec![
+                tag("AC", None),
+                tag("JD", Some("2026-10-02T08:00:00Z"))
+            ])
+        );
+        assert_eq!(revision_tags("header1.r4 @AC"), Some(vec![tag("AC", None)]));
+        assert_eq!(
+            revision_tags("Header_1:rev:4 @AC"),
+            Some(vec![tag("AC", None)])
+        );
+        assert_eq!(revision_tags("noid @AC"), Some(vec![tag("AC", None)]));
+        for text in [
+            "Ann Counsel (2026-10-01T09:00:00Z)",
+            "r0 @AC: why?",
+            "r0 AC",
+            "p3 @AC",
+            "r0 @A-C",
+            "r0 @AC tomorrow",
+            "#12 @AC",
+            "please check r0 @AC",
+            "",
+        ] {
+            assert_eq!(revision_tags(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn comment_heads_carry_author_date_thread_and_state() {
+        let (head, text) = comment_head("c5 @AC: Is one percent the cap?").unwrap();
+        assert_eq!(
+            head,
+            CommentHead {
+                number: 5,
+                handle: Some("AC".into()),
+                date: None,
+                reply_to: None,
+                resolved: false
+            }
+        );
+        assert_eq!(text, "Is one percent the cap?");
+        let (head, text) = comment_head("c6 @AS re c5: Disagree.").unwrap();
+        assert_eq!(
+            (head.number, head.reply_to, text),
+            (6, Some(5), "Disagree.")
+        );
+        let (head, _) = comment_head("c7 @AC 2026-10-01T09:00:00Z resolved: ok").unwrap();
+        assert!(head.resolved);
+        assert_eq!(head.date.as_deref(), Some("2026-10-01T09:00:00Z"));
+        let (head, text) = comment_head("c8:").unwrap();
+        assert_eq!((head.handle, text), (None, ""));
+        assert_eq!(comment_head("c9: a: b").unwrap().1, "a: b");
+        for text in [
+            "Note: hi",
+            "c5 @AC re: x",
+            "c5 @AC maybe: x",
+            "p5 @AC: x",
+            "c5 @A-C: x",
+        ] {
+            assert_eq!(comment_head(text), None, "{text}");
+        }
+    }
+}
