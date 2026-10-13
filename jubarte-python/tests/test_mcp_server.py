@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -294,6 +295,24 @@ def test_compare_then_list_accept_and_reject(tmp_path: Path) -> None:
     assert not partial.is_error
     remaining = Document.read(tmp_path / "part.docx").changes()
     assert remaining and all(c.kind != "insertion" for c in remaining)
+
+
+def test_compare_without_a_date_dates_the_redline_now(tmp_path: Path) -> None:
+    """D17: docx_compare follows the CLI, so a missing date is now (UTC)."""
+    original, modified = write_pair(tmp_path)
+
+    def stamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    before = stamp()
+    (compared,) = call(
+        tmp_path,
+        ("docx_compare", {"original": str(original), "modified": str(modified), "out": "red.docx", "author": "R"}),
+    )
+    after = stamp()
+    assert not compared.is_error, compared.content
+    dates = {c["date"] for c in compared.structured_content["changes"]}
+    assert dates and all(before <= d <= after for d in dates), (before, dates, after)
 
 
 def test_accept_by_id_and_refuse_overwrite(tmp_path: Path) -> None:

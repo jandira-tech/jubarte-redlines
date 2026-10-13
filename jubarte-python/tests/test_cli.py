@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -281,6 +282,18 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
     assert {r["kind"] for r in rows} >= {"insertion", "deletion"}
     assert all(r["author"] == "Legal" for r in rows)
+    assert {r["date"] for r in rows} == {"1970-01-01T00:00:00Z"}
+    # Without -d the revisions are dated now (D17), as the native CLI does.
+    def stamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    before = stamp()
+    assert main(["compare", str(a), str(b), "-o", str(tmp_path / "now.docx"), "-q"]) == 0
+    after = stamp()
+    capsys.readouterr()
+    assert main(["changes", str(tmp_path / "now.docx"), "--json"]) == 0
+    dates = {json.loads(l)["date"] for l in capsys.readouterr().out.splitlines()}
+    assert dates and all(before <= d <= after for d in dates), (before, dates, after)
     assert main(["changes", str(redline)]) == 0
     assert "change(s)" in capsys.readouterr().out
     # `revisions` (the Docxodus GetRevisions listing) left the CLI; `changes`
