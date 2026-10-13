@@ -1,15 +1,42 @@
-[body:p:0 Heading1] Consulting Agreement (short form)
+---
+source: clean.docx
+sha256: cab6567acedfbec8a460f85aa7f71418d2e7160e0965f5fd7393bd0702b88023
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 0
+comments: 0
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+body: p0-p7, 0 tables, 1 page      # pages from layout
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+---
 
-[body:p:1] This Agreement is made between Jandira Technologies, LLC (the "Company") and Northwind Traders Ltd. (the "Client") on 2 March 2026.
+<!-- page 1 of 1 -->
 
-[body:p:2 Heading2] Services
+<!-- p0 -->
+# Consulting Agreement (short form)
 
-[body:p:3] The Company will advise the Client on document automation: pipeline design, template review, and acceptance testing of the generated documents.
+<!-- p1 -->
+This Agreement is made between Jandira Technologies, LLC (the "Company") and Northwind Traders Ltd. (the "Client") on 2 March 2026.
 
-[body:p:4 Heading2] Fees
+<!-- p2 -->
+## Services
 
-[body:p:5] The Company will invoice the Client monthly. The fee is one thousand one hundred USD per day, payable net thirty (30) days. Late payments accrue interest at one percent per month.
+<!-- p3 -->
+The Company will advise the Client on document automation: pipeline design, template review, and acceptance testing of the generated documents.
 
-[body:p:6 Heading2] Term
+<!-- p4 -->
+## Fees
 
-[body:p:7] Either party may end this Agreement on twenty days' written notice.
+<!-- p5 -->
+The Company will invoice the Client monthly. The fee is one thousand one hundred USD per day, payable net thirty (30) days. Late payments accrue interest at one percent per month.
+
+<!-- p6 -->
+## Term
+
+<!-- p7 -->
+Either party may end this Agreement on twenty days' written notice.
