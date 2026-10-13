@@ -52,7 +52,7 @@ headers:
 <!-- p41 empty -->
 
 <!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70 -->
-|Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
+|<br>Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|<br>Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
 |-|-|-|-|-|-|
 |Ed Primaria||||||
 |E.S.O||||||

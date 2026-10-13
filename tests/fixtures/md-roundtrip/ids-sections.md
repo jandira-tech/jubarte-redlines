@@ -40,9 +40,9 @@ Supplementary Table 1. Difference in baseline charactheristics of patients accep
 |BMI (kg/m<sup>2</sup>)|34.7 (±3.9)|34.3 (±5.1)|0.69|
 |HbA1c (mmol/mol)|66.7 (±8.9)|66.3 (±3.9)|0.84|
 |Fasting blood glucose (mmol/l)|9.4 (±2.6)|9.8 (±1.9)|0.43|
-|Smoking<br>Currently (n (%))<br>Former (n (%))<br>Never (n (%))|6 (13%)<br>18 (39.1%)<br>22 (47.8%)|4 (15.4%)<br>9 (34.6%)<br>13 (50%)|0.92|
-|Antidiabetic medication<br>No medication (n (%))<br>Metformin (n (%))<br>Insulin (n (%))<br>GLP1 analog (n (%))<br>DPP4 inhibitor (n (%))<br>SGLT2 inhibitor (n (%))<br>Sulphonyl Urea (n (%))|3 (6.5%)<br>26 (78.3%)<br>29 (63.0%)<br>27 (58.7%)<br>3 (6.5%)<br>5 (10.9%)<br>1 (2.2%)|0 (0%)<br>22 (84.6%)<br>18 (69.2%)<br>12 (46.2%)<br>4 (15.4%)<br>8 (30.8%)<br>1 (3.8%)|0.18<br>0.51<br>0.60<br>0.31<br>0.22<br>**0.04**<br>0.68|
-|Blood pressure medication<br>No medication (n (%))<br>Beta blockers (n (%))<br>Thiazide (n (%))<br>ACE-inhibitor (n (%))<br>AT2 antagonist (n (%))<br>Calcium blockers (n (%))<br>Loop diuretics (n (%))<br>Other (n (%))|4 (8.7%)<br>18 (39.1%)<br>19 (41.3%)<br>24 (52.2%)<br>14 (30.4%)<br>18 (39.1%)<br>8 (17.4%)<br>7 (15.2%)|2 (4.3%)<br>10 (38.5%)<br>9 (34.6%)<br>11 (42.3%)<br>10 (38.5%)<br>11 (42.3%)<br>2 (4.3%)<br>2 (4.3%)|0.88<br>0.96<br>0.58<br>0.42<br>0.49<br>0.79<br>0.25<br>0.35|
+|Smoking<br>Currently (n (%))<br>Former (n (%))<br>Never (n (%))|<br>6 (13%)<br>18 (39.1%)<br>22 (47.8%)|<br>4 (15.4%)<br>9 (34.6%)<br>13 (50%)|<br>0.92|
+|Antidiabetic medication<br>No medication (n (%))<br>Metformin (n (%))<br>Insulin (n (%))<br>GLP1 analog (n (%))<br>DPP4 inhibitor (n (%))<br>SGLT2 inhibitor (n (%))<br>Sulphonyl Urea (n (%))|<br>3 (6.5%)<br>26 (78.3%)<br>29 (63.0%)<br>27 (58.7%)<br>3 (6.5%)<br>5 (10.9%)<br>1 (2.2%)|<br>0 (0%)<br>22 (84.6%)<br>18 (69.2%)<br>12 (46.2%)<br>4 (15.4%)<br>8 (30.8%)<br>1 (3.8%)|<br>0.18<br>0.51<br>0.60<br>0.31<br>0.22<br>**0.04**<br>0.68|
+|Blood pressure medication<br>No medication (n (%))<br>Beta blockers (n (%))<br>Thiazide (n (%))<br>ACE-inhibitor (n (%))<br>AT2 antagonist (n (%))<br>Calcium blockers (n (%))<br>Loop diuretics (n (%))<br>Other (n (%))|<br>4 (8.7%)<br>18 (39.1%)<br>19 (41.3%)<br>24 (52.2%)<br>14 (30.4%)<br>18 (39.1%)<br>8 (17.4%)<br>7 (15.2%)|<br>2 (4.3%)<br>10 (38.5%)<br>9 (34.6%)<br>11 (42.3%)<br>10 (38.5%)<br>11 (42.3%)<br>2 (4.3%)<br>2 (4.3%)|<br>0.88<br>0.96<br>0.58<br>0.42<br>0.49<br>0.79<br>0.25<br>0.35|
 |Statin use (n(%))|36 (78.3%)|21 (80.8%)|0.56|
 |Asprin use (n(%))|25 (54.3%)|12 (46.2%)|0.61|
 
