@@ -5,7 +5,7 @@
 
 Anthropic's docx skill reads a document with `pandoc -t markdown file.docx`;
 the adoption page (`docs/adoption/anthropic-docx-skill.md`) offers
-`jubarte text file.docx` as the replacement. This folder runs both on the
+`jubarte read file.docx` as the replacement. This folder runs both on the
 same input — a two-page services agreement with two heading levels, bold and
 italic runs, a bulleted list, a 4x3 table, a header, a footer and one
 footnote — and shows what each loses.
@@ -25,13 +25,15 @@ reports no findings on it.
 pandoc -t markdown input.docx -o read_pandoc.md
 
 # The replacement:
-jubarte text input.docx > read_jubarte.md
+jubarte read input.docx > read_jubarte.md
 jubarte convert input.docx -t md > read_jubarte_convert.md
 ```
 
 ## Tool versions used here
 
-- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`)
+- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`);
+  `read_jubarte.md` regenerated with jubarte 0.12.0 + the 0.13 CLI changes
+  (`read` replaced `text`, 2026-10-12)
 - pandoc 3.11
 - python-docx 1.2.0, Python 3.14.7 (input only; not a reader below)
 
@@ -41,45 +43,42 @@ jubarte convert input.docx -t md > read_jubarte_convert.md
 |---|---|
 | `make_input.py` / `input.docx` | the input and the script that writes it |
 | `read_pandoc.md` | `pandoc -t markdown` |
-| `read_jubarte.md` | `jubarte text` |
+| `read_jubarte.md` | `jubarte read` |
 | `read_jubarte_convert.md` | `jubarte convert input.docx -t md` |
 | `versions.txt` | tool versions, written by `run.sh` |
 
 ## What each reader keeps
 
-| Input feature | pandoc `-t markdown` | `jubarte text` | `jubarte convert -t md` |
+| Input feature | pandoc `-t markdown` | `jubarte read` | `jubarte convert -t md` |
 |---|---|---|---|
-| Heading 1/2 | `#`, `##` | tag only: `[body:p:2 Heading2]`, no `#` | `#`, `##` |
+| Heading 1/2 | `#`, `##` | `#`, `##` (the YAML header maps them to `Heading1`/`Heading2`) | `#`, `##` |
 | `**bold**`, `*italic*` | kept | kept | kept |
-| Bulleted list | `- ` items | one tagged paragraph per item, no `- ` | `- ` items |
-| Table | grid table, rows and columns kept | lost: flattened to one paragraph per cell | GFM pipe table, kept |
-| Footnote | `[^1]` marker at the anchor + definition | text kept as its own `[footnotes:p:0]` story; the anchor position is not marked | `[^1]` marker + definition |
-| Header | lost (silently) | kept as `[header1:p:0]` story | lost (silently) |
-| Footer | lost (silently) | kept as `[footer1:p:0]` story | lost (silently) |
-| Paragraph ids | none | `[body:p:N]` before every paragraph | none |
-| Punctuation | escaped: `\"`, `\'`, `\_\_\_`; wrapped near 72 columns | as in the document | as in the document |
+| Bulleted list | `- ` items | `- ` items, each under its id line (`<!-- p5 ListBullet bullet -->`) | `- ` items |
+| Table | grid table, rows and columns kept | GFM pipe table, kept, under `<!-- t0 4x3, cells p13-p24 by row -->` | GFM pipe table, kept |
+| Footnote | `[^1]` marker at the anchor + definition | `[^1]` marker at the anchor + definition under `<!-- footnotes.p0 -->` | `[^1]` marker + definition |
+| Header | lost (silently) | kept in the YAML header: `headers: default: {id: header1, text: ...}` | lost (silently) |
+| Footer | lost (silently) | kept in the YAML header: `footers: default: {id: footer1, text: ...}` | lost (silently) |
+| Paragraph ids | none | `<!-- pN -->` before every paragraph | none |
+| Pages | none | `<!-- page N of M -->` from the layout | `<!-- page N of M -->` |
+| Punctuation | escaped: `\"`, `\'`, `\_\_\_`; wrapped near 72 columns | as in the document, but `_` escaped (`\_\_\_`) | as in the document |
 
 Verified in the outputs: `grep -c "Draft 3" read_pandoc.md` is 0 (the
 header text is gone); the same grep on `read_jubarte.md` finds it.
 
 ## Verdict
 
-For the body text, pandoc's Markdown is the more standard rendering: real
-heading and list syntax, a grid table, and the footnote at its anchor.
-jubarte has two different answers. `jubarte convert input.docx -t md` matches
-pandoc on the body — headings, list, a GFM table, the footnote, no escaped
-punctuation — and also drops the header and footer, exactly as pandoc does.
-`jubarte text` is not full Markdown: headings and list items come out as
-style tags rather than `#`/`- `, and the table's structure is lost (each
-cell becomes its own paragraph, in reading order). What `jubarte text` has
-and pandoc has not: the header and footer stories, the footnote's text as
-its own story, and the `[body:p:N]` ids that edit plans anchor to. For the
-Anthropic skill's actual purpose — handing document text to a model — pandoc
-silently loses the header and footer; jubarte's `text` shows them, at the
-cost of the table structure. The adoption page's description of `jubarte
-text` ("Markdown with a `[body:p:N]` id before every paragraph, `**bold**`
-and `*italic*` from direct run formatting, then each header, footer and
-notes story") matches what this folder measured; note that the page does not
-claim `jubarte text` renders tables or heading syntax, and it does not.
+For the body text, pandoc's Markdown and both jubarte readers now agree on
+the structure: heading and list syntax, a table that keeps its rows and
+columns, and the footnote at its anchor. `jubarte convert input.docx -t md`
+also drops the header and footer, exactly as pandoc does. `jubarte read`
+keeps them, in its YAML header, together with the page setup, the styles
+behind `#` and `##`, the page breaks from the layout, and the `<!-- pN -->`
+ids that edits anchor to. For the Anthropic skill's actual purpose —
+handing document text to a model — pandoc silently loses the header and
+footer; `jubarte read` shows them and loses nothing this folder measures.
+The adoption page's description of `jubarte read` matches what this folder
+measured.
 
-No discrepancy between the adoption page and what jubarte did here.
+Until 0.12 this folder ran `jubarte text`, which printed `[body:p:N Style]`
+tags instead of Markdown headings and lists and flattened the table to one
+paragraph per cell; `read` replaced it.
