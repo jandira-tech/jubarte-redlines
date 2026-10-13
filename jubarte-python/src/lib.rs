@@ -994,6 +994,12 @@ fn capabilities_json() -> String {
     jubarte::capabilities::capabilities_json("python")
 }
 
+/// [`capabilities_json`] as the text summary `jubarte capabilities` prints.
+#[pyfunction]
+fn capabilities_text() -> String {
+    jubarte::capabilities::capabilities_text(&jubarte::capabilities::capabilities("python"))
+}
+
 /// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
 ///
 /// `page` is `letter` or `a4` and applies when there is no `reference`
@@ -1100,6 +1106,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preview_json, m)?)?;
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
+    m.add_function(wrap_pyfunction!(capabilities_text, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
     m.add_function(wrap_pyfunction!(diff_view, m)?)?;

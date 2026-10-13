@@ -817,8 +817,13 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return EXIT_FINDINGS if failed else EXIT_OK
 
 
-def cmd_capabilities(_args: argparse.Namespace) -> int:
-    print(json.dumps(capabilities(), indent=2))
+def cmd_capabilities(args: argparse.Namespace) -> int:
+    if args.json:
+        print(json.dumps(capabilities(), indent=2))
+        return EXIT_OK
+    from . import _native
+
+    sys.stdout.write(_native.capabilities_text())
     return EXIT_OK
 
 

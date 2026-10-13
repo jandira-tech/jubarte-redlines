@@ -295,6 +295,11 @@ def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert main(["capabilities", "--json"]) == 0
     caps = json.loads(capsys.readouterr().out)
     assert caps["runtime"] == "python" and caps["operations"]["png"] is True
+    assert caps["ids"]["comment"] == ["c27", "27"] and caps["formats"]["read"] == [".md", ".json"]
+    assert main(["capabilities"]) == 0
+    text = capsys.readouterr().out
+    assert text.startswith(f"engine: jubarte {caps['engine_version']} (python)\ncompare: yes\n"), text
+    assert text.endswith("run with --json for the manifest\n"), text
     missing = tmp_path / "missing.docx"
     assert main(["read", str(missing)]) == 1
     assert "missing.docx" in capsys.readouterr().err

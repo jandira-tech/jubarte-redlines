@@ -50,6 +50,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **`capabilities` prints a text summary**: one line per operation, then
+  limits, rule sets, formats and id spellings; `--json` prints the manifest.
+  The manifest gains `formats` (the extensions each task writes) and `ids`
+  (the spellings `-p`/`--id` accept for revisions, comments, paragraphs and
+  tables). Python and npm print the same text.
 - **Breaking: `validate` and `audit` are one command.** `validate --rules`
   takes rule sets (`word`, the default; `edits`, which needs `--original`
   and `--author` and is added by them; `a11y`, `style`, `structure`) or
