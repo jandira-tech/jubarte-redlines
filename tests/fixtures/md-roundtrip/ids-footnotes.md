@@ -68,11 +68,11 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p14 ListNumber num "2." -->
 2. Whisk dry ingredients.
 
-<!-- p15 ListNumber bullet -->
-   - Sift the flour twice.
+<!-- p15 ListNumber bullet, level 1 -->
+- Sift the flour twice.
 
-<!-- p16 ListNumber bullet -->
-   - Add a pinch of salt.
+<!-- p16 ListNumber bullet, level 1 -->
+- Add a pinch of salt.
 
 <!-- p17 ListNumber num "3." -->
 3. Bake for 22 minutes.
@@ -159,11 +159,11 @@ _— end of sample —_
 <!-- p62 ListNumber num "5.", break-ins r33 @AS -->
 5. {++Whisk dry ingredients.++}{>>r34 @AS<<}
 
-<!-- p63 ListNumber bullet, break-ins r35 @AS -->
-   - {++Sift the flour twice.++}{>>r36 @AS<<}
+<!-- p63 ListNumber bullet, level 1, break-ins r35 @AS -->
+- {++Sift the flour twice.++}{>>r36 @AS<<}
 
-<!-- p64 ListNumber bullet, break-ins r37 @AS -->
-   - {++Add a pinch of salt.++}{>>r38 @AS<<}
+<!-- p64 ListNumber bullet, level 1, break-ins r37 @AS -->
+- {++Add a pinch of salt.++}{>>r38 @AS<<}
 
 <!-- p65 ListNumber num "6.", break-ins r39 @AS -->
 6. {++Bake for 22 minutes.++}{>>r40 @AS<<}
@@ -252,11 +252,11 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p111 ListNumber num "8." -->
 8. Whisk dry ingredients.
 
-<!-- p112 ListNumber bullet -->
-   - Sift the flour twice.
+<!-- p112 ListNumber bullet, level 1 -->
+- Sift the flour twice.
 
-<!-- p113 ListNumber bullet -->
-   - Add a pinch of salt.
+<!-- p113 ListNumber bullet, level 1 -->
+- Add a pinch of salt.
 
 <!-- p114 ListNumber num "9.", break-del r111 @AS -->
 9. {--Bake for 22 minutes.--}{>>r112 @AS<<}
