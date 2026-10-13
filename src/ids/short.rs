@@ -28,7 +28,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use super::{IdError, digit_shaped, is_story, number};
+use super::{IdError, number};
 
 /// Why a short id was refused, when no narrower reason applies.
 pub const SHORT_EXPECTED: &str = "expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or toc0";
@@ -82,6 +82,72 @@ impl Step {
     }
 }
 
+impl Step {
+    /// The step's number.
+    pub fn number(self) -> usize {
+        match self {
+            Self::Paragraph(n)
+            | Self::Table(n)
+            | Self::Row(n)
+            | Self::Cell(n)
+            | Self::TextBox(n)
+            | Self::ContentControl(n) => n,
+        }
+    }
+
+    /// The same kind of step, numbered `n`.
+    fn renumbered(self, n: usize) -> Self {
+        match self {
+            Self::Paragraph(_) => Self::Paragraph(n),
+            Self::Table(_) => Self::Table(n),
+            Self::Row(_) => Self::Row(n),
+            Self::Cell(_) => Self::Cell(n),
+            Self::TextBox(_) => Self::TextBox(n),
+            Self::ContentControl(_) => Self::ContentControl(n),
+        }
+    }
+}
+
+/// The settled spelling of an expired id, when one is clear (spec §2):
+/// `12` → `p12, r12 or c12`, `#12` → `r12`, `#c27` → `c27`, `t0.r1.c2` →
+/// `t0.row1.cell2`, `body:rev:12` → `r12`, `header1:rev:4` → `header1.r4`,
+/// `body:p:12` → `p12`, `header1:p:2` → `header1.p2`. A suggestion is given
+/// only when it parses (`05` suggests nothing).
+fn settled_spelling(token: &str) -> Option<String> {
+    if !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit()) {
+        let n = number::<u32>(token)?;
+        return Some(format!("p{n}, r{n} or c{n}"));
+    }
+    let suggestion = if let Some(rest) = token.strip_prefix("#c") {
+        format!("c{rest}")
+    } else if let Some(rest) = token.strip_prefix('#') {
+        format!("r{rest}")
+    } else if let Some((story, wid)) = token.split_once(":rev:") {
+        match story {
+            "body" => format!("r{wid}"),
+            _ => format!("{story}.r{wid}"),
+        }
+    } else if let Some((story, n)) = token.split_once(":p:") {
+        match story {
+            "body" => format!("p{n}"),
+            _ => format!("{story}.p{n}"),
+        }
+    } else {
+        let parts: Vec<&str> = token.split('.').collect();
+        let [t, r, c, rest @ ..] = parts.as_slice() else {
+            return None;
+        };
+        let (r, c) = (r.strip_prefix('r')?, c.strip_prefix('c')?);
+        let mut s = format!("{t}.row{r}.cell{c}");
+        for part in rest {
+            s.push('.');
+            s.push_str(part);
+        }
+        s
+    };
+    ShortId::parse(&suggestion).is_some().then_some(suggestion)
+}
+
 impl fmt::Display for Step {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -95,22 +161,28 @@ impl fmt::Display for Step {
     }
 }
 
-/// Whether `head` names a part: a story stem that is not the body (never
-/// printed as a part) and not shaped like an id of its own (`s0`, `toc0`,
-/// `box0`, `cc0`).
+/// The parts other than the body that hold blocks or changes the view
+/// names; headers and footers are `headerN` and `footerN`.
+const PARTS: &[&str] = &["footnotes", "endnotes", "comments", "styles", "numbering"];
+
+/// Whether `head` names a part (grok review of #24a: any lowercase word was
+/// a part, so `row`, `page` or `body1` parsed).
 fn part_stem(head: &str) -> bool {
-    is_story(head)
-        && head != "body"
-        && !["s", "toc", "box", "cc"]
+    PARTS.contains(&head)
+        || ["header", "footer"]
             .iter()
-            .any(|p| digit_shaped(head, p))
+            .any(|p| head.strip_prefix(p).and_then(number::<u32>).is_some())
 }
 
 /// Whether `path` is a block the grammar can name: a paragraph, table or
 /// content control of the story; a table's rows, a row's cells; a cell's
 /// paragraphs and nested tables; a paragraph's text boxes (each holding
-/// paragraphs) and inline content controls. A part may be named by itself
-/// (`header1`); the body may not.
+/// paragraphs and tables) and inline content controls. A cell stands for its
+/// first paragraph, so it takes that paragraph's boxes and controls
+/// (`t0.row1.cell2.box0.p0`, `t0.row1.cell2.cc0`), and `.p0` after a cell is
+/// refused: that paragraph has one spelling. A part may be named by itself
+/// (`header1`, the part; its first paragraph is `header1.p0`); the body may
+/// not.
 fn valid_path(story: &Story, path: &[Step]) -> bool {
     #[derive(Clone, Copy, PartialEq)]
     enum At {
@@ -125,12 +197,13 @@ fn valid_path(story: &Story, path: &[Step]) -> bool {
     let mut at = At::Story;
     for step in path {
         at = match (at, step) {
+            (At::Cell, Step::Paragraph(0)) => return false,
             (At::Story | At::Cell | At::TextBox, Step::Paragraph(_)) => At::Paragraph,
-            (At::Story | At::Cell, Step::Table(_)) => At::Table,
+            (At::Story | At::Cell | At::TextBox, Step::Table(_)) => At::Table,
             (At::Table, Step::Row(_)) => At::Row,
             (At::Row, Step::Cell(_)) => At::Cell,
-            (At::Paragraph, Step::TextBox(_)) => At::TextBox,
-            (At::Story | At::Paragraph, Step::ContentControl(_)) => At::Leaf,
+            (At::Paragraph | At::Cell, Step::TextBox(_)) => At::TextBox,
+            (At::Story | At::Paragraph | At::Cell, Step::ContentControl(_)) => At::Leaf,
             _ => return false,
         };
     }
@@ -151,19 +224,21 @@ pub enum ShortId {
         /// Its path from the story; [`valid_path`] holds.
         path: Vec<Step>,
     },
-    /// The blocks from `first` to `last`, both included (`p3-p7`).
+    /// The blocks from `first` to its sibling number `last`, both included:
+    /// `p3-p7`, `footnotes.p2-p3`, `t0.row1.cell2.p1-p3` (the view's
+    /// spelling: the second side is the last step of the first, renumbered).
     Range {
-        /// The first block; never itself a range.
+        /// The first block: a [`ShortId::Block`] with a path.
         first: Box<ShortId>,
-        /// The last block; never itself a range.
-        last: Box<ShortId>,
+        /// The number of the last sibling, not below the first's.
+        last: usize,
     },
     /// Tracked changes by `w:id`: one (`r12`) or a pair shown as one
     /// (`r1+2`), in a story (`header1.r1`).
     Change {
         /// The story the changes are in.
         story: Story,
-        /// Their `w:id`s, at least one.
+        /// Their `w:id`s, at least one, none twice.
         wids: Vec<u32>,
     },
     /// A comment, by `w:id` (`c5`).
@@ -220,17 +295,28 @@ impl ShortId {
             .split('+')
             .map(number::<u32>)
             .collect::<Option<Vec<_>>>()?;
-        Some(Self::Change { story, wids })
+        let distinct: std::collections::BTreeSet<_> = wids.iter().collect();
+        (distinct.len() == wids.len()).then_some(Self::Change { story, wids })
+    }
+
+    /// `FIRST-N`: a block, then the number of its last step's last sibling.
+    fn range(first: &str, last: &str) -> Option<Self> {
+        let first = Self::block(first)?;
+        let Self::Block { path, .. } = &first else {
+            return None;
+        };
+        let from = *path.last()?;
+        let to = Step::parse(last)?;
+        let same_kind = std::mem::discriminant(&from) == std::mem::discriminant(&to);
+        (same_kind && from.number() <= to.number()).then(|| Self::Range {
+            first: Box::new(first.clone()),
+            last: to.number(),
+        })
     }
 
     fn parse(token: &str) -> Option<Self> {
         if let Some((first, last)) = token.split_once('-') {
-            let first = Self::block(first)?;
-            let last = Self::block(last)?;
-            return Some(Self::Range {
-                first: Box::new(first),
-                last: Box::new(last),
-            });
+            return Self::range(first, last);
         }
         if let Some(n) = token
             .strip_suffix(".text")
@@ -260,7 +346,10 @@ impl FromStr for ShortId {
     type Err = IdError;
 
     fn from_str(token: &str) -> Result<Self, IdError> {
-        Self::parse(token).ok_or_else(|| IdError::new(token, SHORT_EXPECTED))
+        Self::parse(token).ok_or_else(|| IdError {
+            hint: settled_spelling(token),
+            ..IdError::new(token, SHORT_EXPECTED)
+        })
     }
 }
 
@@ -286,7 +375,15 @@ impl fmt::Display for ShortId {
                 let steps: Vec<String> = path.iter().map(Step::to_string).collect();
                 f.write_str(&steps.join("."))
             }
-            Self::Range { first, last } => write!(f, "{first}-{last}"),
+            Self::Range { first, last } => {
+                let Self::Block { path, .. } = first.as_ref() else {
+                    return write!(f, "{first}-{last}");
+                };
+                let step = path
+                    .last()
+                    .map_or(Step::Paragraph(*last), |s| s.renumbered(*last));
+                write!(f, "{first}-{step}")
+            }
             Self::Change { story, wids } => {
                 prefix(f, story, true)?;
                 let wids: Vec<String> = wids.iter().map(u32::to_string).collect();
@@ -325,7 +422,14 @@ mod tests {
             "p12.cc0",
             "p3-p7",
             "p10-p11",
-            "header1.p0-header1.p2",
+            "footnotes.p2-p3",
+            "header1.p0-p2",
+            "p4-p4",
+            "t0.row1.cell2.p1-p3",
+            "t0.row1.cell2.box0.p0",
+            "t0.row1.cell2.cc0",
+            "p14.box0.t0.row0.cell0",
+            "numbering.r3",
             "r0",
             "r12",
             "r1+2",
@@ -391,6 +495,27 @@ mod tests {
             "p12 ",
             "p 12",
             "p4294967296999999999999",
+            // grok review of #24a
+            "row",
+            "cell",
+            "page",
+            "body1",
+            "s.p0",
+            "row.p0",
+            "page.p0",
+            "header01",
+            "header",
+            "p3-t0",
+            "p7-p3",
+            "footnotes.p2-header1.p3",
+            "header1.p0-header1.p2",
+            "header1-footer1",
+            "cc0-p12",
+            "t0.row1.cell2-p1",
+            "t0.row1.cell2.p0",
+            "t0.row1.cell2.p0.box0.p0",
+            "r1+1",
+            "r2+2+3",
         ] {
             assert!(
                 token.parse::<ShortId>().is_err(),
@@ -404,5 +529,36 @@ mod tests {
     fn the_constructors_print_what_the_view_prints() {
         assert_eq!(ShortId::paragraph(12).to_string(), "p12");
         assert_eq!(ShortId::change(7).to_string(), "r7");
+    }
+
+    #[test]
+    fn an_expired_id_is_refused_with_its_settled_spelling() {
+        for (token, hint) in [
+            ("12", Some("p12, r12 or c12")),
+            ("#12", Some("r12")),
+            ("#1+2", Some("r1+2")),
+            ("#c27", Some("c27")),
+            ("#c27.text", Some("c27.text")),
+            ("t0.r1.c2", Some("t0.row1.cell2")),
+            ("t0.r1.c2.p1", Some("t0.row1.cell2.p1")),
+            ("body:rev:12", Some("r12")),
+            ("header1:rev:4", Some("header1.r4")),
+            ("body:p:12", Some("p12")),
+            ("header1:p:2", Some("header1.p2")),
+            ("05", None),
+            ("body:rev:007", None),
+            ("Header_1:rev:4", None),
+            ("nonsense", None),
+        ] {
+            let error = token.parse::<ShortId>().unwrap_err();
+            assert_eq!(error.hint.as_deref(), hint, "{token}");
+            if let Some(hint) = hint {
+                let message = error.to_string();
+                assert!(
+                    message.ends_with(&format!("the settled spelling is {hint}")),
+                    "{message}"
+                );
+            }
+        }
     }
 }

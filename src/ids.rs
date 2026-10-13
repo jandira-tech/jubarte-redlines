@@ -80,6 +80,9 @@ pub struct IdError {
     pub given: String,
     /// What the token should have been.
     pub expected: &'static str,
+    /// The settled spelling of an expired one (`12` → `p12, r12 or c12`),
+    /// when one is clear.
+    pub hint: Option<String>,
 }
 
 impl IdError {
@@ -87,13 +90,18 @@ impl IdError {
         Self {
             given: given.to_string(),
             expected,
+            hint: None,
         }
     }
 }
 
 impl fmt::Display for IdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.given, self.expected)
+        write!(f, "{}: {}", self.given, self.expected)?;
+        match &self.hint {
+            Some(hint) => write!(f, "; the settled spelling is {hint}"),
+            None => Ok(()),
+        }
     }
 }
 

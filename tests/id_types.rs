@@ -16,29 +16,49 @@ use regex::Regex;
 
 const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 
-/// The places a view prints an id: the head of an id line, a note's first
-/// token, an id followed by an author handle (`r1 @AL`, `footer2.r7 @LW`),
-/// a reply's `re c5`, a YAML `id:`, and the blocks an id line lists
-/// (`cells p8-p16`, `in c5`).
-static PRINTED: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    [
-        r"(?m)^<!-- ([^\s>]+)",
-        r"\{>>([^\s<]+)",
-        r"([A-Za-z0-9.+:-]+) @[A-Za-z]",
-        r"\bre (c\d+)",
-        r"\bid: ([A-Za-z0-9.+:-]+)",
-        r"\bcells ([a-z0-9.]+-[a-z0-9.]+)",
-        r"\bin (c\d+)",
-    ]
-    .iter()
-    .map(|p| Regex::new(p).unwrap())
-    .collect()
-});
+/// A quoted YAML or id-line string (a header's text, a style name): content,
+/// not ids.
+static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""(?:[^"\\]|\\.)*""#).unwrap());
+/// A note, `{>>…<<}`.
+static NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{>>(.*?)<<\}").unwrap());
+/// What an id looks like: lowercase, a number in it, steps joined by `.`,
+/// `+` or `-` (`p12`, `footnotes.p2-p3`, `t0.row1`, `r1+2`, `footer2.r7`).
+static ID_SHAPED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9]*(?:[.+-][a-z]*[0-9]+)*$").unwrap());
 
-/// Tokens a view prints that are not ids: the note words of a view without
-/// ids, and a pair's lone author.
-fn not_an_id(token: &str) -> bool {
-    matches!(token, "noid" | "-->") || token.starts_with('@')
+/// Every id-shaped token a view prints where ids live (grok review of
+/// #24a: seven narrow patterns missed `cells t1.row0 p194-p208`, `in p195`,
+/// `r389 @??`, `body: p0-p172` and the comment lists): the words of each id
+/// line and of the YAML header outside quoted text, and the heads of notes
+/// (`r1 @AC; r2 @JD`, `c6 @AS re c5:`), never a comment's own text.
+fn printed_ids(view: &str) -> Vec<String> {
+    let mut places: Vec<String> = Vec::new();
+    let mut lines = view.lines();
+    if view.starts_with("---\n") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line == "---" {
+                break;
+            }
+            places.push(QUOTED.replace_all(line, " ").into_owned());
+        }
+    }
+    let body: Vec<&str> = lines.collect();
+    for line in &body {
+        if let Some(inner) = line.strip_prefix("<!-- ") {
+            places.push(QUOTED.replace_all(inner, " ").into_owned());
+        }
+    }
+    for note in NOTE.captures_iter(&body.join("\n")) {
+        let head = note[1].split(": ").next().unwrap_or_default();
+        places.push(head.to_string());
+    }
+    places
+        .iter()
+        .flat_map(|place| place.split(|c: char| c.is_whitespace() || ",;:(){}[]".contains(c)))
+        .filter(|word| ID_SHAPED.is_match(word) && word.bytes().any(|b| b.is_ascii_digit()))
+        .map(str::to_string)
+        .collect()
 }
 
 #[test]
@@ -54,23 +74,17 @@ fn every_id_the_views_print_parses_and_prints_back() {
     for path in &fixtures {
         let text = std::fs::read_to_string(path).unwrap();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        for pattern in PRINTED.iter() {
-            for captures in pattern.captures_iter(&text) {
-                let token = captures[1].trim_end_matches([',', ';', ':']);
-                if not_an_id(token) {
-                    continue;
-                }
-                checked += 1;
-                let why = match token.parse::<ShortId>() {
-                    Ok(id) if id.to_string() == token => continue,
-                    Ok(id) => format!("prints back as {id}"),
-                    Err(e) => e.expected.to_string(),
-                };
-                let list = failures.entry(name.clone()).or_default();
-                let line = format!("    ✗ {token}: {why}");
-                if !list.contains(&line) {
-                    list.push(line);
-                }
+        for token in printed_ids(&text) {
+            checked += 1;
+            let why = match token.parse::<ShortId>() {
+                Ok(id) if id.to_string() == token => continue,
+                Ok(id) => format!("prints back as {id}"),
+                Err(e) => e.to_string(),
+            };
+            let list = failures.entry(name.clone()).or_default();
+            let line = format!("    ✗ {token}: {why}");
+            if !list.contains(&line) {
+                list.push(line);
             }
         }
     }
