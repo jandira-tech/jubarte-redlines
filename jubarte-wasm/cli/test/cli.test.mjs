@@ -533,7 +533,7 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   const a = path.join(tmp, "short-a.md"), b = path.join(tmp, "short-b.md");
   fs.writeFileSync(a, "Due in 30 days.\n");
   fs.writeFileSync(b, "Due in 45 days.\n");
-  const patch = run("diff", a, b, "--author", "Legal", "--date", "2026-09-30T14:05:00Z");
+  const patch = run("diff", a, b, "--author", "Legal", "--datetime", "2026-09-30T14:05:00Z");
   assert.equal(patch.code, 0, patch.err);
   assert.match(patch.out, /\[-30-\]\{\+45\+\}/);
   assert.equal(run("diff", a, b, "--format", "critic").out, "Due in {~~30~>45~~} days.\n");

@@ -173,7 +173,7 @@ const COMMANDS = {
       // Without -o, compare (and the shorthand `A B`) prints the redline's
       // agent view.
       if (o.output == null) {
-        return void printView(wasm.redlineDocuments(a, b, o.author, o.date), o.view, `${fallback} (not written; -o keeps it)`);
+        return void printView(wasm.redlineDocuments(a, b, o.author, o.datetime), o.view, `${fallback} (not written; -o keeps it)`);
       }
       const output = o.output;
       // A .md of two Markdown documents is CriticMarkup; of anything else,
@@ -181,12 +181,12 @@ const COMMANDS = {
       if (o.output_format === "md" && kindOf(original, a, o.old_format) === "md" && kindOf(modified, b, o.new_format) === "md") {
         if (o.view_given) throw new UsageError("read options shape the view; two Markdown documents write CriticMarkup to a .md");
         ensureWritable(output, o.force);
-        const critic = wasm.diffDocumentsCritic(a, b, o.author, o.date);
+        const critic = wasm.diffDocumentsCritic(a, b, o.author, o.datetime);
         write(output, critic);
         return void wrote(o, output, "md", Buffer.byteLength(critic, "utf8"));
       }
       ensureWritable(output, o.force);
-      writeResult(o, wasm.redlineDocuments(a, b, o.author, o.date), `${fallback} (not written; -o keeps it)`, o.view);
+      writeResult(o, wasm.redlineDocuments(a, b, o.author, o.datetime), `${fallback} (not written; -o keeps it)`, o.view);
     },
   },
   diff: {
@@ -208,7 +208,7 @@ const COMMANDS = {
           acceptChanges: o.accept_changes, fullLines: o.full_lines, oldFormat, newFormat,
         }));
       } else {
-        const date = o.date; // the shared parser dated the run (D17)
+        const date = o.datetime; // the shared parser dated the run (D17)
         if (o.format === "critic") {
           if (oldFormat !== "md" || newFormat !== "md") {
             throw new CliError("--format critic needs both documents in Markdown; `jubarte compare OLD NEW` prints their redline as the agent view");
@@ -244,7 +244,7 @@ const COMMANDS = {
     run(_, [file], o) {
       let docx = read(file);
       if (kindOf(file, docx) === "md") {
-        docx = wasm.markdownToDocx(markdownText(file, docx), JSON.stringify({ page: o.page, author: o.author, date: o.date, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
+        docx = wasm.markdownToDocx(markdownText(file, docx), JSON.stringify({ page: o.page, author: o.author, date: o.datetime, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
         if (!o.pdf && o.output_format !== "json" && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
           if (o.move_comments || o.changed_pages) {
             throw new CliError("--move-comments / --changed-pages applies to PDF or PNG output only");
