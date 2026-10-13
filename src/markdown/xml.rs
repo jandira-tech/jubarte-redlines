@@ -5,7 +5,7 @@
 //! The items a Markdown document becomes, and their WordprocessingML.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 /// An inserted or a deleted tracked change.
@@ -57,7 +57,9 @@ pub(super) struct Run {
 /// Paragraph properties.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Paragraph {
-    pub style: Option<&'static str>,
+    /// Its style: a built-in one the reader defines when the docx lacks it
+    /// (`Heading1`), or the one an id line names (`<!-- p0 TitlePage -->`).
+    pub style: Option<Cow<'static, str>>,
     /// A numbering instance (index into [`Document::lists`]) and level.
     pub numbering: Option<(usize, u32)>,
     pub indent: Option<u32>,
@@ -165,6 +167,8 @@ pub(super) struct Document {
     pub pictures: Vec<Picture>,
     pub lists: Vec<List>,
     pub styles: HashSet<&'static str>,
+    /// Styles id lines name (`<!-- p0 TitlePage -->`), by id.
+    pub named_styles: BTreeSet<String>,
     pub title: Option<String>,
     pub author: Option<String>,
     pub warnings: Vec<String>,
@@ -393,8 +397,8 @@ pub(super) fn story(
 
 fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &mut String) {
     let mut properties = String::new();
-    if let Some(style) = paragraph.style {
-        let _ = write!(properties, "<w:pStyle w:val=\"{style}\"/>");
+    if let Some(style) = &paragraph.style {
+        let _ = write!(properties, "<w:pStyle w:val=\"{}\"/>", escape(style));
     }
     if let Some((instance, level)) = paragraph.numbering {
         let num = context.num_ids.get(instance).copied().unwrap_or_default();
@@ -660,6 +664,16 @@ pub(super) fn numbering(
 }
 
 /// The definition of a style this writer uses, for a document that lacks it.
+/// A paragraph style an id line names and the reader has no definition
+/// for: on Normal, named by its id, so the view prints the id back.
+pub(super) fn named_style_definition(id: &str) -> String {
+    let id = escape(id);
+    format!(
+        "<w:style w:type=\"paragraph\" w:customStyle=\"1\" w:styleId=\"{id}\">\
+         <w:name w:val=\"{id}\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/></w:style>"
+    )
+}
+
 pub(crate) fn style_definition(id: &str) -> Option<String> {
     // Heading 7-9 and Title are not written from Markdown; a `.doc`
     // converted through it restores them (`legacy_doc`).

@@ -4,6 +4,7 @@
 
 //! Markdown events to Word items, CriticMarkup to tracked changes.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -201,6 +202,8 @@ struct Writer<'o, 'a> {
     groups: usize,
     anchor: Option<Anchor>,
     comment: Option<Comment>,
+    /// The style the last id line names, for the paragraph after it.
+    id_style: Option<String>,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
     authors: HashMap<String, view_notes::Author>,
 
@@ -248,6 +251,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             substituted: None,
             comment_anchor: None,
             pending_highlights: Vec::new(),
+            id_style: None,
             run_after_close: false,
             highlight: None,
             groups: 0,
@@ -555,6 +559,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         for line in html.lines() {
             let Some(count) = view_notes::empty_paragraphs(line) else {
+                self.id_style = view_notes::id_line_style(line);
                 continue;
             };
             self.end_paragraph();
@@ -575,30 +580,43 @@ impl<'o, 'a> Writer<'o, 'a> {
         });
         let list_indent = list.map(|(_, level, _)| 720 * (level + 1));
         if let Some(level) = self.heading {
-            paragraph.style = Some(HEADINGS[level - 1]);
+            paragraph.style = Some(HEADINGS[level - 1].into());
         } else if self.code_block {
-            paragraph.style = Some("SourceCode");
+            paragraph.style = Some("SourceCode".into());
             paragraph.indent = list_indent;
         } else if let Some((instance, level, first)) = list {
-            paragraph.style = Some("ListParagraph");
+            paragraph.style = Some("ListParagraph".into());
             if first {
                 paragraph.numbering = Some((instance, level));
             } else {
                 paragraph.indent = list_indent;
             }
         } else if self.quote > 0 {
-            paragraph.style = Some("Quote");
+            paragraph.style = Some("Quote".into());
             if self.quote > 1 {
                 paragraph.indent = Some(720 * self.quote);
             }
         } else if self.target.is_some() {
-            paragraph.style = Some("FootnoteText");
+            paragraph.style = Some("FootnoteText".into());
         }
         if let Some(align) = self.cell {
             paragraph.align = align;
         }
-        if let Some(style) = paragraph.style {
-            self.document.styles.insert(style);
+        // The style the id line before it names.
+        if let Some(style) = self.id_style.take()
+            && self.cell.is_none()
+            && self.target.is_none()
+        {
+            paragraph.style = Some(style.into());
+        }
+        match &paragraph.style {
+            Some(Cow::Borrowed(style)) => {
+                self.document.styles.insert(style);
+            }
+            Some(Cow::Owned(style)) => {
+                self.document.named_styles.insert(style.clone());
+            }
+            None => {}
         }
         let index = self.story().len();
         self.story().push(Item::Paragraph(paragraph));
@@ -1140,7 +1158,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             let mut items = self.definitions.get(&label).cloned().unwrap_or_default();
             if items.is_empty() {
                 items = vec![Item::Paragraph(Paragraph {
-                    style: Some("FootnoteText"),
+                    style: Some("FootnoteText".into()),
                     ..Paragraph::default()
                 })];
                 items.push(Item::ParagraphEnd);

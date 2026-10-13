@@ -44,3 +44,10 @@ fn an_id_line_alone_makes_no_paragraph() {
     let md = "<!-- p0 -->\nOne\n\n<!-- p1 -->\nTwo\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+#[test]
+fn an_id_line_style_comes_back_on_its_paragraph() {
+    let md = "<!-- p0 DocumentTitle -->\nLast Will\n\n<!-- p1 -->\nBody text.\n\n\
+              <!-- p2 TitlePage -->\nOf Ann Counsel\n";
+    assert_eq!(round_trip(md), md.trim());
+}

@@ -157,6 +157,42 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
     (empty && count <= MOST_EMPTY).then_some(count)
 }
 
+/// The words that open an id line's clauses (`center`, `left 0.5in`,
+/// `break-ins r3 @AC`): any other word after the id is a style.
+const CLAUSE_WORDS: [&str; 17] = [
+    "empty",
+    "center",
+    "right",
+    "justify",
+    "left",
+    "first-line",
+    "hanging",
+    "bullet",
+    "num",
+    "page-break",
+    "section-break",
+    "break-ins",
+    "break-del",
+    "fmt",
+    "rev",
+    "comments",
+    "in",
+];
+
+/// The style an id line names: `<!-- p5 TitlePage center -->` names
+/// `TitlePage`; `<!-- p5 center -->` none.
+pub(super) fn id_line_style(line: &str) -> Option<String> {
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let (id, rest) = inner.split_once(' ')?;
+    crate::ids::short_number(id, 'p')?;
+    let word = rest.split([' ', ',']).next()?;
+    (!word.is_empty() && !CLAUSE_WORDS.contains(&word)).then(|| word.to_string())
+}
+
 /// The head of `text` and the comment text after it.
 pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
     let (head, body) = text.split_once(": ").or_else(|| {
@@ -200,6 +236,27 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn id_lines_name_their_style() {
+        for (line, style) in [
+            ("<!-- p5 TitlePage -->", Some("TitlePage")),
+            (
+                "<!-- p5 TitlePage center, first-line 0.5in -->",
+                Some("TitlePage"),
+            ),
+            ("<!-- p5 BodyText, page-break -->", Some("BodyText")),
+            ("<!-- p5 center -->", None),
+            ("<!-- p5 left 0.5in -->", None),
+            ("<!-- p5 -->", None),
+            ("<!-- p5 empty -->", None),
+            ("<!-- t0 TableGrid -->", None),
+            ("<!-- page 3 of 9 -->", None),
+            ("p5 TitlePage", None),
+        ] {
+            assert_eq!(id_line_style(line).as_deref(), style, "{line}");
+        }
+    }
 
     #[test]
     fn empty_id_lines_count_their_paragraphs() {

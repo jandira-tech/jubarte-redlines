@@ -123,7 +123,11 @@ pub(super) fn assemble(
     let mut wanted: BTreeSet<&str> = BASE_STYLES.into_iter().collect();
     wanted.extend(document.styles.iter().copied());
     if let Some(styles) = package.part_string(&styles_part) {
-        package.set_part(&styles_part, with_styles(&styles, &wanted).into_bytes());
+        let styles = with_styles(&styles, &wanted);
+        package.set_part(
+            &styles_part,
+            with_named_styles(&styles, &document.named_styles).into_bytes(),
+        );
     }
 
     let num_ids = numbering(&mut package, &main, document);
@@ -376,6 +380,23 @@ fn with_styles(styles: &str, wanted: &BTreeSet<&str>) -> String {
         .iter()
         .filter(|id| !styles.contains(&format!("w:styleId=\"{id}\"")))
         .filter_map(|id| xml::style_definition(id))
+        .collect();
+    match styles.rfind("</w:styles>") {
+        Some(at) if !missing.is_empty() => {
+            format!("{}{missing}{}", &styles[..at], &styles[at..])
+        }
+        _ => styles.to_string(),
+    }
+}
+
+/// `styles` with a definition for each style an id line names that it
+/// lacks: the reader's own definition when it has one (`Quote`), else a
+/// paragraph style on Normal.
+fn with_named_styles(styles: &str, named: &BTreeSet<String>) -> String {
+    let missing: String = named
+        .iter()
+        .filter(|id| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
+        .map(|id| xml::style_definition(id).unwrap_or_else(|| xml::named_style_definition(id)))
         .collect();
     match styles.rfind("</w:styles>") {
         Some(at) if !missing.is_empty() => {
