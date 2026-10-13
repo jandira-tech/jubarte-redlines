@@ -1486,9 +1486,16 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
     tracked::check(&tx)?;
+    // The comparer moves a comment's range off text an edit replaces whole,
+    // so such edits are emitted directly, as under keep.
+    let emit = !plan.update_fields && tx.edits_a_comment_range();
     tx.apply()?;
     let (mut clean, mut marked) = tx.finish()?;
-    if plan.existing_revisions == ExistingRevisions::Keep {
+    if plan.existing_revisions == ExistingRevisions::Keep
+        || (emit
+            && marked.is_none()
+            && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
+    {
         let result = tracked::result(&tx, clean)?;
         tx.check_redactions(&[&result.clean, &result.redline])?;
         return Ok(result);
@@ -1941,6 +1948,66 @@ impl<'p> Transaction<'p> {
             notes_story: None,
             settings: None,
         })
+    }
+
+    /// Whether the plan edits only text and comments, and one of its text
+    /// edits replaces exactly the text a comment covers with new text.
+    fn edits_a_comment_range(&self) -> bool {
+        let text_only = self
+            .resolved
+            .iter()
+            .all(|(_, r)| matches!(r, Resolved::Text { .. } | Resolved::CommentRange { .. }));
+        text_only
+            && self.resolved.iter().any(|(_, r)| match r {
+                Resolved::Text {
+                    para,
+                    start,
+                    end,
+                    replacement,
+                    ..
+                } if !replacement.is_empty() => {
+                    self.comment_ranges(*para).contains(&(*start, *end))
+                }
+                _ => false,
+            })
+    }
+
+    /// The `(start, end)` projection offsets of each comment whose range
+    /// opens and closes in paragraph `para`.
+    fn comment_ranges(&self, para: usize) -> Vec<(usize, usize)> {
+        let dom = &self.opened.dom;
+        let segments = &self.projections[para].segments;
+        let mut offset = 0;
+        let mut open: Vec<(&str, usize)> = Vec::new();
+        let mut ranges = Vec::new();
+        for node in dom.descendants(self.paragraph_nodes[para], None) {
+            let end = segments.iter().find_map(|s| match s.piece {
+                Piece::Text { t: n, .. } | Piece::Glyph { element: n, .. } if n == node => {
+                    Some(s.end)
+                }
+                _ => None,
+            });
+            if let Some(end) = end {
+                offset = end;
+                continue;
+            }
+            let Some(name) = dom.name(node).filter(|n| n.namespace_name() == W::URI) else {
+                continue;
+            };
+            let Some(id) = dom.attribute(node, &W::id()) else {
+                continue;
+            };
+            match name.local_name() {
+                "commentRangeStart" => open.push((id, offset)),
+                "commentRangeEnd" => {
+                    if let Some(at) = open.iter().position(|&(o, _)| o == id) {
+                        ranges.push((open.remove(at).1, offset));
+                    }
+                }
+                _ => {}
+            }
+        }
+        ranges
     }
 
     fn report(&self, ok: bool) -> EditReport {

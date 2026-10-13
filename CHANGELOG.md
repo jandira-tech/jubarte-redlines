@@ -167,6 +167,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   one run. `--pages` narrows a PDF too, and each PNG is named by its
   document page (`X-page-03.png`), also under `--changed-pages`.
 
+### Fixed
+
+- `edit`: replacing exactly the text a comment covers keeps both the
+  deletion and the insertion inside the comment's range, so Accept All
+  leaves the comment on the new text and Reject All on the old. The
+  redline used to put the insertion before the range and the deletion
+  after it.
+
 ### Deprecated
 
 - `diff-render`, `text` and `inspect` (now `read`; `inspect FILE` prints
