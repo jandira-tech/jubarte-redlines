@@ -1775,7 +1775,7 @@ fn later_sections_list_their_range_and_what_differs_from_the_first() {
     );
     let out = agent(&bytes);
     let header = out.split("---\n").nth(1).unwrap();
-    assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, headers: {default: {id: header2, text: SCHEDULE A}}, columns: 2}\n"), "header:\n{header}");
+    assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, page: Letter portrait, margins 1in, header/footer 0.5in, columns 2, headers: {default: {id: header2, text: SCHEDULE A}}}\n"), "header:\n{header}");
     assert!(
         body(&out).contains("<!-- p1 section-break -->\nEnd of part one\n"),
         "{out}"

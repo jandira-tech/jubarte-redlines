@@ -710,12 +710,20 @@ pub(super) struct PageSetup {
     pub header: u32,
     pub footer: u32,
     pub gutter: u32,
+    /// Text columns and the gap between them.
+    pub columns: u32,
+    pub column_gap: u32,
 }
 
 impl PageSetup {
     /// The `w:sectPr` of this page.
     pub(super) fn sect_pr(&self) -> String {
         let [top, right, bottom, left] = self.margins;
+        let num = if self.columns > 1 {
+            format!(" w:num=\"{}\"", self.columns)
+        } else {
+            String::new()
+        };
         let orient = if self.landscape {
             " w:orient=\"landscape\""
         } else {
@@ -724,11 +732,14 @@ impl PageSetup {
         format!(
             "<w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
              w:right=\"{right}\" w:bottom=\"{bottom}\" w:left=\"{left}\" w:header=\"{}\" \
-             w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"720\"/></w:sectPr>",
-            self.width, self.height, self.header, self.footer, self.gutter
+             w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"{}\"{num}/></w:sectPr>",
+            self.width, self.height, self.header, self.footer, self.gutter, self.column_gap
         )
     }
 }
+
+/// The most text columns Word lets a section have.
+const MOST_COLUMNS: u32 = 45;
 
 /// The largest page side or margin a view can set: Word's 22 inches.
 const MOST_PAGE: u32 = 31_680;
@@ -744,7 +755,8 @@ fn page_twips(value: &str) -> Option<u32> {
 /// The page `text` names: `Letter portrait`, `A4 landscape`, `8.5x14in
 /// portrait`, then `margins 1in` (or `margins top 1in, right 1.25in,
 /// bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header 0.5in,
-/// footer 0.6in`) and `gutter 0.2in`. A `; fmt …` tail is left out.
+/// footer 0.6in`), `gutter 0.2in`, `columns 2` and `column gap 0.25in`.
+/// A `; fmt …` tail is left out.
 pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
     let text = text.split(';').next()?.trim();
     let mut clauses = text.split(", ");
@@ -778,9 +790,18 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
         header: 720,
         footer: 720,
         gutter: 0,
+        columns: 1,
+        column_gap: 720,
     };
     for clause in clauses {
         let (name, value) = clause.rsplit_once(' ')?;
+        if name == "columns" {
+            page.columns = value
+                .parse()
+                .ok()
+                .filter(|n| (1..=MOST_COLUMNS).contains(n))?;
+            continue;
+        }
         let twips = page_twips(value)?;
         match name {
             "margins" => page.margins = [twips; 4],
@@ -792,6 +813,7 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
             "header" => page.header = twips,
             "footer" => page.footer = twips,
             "gutter" => page.gutter = twips,
+            "column gap" => page.column_gap = twips,
             _ => return None,
         }
     }

@@ -547,11 +547,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let mut first = 0;
             for (last, sect) in ends {
                 let title_page = sect.child("titlePg").is_some();
-                let columns = sect
-                    .child("cols")
-                    .and_then(|c| c.attr("num"))
-                    .and_then(|n| n.parse().ok())
-                    .unwrap_or(1);
                 let mut stories = Vec::new();
                 for reference in sect.elements() {
                     let kind = match reference.local() {
@@ -653,7 +648,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     sect_pr: Some(sect),
                     stories,
                     title_page,
-                    columns,
                 });
                 first = last + 1;
             }

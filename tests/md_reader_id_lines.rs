@@ -374,6 +374,44 @@ fn sections_and_their_pages_come_back() {
     assert!(view.ends_with(body), "{view}");
 }
 
+#[test]
+fn columns_and_their_gap_come_back() {
+    // `columns N` and `column gap` are page clauses: the first section's
+    // come back, and a later section's own page names its count.
+    let header = "---\npage: Letter portrait, margins 1in, header/footer 0.5in, columns 2, \
+                  column gap 0.25in\nsections:\n  \
+                  2: {p1-p2, page: Letter portrait, margins 1in, header/footer 0.5in}\n---\n\n";
+    let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n\n<!-- p2 -->\nThree.\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{header}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let xml = common::docx::part_string(&docx, "word/document.xml").unwrap();
+    assert!(
+        xml.contains("<w:cols w:space=\"360\" w:num=\"2\"/>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<w:cols w:space=\"720\"/>"), "{xml}");
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    for line in [
+        "page: Letter portrait, margins 1in, header/footer 0.5in, columns 2, column gap 0.25in",
+        "  2: {p1-p2, page: Letter portrait, margins 1in, header/footer 0.5in}",
+    ] {
+        assert!(view.lines().any(|l| l.starts_with(line)), "{line}\n{view}");
+    }
+}
+
 /// The view of `header` and `body` read into a docx and read again.
 fn view_round_trip(header: &str, body: &str) -> String {
     let docx = markdown_to_docx(

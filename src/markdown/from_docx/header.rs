@@ -56,7 +56,6 @@ pub(crate) struct SectionFact {
     pub sect_pr: Option<Element>,
     pub stories: Vec<StoryFact>,
     pub title_page: bool,
-    pub columns: usize,
 }
 
 pub(crate) struct CommentFact {
@@ -507,6 +506,18 @@ fn page_setup(sect: &Element) -> String {
             out.push_str(&format!(", gutter {}", inch(g)));
         }
     }
+    // Text columns, and their gap when it is not Word's 0.5in.
+    if let Some(cols) = sect.child("cols")
+        && let Some(num) = cols
+            .attr("num")
+            .and_then(|n| n.parse::<u32>().ok())
+            .filter(|&n| n > 1)
+    {
+        out.push_str(&format!(", columns {num}"));
+        if let Some(gap) = twips(cols, "space").filter(|&g| g != 720.0) {
+            out.push_str(&format!(", column gap {}", super::agent::inches(gap)));
+        }
+    }
     out
 }
 
@@ -800,7 +811,7 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
     }
 }
 
-/// `{p2-p3, headers: {default: {…}}, columns: 2}`: what a later section
+/// `{p2-p3, page: …, columns 2, headers: {default: {…}}}`: what a later section
 /// changes against the one before it (page setup against the first).
 fn section_entry(
     section: &SectionFact,
@@ -843,9 +854,6 @@ fn section_entry(
         if !changed.is_empty() {
             parts.push(format!("{kind}s: {{{}}}", changed.join(", ")));
         }
-    }
-    if section.columns != previous.columns {
-        parts.push(format!("columns: {}", section.columns));
     }
     format!("{{{}}}", parts.join(", "))
 }
