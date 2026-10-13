@@ -259,11 +259,18 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     if at.is_empty() {
         return Err("-p needs a location".into());
     }
-    // A reply or a resolution names a comment; anything else a paragraph or
-    // a comment, never a change (those take --accept or --reject).
+    // The settled spellings this whole group takes: a reply or a
+    // resolution names a comment; a comment takes no --anchor, --style,
+    // --before or --comment (nor, under add, --delete or --resolve); a
+    // change takes --accept or --reject, never these.
     let names_comment = op.reply.is_some() || op.resolve;
+    let comment_takes = op.anchor.is_none()
+        && op.styles.is_empty()
+        && !op.before
+        && !op.comment
+        && !(verb == Verb::Add && (op.delete || op.resolve));
     let keep = |id: &ShortId| match id {
-        ShortId::Comment(_) => true,
+        ShortId::Comment(_) => comment_takes,
         ShortId::Change { .. } => false,
         _ => !names_comment,
     };

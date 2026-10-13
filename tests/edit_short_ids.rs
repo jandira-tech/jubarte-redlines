@@ -561,6 +561,12 @@ fn the_cli_p_flag_takes_settled_ids_and_refuses_expired_ones() {
             "{at}: {stderr}"
         );
     }
+    // A group a comment cannot take suggests only the paragraph.
+    let out = edit_cli(dir.path(), &["src.docx", "-p", "5", "--style", "bold"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("the settled spelling is p5"), "{stderr}");
+    assert!(!stderr.contains("p5 or c5"), "{stderr}");
     for (n, at) in ["p6", "p6"].iter().enumerate() {
         let out_dir = format!("out{n}");
         let out = edit_cli(
