@@ -73,12 +73,7 @@ fn difference(want: &str, got: &str) -> String {
             break;
         }
     }
-    format!(
-        "{} lines -> {} lines\n{}",
-        a.len(),
-        b.len(),
-        out.join("\n")
-    )
+    format!("{} lines -> {} lines\n{}", a.len(), b.len(), out.join("\n"))
 }
 
 /// md → docx → md must give the Markdown back.
