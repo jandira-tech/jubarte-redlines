@@ -133,8 +133,14 @@ impl ChangeId {
         } else {
             format!("{}.r{}", self.story, self.wid)
         };
+        // Only a short id that reads back as this one change: `w:id="1+2"`
+        // would print `r1+2`, which names two.
         match short.parse::<ShortId>() {
-            Ok(ShortId::Change { .. }) => short,
+            Ok(ShortId::Change { wids, .. })
+                if wids.len() == 1 && wids[0].to_string() == self.wid =>
+            {
+                short
+            }
             _ => self.long(),
         }
     }
@@ -171,13 +177,6 @@ fn number<T: FromStr>(digits: &str) -> Option<T> {
         && digits.bytes().all(|b| b.is_ascii_digit())
         && (digits == "0" || !digits.starts_with('0'));
     canonical.then(|| digits.parse().ok()).flatten()
-}
-
-/// Whether `text` is `prefix` followed by ASCII digits (canonical or not):
-/// the shape that keeps such a word from being a story stem.
-fn digit_shaped(text: &str, prefix: &str) -> bool {
-    text.strip_prefix(prefix)
-        .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// The number after `prefix` in a part of a short id (`p12`, `t0`): ASCII
@@ -353,13 +352,7 @@ mod tests {
                 "{token}"
             );
         }
-        for token in ["r1+2"] {
-            assert_eq!(
-                parse_change_ids(token),
-                Ok(vec![body("1"), body("2")]),
-                "{token}"
-            );
-        }
+        assert_eq!(parse_change_ids("r1+2"), Ok(vec![body("1"), body("2")]));
         let pair = parse_change_ids("header1.r1+2").unwrap();
         assert_eq!(pair[1].long(), "header1:rev:2");
         for (expired, hint) in [
