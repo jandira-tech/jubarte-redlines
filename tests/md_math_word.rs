@@ -14,7 +14,9 @@ mod common;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use jubarte::markdown::{DocxOptions, ReadOptions, markdown_to_docx, read};
+use jubarte::markdown::{
+    DocxOptions, MarkdownOptions, ReadOptions, docx_to_markdown, markdown_to_docx, read,
+};
 
 /// Fixtures whose equations do not come back, and why.
 const KNOWN: &[(&str, &str)] = &[];
@@ -136,8 +138,27 @@ fn view(docx: &[u8]) -> String {
     .markdown
 }
 
+/// The conversion view (`jubarte convert X.docx -o X.md`): no front
+/// matter or id lines, and its table cells escape their own backslashes.
+fn conversion(docx: &[u8]) -> String {
+    docx_to_markdown(docx, &MarkdownOptions::default())
+        .expect("convert")
+        .markdown
+}
+
 #[test]
 fn word_equations_round_trip_through_latex() {
+    round_trip_fixtures(view);
+}
+
+#[test]
+fn word_equations_round_trip_through_the_conversion_view() {
+    round_trip_fixtures(conversion);
+}
+
+/// Each fixture read with `read_view`, written back, and its equations'
+/// shapes compared with Word's.
+fn round_trip_fixtures(read_view: fn(&[u8]) -> String) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/math");
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .expect("fixtures")
@@ -151,7 +172,7 @@ fn word_equations_round_trip_through_latex() {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let source = std::fs::read(&path).expect("fixture");
         let word = shapes(&common::docx::part_string(&source, "word/document.xml").unwrap());
-        let markdown = view(&source);
+        let markdown = read_view(&source);
         let written = markdown_to_docx(&markdown, &DocxOptions::default())
             .expect("write")
             .docx;
@@ -217,5 +238,8 @@ fn display_lines_become_an_equation_array() {
     let (view, xml) = round_trip("$$a=1 \\\\ b=2$$\n");
     assert!(xml.contains("<m:eqArr>"), "{xml}");
     assert_eq!(xml.matches("<m:oMath>").count(), 1, "{xml}");
-    assert!(view.contains(r"$$\begin{aligned}a=1 \\ b=2\end{aligned}$$"), "{view}");
+    assert!(
+        view.contains(r"$$\begin{aligned}a=1 \\ b=2\end{aligned}$$"),
+        "{view}"
+    );
 }

@@ -788,27 +788,56 @@ fn hard_breaks(text: &str) -> String {
 
 /// Escape a table cell for a Markdown pipe table. `escaped` text (the agent
 /// view's) already has its backslashes escaped: its escapes are copied as
-/// they are, and only a bare `|` gains one.
+/// they are, and only a bare `|` gains one. In other text an equation
+/// (`$…$`, `$$…$$`) keeps its LaTeX backslashes: Markdown does not unescape
+/// math, so doubling them would turn `\frac` into a line break.
 fn table_cell(value: &str, escaped: bool) -> String {
-    let value = if escaped {
-        let mut out = String::with_capacity(value.len());
-        let mut chars = value.chars();
-        while let Some(c) = chars.next() {
-            match c {
-                '\\' => {
-                    out.push(c);
-                    if let Some(next) = chars.next() {
-                        out.push(next);
-                    }
+    if !escaped {
+        return cell_math_kept(value);
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push(c);
+                if let Some(next) = chars.next() {
+                    out.push(next);
                 }
-                '|' => out.push_str("\\|"),
-                _ => out.push(c),
             }
+            '|' => out.push_str("\\|"),
+            _ => out.push(c),
         }
-        out
-    } else {
-        value.replace('\\', "\\\\").replace('|', "\\|")
-    };
+    }
+    one_line(&out)
+}
+
+/// `table_cell` for unescaped text: backslashes doubled outside equations,
+/// kept inside them; `|` escaped everywhere, as a pipe table needs.
+fn cell_math_kept(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 8);
+    let mut rest = value;
+    while let Some(start) = rest.find('$') {
+        let fence = if rest[start..].starts_with("$$") {
+            "$$"
+        } else {
+            "$"
+        };
+        let body = start + fence.len();
+        let Some(len) = rest[body..].find(fence) else {
+            break;
+        };
+        out.push_str(&rest[..start].replace('\\', "\\\\").replace('|', "\\|"));
+        let end = body + len + fence.len();
+        out.push_str(&rest[start..end].replace('|', "\\|"));
+        rest = &rest[end..];
+    }
+    out.push_str(&rest.replace('\\', "\\\\").replace('|', "\\|"));
+    one_line(&out)
+}
+
+/// A cell's text on one line: Markdown table rows cannot break.
+fn one_line(value: &str) -> String {
     value
         .replace("\r\n", " ")
         .replace(['\n', '\r'], " ")
@@ -3030,6 +3059,17 @@ mod tests {
             )),
             "Water is H<sub>2</sub>O and area x<sup>2</sup>. Plain[^1]\n\n[^1]: Note.\n"
         );
+    }
+
+    #[test]
+    fn a_table_cell_keeps_its_equations_latex() {
+        assert_eq!(
+            table_cell(r"C:\dir $x=\frac{a|b}{2}$ and $$\sqrt{y}$$ a|b", false),
+            r"C:\\dir $x=\frac{a\|b}{2}$ and $$\sqrt{y}$$ a\|b"
+        );
+        // Two dollars are math, as Markdown reads them; a lone one is text.
+        assert_eq!(table_cell(r"$5 \ $", false), r"$5 \ $");
+        assert_eq!(table_cell(r"costs $5\", false), r"costs $5\\");
     }
 
     #[test]
