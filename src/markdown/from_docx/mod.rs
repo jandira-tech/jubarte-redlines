@@ -1873,20 +1873,35 @@ impl Writer<'_> {
                 "smartTag" | "customXml" | "sdt" | "sdtContent" | "bdo" | "dir" => {
                     self.inline(child, link, base, fields, out, extra);
                 }
-                "oMathPara" => {
-                    let equations: Vec<String> = child
-                        .children_named("oMath")
-                        .map(math)
-                        .filter(|m| !m.is_empty())
-                        .collect();
-                    if !equations.is_empty() {
-                        out.raw(&format!("$${}$$", equations.join(" \\\\ ")));
-                    }
-                }
-                "oMath" => {
-                    let latex = math(child);
-                    if !latex.is_empty() {
-                        out.raw(&format!("${latex}$"));
+                "oMathPara" | "oMath" => {
+                    let latex = if child.is("oMath") {
+                        let latex = math(child);
+                        if latex.is_empty() {
+                            continue;
+                        }
+                        format!("${latex}$")
+                    } else {
+                        let equations: Vec<String> = child
+                            .children_named("oMath")
+                            .map(math)
+                            .filter(|m| !m.is_empty())
+                            .collect();
+                        if equations.is_empty() {
+                            continue;
+                        }
+                        // Word draws a paragraph's equations side by side.
+                        format!("$${}$$", equations.join(" "))
+                    };
+                    // An equation inserted or deleted whole is one change
+                    // around it, as Word shows it.
+                    match whole_math_change(child) {
+                        Some(change) => {
+                            let (mark, by) = self.change_of(change);
+                            out.open(mark, by.as_deref());
+                            self.revised((mark, by), |_| out.raw(&strip_math_changes(&latex)));
+                            out.close(mark);
+                        }
+                        None => out.raw(&latex),
                     }
                 }
                 _ => {}
@@ -2411,19 +2426,31 @@ fn collect_named<'a>(
     }
 }
 
-/// Office Math (OMML) to LaTeX, covering the structures Word's equation editor emits.
+/// Office Math (OMML) to LaTeX, covering the structures Word's equation
+/// editor emits. Each structure prints in one form the writer
+/// (`markdown/math.rs`) reads back as the same element: bare brackets are a
+/// delimiter, so a bracket that is text prints as `\lparen`; a delimiter
+/// Word draws with other characters prints with `\left`, `\middle` and
+/// `\right`. A change inside the math prints as CriticMarkup around the
+/// run's text (`{++2++}`, `{--π--}`); an accepted or rejected view has none
+/// left to print.
 fn math(element: &Element) -> String {
-    ooxml::collapse_ws(&math_inner(element, 0))
+    ooxml::collapse_ws(&math_inner(element, 0, false))
 }
 
-fn math_inner(element: &Element, depth: usize) -> String {
+/// The LaTeX of `element`; `name` while inside a function's name, whose
+/// words print as their command (`\sin`, `\operatorname{argmax}`).
+fn math_inner(element: &Element, depth: usize, name: bool) -> String {
     if depth > 64 {
         return String::new();
     }
-    let part = |name: &str| {
+    let inner = |e: &Element| math_inner(e, depth + 1, name);
+    // In a function's name only the base is the name: `\lim_{n}`'s limit
+    // is math.
+    let part = |part: &str| {
         element
-            .child(name)
-            .map(|e| math_inner(e, depth + 1))
+            .child(part)
+            .map(|e| math_inner(e, depth + 1, name && part == "e"))
             .unwrap_or_default()
     };
     let prop = |pr: &str, name: &str| {
@@ -2433,15 +2460,15 @@ fn math_inner(element: &Element, depth: usize) -> String {
             .map(str::to_string)
     };
     match element.local() {
-        "r" => {
-            let text: String = element
-                .elements()
-                .filter(|e| e.is("t"))
-                .map(Element::text)
-                .collect();
-            text.replace('\u{2061}', "")
+        "r" => math_run(element, name),
+        "f" => {
+            let (num, den) = (part("num"), part("den"));
+            if prop("fPr", "type").as_deref() == Some("noBar") {
+                format!("\\genfrac{{}}{{}}{{0pt}}{{}}{{{num}}}{{{den}}}")
+            } else {
+                format!("\\frac{{{num}}}{{{den}}}")
+            }
         }
-        "f" => format!("\\frac{{{}}}{{{}}}", part("num"), part("den")),
         "sSup" => format!("{}^{}", base(&part("e")), group(&part("sup"))),
         "sSub" => format!("{}_{}", base(&part("e")), group(&part("sub"))),
         "sSubSup" => format!(
@@ -2451,9 +2478,9 @@ fn math_inner(element: &Element, depth: usize) -> String {
             group(&part("sup"))
         ),
         "sPre" => format!(
-            "{{}}_{}^{}{}",
-            group(&part("sub")),
-            group(&part("sup")),
+            "\\prescript{{{}}}{{{}}}{{{}}}",
+            part("sub"),
+            part("sup"),
             part("e")
         ),
         "rad" => {
@@ -2468,43 +2495,48 @@ fn math_inner(element: &Element, depth: usize) -> String {
             let open = prop("dPr", "begChr").unwrap_or_else(|| "(".into());
             let close = prop("dPr", "endChr").unwrap_or_else(|| ")".into());
             let separator = prop("dPr", "sepChr").unwrap_or_else(|| "|".into());
-            let items: Vec<String> = element
-                .children_named("e")
-                .map(|e| math_inner(e, depth + 1))
-                .collect();
-            let brace = |c: &str| match c {
-                "{" => "\\{".to_string(),
-                "}" => "\\}".to_string(),
-                other => other.to_string(),
+            let items: Vec<&Element> = element.children_named("e").collect();
+            // `\binom`: Word's binomial is a bar-less fraction in brackets.
+            if (open.as_str(), close.as_str()) == ("(", ")")
+                && let [item] = items.as_slice()
+                && let [fraction] = structure(item).as_slice()
+                && fraction.is("f")
+                && fraction.path(&["fPr", "type"]).and_then(|e| e.attr("val")) == Some("noBar")
+            {
+                let half = |part: &str| fraction.child(part).map(inner).unwrap_or_default();
+                return format!("\\binom{{{}}}{{{}}}", half("num"), half("den"));
+            }
+            let items: Vec<String> = items.into_iter().map(inner).collect();
+            let bare = match (open.as_str(), close.as_str()) {
+                ("(", ")") | ("[", "]") => Some((open.clone(), close.clone())),
+                ("{", "}") => Some(("\\{".into(), "\\}".into())),
+                _ => None,
             };
-            format!(
-                "{}{}{}",
-                brace(&open),
-                items.join(&separator),
-                brace(&close)
-            )
+            match bare {
+                Some((open, close)) if items.len() == 1 => {
+                    format!("{open}{}{close}", items.concat())
+                }
+                _ => format!(
+                    "\\left{}{}\\right{}",
+                    fence(&open),
+                    items.join(&format!("\\middle{}", fence(&separator))),
+                    fence(&close)
+                ),
+            }
         }
         "func" => {
-            let name = part("fName");
-            let name = math_function(&name).unwrap_or(name);
-            format!("{name}{}", group_always(&part("e")))
+            let fname = element
+                .child("fName")
+                .map(|e| math_inner(e, depth + 1, true))
+                .unwrap_or_default();
+            format!("{}{}", fname.trim(), operand(element.child("e"), depth))
         }
         "nary" => {
-            let symbol = match prop("naryPr", "chr").as_deref() {
-                None | Some("∫") => "\\int",
-                Some("∑") => "\\sum",
-                Some("∏") => "\\prod",
-                Some("∬") => "\\iint",
-                Some("∮") => "\\oint",
-                Some("⋃") => "\\bigcup",
-                Some("⋂") => "\\bigcap",
-                Some(_) => "",
-            }
-            .to_string();
-            let symbol = if symbol.is_empty() {
-                prop("naryPr", "chr").unwrap_or_default()
-            } else {
-                symbol
+            let chr = prop("naryPr", "chr");
+            let symbol = match chr.as_deref().and_then(|c| c.chars().next()) {
+                None => "\\int".to_string(),
+                Some(c) => super::math::nary_command(c)
+                    .map_or_else(|| c.to_string(), |name| format!("\\{name}")),
             };
             let (sub, sup) = (part("sub"), part("sup"));
             let mut out = symbol;
@@ -2514,16 +2546,21 @@ fn math_inner(element: &Element, depth: usize) -> String {
             if !sup.trim().is_empty() {
                 out.push_str(&format!("^{}", group(&sup)));
             }
-            format!("{out} {}", part("e"))
+            format!("{out}{}", operand(element.child("e"), depth))
         }
         "acc" => {
-            let command = match prop("accPr", "chr").as_deref() {
-                Some("\u{303}" | "~") => "tilde",
-                Some("\u{304}" | "\u{305}" | "¯") => "bar",
-                Some("\u{307}" | "˙") => "dot",
-                Some("\u{308}") => "ddot",
-                Some("\u{20d7}" | "→") => "vec",
-                _ => "hat",
+            let chr = prop("accPr", "chr");
+            let command = match chr.as_deref() {
+                None => "hat",
+                Some("~") => "tilde",
+                Some("\u{304}" | "¯") => "bar",
+                Some("˙") => "dot",
+                Some("→") => "vec",
+                Some(c) => c
+                    .chars()
+                    .next()
+                    .and_then(super::math::accent_command)
+                    .unwrap_or("hat"),
             };
             format!("\\{command}{{{}}}", part("e"))
         }
@@ -2535,14 +2572,36 @@ fn math_inner(element: &Element, depth: usize) -> String {
             };
             format!("\\{command}{{{}}}", part("e"))
         }
-        "limLow" => format!("{}_{}", base(&part("e")), group(&part("lim"))),
-        "limUpp" => format!("{}^{}", base(&part("e")), group(&part("lim"))),
+        "groupChr" => {
+            let top = prop("groupChrPr", "pos").as_deref() == Some("top")
+                || prop("groupChrPr", "chr").as_deref() == Some("⏞");
+            let command = if top { "overbrace" } else { "underbrace" };
+            format!("\\{command}{{{}}}", part("e"))
+        }
+        "limLow" | "limUpp" => {
+            let upper = element.local() == "limUpp";
+            let (e, lim) = (part("e"), part("lim"));
+            // A function's name and a brace take their limit as a script;
+            // anything else is stacked.
+            let brace = if upper {
+                "\\overbrace{"
+            } else {
+                "\\underbrace{"
+            };
+            if name || e.trim_start().starts_with(brace) {
+                let e = if name { base(&e) } else { e.trim().to_string() };
+                format!("{e}{}{}", if upper { '^' } else { '_' }, group(&lim))
+            } else {
+                let command = if upper { "overset" } else { "underset" };
+                format!("\\{command}{{{lim}}}{{{e}}}")
+            }
+        }
         "m" => {
             let rows: Vec<String> = element
                 .children_named("mr")
                 .map(|row| {
                     row.children_named("e")
-                        .map(|e| math_inner(e, depth + 1))
+                        .map(inner)
                         .collect::<Vec<_>>()
                         .join(" & ")
                 })
@@ -2550,54 +2609,233 @@ fn math_inner(element: &Element, depth: usize) -> String {
             format!("\\begin{{matrix}}{}\\end{{matrix}}", rows.join(" \\\\ "))
         }
         "eqArr" => {
-            let rows: Vec<String> = element
-                .children_named("e")
-                .map(|e| math_inner(e, depth + 1))
-                .collect();
+            let rows: Vec<String> = element.children_named("e").map(inner).collect();
             format!("\\begin{{aligned}}{}\\end{{aligned}}", rows.join(" \\\\ "))
         }
+        "box" => {
+            let operator = prop("boxPr", "opEmu").is_some_and(|v| v != "0" && v != "off");
+            let command = if operator { "mathop" } else { "mathord" };
+            format!("\\{command}{{{}}}", part("e"))
+        }
         name if name.ends_with("Pr") => String::new(),
-        _ => element
-            .elements()
-            .map(|e| math_inner(e, depth + 1))
-            .collect(),
+        _ => element.elements().map(inner).collect(),
     }
+}
+
+/// The `w:ins` or `w:del` of math every run of which is inserted, or
+/// every run deleted.
+fn whole_math_change(math: &Element) -> Option<&Element> {
+    fn runs<'e>(element: &'e Element, out: &mut Vec<&'e Element>) {
+        for child in element.elements() {
+            if child.is("r") {
+                out.push(child);
+            } else if !child.local().ends_with("Pr") {
+                runs(child, out);
+            }
+        }
+    }
+    let mut all = Vec::new();
+    runs(math, &mut all);
+    let mut first: Option<&Element> = None;
+    for run in all {
+        let change = run.elements().find(|e| e.is("ins") || e.is("del"))?;
+        match first {
+            Some(seen) if seen.local() != change.local() => return None,
+            Some(_) => {}
+            None => first = Some(change),
+        }
+    }
+    first
+}
+
+/// `latex` without the marks of the changes inside it.
+fn strip_math_changes(latex: &str) -> String {
+    use super::math::{DELETE_END, DELETE_START, INSERT_END, INSERT_START};
+    latex
+        .chars()
+        .filter(|c| ![INSERT_START, INSERT_END, DELETE_START, DELETE_END].contains(c))
+        .collect()
+}
+
+/// The structures inside `e`, without its properties.
+fn structure(e: &Element) -> Vec<&Element> {
+    e.elements()
+        .filter(|c| !c.local().ends_with("Pr"))
+        .collect()
+}
+
+/// A math run's text as LaTeX: in a function's name, the name's command;
+/// else escaped and set in its style, inside CriticMarkup when the run is
+/// inserted or deleted.
+fn math_run(run: &Element, name: bool) -> String {
+    let mut text = String::new();
+    let mut change = None;
+    for child in run.elements() {
+        match child.local() {
+            "t" => text.push_str(&child.text()),
+            local @ ("ins" | "del") => {
+                // Stand-ins the paragraph's CriticMarkup leaves whole.
+                change = Some(if local == "ins" {
+                    (super::math::INSERT_START, super::math::INSERT_END)
+                } else {
+                    (super::math::DELETE_START, super::math::DELETE_END)
+                });
+                child
+                    .elements()
+                    .filter(|e| e.is("t"))
+                    .for_each(|t| text.push_str(&t.text()));
+            }
+            _ => {}
+        }
+    }
+    let latex = math_text(run, &text.replace('\u{2061}', ""), name);
+    match change {
+        Some((open, close)) if !latex.is_empty() => format!("{open}{latex}{close}"),
+        _ => latex,
+    }
+}
+
+/// A math run's text, `text`, as LaTeX in the run's style.
+fn math_text(run: &Element, text: &str, name: bool) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    let properties = |name: &str| {
+        run.path(&["rPr", name])
+            .or_else(|| run.path(&["ins", "rPr", name]))
+            .or_else(|| run.path(&["del", "rPr", name]))
+    };
+    if name && properties("nor").is_none() {
+        let word = text.trim();
+        return if super::math::FUNCTIONS.contains(&word) {
+            format!("\\{word} ")
+        } else if word.chars().all(char::is_alphabetic) {
+            format!("\\operatorname{{{word}}}")
+        } else {
+            escape_math(text)
+        };
+    }
+    if properties("nor").is_some() {
+        return format!("\\text{{{}}}", escape_math_text(text));
+    }
+    let command = match (
+        properties("scr").and_then(|e| e.attr("val")),
+        properties("sty").and_then(|e| e.attr("val")),
+    ) {
+        (Some("double-struck"), _) => Some("mathbb"),
+        (Some("script"), _) => Some("mathcal"),
+        (Some("fraktur"), _) => Some("mathfrak"),
+        (Some("sans-serif"), _) => Some("mathsf"),
+        (Some("monospace"), _) => Some("mathtt"),
+        // Word sets digits and operators upright already.
+        (_, Some("p")) if text.chars().any(char::is_alphabetic) => Some("mathrm"),
+        (_, Some("b")) => Some("mathbf"),
+        (_, Some("bi")) => Some("boldsymbol"),
+        _ => None,
+    };
+    let latex = escape_math(text);
+    match command {
+        Some(command) => format!("\\{command}{{{latex}}}"),
+        None => latex,
+    }
+}
+
+/// Math text with the characters LaTeX acts on escaped; brackets, which
+/// would build a delimiter, as their commands.
+fn escape_math(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\backslash "),
+            '{' => out.push_str("\\lbrace "),
+            '}' => out.push_str("\\rbrace "),
+            '(' => out.push_str("\\lparen "),
+            ')' => out.push_str("\\rparen "),
+            '[' => out.push_str("\\lbrack "),
+            ']' => out.push_str("\\rbrack "),
+            '^' | '_' | '&' | '$' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `\text{…}`'s text: braces, backslashes and `$` escaped.
+fn escape_math_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\backslash "),
+            '{' | '}' | '$' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// A delimiter's character after `\left`, `\middle` or `\right`: none is `.`.
+fn fence(chr: &str) -> String {
+    match chr {
+        "" => ".".into(),
+        "{" => "\\{".into(),
+        "}" => "\\}".into(),
+        "‖" => "\\|".into(),
+        other => other.into(),
+    }
+}
+
+/// What a function or an n-ary operator applies to: one bracketed
+/// delimiter, one character after a space, anything else in braces.
+fn operand(e: Option<&Element>, depth: usize) -> String {
+    let Some(e) = e else {
+        return "{}".into();
+    };
+    let latex = math_inner(e, depth + 1, false);
+    let latex = latex.trim();
+    let single = math_chars(latex) == 1 && latex != "{" && latex != "}";
+    let delimiter = matches!(structure(e).as_slice(), [d] if d.is("d"))
+        && (latex.starts_with('(') || latex.starts_with('[') || latex.starts_with("\\{"));
+    if delimiter {
+        latex.to_string()
+    } else if single {
+        format!(" {latex}")
+    } else {
+        format!("{{{latex}}}")
+    }
+}
+
+/// The characters of math LaTeX, without the marks of changes inside it.
+fn math_chars(latex: &str) -> usize {
+    use super::math::{DELETE_END, DELETE_START, INSERT_END, INSERT_START};
+    latex
+        .chars()
+        .filter(|c| ![INSERT_START, INSERT_END, DELETE_START, DELETE_END].contains(c))
+        .count()
 }
 
 fn group(s: &str) -> String {
     let s = s.trim();
-    if s.chars().count() == 1 {
+    if math_chars(s) == 1 {
         s.to_string()
     } else {
         format!("{{{s}}}")
     }
 }
 
-/// The functions LaTeX sets upright with their own command.
-const MATH_FUNCTIONS: [&str; 19] = [
-    "sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "max", "min", "sinh",
-    "cosh", "tanh", "arcsin", "arccos", "arctan", "det",
-];
-
-/// `\sin` for "sin": Word nests a function name under scripts and limits
-/// inside `m:fName` (lim under `m:limLow`, sin² as `m:sSup`).
-fn math_function(name: &str) -> Option<String> {
-    let name = name.trim();
-    MATH_FUNCTIONS.contains(&name).then(|| format!("\\{name}"))
-}
-
-/// The base of a script or limit: a function's command, else a group.
+/// The base of a script or limit: a function's command bare, else a group.
 fn base(s: &str) -> String {
-    math_function(s).unwrap_or_else(|| group(s))
-}
-
-fn group_always(s: &str) -> String {
     let s = s.trim();
-    if s.starts_with('(') || s.starts_with('[') {
-        s.to_string()
-    } else {
-        format!("{{{s}}}")
-    }
+    let command = s.strip_prefix('\\').is_some_and(|rest| {
+        rest.chars().all(|c| c.is_ascii_alphabetic())
+            || (rest.starts_with("operatorname{") && rest.matches('{').count() == 1)
+    });
+    if command { s.to_string() } else { group(s) }
 }
 
 /// The URL of a `HYPERLINK "url"` field instruction; internal `\l` anchors are ignored.
@@ -2807,7 +3045,7 @@ mod tests {
                     mr("n→∞"),
                     e(&mr("a"))
                 ),
-                r"\lim_{n→∞}{a}",
+                r"\lim_{n→∞} a",
             ),
             (
                 format!(
@@ -2816,15 +3054,64 @@ mod tests {
                     mr("2"),
                     e(&mr("x"))
                 ),
-                r"\sin^2{x}",
+                r"\sin^2 x",
             ),
             (
                 format!(
                     "<m:func><m:fName>{}</m:fName>{}</m:func>",
                     mr("f"),
-                    e(&mr("(x)"))
+                    e(&format!("<m:d>{}</m:d>", e(&mr("x"))))
                 ),
-                "f(x)",
+                r"\operatorname{f}(x)",
+            ),
+            // A bracket that is text is not a delimiter.
+            (mr("f(x]"), r"f\lparen x\rbrack"),
+            (
+                format!(
+                    r#"<m:d><m:dPr><m:begChr m:val="⟨"/><m:endChr m:val="⟩"/></m:dPr>{}{}</m:d>"#,
+                    e(&mr("a")),
+                    e(&mr("b"))
+                ),
+                r"\left⟨a\middle|b\right⟩",
+            ),
+            (
+                format!(
+                    r#"<m:d><m:dPr><m:begChr m:val="{{"/><m:endChr m:val=""/></m:dPr>{}</m:d>"#,
+                    e(&mr("x"))
+                ),
+                r"\left\{x\right.",
+            ),
+            (
+                format!(
+                    r#"<m:d>{}</m:d>"#,
+                    e(&format!(
+                        r#"<m:f><m:fPr><m:type m:val="noBar"/></m:fPr><m:num>{}</m:num><m:den>{}</m:den></m:f>"#,
+                        mr("n"),
+                        mr("k")
+                    ))
+                ),
+                r"\binom{n}{k}",
+            ),
+            (
+                format!(
+                    "<m:limLow>{}<m:lim>{}</m:lim></m:limLow>",
+                    e(&format!("<m:groupChr>{}</m:groupChr>", e(&mr("x+y")))),
+                    mr("n")
+                ),
+                r"\underbrace{x+y}_n",
+            ),
+            (
+                format!("<m:limUpp>{}<m:lim>{}</m:lim></m:limUpp>", e(&mr("x")), mr("n")),
+                r"\overset{n}{x}",
+            ),
+            (
+                r#"<m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>d</m:t></m:r><m:r><m:t>x</m:t></m:r>"#.to_string(),
+                r"\mathrm{d}x",
+            ),
+            // A change inside the math: CriticMarkup around its runs.
+            (
+                r#"<m:r><m:t>A=</m:t></m:r><m:r><w:ins w:id="1" w:author="a"><m:t>2</m:t></w:ins></m:r><m:r><w:del w:id="2" w:author="a"><m:t>3</m:t></w:del></m:r>"#.to_string(),
+                "A={++2++}{--3--}",
             ),
             (
                 format!("<m:rad><m:deg/>{}</m:rad>", e(&mr("x"))),
@@ -2857,7 +3144,7 @@ mod tests {
                     r#"<m:nary><m:naryPr><m:chr m:val="∭"/></m:naryPr><m:sub/><m:sup/>{}</m:nary>"#,
                     e(&mr("f"))
                 ),
-                "∭ f",
+                r"\iiint f",
             ),
             (
                 format!(
@@ -2905,7 +3192,7 @@ mod tests {
                     mr("b"),
                     e(&mr("X"))
                 ),
-                "{}_a^bX",
+                r"\prescript{a}{b}{X}",
             ),
         ];
         for (omml, latex) in cases {
@@ -4320,7 +4607,5 @@ mod markdown_source_owner_boundary_tests {
             hyperlink_instruction(" HYPERLINK https://example.invalid "),
             Some("https://example.invalid".to_string())
         );
-        assert_eq!(group_always("(x)"), "(x)");
-        assert_eq!(group_always("[x]"), "[x]");
     }
 }

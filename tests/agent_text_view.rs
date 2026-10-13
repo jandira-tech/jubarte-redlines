@@ -486,7 +486,7 @@ fn table_line_names_the_tables_own_changes() {
     let bytes = docx(&tbl);
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
+        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, p2 right, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
         "{out}"
     );
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)

@@ -558,11 +558,11 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 });
             }
             (Node::Leaf(Leaf::Raw(markdown)), _) => out.push(Piece {
-                text: if plain {
+                text: math_changes(&if plain {
                     markdown.clone()
                 } else {
                     defuse(markdown)
-                },
+                }),
                 bold: false,
                 italic: false,
                 underline: false,
@@ -699,6 +699,25 @@ fn defuse(markdown: &str) -> String {
         .fold(markdown.to_string(), |text, (from, to)| {
             text.replace(from, to)
         })
+}
+
+/// An equation's changes (`$A={--π--}r^2$`), which the converter marks
+/// with [`math::INSERT_START`] and its kin so `defuse` leaves them whole.
+fn math_changes(markdown: &str) -> String {
+    use crate::markdown::math;
+    if !markdown.contains([
+        math::INSERT_START,
+        math::INSERT_END,
+        math::DELETE_START,
+        math::DELETE_END,
+    ]) {
+        return markdown.to_string();
+    }
+    markdown
+        .replace(math::INSERT_START, "{++")
+        .replace(math::INSERT_END, "++}")
+        .replace(math::DELETE_START, "{--")
+        .replace(math::DELETE_END, "--}")
 }
 
 /// Appends `prefix` and `body` to `out` after `separator`. When the separator is
