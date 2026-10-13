@@ -439,7 +439,16 @@ fn table_line_gives_grid_cells_and_header_row() {
 fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_marks() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:rPr><w:ins w:id="12" w:author="Ann Counsel"/></w:rPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged cells, break-ins r12 @AC in p1 -->\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged t0.row0.cell0 across 2, break-ins r12 @AC in p1 -->\n"), "{out}");
+}
+
+#[test]
+fn table_line_names_each_merged_cell_and_how_far_it_reaches() {
+    // A vertical merge names its first cell and the rows it covers; a cell
+    // spanning columns names how many.
+    let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let out = body(&agent(&docx(tbl))).to_string();
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x3, cells p0-p4 by row, merged t0.row0.cell0 down 2; t0.row0.cell1 across 2 -->\n|A|B||\n|-|-|-|\n||C|D|\n"), "{out}");
 }
 
 /// The ids round trip (Task 5b): a table's own property changes and a

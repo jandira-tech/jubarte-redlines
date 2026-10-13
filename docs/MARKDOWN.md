@@ -231,7 +231,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 
 A table gets one line: `<!-- t0 center 3x2, cells p8-p13 by row, header row
 repeats -->`, `cells t0.row0 p8-p10 t0.row1 p11-p14` when a cell holds other
-than one paragraph, then `merged cells`, `break-ins r12 @AC in p9`,
+than one paragraph, then `merged t0.row0.cell1 across 2; t0.row1.cell0
+down 3` for a cell spanning grid columns or a vertical merge and the rows
+it covers (the view prints a span's other columns as empty cells, and
+leaves out empty columns at the right; the reader counts both back),
+`break-ins r12 @AC in p9`,
 `break-del …`, `rev … in pN` (resolved views; `rev r5 @AC in t0.row1.cell2`
 for a cell's own insertion, deletion or merge in the tracked view, and
 `rev r6 @AC in t0.row1` for an inserted or deleted row with no text),

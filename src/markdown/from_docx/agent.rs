@@ -1181,6 +1181,39 @@ pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
     (rendered, hard)
 }
 
+/// The table line's merged cells, row by row: `t0.row0.cell1 across 2`
+/// for a cell spanning two grid columns, `t0.row0.cell0 down 3` for a
+/// vertical merge starting there and covering three rows (Word's
+/// `gridSpan` and `vMerge`). `grid` holds each row's cells as grid column,
+/// columns spanned and vertical merge.
+fn merged_cells(t: &str, grid: &[Vec<(usize, usize, Option<bool>)>]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (r, cells) in grid.iter().enumerate() {
+        for (c, &(column, span, vertical)) in cells.iter().enumerate() {
+            let mut said = Vec::new();
+            if span > 1 {
+                said.push(format!("across {span}"));
+            }
+            if vertical == Some(true) {
+                let down = 1 + grid[r + 1..]
+                    .iter()
+                    .take_while(|row| {
+                        row.iter()
+                            .any(|&(at, _, v)| at == column && v == Some(false))
+                    })
+                    .count();
+                if down > 1 {
+                    said.push(format!("down {down}"));
+                }
+            }
+            if !said.is_empty() {
+                out.push(format!("t{t}.row{r}.cell{c} {}", said.join(" ")));
+            }
+        }
+    }
+    out
+}
+
 /// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
 /// `None` for a nested table (not numbered). With `comments` (comments
 /// hidden) the cells' comment ids print as `comments c9 in p3`; `spans`
@@ -1216,7 +1249,9 @@ pub(crate) fn table_line(
     let mut clauses: Vec<String> = vec![format!("{}x{}", rows.len(), cols)];
     let mut per_row: Vec<(usize, usize)> = Vec::new();
     let mut uniform = true;
-    let mut merged = false;
+    // Each row's cells: grid column, columns spanned, and vertical merge
+    // (`Some(true)` where one starts, `Some(false)` where one continues).
+    let mut grid: Vec<Vec<(usize, usize, Option<bool>)>> = Vec::new();
     let mut break_ins: Vec<String> = Vec::new();
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
@@ -1265,7 +1300,24 @@ pub(crate) fn table_line(
                 }
             }
         }
+        let mut column = tr
+            .path(&["trPr", "gridBefore"])
+            .and_then(|g| g.attr("val"))
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let mut cells = Vec::new();
         for (c, tc) in super::row_cells(tr).enumerate() {
+            let span = tc
+                .path(&["tcPr", "gridSpan"])
+                .and_then(|g| g.attr("val"))
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(1)
+                .clamp(1, 64);
+            let vertical = tc
+                .path(&["tcPr", "vMerge"])
+                .map(|v| v.attr("val") == Some("restart"));
+            cells.push((column, span, vertical));
+            column += span;
             if resolved {
                 revs.extend(
                     stamped_revs(tc)
@@ -1283,9 +1335,6 @@ pub(crate) fn table_line(
                 {
                     revs.push(format!("{}{at}", format_tag(&tag_of(cell_change, handles))));
                 }
-            }
-            if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
-                merged = true;
             }
             let mut ps = Vec::new();
             tc.find_all("p", &mut ps);
@@ -1338,6 +1387,7 @@ pub(crate) fn table_line(
         if let Some(r) = range {
             per_row.push(r);
         }
+        grid.push(cells);
     }
     if uniform {
         if let (Some(&(a, _)), Some(&(_, b))) = (per_row.first(), per_row.last()) {
@@ -1363,8 +1413,9 @@ pub(crate) fn table_line(
     {
         clauses.push("header row repeats".to_string());
     }
-    if merged {
-        clauses.push("merged cells".to_string());
+    let merged = merged_cells(t, &grid);
+    if !merged.is_empty() {
+        clauses.push(format!("merged {}", merged.join("; ")));
     }
     if !break_ins.is_empty() {
         clauses.push(format!("break-ins {}", break_ins.join("; ")));
