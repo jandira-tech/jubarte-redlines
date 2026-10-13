@@ -63,10 +63,103 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         markdown.to_string()
     };
     let mut writer = Writer::new(options);
+    writer.tables = table_plans(&source);
     for event in Parser::new_ext(&source, parser_options()) {
         writer.event(event);
     }
     writer.finish()
+}
+
+/// What the view's table line says about one table, read before the table:
+/// whether its first row repeats, and for each row whether its `<br>`s end
+/// paragraphs.
+#[derive(Clone, Debug, Default)]
+struct TablePlan {
+    header_repeats: bool,
+    /// Per row: whether its `<br>`s end paragraphs, and its first
+    /// paragraph's number when its paragraphs are known one by one.
+    rows: Vec<(bool, Option<usize>)>,
+    /// The cell paragraphs' mark changes, by paragraph number.
+    marks: HashMap<usize, (bool, view_notes::Tag)>,
+}
+
+/// A plan for each table of `source`, in order; `None` for a table no table
+/// line precedes. A row's `<br>`s end paragraphs when its cells and `<br>`s
+/// add up to the paragraphs its table line counts: each cell holds at least
+/// one paragraph and each line break or comment `<br>` adds none, so only
+/// then is every `<br>` a paragraph's end.
+fn table_plans(source: &str) -> Vec<Option<TablePlan>> {
+    let mut plans = Vec::new();
+    let mut html = String::new();
+    let mut line = None;
+    // Cells and `<br>`s of each row of the open table.
+    let mut rows: Vec<(usize, usize)> = Vec::new();
+    for event in Parser::new_ext(source, parser_options()) {
+        match event {
+            Event::Start(Tag::HtmlBlock) => html.clear(),
+            Event::Html(text) => html.push_str(&text),
+            Event::Start(Tag::Table(_)) => {
+                line = html.lines().rev().find_map(view_notes::table_line);
+                html.clear();
+                rows.clear();
+            }
+            Event::Start(Tag::TableHead | Tag::TableRow) => rows.push((0, 0)),
+            Event::Start(Tag::TableCell) => {
+                if let Some(row) = rows.last_mut() {
+                    row.0 += 1;
+                }
+            }
+            Event::InlineHtml(text) if is_line_break(&text) => {
+                if let Some(row) = rows.last_mut() {
+                    row.1 += 1;
+                }
+            }
+            Event::End(TagEnd::Table) => {
+                plans.push(line.take().map(|line: view_notes::TableLine| {
+                    let rows = match (&line.row_paragraphs, line.one_per_cell) {
+                        // One paragraph a cell: a `<br>` is a line break.
+                        (_, Some(first)) => {
+                            let mut at = first;
+                            rows.iter()
+                                .map(|&(cells, _)| {
+                                    let row = (false, Some(at));
+                                    at += cells;
+                                    row
+                                })
+                                .collect()
+                        }
+                        (Some(counts), None) if counts.len() == rows.len() => counts
+                            .iter()
+                            .zip(&rows)
+                            .map(|(&(first, n), &(cells, breaks))| {
+                                let exact = cells + breaks == n;
+                                (exact && breaks > 0, exact.then_some(first))
+                            })
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    TablePlan {
+                        header_repeats: line.header_repeats,
+                        rows,
+                        marks: line.marks,
+                    }
+                }));
+            }
+            Event::Start(_) => html.clear(),
+            _ => {}
+        }
+    }
+    plans
+}
+
+/// `<br>` or `<br/>`, as the view and authors write a line break.
+fn is_line_break(html: &str) -> bool {
+    let tag: String = html
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    matches!(tag.as_str(), "<br>" | "<br/>")
 }
 
 /// The Markdown extensions jubarte reads, for the writer and for
@@ -165,6 +258,18 @@ struct Writer<'o, 'a> {
     view: bool,
     /// The lines of the HTML block open here, read whole when it ends.
     html_block: Option<String>,
+    /// What the view's table lines say, one per table in order
+    /// ([`table_plans`]); the open table's, and how many tables are read.
+    tables: Vec<Option<TablePlan>>,
+    table_plan: Option<TablePlan>,
+    table_count: usize,
+    /// The open table's rows so far, and whether the open row's `<br>`s
+    /// end paragraphs.
+    row_number: usize,
+    row_breaks: bool,
+    /// The number of the next cell paragraph, when the table line counts
+    /// the open row's paragraphs one by one.
+    cell_paragraph: Option<usize>,
     quote: u32,
     lists: Vec<OpenList>,
     bullets: Option<usize>,
@@ -236,6 +341,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             label_prefix: None,
             view: false,
             html_block: None,
+            tables: Vec::new(),
+            table_plan: None,
+            table_count: 0,
+            row_number: 0,
+            row_breaks: false,
+            cell_paragraph: None,
             quote: 0,
             lists: Vec::new(),
             bullets: None,
@@ -404,6 +515,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 });
                 self.table = Some(columns);
                 self.document.styles.insert("TableGrid");
+                self.table_plan = self
+                    .tables
+                    .get(self.table_count)
+                    .cloned()
+                    .flatten()
+                    .filter(|_| self.view);
+                self.table_count += 1;
+                self.row_number = 0;
             }
             Tag::TableHead => self.begin_row(true),
             Tag::TableRow => self.begin_row(false),
@@ -485,6 +604,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.story().push(Item::TableEnd);
                 self.pending_highlights.clear();
                 self.table = None;
+                self.table_plan = None;
+                self.row_breaks = false;
+                self.cell_paragraph = None;
             }
             TagEnd::TableHead | TagEnd::TableRow => self.end_row(),
             TagEnd::TableCell => {
@@ -542,6 +664,19 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     fn begin_row(&mut self, header: bool) {
         self.column = 0;
+        // In a view the table line says whether the first row repeats.
+        let header = header
+            && self
+                .table_plan
+                .as_ref()
+                .is_none_or(|plan| plan.header_repeats);
+        let row = self
+            .table_plan
+            .as_ref()
+            .and_then(|plan| plan.rows.get(self.row_number).copied());
+        self.row_breaks = row.is_some_and(|(breaks, _)| breaks);
+        self.cell_paragraph = row.and_then(|(_, first)| first);
+        self.row_number += 1;
         let index = self.story().len();
         self.story().push(Item::Row {
             header,
@@ -698,22 +833,27 @@ impl<'o, 'a> Writer<'o, 'a> {
                     }
                 }
             }
-            paragraph.mark_fixed = true;
             let mark = line
                 .break_ins
                 .map(|tag| (Kind::Insert, tag))
                 .or_else(|| line.break_del.map(|tag| (Kind::Delete, tag)));
-            if let Some((kind, tag)) = mark {
-                self.serial += 1;
-                let serial = self.serial;
-                let attribution = self.view_author(&tag.handle, tag.date.as_deref());
-                self.document.attributions.insert(serial, attribution);
-                if !tag.ids.is_empty() {
-                    self.document.revision_ids.insert(serial, tag.ids);
-                }
-                paragraph.mark = Some(kind);
-                paragraph.mark_by = Some(serial);
-            }
+            self.fix_mark(&mut paragraph, mark);
+        }
+        // A cell paragraph the table line numbers: its mark is the line's.
+        if self.cell.is_some()
+            && let Some(at) = self.cell_paragraph
+        {
+            self.cell_paragraph = Some(at + 1);
+            let mark = self.table_plan.as_ref().and_then(|plan| {
+                let (inserted, tag) = plan.marks.get(&at)?;
+                let kind = if *inserted {
+                    Kind::Insert
+                } else {
+                    Kind::Delete
+                };
+                Some((kind, tag.clone()))
+            });
+            self.fix_mark(&mut paragraph, mark);
         }
         match &paragraph.style {
             Some(Cow::Borrowed(style)) => {
@@ -1209,6 +1349,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             "<br>" | "<br/>" => {
                 if let Some(comment) = &mut self.comment {
                     comment.paragraphs.push(String::new());
+                } else if self.cell.is_some() && self.row_breaks {
+                    // A cell's paragraphs, as the view joins them.
+                    self.ensure_paragraph();
+                    self.end_paragraph();
+                    self.begin_paragraph();
                 } else {
                     self.push(Content::Break);
                 }
@@ -1266,6 +1411,24 @@ impl<'o, 'a> Writer<'o, 'a> {
                 _ => {}
             }
         }
+    }
+
+    /// Fixes `paragraph`'s mark as a view line says it: `mark`, numbered and
+    /// attributed as its tag says, or none.
+    fn fix_mark(&mut self, paragraph: &mut Paragraph, mark: Option<(Kind, view_notes::Tag)>) {
+        paragraph.mark_fixed = true;
+        let Some((kind, tag)) = mark else {
+            return;
+        };
+        self.serial += 1;
+        let serial = self.serial;
+        let attribution = self.view_author(&tag.handle, tag.date.as_deref());
+        self.document.attributions.insert(serial, attribution);
+        if !tag.ids.is_empty() {
+            self.document.revision_ids.insert(serial, tag.ids);
+        }
+        paragraph.mark = Some(kind);
+        paragraph.mark_by = Some(serial);
     }
 
     /// A paragraph's use of `label` (added to the document's labels once):

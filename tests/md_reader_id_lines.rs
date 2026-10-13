@@ -243,3 +243,28 @@ fn an_id_line_before_a_footnote_definition_keeps_its_paragraph() {
         "{lines:?}"
     );
 }
+
+#[test]
+fn a_cell_keeps_its_paragraphs() {
+    // The table line counts each row's paragraphs: when a row's cells and
+    // `<br>`s add up to that count, every `<br>` there ends a paragraph.
+    let md = "<!-- p0 -->\nBefore.\n\n\
+              <!-- t0 2x2, cells t0.row0 p1-p3 t0.row1 p4-p5 -->\n\
+              |A<br>B|C|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn a_line_break_in_a_cell_stays_a_line_break() {
+    // Two cells, one `<br>`, two paragraphs: the `<br>` is a line break.
+    let md = "<!-- t0 1x2, cells p0-p1 by row -->\n|A<br>B|C|\n|-|-|\n\n<!-- p2 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn a_cell_paragraph_keeps_the_mark_its_table_line_names() {
+    let body = "<!-- p0 -->\nBefore.\n\n\
+                <!-- t0 2x2, cells t0.row0 p1-p3 t0.row1 p4-p5, break-ins r5 @AC in p1 -->\n\
+                |{++A++}{>>r6 @AC<<}{++<br>B++}{>>r7 @AC<<}|C|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+}

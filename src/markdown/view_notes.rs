@@ -137,6 +137,78 @@ pub(super) struct CommentHead {
     pub resolved: bool,
 }
 
+/// What a table's id line says about its rows (`<!-- t0 4x7, cells
+/// t0.row0 p1-p13 t0.row1 p14-p50, header row repeats -->`): how many
+/// paragraphs each row holds, when it counts them row by row, and whether
+/// its first row repeats on each page. `None` for any other line.
+pub(super) struct TableLine {
+    /// Each row's first paragraph and paragraph count, row by row.
+    pub row_paragraphs: Option<Vec<(usize, usize)>>,
+    /// The first paragraph of a table whose every cell holds one (`cells
+    /// p8-p16 by row`).
+    pub one_per_cell: Option<usize>,
+    pub header_repeats: bool,
+    /// The cell paragraphs' mark changes, by paragraph (`break-ins r3 @SW
+    /// in p1`): true for an insertion.
+    pub marks: HashMap<usize, (bool, Tag)>,
+}
+
+pub(super) fn table_line(line: &str) -> Option<TableLine> {
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
+    crate::ids::short_number(id, 't')?;
+    let mut parsed = TableLine {
+        row_paragraphs: None,
+        one_per_cell: None,
+        header_repeats: false,
+        marks: HashMap::new(),
+    };
+    for clause in rest.split(", ") {
+        if clause == "header row repeats" {
+            parsed.header_repeats = true;
+        }
+        for (word, inserted) in [("break-ins ", true), ("break-del ", false)] {
+            let Some(marks) = clause.strip_prefix(word) else {
+                continue;
+            };
+            // `r3 @SW in p1; r4 @SW in p2`
+            for mark in marks.split("; ") {
+                if let Some((tag, at)) = mark.rsplit_once(" in ")
+                    && let Some(at) = crate::ids::short_number(at, 'p')
+                    && let Some(tag) = first_tag(tag)
+                {
+                    parsed.marks.insert(at, (inserted, tag));
+                }
+            }
+        }
+        let Some(rows) = clause.strip_prefix("cells ") else {
+            continue;
+        };
+        if let Some(range) = rows.strip_suffix(" by row") {
+            let first = range.split_once('-').map_or(range, |(first, _)| first);
+            parsed.one_per_cell = crate::ids::short_number(first, 'p');
+            continue;
+        }
+        // `t0.row0 p1-p13 t0.row1 p14`: a row, then its paragraphs.
+        let words: Vec<&str> = rows.split(' ').collect();
+        parsed.row_paragraphs = words
+            .chunks(2)
+            .map(|pair| {
+                let range = pair.get(1)?;
+                let (first, last) = range.split_once('-').unwrap_or((range, range));
+                let first = crate::ids::short_number(first, 'p')?;
+                let last = crate::ids::short_number(last, 'p')?;
+                last.checked_sub(first).map(|n| (first, n + 1))
+            })
+            .collect();
+    }
+    Some(parsed)
+}
+
 /// The most empty paragraphs one id line stands for: a bound on what a
 /// hand-edited range (`p0-p4294967295 empty`) can make the reader write.
 const MOST_EMPTY: usize = 100_000;
