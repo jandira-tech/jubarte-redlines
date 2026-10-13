@@ -71,16 +71,40 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
 }
 
 /// What the view's table line says about one table, read before the table:
-/// whether its first row repeats, and for each row whether its `<br>`s end
-/// paragraphs.
+/// whether its first row repeats, its grid's columns, and how each row's
+/// Markdown cells and `<br>`s map onto its cells and paragraphs.
 #[derive(Clone, Debug, Default)]
 struct TablePlan {
     header_repeats: bool,
-    /// Per row: whether its `<br>`s end paragraphs, and its first
-    /// paragraph's number when its paragraphs are known one by one.
-    rows: Vec<(bool, Option<usize>)>,
+    columns: Option<usize>,
+    rows: Vec<RowPlan>,
     /// The cell paragraphs' mark changes, by paragraph number.
     marks: HashMap<usize, (bool, view_notes::Tag)>,
+}
+
+/// One row of a [`TablePlan`].
+#[derive(Clone, Debug, Default)]
+struct RowPlan {
+    /// Whether the row's `<br>`s end paragraphs.
+    breaks: bool,
+    /// The row's first paragraph's number, when its paragraphs are known
+    /// one by one.
+    first: Option<usize>,
+    /// Each Markdown cell's shape, in order.
+    cells: Vec<CellShape>,
+    /// The empty cells the view left out at the row's end.
+    pad: usize,
+}
+
+/// What one Markdown cell of a planned row is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CellShape {
+    /// A cell spanning `across` grid columns, in a vertical merge or not
+    /// (as [`Item::Cell`]).
+    Cell { across: usize, merge: Option<bool> },
+    /// A grid column the cell before spans: the view prints it as an empty
+    /// cell, which is no cell of its own.
+    Spanned,
 }
 
 /// A plan for each table of `source`, in order; `None` for a table no table
@@ -92,8 +116,10 @@ fn table_plans(source: &str) -> Vec<Option<TablePlan>> {
     let mut plans = Vec::new();
     let mut html = String::new();
     let mut line = None;
-    // Cells and `<br>`s of each row of the open table.
-    let mut rows: Vec<(usize, usize)> = Vec::new();
+    // Each row of the open table: whether each cell is empty, and its
+    // `<br>`s.
+    let mut rows: Vec<(Vec<bool>, usize)> = Vec::new();
+    let mut in_cell = false;
     for event in Parser::new_ext(source, parser_options()) {
         match event {
             Event::Start(Tag::HtmlBlock) => html.clear(),
@@ -103,53 +129,119 @@ fn table_plans(source: &str) -> Vec<Option<TablePlan>> {
                 html.clear();
                 rows.clear();
             }
-            Event::Start(Tag::TableHead | Tag::TableRow) => rows.push((0, 0)),
+            Event::Start(Tag::TableHead | Tag::TableRow) => rows.push((Vec::new(), 0)),
             Event::Start(Tag::TableCell) => {
+                in_cell = true;
                 if let Some(row) = rows.last_mut() {
-                    row.0 += 1;
+                    row.0.push(true);
                 }
             }
-            Event::InlineHtml(text) if is_line_break(&text) => {
-                if let Some(row) = rows.last_mut() {
-                    row.1 += 1;
-                }
-            }
+            Event::End(TagEnd::TableCell) => in_cell = false,
             Event::End(TagEnd::Table) => {
-                plans.push(line.take().map(|line: view_notes::TableLine| {
-                    let rows = match (&line.row_paragraphs, line.one_per_cell) {
-                        // One paragraph a cell: a `<br>` is a line break.
-                        (_, Some(first)) => {
-                            let mut at = first;
-                            rows.iter()
-                                .map(|&(cells, _)| {
-                                    let row = (false, Some(at));
-                                    at += cells;
-                                    row
-                                })
-                                .collect()
-                        }
-                        (Some(counts), None) if counts.len() == rows.len() => counts
-                            .iter()
-                            .zip(&rows)
-                            .map(|(&(first, n), &(cells, breaks))| {
-                                let exact = cells + breaks == n;
-                                (exact && breaks > 0, exact.then_some(first))
-                            })
-                            .collect(),
-                        _ => Vec::new(),
-                    };
-                    TablePlan {
-                        header_repeats: line.header_repeats,
-                        rows,
-                        marks: line.marks,
-                    }
-                }));
+                plans.push(line.take().map(|line| plan_table(line, &rows)));
             }
-            Event::Start(_) => html.clear(),
+            Event::Start(_) if !in_cell => html.clear(),
+            event if in_cell => {
+                if let Some(row) = rows.last_mut() {
+                    if let Event::InlineHtml(text) = &event
+                        && is_line_break(text)
+                    {
+                        row.1 += 1;
+                    }
+                    if let Some(empty) = row.0.last_mut() {
+                        *empty = false;
+                    }
+                }
+            }
             _ => {}
         }
     }
     plans
+}
+
+/// The plan a table line makes for a table whose rows hold `rows` (each
+/// Markdown cell's emptiness, and the row's `<br>`s).
+fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> TablePlan {
+    // The last row each grid column's vertical merge reaches.
+    let mut merged_until: HashMap<usize, usize> = HashMap::new();
+    let mut shaped: Vec<(Vec<CellShape>, usize, usize)> = Vec::new();
+    for (r, (cells, _)) in rows.iter().enumerate() {
+        let mut shapes = Vec::with_capacity(cells.len());
+        let (mut cell, mut column, mut spanned) = (0, 0, 0);
+        for &empty in cells {
+            if spanned > 0 && empty {
+                spanned -= 1;
+                shapes.push(CellShape::Spanned);
+                continue;
+            }
+            let (across, down) = line.merges.get(&(r, cell)).copied().unwrap_or((1, 1));
+            let merge = if down > 1 {
+                merged_until.insert(column, r + down - 1);
+                Some(true)
+            } else {
+                merged_until
+                    .get(&column)
+                    .is_some_and(|&until| until >= r)
+                    .then_some(false)
+            };
+            shapes.push(CellShape::Cell { across, merge });
+            spanned = across - 1;
+            column += across;
+            cell += 1;
+        }
+        let pad = line
+            .columns
+            .map_or(0, |columns| columns.saturating_sub(column + spanned));
+        shaped.push((shapes, cell, pad));
+    }
+    let rows = match (&line.row_paragraphs, line.one_per_cell) {
+        // One paragraph a cell: a `<br>` is a line break.
+        (_, Some(first)) => {
+            let mut at = first;
+            shaped
+                .into_iter()
+                .map(|(cells, count, pad)| {
+                    let row = RowPlan {
+                        breaks: false,
+                        first: Some(at),
+                        cells,
+                        pad,
+                    };
+                    at += count + pad;
+                    row
+                })
+                .collect()
+        }
+        (Some(counts), None) if counts.len() == rows.len() => counts
+            .iter()
+            .zip(rows)
+            .zip(shaped)
+            .map(|((&(first, n), &(_, breaks)), (cells, count, pad))| {
+                // The view leaves out empty cells only at a row's end.
+                let pad = if count + pad + breaks == n { pad } else { 0 };
+                let exact = count + pad + breaks == n;
+                RowPlan {
+                    breaks: exact && breaks > 0,
+                    first: exact.then_some(first),
+                    cells,
+                    pad,
+                }
+            })
+            .collect(),
+        _ => shaped
+            .into_iter()
+            .map(|(cells, _, _)| RowPlan {
+                cells,
+                ..RowPlan::default()
+            })
+            .collect(),
+    };
+    TablePlan {
+        header_repeats: line.header_repeats,
+        columns: line.columns,
+        rows,
+        marks: line.marks,
+    }
 }
 
 /// `<br>` or `<br/>`, as the view and authors write a line break.
@@ -270,6 +362,12 @@ struct Writer<'o, 'a> {
     /// The number of the next cell paragraph, when the table line counts
     /// the open row's paragraphs one by one.
     cell_paragraph: Option<usize>,
+    /// The open row's planned cells, and its left-out empty cells.
+    row_shapes: Vec<CellShape>,
+    row_pad: usize,
+    /// Whether the open Markdown cell is a grid column the cell before
+    /// spans ([`CellShape::Spanned`]).
+    spanned: bool,
     quote: u32,
     lists: Vec<OpenList>,
     bullets: Option<usize>,
@@ -347,6 +445,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_number: 0,
             row_breaks: false,
             cell_paragraph: None,
+            row_shapes: Vec::new(),
+            row_pad: 0,
+            spanned: false,
             quote: 0,
             lists: Vec::new(),
             bullets: None,
@@ -509,11 +610,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Tag::Table(alignments) => {
                 self.end_paragraph();
-                let columns: Vec<_> = alignments.iter().map(|a| alignment(*a)).collect();
-                self.story().push(Item::Table {
-                    columns: columns.clone(),
-                });
-                self.table = Some(columns);
+                let mut columns: Vec<_> = alignments.iter().map(|a| alignment(*a)).collect();
                 self.document.styles.insert("TableGrid");
                 self.table_plan = self
                     .tables
@@ -521,6 +618,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .cloned()
                     .flatten()
                     .filter(|_| self.view);
+                // The grid keeps the columns the view left out.
+                if let Some(grid) = self.table_plan.as_ref().and_then(|plan| plan.columns) {
+                    columns.resize(grid.max(columns.len()), None);
+                }
+                self.story().push(Item::Table {
+                    columns: columns.clone(),
+                });
+                self.table = Some(columns);
                 self.table_count += 1;
                 self.row_number = 0;
             }
@@ -532,9 +637,22 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .as_ref()
                     .and_then(|columns| columns.get(self.column).copied())
                     .flatten();
+                let shape = self.row_shapes.get(self.column).copied();
                 self.column += 1;
+                let (across, merge) = match shape {
+                    Some(CellShape::Spanned) => {
+                        self.spanned = true;
+                        return;
+                    }
+                    Some(CellShape::Cell { across, merge }) => (across, merge),
+                    None => (1, None),
+                };
                 self.cell = Some(align);
-                self.story().push(Item::Cell(align));
+                self.story().push(Item::Cell {
+                    align,
+                    across,
+                    merge,
+                });
             }
             Tag::Emphasis => self.italic += 1,
             Tag::Strong => self.bold += 1,
@@ -607,8 +725,26 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.table_plan = None;
                 self.row_breaks = false;
                 self.cell_paragraph = None;
+                self.row_shapes.clear();
+                self.row_pad = 0;
             }
-            TagEnd::TableHead | TagEnd::TableRow => self.end_row(),
+            TagEnd::TableHead | TagEnd::TableRow => {
+                // The empty cells the view left out at the row's end.
+                for _ in 0..self.row_pad {
+                    self.cell = Some(None);
+                    self.story().push(Item::Cell {
+                        align: None,
+                        across: 1,
+                        merge: None,
+                    });
+                    self.begin_paragraph();
+                    self.end_paragraph();
+                    self.cell = None;
+                    self.story().push(Item::CellEnd);
+                }
+                self.end_row();
+            }
+            TagEnd::TableCell if std::mem::take(&mut self.spanned) => {}
             TagEnd::TableCell => {
                 if self.paragraph.is_none() {
                     self.begin_paragraph();
@@ -656,7 +792,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             .rev()
             .find_map(|item| match item {
                 Item::Paragraph(p) => Some(p.mark == Some(kind) && !p.whole),
-                Item::Table { .. } | Item::TableEnd | Item::Cell(_) | Item::CellEnd => Some(false),
+                Item::Table { .. } | Item::TableEnd | Item::Cell { .. } | Item::CellEnd => {
+                    Some(false)
+                }
                 _ => None,
             })
             .unwrap_or(false)
@@ -673,9 +811,13 @@ impl<'o, 'a> Writer<'o, 'a> {
         let row = self
             .table_plan
             .as_ref()
-            .and_then(|plan| plan.rows.get(self.row_number).copied());
-        self.row_breaks = row.is_some_and(|(breaks, _)| breaks);
-        self.cell_paragraph = row.and_then(|(_, first)| first);
+            .and_then(|plan| plan.rows.get(self.row_number))
+            .cloned()
+            .unwrap_or_default();
+        self.row_breaks = row.breaks;
+        self.cell_paragraph = row.first;
+        self.row_shapes = row.cells;
+        self.row_pad = row.pad;
         self.row_number += 1;
         let index = self.story().len();
         self.story().push(Item::Row {

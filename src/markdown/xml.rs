@@ -124,7 +124,14 @@ pub(super) enum Item {
         header: bool,
         change: Option<Change>,
     },
-    Cell(Option<&'static str>),
+    Cell {
+        align: Option<&'static str>,
+        /// The grid columns the cell spans (`gridSpan`), at least one.
+        across: usize,
+        /// A vertical merge: `Some(true)` where it starts, `Some(false)`
+        /// where it continues (`vMerge`).
+        merge: Option<bool>,
+    },
     CellEnd,
     RowEnd,
     TableEnd,
@@ -458,13 +465,23 @@ pub(super) fn story(
                     out.push_str("</w:trPr>");
                 }
             }
-            Item::Cell(_) => {
+            Item::Cell { across, merge, .. } => {
                 let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
+                let across = u32::try_from(*across).unwrap_or(1).max(1);
                 let _ = write!(
                     out,
-                    "<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/></w:tcPr>",
-                    context.text_width / count
+                    "<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/>",
+                    context.text_width / count * across
                 );
+                if across > 1 {
+                    let _ = write!(out, "<w:gridSpan w:val=\"{across}\"/>");
+                }
+                match merge {
+                    Some(true) => out.push_str("<w:vMerge w:val=\"restart\"/>"),
+                    Some(false) => out.push_str("<w:vMerge/>"),
+                    None => {}
+                }
+                out.push_str("</w:tcPr>");
             }
             Item::CellEnd => out.push_str("</w:tc>"),
             Item::RowEnd => out.push_str("</w:tr>"),

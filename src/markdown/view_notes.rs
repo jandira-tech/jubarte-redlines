@@ -151,7 +151,17 @@ pub(super) struct TableLine {
     /// The cell paragraphs' mark changes, by paragraph (`break-ins r3 @SW
     /// in p1`): true for an insertion.
     pub marks: HashMap<usize, (bool, Tag)>,
+    /// The grid's columns (`4x7`).
+    pub columns: Option<usize>,
+    /// The merged cells by row and cell (`merged t0.row0.cell1 across 2
+    /// down 3`): the grid columns each spans and the rows it covers.
+    pub merges: HashMap<(usize, usize), (usize, usize)>,
 }
+
+/// The most grid columns a table has, and rows one merged cell reaches: a
+/// bound on what a hand-edited table line can make the reader write (Word
+/// takes 63 columns).
+const MOST_GRID: usize = 64;
 
 pub(super) fn table_line(line: &str) -> Option<TableLine> {
     let inner = line
@@ -166,10 +176,38 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         one_per_cell: None,
         header_repeats: false,
         marks: HashMap::new(),
+        columns: None,
+        merges: HashMap::new(),
     };
-    for clause in rest.split(", ") {
+    for (i, clause) in rest.split(", ").enumerate() {
         if clause == "header row repeats" {
             parsed.header_repeats = true;
+        }
+        // The size opens the clauses, after the alignment: `center 3x2`.
+        if i == 0
+            && let Some((_, columns)) = clause.rsplit(' ').next().and_then(|s| s.split_once('x'))
+        {
+            parsed.columns = columns.parse().ok().filter(|&n| n <= MOST_GRID);
+        }
+        if let Some(cells) = clause.strip_prefix("merged ") {
+            // `t0.row0.cell1 across 2 down 3; t0.row2.cell0 down 2`
+            for cell in cells.split("; ") {
+                let mut words = cell.split(' ');
+                let Some((row, at)) = words.next().and_then(row_and_cell) else {
+                    continue;
+                };
+                let (mut across, mut down) = (1, 1);
+                while let (Some(word), Some(Ok(n))) =
+                    (words.next(), words.next().map(str::parse::<usize>))
+                {
+                    match word {
+                        "across" => across = n.clamp(1, MOST_GRID),
+                        "down" => down = n.clamp(1, MOST_GRID),
+                        _ => {}
+                    }
+                }
+                parsed.merges.insert((row, at), (across, down));
+            }
         }
         for (word, inserted) in [("break-ins ", true), ("break-del ", false)] {
             let Some(marks) = clause.strip_prefix(word) else {
@@ -207,6 +245,14 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             .collect();
     }
     Some(parsed)
+}
+
+/// The row and cell of `t0.row2.cell1`.
+fn row_and_cell(id: &str) -> Option<(usize, usize)> {
+    let mut parts = id.split('.').skip(1);
+    let row = parts.next()?.strip_prefix("row")?.parse().ok()?;
+    let cell = parts.next()?.strip_prefix("cell")?.parse().ok()?;
+    parts.next().is_none().then_some((row, cell))
 }
 
 /// The most empty paragraphs one id line stands for: a bound on what a

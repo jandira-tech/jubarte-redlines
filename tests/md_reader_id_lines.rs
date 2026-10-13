@@ -268,3 +268,34 @@ fn a_cell_paragraph_keeps_the_mark_its_table_line_names() {
                 |{++A++}{>>r6 @AC<<}{++<br>B++}{>>r7 @AC<<}|C|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
+
+#[test]
+fn a_cell_spanning_columns_comes_back_as_one_cell() {
+    // The view prints a span's other columns as empty cells: they are no
+    // cells of their own, so the paragraphs after the table keep their ids.
+    let md = "<!-- t0 2x2, cells p0-p2 by row, merged t0.row0.cell0 across 2 -->\n\
+              |Head||\n|-|-|\n|a|b|\n\n<!-- p3 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn a_vertical_merge_comes_back_over_its_rows() {
+    let md = "<!-- t0 3x2, cells p0-p5 by row, merged t0.row0.cell0 down 3 -->\n\
+              |A|B|\n|-|-|\n||C|\n||D|\n\n<!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn a_spanning_merge_comes_back_on_every_row_it_covers() {
+    let md = "<!-- t0 2x3, cells p0-p3 by row, merged t0.row0.cell0 across 2 down 2; \
+              t0.row1.cell0 across 2 -->\n|A||B|\n|-|-|-|\n|||C|\n\n<!-- p4 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn empty_trailing_columns_come_back() {
+    // The view drops the columns no row writes in; the table line still
+    // counts them and their paragraphs.
+    let md = "<!-- t0 2x3, cells p0-p5 by row -->\n|A|B|\n|-|-|\n|C|D|\n\n<!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
