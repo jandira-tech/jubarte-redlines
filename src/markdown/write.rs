@@ -384,6 +384,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
             }
             Tag::FootnoteDefinition(label) => {
+                // An id line with no text before it is a body paragraph.
+                self.textless_paragraph();
                 self.end_paragraph();
                 let label = critic::decode(&label);
                 // A second definition of a label is not the note's text.
@@ -656,9 +658,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             paragraph.align = align;
         }
         // What the id line before it says.
-        if let Some(line) = self.id_line.take()
-            && self.cell.is_none()
+        if self.cell.is_none()
             && self.target.is_none()
+            && let Some(line) = self.id_line.take()
         {
             let styled = line.style.is_some();
             if let Some(style) = line.style {

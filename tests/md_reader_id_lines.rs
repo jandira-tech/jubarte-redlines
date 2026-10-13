@@ -232,3 +232,14 @@ fn fresh_numbers_stay_within_what_word_reads() {
     assert!(document.contains("w:id=\"2147483647\""), "{document}");
     assert!(!document.contains("2147483648"), "{document}");
 }
+
+#[test]
+fn an_id_line_before_a_footnote_definition_keeps_its_paragraph() {
+    let md = "<!-- p0 -->\nText.[^1]\n\n<!-- p1 page-break -->\n\n[^1]: The note.\n";
+    let lines = paragraphs(&as_view(md));
+    assert_eq!(
+        lines,
+        ["<!-- p0 -->", "<!-- p1 page-break -->"],
+        "{lines:?}"
+    );
+}
