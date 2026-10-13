@@ -83,6 +83,14 @@ fn capabilities_roundtrip_preserves_runtime_and_scope_limits() {
         let decoded = serde_json::from_str(&capabilities_json(runtime)).unwrap();
         assert_eq!(capabilities(runtime), decoded);
     }
+    // A manifest stored before `validate_rules`, `formats` and `ids` still
+    // reads.
+    let mut older: serde_json::Value = serde_json::from_str(&capabilities_json("rust")).unwrap();
+    for key in ["validate_rules", "formats", "ids"] {
+        older.as_object_mut().unwrap().remove(key);
+    }
+    let older: jubarte::capabilities::Capabilities = serde_json::from_value(older).unwrap();
+    assert!(older.formats.is_empty() && older.ids.change.is_empty());
     let manifest = capabilities("rust");
     assert_eq!(
         manifest.limits.stories,

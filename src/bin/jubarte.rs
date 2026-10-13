@@ -2539,9 +2539,18 @@ fn cli_main() -> ExitCode {
             };
             return edit_exit(run_flags(&flags));
         }
-        Some(Command::Capabilities { .. }) => {
-            outln!("{}", jubarte::capabilities::capabilities_json("cli"));
-            return ExitCode::SUCCESS;
+        Some(Command::Capabilities { json }) => {
+            let manifest = jubarte::capabilities::capabilities("cli");
+            let printed = if json {
+                outln!(
+                    "{}",
+                    serde_json::to_string_pretty(&manifest).expect("manifest serializes")
+                );
+                Ok(())
+            } else {
+                write_stdout(jubarte::capabilities::capabilities_text(&manifest))
+            };
+            return exit_code(printed);
         }
         Some(Command::SelfUpdate {
             check,

@@ -958,7 +958,7 @@ pub enum Command {
     },
     /// What this binary can do, for agents choosing an operation.
     Capabilities {
-        /// Emit JSON (the default output is JSON too; the flag documents intent).
+        /// The manifest as JSON instead of the text summary.
         #[arg(long)]
         json: bool,
     },

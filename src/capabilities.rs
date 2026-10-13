@@ -15,6 +15,8 @@
 //! plan schema version and the story kinds come from `crate::inspect`, so
 //! the manifest cannot drift from the parser.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Machine-readable capability manifest (`schema_version` 1).
@@ -42,6 +44,29 @@ pub struct Capabilities {
     /// ([`crate::validate::RULE_SETS`]).
     #[serde(default)]
     pub validate_rules: Vec<String>,
+    /// The extensions each task's `-o` writes, by task
+    /// ([`OUTPUT_FORMATS`]; `diff` writes text under five).
+    #[serde(default)]
+    pub formats: BTreeMap<String, Vec<String>>,
+    /// The id spellings each kind of target takes.
+    #[serde(default)]
+    pub ids: Ids,
+}
+
+/// The id spellings the CLI, plans and selectors take, by kind
+/// ([`crate::ids`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ids {
+    /// Tracked changes (`accept`/`reject --id`, `edit -p … --accept`).
+    pub change: Vec<String>,
+    /// Comments (`edit`/`add -p`, a plan's `comment_id`).
+    pub comment: Vec<String>,
+    /// Paragraphs (`edit`/`add -p`, `read -p`).
+    pub paragraph: Vec<String>,
+    /// Tables (`edit -p tN`).
+    pub table: Vec<String>,
+    /// How ids print.
+    pub note: String,
 }
 
 /// Availability per operation.
@@ -130,6 +155,66 @@ pub struct Operations {
     pub audit: bool,
 }
 
+impl Operations {
+    /// Each operation and whether this build has it, in declaration order.
+    pub fn entries(&self) -> Vec<(&'static str, bool)> {
+        let Self {
+            compare,
+            accept_revisions,
+            reject_revisions,
+            selective_revisions,
+            revision_records,
+            pdf,
+            png,
+            inspect_body,
+            markdown,
+            edit,
+            comments,
+            markdown_to_docx,
+            markdown_diff,
+            patch,
+            diff_render,
+            page_ranges,
+            comment_threads,
+            edit_keeps_revisions,
+            append,
+            content_controls,
+            validate,
+            repair,
+            fields,
+            scrub,
+            audit,
+        } = self;
+        vec![
+            ("compare", *compare),
+            ("accept_revisions", *accept_revisions),
+            ("reject_revisions", *reject_revisions),
+            ("selective_revisions", *selective_revisions),
+            ("revision_records", *revision_records),
+            ("pdf", *pdf),
+            ("png", *png),
+            ("inspect_body", *inspect_body),
+            ("markdown", *markdown),
+            ("edit", *edit),
+            ("comments", *comments),
+            ("markdown_to_docx", *markdown_to_docx),
+            ("markdown_diff", *markdown_diff),
+            ("patch", *patch),
+            ("diff_render", *diff_render),
+            ("page_ranges", *page_ranges),
+            ("comment_threads", *comment_threads),
+            ("edit_keeps_revisions", *edit_keeps_revisions),
+            ("append", *append),
+            ("content_controls", *content_controls),
+            ("validate", *validate),
+            ("repair", *repair),
+            ("fields", *fields),
+            ("scrub", *scrub),
+            ("audit", *audit),
+        ]
+    }
+}
+
 /// Documented scope limits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
@@ -205,6 +290,14 @@ pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
     ("edit", &["docx"]),
     ("add", &["docx"]),
 ];
+
+/// What `diff -o` writes: text, under any of these extensions.
+pub const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"];
+
+/// How ids print, for [`Ids::note`].
+pub const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \
+     {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under their table \
+     (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh";
 
 /// The manifest for `runtime`.
 #[must_use]
@@ -288,7 +381,94 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             .iter()
             .map(|set| set.to_string())
             .collect(),
+        formats: OUTPUT_FORMATS
+            .iter()
+            .map(|(task, names)| {
+                let names = if *task == "diff" {
+                    DIFF_EXTENSIONS
+                } else {
+                    names
+                };
+                let extensions = names.iter().map(|name| format!(".{name}")).collect();
+                ((*task).to_string(), extensions)
+            })
+            .collect(),
+        ids: Ids {
+            change: strings(crate::ids::CHANGE_SPELLINGS),
+            comment: strings(crate::ids::COMMENT_SPELLINGS),
+            paragraph: strings(crate::ids::PARAGRAPH_SPELLINGS),
+            table: strings(crate::ids::TABLE_SPELLINGS),
+            note: IDS_NOTE.to_string(),
+        },
     }
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
+/// The manifest as text: `engine:`, one `NAME: yes|no` line per operation,
+/// then the plan versions and kinds, stories, limits, validate rules, audit
+/// codes, `-o` formats and id spellings, and a pointer to `--json`.
+#[must_use]
+pub fn capabilities_text(c: &Capabilities) -> String {
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    let mut out = format!("engine: jubarte {} ({})\n", c.engine_version, c.runtime);
+    for (name, has) in c.operations.entries() {
+        out.push_str(&format!("{name}: {}\n", yes(has)));
+    }
+    let versions: Vec<String> = c.edit_plan_versions.iter().map(u32::to_string).collect();
+    out.push_str(&format!("edit plan versions: {}\n", versions.join(", ")));
+    out.push_str(&format!(
+        "edit operations: {}\n",
+        c.edit_operations.join(", ")
+    ));
+    out.push_str(&format!("stories: {}\n", c.limits.stories.join(", ")));
+    let input = &c.limits.input;
+    out.push_str(&format!(
+        "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \
+         {} bytes compressed, {} entries, {} bytes per part, {} bytes uncompressed, \
+         XML depth {}\n",
+        yes(c.limits.plain_text_runs),
+        yes(c.limits.refuses_opaque_ranges),
+        yes(c.limits.reads_legacy_doc),
+        input.max_compressed_bytes,
+        input.max_entries,
+        input.max_part_bytes,
+        input.max_uncompressed_bytes,
+        input.max_xml_depth
+    ));
+    let rules: Vec<String> = c
+        .validate_rules
+        .iter()
+        .map(|rule| {
+            if rule == "word" {
+                format!("{rule} (default)")
+            } else {
+                rule.clone()
+            }
+        })
+        .collect();
+    out.push_str(&format!("validate rules: {}\n", rules.join(", ")));
+    out.push_str(&format!("audit codes: {}\n", c.audit_rules.join(", ")));
+    let formats: Vec<String> = OUTPUT_FORMATS
+        .iter()
+        .filter_map(|(task, _)| {
+            let extensions = c.formats.get(*task)?;
+            Some(format!("{task} {}", extensions.join(" ")))
+        })
+        .collect();
+    out.push_str(&format!("formats: {}\n", formats.join("; ")));
+    out.push_str(&format!(
+        "ids: revisions {}; comments {}; paragraphs {}; tables {}\n",
+        c.ids.change.join(", "),
+        c.ids.comment.join(", "),
+        c.ids.paragraph.join(", "),
+        c.ids.table.join(", ")
+    ));
+    out.push_str(&format!("ids note: {}\n", c.ids.note));
+    out.push_str("run with --json for the manifest\n");
+    out
 }
 
 /// [`capabilities`] as JSON.
