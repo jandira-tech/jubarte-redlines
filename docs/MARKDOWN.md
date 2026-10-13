@@ -100,6 +100,7 @@ cross emphasis, links and paragraph breaks.
 | `{==text==}{>>note<<}` | a comment on `text` |
 | `{++new++}{>>note<<}` | a comment on the change |
 | `{>>note<<}` alone | a comment at that point |
+| `{>>note<<}` in a footnote, header or footer | Word allows comments only in the body: in a footnote the comment moves to the note's reference mark, in a header or footer it is dropped and its text kept; both warn |
 | `{==text==}` alone | highlighted text |
 
 Every change and comment gets `--author` and `--datetime` (fixed by default,

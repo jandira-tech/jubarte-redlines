@@ -168,7 +168,8 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
         ty,
         part,
         paragraph,
-        text: text_of("text").unwrap_or("").to_string(),
+        // The writer reads the front matter with CriticMarkup encoded.
+        text: super::critic::restore(text_of("text").unwrap_or("")),
         align: if flag("center") {
             Some("center")
         } else if flag("right") {

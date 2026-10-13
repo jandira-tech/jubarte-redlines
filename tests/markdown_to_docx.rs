@@ -987,3 +987,45 @@ fn only_a_top_level_track_changes_key_counts() {
         written.warnings
     );
 }
+
+#[test]
+fn a_comment_in_a_footnote_moves_to_its_reference() {
+    // Word shows a comment only from the body: the note's comment anchors
+    // on the note's reference mark, and the writer says so.
+    let written = markdown_to_docx(
+        "Text[^1] and again[^1].\n\n[^1]: note {>>a comment<<} here\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let notes = part_string(&written.docx, "word/footnotes.xml").unwrap();
+    assert!(!notes.contains("comment"), "{notes}");
+    let body = document_xml(&written.docx);
+    assert_eq!(body.matches("<w:commentReference").count(), 1, "{body}");
+    let start = body.find("<w:commentRangeStart").unwrap();
+    let reference = body.find("<w:footnoteReference").unwrap();
+    let end = body.find("<w:commentRangeEnd").unwrap();
+    assert!(start < reference && reference < end, "{body}");
+    assert!(
+        written.warnings.iter().any(|w| w.contains("footnote")),
+        "{:?}",
+        written.warnings
+    );
+    assert_word_valid_package(&written.docx);
+}
+
+#[test]
+fn a_comment_in_a_header_is_dropped_with_its_text_kept() {
+    let written = markdown_to_docx(
+        "---\nsections:\n  1: {p0-p0, headers: {default: {id: header1, text: \"Head {>>hc<<}\"}}}\n---\n\nBody.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let header = part_string(&written.docx, "word/header1.xml").unwrap();
+    assert!(header.contains(">Head <"), "{header}");
+    assert!(!header.contains("hc"), "{header}");
+    assert!(
+        written.warnings.iter().any(|w| w.contains("header")),
+        "{:?}",
+        written.warnings
+    );
+}

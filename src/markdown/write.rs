@@ -1678,6 +1678,47 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// Word lets no one comment in a footnote and shows no comment from
+    /// one: a note's comment anchors on the note's first reference mark in
+    /// the body instead, and the warnings say so.
+    fn comments_out_of_notes(&mut self) {
+        let mut moved: Vec<(u32, u32)> = Vec::new();
+        for (index, note) in self.document.notes.iter_mut().enumerate() {
+            let position = u32::try_from(index + 1).unwrap_or(u32::MAX);
+            for item in &note.items {
+                if let Item::RangeStart(slot) = item
+                    && let Some(id) = self.document.slots.get_mut(*slot).and_then(Option::take)
+                    && !moved.iter().any(|(_, seen)| *seen == id)
+                {
+                    moved.push((position, id));
+                }
+            }
+            note.items
+                .retain(|item| !matches!(item, Item::RangeEnd(_) | Item::CommentReference(_)));
+        }
+        for (position, id) in moved {
+            let Some(at) = self.document.body.iter().position(|item| {
+                matches!(item, Item::Run(Run { content: Content::NoteReference(p), .. }) if *p == position)
+            }) else {
+                continue;
+            };
+            let slot = self.new_slot();
+            self.document.slots[slot] = Some(id);
+            self.document.body.splice(
+                at..=at,
+                [
+                    Item::RangeStart(slot),
+                    self.document.body[at].clone(),
+                    Item::RangeEnd(id),
+                    Item::CommentReference(id),
+                ],
+            );
+            self.document.warnings.push(format!(
+                "comment in footnote {position} moved to its reference mark: Word shows comments only in the body"
+            ));
+        }
+    }
+
     /// `title:`, `author:` and `track_changes:` from a YAML front matter
     /// block.
     fn metadata(&mut self, text: &str) {
@@ -1740,6 +1781,23 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 _ => {}
             }
+        }
+        // Word lets no one comment in a header or footer, and shows no
+        // comment from one: the text stays, the comment goes.
+        let mut dropped: Vec<String> = self
+            .document
+            .stories
+            .values()
+            .flat_map(|stories| &stories.stories)
+            .filter(|story| story.text.contains("{>>") && story.text.contains("<<}"))
+            .map(|story| story.part.clone())
+            .collect();
+        dropped.sort_unstable();
+        dropped.dedup();
+        for part in dropped {
+            self.document.warnings.push(format!(
+                "comment in {part} dropped: Word shows comments only in the body, never in a header or footer"
+            ));
         }
     }
 
@@ -1888,6 +1946,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             finish_story(&mut items);
             self.document.notes.push(Note { items, change });
         }
+        self.comments_out_of_notes();
         renumber_comments(&mut self.document);
         self.document
     }

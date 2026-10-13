@@ -301,6 +301,29 @@ pub(crate) fn decode(text: &str) -> String {
     out
 }
 
+/// The source of encoded text as it was written, delimiters and all.
+pub(crate) fn restore(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pieces = Pieces::default();
+    pieces.feed(text, |piece| match piece {
+        Piece::Text(text) => out.push_str(text),
+        Piece::Token(token) => out.push_str(match token {
+            Token::InsertStart => "{++",
+            Token::InsertEnd => "++}",
+            Token::DeleteStart => "{--",
+            Token::DeleteEnd => "--}",
+            Token::SubstituteStart => "{~~",
+            Token::SubstituteSeparator => "~>",
+            Token::SubstituteEnd => "~~}",
+            Token::HighlightStart => "{==",
+            Token::HighlightEnd => "==}",
+            Token::CommentStart => "{>>",
+            Token::CommentEnd => "<<}",
+        }),
+    });
+    out
+}
+
 /// Text or a delimiter, in source order.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Piece<'a> {
