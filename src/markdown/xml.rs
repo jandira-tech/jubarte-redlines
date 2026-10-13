@@ -28,6 +28,8 @@ pub(super) struct RunFormat {
     pub underline: bool,
     pub superscript: bool,
     pub subscript: bool,
+    /// `<mark>`: a yellow highlight of its own.
+    pub mark: bool,
     pub code: bool,
     pub link: bool,
 }
@@ -646,7 +648,7 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     if format.strike {
         out.push_str("<w:strike/>");
     }
-    if context.highlighted(run) {
+    if format.mark || context.highlighted(run) {
         out.push_str("<w:highlight w:val=\"yellow\"/>");
     }
     if format.underline {

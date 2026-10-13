@@ -48,6 +48,7 @@ document's properties.
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
 | `---` | a paragraph with a bottom border |
 | `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline |
+| `<b>`/`<strong>`, `<i>`/`<em>`, `<s>`/`<del>`, `<code>`, `<mark>` | bold, italic, strike, `VerbatimChar`, yellow highlight; attributes and case do not matter, a tag left open closes with its block, and any other tag keeps its text and is named once in a warning |
 | `x ^2^`, `x ~2~` | superscript, subscript, at word edges only (pulldown-cmark opens neither inside a word: `H~2~O` is text) |
 
 Images are read relative to the Markdown file, or to `--resource-path`;

@@ -553,6 +553,62 @@ fn a_bookmark_name_keeps_to_forty_characters() {
 }
 
 #[test]
+fn inline_html_bold_italic_strike_code_and_mark() {
+    // The common inline tags format their text as their Markdown siblings
+    // do; a tag's attributes and case do not matter. `<mark>` is Word's
+    // yellow highlight, alone.
+    let docx = write(
+        "<b>b</b> <strong>s</strong> <i>i</i> <em>e</em> <s>x</s> <del>d</del> \
+         <code>c</code> <mark>m</mark> <B CLASS=\"k\">attr</B>.\n",
+    );
+    let xml = document_xml(&docx);
+    for (element, count) in [
+        ("<w:b/>", 3),
+        ("<w:i/>", 2),
+        ("<w:strike/>", 2),
+        ("<w:rStyle w:val=\"VerbatimChar\"/>", 1),
+        ("<w:highlight w:val=\"yellow\"/>", 1),
+    ] {
+        assert_eq!(xml.matches(element).count(), count, "{element}\n{xml}");
+    }
+    assert!(!xml.contains("w:em "), "{xml}");
+    assert_eq!(texts(&docx), ["b s i e x d c m attr."]);
+}
+
+#[test]
+fn an_unclosed_inline_tag_ends_with_its_block() {
+    // `<b>` without `</b>` formats the rest of its paragraph, cell or
+    // heading, never the blocks after it.
+    let docx = write("# <u>head\n\n<b>open and **strong\n\n|<i>a|b|\n|-|-|\n|c|d|\n\nplain\n");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:u ").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<w:i/>").count(), 1, "{xml}");
+    let plain = xml.split("plain").next().unwrap();
+    let last = &plain[plain.rfind("<w:r>").unwrap()..];
+    assert!(!last.contains("<w:b/>"), "{xml}");
+}
+
+#[test]
+fn inline_html_the_writer_drops_is_named_once_in_a_warning() {
+    // A tag the writer does not know keeps its text and loses its markup;
+    // the warning names each such tag once. Comments are no tags.
+    let written = markdown_to_docx(
+        "<span>kept</span> and <kbd>K</kbd> and <span class=\"x\">again</span> <!-- note -->.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(texts(&written.docx), ["kept and K and again ."]);
+    let html: Vec<&String> = written
+        .warnings
+        .iter()
+        .filter(|w| w.contains("HTML"))
+        .collect();
+    assert_eq!(html.len(), 2, "{:?}", written.warnings);
+    assert!(html[0].contains("<span>"), "{html:?}");
+    assert!(html[1].contains("<kbd>"), "{html:?}");
+}
+
+#[test]
 fn inline_html_quotes_code_in_lists_and_anchors() {
     let docx = write(
         "H<sub>2</sub>O and E=mc<sup>2</sup>, <u>underlined</u>, a<br>break, <span>kept</span>.\n\n\

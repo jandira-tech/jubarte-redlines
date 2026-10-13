@@ -397,6 +397,10 @@ struct Writer<'o, 'a> {
     underline: u32,
     superscript: u32,
     subscript: u32,
+    /// Open `<mark>` tags: a yellow highlight.
+    mark: u32,
+    /// The inline HTML tags dropped so far, each warned of once.
+    dropped_html: Vec<String>,
     code: u32,
     link: u32,
 
@@ -472,6 +476,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             underline: 0,
             superscript: 0,
             subscript: 0,
+            mark: 0,
+            dropped_html: Vec::new(),
             code: 0,
             link: 0,
             pieces: Pieces::default(),
@@ -692,6 +698,14 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn end(&mut self, tag: TagEnd) {
+        // Markdown's own marks close inside their block; an inline HTML tag
+        // left open (`<b>` without `</b>`) closes with it.
+        if matches!(
+            tag,
+            TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::Item | TagEnd::TableCell
+        ) {
+            self.close_inline_tags();
+        }
         match tag {
             TagEnd::Paragraph => self.end_paragraph(),
             TagEnd::Heading(_) => {
@@ -1155,6 +1169,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             underline: self.underline > 0,
             superscript: self.superscript > 0,
             subscript: self.subscript > 0,
+            mark: self.mark > 0,
             code: self.code > 0,
             link: self.link > 0,
         }
@@ -1519,31 +1534,87 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn inline_html(&mut self, html: &str) {
-        let tag: String = html
+        let Some(inner) = html
+            .trim()
+            .strip_prefix('<')
+            .and_then(|t| t.strip_suffix('>'))
+        else {
+            return;
+        };
+        // A comment or a declaration is no tag.
+        if inner.starts_with('!') || inner.starts_with('?') {
+            return;
+        }
+        let (closing, inner) = match inner.trim_start().strip_prefix('/') {
+            Some(rest) => (true, rest),
+            None => (false, inner),
+        };
+        let name = inner
+            .trim_start()
             .chars()
-            .filter(|c| !c.is_whitespace())
+            .take_while(char::is_ascii_alphanumeric)
             .collect::<String>()
             .to_ascii_lowercase();
-        match tag.as_str() {
-            "<br>" | "<br/>" => {
-                if let Some(comment) = &mut self.comment {
-                    comment.paragraphs.push(String::new());
-                } else if self.cell.is_some() && self.row_breaks {
-                    // A cell's paragraphs, as the view joins them.
-                    self.ensure_paragraph();
-                    self.end_paragraph();
-                    self.begin_paragraph();
-                } else {
-                    self.push(Content::Break);
+        let counter = match name.as_str() {
+            "br" => {
+                if !closing {
+                    self.line_break();
                 }
+                return;
             }
-            "<sup>" => self.superscript += 1,
-            "</sup>" => self.superscript = self.superscript.saturating_sub(1),
-            "<sub>" => self.subscript += 1,
-            "</sub>" => self.subscript = self.subscript.saturating_sub(1),
-            "<u>" | "<ins>" => self.underline += 1,
-            "</u>" | "</ins>" => self.underline = self.underline.saturating_sub(1),
-            _ => {}
+            "b" | "strong" => &mut self.bold,
+            "i" | "em" => &mut self.italic,
+            "s" | "del" | "strike" => &mut self.strike,
+            "u" | "ins" => &mut self.underline,
+            "sup" => &mut self.superscript,
+            "sub" => &mut self.subscript,
+            "code" => &mut self.code,
+            "mark" => &mut self.mark,
+            _ => {
+                if !name.is_empty() && !self.dropped_html.contains(&name) {
+                    self.document.warnings.push(format!(
+                        "inline HTML <{name}> dropped: its text is kept, its markup is not"
+                    ));
+                    self.dropped_html.push(name);
+                }
+                return;
+            }
+        };
+        if closing {
+            *counter = counter.saturating_sub(1);
+        } else {
+            *counter += 1;
+        }
+    }
+
+    /// Closes every inline formatting mark still open.
+    fn close_inline_tags(&mut self) {
+        for counter in [
+            &mut self.bold,
+            &mut self.italic,
+            &mut self.strike,
+            &mut self.underline,
+            &mut self.superscript,
+            &mut self.subscript,
+            &mut self.code,
+            &mut self.mark,
+        ] {
+            *counter = 0;
+        }
+    }
+
+    /// `<br>`: a new paragraph of a comment, of a cell whose `<br>`s end
+    /// paragraphs, or else a line break.
+    fn line_break(&mut self) {
+        if let Some(comment) = &mut self.comment {
+            comment.paragraphs.push(String::new());
+        } else if self.cell.is_some() && self.row_breaks {
+            // A cell's paragraphs, as the view joins them.
+            self.ensure_paragraph();
+            self.end_paragraph();
+            self.begin_paragraph();
+        } else {
+            self.push(Content::Break);
         }
     }
 
