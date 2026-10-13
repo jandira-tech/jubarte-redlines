@@ -27,9 +27,9 @@ uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --autho
 
 `redline` is an alias of `compare`; `python -m jubarte_redlines` runs the
 same commands. The wheel speaks the shared command set — `compare`/`redline`,
-`revisions`, `changes`, `accept`, `reject`, `inspect`, `text`, `edit`,
-`convert`, `capabilities` — but not the whole Rust binary surface: it has no
-`diff`, `debug` or `self-update`. Exit codes: 0 success, 1 error, 2 usage,
+`changes`, `accept`, `reject`, `convert`, `diff`, `read`, `edit`, `add`,
+`capabilities`, `visual-diff`, `comments`, `validate` — but not the whole
+Rust binary surface: it has no `append`, `scrub`, `debug` or `self-update`. Exit codes: 0 success, 1 error, 2 usage,
 3 edit plan refused. Inputs are `.docx`; save a Word 97-2003 `.doc` as
 `.docx` first.
 
@@ -1250,7 +1250,7 @@ doc.markdown()    # every story as Markdown with [body:p:N] ids
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations)
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change with its stable id
-doc.accept(ids=["body:rev:12"])              # or doc.reject(...): resolve a
+doc.accept(ids=["r12"])                      # or doc.reject(...): resolve a
                                              # selection, keep the rest tracked
 result = doc.render(pdf=True, png_dpi=144)   # Rendered: pdf, pngs, page report
 ```
