@@ -1790,8 +1790,10 @@ fn retired_spellings_are_scoped_and_listed_once() {
         vec![],
         "a value after the task is not a task either"
     );
-    // 0.12's cell form, as a -p value of edit or add, in every spelling.
-    let cell = vec![("tN.rR.cC", "tN.rowR.cellC")];
+    // 0.12's cell form is expired, not retired: the id parsers refuse it
+    // with its settled spelling, so it earns no note. Every spelling of the
+    // -p value is still skipped as a value (a short cluster, `=`, after a
+    // flag that takes none).
     for argv in [
         &["edit", "a", "-p", "t0.r1.c2", "--content", "x"][..],
         &["edit", "a", "-pt0.r1.c2.p1", "--content", "x"],
@@ -1803,18 +1805,15 @@ fn retired_spellings_are_scoped_and_listed_once() {
             "--content",
             "x",
         ],
-        &["add", "a", "--location", "t1.r0.c0", "-p", "t2.r1.c1"],
-        // A short cluster: -q takes no value, so -p's is the next token.
         &["edit", "a", "-qp", "t0.r1.c2", "--content", "x"],
         &["edit", "a", "-qpt0.r1.c2", "--content", "x"],
         &["edit", "--content", "x", "a", "-p", "t0.r1.c2"],
-        // --delete takes no value, so -p after it is still an option.
         &["edit", "a", "--delete", "-p", "t0.r1.c2"],
+        &["read", "a", "-p", "t0.r1.c2"],
     ] {
-        assert_eq!(notes(argv), cell, "{argv:?}");
+        assert_eq!(notes(argv), vec![], "{argv:?}");
     }
-    // A retired spelling (--date for --datetime) takes its value, with its
-    // note ahead of the cell's.
+    // A retired spelling (--date for --datetime) takes its value.
     assert_eq!(
         notes(&[
             "edit",
@@ -1826,22 +1825,16 @@ fn retired_spellings_are_scoped_and_listed_once() {
             "--content",
             "x",
         ]),
-        vec![("--date", "--datetime"), ("tN.rR.cC", "tN.rowR.cellC"),]
+        vec![("--date", "--datetime")]
     );
+    // A -p value spelled like a retired flag is a value, not the flag.
     assert_eq!(
-        notes(&["edit", "a", "-p", "t0.row1.cell2", "--content", "x"]),
+        notes(&["edit", "a", "-p", "--date", "--content", "x"]),
         vec![]
     );
-    assert_eq!(notes(&["read", "a", "-p", "t0.r1.c2"]), vec![]);
     assert_eq!(
         retired_note("diff-render", "visual-diff"),
         "note: diff-render is now visual-diff; diff-render is removed in 0.14"
-    );
-    let parsed = parse(&["edit", "a", "-p", "t0.r1.c2", "--content", "x"], &[]);
-    assert_eq!(parsed["exit_code"], 0, "{parsed}");
-    assert_eq!(
-        parsed["notes"][0],
-        "note: tN.rR.cC is now tN.rowR.cellC; tN.rR.cC is removed in 0.14"
     );
 }
 

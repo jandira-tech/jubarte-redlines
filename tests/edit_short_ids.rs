@@ -89,7 +89,8 @@ fn a_short_id_that_points_nowhere_is_refused_and_named() {
         ),
         ("t0.row2.cell0", "t0 has 2 rows, no row 2"),
         ("t0.row0.cell2", "t0.row0 has 2 cells, no cell 2"),
-        ("t0.r0.c2", "t0.row0 has 2 cells, no cell 2"),
+        // 0.12's cell form is expired: refused with its settled spelling.
+        ("t0.r0.c2", "the settled spelling is t0.row0.cell2"),
         ("t0.row0.cell0.p1", "t0.row0.cell0 has 1 paragraph, no p1"),
         (
             "t0",
@@ -99,16 +100,10 @@ fn a_short_id_that_points_nowhere_is_refused_and_named() {
             "t0.row1",
             "t0.row1: a table id needs a row and a cell, as t0.row1.cell2",
         ),
-        (
-            "t0.r01.c1",
-            "t0.r01.c1: -p takes a paragraph (p12 or 12), a story paragraph",
-        ),
-        ("header", "header is not a story of this document"),
-        (
-            "px",
-            "px is not a story of this document (stories: body, header1)",
-        ),
-        ("p012", "unknown paragraph id p012"),
+        ("t0.r01.c1", "t0.r01.c1: expected a short id such as p12"),
+        ("header", "header: expected a short id such as p12"),
+        ("px", "px: expected a short id such as p12"),
+        ("p012", "p012: expected a short id such as p12"),
     ] {
         let e = apply_plan(
             &source(),
@@ -332,7 +327,7 @@ fn equivalent_short_and_long_selectors_edit_the_same_content() {
     for (short, long, find) in [
         ("p0", "body:p:0", "Zero"),
         ("p6", "body:p:6", "Six"),
-        ("t0.row1.cell1.p0", "body:p:4", "Day 10"),
+        ("t0.row1.cell1", "body:p:4", "Day 10"),
         ("header1.p0", "header1:p:0", "DRAFT"),
     ] {
         let edit = |selector| {
@@ -513,25 +508,28 @@ fn a_plan_comment_id_takes_every_comment_spelling() {
         assert!(out.report.ok, "{id}: {:?}", out.report.operations);
         common::docx::part_string(&out.redline, "word/comments.xml").unwrap()
     };
-    let want = reply(serde_json::json!(5));
-    for id in [
-        serde_json::json!("c5"),
-        serde_json::json!("#c5"),
-        serde_json::json!("5"),
+    // A JSON number is a typed value; a string is an id, settled only.
+    assert_eq!(reply(serde_json::json!("c5")), reply(serde_json::json!(5)));
+    for (id, message) in [
+        ("p5", "p5: expected a comment id such as c27"),
+        (
+            "#c5",
+            "#c5: expected a comment id such as c27; the settled spelling is c5",
+        ),
+        (
+            "5",
+            "5: expected a comment id such as c27; the settled spelling is c5",
+        ),
     ] {
-        assert_eq!(reply(id.clone()), want, "{id}");
+        let operations = serde_json::json!([{
+            "kind": "reply_comment", "comment_id": id, "text": "Yes."
+        }]);
+        let error = EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"A","operations":{operations}}}"#
+        ))
+        .unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
     }
-    let operations = r#"[{"kind":"reply_comment","comment_id":"p5","text":"Yes."}]"#;
-    let error = EditPlan::from_json(&format!(
-        r#"{{"schema_version":1,"author":"A","operations":{operations}}}"#
-    ))
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("p5: expected a comment id such as c27 or 27"),
-        "{error}"
-    );
 }
 
 /// `jubarte edit ARGS` under a pinned timestamp, so two runs compared byte
@@ -549,10 +547,20 @@ fn edit_cli(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
 /// `-p 6` is `-p p6`; `-p '#c5'` (0.12's spelling, passed as argv) is
 /// `-p c5`; `-p footnotes.p0` edits the note.
 #[test]
-fn the_cli_p_flag_takes_bare_numbers_hash_comments_and_notes() {
+fn the_cli_p_flag_takes_settled_ids_and_refuses_expired_ones() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("src.docx"), source()).unwrap();
-    for (n, at) in ["6", "p6"].iter().enumerate() {
+    // Expired spellings (Arthur, 2026-10-13) exit 2 with the settled one.
+    for (at, settled) in [("6", "p6, r6 or c6"), ("#c5", "c5")] {
+        let out = edit_cli(dir.path(), &["src.docx", "-p", at, "--resolve"]);
+        assert_eq!(out.status.code(), Some(2), "{at}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("the settled spelling is {settled}")),
+            "{at}: {stderr}"
+        );
+    }
+    for (n, at) in ["p6", "p6"].iter().enumerate() {
         let out_dir = format!("out{n}");
         let out = edit_cli(
             dir.path(),
@@ -582,7 +590,7 @@ fn the_cli_p_flag_takes_bare_numbers_hash_comments_and_notes() {
     );
 
     std::fs::write(dir.path().join("received.docx"), received()).unwrap();
-    for (n, at) in ["c5", "#c5"].iter().enumerate() {
+    for (n, at) in ["c5", "c5"].iter().enumerate() {
         let out_dir = format!("reply{n}");
         let out = edit_cli(
             dir.path(),
@@ -650,41 +658,42 @@ fn the_cli_p_flag_takes_bare_numbers_hash_comments_and_notes() {
     );
 }
 
-/// 0.12's cell form `t0.r1.c1.p1` edits what `t0.row1.cell1.p1` edits.
+/// 0.12's cell form `t0.r1.c1.p1` is expired: refused with exit 2 and the
+/// settled `t0.row1.cell1.p1`, which edits the cell.
 #[test]
-fn the_retired_cell_form_edits_the_same_cell() {
+fn the_expired_cell_form_is_refused_with_its_settled_spelling() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("src.docx"), source()).unwrap();
-    for (n, at) in ["t0.row1.cell1.p1", "t0.r1.c1.p1"].iter().enumerate() {
-        let out_dir = format!("out{n}");
-        let out = edit_cli(
-            dir.path(),
-            &[
-                "src.docx",
-                "-p",
-                at,
-                "--anchor",
-                "later",
-                "--content",
-                "earlier",
-                "--out-dir",
-                &out_dir,
-            ],
-        );
-        assert!(
-            out.status.success(),
-            "{at}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
+    let args = |at: &'static str, out_dir: &'static str| {
+        [
+            "src.docx",
+            "-p",
+            at,
+            "--anchor",
+            "later",
+            "--content",
+            "earlier",
+            "--out-dir",
+            out_dir,
+        ]
+    };
+    let out = edit_cli(dir.path(), &args("t0.row1.cell1.p1", "out0"));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let a = std::fs::read(dir.path().join("out0/redline.docx")).unwrap();
-    let b = std::fs::read(dir.path().join("out1/redline.docx")).unwrap();
     let body = common::docx::part_string(&a, "word/document.xml").unwrap();
     assert!(body.contains(">earlier<"), "{body}");
-    assert_eq!(
-        Some(body),
-        common::docx::part_string(&b, "word/document.xml")
+    let out = edit_cli(dir.path(), &args("t0.r1.c1.p1", "out1"));
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("the settled spelling is t0.row1.cell1.p1"),
+        "{stderr}"
     );
+    assert!(!dir.path().join("out1/redline.docx").exists());
 }
 
 fn listed(docx: &[u8]) -> Vec<String> {
@@ -794,44 +803,48 @@ fn the_cli_refuses_revision_and_reply_flags_on_the_wrong_location() {
             &["-p", "c5", "--reply", "x", "--resolve"][..],
             "-p c5: --reply takes no other flag",
         ),
-        // A bare number on -p is a paragraph (D7's -p column); the refusal
-        // says so and names the spelling that works.
+        // A bare number is expired (Arthur, 2026-10-13): refused whatever
+        // flag sits beside it, naming the settled spellings when they parse.
         (
             &["-p", "1+2", "--accept"][..],
-            "-p 1+2: on -p a bare number names a paragraph; the revisions are r1+2",
+            "-p 1+2: -p takes a paragraph",
+        ),
+        (
+            &["-p", "1+2", "--accept"][..],
+            "; the settled spelling is r1+2",
         ),
         (
             &["-p", "1", "--reject"][..],
-            "-p 1: on -p a bare number names a paragraph; the revision is r1",
+            "; the settled spelling is p1, r1 or c1",
         ),
         (
             &["-p", "5", "--resolve"][..],
-            "-p 5: on -p a bare number names a paragraph; the comment is c5",
+            "; the settled spelling is p5, r5 or c5",
         ),
         (
             &["-p", "5", "--reply", "x"][..],
-            "-p 5: on -p a bare number names a paragraph; the comment is c5",
+            "; the settled spelling is p5, r5 or c5",
         ),
-        // The suggestion is spelled as the grammar takes it, or not made.
+        (
+            &["-p", "1+2", "--resolve"][..],
+            "; the settled spelling is r1+2",
+        ),
+        // No suggestion that would not parse: the flag's own message.
         (
             &["-p", "01", "--accept"][..],
-            "-p 01: on -p a bare number names a paragraph; the revision is r1",
+            "-p 01: --accept and --reject take a revision (-p r12)",
         ),
         (
             &["-p", "1+02", "--reject"][..],
-            "-p 1+02: on -p a bare number names a paragraph; the revisions are r1+2",
+            "-p 1+02: --accept and --reject take a revision (-p r12)",
         ),
         (
             &["-p", "05", "--reply", "x"][..],
-            "-p 05: on -p a bare number names a paragraph; the comment is c5",
+            "-p 05: --reply is for a comment (-p c5)",
         ),
         (
             &["-p", "4294967296", "--accept"][..],
             "-p 4294967296: --accept and --reject take a revision (-p r12)",
-        ),
-        (
-            &["-p", "1+2", "--resolve"][..],
-            "-p 1+2: --resolve is for a comment (-p c5)",
         ),
     ] {
         let out = edit_cli(dir.path(), &[&["received.docx"][..], args].concat());
