@@ -24,6 +24,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `--anchor` looks only inside it (`… is not in the text c5 covers`,
   exit 3); `--delete` deletes it. `-p c5` still edits the comment's own
   text. `capabilities` lists the spelling under `ids.comment_text`.
+- `read` prints the paragraph id of each footnote and endnote on the
+  line before its definition (`<!-- footnotes.p0 -->`,
+  `<!-- endnotes.p0-p2 -->` for a note of three paragraphs): the id
+  `edit -p` takes to change the note.
 - `read --json` prints the snapshot (`inspect --json`'s, which now also
   carries `changes` and `comments` as `changes --json` and
   `comments --json` list them). `-p`, `--head`, `--tail`, `--changed` and

@@ -395,3 +395,68 @@ fn a_point_comment_covers_no_text_to_rewrite() {
         refused.message
     );
 }
+
+/// `read` names each note's paragraphs on the line before its definition,
+/// numbered as `edit -p` takes them (separator notes are not numbered).
+#[test]
+fn note_definitions_carry_the_ids_edit_takes() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = "tests/fixtures/from-docx/critic/synthetic/hard-notes.docx";
+    std::fs::copy(source, dir.path().join("notes.docx")).unwrap();
+    let read = jubarte(&["read", "notes.docx"], dir.path());
+    assert!(read.status.success());
+    let view = String::from_utf8(read.stdout).unwrap();
+    let tail: Vec<&str> = view.lines().rev().take(10).collect::<Vec<_>>();
+    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    assert_eq!(
+        tail.iter().step_by(2).copied().collect::<Vec<_>>(),
+        [
+            "<!-- footnotes.p0 -->",
+            "<!-- footnotes.p1 -->",
+            "<!-- footnotes.p2 -->",
+            "<!-- endnotes.p0-p2 -->",
+            "<!-- footnotes.p3 -->",
+        ],
+        "{view}"
+    );
+    for (id, anchor) in [
+        ("footnotes.p0", "2024"),
+        ("footnotes.p2", "Still"),
+        ("endnotes.p2", "joined"),
+        ("footnotes.p3", "Inside"),
+    ] {
+        let out = jubarte(
+            &[
+                "edit",
+                "notes.docx",
+                "-p",
+                id,
+                "--anchor",
+                anchor,
+                "--content",
+                "X",
+                "--existing-revisions",
+                "keep",
+                "-o",
+                "out.docx",
+                "--force",
+            ],
+            dir.path(),
+        );
+        assert!(
+            out.status.success(),
+            "{id}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // Markdown without ids (convert) prints no id lines.
+    let md = jubarte(&["convert", "notes.docx", "-o", "n.md"], dir.path());
+    assert!(
+        md.status.success(),
+        "{}",
+        String::from_utf8_lossy(&md.stderr)
+    );
+    let text = std::fs::read_to_string(dir.path().join("n.md")).unwrap();
+    assert!(text.contains("[^3]: Still here."), "{text}");
+    assert!(!text.contains("<!-- footnotes"), "{text}");
+}
