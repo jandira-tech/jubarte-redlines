@@ -19,3 +19,4 @@ ids-table-changes.md tests/corpus/_to_improve_accepted_changes/_original_unaccep
 ids-fonts.md tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/44f83e9351_word_tolerated_misplaced_uipriority.docx
 ids-font-sizes.md tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/24d37f7b5e_rejected_tracking.docx
 mix.md tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/25f1d6ecc3.docx
+math.md tests/fixtures/agent-view/quadratic.docx

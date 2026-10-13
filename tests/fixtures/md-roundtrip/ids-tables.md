@@ -17,7 +17,7 @@ headers:
 footers:
   default: {id: footer1, text: "", fmt: footer1.r903 @LW}
 sections:
-  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.49in, fmt: r1650 @LW, footers: {default: {id: footer2, text: "{--{FIELD}--}{>>footer2.r1648 @LW<<}", right, rev: footer2.r1647 @LW, fmt: footer2.r1649 @LW}}}
+  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.49in, fmt: r1650 @LW, headers: {first: none}, footers: {default: {id: footer2, text: "{--{FIELD}--}{>>footer2.r1648 @LW<<}", right, rev: footer2.r1647 @LW, fmt: footer2.r1649 @LW}}}
 ---
 
 <!-- p0 center, break-ins r5 @LW -->

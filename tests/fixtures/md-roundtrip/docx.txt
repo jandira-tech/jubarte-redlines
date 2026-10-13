@@ -6,3 +6,4 @@ tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/ac6cd8d92f.d
 tests/corpus/broken_ones_two/sources/file_170.docx
 tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_removal.docx
 tests/corpus/neurotic_docx_bench/corpus/word/with_comments_tracking/docx/68526de79b_file_77__vs__7476f5fbb1_file_78_redline_7cc19c9376.docx
+tests/fixtures/agent-view/quadratic.docx
