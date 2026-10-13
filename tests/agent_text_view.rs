@@ -152,7 +152,7 @@ fn select_parses_single_paragraphs_ranges_lists_and_tables() {
     // A bare number is expired (Arthur, 2026-10-13).
     assert_eq!(
         Select::parse("12").unwrap_err(),
-        "12: expected pN, pN-pM or tN; the settled spelling is p12, r12 or c12"
+        "12: expected pN, pN-pM or tN; the settled spelling is p12"
     );
     assert_eq!(
         Select::parse("-").unwrap_err(),

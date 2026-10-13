@@ -206,7 +206,8 @@ pub fn parse_change_ids(token: &str) -> Result<Vec<ChangeId>, IdError> {
             .collect()),
         Ok(_) => Err(IdError::new(token, CHANGE_EXPECTED)),
         Err(e) => Err(IdError {
-            hint: settled_as(token, 'r').or(e.hint),
+            hint: settled_as(token, 'r')
+                .or_else(|| hint_where(e.hint, |id| matches!(id, ShortId::Change { .. }))),
             ..IdError::new(token, CHANGE_EXPECTED)
         }),
     }
@@ -218,9 +219,27 @@ pub fn parse_comment_id(token: &str) -> Result<u32, IdError> {
         Ok(ShortId::Comment(n)) => Ok(n),
         Ok(_) => Err(IdError::new(token, COMMENT_EXPECTED)),
         Err(e) => Err(IdError {
-            hint: settled_as(token, 'c').or(e.hint),
+            hint: settled_as(token, 'c')
+                .or_else(|| hint_where(e.hint, |id| matches!(id, ShortId::Comment(_)))),
             ..IdError::new(token, COMMENT_EXPECTED)
         }),
+    }
+}
+
+/// The spellings of `hint` (`p12, r12 or c12`) that name what an option
+/// takes: a refusal never suggests a spelling the same option refuses
+/// (`--id body:p:12` suggests nothing, `read -p 12` only `p12`).
+pub fn hint_where(hint: Option<String>, keep: impl Fn(&ShortId) -> bool) -> Option<String> {
+    let hint = hint?;
+    let kept: Vec<&str> = hint
+        .split(" or ")
+        .flat_map(|part| part.split(", "))
+        .filter(|s| s.parse::<ShortId>().is_ok_and(|id| keep(&id)))
+        .collect();
+    match kept.as_slice() {
+        [] => None,
+        [one] => Some((*one).to_string()),
+        [rest @ .., last] => Some(format!("{} or {last}", rest.join(", "))),
     }
 }
 
@@ -333,6 +352,30 @@ pub fn short_paragraph(long: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hints_keep_only_what_the_option_takes() {
+        let all = || Some("p12, r12 or c12".to_string());
+        let change = |id: &ShortId| matches!(id, ShortId::Change { .. });
+        assert_eq!(hint_where(all(), change).as_deref(), Some("r12"));
+        assert_eq!(
+            hint_where(all(), |_| true).as_deref(),
+            Some("p12, r12 or c12")
+        );
+        assert_eq!(
+            hint_where(all(), |id| !matches!(id, ShortId::Comment(_))).as_deref(),
+            Some("p12 or r12")
+        );
+        assert_eq!(hint_where(Some("p12".into()), change), None);
+        assert_eq!(hint_where(None, |_| true), None);
+        // An option's refusal never suggests what the same option refuses.
+        assert_eq!(parse_change_ids("body:p:12").unwrap_err().hint, None);
+        assert_eq!(parse_comment_id("1+2").unwrap_err().hint, None);
+        assert_eq!(
+            parse_comment_id("#c5").unwrap_err().hint.as_deref(),
+            Some("c5")
+        );
+    }
 
     fn body(wid: &str) -> ChangeId {
         ChangeId::new("body", wid)

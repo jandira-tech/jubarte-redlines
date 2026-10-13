@@ -15,7 +15,7 @@ use super::{
     RunSpec, Selector, Side,
 };
 use crate::changes::ChangeFilter;
-use crate::ids::Location;
+use crate::ids::{IdError, Location, ShortId};
 
 /// One operation as the flags describe it, grouped by its `-p`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,13 +189,18 @@ fn comment_number(at: &str) -> Option<u32> {
     }
 }
 
-/// The refusal of an expired or malformed `-p` id that names its settled
-/// spelling (`-p 5` → `p5, r5 or c5`); `None` when `at` parses, or when no
-/// settled spelling is known (the caller's own message is then the better
-/// one).
-fn expired(at: &str) -> Option<String> {
+/// The refusal of a `-p` id this group cannot take: an expired one, named
+/// with the settled spellings `keep` allows (`-p 5 --reject` → `r5`), or a
+/// settled id `-p` does not edit yet (`s0`, `p3-p7`). `None` when `at`
+/// parses, or when no settled spelling is known (the caller's own message
+/// is then the better one).
+fn expired(at: &str, keep: impl Fn(&ShortId) -> bool) -> Option<String> {
     match crate::ids::parse_location(at) {
-        Err(e) if e.hint.is_some() => Some(format!("-p {e}")),
+        Err(e) if e.expected == crate::ids::LOCATION_NOT_YET => Some(format!("-p {e}")),
+        Err(e) if e.hint.is_some() => {
+            let hint = crate::ids::hint_where(e.hint.clone(), keep);
+            Some(format!("-p {}", IdError { hint, ..e }))
+        }
         _ => None,
     }
 }
@@ -205,7 +210,11 @@ fn expired(at: &str) -> Option<String> {
 /// resolves revisions.
 fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
     let at = op.at.trim();
-    if let Some(refused) = expired(at) {
+    // Only a revision group names a change; any other group's id is
+    // refused by [`flag_operation`], with the spellings it takes.
+    if (op.accept || op.reject)
+        && let Some(refused) = expired(at, |id| matches!(id, ShortId::Change { .. }))
+    {
         return Err(refused);
     }
     let bad = |m: &str| Err(format!("-p {at}: {m}"));
@@ -250,7 +259,15 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     if at.is_empty() {
         return Err("-p needs a location".into());
     }
-    if let Some(refused) = expired(at) {
+    // A reply or a resolution names a comment; anything else a paragraph or
+    // a comment, never a change (those take --accept or --reject).
+    let names_comment = op.reply.is_some() || op.resolve;
+    let keep = |id: &ShortId| match id {
+        ShortId::Comment(_) => true,
+        ShortId::Change { .. } => false,
+        _ => !names_comment,
+    };
+    if let Some(refused) = expired(at, keep) {
         return Err(refused);
     }
     if let Some(reply) = &op.reply {

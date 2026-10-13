@@ -551,7 +551,8 @@ fn the_cli_p_flag_takes_settled_ids_and_refuses_expired_ones() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("src.docx"), source()).unwrap();
     // Expired spellings (Arthur, 2026-10-13) exit 2 with the settled one.
-    for (at, settled) in [("6", "p6, r6 or c6"), ("#c5", "c5")] {
+    // `--resolve` names a comment: only `c6` is suggested.
+    for (at, settled) in [("6", "c6"), ("#c5", "c5")] {
         let out = edit_cli(dir.path(), &["src.docx", "-p", at, "--resolve"]);
         assert_eq!(out.status.code(), Some(2), "{at}");
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -815,19 +816,33 @@ fn the_cli_refuses_revision_and_reply_flags_on_the_wrong_location() {
         ),
         (
             &["-p", "1", "--reject"][..],
-            "; the settled spelling is p1, r1 or c1",
+            "; the settled spelling is r1\n",
         ),
         (
             &["-p", "5", "--resolve"][..],
-            "; the settled spelling is p5, r5 or c5",
+            "; the settled spelling is c5\n",
         ),
         (
             &["-p", "5", "--reply", "x"][..],
-            "; the settled spelling is p5, r5 or c5",
+            "; the settled spelling is c5\n",
         ),
         (
+            // Only a spelling the group takes: no comment is spelled `1+2`.
             &["-p", "1+2", "--resolve"][..],
-            "; the settled spelling is r1+2",
+            "-p 1+2: -p takes a paragraph",
+        ),
+        // A settled id -p does not edit yet: refused before any I/O.
+        (
+            &["-p", "s0", "--content", "x"][..],
+            "-p s0: a settled id, but -p does not edit",
+        ),
+        (
+            &["-p", "p3-p7", "--content", "x"][..],
+            "-p p3-p7: a settled id, but -p does not edit",
+        ),
+        (
+            &["-p", "toc0", "--accept"][..],
+            "-p toc0: a settled id, but -p does not edit",
         ),
         // No suggestion that would not parse: the flag's own message.
         (

@@ -342,7 +342,18 @@ impl Select {
                 path,
             }) => Ok(path),
             Ok(_) => Err(refused(item, None)),
-            Err(e) => Err(refused(item, e.hint)),
+            Err(e) => Err(refused(
+                item,
+                crate::ids::hint_where(e.hint, |id| {
+                    matches!(
+                        id,
+                        ShortId::Block {
+                            story: Story::Body,
+                            ..
+                        }
+                    )
+                }),
+            )),
         };
         // The body paragraph an end of a range names; `None` when open.
         let end = |item: &str, text: &str| {
