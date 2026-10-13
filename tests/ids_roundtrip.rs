@@ -1064,7 +1064,8 @@ fn every_story_and_every_collision_round_trips() {
         "footer1.r1 @JD",
         "footer2.r4 @JD",
         "footer3.r9 @JD",
-        "hdr.r1 @AC",
+        // Stems outside `header N` / `footer N` keep the long id (spec §2.2).
+        "hdr:rev:1 @AC",
         "Header_1:rev:1 @AC",
         "footnotes.r5 @AC",
         "footnotes.r51000 @JD",
@@ -1096,7 +1097,7 @@ fn every_story_and_every_collision_round_trips() {
         "footnotes.r5",
         "header1.r1",
         "header3.r1",
-        "hdr.r1",
+        "hdr:rev:1",
         "Header_1:rev:1",
         "footnotes.r51000",
         "endnotes.r12",
