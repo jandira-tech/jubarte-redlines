@@ -978,7 +978,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
                 "p0",
                 "--content",
                 "x",
-                "--date",
+                "--datetime",
                 date,
             ],
             vec![
