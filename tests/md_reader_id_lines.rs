@@ -415,3 +415,53 @@ fn headers_and_footers_come_back_with_their_ids() {
     }
     assert!(view.ends_with(body), "{view}");
 }
+
+#[test]
+fn a_substitution_by_two_authors_keeps_both_tags() {
+    // The view tags a substitution's sides one by one when two authors
+    // made them: the second tag is the insertion's, not a comment.
+    let header = "---\nauthors:\n  AC: Ann Counsel                  # 2026-10-01T09:00:00Z\n  \
+                  ASR: Arthur Souza Rodrigues      # 2026-10-09T16:13:00Z\n---\n\n";
+    let body =
+        "<!-- p0 -->\nThe {~~old~>new~~}{>>r0 @AC<<}{>>r1 @ASR<<} term {~~a~>b~~}{>>r2+3 @AC<<}.\n";
+    assert_eq!(round_trip(&format!("{header}{body}")), body.trim());
+}
+
+#[test]
+fn the_styles_legend_comes_back() {
+    // The legend defines the default style and the headings', spacing,
+    // keep-next and alignment included.
+    let header = "---\nstyles:\n  \
+                  Normal: Georgia 11pt, after 8pt, line 1.08, justify  # default; unannotated paragraphs use it\n  \
+                  \"#\": Heading1, Arial bold 16pt, before 12pt, keep-next, center\n  \
+                  \"##\": Heading2, Arial italic 13pt, before 2pt, line 12pt exact\n---\n\n";
+    let body = "<!-- p0 -->\n# Title\n\n<!-- p1 -->\n## Part\n\n<!-- p2 -->\nText.\n";
+    let view = view_round_trip(header, body);
+    for line in [
+        "  Normal: Georgia 11pt, after 8pt, line 1.08, justify",
+        "  \"#\": Heading1, Arial bold 16pt, before 12pt, keep-next, center",
+        "  \"##\": Heading2, Arial italic 13pt, before 2pt, line 12pt exact",
+    ] {
+        assert!(view.lines().any(|l| l.starts_with(line)), "{line}\n{view}");
+    }
+    assert!(view.ends_with(body), "{view}");
+}
+
+#[test]
+fn a_heading_takes_the_style_the_legend_names_for_its_level() {
+    let header = "---\nstyles:\n  \
+                  \"1\": Arial 12pt, left            # default; unannotated paragraphs use it\n  \
+                  \"#\": 2, Calibri bold 16pt, before 12pt, after 6pt\n---\n\n";
+    // The printer names a heading style other than HeadingN on the id
+    // line; the legend gives the level its style when the line does not.
+    let body = "<!-- p0 -->\n# Title\n\n<!-- p1 -->\nText.\n";
+    let view = view_round_trip(header, body);
+    let body = "<!-- p0 2 -->\n# Title\n\n<!-- p1 -->\nText.\n";
+    for line in [
+        "  \"1\": Arial 12pt, left",
+        "  \"#\": 2, Calibri bold 16pt, before 12pt, after 6pt",
+    ] {
+        assert!(view.lines().any(|l| l.starts_with(line)), "{line}\n{view}");
+    }
+    assert!(view.ends_with(body), "{view}");
+}
