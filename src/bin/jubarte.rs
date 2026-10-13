@@ -7,7 +7,7 @@
 //! ```text
 //! jubarte original.docx modified.docx
 //!   → writes original_v_modified.docx
-//! jubarte -b a.docx -m b.docx -o out.docx --author "Jane" --date 2024-01-02T00:00:00Z
+//! jubarte -b a.docx -m b.docx -o out.docx --author "Jane" --datetime 2024-01-02T00:00:00Z
 //! jubarte compare original.docx modified.docx
 //! jubarte diff old.md new.md                 (inline paragraph patch on stdout)
 //! jubarte diff old.docx new.docx --format github (unified text patch)
@@ -1512,7 +1512,7 @@ fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
         resource_path: compare.resource_path,
         author: compare.author,
         date: compare
-            .date
+            .datetime
             .unwrap_or_else(jubarte::convert::utc_now_iso8601),
         force: compare.force,
         quiet,
@@ -1798,7 +1798,7 @@ struct DiffJob<'a> {
     output: Option<&'a Path>,
     from: Option<Format>,
     force: bool,
-    /// The patch's owner (`--author`, `--date`).
+    /// The patch's owner (`--author`, `--datetime`).
     settings: jubarte::comparer::WmlComparerSettings,
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
@@ -2131,7 +2131,7 @@ fn run_convert_any(
                 critic: !markdown.no_critic,
                 track_changes: markdown.track_changes.into(),
                 author: markdown.author.clone(),
-                date: markdown.date.clone(),
+                date: markdown.datetime.clone(),
                 images: Some(&loader),
                 page: markdown.page.into(),
             };
@@ -2428,7 +2428,7 @@ fn cli_main() -> ExitCode {
             full_lines,
             force,
             author,
-            date,
+            datetime: date,
             ..
         }) => {
             let job = DiffJob {
