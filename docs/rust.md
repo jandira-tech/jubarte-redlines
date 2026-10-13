@@ -654,7 +654,7 @@ Formats:
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
           - json: The JSON snapshot (`read --json`'s object): written, never read.
-            `compare` and `diff` refuse it until they write it (`json_not_yet`)
+            `diff` refuses it (`json_not_yet`)
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
