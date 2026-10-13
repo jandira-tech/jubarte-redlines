@@ -92,3 +92,23 @@ fn revisions_keep_the_numbers_their_tags_name() {
                 <!-- p1 -->\n{--Gone.--}{>>r3 @AC<<} Kept.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
+
+#[test]
+fn a_revision_number_is_written_once() {
+    // A change written as several marks (two runs, or a view that names one
+    // number for two changes) keeps its number on the first mark; the rest
+    // take fresh ones, so no two marks share a `w:id`.
+    let body = "<!-- p0 -->\n{++**Bold** plain++}{>>r4 @AC<<} and {++one++}{>>r5 @AC<<} \
+                {++two++}{>>r5 @AC<<}.\n";
+    let docx = markdown_to_docx(&format!("{AUTHORS}{body}"), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&docx);
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    for id in ["4", "5"] {
+        assert!(
+            document.contains(&format!("w:ins w:id=\"{id}\"")),
+            "w:id {id} kept: {document}"
+        );
+    }
+}

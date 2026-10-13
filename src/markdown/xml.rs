@@ -238,6 +238,8 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
+    /// Every revision `w:id` written so far: none is written twice.
+    pub used_revisions: HashSet<u32>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
     /// Added to a footnote's position to make its `w:id`.
@@ -251,20 +253,25 @@ impl Context<'_> {
     /// A `w:ins` or `w:del` start tag's name and attributes, with the
     /// author and date change `by` names, or the document's.
     /// The `w:id` of the next mark of change `by`: the ids the view names
-    /// for it, in turn (the last again once they run out), else a fresh one
-    /// above every id the view names.
+    /// for it, in turn, while one is left that no mark has taken; else a
+    /// fresh one above every id the view names.
     fn revision_id(&mut self, by: Option<u32>) -> u32 {
         if let Some(serial) = by
             && let Some(ids) = self.document.revision_ids.get(&serial)
-            && let Some(&last) = ids.last()
         {
             let at = self.cursors.entry(serial).or_insert(0);
-            let id = ids.get(*at).copied().unwrap_or(last);
-            *at += 1;
-            return id;
+            if let Some(&id) = ids.get(*at) {
+                *at += 1;
+                if self.used_revisions.insert(id) {
+                    return id;
+                }
+            }
+        }
+        while !self.used_revisions.insert(self.next_revision) {
+            self.next_revision = self.next_revision.wrapping_add(1);
         }
         let id = self.next_revision;
-        self.next_revision += 1;
+        self.next_revision = self.next_revision.wrapping_add(1);
         id
     }
 

@@ -144,6 +144,7 @@ pub(super) fn assemble(
             .max()
             .map_or(1, |max| max.saturating_add(1)),
         cursors: HashMap::new(),
+        used_revisions: HashSet::new(),
         num_ids,
         note_base: 0,
         next_drawing,
