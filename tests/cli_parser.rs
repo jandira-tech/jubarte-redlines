@@ -1017,6 +1017,46 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
 }
 
 #[test]
+fn compare_and_diff_date_their_revisions_now_unless_d_pins_it() {
+    // D17: the parser fills now (UTC, to the second), so the binary and
+    // every host get the same value; the fixed-width form orders as text.
+    let before = jubarte::convert::utc_now_iso8601();
+    let runs = [
+        parse(&["compare", "a.docx", "b.docx"], &[]),
+        parse(&["a.docx", "b.docx"], &[]),
+        parse(&["diff", "a.docx", "b.docx"], &[]),
+    ];
+    let native = jubarte::cli::Cli::try_parse_from(["jubarte", "a.docx", "b.docx"]).unwrap();
+    let after = jubarte::cli::Cli::try_parse_from(["jubarte", "compare", "a.docx", "b.docx"])
+        .map(|_| jubarte::convert::utc_now_iso8601())
+        .unwrap();
+    let mut dates: Vec<String> = runs
+        .iter()
+        .map(|run| run["args"]["date"].as_str().expect("a date").to_string())
+        .collect();
+    dates.push(native.compare.date.expect("the shorthand's date"));
+    for date in &dates {
+        assert!(
+            before.as_str() <= date.as_str() && date.as_str() <= after.as_str(),
+            "{before} {date} {after}"
+        );
+        assert!(date.ends_with('Z') && date.len() == 20, "{date}");
+    }
+    for task in [&["compare"][..], &[][..], &["diff"][..]] {
+        let args = [
+            task,
+            &["a.docx", "b.docx", "-d", "1970-01-01T00:00:00Z"][..],
+        ]
+        .concat();
+        assert_eq!(
+            parse(&args, &[])["args"]["date"],
+            "1970-01-01T00:00:00Z",
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
 fn pr392_author_filters_share_validation_with_the_library() {
     use jubarte::markdown::{Select, author};
 

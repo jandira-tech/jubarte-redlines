@@ -29,6 +29,52 @@ fn seed(dir: &Path) -> (PathBuf, PathBuf) {
     (a, b)
 }
 
+#[test]
+fn a_redline_is_dated_now_unless_d_pins_it() {
+    // D17: without -d the revisions carry the run's time; -d pins it.
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    let dated = |name: &str, pin: Option<&str>| {
+        let out_path = dir.path().join(name);
+        let mut command = Command::new(BIN);
+        command
+            .arg("compare")
+            .arg(&a)
+            .arg(&b)
+            .arg("-o")
+            .arg(&out_path);
+        if let Some(date) = pin {
+            command.args(["-d", date]);
+        }
+        let out = command.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let xml = common::docx::part_string(&std::fs::read(out_path).unwrap(), "word/document.xml")
+            .unwrap();
+        let dates: Vec<String> = xml
+            .split("w:date=\"")
+            .skip(1)
+            .map(|rest| rest[..rest.find('"').unwrap()].to_string())
+            .collect();
+        assert!(!dates.is_empty(), "the pair has revisions");
+        dates
+    };
+    let before = jubarte::convert::utc_now_iso8601();
+    let now = dated("now.docx", None);
+    let after = jubarte::convert::utc_now_iso8601();
+    for date in &now {
+        assert!(before <= *date && *date <= after, "{before} {date} {after}");
+    }
+    let pinned = dated("pinned.docx", Some("1970-01-01T00:00:00Z"));
+    assert!(
+        pinned.iter().all(|d| d == "1970-01-01T00:00:00Z"),
+        "{pinned:?}"
+    );
+}
+
 fn assert_loadable(path: &Path) {
     let bytes = std::fs::read(path).unwrap();
     let doc =

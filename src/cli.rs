@@ -311,6 +311,23 @@ fn plan_path() -> impl clap::builder::TypedValueParser<Value = PathBuf> {
     clap::builder::OsStringValueParser::new().map(PathBuf::from)
 }
 
+/// `compare`'s and `diff`'s missing `-d` is now, in UTC, to the second
+/// (D17): filled once here, so the binary and every host share it.
+fn fill_date(date: &mut Option<String>) {
+    if date.is_none() {
+        *date = Some(crate::convert::utc_now_iso8601());
+    }
+}
+
+/// [`fill_date`] for the task that dates its revisions.
+fn fill_task_date(task: &mut Command) {
+    match task {
+        Command::Compare(compare) => fill_date(&mut compare.date),
+        Command::Diff { date, .. } => fill_date(date),
+        _ => {}
+    }
+}
+
 /// `--plan` without a value (D16) is `<FILE's dir>/<stem>_plan.json`.
 fn resolve_plan(task: &mut Command) {
     let (Command::Edit {
@@ -464,15 +481,11 @@ pub struct CompareArgs {
     #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
     pub author: String,
 
-    /// Revision timestamp (ISO 8601); pinned for reproducible output.
-    #[arg(
-        short = 'd',
-        long,
-        value_name = "ISO8601",
-        value_parser = parse_datetime,
-        default_value = crate::document_comparer::DEFAULT_DATE
-    )]
-    pub date: String,
+    /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
+    /// reproducible output. The parser fills `now` when absent, so every
+    /// host gets the same value.
+    #[arg(short = 'd', long, value_name = "ISO8601", value_parser = parse_datetime)]
+    pub date: Option<String>,
 
     /// Overwrite the output file if it already exists.
     #[arg(long)]
@@ -762,7 +775,8 @@ pub enum Command {
             help_heading = "Paragraph patch"
         )]
         author: String,
-        /// When (ISO 8601) [default: now]; pin it for reproducible output.
+        /// When (ISO 8601) [default: now, UTC]; pin it for reproducible
+        /// output.
         #[arg(
             short = 'd',
             long,
@@ -2760,6 +2774,9 @@ impl Cli {
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect();
             apply_retired(task, &retired_spellings(typed.iter().map(String::as_str)));
+            fill_task_date(task);
+        } else {
+            fill_date(&mut cli.compare.date);
         }
         match (cli.command.as_mut(), matches.subcommand()) {
             (Some(Command::Compare(compare)), Some((_, args))) => {
@@ -2925,6 +2942,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 &mut task,
                 &retired_spellings(arguments.iter().map(String::as_str)),
             );
+            fill_task_date(&mut task);
             let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
             if let Command::Compare(compare) = &mut task {
                 if let Some((_, args)) = matches.subcommand() {
@@ -3024,6 +3042,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             Ok(value)
         } else {
             let mut compare = CompareArgs::from_arg_matches(&matches)?;
+            fill_date(&mut compare.date);
             if compare
                 .original_pos
                 .as_ref()

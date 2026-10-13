@@ -1511,7 +1511,9 @@ fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
         critic: compare.critic,
         resource_path: compare.resource_path,
         author: compare.author,
-        date: compare.date,
+        date: compare
+            .date
+            .unwrap_or_else(jubarte::convert::utc_now_iso8601),
         force: compare.force,
         quiet,
         detail_threshold: compare.detail_threshold,
@@ -2912,10 +2914,18 @@ mod tests {
         assert_eq!(j.original, PathBuf::from("a.docx"));
         assert_eq!(j.modified, PathBuf::from("b.docx"));
         assert_eq!(j.output, None, "the shorthand prints the view without -o");
+        let before = jubarte::convert::utc_now_iso8601();
         let j = job_of(&["jubarte", "compare", "a.docx", "b.docx"]);
+        let after = jubarte::convert::utc_now_iso8601();
         assert_eq!(j.output, None, "so does compare");
         assert_eq!(j.author, "Redline");
-        assert_eq!(j.date, "1970-01-01T00:00:00Z");
+        // Without -d the revisions are dated now (D17); the fixed-width
+        // UTC form orders as text.
+        assert!(
+            before <= j.date && j.date <= after,
+            "{before} {} {after}",
+            j.date
+        );
         assert!(!j.force && !j.quiet);
     }
 
