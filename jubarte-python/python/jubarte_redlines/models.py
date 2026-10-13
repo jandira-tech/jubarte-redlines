@@ -236,7 +236,10 @@ class _ChangeRow(TypedDict):
 
 
 def _decode_changes(payload: str) -> tuple[Change, ...]:
-    rows: list[_ChangeRow] = json.loads(payload)
+    return _changes_of(json.loads(payload))
+
+
+def _changes_of(rows: list[_ChangeRow]) -> tuple[Change, ...]:
     return tuple(
         Change(
             id=row["id"],
@@ -301,7 +304,10 @@ class _CommentRow(TypedDict):
 
 
 def _decode_comments(payload: str) -> tuple[Comment, ...]:
-    rows: list[_CommentRow] = json.loads(payload)
+    return _comments_of(json.loads(payload))
+
+
+def _comments_of(rows: list[_CommentRow]) -> tuple[Comment, ...]:
     return tuple(
         Comment(
             id=row["id"],
@@ -449,7 +455,12 @@ class Table:
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
-    """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses."""
+    """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses.
+
+    ``changes`` and ``comments`` are the tracked changes and comments, as
+    ``Document.changes()`` and ``comments()`` list them and ``read --json``
+    prints them.
+    """
 
     schema_version: int
     source_sha256: str
@@ -458,6 +469,8 @@ class Snapshot:
     stories: tuple[Story, ...] = ()
     tables: tuple[Table, ...] = ()
     controls: tuple[ContentControl, ...] = ()
+    changes: tuple[Change, ...] = ()
+    comments: tuple[Comment, ...] = ()
 
     def control(self, id: str | None = None, *, tag: str | None = None, alias: str | None = None) -> ContentControl:
         """The one control with this id (``body:sdt:N``), tag or alias; give exactly one."""
@@ -579,6 +592,8 @@ def _decode_snapshot(payload: str) -> Snapshot:
             )
             for c in data.get("controls", ())
         ),
+        changes=_changes_of(data.get("changes", [])),
+        comments=_comments_of(data.get("comments", [])),
     )
 
 

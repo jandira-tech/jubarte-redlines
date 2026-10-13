@@ -394,6 +394,8 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     ]
     # `ref` is the short id the CLI prints; `paragraph` the paragraph it is in.
     assert [(c.ref, c.paragraph) for c in changes] == [("r1", "body:p:0"), ("r2", "body:p:0")]
+    # The snapshot carries them too, as `read --json` does.
+    assert doc.inspect().changes == changes and doc.inspect().comments == ()
     accepted = doc.accept(ids=["body:rev:1"])
     assert [c.id for c in accepted.changes()] == ["body:rev:2"]
     assert [p.text for p in accepted.accept().inspect().paragraphs] == ["keep new"]
