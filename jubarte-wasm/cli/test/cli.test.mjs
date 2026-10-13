@@ -373,7 +373,7 @@ test("edit and add --plan record into one plan that --consume deletes once appli
   assert.match(author.err, /--author belongs to recorded operations/);
   const bob = run("edit", file, "--plan", plan, "-p", "p1", "--content", "x", "--author", "Bob");
   assert.equal(bob.code, 2);
-  assert.match(bob.err, /the plan's author is "Modified User"/);
+  assert.match(bob.err, /the plan's author is "Redline"/);
   const missing = run("edit", file, "--plan", plan, "-p", `p${para.index}`, "--anchor", "nowhere at all", "--content", "x");
   assert.equal(missing.code, 3, missing.out);
   assert.match(missing.out, /"status":"failed"/);

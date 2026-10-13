@@ -427,7 +427,7 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     for name in ("clean.docx", "redline.docx", "patch.diff", "report.jsonl"):
         assert (bundle / name).is_file(), name
     assert f"\nsource: {bundle / 'redline.docx'}\n" in out, out
-    assert "\nrange: changed by @MU (p0, p1) of p0-p2\n" in out, out
+    assert "\nrange: changed by @R (p0, p1) of p0-p2\n" in out, out
     assert "{~~his or her~>an~~}" in out and "{--Heading--}" in out, out
     # A recording takes no --out-dir; flags without an operation are usage errors.
     for bad in (["--plan", "x.json", "-p", "p1", "--delete"], ["-p", "p1"], ["--anchor", "a", "-p", "p1", "--content", "b"]):
@@ -527,9 +527,9 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
     for args, message in (
         (["-p", "p0", "--delete", "--out-dir", "d"], "--out-dir takes effect when the plan is applied"),
         (["--author", "Bob"], "--author belongs to recorded operations"),
-        (["-p", "p0", "--delete", "--author", "Bob"], 'the plan\'s author is "Modified User"'),
+        (["-p", "p0", "--delete", "--author", "Bob"], 'the plan\'s author is "Redline"'),
         (["-p", "p0", "--delete", "--revisions", "word"], "--revisions takes effect when the plan is applied"),
-        (["--author", "Modified User"], "--author belongs to recorded operations"),
+        (["--author", "Redline"], "--author belongs to recorded operations"),
     ):
         with pytest.raises(SystemExit) as exit_info:
             main(["edit", str(letter), "--plan", str(plan), *args])
