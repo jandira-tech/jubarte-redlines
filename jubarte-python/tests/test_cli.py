@@ -41,12 +41,13 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     for argv in ([str(letter), "--json"], ["inspect", str(letter), "--json"]):
         assert main(argv) == 0
         assert json.loads(capsys.readouterr().out) == snapshot
-    # The grid and a selected snapshot need the Rust build for now.
-    for argv in (["read", str(letter), "--tables"], ["read", str(letter), "--json", "-p", "p1"]):
-        with pytest.raises(SystemExit) as exit:
-            main(argv)
-        assert exit.value.code == 2
-        assert "not supported by the Python CLI" in capsys.readouterr().err
+    # A selected snapshot keeps the selected paragraphs, as the binary's.
+    assert main(["read", str(letter), "--json", "-p", "p1"]) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert [p["id"] for p in selected["paragraphs"]] == ["body:p:1"]
+    # The grid: a document without tables prints none.
+    assert main(["read", str(letter), "--tables"]) == 0
+    assert capsys.readouterr().out == "no tables\n"
     # The engine writes a task's view, snapshot or PDF; this CLI, Word only.
     for argv in (
         ["accept", str(letter), "-o", str(letter.with_name("a.pdf"))],
@@ -404,28 +405,22 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     source = tmp_path / "tracked.docx"
     source.write_bytes(docx(body))
     assert main(["changes", str(source)]) == 0
+    # The binary's listing, byte for byte: short ids and the paragraph.
     assert capsys.readouterr().out.splitlines() == [
-        'body:rev:1\tdeletion\ttext\ta\t"gone"',
-        'body:rev:2\tinsertion\ttext\tb\t"new"',
+        'r1\tdeletion\ttext\ta\tp0\t"gone"',
+        'r2\tinsertion\ttext\tb\tp0\t"new"',
         "2 change(s)",
     ]
     assert main(["changes", str(source), "--json"]) == 0
-    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert rows[0] == {
-        "id": "body:rev:1",
-        "kind": "deletion",
-        "target": "text",
-        "author": "a",
-        "date": "2020-01-01T00:00:00Z",
-        "text": "gone",
-        "ref": "r1",
-        "paragraph": "body:p:0",
-    }
+    assert capsys.readouterr().out.splitlines()[0] == (
+        '{"id":"body:rev:1","ref":"r1","kind":"deletion","target":"text","author":"a",'
+        '"date":"2020-01-01T00:00:00Z","text":"gone","paragraph":"body:p:0"}'
+    )
     out = tmp_path / "out.docx"
     assert main(["reject", str(source), "-o", str(out), "--author", "b", "--kind", "insertion"]) == 0
     capsys.readouterr()
     assert main(["changes", str(out)]) == 0
-    assert capsys.readouterr().out.splitlines()[-2:] == ['body:rev:1\tdeletion\ttext\ta\t"gone"', "1 change(s)"]
+    assert capsys.readouterr().out.splitlines()[-2:] == ['r1\tdeletion\ttext\ta\tp0\t"gone"', "1 change(s)"]
     assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "body:rev:9"]) == 1
     assert "no tracked change r9" in capsys.readouterr().err
 

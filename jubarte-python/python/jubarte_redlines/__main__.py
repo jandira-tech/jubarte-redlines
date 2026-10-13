@@ -210,10 +210,22 @@ def _print_view(docx: bytes, options: dict, source: str) -> int:
 
 
 def cmd_read(args: argparse.Namespace) -> int:
-    if args.json:
-        from . import _native
+    from . import _native
 
-        print(_native.inspect_json(_read(args.file).to_bytes()))
+    if args.tables:
+        sys.stdout.write(_native.tables_text(_read(args.file).to_bytes()))
+        return EXIT_OK
+    if args.json:
+        snapshot = _native.read_json(
+            _read(args.file).to_bytes(),
+            paragraphs=args.paragraphs,
+            head=args.head,
+            tail=args.tail,
+            changed=bool(args.changed),
+            by=args.by,
+            source=args.file.name,
+        )
+        print(snapshot)
         return EXIT_OK
     return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
 
@@ -745,34 +757,31 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _json_lines(payload: str) -> None:
+    """Each object of the engine's JSON array on its own line, as the binary prints them."""
+    for row in json.loads(payload):
+        print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+
+
 def cmd_changes(args: argparse.Namespace) -> int:
-    for change in (changes := _read(args.file).changes()):
-        row = {key: value for key, value in asdict(change).items() if value is not None}
-        if args.json:
-            print(json.dumps(row, ensure_ascii=False))
-            continue
-        preview = json.dumps(change.text[:60], ensure_ascii=False)
-        inside = f"\tinside {change.inside}" if change.inside else ""
-        print(f"{change.id}\t{change.kind}\t{change.target}\t{change.author or '-'}\t{preview}{inside}")
-    if not args.json:
-        print(f"{len(changes)} change(s)")
+    from . import _native
+
+    docx = _read(args.file).to_bytes()
+    if args.json:
+        _json_lines(_native.list_changes_json(docx))
+    else:
+        sys.stdout.write(_native.changes_text(docx))
     return EXIT_OK
 
 
 def cmd_comments(args: argparse.Namespace) -> int:
-    comments = _read(args.file).comments(author=args.author, latest=args.latest)
-    for comment in comments:
-        row = {key: value for key, value in asdict(comment).items() if value is not None}
-        if args.json:
-            print(json.dumps(row, ensure_ascii=False))
-            continue
-        text = json.dumps(comment.text[:60], ensure_ascii=False)
-        anchor = json.dumps(comment.anchor_text[:40], ensure_ascii=False)
-        thread = f"\treply to {comment.parent}" if comment.parent is not None else ""
-        done = "\tresolved" if comment.done else ""
-        print(f"{comment.id}\t{comment.paragraph or '-'}\t{comment.author}\t{text}\ton {anchor}{thread}{done}")
-    if not args.json:
-        print(f"{len(comments)} comment(s)")
+    from . import _native
+
+    docx = _read(args.file).to_bytes()
+    if args.json:
+        _json_lines(_native.list_comments_json(docx, author=args.author, latest=args.latest))
+    else:
+        sys.stdout.write(_native.comments_text(docx, author=args.author, latest=args.latest))
     return EXIT_OK
 
 
@@ -882,8 +891,6 @@ class SharedParser:
                 self.error("--detail-threshold is not supported by the Python CLI")
             if values.get("no_paragraph_merge"):
                 self.error("--no-paragraph-merge is not supported by the Python CLI")
-        if command == "read" and values.get("tables"):
-            self.error("--tables is not supported by the Python CLI")
         # The engine's -o writer (view, snapshot, PDF of a result) comes to
         # this CLI with Task 19; until then it writes Word only.
         written = values.get("output_format")
@@ -899,10 +906,6 @@ class SharedParser:
             for key in ("reference_doc", "critic", "resource_path"):
                 if values.get(key) not in (None, False):
                     self.error(f"--{key.replace('_', '-')} is not supported by the Python CLI")
-        if command == "read" and values.get("json"):
-            for key in ("paragraphs", "head", "tail", "changed", "by"):
-                if values.get(key) not in (None, False):
-                    self.error("--json with a selection is not supported by the Python CLI")
         if command == "convert":
             for key in ("from", "resource_path", "timeout", "fail_on_substitution", "no_page_markers"):
                 if values.get(key) not in (None, False):

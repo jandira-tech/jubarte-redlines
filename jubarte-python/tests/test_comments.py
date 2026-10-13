@@ -90,6 +90,6 @@ def test_cli_comments_matches_the_binary(tmp_path: Path, capsys: pytest.CaptureF
     assert rows[1]["parent"] == 0 and "initials" in rows[0]
     assert main(["comments", str(path), "--author", "Bob"]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[-1] == "1 comment(s)" and "reply to 0" in out[0]
+    assert out[-1] == "1 comment(s)" and "reply to c0" in out[0] and out[0].startswith("c1\tp0\tBob\t")
     assert main(["comments", str(path), "--latest", "--json"]) == 0
     assert [json.loads(line)["text"] for line in capsys.readouterr().out.splitlines()] == ["Agreed"]
