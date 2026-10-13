@@ -907,8 +907,8 @@ pub(crate) fn rendered_page_breaks(p: &Element) -> usize {
 /// Backslash-escapes the characters CommonMark would act on inside a run of
 /// document text, so literal `*`, `` ` ``, `~~`, `==`, `\`, `[^` and
 /// tag-like `<` read back as themselves. `_` is escaped only at a word edge
-/// (`a_b` stays; `_x_` becomes `\_x\_`); `~` and `=` only beside their
-/// twin. CriticMarkup delimiters are `critic::escape`'s job, after this.
+/// (`a_b` stays; `_x_` becomes `\_x\_`); `=` only beside its twin; `~`
+/// and `^` beside their twin or at a word edge (`H~2~O` stays). CriticMarkup delimiters are `critic::escape`'s job, after this.
 pub(crate) fn escape_markdown(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let at = |i: usize| chars.get(i).copied();
@@ -922,7 +922,17 @@ pub(crate) fn escape_markdown(text: &str) -> String {
                 !(before(i).is_some_and(char::is_alphanumeric)
                     && next.is_some_and(char::is_alphanumeric))
             }
-            '~' | '=' => before(i) == Some(c) || next == Some(c),
+            '=' => before(i) == Some(c) || next == Some(c),
+            // One `~` or `^` marks subscript or superscript at a word
+            // edge; inside a word, or between spaces, it opens nothing.
+            '~' | '^' if before(i) == Some('[') => false,
+            '~' | '^' => {
+                let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+                let space = |c: Option<char>| c.is_none_or(char::is_whitespace);
+                before(i) == Some(c)
+                    || next == Some(c)
+                    || !((word(before(i)) && word(next)) || (space(before(i)) && space(next)))
+            }
             '<' => next.is_some_and(|n| n.is_ascii_alphabetic() || n == '/' || n == '!'),
             '[' => next == Some('^'),
             _ => false,
@@ -2005,7 +2015,9 @@ mod tests {
             ("_x_", "\\_x\\_"),
             ("x < y <br> </u> <!--", "x < y \\<br> \\</u> \\<!--"),
             ("2*3 `t` \\", "2\\*3 \\`t\\` \\\\"),
-            ("~~a~~ ~x == y = z", "\\~\\~a\\~\\~ ~x \\=\\= y = z"),
+            ("~~a~~ ~x == y = z", "\\~\\~a\\~\\~ \\~x \\=\\= y = z"),
+            ("a ^b^ c ~d~ e", "a \\^b\\^ c \\~d\\~ e"),
+            ("H~2~O 2^10 x^2^ a ~ b ^", "H~2~O 2^10 x^2\\^ a ~ b ^"),
             ("[^1] [x]", "\\[^1] [x]"),
         ] {
             assert_eq!(escape_markdown(text), escaped, "{text}");

@@ -505,3 +505,12 @@ fn a_hash_inside_quotes_is_no_yaml_comment() {
         "{view}"
     );
 }
+
+#[test]
+fn a_span_cut_at_the_right_edge_keeps_the_cells_after_it() {
+    // The view drops a span's empty columns at the right too; the cells
+    // past the span still come back.
+    let md = "<!-- t0 2x5, cells p0-p7 by row, merged t0.row0.cell0 across 3 -->\n\
+              |A|\n|-|\n|B|\n\n<!-- p8 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}

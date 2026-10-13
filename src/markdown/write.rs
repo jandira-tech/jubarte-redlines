@@ -190,9 +190,10 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
             column += across;
             cell += 1;
         }
+        // `column` already counts a span the view cut at the right edge.
         let pad = line
             .columns
-            .map_or(0, |columns| columns.saturating_sub(column + spanned));
+            .map_or(0, |columns| columns.saturating_sub(column));
         shaped.push((shapes, cell, pad));
     }
     let rows = match (&line.row_paragraphs, line.one_per_cell) {
@@ -262,6 +263,8 @@ pub(super) fn parser_options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_SUPERSCRIPT
+        | Options::ENABLE_SUBSCRIPT
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
 }

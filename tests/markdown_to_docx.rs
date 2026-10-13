@@ -417,6 +417,34 @@ fn images_are_embedded_through_the_loader() {
 }
 
 #[test]
+fn caret_and_single_tilde_mark_superscript_and_subscript() {
+    // `^x^` and `~x~` at word edges, as pulldown-cmark reads them; two
+    // tildes stay strikethrough and `{~~a~>b~~}` stays a change. Inside a
+    // word (`H~2~O`) they stay text: pulldown-cmark opens neither there.
+    let docx = write("water H ~2~ O, E = mc ^2^, H~2~O, ~~struck~~ and {~~a~>b~~}.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(
+        xml.matches("<w:vertAlign w:val=\"subscript\"/>").count(),
+        1,
+        "{xml}"
+    );
+    assert_eq!(
+        xml.matches("<w:vertAlign w:val=\"superscript\"/>").count(),
+        1,
+        "{xml}"
+    );
+    assert!(xml.contains("<w:strike/>"), "{xml}");
+    assert_eq!(
+        texts(&docx),
+        ["water H 2 O, E = mc 2, H~2~O, struck and b."]
+    );
+    assert_eq!(
+        rejected(&docx),
+        ["water H 2 O, E = mc 2, H~2~O, struck and a."]
+    );
+}
+
+#[test]
 fn inline_html_quotes_code_in_lists_and_anchors() {
     let docx = write(
         "H<sub>2</sub>O and E=mc<sup>2</sup>, <u>underlined</u>, a<br>break, <span>kept</span>.\n\n\

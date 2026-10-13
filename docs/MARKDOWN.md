@@ -48,6 +48,7 @@ document's properties.
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
 | `---` | a paragraph with a bottom border |
 | `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline |
+| `x ^2^`, `x ~2~` | superscript, subscript, at word edges only (pulldown-cmark opens neither inside a word: `H~2~O` is text) |
 
 Images are read relative to the Markdown file, or to `--resource-path`;
 URLs are not fetched.
@@ -343,7 +344,7 @@ is `inactive`, an active `even:` turns on even and odd headers, and a
 Document text that CommonMark would read as markup is escaped in the agent
 view: a paragraph that starts with `# `, `- `, `> ` or `1. ` (also after a
 line break), and `*`, `` ` ``, `\`, `~~`, `==`, `[^`, a tag-like `<` and a
-word-edge `_` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes
+word-edge `_`, `~` or `^` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes
 read back as the characters. `convert -t md` (ids off) does not escape.
 
 An `edit` anchor copied out of the view may carry marks that are not
