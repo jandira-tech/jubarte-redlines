@@ -120,7 +120,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   2 for it, as the binary does; a resolution that fails otherwise says
   `accept failed: …`.
 - **Breaking: `compare` (and `jubarte OLD NEW`) dates its revisions now.**
-  Without `-d/--date` the shared parser fills the current UTC time, to the
+  Without `-d/--datetime` the shared parser fills the current UTC time, to the
   second, so the binary, Python and npm hand the same value to the engine;
   `-d 1970-01-01T00:00:00Z` pins it for reproducible output (the old
   default). `diff`'s patch header already said now; Python and npm no longer
@@ -129,6 +129,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `Document.compare`, WASM `redlineDocuments`) stays the epoch, and
   `convert`'s Markdown-to-Word date is unchanged. `cli::CompareArgs::date`
   is `Option<String>`.
+- **Breaking: the timestamp flag is `-d, --datetime` everywhere** (`edit`,
+  `add`, `compare`, `diff`, `convert`'s Markdown-to-Word date), with
+  `--date` kept as a hidden alias. `edit` and `add` gain the `-d` short
+  flag; `compare`, `diff` and `convert` move it from `--date`. The clap
+  field is `datetime` on `cli::EditOptions`, `cli::CompareArgs`,
+  `cli::Command::Diff` and `cli::MarkdownArgs`, and the shared parser's
+  JSON carries `datetime`, so the Python CLI reads `args.datetime` and
+  the npm CLI `o.datetime`.
 - **Breaking: the default author of `edit` and `add` is `Redline`** (was
   `Modified User`), so the agent view's handle is `@R`. A plan recorded
   from operation flags (`--plan X -p …`), WASM `flagPlan` and the hosts'
@@ -173,7 +181,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `--resource-path`, `--revisions`, `--revision-palette`, `--dpi`,
   `--pages`, `--move-comments` and `--changed-pages` are compare's and
   convert's, and diff no longer takes them. `--format critic` with a Word
-  side exits 1, naming compare; with `--author`, `--date` or `--columns`
+  side exits 1, naming compare; with `--author`, `--datetime` or `--columns`
   (the patch's) it exits 2. The patch's owner is `Redline` unless
   `--author` says otherwise (git's `user.name` is no longer read). An
   existing `-o` file exits 1 before anything is read. The Python and npm
@@ -262,12 +270,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   grid), `audit` (now `validate --rules a11y,style,structure`, which it
   still checks when no `--rules` is given), `--changed-only` (now
   `--changed-pages`), convert's `--pdf` and `--png` (now `--to pdf`/`--to
-  png`; together they exit 2), and 0.12's cell id `t0.r1.c2` as an
-  `edit`/`add` `-p` value, keep working and print `note: X is now Y; X is
-  removed in 0.14` on stderr. The shared parser's JSON carries those notes
-  as `notes`, and `args.quiet` on every task. `jubarte --help` no longer
-  lists them, nor `debug` (still documented in AGENTS.md); `self-update`
-  is listed last.
+  png`; together they exit 2), `--date` (now `--datetime`, on `edit`,
+  `add`, `compare`, `diff` and `convert`), and 0.12's cell id `t0.r1.c2`
+  as an `edit`/`add` `-p` value, keep working and print
+  `note: X is now Y; X is removed in 0.14` on stderr. The shared parser's
+  JSON carries those notes as `notes`, and `args.quiet` on every task.
+  `jubarte --help` no longer lists them, nor `debug` (still documented in
+  AGENTS.md); `self-update` is listed last.
 
 ### Breaking (library)
 
@@ -287,7 +296,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - `cli::EditOptions` gains `output`; `out_dir` is
   `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
   `EditOptions::target(file)` gives the `EditTarget` (`Single` or
-  `Bundle`) a host writes.
+  `Bundle`) a host writes. `cli::EditOptions::datetime` gains the `-d`
+  short flag; `cli::CompareArgs::date`, `cli::MarkdownArgs::date` and
+  `cli::Command::Diff`'s `date` are renamed to `datetime` (`--date` stays
+  a hidden alias).
 - `validate::Finding` is `{code, set, severity, part, location, message,
   word_fatal, repairable}` (`path` is `location`); `ValidateError` gains
   `Usage` and `Layout`. `cli::Command::Audit` and `Command::Inspect` are
