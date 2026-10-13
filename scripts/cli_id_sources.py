@@ -131,7 +131,7 @@ def functions(root: Path) -> dict[str, Fn]:
     found: dict[str, Fn] = {}
     for path in sorted((root / "src").rglob("*.rs")):
         rel = path.relative_to(root).as_posix()
-        lines = non_test_lines(path.read_text())
+        lines = non_test_lines(path.read_text(encoding="utf-8"))
         impl: str | None = None
         starts: list[tuple[int, str, str | None]] = []
         for i, line in enumerate(lines):
@@ -208,7 +208,7 @@ def attribute_uses(root: Path, name: str) -> list[str]:
     found = set()
     for path in sorted((root / "src").rglob("*.rs")):
         owner = "?"
-        for line in non_test_lines(path.read_text()):
+        for line in non_test_lines(path.read_text(encoding="utf-8")):
             if m := re.match(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+(\w+)", line):
                 owner = m.group(1)
             if re.search(
@@ -236,7 +236,11 @@ def parsers(fns: dict[str, Fn]) -> list[Fn]:
 def messages(fn: Fn, root: Path) -> list[str]:
     """The refusals a parser can give: its id-message literals and the ids.rs
     constants it names, spelled out."""
-    consts = dict(re.findall(r'pub const (\w+): &str = "([^"]*)";', (root / "src" / "ids.rs").read_text()))
+    consts = dict(
+        re.findall(
+            r'pub const (\w+): &str = "([^"]*)";', (root / "src" / "ids.rs").read_text(encoding="utf-8")
+        )
+    )
     found = [m.strip('"') for m in ID_MESSAGE.findall(fn.body)]
     found += [consts[c] for c in sorted(set(re.findall(r"\b([A-Z_]{6,})\b", fn.body))) if c in consts]
     return sorted(set(found))
@@ -255,7 +259,7 @@ class Flag:
 
 def id_flags(root: Path) -> list[Flag]:
     """The clap fields of src/cli.rs whose doc or value name speaks of an id."""
-    lines = non_test_lines((root / "src" / "cli.rs").read_text())
+    lines = non_test_lines((root / "src" / "cli.rs").read_text(encoding="utf-8"))
     flags, owner, i = [], "?", 0
     while i < len(lines):
         line = lines[i]
