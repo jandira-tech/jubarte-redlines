@@ -482,8 +482,8 @@ pub struct CompareArgs {
     pub author: String,
 
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
-    /// reproducible output. The parser fills `now` when absent, so every
-    /// host gets the same value.
+    /// reproducible output.
+    // The parser fills now when absent (D17), so every host shares it.
     #[arg(short = 'd', long, value_name = "ISO8601", value_parser = parse_datetime)]
     pub date: Option<String>,
 

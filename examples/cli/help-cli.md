@@ -114,7 +114,7 @@ Options:
 
   -d, --date <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
-          output. The parser fills `now` when absent, so every host gets the same value
+          output
 
       --force
           Overwrite the output file if it already exists
