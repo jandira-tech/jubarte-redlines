@@ -465,3 +465,43 @@ fn a_heading_takes_the_style_the_legend_names_for_its_level() {
     }
     assert!(view.ends_with(body), "{view}");
 }
+
+#[test]
+fn a_title_page_belongs_to_its_own_section() {
+    // Word reads w:titlePg per section: section 1's does not reach 2.
+    let header = "---\nheaders:\n  first: none\n  default: {id: header2, text: X}\n\
+                  sections:\n  2: {p1-p1}\n---\n\n";
+    let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{header}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("a body");
+    assert_eq!(document.matches("<w:titlePg/>").count(), 1, "{document}");
+}
+
+#[test]
+fn a_later_sections_title_page_comes_back() {
+    let header = "---\nheaders:\n  default: {id: header2, text: X}\n\
+                  sections:\n  2: {p1-p1, headers: {first: none}}\n---\n\n";
+    let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n";
+    let view = view_round_trip(header, body);
+    assert!(
+        view.lines()
+            .any(|l| l.starts_with("  2: {p1-p1, headers: {first: none}}")),
+        "{view}"
+    );
+}
+
+#[test]
+fn a_hash_inside_quotes_is_no_yaml_comment() {
+    let header = "---\nheaders:\n  default: {id: header2, text: \"Totals  #3\", center}\n---\n\n";
+    let view = view_round_trip(header, "<!-- p0 -->\nOne.\n");
+    assert!(
+        view.lines()
+            .any(|l| l.starts_with("  default: {id: header2, text: \"Totals  #3\", center}")),
+        "{view}"
+    );
+}

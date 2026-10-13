@@ -225,7 +225,7 @@ pub(super) fn first_section(yaml: &str) -> Stories {
         }
         let Some(kind) = kind else { continue };
         // A YAML comment (`  # …`) is no part of the value.
-        let line = line.split_once("  #").map_or(line, |(value, _)| value);
+        let line = super::view_styles::without_comment(line);
         if let Some((ty, value)) = line.trim().split_once(": ") {
             stories.entry(kind, ty, value);
         }
@@ -427,14 +427,15 @@ pub(super) fn write(
     }
     let mut parts: HashMap<String, String> = HashMap::new();
     let mut by_section = HashMap::new();
-    let mut title_page = false;
     let mut even = false;
     for number in 1..=count.max(1) {
+        // Word reads w:titlePg per section; the view names it on each
+        // section that has it.
         let Some(stories) = sections.get(&number) else {
-            by_section.insert(number, (String::new(), title_page));
+            by_section.insert(number, (String::new(), false));
             continue;
         };
-        title_page = stories.title_page.unwrap_or(title_page);
+        let title_page = stories.title_page.unwrap_or(false);
         let mut refs = String::new();
         for kind in ["header", "footer"] {
             for story in stories.stories.iter().filter(|s| s.kind == kind) {

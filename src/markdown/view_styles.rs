@@ -118,21 +118,22 @@ fn spec(id: &str, heading: Option<u32>, value: &str) -> Option<StyleSpec> {
     Some(spec)
 }
 
-/// `line` without its YAML comment: a `#` after a space, outside a
-/// quoted string (`text: "ACME  #1"` keeps its `#`).
+/// `line` without the comment the view prints after a value: a `#` after
+/// two spaces, outside a quoted string (`text: "ACME  #1"` keeps its
+/// `#`; so does `title: Issue #5`).
 pub(super) fn without_comment(line: &str) -> &str {
     let mut quoted = false;
     let mut escaped = false;
-    let mut space = false;
+    let mut spaces = 0;
     for (at, c) in line.char_indices() {
         match c {
             _ if escaped => escaped = false,
             '\\' if quoted => escaped = true,
             '"' => quoted = !quoted,
-            '#' if space && !quoted => return &line[..at],
+            '#' if spaces >= 2 && !quoted => return &line[..at],
             _ => {}
         }
-        space = c == ' ';
+        spaces = if c == ' ' { spaces + 1 } else { 0 };
     }
     line
 }
@@ -349,6 +350,7 @@ mod tests {
     #[test]
     fn a_comment_ends_at_a_hash_outside_quotes() {
         assert_eq!(without_comment("  a: b  # c"), "  a: b  ");
+        assert_eq!(without_comment("title: Issue #5"), "title: Issue #5");
         assert_eq!(
             without_comment("  a: \"x  #1 \\\" #\"  # c"),
             "  a: \"x  #1 \\\" #\"  "

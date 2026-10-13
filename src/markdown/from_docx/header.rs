@@ -819,18 +819,27 @@ fn section_entry(
         parts.push(format!("fmt: {}", scalar(&tags, true)));
     }
     for kind in ["header", "footer"] {
-        let changed: Vec<String> = section
+        // w:titlePg is the section's own: a section that has it names its
+        // first-page story, or `first: none`, even when inherited.
+        let mut changed: Vec<String> = section
             .stories
             .iter()
             .filter(|s| s.kind == kind)
             .filter(|s| {
-                !previous
-                    .stories
-                    .iter()
-                    .any(|p| p.kind == s.kind && p.ty == s.ty && p.id == s.id)
+                (s.ty == "first" && section.title_page)
+                    || !previous
+                        .stories
+                        .iter()
+                        .any(|p| p.kind == s.kind && p.ty == s.ty && p.id == s.id)
             })
             .map(|s| format!("{}: {}", s.ty, entry(s)))
             .collect();
+        if kind == "header"
+            && section.title_page
+            && !section.stories.iter().any(|s| s.ty == "first")
+        {
+            changed.insert(0, "first: none".to_string());
+        }
         if !changed.is_empty() {
             parts.push(format!("{kind}s: {{{}}}", changed.join(", ")));
         }

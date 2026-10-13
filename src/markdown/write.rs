@@ -1577,7 +1577,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         let mut key_above = "";
         for line in text.lines() {
             // A YAML comment (`  # …`) is no part of the value.
-            let line = line.split_once("  #").map_or(line, |(value, _)| value);
+            let line = view_styles::without_comment(line);
             if !line.starts_with(' ') {
                 key_above = line.split(':').next().unwrap_or("").trim();
             } else if key_above == "sections"
