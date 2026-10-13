@@ -61,6 +61,12 @@ nothing; the earlier "314 of 400" figure came from a sample dominated by them.
 
 ## 2. Our id (short): final grammar
 
+**Decided (Arthur, 2026-10-13): positional, completed (alternative A of three).** The others were
+B, a key prefix (`p3F2A`: stable across edits, but no order and hard to read), and C, a hybrid
+guard (`p12~3F2A`: re-finds a moved element by its key); C can still be added later without
+breaking A. Numbering stays 0-based. A stale positional id is caught by the view's `sha256:` pin
+(`STALE_SOURCE`); the long id carries stability.
+
 One grammar, one parser (`src/ids.rs`), every option that takes a location, printed and accepted
 alike. Positions count the drafter's real structure.
 
