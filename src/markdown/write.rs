@@ -77,6 +77,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
 struct TablePlan {
     header_repeats: bool,
     columns: Option<usize>,
+    align: Option<&'static str>,
     rows: Vec<RowPlan>,
     /// The cell paragraphs' mark changes, by paragraph number.
     marks: HashMap<usize, (bool, view_notes::Tag)>,
@@ -239,6 +240,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
     TablePlan {
         header_repeats: line.header_repeats,
         columns: line.columns,
+        align: line.align,
         rows,
         marks: line.marks,
     }
@@ -622,8 +624,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let Some(grid) = self.table_plan.as_ref().and_then(|plan| plan.columns) {
                     columns.resize(grid.max(columns.len()), None);
                 }
+                let align = self.table_plan.as_ref().and_then(|plan| plan.align);
                 self.story().push(Item::Table {
                     columns: columns.clone(),
+                    align,
                 });
                 self.table = Some(columns);
                 self.table_count += 1;

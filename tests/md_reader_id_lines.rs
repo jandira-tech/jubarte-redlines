@@ -299,3 +299,20 @@ fn empty_trailing_columns_come_back() {
     let md = "<!-- t0 2x3, cells p0-p5 by row -->\n|A|B|\n|-|-|\n|C|D|\n\n<!-- p6 -->\nAfter.\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+#[test]
+fn a_cells_empty_paragraphs_come_back() {
+    let md =
+        "<!-- t0 1x2, cells t0.row0 p0-p4 -->\n|a<br><br>b|c<br>|\n|-|-|\n\n<!-- p5 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn a_tables_alignment_comes_back() {
+    for md in [
+        "<!-- t0 center 1x2, cells p0-p1 by row -->\n|a|b|\n|-|-|\n\n<!-- p2 -->\nAfter.\n",
+        "<!-- t0 right 1x2, cells p0-p1 by row -->\n|a|b|\n|-|-|\n\n<!-- p2 -->\nAfter.\n",
+    ] {
+        assert_eq!(round_trip(md), md.trim());
+    }
+}

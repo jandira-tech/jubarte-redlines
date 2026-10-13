@@ -119,6 +119,8 @@ pub(super) enum Item {
     LinkEnd,
     Table {
         columns: Vec<Option<&'static str>>,
+        /// The table's own alignment (`jc`).
+        align: Option<&'static str>,
     },
     Row {
         header: bool,
@@ -436,13 +438,21 @@ pub(super) fn story(
                 );
             }
             Item::LinkEnd => out.push_str("</w:hyperlink>"),
-            Item::Table { columns: these } => {
+            Item::Table {
+                columns: these,
+                align,
+            } => {
                 columns.clone_from(these);
                 let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
                 out.push_str(
                     "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/>\
-                     <w:tblW w:w=\"5000\" w:type=\"pct\"/>\
-                     <w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" \
+                     <w:tblW w:w=\"5000\" w:type=\"pct\"/>",
+                );
+                if let Some(align) = align {
+                    let _ = write!(out, "<w:jc w:val=\"{align}\"/>");
+                }
+                out.push_str(
+                    "<w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" \
                      w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/>\
                      </w:tblPr><w:tblGrid>",
                 );

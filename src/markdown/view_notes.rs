@@ -153,6 +153,8 @@ pub(super) struct TableLine {
     pub marks: HashMap<usize, (bool, Tag)>,
     /// The grid's columns (`4x7`).
     pub columns: Option<usize>,
+    /// The table's alignment (`t0 center 4x7`), as Word's `jc` value.
+    pub align: Option<&'static str>,
     /// The merged cells by row and cell (`merged t0.row0.cell1 across 2
     /// down 3`): the grid columns each spans and the rows it covers.
     pub merges: HashMap<(usize, usize), (usize, usize)>,
@@ -177,6 +179,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         header_repeats: false,
         marks: HashMap::new(),
         columns: None,
+        align: None,
         merges: HashMap::new(),
     };
     for (i, clause) in rest.split(", ").enumerate() {
@@ -188,6 +191,11 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             && let Some((_, columns)) = clause.rsplit(' ').next().and_then(|s| s.split_once('x'))
         {
             parsed.columns = columns.parse().ok().filter(|&n| n <= MOST_GRID);
+            parsed.align = match clause.split(' ').next() {
+                Some("center") => Some("center"),
+                Some("right") => Some("right"),
+                _ => None,
+            };
         }
         if let Some(cells) = clause.strip_prefix("merged ") {
             // `t0.row0.cell1 across 2 down 3; t0.row2.cell0 down 2`
