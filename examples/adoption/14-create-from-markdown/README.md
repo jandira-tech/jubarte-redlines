@@ -37,7 +37,7 @@ Renderers (both applied to all three .docx files):
 soffice -env:UserInstallation=file:///tmp/lo_adopt_14 \
     --headless --convert-to pdf --outdir . create_pandoc.docx
 pdftoppm -png -r 72 -singlefile create_pandoc.pdf render_page_1_pandoc_soffice
-jubarte convert create_pandoc.docx --png --dpi 72 --pages 1
+jubarte convert create_pandoc.docx -o create_pandoc.png --dpi 72 --pages 1
 ```
 
 ## Tool versions (measured in this folder)
@@ -78,15 +78,17 @@ jubarte's default is Letter and `--page a4` switches it explicitly.
 | `page_size_*.txt` | `<w:pgSz>` from each producer's `word/document.xml` |
 | `pdf_page_size_*.txt` | `pdfinfo` "Page size" of each soffice-made PDF |
 | `render_page_1_<producer>_soffice.png` | page 1 of each file, soffice + pdftoppm at 72 dpi |
-| `render_page_1_<producer>_jubarte.png` | page 1 of each file, `jubarte convert --png` at 72 dpi |
+| `render_page_1_<producer>_jubarte.png` | page 1 of each file, `jubarte convert -o x.png` at 72 dpi |
 | `tool_versions_*.txt` | versions measured above |
 
 ## Verdict
 
-All three carry the same paragraphs — `jubarte text` on each file
-returns the same 22 body paragraphs (title, sections, list items,
-table cells as their own paragraphs). The differences are in what
-surrounds the text:
+All three carry the same text. `jubarte diff` from each to jubarte's
+file shows two differences only: pandoc's curly apostrophe (below), and
+the docx-js script's second paragraph split in two where the Markdown
+has a soft line break, which CommonMark reads as a space (pandoc and
+jubarte write 24 body paragraphs, docx-js 25). The rest of the
+differences are in what surrounds the text:
 
 - **pandoc** is the shortest command and styles the result from a
   reference doc (`--reference-doc`), but its default output names no
