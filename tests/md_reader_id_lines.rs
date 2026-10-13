@@ -112,3 +112,20 @@ fn a_revision_number_is_written_once() {
         );
     }
 }
+
+#[test]
+fn a_paragraph_mark_change_comes_back_with_its_number() {
+    let body = "<!-- p0 break-ins r4 @AC -->\nThe break after this text is new.\n\n\
+                <!-- p1 -->\nNext.\n\n\
+                <!-- p2 empty, break-del r6 @AC -->\n\n\
+                <!-- p3 BodyText center, break-ins r8 @AC -->\nStyled.\n\n<!-- p4 -->\nLast.\n";
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+}
+
+#[test]
+fn an_id_line_without_a_break_clause_leaves_the_mark_alone() {
+    // Text inserted whole, its paragraph mark not: the id line says so by
+    // naming no `break-ins`.
+    let body = "<!-- p0 -->\n{++All new text.++}{>>r3 @AC<<}\n\n<!-- p1 -->\nNext.\n";
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+}

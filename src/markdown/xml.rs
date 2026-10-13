@@ -80,6 +80,9 @@ pub(super) struct Paragraph {
     pub mark_by: Option<u32>,
     /// `mark` was set because the paragraph's whole text is one change.
     pub whole: bool,
+    /// An id line said what the mark is (`break-ins r4 @AC`, or nothing):
+    /// the text does not change it.
+    pub mark_fixed: bool,
 }
 
 /// A paragraph's `w:ind`, side by side, in twips.

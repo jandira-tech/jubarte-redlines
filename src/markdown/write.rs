@@ -571,6 +571,14 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.textless_paragraph();
             if let Some(count) = view_notes::empty_paragraphs(line) {
                 self.end_paragraph();
+                // One empty paragraph whose id line says more than `empty`.
+                if let Some(said) =
+                    view_notes::id_line(line).filter(|said| *said != view_notes::IdLine::default())
+                {
+                    self.id_line = Some(said);
+                    self.textless_paragraph();
+                    continue;
+                }
                 for _ in 0..count {
                     let story = self.story();
                     story.push(Item::Paragraph(Paragraph::default()));
@@ -640,6 +648,22 @@ impl<'o, 'a> Writer<'o, 'a> {
                 left: line.left,
                 right: line.right,
             };
+            paragraph.mark_fixed = true;
+            let mark = line
+                .break_ins
+                .map(|tag| (Kind::Insert, tag))
+                .or_else(|| line.break_del.map(|tag| (Kind::Delete, tag)));
+            if let Some((kind, tag)) = mark {
+                self.serial += 1;
+                let serial = self.serial;
+                let attribution = self.view_author(&tag.handle, tag.date.as_deref());
+                self.document.attributions.insert(serial, attribution);
+                if !tag.ids.is_empty() {
+                    self.document.revision_ids.insert(serial, tag.ids);
+                }
+                paragraph.mark = Some(kind);
+                paragraph.mark_by = Some(serial);
+            }
         }
         match &paragraph.style {
             Some(Cow::Borrowed(style)) => {
@@ -740,14 +764,20 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some((first, kind, serial)) = shift
             && let Some(Item::Paragraph(paragraph)) = story.get_mut(first)
         {
-            paragraph.mark = None;
-            paragraph.mark_by = None;
-            if let Some(Item::Paragraph(paragraph)) = story.get_mut(index) {
+            if !paragraph.mark_fixed {
+                paragraph.mark = None;
+                paragraph.mark_by = None;
+            }
+            if let Some(Item::Paragraph(paragraph)) = story.get_mut(index)
+                && !paragraph.mark_fixed
+            {
                 paragraph.mark = Some(kind);
                 paragraph.mark_by = Some(serial);
                 paragraph.whole = false;
             }
-        } else if let Some(Item::Paragraph(paragraph)) = story.get_mut(index) {
+        } else if let Some(Item::Paragraph(paragraph)) = story.get_mut(index)
+            && !paragraph.mark_fixed
+        {
             paragraph.mark = mark.map(|(kind, _)| kind);
             paragraph.mark_by = mark.map(|(_, serial)| serial);
             paragraph.whole = whole;
@@ -1340,7 +1370,9 @@ fn finish_story(items: &mut Vec<Item>) {
                     let Item::Paragraph(before) = &mut items[index] else {
                         return;
                     };
-                    if before.mark.is_none() {
+                    if before.mark_fixed {
+                        // Its id line said what its mark is.
+                    } else if before.mark.is_none() {
                         before.mark = kind;
                         before.mark_by = by;
                     } else if before.whole && before.mark == kind {
@@ -1353,6 +1385,7 @@ fn finish_story(items: &mut Vec<Item>) {
                         if let Some(earlier) = earlier
                             && let Item::Paragraph(p) = &mut items[earlier]
                             && p.mark.is_none()
+                            && !p.mark_fixed
                         {
                             p.mark = kind;
                             p.mark_by = by;

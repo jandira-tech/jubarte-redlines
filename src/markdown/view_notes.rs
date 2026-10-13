@@ -197,6 +197,10 @@ pub(super) struct IdLine {
     pub right: Option<i64>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
+    /// The paragraph mark's insertion (`break-ins r4 @AC`).
+    pub break_ins: Option<Tag>,
+    /// The paragraph mark's deletion (`break-del r6 @AC`).
+    pub break_del: Option<Tag>,
 }
 
 /// The id line of one paragraph (`pN`, not a range); `None` for any
@@ -251,9 +255,16 @@ impl IdLine {
             Some(("hanging", v)) => self.hanging = twips(v),
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
+            // A mark has one change: the first tag names it.
+            Some(("break-ins", v)) => self.break_ins = first_tag(v),
+            Some(("break-del", v)) => self.break_del = first_tag(v),
             Some(_) => {}
         }
     }
+}
+
+fn first_tag(text: &str) -> Option<Tag> {
+    revision_tags(text)?.into_iter().next()
 }
 
 /// The head of `text` and the comment text after it.
