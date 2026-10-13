@@ -31,7 +31,7 @@ headers:
 
 <!-- p7 empty -->
 
-<!-- t0 10x4, cells p8-p38 by row, merged cells -->
+<!-- t0 10x4, cells p8-p38 by row, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
 |Centro:||Código de Centro:||
 |-|-|-|-|
 |Dirección:||Provincia:||

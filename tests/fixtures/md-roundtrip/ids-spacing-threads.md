@@ -71,7 +71,7 @@ Bake for 22 minutes.
 <!-- p18 -->
 A small table with a header row:
 
-<!-- t0 center 5x4, cells p19-p38 by row, merged cells -->
+<!-- t0 center 5x4, cells p19-p38 by row -->
 |Region|Q1|Q2|Q3|
 |-|-|-|-|
 |North|$120k|$135k|$150k|
@@ -162,7 +162,7 @@ _— end of sample —_
 <!-- p66 -->
 {++A small table with a header row:++}{>>r19 @ASR<<}
 
-<!-- t1 center 5x4, cells p67-p86 by row, merged cells -->
+<!-- t1 center 5x4, cells p67-p86 by row -->
 |{++Region++}{>>r20 @ASR<<}|{++Q1++}{>>r21 @ASR<<}|{++Q2++}{>>r22 @ASR<<}|{++Q3++}{>>r23 @ASR<<}|
 |-|-|-|-|
 |{++North++}{>>r24 @ASR<<}|{++$120k++}{>>r25 @ASR<<}|{++$135k++}{>>r26 @ASR<<}|{++$150k++}{>>r27 @ASR<<}|
