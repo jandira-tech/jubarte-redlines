@@ -5,7 +5,7 @@ The buyer shall return defective goods within fourteen days.
 Notices must **be** sent by _email_ and by registered _mail_.
 
 |Clause|Change|Status|
-|-|-|-|
+|:-|:-|:-|
 |This agreement is governed.|The buyer shall return.|Disputes go first to.|
 |Disputes go first to.|Any change to this.|Notices must be sent.|
 |Neither party is liable.|Notices must be sent.|Either party may end.|

@@ -1,7 +1,7 @@
 # Tables and text boxes
 
 |Merged||C|
-|-|-|-|
+|:-|:-|:-|
 |Line one<br>line two|Para|noted|
 |in; gone||all deleted|
 
