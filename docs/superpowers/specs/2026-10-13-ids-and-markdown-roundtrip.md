@@ -42,15 +42,15 @@ structure.
 | Kind | Spelling | Notes |
 |-|-|-|
 | Body paragraph | `p12` | paragraphs in table cells are numbered in the same sequence |
-| Story paragraph | `header1.p0`, `footnotes.p3`, `endnotes.p0` | always with `.pN` in print; a bare `header1` is still accepted as input |
+| Story paragraph | `header1.p0`, `footnotes.p3`, `endnotes.p0` | always with `.pN`. A bare `header1` names the part itself (the YAML `id:`); `edit -p header1` edits its first paragraph. The view prints `header1` for a header's first paragraph today: drift, fixed with the printers (plan task 3). Parts: `headerN`, `footerN`, `footnotes`, `endnotes`, `comments`, `styles`, `numbering` |
 | Table | `t0` | top-level tables of a story, in order |
 | Row | `t0.row1` | |
-| Cell | `t0.row1.cell2` | its first paragraph; `.p1` for the next |
+| Cell | `t0.row1.cell2` | its first paragraph, so `.p0` is never written; `.p1` for the next; the first paragraph's boxes and controls are `t0.row1.cell2.box0.p0`, `t0.row1.cell2.cc0` |
 | Nested table | `t0.row1.cell2.t0.row0.cell0` | numbered inside its cell; `read --tables` uses the same numbering |
 | Text-box paragraph | `p14.box0.p0` | the box anchored in p14 |
-| Change | `r12`, pair `r1+2`; in another part `header1.r1`, `footnotes.r1`, `styles.r0` | a change that spans blocks prints its note in each block; the copies are one change |
+| Change | `r12`, pair `r1+2` (`r43+43` when Word gave both marks one `w:id`); in another part `header1.r1`, `footnotes.r1`, `styles.r0` | a change that spans blocks prints its note in each block; the copies are one change |
 | Comment | `c5`; the text it covers `c5.text` | |
-| Range | `p3-p7` | wherever several blocks are accepted (read, accept, reject) |
+| Range | `p3-p7`, `footnotes.p2-p3`, `t0.row1.cell2.p1-p3` | the second side renumbers the first's last step: same story, same kind, ascending (`p4-p4` is one block); wherever several blocks are accepted |
 | Section | `s0` … `sN` | in body order; the last is the body's own `w:sectPr`. Drift today: the YAML `sections:` map numbers from 1 and leaves out the first (`2:` is `s1`); it must print `s1:` |
 | Table of contents | `toc0` | a TOC field, or the TOC content control around one, counted once |
 | Content control | `cc0` (block), `p12.cc0` (inline) | the one inline object with no Markdown sibling |
