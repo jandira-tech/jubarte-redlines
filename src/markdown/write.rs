@@ -979,7 +979,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             if let Some(handle) = &head.handle {
                 let (author, date) = self.view_author(handle, head.date.as_deref());
                 comment.by = Some((author, date));
-                comment.initials = Some(handle.clone());
+                // A handle stands for initials unless it carries the
+                // digit that tells two authors' initials apart (`U2`):
+                // then the writer takes them from the name.
+                if !handle.chars().any(|c| c.is_ascii_digit()) {
+                    comment.initials = Some(handle.clone());
+                }
             }
             comment.paragraphs[0] = text;
         } else if let Some(first) = comment.paragraphs.first_mut()
@@ -1083,15 +1088,19 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// The author a view handle names and the date for one of their notes:
-    /// the note's own, else the one the `authors:` table gives them all,
-    /// else the conversion's date. An unknown handle stands for itself.
+    /// the note's own, else the one the `authors:` table gives them all. An
+    /// author the table knows without one date (several, printed as a day
+    /// range) gets none: the note is written undated, never with the
+    /// conversion's date. An unknown handle stands for itself, dated as the
+    /// conversion is.
     fn view_author(&self, handle: &str, date: Option<&str>) -> (String, String) {
         let known = self.authors.get(handle);
         let author = known.map_or_else(|| handle.to_string(), |a| a.name.clone());
-        let date = date
-            .map(str::to_string)
-            .or_else(|| known.and_then(|a| a.date.clone()))
-            .unwrap_or_else(|| self.options.date.clone());
+        let date = match (date, known) {
+            (Some(date), _) => date.to_string(),
+            (None, Some(known)) => known.date.clone().unwrap_or_default(),
+            (None, None) => self.options.date.clone(),
+        };
         (author, date)
     }
 

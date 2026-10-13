@@ -225,9 +225,9 @@ impl Context<'_> {
         };
         match by.and_then(|serial| self.document.attributions.get(&serial)) {
             Some((author, date)) => format!(
-                "{name} w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\"",
+                "{name} w:id=\"{id}\" w:author=\"{}\"{}",
                 escape(author),
-                escape(date)
+                date_attribute(date)
             ),
             None => format!(
                 "{name} w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\"",
@@ -535,10 +535,10 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
                 });
                 let _ = write!(
                     out,
-                    "<w:comment w:id=\"{}\" w:author=\"{}\" w:date=\"{}\" w:initials=\"{}\">",
+                    "<w:comment w:id=\"{}\" w:author=\"{}\"{} w:initials=\"{}\">",
                     comment.id,
                     escape(author),
-                    escape(date),
+                    date_attribute(date),
                     escape(&initials)
                 );
             }
@@ -788,6 +788,18 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
         }
         _ => return None,
     })
+}
+
+/// ` w:date="…"`, or nothing for an empty date: the attribute is optional,
+/// and a note the view gave no exact date (an author with several, the
+/// `authors:` table only spanning days) is written undated, never with an
+/// invented one.
+fn date_attribute(date: &str) -> String {
+    if date.is_empty() {
+        String::new()
+    } else {
+        format!(" w:date=\"{}\"", escape(date))
+    }
 }
 
 #[cfg(test)]

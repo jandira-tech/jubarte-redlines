@@ -94,9 +94,11 @@ pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
             if words.next().is_some() || !is_handle(handle) {
                 return None;
             }
-            let id_ok = id == "noid"
-                || id.strip_suffix(".noid").is_some()
-                || crate::ids::parse_change_ids(id).is_ok();
+            // A bare number (`5 @AC`) is a person's comment, not a tag.
+            let id_ok = !id.starts_with(|c: char| c.is_ascii_digit())
+                && (id == "noid"
+                    || id.strip_suffix(".noid").is_some()
+                    || crate::ids::parse_change_ids(id).is_ok());
             let date_ok = date.is_none_or(super::write::is_date);
             (id_ok && date_ok && !id.starts_with('#')).then(|| Tag {
                 handle: handle.to_string(),
@@ -126,7 +128,10 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         text.strip_suffix(':').map(|head| (head, ""))
     })?;
     let mut words = head.split(' ').peekable();
-    let number = crate::ids::parse_comment_id(words.next()?).ok()?;
+    // `c5`, never a bare `5`: a person's comment such as `3: item three` is
+    // text, not a head.
+    let id = words.next().filter(|w| w.starts_with('c'))?;
+    let number = crate::ids::parse_comment_id(id).ok()?;
     let mut parsed = CommentHead {
         number,
         handle: None,
@@ -148,7 +153,7 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
     match (words.next(), words.next(), words.next()) {
         (None, ..) => {}
         (Some("resolved"), None, _) => parsed.resolved = true,
-        (Some("re"), Some(root), None) => {
+        (Some("re"), Some(root), None) if root.starts_with('c') => {
             parsed.reply_to = Some(crate::ids::parse_comment_id(root).ok()?);
         }
         _ => return None,
@@ -213,6 +218,10 @@ mod tests {
             "r0 @AC tomorrow",
             "#12 @AC",
             "please check r0 @AC",
+            // A person's comment that happens to look like a tag (pi review).
+            "5 @AC",
+            "12 @home",
+            "1+2 @AC",
             "",
         ] {
             assert_eq!(revision_tags(text), None, "{text}");
@@ -253,5 +262,15 @@ mod tests {
         ] {
             assert_eq!(comment_head(text), None, "{text}");
         }
+    }
+
+    #[test]
+    fn a_persons_comment_is_not_a_head() {
+        // pi review of #462: `c5: x` without a handle and `3: item three`
+        // kept their prefix only by luck; a bare number is never a head.
+        for text in ["3: item three", "5 @AC: x", "Note: hi", "c5 @AC re 4: x"] {
+            assert_eq!(comment_head(text), None, "{text}");
+        }
+        assert!(comment_head("c5 @AC re c4: x").is_some());
     }
 }

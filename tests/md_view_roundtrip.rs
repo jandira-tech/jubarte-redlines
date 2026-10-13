@@ -24,9 +24,12 @@ fn jubarte(dir: &Path, args: &[&str]) -> String {
 
 /// `received.docx` → its view → a docx again.
 fn round_trip(dir: &Path) -> (Vec<u8>, Vec<u8>) {
+    // The source sits apart from the Markdown, so automatic anchoring (spec
+    // §5.3) can never make this test measure nothing.
     let source = std::fs::read("tests/fixtures/agent-view/received.docx").unwrap();
-    std::fs::write(dir.join("received.docx"), &source).unwrap();
-    let view = jubarte(dir, &["read", "received.docx"]);
+    std::fs::create_dir_all(dir.join("source")).unwrap();
+    std::fs::write(dir.join("source/received.docx"), &source).unwrap();
+    let view = jubarte(dir, &["read", "source/received.docx"]);
     std::fs::write(dir.join("view.md"), view).unwrap();
     jubarte(dir, &["convert", "view.md", "-o", "back.docx"]);
     (source, std::fs::read(dir.join("back.docx")).unwrap())
@@ -65,4 +68,26 @@ fn comment_notes_keep_their_author_initials_and_date() {
             .collect()
     };
     assert_eq!(comments(&back), comments(&source));
+}
+
+/// An author with several dates is listed as a day range (`2016-07-03..
+/// 2016-07-03`), which names no date: their notes are written undated,
+/// never with the conversion's 1970-01-01 (pi review of #462: 21 of 22
+/// such corpus files were re-dated to the epoch).
+#[test]
+fn an_author_with_several_dates_is_never_dated_1970() {
+    let dir = tempfile::tempdir().unwrap();
+    let view = "---\nview: tracked\ncomments: 2 threads open\nauthors:\n  MW: Michael Williamson           # 2 comments, 2016-07-03..2016-07-03\n---\n\n<!-- p0 -->\nA tachyon{== walks==}{>>c0 @MW: A tachyon walks into a bar.<<} in.{== Fin==}{>>c1 @MW: Fin.<<}\n";
+    std::fs::write(dir.path().join("view.md"), view).unwrap();
+    jubarte(dir.path(), &["convert", "view.md", "-o", "back.docx"]);
+    let back = std::fs::read(dir.path().join("back.docx")).unwrap();
+    let comments = jubarte::comments::list_comments(&back).unwrap();
+    assert_eq!(comments.len(), 2, "{comments:?}");
+    for c in comments {
+        assert_eq!(c.author, "Michael Williamson");
+        assert!(
+            !c.date.as_deref().unwrap_or_default().starts_with("1970"),
+            "{c:?}"
+        );
+    }
 }
