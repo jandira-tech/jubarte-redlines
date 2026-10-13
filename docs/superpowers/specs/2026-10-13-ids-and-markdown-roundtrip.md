@@ -4,14 +4,14 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Ids and the Markdown round trip: the settlement (draft, 2026-10-13)
+# Ids and the Markdown round trip: the settlement (2026-10-13)
 
 Arthur, 2026-10-13: "I want to settle the id (ours) and the long id for good. I want to absolutely
 ensure that docx to md to docx to md is as lossless as possible."
 
-This document proposes the final rules. Items marked **Decide** wait for Arthur; everything else
-follows from evidence below and from rules already agreed (D7, the hierarchy rule: depth and
-position come from the real structure, never from marker names).
+This document sets the final rules. Arthur decided the three open choices on 2026-10-13 (marked
+**Decided**); everything else follows from the evidence below and from rules already agreed (D7,
+the hierarchy rule: depth and position come from the real structure, never from marker names).
 
 ## 1. Evidence
 
@@ -77,16 +77,14 @@ alike. Positions count the drafter's real structure.
 | Comment | `c5`; the text it covers `c5.text` | |
 | Range | `p3-p7` | wherever several blocks are accepted (read, accept, reject) |
 
-**Decide (A): bare numbers.** Today `12` is a paragraph on `-p`, a change on `--id`, a comment in plan
-JSON. Options: (1) keep them, one kind per option, never printed (today); (2) deprecate them: accepted
-with a note through 0.13, removed in 0.14, so every id says its kind; (3) refuse a bare number that
-names two things in the document. Recommendation: (2).
+**Decided (A): bare numbers are deprecated.** Today `12` is a paragraph on `-p`, a change on `--id`,
+a comment in plan JSON. From now on a bare number is accepted with a `note:` naming the prefixed
+spelling (`p12`, `r12`, `c12`) through 0.13, and refused in 0.14, so every id says its kind. Help,
+docs and `capabilities` stop advertising bare numbers.
 
 ## 3. The long id: final grammar
 
-**Decide (B):** `PART.ELEMENT.ATTRIBUTE.VALUE` ("D", recommended) or `story:kind:xmlid` ("B").
-
-D, with examples: `document.w:p.w14:paraId.3F2A1B7C`, `document.w:ins.w:id.12`,
+**Decided (B): `PART.ELEMENT.ATTRIBUTE.VALUE`.** Examples: `document.w:p.w14:paraId.3F2A1B7C`, `document.w:ins.w:id.12`,
 `footnotes.w:footnote.w:id.2`, `comments.w:comment.w:id.5`, `document.w:tr.w14:paraId.1A2B3C4D`,
 `document.w:bookmarkStart.w:name._Ref123`.
 
@@ -100,6 +98,14 @@ D, with examples: `document.w:p.w14:paraId.3F2A1B7C`, `document.w:ins.w:id.12`,
   file, as Word does on save. Before shipping, a Word check that the stamped file opens cleanly.
 - A repeated key exits 2 and lists the candidates (D7's rule for change ids).
 - Long ids appear in JSON, machine hints and `--long-id`; text output prints short ids (D7).
+
+Coverage on `tests/corpus` (1,195 documents, 146,300 addressable elements): 92.2% named by this
+syntax as is (78.2% directly, 14.1% through a row key), 0.3% under a repeated key, 7.5% with no key.
+Real-world documents (`neurotic_docx_bench`, 442): 97.75%. The 321 Docxodus fixtures, written by the
+C# library, hold 8,566 of the 11,006 unkeyed elements. Revisions, comments, notes, bookmarks and
+drawings are 100% (their `w:id` is required); paragraphs, rows, cells and tables depend on
+`w14:paraId`, which stamping completes for every file jubarte writes. A file read without keys falls
+back to the short id (Word's own positional addressing).
 
 ## 4. The Markdown round trip
 
@@ -132,8 +138,8 @@ Each line below is a test: write, read back, compare.
   express survives byte for byte. This is where ids matter: each id line ties a Markdown block to
   its source element; a block with no id line is new.
 
-**Decide (C):** anchored automatically when the YAML names a matching source, or only with `--base`.
-Recommendation: automatic, with a `note:` saying so.
+**Decided (C): automatic.** When the YAML `source:`/`sha256:` matches a file beside the Markdown,
+the conversion is anchored on it and prints `note: anchored on SOURCE.docx`; `--standalone` opts out.
 
 ### 4.4 The gate
 

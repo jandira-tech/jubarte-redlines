@@ -22,7 +22,7 @@ jubarte reads Markdown alongside Word documents:
 each tracked change and comment as CriticMarkup followed by its author and
 date (`-o FILE.md` writes it; `--track-changes accept` or `reject` writes
 the text after Word's Accept All or Reject All). Pictures become their alt
-text. `jubarte read FILE` (alias `text`) prints the [agent view](#agent-view):
+text. `jubarte read FILE` prints the [agent view](#agent-view):
 the same Markdown with a YAML header, an id line before every paragraph and
 an id on every change and comment, for edit plans.
 
@@ -124,7 +124,7 @@ accept` renders the accepted document to PDF.
 
 ## Agent view
 
-`jubarte read FILE.docx` (alias `text`) prints the agent view: a YAML header
+`jubarte read FILE.docx` prints the agent view: a YAML header
 with the facts an editor needs, then the document as Markdown and
 CriticMarkup, with an id line before every paragraph and an id on every
 tracked change and comment. The ids are the ones `edit`, `accept --id`,
