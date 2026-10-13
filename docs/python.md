@@ -841,9 +841,9 @@ Options:
           --plan and no operation flags)
 
   -p, --location <WHERE>
-          Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment) or r12 (a
-          revision, with --accept or --reject). Each -p starts an operation; the flags
-          after it belong to it
+          Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the
+          text c5 covers) or r12 (a revision, with --accept or --reject). Each -p starts
+          an operation; the flags after it belong to it
 
       --anchor <TEXT>
           Text inside WHERE the operation applies to (must occur once)
@@ -958,6 +958,7 @@ Examples:
   jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
   jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
   jubarte edit a.docx -p c5 --reply "Agreed, will fix."
+  jubarte edit a.docx -p c5.text --content "net 30"   the text c5 covers
   jubarte edit a.docx -p r3 --accept -p header1.r1 --reject
   jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf
   jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/
@@ -965,8 +966,8 @@ Examples:
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
 WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
-t0.row1.cell2, c5 (a comment), r12 (a revision), or a long id
-(body:p:12).
+t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12
+(a revision), or a long id (body:p:12).
 ```
 
 #### `jubarte-redlines add`
