@@ -436,7 +436,7 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     with pytest.raises(SystemExit) as usage:
         main(["reject", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "c5"])
     assert usage.value.code == 2
-    assert capsys.readouterr().err == "error: c5: expected a change id such as r12, header1.r1 or body:rev:12\n"
+    assert capsys.readouterr().err == "error: c5: expected a change id such as r12, r1+2 or header1.r1\n"
     assert main(["changes", str(tmp_path / "missing.docx")]) == 1
     missing = tmp_path / "missing.docx"
     assert capsys.readouterr().err == f"error: reading {missing}: No such file or directory (os error 2)\n"

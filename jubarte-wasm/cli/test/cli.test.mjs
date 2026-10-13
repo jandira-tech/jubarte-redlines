@@ -140,7 +140,7 @@ test("errors read as the binary's: bad ids are usage, I/O as Rust words it, sort
   const out = path.join(tmp, "never-accepted.docx");
   const bad = run("accept", tracked, "-o", out, "--id", "c5");
   assert.equal(bad.code, 2, bad.err);
-  assert.equal(bad.err, "error: c5: expected a change id such as r12, header1.r1 or body:rev:12\n");
+  assert.equal(bad.err, "error: c5: expected a change id such as r12, r1+2 or header1.r1\n");
   // The id is checked before any I/O, as natively.
   assert.equal(run("reject", "missing.docx", "-o", out, "--id", "c5").code, 2);
   const unknown = run("accept", tracked, "-o", out, "--id", "r99");

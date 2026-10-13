@@ -118,7 +118,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   own pairs count once: a style's `w:pPrChange` and `w:rPrChange` sharing a
   `w:id`, and a text box's `mc:Fallback` copy. Marks in `comments.xml` and
   `numbering.xml` no longer count.
-- **Breaking: `edit -p 6` means `p6`**; it was refused as an unknown id.
+- **Breaking: only the settled short ids parse.** `12`, `#12`, `#c27`,
+  `#c27.text` and `t0.r1.c2` exit 2 wherever an id is taken (`--id`,
+  `edit -p`, `read -p`, plan JSON, Python and npm alike), naming the
+  settled spelling the option takes: `--id 12` → `r12`, `read -p 12` →
+  `p12`, `-p 6 --resolve` → `c6`, `t0.r1.c2` → `t0.row1.cell2`. A settled
+  id `-p` does not edit yet (`s0`, `p3-p7`, `toc0`) exits 2 as well. The
+  long `body:rev:12` and `body:p:12` the JSON prints still parse.
 - **Breaking: `read --tables` and `validate` print short ids.** A table
   cell that read `body:p:1=Item\tbody:p:2=Qty` now reads
   `p1=Item\tp2=Qty` (a cell's `p3,p4`, via `ids::short_paragraph`, the id
