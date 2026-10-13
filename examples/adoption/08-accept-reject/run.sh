@@ -85,16 +85,16 @@ fi
 "$JUBARTE" reject redline.docx -o rejected_jubarte.docx --force
 
 # Text comparison of the two accepted files, and of the rejected file
-# against the original.
-"$JUBARTE" text accepted_jubarte.docx > accept_text_jubarte.txt
+# against the original: jubarte diff prints nothing when the text is equal.
+"$JUBARTE" read accepted_jubarte.docx > accept_text_jubarte.txt
 if [ -f accepted_libreoffice.docx ]; then
-  "$JUBARTE" text accepted_libreoffice.docx > accept_text_libreoffice.txt
-  diff accept_text_jubarte.txt accept_text_libreoffice.txt \
+  "$JUBARTE" read accepted_libreoffice.docx > accept_text_libreoffice.txt
+  "$JUBARTE" diff accepted_libreoffice.docx accepted_jubarte.docx \
     > accept_text.diff || true
 fi
-"$JUBARTE" text rejected_jubarte.docx > reject_text_jubarte.txt
-"$JUBARTE" text original.docx > text_original.txt
-diff reject_text_jubarte.txt text_original.txt > reject_text.diff || true
+"$JUBARTE" read rejected_jubarte.docx > reject_text_jubarte.txt
+"$JUBARTE" read original.docx > text_original.txt
+"$JUBARTE" diff original.docx rejected_jubarte.docx > reject_text.diff || true
 
 # No tracked change may survive on either side.
 "$JUBARTE" changes accepted_jubarte.docx > changes_accepted_jubarte.log 2>&1 || true
@@ -103,11 +103,11 @@ if [ -f accepted_libreoffice.docx ]; then
 fi
 
 # Page 1 of each accepted file, rendered by jubarte (72 dpi).
-"$JUBARTE" convert accepted_jubarte.docx --png --dpi 72 --force >/dev/null
+"$JUBARTE" convert accepted_jubarte.docx -o accepted_jubarte.png --dpi 72 --force >/dev/null
 mv accepted_jubarte-page-01.png accept_page_1_jubarte.png 2>/dev/null \
   || mv accepted_jubarte-page-1.png accept_page_1_jubarte.png
 if [ -f accepted_libreoffice.docx ]; then
-  "$JUBARTE" convert accepted_libreoffice.docx --png --dpi 72 --force >/dev/null
+  "$JUBARTE" convert accepted_libreoffice.docx -o accepted_libreoffice.png --dpi 72 --force >/dev/null
   mv accepted_libreoffice-page-01.png accept_page_1_libreoffice.png 2>/dev/null \
     || mv accepted_libreoffice-page-1.png accept_page_1_libreoffice.png
 fi
