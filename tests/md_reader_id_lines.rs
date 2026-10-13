@@ -373,3 +373,45 @@ fn sections_and_their_pages_come_back() {
     }
     assert!(view.ends_with(body), "{view}");
 }
+
+/// The view of `header` and `body` read into a docx and read again.
+fn view_round_trip(header: &str, body: &str) -> String {
+    let docx = markdown_to_docx(
+        &as_view(&format!("{header}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown
+}
+
+#[test]
+fn headers_and_footers_come_back_with_their_ids() {
+    let header = "---\nheaders:\n  \
+                  first: {id: header3, text: \"{PAGE}\"}  # page 1 only (different first page)\n  \
+                  default: {id: header2.p1, text: Smith & Co, center}\n  \
+                  even: {id: header1, text: Even, inactive}  # defined, but even/odd headers are off\n\
+                  footers:\n  default: {id: footer2, text: \"Page {PAGE}\", right}\n\
+                  sections:\n  2: {p1-p1, footers: {default: {id: footer5, text: Annex}}}\n---\n\n";
+    let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n";
+    let view = view_round_trip(header, body);
+    for line in [
+        "  first: {id: header3, text: \"{PAGE}\"}",
+        "  default: {id: header2.p1, text: Smith & Co, center}",
+        "  even: {id: header1, text: Even, inactive}",
+        "  default: {id: footer2, text: \"Page {PAGE}\", right}",
+        "  2: {p1-p1, footers: {default: {id: footer5, text: Annex}}}",
+    ] {
+        assert!(view.lines().any(|l| l.starts_with(line)), "{line}\n{view}");
+    }
+    assert!(view.ends_with(body), "{view}");
+}

@@ -333,7 +333,10 @@ warning; `document_owner` missing is
 Normal Calibri 11pt and the writer's other defaults. A header without
 `source:` is honoured for `page:`, the `styles:` lines it names, and
 `headers:`/`footers:` text, alignment and `{PAGE}`/`{NUMPAGES}`/`{DATE}`
-fields.
+fields. Each story becomes the part its id names (`header2.p1` is
+paragraph 1 of `header2.xml`), `first:` turns on the title page unless it
+is `inactive`, an active `even:` turns on even and odd headers, and a
+`sections:` entry gives its section the page and stories it names.
 
 ### Literal marks and anchors
 
