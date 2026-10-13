@@ -625,7 +625,7 @@ def _from_markdown(args: argparse.Namespace, text: str) -> Document:
             reference=reference,
             page=args.page,
             author=args.author,
-            date=args.date,
+            date=args.datetime,
             critic=not args.no_critic,
             track_changes=args.track_changes,
         )
@@ -787,7 +787,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     if args.output is None:
         # Without -o, compare (and the shorthand `A B`) prints the
         # redline's agent view.
-        redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+        redline = _native.redline_documents(original, modified, author=args.author, date=args.datetime)
         return _print_view(redline, args.view, f"{default} (not written; -o keeps it)")
     output: Path = args.output
     if args.output_format == "md" and isinstance(original, str) and isinstance(modified, str):
@@ -797,12 +797,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
             print("error: read options shape the view; two Markdown documents write CriticMarkup to a .md", file=sys.stderr)
             raise SystemExit(EXIT_USAGE)
         _ensure_writable(output, args.force)
-        critic = diff(original, modified, format="critic", author=args.author, date=args.date).text
+        critic = diff(original, modified, format="critic", author=args.author, date=args.datetime).text
         _wrote(args, output, "md", _write(output, critic))
         return EXIT_OK
     if args.output_format != "png":
         _ensure_writable(output, args.force)
-    redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+    redline = _native.redline_documents(original, modified, author=args.author, date=args.datetime)
     _write_result(args, redline, source=f"{default} (not written; -o keeps it)", view=getattr(args, "view", None))
     return EXIT_OK
 
@@ -829,7 +829,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
                            "`jubarte compare OLD NEW` prints their redline as the agent view")
         # The shared parser dated the run (D17).
         text = _decode_diff(_native.diff_json(old, new, old_name=_spelled(args, "old"), new_name=_spelled(args, "new"),
-                                              author=args.author, date=args.date, columns=args.columns, critic=critic)).text
+                                              author=args.author, date=args.datetime, columns=args.columns, critic=critic)).text
     if output is None:
         sys.stdout.write(text)
         return EXIT_OK

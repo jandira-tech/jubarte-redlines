@@ -81,7 +81,7 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     a, b = (tmp_path / name for name in ("before.md", "after.md"))
     a.write_text("Due in 30 days.\n")
     b.write_text("Due in 45 days.\n")
-    assert main(["diff", str(a), str(b), "--author", "Legal", "--date", "2026-09-30T14:05:00Z"]) == 0
+    assert main(["diff", str(a), str(b), "--author", "Legal", "--datetime", "2026-09-30T14:05:00Z"]) == 0
     assert "[-30-]{+45+}" in capsys.readouterr().out
     assert main(["diff", str(a), str(b), "--format", "critic"]) == 0
     assert capsys.readouterr().out == "Due in {~~30~>45~~} days.\n"
