@@ -1751,6 +1751,8 @@ Change(
     move_name: str | None,
     move_side: Literal['from', 'to'] | None,
     inside: str | None,
+    ref: str | None = None,
+    paragraph: str | None = None,
 )
 ```
 
@@ -1762,7 +1764,9 @@ change applies to (``text``, ``paragraph_mark``, ``table_row``,
 ``table_cell``, ``properties``). Both sides of a move share
 ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
 ``inside`` names the change whose content holds this one: resolving that
-one so its content goes takes this one along.
+one so its content goes takes this one along. ``ref`` is the short id the
+CLI prints and ``-p``/``--id`` take (``r12``, ``header1.r3``);
+``paragraph`` is the id of the paragraph the change is in (``body:p:3``).
 
 ### `Comment`
 
@@ -1779,6 +1783,7 @@ Comment(
     anchor_text: str,
     before: str,
     after: str,
+    ref: str | None = None,
 )
 ```
 
@@ -1791,7 +1796,8 @@ One comment with its thread position and the text it is anchored to.
     is the paragraph id where the range starts (``body:p:12``);
     ``anchor_text`` is the commented text, paragraphs joined by ``
 ``, with
-    up to 80 characters ``before`` and ``after`` it.
+    up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
+    the CLI prints and ``-p`` takes (``c5``).
 
 ### `CompareOptions`
 
@@ -2314,10 +2320,16 @@ Snapshot(
     stories: tuple[Story, ...] = (),
     tables: tuple[Table, ...] = (),
     controls: tuple[ContentControl, ...] = (),
+    changes: tuple[Change, ...] = (),
+    comments: tuple[Comment, ...] = (),
 )
 ```
 
 What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses.
+
+``changes`` and ``comments`` are the tracked changes and comments, as
+``Document.changes()`` and ``comments()`` list them and ``read --json``
+prints them.
 
 #### `Snapshot.control`
 

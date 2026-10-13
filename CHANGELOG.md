@@ -17,6 +17,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **The Python CLI prints what the binary prints.** `changes`, `comments`,
+  `read --tables` and a selected `read --json` come from the engine
+  (`_native.changes_text`, `comments_text`, `tables_text`, `read_json`), and
+  every `wrote` line from `wrote_line`/`wrote_png_line`, on stderr. Edit's
+  report lines are compact with sorted keys, so a bundle is byte-identical
+  to the binary's. Python's `Change` gains `ref` and `paragraph`, `Comment`
+  gains `ref`, and `Snapshot` gains `changes` and `comments`.
+- **MCP `docx_text` returns `read`'s agent view** (the header, `<!-- pN -->`
+  id lines, revisions and comments with their ids) instead of the body with
+  `[body:p:N]` ids; plans take `p12` as written.
+
 - **One id grammar** (`jubarte::ids`), the same in every place an id goes:
   revisions `r12`, `12`, `r1+2` (both marks of one change), `header1.r1`,
   `footnotes.r3`, `body:rev:12`; comments `c27`, `27`; paragraphs `p12`,
@@ -49,9 +60,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `comments --json` list them). `-p`, `--head`, `--tail`, `--changed` and
   `--by` keep the paragraphs they select and those paragraphs' changes and
   comments; the view-only flags exit 2 with it, and so does `--json` with
-  two documents. `read --tables` prints the table grids. The Python and
-  npm CLIs print the whole snapshot and refuse `--tables` and a selected
-  snapshot for now. The library adds `inspect::snapshot`,
+  two documents. `read --tables` prints the table grids. The Python CLI
+  does the same; the npm CLI prints the whole snapshot and refuses
+  `--tables` and a selected snapshot for now. The library adds `inspect::snapshot`,
   `Snapshot::retain`, `inspect::tables_text` and
   `markdown::read_snapshot`; `ReadView` and `ReadDocx` gain `selected`.
 
@@ -62,7 +73,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `--dpi`, `--move-comments`, `--changed-pages` and `--pages` for a PDF or
   PNG. `read` (and `jubarte FILE`) takes `-o FILE.md` for the view or
   `-o FILE.json` for the snapshot, and `--force`. `convert` writes `.json`.
-  The Python and npm CLIs refuse these outputs until they share the writer.
+  The Python CLI writes them too (it has no `append` or `scrub`); the npm
+  CLI refuses them until it shares the writer.
 - `compare` takes the view's options (`--track-changes`, `--comments`,
   `--dates`, `--no-page-markers`, `-p`, `--head`, `--tail`, `--changed`,
   `--by`), `--reference-doc`, `--critic` and `--resource-path` for
@@ -91,6 +103,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `w:id`, and a text box's `mc:Fallback` copy. Marks in `comments.xml` and
   `numbering.xml` no longer count.
 - **Breaking: `edit -p 6` means `p6`**; it was refused as an unknown id.
+- Python: `Document.accept`/`reject` raise `ValueError` for an id that is no
+  change id or names two changes (it was `JubarteError`), and the CLI exits
+  2 for it, as the binary does; a resolution that fails otherwise says
+  `accept failed: …`.
 - **Breaking: `compare` (and `jubarte OLD NEW`) dates its revisions now.**
   Without `-d/--date` the shared parser fills the current UTC time, to the
   second, so the binary, Python and npm hand the same value to the engine;
@@ -176,9 +192,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
   moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
   in the Python and npm CLIs too.
-  The Python and npm CLIs print the view too; they refuse a `.md` view,
-  `.pdf`, `.png` and `.json` outputs and the Markdown-input options for
-  now, and a host without `read` refuses a compare that prints the view.
+  The Python and npm CLIs print the view too. The Python CLI also writes
+  the `.md` view, `.pdf`, `.png` and `.json`; the npm CLI refuses them, and
+  both refuse the Markdown-input options for now. A host without `read`
+  refuses a compare that prints the view.
 - `jubarte --help` lists the tasks; the shorthands' options are in
   `jubarte compare --help` and `jubarte read --help`.
   `--powertools-faithful` is hidden (`--mode powertools` stays).
