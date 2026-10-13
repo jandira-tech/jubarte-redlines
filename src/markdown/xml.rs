@@ -5,7 +5,7 @@
 //! The items a Markdown document becomes, and their WordprocessingML.
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 /// An inserted or a deleted tracked change.
@@ -86,6 +86,8 @@ pub(super) struct Paragraph {
     /// An id line said what the mark is (`break-ins r4 @AC`, or nothing):
     /// the text does not change it.
     pub mark_fixed: bool,
+    /// The paragraph ends a section (an id line's `section-break`).
+    pub section_break: bool,
 }
 
 /// A paragraph's `w:ind`, side by side, in twips.
@@ -213,6 +215,28 @@ pub(super) struct Document {
     pub labels: Vec<Label>,
     /// Each paragraph's use of a label: one `w:num` each.
     pub label_uses: Vec<LabelUse>,
+    /// Each section's page the view's YAML header names, by section number
+    /// from 1 (`page:` the first, `sections:` the others).
+    pub pages: BTreeMap<usize, super::view_notes::PageSetup>,
+}
+
+impl Document {
+    /// The `w:sectPr` of section `number` (from 1) as the view names its
+    /// page: its own, else the first section's, else `fallback`.
+    pub(super) fn section(&self, number: usize, fallback: &str) -> String {
+        self.pages
+            .get(&number)
+            .or_else(|| self.pages.get(&1))
+            .map_or_else(|| fallback.to_string(), |page| page.sect_pr())
+    }
+
+    /// How many paragraphs end a section.
+    pub(super) fn section_breaks(&self) -> usize {
+        self.body
+            .iter()
+            .filter(|item| matches!(item, Item::Paragraph(p) if p.section_break))
+            .count()
+    }
 }
 
 /// A paragraph numbered with a label: which one, at which list level, and
@@ -284,6 +308,10 @@ pub(super) struct Context<'d> {
     pub next_drawing: u32,
     /// Width available to a table, in twentieths of a point.
     pub text_width: u32,
+    /// The body's sections ended so far, and the section a paragraph
+    /// ending one takes when the view names no page.
+    pub sections_ended: usize,
+    pub default_section: String,
 }
 
 impl Context<'_> {
@@ -555,6 +583,13 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     if let Some(kind) = paragraph.mark {
         let mark = context.revision(kind, paragraph.mark_by);
         let _ = write!(properties, "<w:rPr><{mark}/></w:rPr>");
+    }
+    if paragraph.section_break {
+        context.sections_ended += 1;
+        let section = context
+            .document
+            .section(context.sections_ended, &context.default_section);
+        properties.push_str(&section);
     }
     if !properties.is_empty() {
         let _ = write!(out, "<w:pPr>{properties}</w:pPr>");

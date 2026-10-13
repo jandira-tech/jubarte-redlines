@@ -132,6 +132,8 @@ pub(super) fn assemble(
 
     let num_ids = numbering(&mut package, &main, document);
     let label_nums = label_numbering(&mut package, &main, document);
+    // A view's YAML header names its sections' pages.
+    let section = document.section(document.section_breaks() + 1, &section);
     let text_width = text_width(&section);
     let next_drawing = max_drawing_id(&package) + 1;
     let mut context = Context {
@@ -151,6 +153,8 @@ pub(super) fn assemble(
         note_base: 0,
         next_drawing,
         text_width,
+        sections_ended: 0,
+        default_section: section.clone(),
     };
     let mut media = Media::default();
 

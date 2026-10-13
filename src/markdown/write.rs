@@ -951,6 +951,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             paragraph.align = line.align.or(paragraph.align);
             self.page_break_due = line.page_break;
+            paragraph.section_break = line.section_break;
             paragraph.ind = Indent {
                 first_line: line.first_line,
                 hanging: line.hanging,
@@ -963,7 +964,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let (Some(_), Label::Text(text)) = (self.heading, &label) {
                     self.label_prefix = Some(format!("{text} "));
                 }
-                let level = list.map_or(0, |(_, level, _)| level);
+                let level = line
+                    .level
+                    .unwrap_or_else(|| list.map_or(0, |(_, level, _)| level));
                 let start = list
                     .filter(|&(_, _, first)| first)
                     .and_then(|(instance, _, _)| self.document.lists.get(instance))
@@ -1552,7 +1555,18 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// `title:` and `author:` from a YAML front matter block.
     fn metadata(&mut self, text: &str) {
         self.authors = view_notes::authors(text);
+        let mut key_above = "";
         for line in text.lines() {
+            // A YAML comment (`  # …`) is no part of the value.
+            let line = line.split_once("  #").map_or(line, |(value, _)| value);
+            if !line.starts_with(' ') {
+                key_above = line.split(':').next().unwrap_or("").trim();
+            } else if key_above == "sections"
+                && let Some((number, page)) = view_notes::section_page(line)
+                && let Some(page) = page
+            {
+                self.document.pages.insert(number, page);
+            }
             let Some((key, value)) = line.split_once(':') else {
                 continue;
             };
@@ -1564,6 +1578,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                 "title" => self.document.title = Some(critic::decode(value)),
                 "author" => self.document.author = Some(critic::decode(value)),
                 "view" => self.view = true,
+                "page" => {
+                    if let Some(page) = view_notes::page_setup(value) {
+                        self.document.pages.insert(1, page);
+                    }
+                }
                 _ => {}
             }
         }

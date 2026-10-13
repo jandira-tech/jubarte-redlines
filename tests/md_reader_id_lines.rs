@@ -326,3 +326,50 @@ fn an_inserted_row_stays_one_change_when_a_cell_holds_paragraphs() {
                 |{++A<br>B++}{>>r2 @AC<<}|{++C++}{>>r2 @AC<<}|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
+
+#[test]
+fn a_nested_list_item_keeps_its_level_from_its_id_line() {
+    // Each id line ends the Markdown list, so the view prints the level
+    // Word gives the paragraph (`ilvl`) on its id line, not as indentation
+    // (which past one level would read as code).
+    let md = "<!-- p0 ListParagraph num \"1)\" -->\n1. One.\n\n\
+              <!-- p1 ListParagraph num \"a)\", level 1 -->\n1. Under one.\n\n\
+              <!-- p2 ListParagraph num \"i)\", level 2 -->\n1. Deeper.\n\n\
+              <!-- p3 ListParagraph num \"b)\", level 1 -->\n2. Under one again.\n\n\
+              <!-- p4 ListParagraph num \"2)\" -->\n2. Two.\n\n\
+              <!-- p5 bullet, level 1 -->\n- A bullet under two.\n\n\
+              <!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+#[test]
+fn sections_and_their_pages_come_back() {
+    let header = "---\npage: A4 landscape, margins 0.5in, header/footer 0.49in\nsections:\n  \
+                  2: {p1-p2, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, \
+                  left 1.25in, header/footer 0.5in}\n---\n\n";
+    let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n\n<!-- p2 -->\nThree.\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{header}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    for line in [
+        "page: A4 landscape, margins 0.5in, header/footer 0.49in",
+        "  2: {p1-p2, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, \
+         header/footer 0.5in}",
+    ] {
+        assert!(view.lines().any(|l| l.starts_with(line)), "{line}\n{view}");
+    }
+    assert!(view.ends_with(body), "{view}");
+}

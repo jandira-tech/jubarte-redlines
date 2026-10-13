@@ -301,7 +301,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 17] = [
+const CLAUSE_WORDS: [&str; 18] = [
     "empty",
     "center",
     "right",
@@ -311,6 +311,7 @@ const CLAUSE_WORDS: [&str; 17] = [
     "hanging",
     "bullet",
     "num",
+    "level",
     "page-break",
     "section-break",
     "break-ins",
@@ -334,8 +335,12 @@ pub(super) struct IdLine {
     pub right: Option<i64>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
+    /// The paragraph ends a section (`section-break`).
+    pub section_break: bool,
     /// The list label (`num "(a)"`, `bullet`).
     pub label: Option<Label>,
+    /// The label's list level (`level 2`), when not the first.
+    pub level: Option<u32>,
     /// The paragraph mark's insertion (`break-ins r4 @AC`).
     pub break_ins: Option<Tag>,
     /// The paragraph mark's deletion (`break-del r6 @AC`).
@@ -393,6 +398,7 @@ impl IdLine {
                     _ => self.align,
                 };
                 self.page_break |= clause == "page-break";
+                self.section_break |= clause == "section-break";
                 if clause == "bullet" {
                     self.label = Some(Label::Bullet);
                 }
@@ -401,6 +407,7 @@ impl IdLine {
             Some(("hanging", v)) => self.hanging = twips(v),
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
+            Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
@@ -689,4 +696,124 @@ mod tests {
         }
         assert!(comment_head("c5 @AC re c4: x").is_some());
     }
+}
+
+/// A section's page as the view's YAML header prints it (`page: A4
+/// landscape, margins 0.5in, header/footer 0.49in`), in twips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PageSetup {
+    pub width: u32,
+    pub height: u32,
+    pub landscape: bool,
+    /// Top, right, bottom, left.
+    pub margins: [u32; 4],
+    pub header: u32,
+    pub footer: u32,
+    pub gutter: u32,
+}
+
+impl PageSetup {
+    /// The `w:sectPr` of this page.
+    pub(super) fn sect_pr(&self) -> String {
+        let [top, right, bottom, left] = self.margins;
+        let orient = if self.landscape {
+            " w:orient=\"landscape\""
+        } else {
+            ""
+        };
+        format!(
+            "<w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
+             w:right=\"{right}\" w:bottom=\"{bottom}\" w:left=\"{left}\" w:header=\"{}\" \
+             w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"720\"/></w:sectPr>",
+            self.width, self.height, self.header, self.footer, self.gutter
+        )
+    }
+}
+
+/// The largest page side or margin a view can set: Word's 22 inches.
+const MOST_PAGE: u32 = 31_680;
+
+/// Twips from the view's inches (`0.49in`), within Word's page.
+fn page_twips(value: &str) -> Option<u32> {
+    let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
+    let twips = (inches * 1440.0).round();
+    // `as` cannot overflow: the bound is checked first.
+    (twips.is_finite() && (0.0..=f64::from(MOST_PAGE)).contains(&twips)).then_some(twips as u32)
+}
+
+/// The page `text` names: `Letter portrait`, `A4 landscape`, `8.5x14in
+/// portrait`, then `margins 1in` (or `margins top 1in, right 1.25in,
+/// bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header 0.5in,
+/// footer 0.6in`) and `gutter 0.2in`. A `; fmt …` tail is left out.
+pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
+    let text = text.split(';').next()?.trim();
+    let mut clauses = text.split(", ");
+    let (size, orientation) = clauses.next()?.rsplit_once(' ')?;
+    let landscape = match orientation {
+        "landscape" => true,
+        "portrait" => false,
+        _ => return None,
+    };
+    let (width, height) = match size {
+        "Letter" => (12_240, 15_840),
+        "Legal" => (12_240, 20_160),
+        "A4" => (11_906, 16_838),
+        // `8.5x14in`: the sheet as it lies, not its short side first.
+        custom => {
+            let (w, h) = custom.split_once('x')?;
+            let (w, h) = (page_twips(&format!("{w}in"))?, page_twips(h)?);
+            (w.min(h), w.max(h))
+        }
+    };
+    let (width, height) = if landscape {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let mut page = PageSetup {
+        width,
+        height,
+        landscape,
+        margins: [1440; 4],
+        header: 720,
+        footer: 720,
+        gutter: 0,
+    };
+    for clause in clauses {
+        let (name, value) = clause.rsplit_once(' ')?;
+        let twips = page_twips(value)?;
+        match name {
+            "margins" => page.margins = [twips; 4],
+            "margins top" | "top" => page.margins[0] = twips,
+            "right" => page.margins[1] = twips,
+            "bottom" => page.margins[2] = twips,
+            "left" => page.margins[3] = twips,
+            "header/footer" => (page.header, page.footer) = (twips, twips),
+            "header" => page.header = twips,
+            "footer" => page.footer = twips,
+            "gutter" => page.gutter = twips,
+            _ => return None,
+        }
+    }
+    Some(page)
+}
+
+/// A `sections:` entry of the view's YAML header (`  2: {p30-p103, page:
+/// Letter landscape, margins 1in, headers: {…}}`): the section's number and
+/// its page, when it names one (else it keeps the first section's).
+pub(super) fn section_page(line: &str) -> Option<(usize, Option<PageSetup>)> {
+    let (number, entry) = line.trim().split_once(": ")?;
+    let number: usize = number.parse().ok()?;
+    let entry = entry.strip_prefix('{')?;
+    let Some((_, page)) = entry.split_once(", page: ") else {
+        return Some((number, None));
+    };
+    // The page's own clauses end where the entry's next key starts.
+    let end = [", fmt: ", ", headers: ", ", footers: ", ", columns: "]
+        .iter()
+        .filter_map(|key| page.find(key))
+        .min()
+        .or_else(|| page.rfind('}'))
+        .unwrap_or(page.len());
+    Some((number, page_setup(&page[..end])))
 }
