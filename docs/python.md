@@ -122,9 +122,8 @@ Options:
           [default: Redline]
 
   -d, --date <ISO8601>
-          Revision timestamp (ISO 8601); pinned for reproducible output
-
-          [default: 1970-01-01T00:00:00Z]
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output. The parser fills `now` when absent, so every host gets the same value
 
       --force
           Overwrite the output file if it already exists
@@ -701,7 +700,7 @@ Paragraph patch:
           [default: Redline]
 
   -d, --date <ISO8601>
-          When (ISO 8601) [default: now]; pin it for reproducible output
+          When (ISO 8601) [default: now, UTC]; pin it for reproducible output
 
 Formats:
   -t, --to <FORMAT>
