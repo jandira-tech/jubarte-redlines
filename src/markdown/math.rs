@@ -827,8 +827,44 @@ impl Parser {
         }
     }
 
-    /// Nodes up to a stop, which is left unread.
+    /// Nodes up to a stop, which is left unread. A script's or a prime's
+    /// group nests through here without passing [`Self::atom`], so this
+    /// bounds the depth ([`MOST_NESTING`]) too.
     fn list(&mut self, stops: Stops) -> Vec<Node> {
+        if self.depth >= MOST_NESTING {
+            return self.flat(stops);
+        }
+        self.depth += 1;
+        let nodes = self.nested_list(stops);
+        self.depth -= 1;
+        nodes
+    }
+
+    /// The tokens up to a stop as one text, past [`MOST_NESTING`]: a `{…}`
+    /// read here keeps its `}`, so it does not end the group around it.
+    fn flat(&mut self, stops: Stops) -> Vec<Node> {
+        let mut latex = String::new();
+        let mut open = 0usize;
+        while let Some(token) = self.peek() {
+            if open == 0 && self.stopped(stops) {
+                break;
+            }
+            match token {
+                Token::Open => open += 1,
+                Token::Close => open = open.saturating_sub(1),
+                _ => {}
+            }
+            latex.push_str(&token_latex(token));
+            self.at += 1;
+        }
+        if latex.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.text(&latex, Style::Math)]
+        }
+    }
+
+    fn nested_list(&mut self, stops: Stops) -> Vec<Node> {
         let mut out: Vec<Node> = Vec::new();
         while !self.stopped(stops) {
             match self.peek() {
@@ -2104,6 +2140,17 @@ mod tests {
         let _ = shape(&deep);
         let fracs = format!("{}x{}", r"\frac{".repeat(20_000), "}{y}".repeat(20_000));
         let _ = shape(&fracs);
+        // A script's or a prime's group nests through `list`, not `atom`.
+        let scripts = format!("x{}y{}", "^{x".repeat(50_000), "}".repeat(50_000));
+        let _ = shape(&scripts);
+        let primes = format!("x{}y{}", "'^{x".repeat(50_000), "}".repeat(50_000));
+        let _ = shape(&primes);
+    }
+
+    #[test]
+    fn scripts_within_the_limit_still_nest() {
+        let nested = format!("x{}y{}", "^{x".repeat(8), "}".repeat(8));
+        assert!(!shape(&nested).contains("^{"), "{}", shape(&nested));
     }
 
     #[test]

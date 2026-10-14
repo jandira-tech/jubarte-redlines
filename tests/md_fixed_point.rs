@@ -170,19 +170,67 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
             part = format!("{name} ");
         }
     }
-    for line in lost {
-        match new.iter().position(|n| *n == line) {
-            Some(at) => {
-                new.remove(at);
-            }
-            None => lines.push(format!("  ✗ docx {}lost: {}", line.0, line.1)),
-        }
-    }
+    let (lost, new) = unmatched(lost, new);
+    lines.extend(
+        lost.iter()
+            .map(|(part, rest)| format!("  ✗ docx {part}lost: {rest}")),
+    );
     lines.extend(
         new.iter()
             .map(|(part, rest)| format!("  ✗ docx {part}new: {rest}")),
     );
     lines
+}
+
+/// The lost and the new lines left once the longest run of equal lines,
+/// in order, cancels: a line that only moved (an insertion now after the
+/// deletion it came before) is reported, not cancelled.
+fn unmatched<T: PartialEq>(lost: Vec<T>, new: Vec<T>) -> (Vec<T>, Vec<T>) {
+    let (n, m) = (lost.len(), new.len());
+    let mut longest = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            longest[i][j] = if lost[i] == new[j] {
+                longest[i + 1][j + 1] + 1
+            } else {
+                longest[i + 1][j].max(longest[i][j + 1])
+            };
+        }
+    }
+    let (mut kept_lost, mut kept_new) = (vec![false; n], vec![false; m]);
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if lost[i] == new[j] {
+            (i, j) = (i + 1, j + 1);
+        } else if longest[i + 1][j] >= longest[i][j + 1] {
+            kept_lost[i] = true;
+            i += 1;
+        } else {
+            kept_new[j] = true;
+            j += 1;
+        }
+    }
+    kept_lost[i..].iter_mut().for_each(|k| *k = true);
+    kept_new[j..].iter_mut().for_each(|k| *k = true);
+    let keep = |items: Vec<T>, kept: Vec<bool>| {
+        items
+            .into_iter()
+            .zip(kept)
+            .filter_map(|(item, kept)| kept.then_some(item))
+            .collect()
+    };
+    (keep(lost, kept_lost), keep(new, kept_new))
+}
+
+#[test]
+fn a_moved_render_line_is_reported_and_an_equal_one_cancels() {
+    assert_eq!(unmatched(vec!["X", "A"], vec!["A", "X"]), (vec!["X"], vec!["X"]));
+    assert_eq!(unmatched(vec!["A", "B"], vec!["A", "B"]), (vec![], vec![]));
+    assert_eq!(
+        unmatched(vec!["A", "B", "C"], vec!["B", "C", "A"]),
+        (vec!["A"], vec!["A"])
+    );
+    assert_eq!(unmatched(vec!["A"], vec!["B"]), (vec!["A"], vec!["B"]));
 }
 
 /// What the Markdown view cannot say, so a docx it writes cannot hold it,
@@ -218,6 +266,13 @@ static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
         (
             r"^\(layout\) (fontTable|theme|font|docDefaults) ",
             "fonts outside the legend",
+        ),
+        // A note is one Markdown definition: a table in it prints as its
+        // cells, one `<br>` line each (their text is compared), and the
+        // dialect has no table inside a note to write back.
+        (
+            r"^word/(footnotes|endnotes)\.xml table ",
+            "a table inside a note",
         ),
     ]
     .into_iter()
