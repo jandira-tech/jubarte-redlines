@@ -223,8 +223,8 @@ fn a_closed_stdout_pipe_ends_the_view_without_a_panic() {
         &["diff", "--format", "github", big, other][..],
         // pi review r392 F1/F4: the listings print line by line (one
         // `outln!` serves them all; inspect's outlast any pipe buffer).
-        &["inspect", big][..],
-        &["inspect", "--json", big][..],
+        &["read", big][..],
+        &["read", "--json", big][..],
         &["read", "--json", big][..],
     ] {
         let mut child = Command::new(BIN)

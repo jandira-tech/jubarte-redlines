@@ -9,7 +9,7 @@
 //! A change is one revision element (`w:ins`, `w:del`, `w:moveFrom`,
 //! `w:moveTo`, `w:cellIns`, `w:cellDel`, `w:*PrChange`, ...), named
 //! `{story}:rev:{w:id}`. The story is `body`, a header, footer or notes
-//! part's file stem (`header1`, `footnotes`, as `jubarte inspect` names
+//! part's file stem (`header1`, `footnotes`, as `jubarte read` names
 //! them) or `styles`. Resolving some changes never renumbers the rest, so an
 //! id listed before stays valid after. Word moves text as one change:
 //! selecting either side of a move selects both sides and their range

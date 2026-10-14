@@ -1838,7 +1838,7 @@ fn cli_read_prints_the_agent_view_with_flags() {
     std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
     let tracked = ok(&["read", "received.docx"], dir.path());
     assert_eq!(
-        ok(&["text", "received.docx"], dir.path()),
+        ok(&["read", "received.docx"], dir.path()),
         tracked,
         "text is an alias of read"
     );

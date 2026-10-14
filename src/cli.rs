@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
     subcommand_negates_reqs = true,
     arg_required_else_help = true,
     subcommand_help_heading = "Tasks",
-    after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte contract.docx                    print the agent view (read)\n  jubarte old.docx new.docx                redline printed as the agent view (-o writes it)\n  jubarte inspect contract.docx --json\n  jubarte diff old.docx new.docx --format github\n  jubarte convert contract.docx -o contract.pdf\n\nRun jubarte <task> --help for task options.",
+    after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte contract.docx                    print the agent view (read)\n  jubarte old.docx new.docx                redline printed as the agent view (-o writes it)\n  jubarte read contract.docx --json\n  jubarte diff old.docx new.docx --format github\n  jubarte convert contract.docx -o contract.pdf\n\nRun jubarte <task> --help for task options.",
 )]
 pub struct Cli {
     /// Subcommand (e.g. `revisions`); plain compare when omitted.
@@ -772,29 +772,13 @@ pub enum Command {
         )]
         date: Option<String>,
     },
-    /// Inspect document facts, paragraphs, styles and tables.
-    Inspect {
-        /// The document (.docx) to read.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit the snapshot as JSON (`schema_version`, `source_sha256`,
-        /// `summary`, `paragraphs`, `stories`, `tables`, `controls`,
-        /// `changes`, `comments`) instead of a human summary.
-        #[arg(long)]
-        json: bool,
-        /// Print each body table as a grid instead of the paragraphs: a
-        /// `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one
-        /// line per row of tab-separated `ids=text` cells.
-        #[arg(long, conflicts_with = "json")]
-        tables: bool,
-    },
     /// Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
     ///
     /// A YAML header, then Markdown with an `<!-- pN -->` id line before every
     /// paragraph (`pN` is `body:p:N`), tracked changes as CriticMarkup
     /// followed by their ids (`{++text++}{>>r12 @AC<<}`) and comments with
     /// theirs (`{>>c5 @AC: …<<}`).
-    #[command(visible_alias = "text")]
+    #[command(aliases = ["text", "inspect"])]
     Read {
         /// The document (.docx) to read.
         #[arg(value_name = "FILE")]
@@ -984,6 +968,7 @@ pub enum Command {
         jubarte self-update                  ask, then install the latest release\n  \
         jubarte self-update --yes            install without asking\n  \
         jubarte self-update --version 0.9.3  install that release (also older)")]
+    #[command(display_order = 1000)]
     SelfUpdate {
         /// Print the installed and latest versions; install nothing.
         #[arg(long)]
@@ -1012,7 +997,11 @@ pub enum Command {
         jubarte debug a.docx b.docx -c numbering  list levels that differ, by numId\n  \
         jubarte debug a.docx b.docx -c xml -p document.xml\n  \
         jubarte debug diff a.docx ours.docx word.docx   element by element, three-way")]
-    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+    #[command(
+        hide = true,
+        args_conflicts_with_subcommands = true,
+        subcommand_negates_reqs = true
+    )]
     Debug {
         /// Optional package comparison task.
         #[command(subcommand)]
@@ -1133,6 +1122,7 @@ pub enum Command {
     ///
     /// A word or edits finding fails the run (exit 2), and so does any
     /// error; --strict fails on warnings too. An unreadable file exits 1.
+    #[command(alias = "audit")]
     #[command(after_help = "Examples:\n  \
         jubarte validate contract.docx\n  \
         jubarte validate contract.docx --json\n  \
@@ -1472,7 +1462,7 @@ pub enum Task {
     Compare,
     /// `convert`: the document in another format.
     Convert,
-    /// `read` (alias `text`): the agent view.
+    /// `read`: the agent view.
     Read,
     /// `diff`: a text diff.
     Diff,
@@ -1506,7 +1496,7 @@ impl Task {
         Some(match name {
             "compare" | "redline" => Self::Compare,
             "convert" => Self::Convert,
-            "read" | "text" => Self::Read,
+            "read" | "text" | "inspect" => Self::Read,
             "diff" => Self::Diff,
             "accept" => Self::Accept,
             "reject" => Self::Reject,
@@ -1652,6 +1642,21 @@ pub const RETIRED: &[Retired] = &[
     Retired {
         old: "diff-render",
         now: "visual-diff",
+        on: None,
+    },
+    Retired {
+        old: "text",
+        now: "read",
+        on: None,
+    },
+    Retired {
+        old: "inspect",
+        now: "read",
+        on: None,
+    },
+    Retired {
+        old: "audit",
+        now: "validate --rules a11y,style,structure",
         on: None,
     },
     Retired {
@@ -1820,13 +1825,9 @@ pub fn retired_spellings<'a>(
     let Some(&task) = argv.get(at) else {
         return found;
     };
-    let task = match RETIRED.iter().find(|r| r.on.is_none() && r.old == task) {
-        Some(retired) => {
-            found.push((retired.old, retired.now));
-            retired.now
-        }
-        None => task,
-    };
+    if let Some(retired) = RETIRED.iter().find(|r| r.on.is_none() && r.old == task) {
+        found.push((retired.old, retired.now));
+    }
     // The shorthand `jubarte A B` is compare, with the top level's options
     // (zcode-14 F1).
     let (sub, task, from) = match model.find_subcommand(task) {
@@ -1855,6 +1856,18 @@ pub fn retired_spellings<'a>(
     let mut seen = std::collections::HashSet::new();
     found.retain(|spelling| seen.insert(*spelling));
     found
+}
+
+/// What a retired spelling still means once parsed: `audit` with no
+/// `--rules` checks `a11y,style,structure`, as the retired task did, not
+/// `validate`'s default `word`.
+pub fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
+    if let Command::Validate { rules, .. } = task
+        && rules.is_empty()
+        && retired.iter().any(|(old, _)| *old == "audit")
+    {
+        *rules = ["a11y", "style", "structure"].map(String::from).to_vec();
+    }
 }
 
 /// The stderr line a retired spelling prints once.
@@ -2741,6 +2754,12 @@ impl Cli {
         if let Some(task) = cli.command.as_mut() {
             fill_flag_operations(task, &matches, &mut command)?;
             resolve_plan(task);
+            let typed: Vec<String> = arguments
+                .iter()
+                .skip(1)
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            apply_retired(task, &retired_spellings(typed.iter().map(String::as_str)));
         }
         match (cli.command.as_mut(), matches.subcommand()) {
             (Some(Command::Compare(compare)), Some((_, args))) => {
@@ -2877,7 +2896,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     let examples: Vec<String> = [
         ("compare", "compare old.docx new.docx -o redline.docx"),
         ("read", "contract.docx"),
-        ("inspect", "inspect contract.docx --json"),
+        ("read", "read contract.docx --json"),
         ("diff", "diff old.docx new.docx --format github"),
         ("convert", "convert contract.docx -o contract.pdf"),
     ]
@@ -2902,6 +2921,10 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             let mut task = Command::from_arg_matches(&matches)?;
             fill_flag_operations(&mut task, &matches, &mut command)?;
             resolve_plan(&mut task);
+            apply_retired(
+                &mut task,
+                &retired_spellings(arguments.iter().map(String::as_str)),
+            );
             let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
             if let Command::Compare(compare) = &mut task {
                 if let Some((_, args)) = matches.subcommand() {

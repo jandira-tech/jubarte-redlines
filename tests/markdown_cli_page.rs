@@ -114,7 +114,7 @@ fn text_reads_tracked_changes_as_critic_markup_or_resolves_them() {
 
     // Without the flag: tracked changes inline, with the paragraph ids an
     // edit plan uses.
-    let plain = ok(&jubarte(&["text", "draft.docx"], dir.path()));
+    let plain = ok(&jubarte(&["read", "draft.docx"], dir.path()));
     assert!(plain.contains("<!-- p0"), "{plain}");
 
     let all = ok(&jubarte(
@@ -150,7 +150,7 @@ fn help_describes_the_new_flags() {
     let dir = tempfile::tempdir().unwrap();
     let convert = ok(&jubarte(&["convert", "--help"], dir.path()));
     assert!(convert.contains("--page"), "{convert}");
-    let text = ok(&jubarte(&["text", "--help"], dir.path()));
+    let text = ok(&jubarte(&["read", "--help"], dir.path()));
     assert!(text.contains("--track-changes"), "{text}");
     assert!(text.contains("<!-- pN -->"), "{text}");
 }

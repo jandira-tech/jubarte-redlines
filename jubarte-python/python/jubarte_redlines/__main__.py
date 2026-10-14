@@ -7,7 +7,7 @@ binary's commands over the installed wheel, with the same names, flags, output
 files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
 
     uvx jubarte-redlines redline a.docx b.docx -o redline.docx
-    python -m jubarte_redlines inspect letter.docx --json
+    python -m jubarte_redlines read letter.docx --json
     python -m jubarte_redlines read letter.docx
     python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
     python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
@@ -184,30 +184,6 @@ def _parse_pages(spec: str) -> list[int]:
 
 
 # -- commands -----------------------------------------------------------------
-
-
-def cmd_inspect(args: argparse.Namespace) -> int:
-    doc = _read(args.file)
-    if args.json:
-        from . import _native
-
-        print(_native.inspect_json(doc.to_bytes()))
-        return EXIT_OK
-    snap = doc.inspect()
-    s = snap.summary
-    print(f"sha256: {snap.source_sha256}")
-    print(
-        f"paragraphs: {s.paragraphs}  tables: {s.tables}  fields: {s.fields}  sections: {s.sections}  "
-        f"comments: {s.comments}  revisions: {s.revisions}  footnotes: {s.footnotes}  endnotes: {s.endnotes}  "
-        f"headers: {s.headers}  footers: {s.footers}  images: {s.images}  numbering: {str(s.list_numbering).lower()}  "
-        f"track_changes: {str(s.track_changes).lower()}"
-    )
-    for p in snap.paragraphs:
-        flags = [f for f in (p.style, "numbered" if p.numbered else None, "table" if p.in_table else None, "page-break" if p.page_break else None) if f]
-        flags.extend(p.limitations)
-        preview = p.text[:80] + ("…" if len(p.text) > 80 else "")
-        print(f"{p.id}\t[{','.join(flags)}]\t{preview}")
-    return EXIT_OK
 
 
 def _print_view(docx: bytes, options: dict, source: str) -> int:
@@ -851,7 +827,7 @@ def cmd_capabilities(_args: argparse.Namespace) -> int:
 
 # Handlers own host I/O. Rust clap owns the grammar, defaults and help.
 _HANDLERS = {
-    "inspect": cmd_inspect, "read": cmd_read, "edit": cmd_edit, "add": cmd_add,
+    "read": cmd_read, "edit": cmd_edit, "add": cmd_add,
     "convert": cmd_convert, "compare": cmd_compare, "diff": cmd_diff,
     "changes": cmd_changes, "comments": cmd_comments,
     "accept": cmd_accept, "reject": cmd_reject, "visual-diff": cmd_diff_render,
@@ -902,7 +878,7 @@ class SharedParser:
                 self.error("--detail-threshold is not supported by the Python CLI")
             if values.get("no_paragraph_merge"):
                 self.error("--no-paragraph-merge is not supported by the Python CLI")
-        if command in ("inspect", "read") and values.get("tables"):
+        if command == "read" and values.get("tables"):
             self.error("--tables is not supported by the Python CLI")
         # The engine's -o writer (view, snapshot, PDF of a result) comes to
         # this CLI with Task 19; until then it writes Word only.

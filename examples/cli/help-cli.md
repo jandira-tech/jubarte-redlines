@@ -16,19 +16,16 @@ Do not edit by hand: rerun `JUBARTE=path/to/jubarte bash examples/cli/gen-help.s
 - [`jubarte reject --help`](#jubarte-reject---help)
 - [`jubarte convert --help`](#jubarte-convert---help)
 - [`jubarte diff --help`](#jubarte-diff---help)
-- [`jubarte inspect --help`](#jubarte-inspect---help)
 - [`jubarte read --help`](#jubarte-read---help)
 - [`jubarte edit --help`](#jubarte-edit---help)
 - [`jubarte add --help`](#jubarte-add---help)
 - [`jubarte capabilities --help`](#jubarte-capabilities---help)
-- [`jubarte self-update --help`](#jubarte-self-update---help)
-- [`jubarte debug --help`](#jubarte-debug---help)
-  - [`jubarte debug diff --help`](#jubarte-debug-diff---help)
 - [`jubarte visual-diff --help`](#jubarte-visual-diff---help)
 - [`jubarte comments --help`](#jubarte-comments---help)
 - [`jubarte append --help`](#jubarte-append---help)
 - [`jubarte validate --help`](#jubarte-validate---help)
 - [`jubarte scrub --help`](#jubarte-scrub---help)
+- [`jubarte self-update --help`](#jubarte-self-update---help)
 
 ## `jubarte --help`
 
@@ -46,9 +43,8 @@ Tasks:
   reject        Reject all tracked changes, or select by ID, author or kind
   convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
   diff          Review differences as GitHub, word, normal, context or side-by-side text
-  inspect       Inspect document facts, paragraphs, styles and tables
   read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
-                comments with ids [alias: text]
+                comments with ids
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
@@ -57,8 +53,6 @@ Tasks:
                 -p per command). Writes FILE_modified.docx, as edit does, and prints the
                 changed paragraphs as the agent view
   capabilities  What this binary can do, for agents choosing an operation
-  self-update   Check or install a release from GitHub
-  debug         Diagnose a Word package, or compare package structures
   visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
   append        Join documents in order, preserving images, styles, lists and notes
@@ -66,6 +60,7 @@ Tasks:
                 or repair Word validity
   scrub         Remove authors, editing IDs, metadata and comments before sharing
   help          Print this message or the help of the given subcommand(s)
+  self-update   Check or install a release from GitHub
 
 Options:
   -q, --quiet    Print nothing on success (files are still written; warnings and errors
@@ -78,7 +73,7 @@ Examples:
   jubarte contract.docx                    print the agent view (read)
   jubarte old.docx new.docx                redline printed as the agent view (-o writes
   it)
-  jubarte inspect contract.docx --json
+  jubarte read contract.docx --json
   jubarte diff old.docx new.docx --format github
   jubarte convert contract.docx -o contract.pdf
 
@@ -718,28 +713,6 @@ GIT:
   git difftool -t jubarte -y -- '*.md'
 ```
 
-## `jubarte inspect --help`
-
-```text
-Inspect document facts, paragraphs, styles and tables
-
-Usage: jubarte inspect [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  The document (.docx) to read
-
-Options:
-      --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-                `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`)
-                instead of a human summary
-      --tables  Print each body table as a grid instead of the paragraphs: a `table N:
-                ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
-                tab-separated `ids=text` cells
-  -q, --quiet   Print nothing on success (files are still written; warnings and errors
-                still print)
-  -h, --help    Print help
-```
-
 ## `jubarte read --help`
 
 ```text
@@ -922,12 +895,12 @@ Options:
           report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
           and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
 
-      --force
-          Replace an existing output (the bundle directory's files)
-
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
+
+      --force
+          Replace an existing output (the bundle directory's files)
 
       --dry-run
           Resolve and report only; write nothing
@@ -1100,177 +1073,6 @@ Options:
   -q, --quiet  Print nothing on success (files are still written; warnings and errors
                still print)
   -h, --help   Print help
-```
-
-## `jubarte self-update --help`
-
-```text
-Check or install a release from GitHub
-
-Usage: jubarte self-update [OPTIONS]
-
-Options:
-      --check              Print the installed and latest versions; install nothing
-  -y, --yes                Install without asking (needed without a terminal)
-      --version <VERSION>  Install this release instead of the latest, older ones
-                           included
-  -q, --quiet              Print nothing on success (files are still written; warnings
-                           and errors still print)
-  -h, --help               Print help
-
-Examples:
-  jubarte self-update --check          installed and latest versions
-  jubarte self-update                  ask, then install the latest release
-  jubarte self-update --yes            install without asking
-  jubarte self-update --version 0.9.3  install that release (also older)
-```
-
-## `jubarte debug --help`
-
-```text
-Diagnose a Word package, or compare package structures
-
-Usage: jubarte debug [OPTIONS] <FILE>...
-       jubarte debug <COMMAND>
-
-Commands:
-  diff  What differs between two or more packages, element by element: styles paired by
-        type and name, paragraphs by their text, headers and footers by section role.
-        Each hunk prints the lines not every file holds; with three or more files each
-        line names the files that hold it. rsids, paragraph ids, revision
-        ids/authors/dates, relationship ids (shown as what they point to), docProps save
-        stamps, attribute order, on/off values and empty property blocks are dropped
-        unless --raw
-  help  Print this message or the help of the given subcommand(s)
-
-Arguments:
-  <FILE>...
-          One package, or two to compare (A then B)
-
-Options:
-  -l, --list
-          List the package's entries (sizes); with two files, the entries that differ
-
-  -c, --check <CHECKS>
-          Reports to run [default: orphans, fields, bookmarks, package, structure]
-
-          Possible values:
-          - orphans:   Deleted text outside its story's w:del; live text inside one;
-            bare runs in a text box whose anchor is deleted
-          - fields:    Field nesting per story; fields partly deleted
-          - bookmarks: Duplicate/unpaired bookmarks; start and end in different sdt,
-            cell, text box or revision; bookmarks in plain-text or list controls
-          - package:   Content types, relationship ids and targets, dangling
-            note/comment references, undeclared mc:Ignorable prefixes
-          - structure: Empty field codes, cells not ending in a paragraph, rows without
-            cells, nested same-kind revisions, a body sectPr that is not last
-          - ids:       Revision and docPr ids used twice (not in the default triage:
-            Word opens such files)
-          - styles:    Style links and references naming no style; two styles with one
-            type and name (Word pairs styles by name)
-          - chains:    Where bookmark starts and ends sit (parent chains, tallied)
-          - elements:  Element counts
-          - textbox:   Text box stories as XML (see --grep)
-          - text:      Paragraph text per story part, with {+inserted+} / [-deleted-]
-            runs and the mark state; with two files, the lines that differ
-          - xml:       Part XML one element per line, without namespace declarations,
-            rsids or paraIds; with two files, the lines that differ
-          - runs:      `text` with each paragraph's direct properties [..], its mark's
-            «..» and each run's direct formatting «..»; with two files, the lines that
-            differ
-          - changes:   Property-change records (pPrChange, tcPrChange, sectPrChange, …):
-            where each sits and what the live properties add (+) and drop (-) against
-            the recorded ones; with two files, the lines that differ
-          - styledefs: Style definitions by type and name (localized ids pair):
-            docDefaults, then each style's default flag and basedOn/link by name, and a
-            line per pPr/rPr/tblPr/… block; with two files, the lines that differ
-          - numbering: List levels by numId and level as paragraphs see them (abstract
-            definition plus the list's overrides; abstract ids renumber, so they are
-            left out); with two files, the lines that differ
-          - render:    What each story part should put on the page (tables with style,
-            float and shading; shaded, highlighted, coloured and hidden text; fonts;
-            fields; ins/del order; frames; sections), and "(layout)": jubarte's page
-            count and the face each font resolved to; with two files, the lines that
-            differ
-
-  -p, --part <NAME>
-          Only parts whose name contains this (e.g. document.xml)
-
-  -g, --grep <TEXT>
-          Only what contains this: textbox stories;
-          text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on
-          its plain text, printed whole)
-
-  -n, --limit <N>
-          Examples per finding kind
-          
-          [default: 5]
-
-  -C, --context <N>
-          text/xml/runs of two files: common lines shown around each change
-          
-          [default: 0]
-
-  -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-Examples:
-  jubarte debug out.docx                    orphans, fields, bookmarks, package,
-  structure
-  jubarte debug out.docx --list             the package's entries
-  jubarte debug old.docx new.docx --list    entries that differ
-  jubarte debug old.docx new.docx -c elements -p document.xml
-  jubarte debug out.docx -c ids             revision/docPr ids used twice
-  jubarte debug out.docx -c textbox -g FILENAME
-  jubarte debug out.docx -c text            paragraphs with ins/del marks
-  jubarte debug a.docx b.docx -c text       paragraphs that differ, per part
-  jubarte debug a.docx b.docx -c runs       the same, with direct formatting
-  jubarte debug out.docx -c runs -g "Q: Can"   one paragraph's runs, whole
-  jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records
-  jubarte debug a.docx b.docx -c styledefs  style definitions that differ, paired by
-  name
-  jubarte debug a.docx b.docx -c numbering  list levels that differ, by numId
-  jubarte debug a.docx b.docx -c xml -p document.xml
-  jubarte debug diff a.docx ours.docx word.docx   element by element, three-way
-```
-
-## `jubarte debug diff --help`
-
-```text
-What differs between two or more packages, element by element: styles paired by type and
-name, paragraphs by their text, headers and footers by section role. Each hunk prints
-the lines not every file holds; with three or more files each line names the files that
-hold it. rsids, paragraph ids, revision ids/authors/dates, relationship ids (shown as
-what they point to), docProps save stamps, attribute order, on/off values and empty
-property blocks are dropped unless --raw
-
-Usage: jubarte debug diff [OPTIONS] <FILE> <FILE>...
-
-Arguments:
-  <FILE> <FILE>...  Two or more packages; the first is the reference (`-` lines)
-
-Options:
-  -p, --part <NAME>       Only parts whose name or role contains this (e.g. styles,
-                          document.xml, "default header")
-      --style <NAME>      Only the style with this name or id (case-insensitive)
-      --para-text <TEXT>  Only paragraphs whose text contains this, in any file
-      --raw               Keep rsids, ids, authors, dates, on/off values and empty
-                          blocks
-      --full              Print each shown element's common lines too
-  -n, --limit <N>         Hunks per part (0: all) [default: 60]
-  -q, --quiet             Print nothing on success (files are still written; warnings
-                          and errors still print)
-  -h, --help              Print help
-
-Examples:
-  jubarte debug diff a.docx b.docx
-  jubarte debug diff a.docx ours_rej.docx word_rej.docx -p styles
-  jubarte debug diff a.docx ours_rej.docx word_rej.docx --style "Body Text" --full
-  jubarte debug diff a.docx ours.docx --para-text "Section 4"
 ```
 
 ## `jubarte visual-diff --help`
@@ -1567,4 +1369,27 @@ Examples:
   jubarte scrub redline.docx -o out.docx                     everything, alias Author
   jubarte scrub redline.docx -o out.docx --author-alias Counsel --rsids
   jubarte scrub redline.docx -o out.docx --comments          comments only
+```
+
+## `jubarte self-update --help`
+
+```text
+Check or install a release from GitHub
+
+Usage: jubarte self-update [OPTIONS]
+
+Options:
+      --check              Print the installed and latest versions; install nothing
+  -y, --yes                Install without asking (needed without a terminal)
+      --version <VERSION>  Install this release instead of the latest, older ones
+                           included
+  -q, --quiet              Print nothing on success (files are still written; warnings
+                           and errors still print)
+  -h, --help               Print help
+
+Examples:
+  jubarte self-update --check          installed and latest versions
+  jubarte self-update                  ask, then install the latest release
+  jubarte self-update --yes            install without asking
+  jubarte self-update --version 0.9.3  install that release (also older)
 ```

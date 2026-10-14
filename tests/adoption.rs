@@ -133,14 +133,14 @@ fn pdf_pages_reads_page_objects_however_they_are_spaced() {
 #[test]
 fn read_text_has_paragraph_ids_and_inspect_has_the_source_hash() {
     let (_dir, dir) = workspace();
-    let text = ok(&["text", "input.docx"], &dir);
+    let text = ok(&["read", "input.docx"], &dir);
     assert!(text.contains("<!-- p0"), "{text}");
     assert!(text.contains("Services Agreement"), "{text}");
-    let inspect = ok(&["inspect", "input.docx", "--json"], &dir);
+    let inspect = ok(&["read", "input.docx", "--json"], &dir);
     assert!(inspect.contains("source_sha256"), "{inspect}");
 }
 
-/// Render row: `soffice` + `pdftoppm` -> `jubarte convert --png --dpi 100
+/// Render row: `soffice` + `pdftoppm` -> `jubarte convert --to png --dpi 100
 /// --report pages.json`, with `page_count`, page text and fonts.
 #[test]
 fn render_png_writes_pages_and_a_report() {
@@ -149,7 +149,8 @@ fn render_png_writes_pages_and_a_report() {
         &[
             "convert",
             "input.docx",
-            "--png",
+            "--to",
+            "png",
             "--dpi",
             "100",
             "--report",
@@ -180,7 +181,8 @@ fn page_range_rasterizes_only_the_pages_asked_for() {
         &[
             "convert",
             "long.docx",
-            "--png",
+            "--to",
+            "png",
             "--pages",
             "2-3",
             "--dpi",
@@ -329,8 +331,8 @@ fn an_edit_plan_writes_four_outputs_and_every_edit_is_tracked() {
     assert_word_valid_package(&std::fs::read(dir.join("review/redline.docx")).unwrap());
     ok(&["accept", "review/redline.docx", "-o", "check.docx"], &dir);
     assert_eq!(
-        body(&ok(&["text", "check.docx"], &dir)),
-        body(&ok(&["text", "review/clean.docx"], &dir))
+        body(&ok(&["read", "check.docx"], &dir)),
+        body(&ok(&["read", "review/clean.docx"], &dir))
     );
 }
 
@@ -384,7 +386,7 @@ fn occurrence_edits_only_the_nth_match() {
         ],
         &dir,
     );
-    let text = ok(&["text", "review/clean.docx"], &dir);
+    let text = ok(&["read", "review/clean.docx"], &dir);
     assert!(
         text.contains("The fee is due monthly. The price is fixed. The fee includes support."),
         "{text}"
@@ -470,8 +472,8 @@ fn accept_and_reject_resolve_every_change() {
     );
     ok(&["accept", "redline.docx", "-o", "accepted.docx"], &dir);
     ok(&["reject", "redline.docx", "-o", "rejected.docx"], &dir);
-    assert!(ok(&["text", "accepted.docx"], &dir).contains("The term is six months."));
-    assert!(ok(&["text", "rejected.docx"], &dir).contains("The term is twelve months."));
+    assert!(ok(&["read", "accepted.docx"], &dir).contains("The term is six months."));
+    assert!(ok(&["read", "rejected.docx"], &dir).contains("The term is twelve months."));
     assert!(
         ok(&["changes", "accepted.docx", "--json"], &dir)
             .trim()
@@ -647,7 +649,7 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
     ok(&["convert", "old.doc"], dir.path());
     let docx = std::fs::read(dir.path().join("old.docx")).unwrap();
     assert_word_valid_package(&docx);
-    let text = ok(&["text", "old.docx"], dir.path());
+    let text = ok(&["read", "old.docx"], dir.path());
     assert!(text.contains("# Services Agreement"), "{text}");
     let markdown = ok(&["convert", "old.doc", "-t", "md"], dir.path());
     assert!(markdown.contains("|Setup|500|one-off|"), "{markdown}");
@@ -657,7 +659,7 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
         1
     );
     // The other commands still refuse it, and say how to convert it.
-    let refused = jubarte(&["text", "old.doc"], dir.path());
+    let refused = jubarte(&["read", "old.doc"], dir.path());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         stderr.contains("jubarte convert old.doc -o old.docx"),
@@ -669,7 +671,7 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
     let mut fake = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1".to_vec();
     fake.extend_from_slice(b"not a word file at all");
     std::fs::write(dir.path().join("fake.doc"), fake).unwrap();
-    let refused = jubarte(&["text", "fake.doc"], dir.path());
+    let refused = jubarte(&["read", "fake.doc"], dir.path());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(!refused.status.success(), "{stderr}");
     assert!(!stderr.contains("jubarte convert"), "{stderr}");
@@ -734,8 +736,8 @@ fn markdown_page_markers_count_the_pdf_pages() {
     std::fs::write(dir.path().join("back.md"), &markdown).unwrap();
     ok(&["convert", "back.md", "-o", "back.docx"], dir.path());
     assert_eq!(
-        body(&ok(&["text", "back.docx"], dir.path())),
-        body(&ok(&["text", "long.docx"], dir.path()))
+        body(&ok(&["read", "back.docx"], dir.path())),
+        body(&ok(&["read", "long.docx"], dir.path()))
     );
     let plain = ok(
         &["convert", "long.docx", "-t", "md", "--no-page-markers"],
@@ -752,7 +754,7 @@ fn convert_timeout_exits_124_past_the_deadline() {
     std::fs::write(dir.path().join("long.md"), long_markdown(400)).unwrap();
     ok(&["convert", "long.md", "-o", "long.docx"], dir.path());
     let late = jubarte(
-        &["convert", "long.docx", "--png", "--timeout", "0.001"],
+        &["convert", "long.docx", "--to", "png", "--timeout", "0.001"],
         dir.path(),
     );
     assert_eq!(late.status.code(), Some(124), "{late:?}");

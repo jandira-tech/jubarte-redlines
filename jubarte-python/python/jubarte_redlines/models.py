@@ -328,7 +328,7 @@ def change_filter(
 
 
 # ---------------------------------------------------------------------------
-# Inspection snapshot (jubarte inspect --json)
+# Inspection snapshot (jubarte read --json)
 # ---------------------------------------------------------------------------
 
 

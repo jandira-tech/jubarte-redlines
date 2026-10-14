@@ -104,7 +104,7 @@ pub struct Operations {
     /// and notes (`jubarte append`).
     #[serde(default)]
     pub append: bool,
-    /// `inspect` lists the body's content controls and edit plans fill
+    /// `read --json` lists the body's content controls and edit plans fill
     /// them (`fill_control`).
     #[serde(default)]
     pub content_controls: bool,
@@ -133,11 +133,11 @@ pub struct Operations {
 /// Documented scope limits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
-    /// Story kinds `inspect` and `edit` address: `body`, then the `kind` of
-    /// each entry of `inspect`'s `stories` (`header`, `footer`, `footnotes`,
+    /// Story kinds `read` and `edit` address: `body`, then the `kind` of
+    /// each entry of the snapshot's `stories` (`header`, `footer`, `footnotes`,
     /// `endnotes`). A selector names a story by its id, the part's file stem
     /// (`header1:p:0`, `{"story": "footnotes", "index": 0}`), which
-    /// `inspect` lists for the document at hand. Comments are counted in
+    /// `read --json` lists for the document at hand. Comments are counted in
     /// `summary` but are not stories; text boxes are not stories either, and
     /// their owner paragraph carries the `text_box_omitted` limitation.
     pub stories: Vec<String>,
@@ -156,7 +156,7 @@ pub struct Limits {
     /// refused with `LEGACY_DOC` on every entry point, and RTF with
     /// `UNSUPPORTED_PACKAGE`.
     pub reads_legacy_doc: bool,
-    /// Package budgets `inspect` and `edit` admit (larger input is refused
+    /// Package budgets `read` and `edit` admit (larger input is refused
     /// with `INPUT_LIMIT`).
     #[serde(default)]
     pub input: InputBudget,

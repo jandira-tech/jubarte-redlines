@@ -43,19 +43,54 @@ fn run_in(dir: &Path, args: &[&str]) -> (i32, String, String) {
 }
 
 #[test]
-fn inspect_prints_json_snapshot_or_a_human_table() {
+fn retired_names_work_once_with_a_note() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_fixture(dir.path());
-    let (code, stdout, _) = run(&["inspect", file.to_str().unwrap(), "--json"]);
+    let file = file.to_str().unwrap();
+    let (code, stdout, stderr) = run(&["text", file]);
     assert_eq!(code, 0);
-    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(v["schema_version"], 1);
-    assert_eq!(v["summary"]["paragraphs"], 3);
-    assert_eq!(v["paragraphs"][1]["id"], "body:p:1");
-    let (code, stdout, _) = run(&["inspect", file.to_str().unwrap()]);
+    assert_eq!(stdout, run(&["read", file]).1);
+    assert_eq!(stderr, "note: text is now read; text is removed in 0.14\n");
+    let (code, stdout, stderr) = run(&["inspect", file, "--json"]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("body:p:2"), "{stdout}");
-    assert!(stdout.contains("paragraphs: 3"), "{stdout}");
+    assert!(stdout.starts_with("{\"schema_version\":1"), "{stdout}");
+    assert_eq!(
+        stderr,
+        "note: inspect is now read; inspect is removed in 0.14\n"
+    );
+    let bullets = dir.path().join("bullets.docx");
+    std::fs::write(&bullets, common::docx::docx(&common::docx::para("• item"))).unwrap();
+    let (code, stdout, stderr) = run(&["audit", bullets.to_str().unwrap()]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    assert!(
+        stdout.contains("\n  LITERAL_BULLET\twarning\tbody:p:0\t"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stderr,
+        "note: audit is now validate --rules a11y,style,structure; \
+         audit is removed in 0.14\n"
+    );
+    let (_, help, _) = run(&["--help"]);
+    assert!(
+        !help.contains("\n  inspect ") && !help.contains("\n  debug "),
+        "{help}"
+    );
+    assert!(
+        !help.contains("\n  text ") && !help.contains("\n  audit "),
+        "{help}"
+    );
+    let tasks: Vec<&str> = help
+        .split("\n\n")
+        .find(|block| block.starts_with("Tasks:"))
+        .unwrap()
+        .lines()
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .collect();
+    assert!(
+        tasks.last().unwrap().starts_with("  self-update "),
+        "{tasks:?}"
+    );
 }
 
 /// A document with changes, comments and a table.

@@ -31,12 +31,12 @@ def letter(tmp_path: Path) -> Path:
 
 
 def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["inspect", str(letter), "--json"]) == 0
+    assert main(["read", str(letter), "--json"]) == 0
     snapshot = json.loads(capsys.readouterr().out)
     assert snapshot["summary"]["paragraphs"] == 3
     assert snapshot["changes"] == [] and snapshot["comments"] == []
-    # `read --json` (and `FILE --json`) print the same snapshot.
-    for argv in (["read", str(letter), "--json"], [str(letter), "--json"]):
+    # `FILE --json` and the retired `inspect --json` print the same snapshot.
+    for argv in ([str(letter), "--json"], ["inspect", str(letter), "--json"]):
         assert main(argv) == 0
         assert json.loads(capsys.readouterr().out) == snapshot
     # The grid and a selected snapshot need the Rust build for now.
@@ -60,9 +60,11 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
             main(argv)
         assert refused.value.code == 2, argv
         assert "not supported by the Python CLI yet" in capsys.readouterr().err
-    assert main(["inspect", str(letter)]) == 0
-    out = capsys.readouterr().out
-    assert "paragraphs: 3" in out and "body:p:2" in out
+    # `inspect` is `read` now, with a note.
+    assert main(["inspect", str(letter), "--no-page-markers"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.startswith(f"---\nsource: {letter.name}\n"), captured.out
+    assert captured.err == "note: inspect is now read; inspect is removed in 0.14\n"
     # `read` (alias `text`) prints the agent view, as the binary does.
     for command in ("read", "text"):
         assert main([command, str(letter), "--no-page-markers"]) == 0
@@ -294,7 +296,7 @@ def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[s
     caps = json.loads(capsys.readouterr().out)
     assert caps["runtime"] == "python" and caps["operations"]["png"] is True
     missing = tmp_path / "missing.docx"
-    assert main(["inspect", str(missing)]) == 1
+    assert main(["read", str(missing)]) == 1
     assert "missing.docx" in capsys.readouterr().err
     bad = tmp_path / "bad.docx"
     bad.write_bytes(b"not a zip")

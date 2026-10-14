@@ -479,7 +479,7 @@ class Document:
         """Accessibility, style and structure findings, each located by
         paragraph id. ``rules`` names rule sets (``a11y``, ``style``,
         ``structure``) or codes, as a sequence or a comma-separated string;
-        ``None`` runs every rule. ``jubarte audit --help`` lists the codes."""
+        ``None`` runs every rule. ``jubarte validate --help`` lists the codes."""
         if rules is None:
             selected = None
         else:

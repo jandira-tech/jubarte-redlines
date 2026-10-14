@@ -144,11 +144,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Deprecated
 
-- `diff-render`, `--changed-only` (now `--changed-pages`), convert's
-  `--pdf` and `--png` (now `--to pdf`/`--to png`; together they exit 2),
-  and 0.12's cell id `t0.r1.c2` as an `edit`/`add` `-p` value, keep working and print `note: X is now Y; X is removed in 0.14` on
-  stderr. The shared parser's JSON carries those notes as `notes`, and
-  `args.quiet` on every task.
+- `diff-render`, `text` and `inspect` (now `read`; `inspect FILE` prints
+  the agent view, `inspect --json` the snapshot, `inspect --tables` the
+  grid), `audit` (now `validate --rules a11y,style,structure`, which it
+  still checks when no `--rules` is given), `--changed-only` (now
+  `--changed-pages`), convert's `--pdf` and `--png` (now `--to pdf`/`--to
+  png`; together they exit 2), and 0.12's cell id `t0.r1.c2` as an
+  `edit`/`add` `-p` value, keep working and print `note: X is now Y; X is
+  removed in 0.14` on stderr. The shared parser's JSON carries those notes
+  as `notes`, and `args.quiet` on every task. `jubarte --help` no longer
+  lists them, nor `debug` (still documented in AGENTS.md); `self-update`
+  is listed last.
 
 ### Breaking (library)
 
