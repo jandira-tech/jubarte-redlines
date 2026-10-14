@@ -40,3 +40,5 @@ edge-cells-more.md tests/fixtures/md-roundtrip/edges/edge-cells-more.docx
 edge-order-more.md tests/fixtures/md-roundtrip/edges/edge-order-more.docx
 edge-notes-tracked.md tests/fixtures/md-roundtrip/edges/edge-notes-tracked.docx
 edge-notes-table.md tests/fixtures/md-roundtrip/edges/edge-notes-table.docx
+# Word-checked: Arthur opened it in Word on 2026-10-14 (marks with w:author="" in the body and a header); jubarte wrote it from a view.
+edge-authorless.md tests/fixtures/md-roundtrip/edges/edge-authorless.docx

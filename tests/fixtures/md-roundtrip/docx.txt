@@ -26,3 +26,4 @@ tests/fixtures/md-roundtrip/edges/edge-cells-more.docx
 tests/fixtures/md-roundtrip/edges/edge-order-more.docx
 tests/fixtures/md-roundtrip/edges/edge-notes-tracked.docx
 tests/fixtures/md-roundtrip/edges/edge-notes-table.docx
+tests/fixtures/md-roundtrip/edges/edge-authorless.docx
