@@ -398,8 +398,8 @@ impl From<crate::audit::AuditFinding> for Finding {
     }
 }
 
-/// Findings in document order, sorted by part and location; an empty vector is
-/// a pass.
+/// Findings sorted by part, location, code and message (the same order every
+/// run); an empty vector is a pass.
 ///
 /// # Errors
 ///
@@ -415,7 +415,16 @@ pub fn validate(docx: &[u8]) -> Result<Vec<Finding>, ValidateError> {
             .into_iter()
             .filter(|f| !RING1_CODES.contains(&f.code.as_str())),
     );
-    out.sort_by(|a, b| (&a.part, &a.location).cmp(&(&b.part, &b.location)));
+    // A total order: findings at one location (comment metadata gathered
+    // from hash sets) would otherwise print in a different order each run.
+    out.sort_by(|a, b| {
+        (&a.part, &a.location, &a.code, &a.message).cmp(&(
+            &b.part,
+            &b.location,
+            &b.code,
+            &b.message,
+        ))
+    });
     Ok(out)
 }
 

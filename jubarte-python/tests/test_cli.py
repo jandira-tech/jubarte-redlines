@@ -435,6 +435,9 @@ def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter
     assert "\nrange: changed by @C (p1) of p0-p2\n" in stdout and "{~~his or her~>an~~}" in stdout, stdout
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "quiet"), "-q"]) == 0
     assert capsys.readouterr().out == ""
+    # -q also goes before the task.
+    assert main(["-q", "edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "quiet-first")]) == 0
+    assert capsys.readouterr().out == ""
     assert (tmp_path / "quiet" / "patch.diff").read_text() == patch
 
 

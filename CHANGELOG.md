@@ -153,8 +153,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   also keeps the pages a comment is anchored on and the first page of each
   section on which a revised header or footer paints. The comment listing's
   pages number on after the document's last page.
-- `-q`/`--quiet` is one global option that goes after the task
-  (`jubarte compare a.docx b.docx -q`); `jubarte -q read a.docx` exits 2.
+- `-q`/`--quiet` is one global option, after the task
+  (`jubarte compare a.docx b.docx -q`) or before it (`jubarte -q read
+  a.docx`); every other option goes after the task.
+- `validate` prints findings in one order every run (part, location, code,
+  message); two findings at one location used to swap between runs.
 - `diff-render` is `visual-diff`.
 - `convert` and `diff` share one Rendering group (`--revisions`,
   `--revision-palette`, `--dpi`, `--move-comments`, `--changed-pages`,

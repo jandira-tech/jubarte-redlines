@@ -62,6 +62,31 @@ fn a_clean_compare_output_validates_empty() {
 }
 
 #[test]
+fn findings_print_in_one_order_every_run() {
+    // received.docx has two comment-metadata findings at one location; they
+    // come from hash sets, so only a total sort keeps their order.
+    let docx = std::fs::read("tests/fixtures/agent-view/received.docx").unwrap();
+    let findings = validate(&docx).unwrap();
+    let key = |f: &jubarte::validate::Finding| {
+        (
+            f.part.clone(),
+            f.location.clone(),
+            f.code.clone(),
+            f.message.clone(),
+        )
+    };
+    let keys: Vec<_> = findings.iter().map(key).collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(keys, sorted);
+    assert!(
+        keys.windows(2)
+            .any(|w| (&w[0].0, &w[0].1) == (&w[1].0, &w[1].1)),
+        "the fixture still has findings that tie on part and location"
+    );
+}
+
+#[test]
 fn findings_are_json_with_stable_field_names() {
     let body = r#"<w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>gone</w:t></w:r></w:del></w:p>"#;
     let findings = validate(&docx(body)).unwrap();

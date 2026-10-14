@@ -1691,7 +1691,7 @@ fn diff_render_is_visual_diff_with_a_note() {
 }
 
 #[test]
-fn quiet_is_global_and_goes_after_the_task() {
+fn quiet_is_global_before_or_after_the_task() {
     for argv in [
         &["compare", "a", "b", "-q"][..],
         &["a.docx", "b.docx", "--quiet"],
@@ -1709,8 +1709,24 @@ fn quiet_is_global_and_goes_after_the_task() {
     // A facade without compare still takes the global flag.
     let facade = parse(&["edit", "a", "--plan", "p", "-q"], &["edit"]);
     assert_eq!(facade["args"]["quiet"], true, "{facade}");
-    // Before the task, -q makes clap read the task as a document.
-    let early = parse(&["-q", "read", "a.docx"], &[]);
+    // -q also goes before the task (D6 follow-up): it moves after it.
+    for argv in [
+        &["-q", "read", "a.docx"][..],
+        &["--quiet", "compare", "a", "b"],
+        &["-q", "validate", "a.docx", "--rules", "style"],
+    ] {
+        let parsed = parse(argv, &[]);
+        assert_eq!(parsed["exit_code"], 0, "{argv:?}: {parsed}");
+        assert_eq!(parsed["args"]["quiet"], true, "{argv:?}: {parsed}");
+    }
+    let native = jubarte::cli::Cli::try_parse_from(["jubarte", "-q", "read", "a.docx"]).unwrap();
+    assert!(native.quiet);
+    // So does a facade without compare: one rule for every binding.
+    let facade_early = parse(&["-q", "edit", "a", "--plan", "p"], &["edit"]);
+    assert_eq!(facade_early["exit_code"], 0, "{facade_early}");
+    assert_eq!(facade_early["args"]["quiet"], true, "{facade_early}");
+    // Every other option still goes after the task.
+    let early = parse(&["--head", "2", "read", "a.docx"], &[]);
     assert_eq!(early["exit_code"], 2);
     assert!(
         early["text"]
@@ -1719,10 +1735,6 @@ fn quiet_is_global_and_goes_after_the_task() {
             .contains("options go after the task"),
         "{early}"
     );
-    assert_eq!(parse(&["-q", "compare", "a", "b"], &[])["exit_code"], 2);
-    // So does a facade without compare: one rule for every binding.
-    let facade_early = parse(&["-q", "edit", "a", "--plan", "p"], &["edit"]);
-    assert_eq!(facade_early["exit_code"], 2, "{facade_early}");
 }
 
 #[test]
