@@ -530,6 +530,9 @@ pub(super) fn story(
     // The open row's own change: its mark carries the text the view tags
     // with the row's id alone.
     let mut row_change: Option<Change> = None;
+    // Each open link's change when it is written as a HYPERLINK field
+    // inside that change's mark (`field_link`).
+    let mut fields: Vec<Option<Change>> = Vec::new();
     // The open cell's own insertion or deletion, and its id; likewise the
     // open row's, when the table line names it.
     let mut cell_change: Option<(Kind, u32)> = None;
@@ -558,8 +561,14 @@ pub(super) fn story(
         // they are in neither. A range that ends a substitution's inserted
         // side, its deleted side next, ends inside the insertion, as Word
         // writes it: between the two it would part them.
+        let field = match item {
+            Item::LinkStart(..) => field_link(&items[at + 1..]),
+            Item::LinkEnd => fields.last().copied().flatten(),
+            _ => None,
+        };
         let inside = match item {
             Item::Run(_) => true,
+            Item::LinkStart(..) | Item::LinkEnd if field.is_some() => true,
             Item::RangeEnd(_) if ends_inserted_side(&items[at + 1..], open) => true,
             Item::Bookmark(_)
             | Item::RangeStart(_)
@@ -767,7 +776,43 @@ pub(super) fn story(
                      <w:commentReference w:id=\"{id}\"/></w:r>"
                 );
             }
+            Item::LinkStart(link, title) if field.is_some() => {
+                fields.push(field);
+                let Some((kind, by)) = field else {
+                    continue;
+                };
+                if open != field {
+                    close_mark(context, &natural, &mut out, &mut open);
+                    spend(&mut natural, by);
+                    let wrap = context.revision(kind, Some(by));
+                    let _ = write!(out, "<{wrap}>");
+                    open = field;
+                }
+                let mut instruction = match link {
+                    Link::External(url) => format!(" HYPERLINK \"{url}\""),
+                    Link::Anchor(name) => format!(" HYPERLINK \\l \"{name}\""),
+                };
+                if let Some(title) = title {
+                    let _ = write!(instruction, " \\o \"{title}\"");
+                }
+                let element = match kind {
+                    Kind::Insert => "instrText",
+                    Kind::Delete => "delInstrText",
+                };
+                let _ = write!(
+                    out,
+                    "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+                     <w:r><w:{element} xml:space=\"preserve\">{} </w:{element}></w:r>\
+                     <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>",
+                    escape(&instruction)
+                );
+            }
+            Item::LinkEnd if field.is_some() => {
+                fields.pop();
+                out.push_str("<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>");
+            }
             Item::LinkStart(link, title) => {
+                fields.push(None);
                 let tooltip = title
                     .as_deref()
                     .map(|t| format!(" w:tooltip=\"{}\"", escape(t)))
@@ -786,7 +831,10 @@ pub(super) fn story(
                     }
                 }
             }
-            Item::LinkEnd => out.push_str("</w:hyperlink>"),
+            Item::LinkEnd => {
+                fields.pop();
+                out.push_str("</w:hyperlink>");
+            }
             Item::Table {
                 columns: these,
                 align,
@@ -982,6 +1030,35 @@ pub(super) fn story(
 }
 
 /// Whether the next run after a comment's marks continues the open change.
+/// The change every run of the link `rest` starts with carries, when they
+/// all carry one: the link is then a HYPERLINK field inside that change's
+/// mark, as Word writes a link it tracks (a `w:hyperlink` would part the
+/// mark in two, and the change read back with two ids).
+fn field_link(rest: &[Item]) -> Option<Change> {
+    let mut change = None;
+    for item in rest {
+        match item {
+            Item::LinkEnd => return change,
+            Item::Run(Run {
+                content: Content::Math { .. },
+                ..
+            }) => return None,
+            Item::Run(run) => match (change, run.change) {
+                (_, None) => return None,
+                (None, Some(own)) => change = Some(own),
+                (Some(seen), Some(own)) if seen != own => return None,
+                _ => {}
+            },
+            Item::Bookmark(_)
+            | Item::RangeStart(_)
+            | Item::RangeEnd(_)
+            | Item::CommentReference(_) => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 fn continues(rest: &[Item], open: Option<Change>) -> bool {
     open.is_some()
         && rest
@@ -1058,9 +1135,28 @@ fn close_mark(
 fn natural_marks(items: &[Item]) -> HashMap<u32, usize> {
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
+    let mut fields: Vec<Option<Change>> = Vec::new();
     for (at, item) in items.iter().enumerate() {
         match item {
             Item::Bookmark(_) => {}
+            Item::LinkStart(..) => {
+                let field = field_link(&items[at + 1..]);
+                fields.push(field);
+                match field {
+                    Some(change) => {
+                        if open != field {
+                            *marks.entry(change.1).or_default() += 1;
+                        }
+                        open = field;
+                    }
+                    None => open = None,
+                }
+            }
+            Item::LinkEnd => {
+                if fields.pop().flatten().is_none() {
+                    open = None;
+                }
+            }
             Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
                 if continues(&items[at + 1..], open) => {}
             Item::Run(Run {
