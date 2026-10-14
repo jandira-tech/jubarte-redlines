@@ -171,6 +171,7 @@ fn paragraphs(markdown: &str) -> Vec<String> {
         .expect("the docx reads")
         .markdown;
     view.lines()
+        .map(str::trim_start)
         .filter(|line| {
             line.strip_prefix("<!-- p")
                 .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
