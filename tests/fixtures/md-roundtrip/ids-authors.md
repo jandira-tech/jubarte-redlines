@@ -9,7 +9,7 @@ authors:
   BC: Bo Chen                      # 13 revisions, 2026-10-01..2026-10-01
   CD: Carla Duarte                 # 1 revision, 2026-10-01T00:15:00Z
   DP: Dev Patel                    # 1 revision, 2026-10-01T00:20:00Z
-body: p0-p16, 0 tables, 1 page     # page count estimated from breaks
+body: p0-p16, 0 tables, 1 page     # pages from layout
 page: A4 portrait, margins 0.79in, header/footer 0in
 styles:
   Normal: Liberation Serif 12pt, left  # default; unannotated paragraphs use it

@@ -5,7 +5,7 @@ revisions: 0
 comments: 0
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
-body: p0-p1, 0 tables, 1 page      # page count estimated from breaks
+body: p0-p1, 0 tables, 1 page      # pages from layout
 page: A4 portrait, margins 0.79in, header/footer 0in
 styles:
   Normal: Times New Roman 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it

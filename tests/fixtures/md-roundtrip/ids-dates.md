@@ -6,7 +6,7 @@ comments: 0
 authors:
   document_owner: Arthur Souza Rodrigues  # dc:creator
   TA: Test Author                  # 714 revisions, 2020-01-01T00:00:00Z
-body: p0-p378, 0 tables, 1 page    # page count estimated from breaks
+body: p0-p378, 0 tables, 15 pages  # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Aptos 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it
