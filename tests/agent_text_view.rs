@@ -5397,3 +5397,51 @@ fn an_internal_link_does_not_read_as_underlined() {
     let view = body(&full);
     assert!(view.contains("\nSee the intro.\n"), "{view}");
 }
+
+#[test]
+fn a_field_across_a_change_boundary_shows_its_result_only() {
+    // `{CODE}` and `{/}` print only where the field's begin, separate and
+    // end share their tracked changes: the writer reads a field inside one
+    // change, never one cut by `{++`, so a cut field shows its result.
+    let ins = r#"<w:ins w:id="10" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z">"#;
+    let del = r#"<w:del w:id="11" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z">"#;
+    let begin = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>"#;
+    let separate = r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
+    let end = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let p = format!(
+        "<w:p>{}{ins}{begin}{separate}</w:ins>{}{end}{}</w:p>\
+         <w:p>{}{begin}{separate}{del}<w:r><w:delText>1</w:delText></w:r>{end}</w:del>{}</w:p>\
+         <w:p>{}{begin}{separate}{del}<w:r><w:delText>1</w:delText></w:r></w:del>{end}{}</w:p>",
+        run("A "),
+        run("1"),
+        run(" B."),
+        run("C "),
+        run(" D."),
+        run("E "),
+        run(" F."),
+    );
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert!(
+        !view.contains("A {PAGE}") && !view.contains("{++{PAGE}"),
+        "{view}"
+    );
+    assert!(!view.contains("C {PAGE}"), "{view}");
+    assert!(view.contains("E {PAGE}{--1--}"), "{view}");
+    // The insertion that holds only the field's start shows as `rev` on
+    // p0's id line and has nothing to write back; the rest survives, and
+    // from there on the view is a fixed point.
+    let once = agent(
+        &markdown_to_docx(&full, &DocxOptions::default())
+            .unwrap()
+            .docx,
+    );
+    assert!(body(&once).contains("C {--1--}"), "{once}");
+    assert!(body(&once).contains("E {PAGE}{--1--}"), "{once}");
+    let twice = agent(
+        &markdown_to_docx(&once, &DocxOptions::default())
+            .unwrap()
+            .docx,
+    );
+    assert_eq!(body(&twice), body(&once));
+}

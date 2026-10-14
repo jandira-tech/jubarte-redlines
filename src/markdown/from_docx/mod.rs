@@ -1255,31 +1255,53 @@ struct Field {
     printed: bool,
 }
 
-/// The `fldChar begin` of each field in `p` whose `end` is in `p` too,
-/// outside text boxes (their paragraphs are written on their own).
+/// The `fldChar begin` of each field in `p` whose `separate` and `end` are
+/// in `p` too, inside the same tracked changes as its begin: the writer
+/// reads a field within one change, never one a change boundary cuts.
+/// Text boxes are left out (their paragraphs are written on their own).
 fn closing_fields(p: &Element) -> HashSet<*const Element> {
-    fn walk<'e>(e: &'e Element, open: &mut Vec<&'e Element>, out: &mut HashSet<*const Element>) {
+    /// A field open in the walk: its begin, the changes around the begin,
+    /// and whether its separate (if any yet) sat inside the same ones.
+    type Open<'e> = (&'e Element, Vec<*const Element>, bool);
+    fn walk<'e>(
+        e: &'e Element,
+        changes: &mut Vec<*const Element>,
+        open: &mut Vec<Open<'e>>,
+        out: &mut HashSet<*const Element>,
+    ) {
         for child in e.elements() {
             if child.is("txbxContent") || child.is("pPr") {
                 continue;
             }
             if child.is("fldChar") {
                 match child.attr("fldCharType") {
-                    Some("begin") => open.push(child),
+                    Some("begin") => open.push((child, changes.clone(), true)),
+                    Some("separate") => {
+                        if let Some((_, around, same)) = open.last_mut() {
+                            *same &= around == changes;
+                        }
+                    }
                     Some("end") => {
-                        if let Some(begin) = open.pop() {
+                        if let Some((begin, around, same)) = open.pop()
+                            && same
+                            && around == *changes
+                        {
                             out.insert(std::ptr::from_ref(begin));
                         }
                     }
                     _ => {}
                 }
+            } else if matches!(child.local(), "ins" | "del" | "moveTo" | "moveFrom") {
+                changes.push(std::ptr::from_ref(child));
+                walk(child, changes, open, out);
+                changes.pop();
             } else {
-                walk(child, open, out);
+                walk(child, changes, open, out);
             }
         }
     }
     let mut out = HashSet::new();
-    walk(p, &mut Vec::new(), &mut out);
+    walk(p, &mut Vec::new(), &mut Vec::new(), &mut out);
     out
 }
 
