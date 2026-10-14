@@ -50,6 +50,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **`capabilities` prints a text summary**: one line per operation, then
+  limits, rule sets, formats and id spellings; `--json` prints the manifest.
+  The manifest gains `formats` (the extensions each task writes) and `ids`
+  (the spellings `-p`/`--id` accept for revisions, comments, paragraphs and
+  tables). Python and npm print the same text.
 - **Breaking: `validate` and `audit` are one command.** `validate --rules`
   takes rule sets (`word`, the default; `edits`, which needs `--original`
   and `--author` and is added by them; `a11y`, `style`, `structure`) or
@@ -175,6 +180,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
   `EditOptions::target(file)` gives the `EditTarget` (`Single` or
   `Bundle`) a host writes.
+- `validate::Finding` is `{code, set, severity, part, location, message,
+  word_fatal, repairable}` (`path` is `location`); `ValidateError` gains
+  `Usage` and `Layout`. `cli::Command::Audit` and `Command::Inspect` are
+  gone (`Validate` gains `rules` and `strict`; `audit` and `inspect` parse
+  as their aliases).
+- `capabilities::Capabilities` gains `validate_rules`, `formats` and `ids`
+  (`capabilities::Ids`), so a struct literal needs them; deserializing an
+  older manifest still works (`serde(default)`).
 
 ## [0.12.0] - 2026-10-11
 

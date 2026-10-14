@@ -139,6 +139,13 @@ export function auditTracked(original: Uint8Array, edited: Uint8Array, author: s
 export function capabilities(): string;
 
 /**
+ * [`capabilities`] as the text summary `jubarte capabilities` prints.
+ *
+ * Mirrors `jubarte::capabilities::capabilities_text`.
+ */
+export function capabilitiesText(): string;
+
+/**
  * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
  * view `edit` and `add` print (every changed block when none does);
  * `accepted` reads its accepted text, `source` is the name printed as

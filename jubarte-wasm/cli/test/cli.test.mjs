@@ -186,7 +186,24 @@ test("read (alias text), inspect, capabilities and convert", () => {
     assert.equal(refused.code, 2, `${args}: ${refused.err}`);
     assert.match(refused.err, /not supported by the npm CLI yet/);
   }
-  assert.equal(JSON.parse(run("capabilities").out).runtime, "wasm");
+  const manifest = JSON.parse(run("capabilities", "--json").out);
+  assert.equal(manifest.runtime, "wasm");
+  assert.ok(!manifest.formats.convert.includes(".png"), manifest.formats.convert);
+  const summary = run("capabilities").out;
+  assert.match(summary, /^engine: jubarte \S+ \(wasm\)\ncompare: yes\n/);
+  assert.match(summary, /\npng: no\n/);
+  assert.match(summary, /run with --json for the manifest\n$/);
+  const lines = summary.split("\n");
+  const ops = Object.entries(manifest.operations);
+  assert.deepEqual(
+    lines.slice(1, ops.length + 1).sort(),
+    ops.map(([name, on]) => `${name}: ${on ? "yes" : "no"}`).sort(),
+  );
+  const formats = lines.find((line) => line.startsWith("formats: ")).slice("formats: ".length);
+  assert.deepEqual(
+    formats.split("; ").sort(),
+    Object.entries(manifest.formats).map(([task, ext]) => `${task} ${ext.join(" ")}`).sort(),
+  );
   const pdf = path.join(tmp, "out.pdf");
   const r = run("convert", tracked, "-o", pdf, "--revisions", "word", "--compress");
   assert.equal(r.code, 0, r.err);

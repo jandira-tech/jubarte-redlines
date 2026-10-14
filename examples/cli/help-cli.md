@@ -1069,7 +1069,7 @@ What this binary can do, for agents choosing an operation
 Usage: jubarte capabilities [OPTIONS]
 
 Options:
-      --json   Emit JSON (the default output is JSON too; the flag documents intent)
+      --json   The manifest as JSON instead of the text summary
   -q, --quiet  Print nothing on success (files are still written; warnings and errors
                still print)
   -h, --help   Print help

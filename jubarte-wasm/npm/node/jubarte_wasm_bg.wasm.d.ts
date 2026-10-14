@@ -14,6 +14,7 @@ export const applyEditPlan: (a: number, b: number, c: number, d: number, e: numb
 export const auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
 export const auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const capabilities: (a: number) => void;
+export const capabilitiesText: (a: number) => void;
 export const changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;

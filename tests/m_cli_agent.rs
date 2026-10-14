@@ -591,6 +591,115 @@ fn capabilities_describe_the_built_binary() {
         v["limits"]["stories"],
         serde_json::json!(["body", "header", "footer", "footnotes", "endnotes"])
     );
+    assert_eq!(v["validate_rules"][0], "word");
+    assert_eq!(v["formats"]["read"], serde_json::json!([".md", ".json"]));
+    assert_eq!(
+        v["formats"]["diff"],
+        serde_json::json!([".md", ".markdown", ".txt", ".patch", ".diff"])
+    );
+    // 0.12's `#c27` still parses but is not advertised.
+    assert_eq!(v["ids"]["comment"], serde_json::json!(["c27", "27"]));
+    assert_eq!(v["ids"]["table"], serde_json::json!(["t0"]));
+    assert!(v["ids"]["note"].as_str().unwrap().contains("safe unquoted"));
+}
+
+/// Without `--json`, `capabilities` prints the text summary.
+#[test]
+fn capabilities_print_a_text_summary_by_default() {
+    let (code, text, stderr) = run(&["capabilities"]);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        format!("engine: jubarte {} (cli)", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(lines[1], "compare: yes");
+    assert!(lines.contains(&"png: yes"), "{text}");
+    assert!(lines.contains(&"edit plan versions: 1"), "{text}");
+    for prefix in [
+        "edit operations: replace, insert, ",
+        "stories: body, header, footer, footnotes, endnotes",
+        "limits: plain text runs no, ",
+        "validate rules: word (default), edits, a11y, style, structure",
+        "audit codes: HEADING_SKIP, ",
+        "formats: compare .docx .md .pdf .png .json; convert ",
+        "ids: revisions r12, 12, r1+2, ",
+        "ids note: body ids print without a story",
+    ] {
+        assert!(
+            lines.iter().any(|line| line.starts_with(prefix)),
+            "{prefix}: {text}"
+        );
+    }
+    assert!(text.contains("; read .md .json; diff .md .markdown .txt .patch .diff;"));
+    assert!(text.contains("; comments c27, 27; "), "{text}");
+    assert_eq!(lines.last(), Some(&"run with --json for the manifest"));
+
+    // The text says what the manifest says: every operation with its value,
+    // the limits and every task's formats.
+    let (code, json, _) = run(&["capabilities", "--json"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let yes = |value: &serde_json::Value| {
+        if value.as_bool().unwrap() {
+            "yes"
+        } else {
+            "no"
+        }
+    };
+    let operations = v["operations"].as_object().unwrap();
+    let mut expected: Vec<String> = operations
+        .iter()
+        .map(|(name, on)| format!("{name}: {}", yes(on)))
+        .collect();
+    let mut printed: Vec<String> = lines[1..=operations.len()]
+        .iter()
+        .map(|line| line.to_string())
+        .collect();
+    expected.sort();
+    printed.sort();
+    assert_eq!(printed, expected);
+    assert_eq!(lines[operations.len() + 1], "edit plan versions: 1");
+    let (limits, input) = (&v["limits"], &v["limits"]["input"]);
+    let limits_line = format!(
+        "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \
+         {} bytes compressed, {} entries, {} bytes per part, {} bytes uncompressed, \
+         XML depth {}",
+        yes(&limits["plain_text_runs"]),
+        yes(&limits["refuses_opaque_ranges"]),
+        yes(&limits["reads_legacy_doc"]),
+        input["max_compressed_bytes"],
+        input["max_entries"],
+        input["max_part_bytes"],
+        input["max_uncompressed_bytes"],
+        input["max_xml_depth"]
+    );
+    assert!(
+        lines.contains(&limits_line.as_str()),
+        "{limits_line}\n{text}"
+    );
+    let formats_line = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("formats: "))
+        .unwrap();
+    let mut printed: Vec<&str> = formats_line.split("; ").collect();
+    let mut expected: Vec<String> = v["formats"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(task, extensions)| {
+            let extensions: Vec<&str> = extensions
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e.as_str().unwrap())
+                .collect();
+            format!("{task} {}", extensions.join(" "))
+        })
+        .collect();
+    printed.sort();
+    expected.sort();
+    assert_eq!(printed, expected);
 }
 
 #[test]

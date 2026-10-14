@@ -139,6 +139,13 @@ export function auditTracked(original: Uint8Array, edited: Uint8Array, author: s
 export function capabilities(): string;
 
 /**
+ * [`capabilities`] as the text summary `jubarte capabilities` prints.
+ *
+ * Mirrors `jubarte::capabilities::capabilities_text`.
+ */
+export function capabilitiesText(): string;
+
+/**
  * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
  * view `edit` and `add` print (every changed block when none does);
  * `accepted` reads its accepted text, `source` is the name printed as
@@ -393,6 +400,7 @@ export interface InitOutput {
     readonly auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly capabilities: (a: number) => void;
+    readonly capabilitiesText: (a: number) => void;
     readonly changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
