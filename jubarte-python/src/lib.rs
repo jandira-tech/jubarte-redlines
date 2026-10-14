@@ -87,7 +87,7 @@ fn settings_with_limits(
 /// `max_uncompressed_bytes`, `max_xml_depth`); a package past it raises
 /// `JubarteError` with `INPUT_LIMIT`.
 #[pyfunction]
-#[pyo3(signature = (original, modified, author = "jubarte", date = None, *, input_limits = None))]
+#[pyo3(signature = (original, modified, author = "Redline", date = None, *, input_limits = None))]
 fn compare_documents(
     py: Python<'_>,
     original: &[u8],

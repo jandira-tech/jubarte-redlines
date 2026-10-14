@@ -202,6 +202,11 @@ def test_compare_still_accepts_a_well_formed_pair():
     assert redline.startswith(b"PK")
 
 
+def test_compare_default_author_is_redline_as_the_cli_s():
+    redline = jubarte.compare_documents(make_document("hello"), make_document("hello there"))
+    assert {row["author"] for row in jubarte.get_revisions(redline)} == {"Redline"}
+
+
 def test_input_limits_tighten_the_compare_budget():
     small = {"max_entries": 2}
     with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):

@@ -88,7 +88,7 @@ base = reject_revisions(redline)    # ≙ original content
 Path("redline.pdf").write_bytes(docx_to_pdf(redline))
 ```
 
-`compare_documents(original, modified, author="jubarte", date=None)` stamps
+`compare_documents(original, modified, author="Redline", date=None)` stamps
 revisions with a fixed epoch date by default so output is deterministic;
 pass an ISO-8601 `date` to override. Errors raise
 `jubarte_redlines.JubarteError`.

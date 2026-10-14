@@ -2896,10 +2896,10 @@ fn error_json(error: &clap::Error) -> String {
 /// native snake_case field names, flattened Args groups, canonical enum strings,
 /// string paths, defaults and null optional fields. Nested subcommands use
 /// `{command, args}`. Compare inputs include resolved named-over-positional
-/// values; runtime-dependent defaults (compare's output path, git author,
-/// current date) remain null. `edit` and `add` carry where they write,
-/// resolved: `output` for the one document or `out_dir` for the bundle, both
-/// null while recording into a plan. Informational/error results contain
+/// values; compare's output path stays null (the host picks it), while the
+/// author is `Redline` (D12) and the date now (D17), as for the binary.
+/// `edit` and `add` carry where they write, resolved: `output` for the one
+/// document or `out_dir` for the bundle, both null while recording into a plan. Informational/error results contain
 /// `{exit_code, stream, text}`.
 /// This function performs no document, filesystem, network or process I/O.
 pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> String {
