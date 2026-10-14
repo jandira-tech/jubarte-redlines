@@ -561,7 +561,7 @@ fn parse_pages(spec: &str) -> Result<Vec<usize>, String> {
     Ok(pages)
 }
 
-/// What `diff-render` compares and where it writes.
+/// What `visual-diff` compares and where it writes.
 struct DiffRenderJob<'a> {
     a: &'a Path,
     b: &'a Path,
@@ -582,7 +582,7 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
         ..jubarte::convert::DiffOptions::default()
     };
     let diff = jubarte::convert::diff_render(&a, &b, &options)
-        .map_err(|e| format!("diff-render failed: {e}"))?;
+        .map_err(|e| format!("visual-diff failed: {e}"))?;
     let changed: Vec<&jubarte::convert::PageDiff> =
         diff.pages.iter().filter(|p| p.differs()).collect();
     /// `diff.json`. Serialized directly (not through `serde_json::Value`)
@@ -1127,6 +1127,8 @@ struct EditFlags<'a> {
     png: bool,
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
+    /// The global `-q`.
+    quiet: bool,
 }
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
@@ -1186,7 +1188,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         png: flags.png,
         dpi: flags.dpi,
         revisions: flags.revisions,
-        quiet: flags.options.quiet,
+        quiet: flags.quiet,
     };
     run_edit(&job, &plan, &source, &notes)?;
     if let Some((path, held)) = consumed {
@@ -1236,7 +1238,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
     jubarte::edit::preview_plan(source, &recorded.plan).map_err(|e| refused(&e))?;
-    if !options.quiet {
+    if !flags.quiet {
         for note in &recorded.notes {
             outln!("note: {note}");
         }
@@ -1245,7 +1247,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         write_plan(path, &recorded.json())
             .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
     }
-    if !options.quiet {
+    if !flags.quiet {
         outln!(
             "{}",
             recorded.summary(
@@ -1338,7 +1340,7 @@ struct Job {
 /// Native runtime defaults; required inputs have already been checked by clap.
 /// `explicit` is `compare A B`, which writes `<A>_v_<B>.docx` by default;
 /// the shorthand `A B` prints the redline's view unless -o names a file.
-fn resolve_compare(compare: CompareArgs, read: ReadArgs, explicit: bool) -> Job {
+fn resolve_compare(compare: CompareArgs, read: ReadArgs, explicit: bool, quiet: bool) -> Job {
     let original = compare
         .original
         .or(compare.original_pos)
@@ -1358,7 +1360,7 @@ fn resolve_compare(compare: CompareArgs, read: ReadArgs, explicit: bool) -> Job 
         author: compare.author,
         date: compare.date,
         force: compare.force,
-        quiet: compare.quiet,
+        quiet,
         detail_threshold: compare.detail_threshold,
         powertools_faithful: compare.powertools_faithful || compare.mode == CompareMode::Powertools,
         no_paragraph_merge: compare.no_paragraph_merge,
@@ -2208,9 +2210,22 @@ fn main() -> ExitCode {
 
 fn cli_main() -> ExitCode {
     let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit());
+    let argv: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
+        eprintln!("{}", jubarte::cli::retired_note(old, now));
+    }
+    let quiet = cli.quiet;
     match cli.command {
         Some(Command::Compare(compare)) => {
-            return exit_code(run(&resolve_compare(compare, ReadArgs::default(), true)));
+            return exit_code(run(&resolve_compare(
+                compare,
+                ReadArgs::default(),
+                true,
+                quiet,
+            )));
         }
         Some(Command::Changes { file, json }) => {
             return exit_code(run_changes(&file, json));
@@ -2418,6 +2433,7 @@ fn cli_main() -> ExitCode {
                 png,
                 dpi,
                 revisions: style,
+                quiet,
             };
             return edit_exit(run_flags(&flags));
         }
@@ -2441,6 +2457,7 @@ fn cli_main() -> ExitCode {
                 png: false,
                 dpi: 96.0,
                 revisions: jubarte::convert::RevisionStyle::Conventional,
+                quiet,
             };
             return edit_exit(run_flags(&flags));
         }
@@ -2476,7 +2493,7 @@ fn cli_main() -> ExitCode {
             };
             return exit_code(run_debug_diff(&files, &opts));
         }
-        Some(Command::DiffRender {
+        Some(Command::VisualDiff {
             a,
             b,
             dpi,
@@ -2522,7 +2539,6 @@ fn cli_main() -> ExitCode {
             keep_sections,
             carry_comments,
             force,
-            quiet,
         }) => {
             let options = jubarte::append::AppendOptions {
                 section_break: section_break.into(),
@@ -2589,7 +2605,7 @@ fn cli_main() -> ExitCode {
             .expect("clap requires ORIGINAL");
         return exit_code(run_text(&file, &cli.read));
     }
-    exit_code(run(&resolve_compare(cli.compare, cli.read, false)))
+    exit_code(run(&resolve_compare(cli.compare, cli.read, false, quiet)))
 }
 
 /// `jubarte append`: fold the documents left, `append(append(A, B), C)`.
@@ -2685,7 +2701,6 @@ mod tests {
             keep_sections,
             carry_comments,
             force,
-            quiet,
         }) = cli.command
         else {
             panic!("not append");
@@ -2693,7 +2708,12 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(output, PathBuf::from("out.docx"));
         assert_eq!(section_break, SectionBreakArg::NextPage);
-        assert!(!keep_sections && !carry_comments && !force && !quiet);
+        assert!(!keep_sections && !carry_comments && !force && !cli.quiet);
+        let quiet = Cli::try_parse_from([
+            "jubarte", "append", "a.docx", "b.docx", "-o", "o.docx", "-q",
+        ])
+        .unwrap();
+        assert!(quiet.quiet, "-q is the global flag after the task");
         let cli = Cli::try_parse_from([
             "jubarte",
             "append",
@@ -2783,8 +2803,10 @@ mod tests {
     fn job_of(args: &[&str]) -> Job {
         let cli = Cli::try_parse_from(args).expect("parse");
         match cli.command {
-            Some(Command::Compare(compare)) => resolve_compare(compare, ReadArgs::default(), true),
-            None => resolve_compare(cli.compare, cli.read, false),
+            Some(Command::Compare(compare)) => {
+                resolve_compare(compare, ReadArgs::default(), true, cli.quiet)
+            }
+            None => resolve_compare(cli.compare, cli.read, false, cli.quiet),
             other => panic!("expected compare, got {other:?}"),
         }
     }
@@ -2940,7 +2962,7 @@ mod tests {
     fn revisions_is_no_subcommand() {
         let cli = Cli::try_parse_from(["jubarte", "revisions", "b.docx"]).unwrap();
         assert!(cli.command.is_none());
-        let job = resolve_compare(cli.compare, cli.read, false);
+        let job = resolve_compare(cli.compare, cli.read, false, cli.quiet);
         assert_eq!(job.original, PathBuf::from("revisions"));
     }
 
@@ -2952,7 +2974,7 @@ mod tests {
     fn plain_compare_positionals_leave_command_none() {
         let cli = Cli::try_parse_from(["jubarte", "a.docx", "b.docx"]).unwrap();
         assert!(cli.command.is_none());
-        let job = resolve_compare(cli.compare, cli.read, false);
+        let job = resolve_compare(cli.compare, cli.read, false, cli.quiet);
         assert_eq!(job.original, PathBuf::from("a.docx"));
         assert_eq!(job.modified, PathBuf::from("b.docx"));
     }
@@ -3491,7 +3513,7 @@ mod tests {
             "--force",
         ])
         .expect("parse");
-        let Some(Command::DiffRender {
+        let Some(Command::VisualDiff {
             a,
             b,
             dpi,
@@ -3512,7 +3534,7 @@ mod tests {
         assert!(json && no_overlay && force);
         let cli =
             Cli::try_parse_from(["jubarte", "diff-render", "a.docx", "b.docx"]).expect("parse");
-        let Some(Command::DiffRender {
+        let Some(Command::VisualDiff {
             dpi,
             out_dir,
             json,

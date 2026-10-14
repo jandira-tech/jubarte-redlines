@@ -197,8 +197,9 @@ fn page_range_rasterizes_only_the_pages_asked_for() {
     assert_eq!(pngs, ["long-page-02.png", "long-page-03.png"]);
 }
 
-/// "Did my edit change the layout?": `diff-render` exits 5 when a page
-/// differs and 0 when none does.
+/// "Did my edit change the layout?": `visual-diff` exits 5 when a page
+/// differs and 0 when none does. Its 0.12 name, `diff-render`, still runs
+/// and says what it is now.
 #[test]
 fn diff_render_exits_five_on_a_changed_page_and_zero_otherwise() {
     let (_dir, dir) = workspace();
@@ -225,6 +226,48 @@ fn diff_render_exits_five_on_a_changed_page_and_zero_otherwise() {
     );
     assert_eq!(changed.status.code(), Some(5), "{changed:?}");
     assert!(dir.join("d/diff.json").is_file());
+    assert_eq!(
+        String::from_utf8_lossy(&changed.stderr),
+        "note: diff-render is now visual-diff; diff-render is removed in 0.14\n"
+    );
+    let renamed = jubarte(
+        &["visual-diff", "input.docx", "after.docx", "--out-dir", "e"],
+        &dir,
+    );
+    assert_eq!(renamed.status.code(), Some(5), "{renamed:?}");
+    assert_eq!(String::from_utf8_lossy(&renamed.stderr), "");
+}
+
+/// 0.12's cell form still edits the cell and says, once, what it is now,
+/// even folded into a short cluster after `-q`.
+#[test]
+fn a_retired_cell_location_edits_the_cell_with_a_note() {
+    let (_dir, dir) = workspace();
+    let out = jubarte(
+        &[
+            "edit",
+            "input.docx",
+            "-qp",
+            "t0.r1.c1",
+            "--anchor",
+            "500",
+            "--content",
+            "600",
+            "--out-dir",
+            "review",
+        ],
+        &dir,
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "note: tN.rR.cC is now tN.rowR.cellC; tN.rR.cC is removed in 0.14\n"
+    );
+    let xml = part(
+        &std::fs::read(dir.join("review/redline.docx")).unwrap(),
+        "word/document.xml",
+    );
+    assert!(xml.contains("600") && xml.contains("<w:del "), "{xml}");
 }
 
 /// "Did a font fall back?": `--fail-on-substitution` exits 4 and still

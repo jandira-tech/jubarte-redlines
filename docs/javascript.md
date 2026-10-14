@@ -408,7 +408,8 @@ never layout metrics.
 `moveComments` (optional, default `false`) lists the comments after the
 last page instead of in balloons beside the text; `changedOnly`
 (optional, default `false`) keeps only the pages a tracked change
-touches (a document without changes keeps its first page).
+touches, the pages a comment is anchored on and each section's first
+page on which a revised header or footer paints (else the first page).
 
 ### `editReportJsonl`
 

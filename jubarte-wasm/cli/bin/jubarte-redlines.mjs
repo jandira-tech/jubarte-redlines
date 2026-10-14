@@ -543,6 +543,7 @@ function main(argv) {
       (parsed.stream === "stderr" ? process.stderr : process.stdout).write(parsed.text);
       return parsed.exit_code;
     }
+    for (const note of parsed.notes ?? []) console.error(note);
     const name = parsed.command, o = parsed.args;
     validateHost(name, o);
     const positionals = name === "compare" ? [o.original, o.modified] : name === "diff" ? [o.old, o.new] : o.file == null ? [] : [o.file];

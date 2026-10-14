@@ -142,7 +142,7 @@ fn the_cli_exits_0_when_equal_5_when_different_and_1_on_error() {
     std::fs::write(&b, docx(&para("The fee is twenty."))).unwrap();
     let run = |x: &std::path::Path, y: &std::path::Path| {
         std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
-            .args(["diff-render", "--dpi", "30"])
+            .args(["visual-diff", "--dpi", "30"])
             .arg(x)
             .arg(y)
             .output()

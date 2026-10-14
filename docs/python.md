@@ -66,12 +66,16 @@ Tasks:
                 -p per command). Writes the same files as edit and prints the changed
                 paragraphs as the agent view
   capabilities  What this binary can do, for agents choosing an operation
-  diff-render   Compare rendered pages pixel by pixel (different pages: exit 5)
+  visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
   validate      Check or repair Word validity (findings: exit 2; unreadable: exit 1)
   help          Print this message or the help of the given subcommand(s)
 
 Options:
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -101,9 +105,6 @@ Compare options:
 
       --force
           Overwrite the output file if it already exists
-
-  -q, --quiet
-          Do not print the success message
 
       --detail-threshold <RATIO>
           Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
@@ -221,9 +222,6 @@ Options:
       --force
           Overwrite the output file if it already exists
 
-  -q, --quiet
-          Do not print the success message
-
       --detail-threshold <RATIO>
           Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
 
@@ -240,6 +238,10 @@ Options:
 
       --powertools-faithful
           Same as --mode powertools
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -261,8 +263,10 @@ Arguments:
   <FILE>  The document (.docx)
 
 Options:
-      --json  Emit one JSON object per line
-  -h, --help  Print help
+      --json   Emit one JSON object per line
+  -q, --quiet  Print nothing on success (files are still written; warnings and errors
+               still print)
+  -h, --help   Print help
 ```
 
 #### `jubarte-redlines accept`
@@ -299,6 +303,10 @@ Options:
           - deletion:   Deleted text or structural elements
           - move:       Content moved between document locations
           - formatting: Changes to text or paragraph formatting
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -338,6 +346,10 @@ Options:
           - deletion:   Deleted text or structural elements
           - move:       Content moved between document locations
           - formatting: Changes to text or paragraph formatting
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -425,6 +437,10 @@ Options:
           Markdown to Word: their date (ISO 8601); pinned for reproducible output
 
           [default: 1970-01-01T00:00:00Z]
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
       --page <SIZE>
           Markdown to Word: the page size when there is no --reference-doc (one-inch
@@ -546,6 +562,10 @@ Options:
           Keep only the pages a tracked change touches. The whole document is laid out
           first, so page numbers stay the document's; a document without changes keeps
           its first page. --pages counts the kept pages
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -688,6 +708,8 @@ Options:
       --tables  Print each body table as a grid instead of the paragraphs: a `table N:
                 ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
                 tab-separated `ids=text` cells
+  -q, --quiet   Print nothing on success (files are still written; warnings and errors
+                still print)
   -h, --help    Print help
 ```
 
@@ -708,6 +730,10 @@ Arguments:
           The document (.docx) to read
 
 Options:
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -849,14 +875,15 @@ Options:
       --force
           Replace an existing output directory's files
 
-  -q, --quiet
-          Print nothing on success (the files are still written)
-
       --dry-run
           Resolve and report only; write nothing
 
       --pdf
           Also write redline.pdf and clean.pdf
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
       --png
           Also write redline-page-NN.png and clean-page-NN.png
@@ -986,7 +1013,8 @@ Options:
           Replace an existing output directory's files
 
   -q, --quiet
-          Print nothing on success (the files are still written)
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1012,17 +1040,19 @@ What this binary can do, for agents choosing an operation
 Usage: jubarte-redlines capabilities [OPTIONS]
 
 Options:
-      --json  Emit JSON (the default output is JSON too; the flag documents intent)
-  -h, --help  Print help
+      --json   Emit JSON (the default output is JSON too; the flag documents intent)
+  -q, --quiet  Print nothing on success (files are still written; warnings and errors
+               still print)
+  -h, --help   Print help
 ```
 
-#### `jubarte-redlines diff-render`
+#### `jubarte-redlines visual-diff`
 
 ```text
-$ jubarte-redlines diff-render --help
+$ jubarte-redlines visual-diff --help
 Compare rendered pages pixel by pixel (different pages: exit 5)
 
-Usage: jubarte-redlines diff-render [OPTIONS] <A> <B>
+Usage: jubarte-redlines visual-diff [OPTIONS] <A> <B>
 
 Arguments:
   <A>  The document before
@@ -1034,6 +1064,8 @@ Options:
       --json           Print diff.json to stdout instead of one line per changed page
       --no-overlay     Skip the diff-page-NN.png overlays
       --force          Overwrite files already in --out-dir
+  -q, --quiet          Print nothing on success (files are still written; warnings and
+                       errors still print)
   -h, --help           Print help
 
 Rendering:
@@ -1041,10 +1073,10 @@ Rendering:
                    100]
 
 Examples:
-  jubarte diff-render before.docx after.docx                  changed pages on stdout
-  jubarte diff-render before.docx after.docx --out-dir diff   PNGs of the changed pages
+  jubarte visual-diff before.docx after.docx                  changed pages on stdout
+  jubarte visual-diff before.docx after.docx --out-dir diff   PNGs of the changed pages
   and diff.json
-  jubarte diff-render a.docx b.docx --json                    the diff.json document on
+  jubarte visual-diff a.docx b.docx --json                    the diff.json document on
   stdout
 
 With --out-dir, each page that differs is written as a-page-NN.png,
@@ -1068,6 +1100,8 @@ Options:
       --json           Emit one JSON object per line
       --author <NAME>  Only this author's comments (exact match)
       --latest         One comment per thread: the newest
+  -q, --quiet          Print nothing on success (files are still written; warnings and
+                       errors still print)
   -h, --help           Print help
 ```
 
@@ -1090,6 +1124,8 @@ Options:
                          a revision by --author
       --author <NAME>    The author every change must carry (with --original)
       --force            Replace an existing --repair output
+  -q, --quiet            Print nothing on success (files are still written; warnings and
+                         errors still print)
   -h, --help             Print help
 
 Examples:

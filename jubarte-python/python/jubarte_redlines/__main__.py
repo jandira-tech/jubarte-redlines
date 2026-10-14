@@ -12,7 +12,7 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
     python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
     python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
     python -m jubarte_redlines convert letter.docx --png --pages 3-5
-    python -m jubarte_redlines diff-render before.docx after.docx --out-dir diff
+    python -m jubarte_redlines visual-diff before.docx after.docx --out-dir diff
     python -m jubarte_redlines convert draft.md --page a4 -o draft.docx
     python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
     python -m jubarte_redlines accept redline.docx -o clean.docx
@@ -23,7 +23,7 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
 
 Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage, 3 edit
 plan refused (its per-operation report is on stdout; nothing was written), 5
-``diff-render`` found a page that differs. ``validate`` exits 2 when it has
+``visual-diff`` found a page that differs. ``validate`` exits 2 when it has
 findings.
 """
 
@@ -836,7 +836,7 @@ _HANDLERS = {
     "inspect": cmd_inspect, "read": cmd_read, "edit": cmd_edit, "add": cmd_add,
     "convert": cmd_convert, "compare": cmd_compare, "diff": cmd_diff,
     "changes": cmd_changes, "comments": cmd_comments,
-    "accept": cmd_accept, "reject": cmd_reject, "diff-render": cmd_diff_render,
+    "accept": cmd_accept, "reject": cmd_reject, "visual-diff": cmd_diff_render,
     "validate": cmd_validate, "capabilities": cmd_capabilities,
 }
 _PATH_ARGUMENTS = {"file", "original", "modified", "old", "new", "output", "plan", "out_dir", "reference_doc", "report", "font_report", "repair", "a", "b"}
@@ -860,6 +860,8 @@ class SharedParser:
             stream = sys.stderr if parsed["stream"] == "stderr" else sys.stdout
             stream.write(parsed["text"])
             raise SystemExit(parsed["exit_code"])
+        for note in parsed.get("notes", ()):
+            print(note, file=sys.stderr)
         command, values = parsed["command"], parsed["args"]
         self._validate_host(command, values)
         # FILE and --plan as typed: messages quote them, and Path() would
