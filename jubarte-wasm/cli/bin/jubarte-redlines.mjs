@@ -249,7 +249,7 @@ const COMMANDS = {
           author ??= stampAuthor ?? "Redline";
           date ??= stampDate ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
         }
-        docx = wasm.markdownToDocx(text, JSON.stringify({ page: o.page, author, date, critic: !o.no_critic, track_changes: o.track_changes }), reference);
+        docx = wasm.markdownToDocx(text, JSON.stringify({ page: o.page, author, date, critic: !o.no_critic, track_changes: o.track_changes, tracking: o.tracking == null ? undefined : o.tracking === "on", scholar: Boolean(o.scholar) }), reference);
         if (!o.pdf && o.output_format !== "json" && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
           if (o.move_comments || o.changed_pages) {
             throw new CliError("--move-comments / --changed-pages applies to PDF or PNG output only");

@@ -1391,51 +1391,19 @@ pub fn wrote_line(
     wrote_line_of(path, format, size, pages).map_err(js_err)
 }
 
-/// `markdownToDocx`'s options (JSON, every field optional).
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MarkdownDocxOptions {
-    #[serde(default)]
-    page: jubarte::markdown::PageSize,
-    author: Option<String>,
-    date: Option<String>,
-    critic: Option<bool>,
-    #[serde(alias = "trackChanges")]
-    track_changes: Option<String>,
-}
-
 /// Markdown with CriticMarkup → DOCX bytes; errors as text so native tests
-/// can reach them (a `JsValue` exists only on wasm).
+/// can reach them (a `JsValue` exists only on wasm). The options are
+/// [`jubarte::markdown::docx_options_from_json`]'s.
 fn markdown_docx(
     text: &str,
     options_json: Option<String>,
     reference: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, String> {
-    let options: MarkdownDocxOptions =
-        serde_json::from_str(options_json.as_deref().unwrap_or("{}")).map_err(|e| e.to_string())?;
-    let track_changes = match options.track_changes.as_deref() {
-        None => jubarte::markdown::TrackChanges::All,
-        Some(value) => jubarte::markdown::TrackChanges::parse(value)
-            .ok_or_else(|| format!("track_changes must be all, accept or reject, not {value:?}"))?,
-    };
-    let mut docx_options = jubarte::markdown::DocxOptions {
-        reference: reference.as_deref(),
-        track_changes,
-        page: options.page,
-        ..jubarte::markdown::DocxOptions::default()
-    };
-    if let Some(author) = options.author {
-        docx_options.author = author;
-        docx_options.author_fixed = true;
-    }
-    if let Some(date) = options.date {
-        docx_options.date = date;
-        docx_options.date_fixed = true;
-    }
-    if let Some(critic) = options.critic {
-        docx_options.critic = critic;
-    }
-    jubarte::markdown::markdown_to_docx(text, &docx_options)
+    let options = jubarte::markdown::docx_options_from_json(
+        options_json.as_deref().unwrap_or("{}"),
+        reference.as_deref(),
+    )?;
+    jubarte::markdown::markdown_to_docx(text, &options)
         .map(|written| written.docx)
         .map_err(|e| e.to_string())
 }
@@ -1461,8 +1429,12 @@ pub fn markdown_stamp(text: &str, reference: Option<Vec<u8>>) -> String {
 /// `modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
 /// epoch, so the same Markdown writes the same bytes; the CLI dates them now
 /// instead), `critic` (`true`: CriticMarkup becomes tracked changes and
-/// comments) and `track_changes` (or `trackChanges`: `"all"`,
-/// `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
+/// comments), `track_changes` (or `trackChanges`: `"all"`,
+/// `"accept"`, `"reject"`), `tracking` (`true`/`false`: Word's Track
+/// Changes switch in the output, whatever the front matter's
+/// `track_changes:` says) and `scholar` (`true`: set as LaTeX's article
+/// class, page numbers from page 2, as `--scholar`). An unknown field is
+/// an error. `reference`, a
 /// `.docx`, lends its styles and page setup, and then `page` is ignored.
 /// Images are written as their alt text, and the engine's warnings are not
 /// returned.
@@ -2079,6 +2051,28 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn markdown_to_docx_takes_scholar_and_tracking() {
+        let part = |docx: &[u8], name: &str| {
+            jubarte::opc::PartFs::open(docx)
+                .unwrap()
+                .part_string(name)
+                .unwrap()
+        };
+        let docx = markdown_docx(
+            "# Title\n\nBody.\n",
+            Some(r#"{"scholar":true,"tracking":true}"#.into()),
+            None,
+        )
+        .unwrap();
+        assert!(part(&docx, "word/styles.xml").contains("Latin Modern Roman"));
+        assert!(part(&docx, "word/settings.xml").contains("<w:trackRevisions"));
+        assert!(part(&docx, "word/document.xml").contains("<w:titlePg/>"));
+        let plain = markdown_docx("Body.\n", None, None).unwrap();
+        assert!(!part(&plain, "word/styles.xml").contains("Latin Modern Roman"));
+        assert!(!part(&plain, "word/settings.xml").contains("<w:trackRevisions"));
     }
 
     #[test]

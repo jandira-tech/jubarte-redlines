@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cliDir = path.resolve(here, "..");
@@ -37,6 +38,28 @@ before(() => {
 function run(...args) {
   const r = spawnSync(process.execPath, [bin, ...args], { encoding: "utf8", cwd: tmp });
   return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+/// One part of a .docx, by name, read from its central directory.
+function part(file, name) {
+  const zip = fs.readFileSync(file);
+  let at = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = zip.readUInt16LE(at + 10);
+  at = zip.readUInt32LE(at + 16);
+  for (let i = 0; i < count; i++) {
+    const method = zip.readUInt16LE(at + 10);
+    const size = zip.readUInt32LE(at + 20);
+    const nameLength = zip.readUInt16LE(at + 28);
+    const skip = zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32);
+    const local = zip.readUInt32LE(at + 42);
+    if (zip.toString("utf8", at + 46, at + 46 + nameLength) === name) {
+      const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+      const data = zip.subarray(start, start + size);
+      return (method === 8 ? zlib.inflateRawSync(data) : data).toString("utf8");
+    }
+    at += 46 + nameLength + skip;
+  }
+  throw new Error(`${file} has no ${name}`);
 }
 
 function copy(from, name) {
@@ -360,6 +383,19 @@ test("capabilities claims only what this CLI does (#454, #447, #453)", () => {
   const summary = run("capabilities").out;
   for (const op of ["append", "scrub", "validate", "audit"]) assert.match(summary, new RegExp(`\\n${op}: no\\n`), op);
   assert.doesNotMatch(summary, /append \./);
+});
+
+test("convert --scholar and --tracking, as the binary has them", () => {
+  const source = path.join(tmp, "paper.md");
+  fs.writeFileSync(source, "# Title\n\nBody.\n");
+  const out = path.join(tmp, "paper.docx");
+  assert.equal(run("convert", source, "-o", out, "--scholar", "--tracking", "on").code, 0);
+  assert.match(part(out, "word/styles.xml"), /Latin Modern Roman/);
+  assert.match(part(out, "word/settings.xml"), /<w:trackRevisions/);
+  assert.match(part(out, "word/document.xml"), /<w:titlePg\/>/);
+  assert.equal(run("convert", source, "-o", out, "--force").code, 0);
+  assert.doesNotMatch(part(out, "word/styles.xml"), /Latin Modern Roman/);
+  assert.doesNotMatch(part(out, "word/settings.xml"), /<w:trackRevisions/);
 });
 
 test("convert --move-comments and --changed-only", () => {
