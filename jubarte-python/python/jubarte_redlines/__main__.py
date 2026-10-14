@@ -38,7 +38,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__, capabilities
-from .document import Document, EditPlanError, diff_render
+from .document import Document, EditPlanError, EditResult, diff_render
 from .models import Finding, PdfOptions, RevisionStyle
 
 EXIT_OK = 0
@@ -250,11 +250,6 @@ _EDITING_KEEPS = (
 _DOCX_NEEDS_MARKDOWN = "--to docx requires Markdown input in the Python CLI"
 
 
-def _default_out_dir(file: Path) -> Path:
-    """``<dir>/<stem>.edit`` next to the source, as the binary."""
-    return file.with_name(f"{file.stem}.edit")
-
-
 def _edit_plan(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str, list[str]]:
     """``--plan``'s text, or the plan the operation flags describe, and its notes."""
     from . import _native
@@ -419,20 +414,25 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
         raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
-    out_dir: Path = args.out_dir if args.out_dir is not None else _default_out_dir(args.file)
-    if not dry_run:
-        if out_dir.exists() and not args.force:
-            raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
-        if out_dir.resolve() == args.file.resolve().parent:
-            raise CliError("--out-dir must not be the input's own directory")
     try:
         if dry_run:
             sys.stdout.write(doc.preview(plan_text).to_jsonl())
             return EXIT_OK
+        # The plan first: a refused plan prints its whole report, whatever
+        # the outputs (D15).
         result = doc.edit(plan_text)
     except EditPlanError as exc:
         _print_refusal(exc)
         return EXIT_PLAN_REFUSED
+    # The shared parser resolved the target: ``output`` for the one
+    # document (FILE_modified.docx by default), ``out_dir`` for the bundle.
+    out_dir: Path | None = args.out_dir
+    if out_dir is None:
+        return _write_edited(args, args.output, result, notes)
+    if out_dir.exists() and not args.force:
+        raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
+    if out_dir.resolve() == args.file.resolve().parent:
+        raise CliError("--out-dir must not be the input's own directory")
     lines = result.report.to_jsonl().splitlines()
     summary = lines.pop()
     outputs: list[tuple[str, bytes]] = [("clean.docx", result.clean.to_bytes())]
@@ -467,23 +467,86 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     if args.quiet:
         return EXIT_OK
     print(summary)
+    # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
-    print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})")
-    for note in notes:
-        print(f"note: {note}")
+    print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
+    for note in _edit_notes(notes, result):
+        print(note, file=sys.stderr)
+    shown = out_dir / ("clean.docx" if editing else "redline.docx")
+    _print_changed_view(result, editing, shown)
+    return EXIT_OK
+
+
+def _edit_notes(notes: list[str], result: EditResult) -> list[str]:
+    """The ``note:`` lines of an applied edit: the flags' notes, then each
+    anchor read without its Markdown marks."""
+    lines = [f"note: {note}" for note in notes]
     for outcome in result.report.operations:
         if outcome.anchor_given is not None and outcome.anchor_read_as is not None:
             given, read_as = json.dumps(outcome.anchor_given, ensure_ascii=False), json.dumps(outcome.anchor_read_as, ensure_ascii=False)
-            print(f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)")
-    shown = out_dir / ("clean.docx" if editing else "redline.docx")
-    # The files are written and report.jsonl says so: a view that cannot be
-    # read back is a warning, not a failed edit.
+            lines.append(f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)")
+    return lines
+
+
+def _print_changed_view(result: EditResult, editing: bool, shown: Path) -> None:
+    """The changed blocks' view of the written ``shown``. The files are
+    written: a view that cannot be read back is a warning, not a failed edit."""
+    from . import _native
+
     try:
         view = _native.changed_view(result.redline.to_bytes(), result.report.author, accepted=editing, source=str(shown))
     except _native.JubarteError as exc:
         print(f"warning: the changed blocks cannot be shown: {exc}", file=sys.stderr)
-        return EXIT_OK
+        return
     sys.stdout.write(view)
+
+
+def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, notes: list[str]) -> int:
+    """``edit`` and ``add`` without --out-dir, as the binary: the redline (in
+    editing mode, the result) as one .docx at ``path``, its PDF and PNG pages
+    beside it, the ``wrote`` lines and notes on stderr, the changed blocks'
+    view of that file on stdout."""
+    editing = bool(args.editing_mode)
+    chosen = result.clean if editing else result.redline
+    document = chosen.to_bytes()
+    outputs: list[tuple[Path, bytes]] = [(path, document)]
+    pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
+    # FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
+    # replaced only with --force (D15). The PNG names wait for the page count.
+    for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
+        if taken.exists() and not args.force:
+            print(f"error: output '{taken}' already exists (use --force to overwrite)", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+    pages, png_count = None, 0
+    if pdf or png:
+        # Render before writing, so a failed render writes nothing.
+        options = PdfOptions(compress=True, revisions=args.revisions, revision_palette=args.revision_palette)
+        rendered = chosen.render(pdf=pdf, png_dpi=args.dpi if png else None, options=options)
+        if rendered.pdf is not None:
+            outputs.append((path.with_suffix(".pdf"), rendered.pdf))
+            pages = rendered.report.page_count
+        png_count = len(rendered.pngs)
+        for i, image in enumerate(rendered.pngs):
+            outputs.append((path.with_name(_png_name(path.stem, i, png_count)), image))
+    # The PNG names are known only now: nothing is written over a file.
+    for taken, _ in outputs:
+        if taken.exists() and not args.force:
+            print(f"error: output '{taken}' already exists (use --force to overwrite)", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+    for output, data in outputs:
+        _write(output, data)
+    if args.quiet:
+        return EXIT_OK
+    print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
+    if pages is not None:
+        pdf_path, pdf_bytes = outputs[1]
+        print(f"wrote {pdf_path} (pdf, {len(pdf_bytes)} bytes, {pages} page{'' if pages == 1 else 's'})", file=sys.stderr)
+    if png_count:
+        pattern = path.with_name(f"{path.stem}-page-NN.png")
+        print(f"wrote {pattern} (png, {png_count} page{'' if png_count == 1 else 's'}, {args.dpi:g} dpi)", file=sys.stderr)
+    for note in _edit_notes(notes, result):
+        print(note, file=sys.stderr)
+    _print_changed_view(result, editing, path)
     return EXIT_OK
 
 

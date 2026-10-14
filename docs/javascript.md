@@ -710,11 +710,11 @@ Tasks:
                 comments with ids [alias: text]
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
-                JSON plan. Writes clean copy, redline, patch and report, then prints the
-                changed paragraphs as the agent view (refusal: exit 3)
+                JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
+                prints the changed paragraphs as the agent view (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
-                -p per command). Writes the same files as edit and prints the changed
-                paragraphs as the agent view
+                -p per command). Writes FILE_modified.docx, as edit does, and prints the
+                changed paragraphs as the agent view
   capabilities  What this binary can do, for agents choosing an operation
   help          Print this message or the help of the given subcommand(s)
 
@@ -1562,9 +1562,9 @@ Read options:
 ```text
 $ jubarte-redlines edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
---accept, --reject or --style (several -p per command), or a JSON plan. Writes clean
-copy, redline, patch and report, then prints the changed paragraphs as the agent view
-(refusal: exit 3)
+--accept, --reject or --style (several -p per command), or a JSON plan. Writes
+FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
+agent view (refusal: exit 3)
 
 Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
@@ -1623,12 +1623,12 @@ Options:
           Their timestamp (ISO 8601) [default: now, UTC]
 
       --suggesting-mode
-          The edits are tracked changes (the default): redline.docx, clean.docx,
-          patch.diff and report.jsonl are written and the view shows the marks
+          The edits are tracked changes (the default): the file written is the redline
+          and the view shows the marks
 
       --editing-mode
-          The edits land directly: clean.docx and report.jsonl only; the view shows the
-          result with rev tags on the id lines
+          The edits land directly: the file written is the result, and the view shows it
+          with rev tags on the id lines
 
       --existing-revisions <MODE>
           What to do when FILE already holds tracked changes: auto keeps them and tracks
@@ -1643,25 +1643,31 @@ Options:
 
           [default: auto]
 
-      --out-dir <DIR>
-          Directory to create for the outputs (default: `<FILE's
-          directory>/<stem>.edit`)
+  -o, --output <FILE.docx>
+          The edited document, a .docx (default: `<FILE's
+          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+
+      --out-dir [<DIR>]
+          Write the bundle instead: clean.docx, redline.docx, patch.diff and
+          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
+          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
 
       --force
-          Replace an existing output directory's files
+          Replace an existing output (the bundle directory's files)
 
       --dry-run
           Resolve and report only; write nothing
-
-      --pdf
-          Also write redline.pdf and clean.pdf
 
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
 
+      --pdf
+          Also write the PDF beside the document (the bundle: redline.pdf and clean.pdf)
+
       --png
-          Also write redline-page-NN.png and clean-page-NN.png
+          Also write PNG pages beside the document, STEM-page-NN.png (the bundle:
+          redline-page-NN.png and clean-page-NN.png)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1695,7 +1701,8 @@ Examples:
   jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
   jubarte edit a.docx -p c5 --reply "Agreed, will fix."
   jubarte edit a.docx -p r3 --accept -p header1.r1 --reject
-  jubarte edit a.docx --plan plan.json --out-dir review
+  jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf
+  jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/
   jubarte edit a.docx --plan plan.json -p p3 --content "New."   record into plan.json
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
@@ -1709,7 +1716,8 @@ t0.row1.cell2, c5 (a comment), r12 (a revision), or a long id
 ```text
 $ jubarte-redlines add --help
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
-Writes the same files as edit and prints the changed paragraphs as the agent view
+Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent
+view
 
 Usage: jubarte-redlines add [OPTIONS] <FILE>
 
@@ -1760,12 +1768,12 @@ Options:
           Their timestamp (ISO 8601) [default: now, UTC]
 
       --suggesting-mode
-          The edits are tracked changes (the default): redline.docx, clean.docx,
-          patch.diff and report.jsonl are written and the view shows the marks
+          The edits are tracked changes (the default): the file written is the redline
+          and the view shows the marks
 
       --editing-mode
-          The edits land directly: clean.docx and report.jsonl only; the view shows the
-          result with rev tags on the id lines
+          The edits land directly: the file written is the result, and the view shows it
+          with rev tags on the id lines
 
       --existing-revisions <MODE>
           What to do when FILE already holds tracked changes: auto keeps them and tracks
@@ -1780,12 +1788,17 @@ Options:
 
           [default: auto]
 
-      --out-dir <DIR>
-          Directory to create for the outputs (default: `<FILE's
-          directory>/<stem>.edit`)
+  -o, --output <FILE.docx>
+          The edited document, a .docx (default: `<FILE's
+          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+
+      --out-dir [<DIR>]
+          Write the bundle instead: clean.docx, redline.docx, patch.diff and
+          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
+          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
 
       --force
-          Replace an existing output directory's files
+          Replace an existing output (the bundle directory's files)
 
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still

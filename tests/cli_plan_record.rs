@@ -301,7 +301,11 @@ fn consume_keeps_the_plan_until_it_has_been_applied() {
     );
     assert_eq!(code, 0, "{err}");
     assert!(!dir.join("plan.json").exists());
-    assert!(dir.join("letter.edit/redline.docx").exists());
+    assert!(dir.join("letter_modified.docx").exists());
+    assert!(
+        !dir.join("letter.edit").exists(),
+        "only --out-dir writes the bundle"
+    );
 }
 
 /// zcode review 06b F3, F4, F6, F8, F9.

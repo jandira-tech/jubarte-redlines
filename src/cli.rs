@@ -150,13 +150,12 @@ pub struct EditOptions {
     /// Their timestamp (ISO 8601) [default: now, UTC].
     #[arg(long, value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
     pub datetime: Option<String>,
-    /// The edits are tracked changes (the default): redline.docx,
-    /// clean.docx, patch.diff and report.jsonl are written and the view
-    /// shows the marks.
+    /// The edits are tracked changes (the default): the file written is
+    /// the redline and the view shows the marks.
     #[arg(long, conflicts_with = "editing_mode")]
     pub suggesting_mode: bool,
-    /// The edits land directly: clean.docx and report.jsonl only; the view
-    /// shows the result with rev tags on the id lines.
+    /// The edits land directly: the file written is the result, and the
+    /// view shows it with rev tags on the id lines.
     #[arg(long)]
     pub editing_mode: bool,
     /// What to do when FILE already holds tracked changes: auto keeps them
@@ -164,13 +163,58 @@ pub struct EditOptions {
     /// comparer.
     #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
     pub existing_revisions: ExistingArg,
-    /// Directory to create for the outputs (default:
-    /// `<FILE's directory>/<stem>.edit`).
-    #[arg(long, value_name = "DIR")]
-    pub out_dir: Option<PathBuf>,
-    /// Replace an existing output directory's files.
+    /// The edited document, a .docx (default: `<FILE's
+    /// directory>/<stem>_modified.docx`); --pdf and --png write beside it.
+    #[arg(
+        short = 'o',
+        long,
+        value_name = "FILE.docx",
+        conflicts_with = "out_dir"
+    )]
+    pub output: Option<PathBuf>,
+    /// Write the bundle instead: clean.docx, redline.docx, patch.diff and
+    /// report.jsonl (clean.docx and report.jsonl in editing mode), plus
+    /// what --pdf and --png ask for, in DIR (default: `<FILE's
+    /// directory>/<stem>.edit`).
+    #[arg(long, value_name = "DIR", num_args = 0..=1)]
+    pub out_dir: Option<Option<PathBuf>>,
+    /// Replace an existing output (the bundle directory's files).
     #[arg(long)]
     pub force: bool,
+}
+
+/// What `edit` and `add` write: one document, or the bundle directory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditTarget {
+    /// The redline (or, in editing mode, the result) as one .docx.
+    Single(PathBuf),
+    /// clean.docx, redline.docx, patch.diff and report.jsonl in a directory.
+    Bundle(PathBuf),
+}
+
+impl EditOptions {
+    /// Where `edit FILE` (or `add FILE`) writes: `--out-dir [DIR]`'s
+    /// bundle, else `-o`, else `<FILE's dir>/<stem>_modified.docx`. A FILE
+    /// whose stem already ends in `_modified` keeps its name. Pure.
+    pub fn target(&self, file: &Path) -> EditTarget {
+        let beside = |name: String| match file.parent().filter(|p| !p.as_os_str().is_empty()) {
+            Some(dir) => dir.join(name),
+            None => PathBuf::from(name),
+        };
+        let stem = file.file_stem().map_or_else(
+            || "document".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        );
+        match (&self.out_dir, &self.output) {
+            (Some(Some(dir)), _) => EditTarget::Bundle(dir.clone()),
+            (Some(None), _) => EditTarget::Bundle(beside(format!("{stem}.edit"))),
+            (None, Some(output)) => EditTarget::Single(output.clone()),
+            (None, None) if stem.ends_with("_modified") => {
+                EditTarget::Single(beside(format!("{stem}.docx")))
+            }
+            (None, None) => EditTarget::Single(beside(format!("{stem}_modified.docx"))),
+        }
+    }
 }
 
 /// `--existing-revisions` of `edit` and `add`.
@@ -674,9 +718,9 @@ pub enum Command {
     },
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
     /// --resolve, --reply, --accept, --reject or --style (several -p per
-    /// command), or a JSON plan. Writes
-    /// clean copy, redline, patch and report, then prints the changed
-    /// paragraphs as the agent view (refusal: exit 3).
+    /// command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
+    /// bundle), then prints the changed paragraphs as the agent view
+    /// (refusal: exit 3).
     #[command(after_help = "Examples:\n  \
         jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
         jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
@@ -686,7 +730,8 @@ pub enum Command {
         jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
         jubarte edit a.docx -p c5 --reply \"Agreed, will fix.\"\n  \
         jubarte edit a.docx -p r3 --accept -p header1.r1 --reject\n  \
-        jubarte edit a.docx --plan plan.json --out-dir review\n  \
+        jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf\n  \
+        jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/\n  \
         jubarte edit a.docx --plan plan.json -p p3 --content \"New.\"   record into plan.json\n  \
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
@@ -745,10 +790,12 @@ pub enum Command {
         /// Resolve and report only; write nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Also write redline.pdf and clean.pdf.
+        /// Also write the PDF beside the document (the bundle: redline.pdf
+        /// and clean.pdf).
         #[arg(long)]
         pdf: bool,
-        /// Also write redline-page-NN.png and clean-page-NN.png.
+        /// Also write PNG pages beside the document, STEM-page-NN.png (the
+        /// bundle: redline-page-NN.png and clean-page-NN.png).
         #[arg(long)]
         png: bool,
         /// PNG resolution in dots per inch (1-1200).
@@ -766,8 +813,8 @@ pub enum Command {
         operations: Vec<FlagOp>,
     },
     /// Add a paragraph, a comment or a reply: -p WHERE --content TEXT
-    /// (several -p per command). Writes the same files as edit and prints
-    /// the changed paragraphs as the agent view.
+    /// (several -p per command). Writes FILE_modified.docx, as edit does,
+    /// and prints the changed paragraphs as the agent view.
     #[command(after_help = "Examples:\n  \
         jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
         jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
@@ -2343,6 +2390,40 @@ fn validate_matches(
             return Err(error(&mut task, &message));
         }
     }
+    // --out-dir's value is optional, so `edit --out-dir a.docx -p p1`
+    // would read the document as the directory.
+    if matches!(name, "edit" | "add")
+        && let Some(dir) = args.try_get_one::<PathBuf>("out_dir").ok().flatten()
+        && Format::of_path(dir) == Some(Format::Docx)
+    {
+        return Err(error(
+            &mut task,
+            &format!(
+                "--out-dir {} names a Word document; put FILE before --out-dir, or write --out-dir=DIR",
+                dir.display()
+            ),
+        ));
+    }
+    // edit and add write one Word document: a known extension that is not
+    // .docx names the task that writes it.
+    if matches!(name, "edit" | "add")
+        && let Some(output) = args.get_one::<PathBuf>("output")
+        && let Some(kind) = Format::of_path(output).filter(|kind| *kind != Format::Docx)
+    {
+        // As typed (`.txt`, `.markdown`), which the named task also takes.
+        let ext = output.extension().map_or_else(
+            || kind.name().to_string(),
+            |e| e.to_string_lossy().to_lowercase(),
+        );
+        let how = match kind {
+            Format::Md | Format::Json => format!("`jubarte read FILE_modified.docx -o v.{ext}`"),
+            _ => format!("`jubarte convert FILE_modified.docx -o r.{ext}`"),
+        };
+        return Err(error(
+            &mut task,
+            &format!("{name} writes a .docx; {how} writes .{ext} from it"),
+        ));
+    }
     if matches!(name, "convert" | "edit" | "diff")
         && args.get_one::<String>("revision_palette").is_some()
         && args.get_one::<Revisions>("revisions") != Some(&Revisions::Custom)
@@ -2623,8 +2704,11 @@ fn error_json(error: &clap::Error) -> String {
 /// native snake_case field names, flattened Args groups, canonical enum strings,
 /// string paths, defaults and null optional fields. Nested subcommands use
 /// `{command, args}`. Compare inputs include resolved named-over-positional
-/// values; runtime-dependent defaults (output path, git author, current date)
-/// remain null. Informational/error results contain `{exit_code, stream, text}`.
+/// values; runtime-dependent defaults (compare's output path, git author,
+/// current date) remain null. `edit` and `add` carry where they write,
+/// resolved: `output` for the one document or `out_dir` for the bundle, both
+/// null while recording into a plan. Informational/error results contain
+/// `{exit_code, stream, text}`.
 /// This function performs no document, filesystem, network or process I/O.
 pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> String {
     let model = top_level_command();
@@ -2733,6 +2817,33 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                         .flatten(),
                 )
                 .expect("format");
+            }
+            // edit and add: the one document or the bundle, resolved, so a
+            // host never rebuilds the default names.
+            if let Command::Edit {
+                file,
+                options,
+                plan,
+                operations,
+                ..
+            }
+            | Command::Add {
+                file,
+                options,
+                plan,
+                operations,
+                ..
+            } = &task
+            {
+                // Recording writes the plan only.
+                let recording = plan.is_some() && !operations.is_empty();
+                let (output, out_dir) = match options.target(file) {
+                    _ if recording => (None, None),
+                    EditTarget::Single(path) => (Some(path), None),
+                    EditTarget::Bundle(dir) => (None, Some(dir)),
+                };
+                value["args"]["output"] = serde_json::to_value(output).expect("UTF-8 path");
+                value["args"]["out_dir"] = serde_json::to_value(out_dir).expect("UTF-8 path");
             }
             let written = match &task {
                 Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),

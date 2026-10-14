@@ -406,19 +406,22 @@ function applyEdit(verb, file, docx, o) {
   if (editing && planKeepsRevisions(plan)) {
     throw new UsageError("--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject");
   }
-  const outDir = o.out_dir ?? path.join(path.dirname(file), `${stem(file)}.edit`);
-  if (!o.dry_run) {
-    if (fs.existsSync(outDir) && !o.force) {
-      throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
-    }
-    if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
-      throw new CliError("--out-dir must not be the input's own directory");
-    }
-  }
+  // The plan first: a refused plan prints its whole report, whatever the
+  // outputs (D15).
   const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan);
   if (!result.ok) return printRefusal(result);
   const jsonl = wasm.editReportJsonl(result.json);
   if (o.dry_run) return void process.stdout.write(jsonl);
+  // The shared parser resolved the target: `output` for the one document
+  // (FILE_modified.docx by default), `out_dir` for the bundle.
+  const outDir = o.out_dir;
+  if (outDir == null) return writeEdited(o.output, result, notes, o);
+  if (fs.existsSync(outDir) && !o.force) {
+    throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
+  }
+  if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
+    throw new CliError("--out-dir must not be the input's own directory");
+  }
   const lines = jsonl.trimEnd().split("\n");
   const summary = lines.pop();
   const outputs = [["clean.docx", result.clean]];
@@ -437,25 +440,53 @@ function applyEdit(verb, file, docx, o) {
   if (o.quiet) return;
   console.log(summary);
   const names = [...outputs.map(([n]) => n), "report.jsonl"];
-  console.log(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
-  for (const note of notes) console.log(`note: ${note}`);
-  const report = JSON.parse(result.json);
-  for (const outcome of report.operations ?? []) {
+  // The status lines on stderr (D6); the summary and the view are data.
+  console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
+  for (const note of editNotes(notes, result)) console.error(note);
+  printChangedView(result, editing, path.join(outDir, editing ? "clean.docx" : "redline.docx"));
+}
+
+/** The `note:` lines of an applied edit: the flags' notes, then each anchor
+ * read without its Markdown marks. */
+function editNotes(notes, result) {
+  const lines = notes.map((note) => `note: ${note}`);
+  for (const outcome of JSON.parse(result.json).operations ?? []) {
     if (outcome.anchor_given != null && outcome.anchor_read_as != null) {
-      console.log(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
+      lines.push(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
     }
   }
-  const shown = path.join(outDir, editing ? "clean.docx" : "redline.docx");
-  // The files are written and report.jsonl says so: a view that cannot be
-  // read back is a warning, not a failed edit.
+  return lines;
+}
+
+/** The changed blocks' view of the written `shown`. The files are written:
+ * a view that cannot be read back is a warning, not a failed edit. */
+function printChangedView(result, editing, shown) {
   let view;
   try {
-    view = wasm.changedView(result.redline, report.author, editing, shown);
+    view = wasm.changedView(result.redline, JSON.parse(result.json).author, editing, shown);
   } catch (error) {
     console.error(`warning: the changed blocks cannot be shown: ${error.message ?? error}`);
     return;
   }
   process.stdout.write(view);
+}
+
+/** `edit` and `add` without --out-dir, as the binary: the redline (in
+ * editing mode, the result) as one .docx at `output`, the `wrote` line and
+ * notes on stderr, the changed blocks' view of that file on stdout. */
+function writeEdited(output, result, notes, o) {
+  const editing = Boolean(o.editing_mode);
+  const document = editing ? result.clean : result.redline;
+  // FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
+  // replaced only with --force (D15).
+  if (fs.existsSync(output) && !o.force) {
+    throw new UsageError(`output '${output}' already exists (use --force to overwrite)`);
+  }
+  write(output, document);
+  if (o.quiet) return;
+  console.error(`wrote ${output} (docx, ${document.length} bytes)`);
+  for (const note of editNotes(notes, result)) console.error(note);
+  printChangedView(result, editing, output);
 }
 
 /** The agent view of `docx` with the read options `o`; `source` is its header name. */

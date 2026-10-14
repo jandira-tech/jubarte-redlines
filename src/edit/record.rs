@@ -18,6 +18,7 @@ use super::{EditPlan, ExistingRevisions};
 const APPLY_ONLY: &[&str] = &[
     "--consume",
     "--out-dir",
+    "--output",
     "--force",
     "--editing-mode",
     "--suggesting-mode",

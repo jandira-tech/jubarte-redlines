@@ -71,6 +71,22 @@ fn jubarte(args: &[&str], dir: &Path) -> Output {
 }
 
 #[track_caller]
+/// stdout and stderr of a run that must succeed.
+fn ok_both(args: &[&str], dir: &Path) -> (String, String) {
+    let out = jubarte(args, dir);
+    assert!(
+        out.status.success(),
+        "jubarte {args:?} exited {:?}\nstdout: {}\nstderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (
+        String::from_utf8(out.stdout).expect("utf-8 stdout"),
+        String::from_utf8(out.stderr).expect("utf-8 stderr"),
+    )
+}
+
 fn ok(args: &[&str], dir: &Path) -> String {
     let out = jubarte(args, dir);
     assert!(
@@ -2552,16 +2568,18 @@ fn cli_edit_says_when_an_anchor_was_read_without_its_marks() {
     let plan = r##"{"schema_version":1,"author":"Ann Counsel","operations":[
         {"kind":"replace","paragraph":"p0","find":"# Fees","replacement":"Fees and Expenses"}]}"##;
     std::fs::write(dir.path().join("plan.json"), plan).unwrap();
-    let out = ok(
+    let (out, err) = ok_both(
         &["edit", "base.docx", "--plan", "plan.json", "--out-dir", "r"],
         dir.path(),
     );
+    // The notes are status lines: stderr, beside the wrote line (D6).
     assert!(
-        out.contains(
+        err.contains(
             "\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"
-        ),
-        "{out}"
+        ) && err.starts_with("wrote r (4 files: "),
+        "{err}"
     );
+    assert!(!out.contains("note:") && !out.contains("\nwrote "), "{out}");
     let report = std::fs::read_to_string(dir.path().join("r/report.jsonl")).unwrap();
     assert!(
         report.contains(r##""anchor_given":"# Fees","anchor_read_as":"Fees""##),
@@ -2577,6 +2595,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         &[
             "edit",
             "base.docx",
+            "--out-dir",
             "-p",
             "p1",
             "--anchor",
@@ -2600,7 +2619,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     for name in ["clean.docx", "redline.docx", "patch.diff", "report.jsonl"] {
         assert!(
             dir.path().join("base.edit").join(name).is_file(),
-            "default out dir holds {name}"
+            "--out-dir's default holds {name}"
         );
     }
     assert!(out.contains("\nsource: base.edit/redline.docx\n"), "{out}");
@@ -2637,6 +2656,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         &[
             "edit",
             "base.docx",
+            "--out-dir",
             "-p",
             "p1",
             "--anchor",
@@ -3037,7 +3057,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         r"<!-- p1 rev r\d+\+\d+ @MU -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
     );
 
-    let noted = ok(
+    let (noted, noted_err) = ok_both(
         &[
             "edit",
             "base.docx",
@@ -3052,12 +3072,12 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         ],
         dir.path(),
     );
-    assert!(noted.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted}");
+    assert!(noted_err.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted_err}");
     captures(
         &noted,
         r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>r\d+ @MU<<\}\n",
     );
-    let marks = ok(
+    let (_, marks) = ok_both(
         &[
             "edit",
             "base.docx",

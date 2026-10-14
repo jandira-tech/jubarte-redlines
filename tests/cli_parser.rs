@@ -743,6 +743,48 @@ fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
     }
 }
 
+/// D15: a host reads where edit and add write from `args`: `output` for the
+/// one document, `out_dir` for the bundle, the other null.
+#[test]
+fn parse_json_resolves_where_edit_writes() {
+    let row = |args: &[&str]| {
+        let parsed = parse(args, &["edit", "add"]);
+        assert_eq!(parsed["exit_code"], 0, "{args:?}: {parsed}");
+        (
+            parsed["args"]["output"].clone(),
+            parsed["args"]["out_dir"].clone(),
+        )
+    };
+    let edit = ["edit", "d/a.docx", "-p", "p1", "--content", "x"];
+    assert_eq!(row(&edit), (Value::from("d/a_modified.docx"), Value::Null));
+    assert_eq!(
+        row(&["add", "d/a_modified.docx", "-p", "p1", "--content", "x"]),
+        (Value::from("d/a_modified.docx"), Value::Null),
+        "a _modified file is edited onto itself"
+    );
+    assert_eq!(
+        row(&[&edit[..], &["-o", "b.docx"]].concat()),
+        (Value::from("b.docx"), Value::Null)
+    );
+    assert_eq!(
+        row(&[&edit[..], &["--out-dir"]].concat()),
+        (Value::Null, Value::from("d/a.edit"))
+    );
+    assert_eq!(
+        row(&[&edit[..], &["--out-dir", "r"]].concat()),
+        (Value::Null, Value::from("r"))
+    );
+    // pi-13b F7: recording writes the plan only, so neither is named.
+    assert_eq!(
+        row(&[&edit[..], &["--plan", "p.json"]].concat()),
+        (Value::Null, Value::Null)
+    );
+    for bad in [&["-o", "b.pdf"][..], &["--out-dir", "x.docx"][..]] {
+        let parsed = parse(&[&edit[..], bad].concat(), &["edit"]);
+        assert_eq!(parsed["exit_code"], 2, "{bad:?}: {parsed}");
+    }
+}
+
 /// pi review av4 F11: a revision timestamp is an xsd:dateTime (`w:date`);
 /// clap refuses anything else instead of writing it into the document.
 #[test]

@@ -268,6 +268,51 @@ test("edit and add by flags print the changed blocks, as the binary does", () =>
   assert.ok(!editing.out.includes("{++"), editing.out);
 });
 
+test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
+  const para = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const word = para.text.split(" ")[0];
+  const file = copy(untracked, "single.docx");
+  const written = path.join(tmp, "single_modified.docx");
+  const edit = ["edit", file, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed"];
+  const r = run(...edit);
+  assert.equal(r.code, 0, r.err);
+  assert.ok(fs.existsSync(written) && !fs.existsSync(path.join(tmp, "single.edit")));
+  assert.ok(r.out.includes(`\nsource: ${written}\n`), r.out);
+  assert.ok(r.err.startsWith(`wrote ${written} (docx, `), r.err);
+  // An existing output is a usage error until --force.
+  const again = run(...edit);
+  assert.equal(again.code, 2, again.err);
+  assert.match(again.err, /already exists \(use --force to overwrite\)/);
+  const quiet = run(...edit, "--force", "-q");
+  assert.equal(quiet.code, 0, quiet.err);
+  assert.equal(quiet.out + quiet.err, "");
+  // -o names the one .docx; any other extension, or -o with --out-dir, is a usage error.
+  const named = path.join(tmp, "single-named.docx");
+  assert.equal(run(...edit, "-o", named).code, 0);
+  assert.ok(fs.existsSync(named));
+  for (const bad of [["-o", path.join(tmp, "single.pdf")], ["-o", named, "--out-dir", path.join(tmp, "single-r")]]) {
+    assert.equal(run(...edit, ...bad).code, 2, bad.join(" "));
+  }
+  assert.ok(!fs.existsSync(path.join(tmp, "single.pdf")) && !fs.existsSync(path.join(tmp, "single-r")));
+  // --out-dir alone writes the bundle beside FILE.
+  const bundle = run(...edit, "--out-dir");
+  assert.equal(bundle.code, 0, bundle.err);
+  assert.ok(fs.existsSync(path.join(tmp, "single.edit", "redline.docx")));
+  // The plan runs first: a refused plan reports even over an existing output.
+  const refused = run("edit", file, "-p", `p${para.index}`, "--anchor", "absent words", "--content", "x");
+  assert.equal(refused.code, 3, refused.err);
+  assert.match(refused.out, /absent words/);
+  // The bundle's wrote line is a status line, on stderr.
+  assert.ok(bundle.err.startsWith(`wrote ${path.join(tmp, "single.edit")} (`), bundle.err);
+  assert.doesNotMatch(bundle.out, /\nwrote /);
+  // A _modified FILE keeps its name: add edits it in place, with --force.
+  const add = ["add", written, "-p", `p${para.index}`, "--content", "New."];
+  assert.equal(run(...add).code, 2);
+  const forced = run(...add, "--force");
+  assert.equal(forced.code, 0, forced.err);
+  assert.ok(forced.out.includes(`\nsource: ${written}\n`), forced.out);
+});
+
 test("edit and add --plan record into one plan that --consume deletes once applied", () => {
   const paras = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.filter((p) => p.text.length > 3);
   const [para, other, third] = paras;
@@ -604,7 +649,9 @@ test("edit previews write nothing and quiet application still writes its report 
   assert.equal(applied.code, 0, applied.err);
   assert.equal(applied.out, "");
   assert.ok(fs.readFileSync(path.join(dir, "report.jsonl"), "utf8").includes('"ev":"save"'));
-  const own = run("edit", tracked, "--plan", plan, "--out-dir", path.dirname(tracked), "--force");
+  // The plan runs first (a refused plan reports whatever the outputs), so the
+  // directory check needs a plan the document takes.
+  const own = run("edit", untracked, "--plan", plan, "--out-dir", path.dirname(untracked), "--force");
   assert.equal(own.code, 1);
   assert.match(own.err, /input's own directory/);
   const badPlan = path.join(tmp, "malformed-plan.json");
