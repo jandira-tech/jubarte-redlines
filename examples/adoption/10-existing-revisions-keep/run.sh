@@ -10,7 +10,7 @@ JUBARTE="${JUBARTE:-jubarte}"
 "$JUBARTE" convert input.md -o input.docx --force
 "$JUBARTE" convert edited.md -o edited.docx --force
 "$JUBARTE" input.docx edited.docx -o received.docx \
-  --author Counterparty --date 2026-10-01T09:00:00Z --force
+  --author Counterparty --datetime 2026-10-01T09:00:00Z --force
 
 # --- jubarte: keep their revisions, add ours beside them ---------------------
 rm -rf review keep_page_1_jubarte.png changes_jubarte.jsonl refusal.txt

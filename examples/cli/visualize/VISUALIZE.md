@@ -23,7 +23,7 @@ nine tracked changes (insertions, deletions, a table cell change) and two
 comments, built from CriticMarkup:
 
 ```bash
-jubarte convert received.md -o out/received.docx --author "Ann Counsel" --date 2026-10-01T09:00:00Z
+jubarte convert received.md -o out/received.docx --author "Ann Counsel" --datetime 2026-10-01T09:00:00Z
 ```
 
 Pages are rendered at 60 dpi to keep this folder small; read them at 96 dpi

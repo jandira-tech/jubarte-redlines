@@ -96,7 +96,7 @@ cross emphasis, links and paragraph breaks.
 | `{>>note<<}` alone | a comment at that point |
 | `{==text==}` alone | highlighted text |
 
-Every change and comment gets `--author` and `--date` (fixed by default,
+Every change and comment gets `--author` and `--datetime` (fixed by default,
 so the same Markdown writes the same bytes).
 
 Paragraphs follow Word's model, where a paragraph's mark (the end of the
@@ -452,7 +452,7 @@ Payment is due in [-30-]{+45+} days.
 - The `+++` line names who made the changes and when, once. A change by
   anyone else (a tracked change already in a Word document) is followed
   by `{>>Name (date)<<}`, and every comment carries its author and date.
-  `-a/--author` defaults to Redline; `-d/--date` to now.
+  `-a/--author` defaults to Redline; `-d/--datetime` to now.
 - Changes grow to whole words, numbers, formatting spans and links, so
   `[-**twelve**-]{+**eighteen**+}` rather than a change inside the bold.
   Positions and counts are in characters: nothing is tokenized.

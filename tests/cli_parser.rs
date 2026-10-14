@@ -524,7 +524,7 @@ fn diff_has_no_rendering_flags() {
     // flags are refused rather than dropped.
     for flags in [
         &["-a", "Ann"][..],
-        &["--date", "2026-01-01T00:00:00Z"],
+        &["--datetime", "2026-01-01T00:00:00Z"],
         &["--columns", "40"],
     ] {
         let result = parse(
@@ -969,7 +969,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
         ("", false),
     ] {
         for args in [
-            vec!["compare", "a.docx", "b.docx", "--date", date],
+            vec!["compare", "a.docx", "b.docx", "--datetime", date],
             vec!["a.docx", "b.docx", "-d", date],
             vec![
                 "edit",
@@ -978,7 +978,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
                 "p0",
                 "--content",
                 "x",
-                "--date",
+                "--datetime",
                 date,
             ],
             vec![
@@ -991,8 +991,8 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
                 "--datetime",
                 date,
             ],
-            vec!["convert", "a.md", "-t", "docx", "--date", date],
-            vec!["diff", "a.md", "b.md", "--date", date],
+            vec!["convert", "a.md", "-t", "docx", "--datetime", date],
+            vec!["diff", "a.md", "b.md", "--datetime", date],
         ] {
             let result = parse(&args, &[]);
             assert_eq!(
@@ -1009,7 +1009,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
         }
         if valid {
             assert_eq!(
-                parse(&["compare", "a", "b", "-d", date], &[])["args"]["date"],
+                parse(&["compare", "a", "b", "-d", date], &[])["args"]["datetime"],
                 date
             );
         }
@@ -1032,9 +1032,14 @@ fn compare_and_diff_date_their_revisions_now_unless_d_pins_it() {
         .unwrap();
     let mut dates: Vec<String> = runs
         .iter()
-        .map(|run| run["args"]["date"].as_str().expect("a date").to_string())
+        .map(|run| {
+            run["args"]["datetime"]
+                .as_str()
+                .expect("a date")
+                .to_string()
+        })
         .collect();
-    dates.push(native.compare.date.expect("the shorthand's date"));
+    dates.push(native.compare.datetime.expect("the shorthand's date"));
     for date in &dates {
         assert!(
             before.as_str() <= date.as_str() && date.as_str() <= after.as_str(),
@@ -1049,7 +1054,7 @@ fn compare_and_diff_date_their_revisions_now_unless_d_pins_it() {
         ]
         .concat();
         assert_eq!(
-            parse(&args, &[])["args"]["date"],
+            parse(&args, &[])["args"]["datetime"],
             "1970-01-01T00:00:00Z",
             "{args:?}"
         );
@@ -1805,8 +1810,13 @@ fn retired_spellings_are_scoped_and_listed_once() {
         &["edit", "--content", "x", "a", "-p", "t0.r1.c2"],
         // --delete takes no value, so -p after it is still an option.
         &["edit", "a", "--delete", "-p", "t0.r1.c2"],
-        // A hidden alias (--date for --datetime) takes its value.
-        &[
+    ] {
+        assert_eq!(notes(argv), cell, "{argv:?}");
+    }
+    // A retired spelling (--date for --datetime) takes its value, with its
+    // note ahead of the cell's.
+    assert_eq!(
+        notes(&[
             "edit",
             "a",
             "--date",
@@ -1815,10 +1825,9 @@ fn retired_spellings_are_scoped_and_listed_once() {
             "t0.r1.c2",
             "--content",
             "x",
-        ],
-    ] {
-        assert_eq!(notes(argv), cell, "{argv:?}");
-    }
+        ]),
+        vec![("--date", "--datetime"), ("tN.rR.cC", "tN.rowR.cellC"),]
+    );
     assert_eq!(
         notes(&["edit", "a", "-p", "t0.row1.cell2", "--content", "x"]),
         vec![]
@@ -1834,6 +1843,59 @@ fn retired_spellings_are_scoped_and_listed_once() {
         parsed["notes"][0],
         "note: tN.rR.cC is now tN.rowR.cellC; tN.rR.cC is removed in 0.14"
     );
+}
+
+/// Arthur (2026-10-13): one spelling for the timestamp flag: `-d,
+/// --datetime` on edit, add, compare, diff and convert (md->docx), with
+/// `--date` kept as a hidden alias that still parses.
+#[test]
+fn timestamp_flag_is_d_datetime_with_hidden_date_alias() {
+    let date = "2026-10-01T09:00:00Z";
+    let bases: &[&[&str]] = &[
+        &["edit", "a.docx", "-p", "p0", "--content", "x"],
+        &["add", "a.docx", "-p", "p0", "--content", "x"],
+        &["compare", "a.docx", "b.docx"],
+        &["diff", "a.md", "b.md"],
+        &["convert", "a.md", "-t", "docx"],
+    ];
+    for base in bases {
+        for flag in ["-d", "--datetime", "--date"] {
+            let args = [base.to_vec(), vec![flag, date]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(
+                result["args"]["datetime"].as_str(),
+                Some(date),
+                "{args:?}: {result}"
+            );
+        }
+        // `--date` is retired: it parses, with the note `parse_json` carries.
+        let args = [base.to_vec(), vec!["--date", date]].concat();
+        let result = parse(&args, &[]);
+        assert!(
+            result["notes"]
+                .as_array()
+                .is_some_and(|notes| notes.iter().any(|note| note.as_str()
+                    == Some("note: --date is now --datetime; --date is removed in 0.14"))),
+            "{args:?}: {result}"
+        );
+        // `-d` and `--datetime` are current: they earn no note.
+        for flag in ["-d", "--datetime"] {
+            let args = [base.to_vec(), vec![flag, date]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["notes"], serde_json::json!([]), "{args:?}: {result}");
+        }
+    }
+    // `--date` is hidden: no task's `--help` shows it.
+    for task in ["edit", "add", "compare", "diff", "convert"] {
+        let help = parse(&[task, "--help"], &[]);
+        let text = help["text"].as_str().unwrap();
+        assert!(text.contains("--datetime"), "{task}: {text}");
+        assert!(
+            !text.contains("--date ") && !text.contains("--date\n"),
+            "{task}: {text}"
+        );
+    }
 }
 
 #[test]
