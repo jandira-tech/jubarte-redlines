@@ -2650,7 +2650,12 @@ fn math_inner(element: &Element, depth: usize, name: bool) -> String {
             format!("\\begin{{matrix}}{}\\end{{matrix}}", rows.join(" \\\\ "))
         }
         "eqArr" => {
-            let rows: Vec<String> = element.children_named("e").map(inner).collect();
+            // Word aligns an array's lines at each `&` in their text and
+            // draws none: `aligned`'s `&` is that alignment point.
+            let rows: Vec<String> = element
+                .children_named("e")
+                .map(|row| inner(row).replace("\\&", "&"))
+                .collect();
             format!("\\begin{{aligned}}{}\\end{{aligned}}", rows.join(" \\\\ "))
         }
         "box" => {
@@ -3227,6 +3232,11 @@ mod tests {
             (
                 format!("<m:eqArr>{}{}</m:eqArr>", e(&mr("x=1")), e(&mr("y=2"))),
                 r"\begin{aligned}x=1 \\ y=2\end{aligned}",
+            ),
+            // Word aligns an array's lines at each `&` and draws none.
+            (
+                format!("<m:eqArr>{}{}</m:eqArr>", e(&mr("a&amp;=1")), e(&mr("bc&amp;=2"))),
+                r"\begin{aligned}a&=1 \\ bc&=2\end{aligned}",
             ),
             (
                 format!(
