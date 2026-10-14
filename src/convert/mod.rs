@@ -26948,6 +26948,15 @@ impl<'a> Layout<'a> {
         let mut idx = 0usize;
         for run in line {
             let start = x;
+            // An equation is one box. Splitting it on its spaces paints
+            // the letters at body size and drops the bar (inline-symbol-runs
+            // is justified, so its superscript fraction became "p+14").
+            if run.math.is_some() {
+                x = self.paint_run(run, x, y);
+                idx += run.text.len();
+                self.place_run_comments(run, start, y, x - start);
+                continue;
+            }
             let mut word = String::new();
             for ch in run.text.chars() {
                 if ch == ' ' {
