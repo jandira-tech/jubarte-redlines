@@ -34,7 +34,7 @@ styles:
 ## - {--Economics & business--}{>>r211 @SW<<}
 
 <!-- p108 NoSpacing break-del r212 @SW -->
-{--Title: [<u>Ida Greaves : a pioneer development economist</u>](https://eur.on.worldcat.org/oclc/1381732921)--}{>>r213 @SW<<}
+{--Title: [Ida Greaves : a pioneer development economist](https://eur.on.worldcat.org/oclc/1381732921)--}{>>r213 @SW<<}
 
 <!-- p109 NoSpacing break-del r214 @SW -->
 {--Editors: Barbara Ingham (2024) - e-book--}{>>r215 @SW<<}
@@ -47,7 +47,7 @@ styles:
 ## - {--History, culture & communication--}{>>r219 @SW<<}
 
 <!-- p113 NoSpacing break-del r220 @SW -->
-{--Title: [<u>Lies my teacher told me : a graphic adaptation</u>](https://eur.on.worldcat.org/oclc/1376499816)--}{>>r221 @SW<<}
+{--Title: [Lies my teacher told me : a graphic adaptation](https://eur.on.worldcat.org/oclc/1376499816)--}{>>r221 @SW<<}
 
 <!-- p114 NoSpacing break-del r222 @SW -->
 {--Authors: James W. Loewen, Nate Powell (2024) – graphic print novel--}{>>r223 @SW<<}
@@ -55,7 +55,7 @@ styles:
 <!-- p115 NoSpacing empty, break-del r224 @SW -->
 
 <!-- p116 NoSpacing break-del r225 @SW -->
-{--Title: [<u>Memory and Modern British Politics : Commemoration, Tradition, Legacy.</u>](https://eur.on.worldcat.org/oclc/1411306469)--}{>>r226 @SW<<}
+{--Title: [Memory and Modern British Politics : Commemoration, Tradition, Legacy.](https://eur.on.worldcat.org/oclc/1411306469)--}{>>r226 @SW<<}
 
 <!-- p117 NoSpacing break-del r227 @SW -->
 {--Author: Matthew Roberts (2024) – e-book--}{>>r228 @SW<<}
@@ -63,7 +63,7 @@ styles:
 <!-- p118 NoSpacing empty, break-del r229 @SW -->
 
 <!-- p119 NoSpacing break-del r230 @SW -->
-{--Title: [<u>Monumental Crossroads: The Fight for Southern Heritage</u>](https://eur.on.worldcat.org/oclc/1426764163) --}{>>r231 @SW<<}
+{--Title: [Monumental Crossroads: The Fight for Southern Heritage](https://eur.on.worldcat.org/oclc/1426764163) --}{>>r231 @SW<<}
 
 <!-- p120 NoSpacing break-del r232 @SW -->
 {--Director: Tim van den Hoff (2018) – film--}{>>r233 @SW<<}
@@ -71,7 +71,7 @@ styles:
 <!-- p121 NoSpacing empty, break-del r234 @SW -->
 
 <!-- p122 NoSpacing break-del r235 @SW -->
-{--Title: [<u>Ooggetuigen van de Nederlandse slavernij. Van overtocht tot opstand</u>](https://eur.on.worldcat.org/oclc/1434122352)--}{>>r236 @SW<<}
+{--Title: [Ooggetuigen van de Nederlandse slavernij. Van overtocht tot opstand](https://eur.on.worldcat.org/oclc/1434122352)--}{>>r236 @SW<<}
 
 <!-- p123 NoSpacing break-del r237 @SW -->
 {--Authors: Karwan Fatah-Black, Camilla de Koning (2024) – print--}{>>r238 @SW<<}
@@ -84,7 +84,7 @@ styles:
 ## - {--Law & criminology--}{>>r242 @SW<<}
 
 <!-- p127 NoSpacing break-del r243 @SW -->
-{--Title: [<u>The Routledge International Handbook on Decolonizing Justice</u>](https://eur.on.worldcat.org/oclc/1389364158)--}{>>r244 @SW<<}
+{--Title: [The Routledge International Handbook on Decolonizing Justice](https://eur.on.worldcat.org/oclc/1389364158)--}{>>r244 @SW<<}
 
 <!-- p128 NoSpacing break-del r245 @SW -->
 {--Editors: Chris Cunneen, Antje Deckert, Amanda Porter, Juan Tauri, Robert Webb (2023) – e-book--}{>>r246 @SW<<}
@@ -97,7 +97,7 @@ styles:
 ## - {--Psychology--}{>>r250 @SW<<}
 
 <!-- p132 NoSpacing break-del r251 @SW -->
-{--Title: [<u>Decolonial psychology: Toward anticolonial theories, research, training, and practice</u>](https://eur.on.worldcat.org/oclc/1402269167)--}{>>r252 @SW<<}
+{--Title: [Decolonial psychology: Toward anticolonial theories, research, training, and practice](https://eur.on.worldcat.org/oclc/1402269167)--}{>>r252 @SW<<}
 
 <!-- p133 NoSpacing break-del r253 @SW -->
 {--Editors: Lillian Comas-Díaz, Hector Y Adames, Nayeli Y Chavez-Dueñas (2024) e-book--}{>>r254 @SW<<}
@@ -110,7 +110,7 @@ styles:
 ## - {--Sociology & public administration--}{>>r258 @SW<<}
 
 <!-- p137 NoSpacing break-del r259 @SW -->
-{--Title: [<u>Diaspora as translation and decolonisation</u>](https://eur.on.worldcat.org/oclc/1319342860)--}{>>r260 @SW<<}
+{--Title: [Diaspora as translation and decolonisation](https://eur.on.worldcat.org/oclc/1319342860)--}{>>r260 @SW<<}
 
 <!-- p138 NoSpacing break-del r261 @SW -->
 {--Author: Ipek Demir (2022) – e-book--}{>>r262 @SW<<}
@@ -118,7 +118,7 @@ styles:
 <!-- p139 NoSpacing empty, break-del r263 @SW -->
 
 <!-- p140 NoSpacing break-del r264 @SW -->
-{--Title: [<u>The making and unmaking of colonial cities : urban planning, imperial power, and the improvisational itineraries of the poor</u>](https://eur.on.worldcat.org/oclc/1396988422)--}{>>r265 @SW<<}
+{--Title: [The making and unmaking of colonial cities : urban planning, imperial power, and the improvisational itineraries of the poor](https://eur.on.worldcat.org/oclc/1396988422)--}{>>r265 @SW<<}
 
 <!-- p141 NoSpacing break-del r266 @SW -->
 {--Author: Julia C Obert (2023) - e-book--}{>>r267 @SW<<}
@@ -131,7 +131,7 @@ styles:
 ## - {--Other--}{>>r271 @SW<<}
 
 <!-- p145 NoSpacing break-del r272 @SW -->
-{--Title: [<u>Black man in the Netherlands : an Afro-Antillean anthropology</u>](https://eur.on.worldcat.org/oclc/1260170646)--}{>>r273 @SW<<}
+{--Title: [Black man in the Netherlands : an Afro-Antillean anthropology](https://eur.on.worldcat.org/oclc/1260170646)--}{>>r273 @SW<<}
 
 <!-- p146 NoSpacing break-del r274 @SW -->
 {--Author: Francio Guadeloupe (2022) – e-book--}{>>r275 @SW<<}
@@ -139,7 +139,7 @@ styles:
 <!-- p147 NoSpacing empty, break-del r276 @SW -->
 
 <!-- p148 NoSpacing break-del r277 @SW -->
-{--Title: [<u>Experiments in decolonizing the university : towards an ecology of study</u>](https://eur.on.worldcat.org/oclc/1240681277)--}{>>r278 @SW<<}
+{--Title: [Experiments in decolonizing the university : towards an ecology of study](https://eur.on.worldcat.org/oclc/1240681277)--}{>>r278 @SW<<}
 
 <!-- p149 NoSpacing break-del r279 @SW -->
 {--Author: Hans Schildermans (2021) – e-book--}{>>r280 @SW<<}
@@ -155,7 +155,7 @@ styles:
 ## - {--Economics & business--}{>>r287 @SW<<}
 
 <!-- p154 NoSpacing break-del r288 @SW -->
-{--Title: [<u>Working together : practicing the science of diversity, equity, and inclusion</u>](https://eur.on.worldcat.org/oclc/1406102812)--}{>>r289 @SW<<}
+{--Title: [Working together : practicing the science of diversity, equity, and inclusion](https://eur.on.worldcat.org/oclc/1406102812)--}{>>r289 @SW<<}
 
 <!-- p155 NoSpacing break-del r290 @SW -->
 {--Editors: Mikki Hebl, Eden King (2024) - e-book--}{>>r291 @SW<<}
@@ -168,7 +168,7 @@ styles:
 ## - {--History, culture, & communication--}{>>r295 @SW<<}
 
 <!-- p159 NoSpacing break-del r296 @SW -->
-{--Title: [<u>Hybrid hate : Jews, blacks, and the question of race</u>](https://eur.on.worldcat.org/oclc/1237335998)--}{>>r297 @SW<<}
+{--Title: [Hybrid hate : Jews, blacks, and the question of race](https://eur.on.worldcat.org/oclc/1237335998)--}{>>r297 @SW<<}
 
 <!-- p160 NoSpacing break-del r298 @SW -->
 {--Editor: Tudor Parfitt (2020) - e-book--}{>>r299 @SW<<}
@@ -176,7 +176,7 @@ styles:
 <!-- p161 NoSpacing empty, break-del r300 @SW -->
 
 <!-- p162 NoSpacing break-del r301 @SW -->
-{--Title: [<u>The othering museum : a case for non-selective curation</u>](https://eur.on.worldcat.org/oclc/1436703172)--}{>>r302 @SW<<}
+{--Title: [The othering museum : a case for non-selective curation](https://eur.on.worldcat.org/oclc/1436703172)--}{>>r302 @SW<<}
 
 <!-- p163 NoSpacing break-del r303 @SW -->
 {--Author: Carrie Westwater (2024) – e-book--}{>>r304 @SW<<}
@@ -184,7 +184,7 @@ styles:
 <!-- p164 NoSpacing empty, break-del r305 @SW -->
 
 <!-- p165 NoSpacing break-del r306 @SW -->
-{--Title: [<u>Diversity, equity, and inclusion in strategic communications : becoming culturally proficient communicators</u>](https://eur.on.worldcat.org/oclc/1433988675)--}{>>r307 @SW<<}
+{--Title: [Diversity, equity, and inclusion in strategic communications : becoming culturally proficient communicators](https://eur.on.worldcat.org/oclc/1433988675)--}{>>r307 @SW<<}
 
 <!-- p166 NoSpacing break-del r308 @SW -->
 {--Author: Lee Bush, Karen Lindsey (2024) – e-book--}{>>r309 @SW<<}
@@ -197,7 +197,7 @@ styles:
 ## - {--Pedagogy & Education--}{>>r313 @SW<<}
 
 <!-- p170 NoSpacing break-del r314 @SW -->
-{--Title: [<u>Education and Dialogue in Polarized Societies: Dialogic perspectives in times of change</u>](https://eur.on.worldcat.org/oclc/1422578570)--}{>>r315 @SW<<}
+{--Title: [Education and Dialogue in Polarized Societies: Dialogic perspectives in times of change](https://eur.on.worldcat.org/oclc/1422578570)--}{>>r315 @SW<<}
 
 <!-- p171 NoSpacing break-del r316 @SW -->
 {--Editors: Ola Erstad, Bente Eriksen Hagtvet, James V. Wertsch. (2024) - e-book--}{>>r317 @SW<<}
@@ -205,7 +205,7 @@ styles:
 <!-- p172 NoSpacing empty, break-del r318 @SW -->
 
 <!-- p173 NoSpacing break-del r319 @SW -->
-{--Title: [<u>Handbook of race and refusal in higher education : like a path in tall grasses</u>](https://eur.on.worldcat.org/oclc/1422226739)--}{>>r320 @SW<<}
+{--Title: [Handbook of race and refusal in higher education : like a path in tall grasses](https://eur.on.worldcat.org/oclc/1422226739)--}{>>r320 @SW<<}
 
 <!-- p174 NoSpacing break-del r321 @SW -->
 {--Editors: Kenjus T. Watson, Nora Cisneros, Lindsay Pérez Huber, Verónica Vélez (2024) – e-book--}{>>r322 @SW<<}
@@ -213,7 +213,7 @@ styles:
 <!-- p175 NoSpacing empty, break-del r323 @SW -->
 
 <!-- p176 NoSpacing break-del r324 @SW -->
-{--Title: [<u>Promoting inclusion and justice in university teaching : a transformative-emancipatory toolkit for educators.</u>](https://eur.on.worldcat.org/oclc/1422226386)--}{>>r325 @SW<<}
+{--Title: [Promoting inclusion and justice in university teaching : a transformative-emancipatory toolkit for educators.](https://eur.on.worldcat.org/oclc/1422226386)--}{>>r325 @SW<<}
 
 <!-- p177 NoSpacing break-del r326 @SW -->
 {--Editors: Teresa M. Cappiali, Johanne Jean-Pierre (2024) – e-book--}{>>r327 @SW<<}
@@ -226,7 +226,7 @@ styles:
 ## - {--Sociology & public administration--}{>>r331 @SW<<}
 
 <!-- p181 NoSpacing break-del r332 @SW -->
-{--Title: [<u>Dogwhistles and figleaves : how manipulative language spreads racism and falsehood</u>](https://eur.on.worldcat.org/oclc/1408678201)--}{>>r333 @SW<<}
+{--Title: [Dogwhistles and figleaves : how manipulative language spreads racism and falsehood](https://eur.on.worldcat.org/oclc/1408678201)--}{>>r333 @SW<<}
 
 <!-- p182 NoSpacing break-del r334 @SW -->
 {--Author: Jennifer M. Saul (2024) – e-book--}{>>r335 @SW<<}
@@ -234,7 +234,7 @@ styles:
 <!-- p183 NoSpacing empty, break-del r336 @SW -->
 
 <!-- p184 NoSpacing break-del r337 @SW -->
-{--Title: [<u>Inclusion and belonging in cities of tomorrow : governance and access by design</u>](https://eur.on.worldcat.org/oclc/1423771298)--}{>>r338 @SW<<}
+{--Title: [Inclusion and belonging in cities of tomorrow : governance and access by design](https://eur.on.worldcat.org/oclc/1423771298)--}{>>r338 @SW<<}
 
 <!-- p185 NoSpacing break-del r339 @SW -->
 {--Author: Victor Santiago Pineda (2024) – e-book--}{>>r340 @SW<<}
@@ -247,7 +247,7 @@ styles:
 ## - {--Other--}{>>r344 @SW<<}
 
 <!-- p189 NoSpacing break-del r345 @SW -->
-{--Title: [<u>Black women's stories of everyday racism : narrative analysis for social change</u>](https://eur.on.worldcat.org/oclc/1422229613)--}{>>r346 @SW<<}
+{--Title: [Black women's stories of everyday racism : narrative analysis for social change](https://eur.on.worldcat.org/oclc/1422229613)--}{>>r346 @SW<<}
 
 <!-- p190 NoSpacing break-del r347 @SW -->
 {--Author: Simone Drake, James Phelan, Robyn Warhol, Lisa Zunshine (2024) – e-book--}{>>r348 @SW<<}
@@ -255,7 +255,7 @@ styles:
 <!-- p191 NoSpacing empty, break-del r349 @SW -->
 
 <!-- p192 NoSpacing break-del r350 @SW -->
-{--Title: [<u>European others : queering ethnicity in postnational Europe</u>](https://eur.on.worldcat.org/oclc/757710563)--}{>>r351 @SW<<}
+{--Title: [European others : queering ethnicity in postnational Europe](https://eur.on.worldcat.org/oclc/757710563)--}{>>r351 @SW<<}
 
 <!-- p193 NoSpacing break-del r352 @SW -->
 {--Author: Fatima El-Tayeb (2011) - e-book--}{>>r353 @SW<<}
@@ -263,7 +263,7 @@ styles:
 <!-- p194 NoSpacing empty, break-del r354 @SW -->
 
 <!-- p195 NoSpacing break-del r355 @SW -->
-{--Title: [<u>Learning inclusion in a digital age : belonging and finding a voice with the disadvantaged</u>](https://eur.on.worldcat.org/oclc/1424614828)--}{>>r356 @SW<<}
+{--Title: [Learning inclusion in a digital age : belonging and finding a voice with the disadvantaged](https://eur.on.worldcat.org/oclc/1424614828)--}{>>r356 @SW<<}
 
 <!-- p196 fmt r357 @SW; r358 @SW -->
 {--Editors: Stephen Dobson, Brit Svoen, Gabriella Agrusti, Pip Hardy (2024) – e-book--}{>>r359 @SW<<}

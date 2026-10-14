@@ -88,7 +88,7 @@ A small table with a header row:
 “Not all those who wander are lost.” — a line often quoted to test block-quote handling.
 
 <!-- p42 -->
-More information available at our [<u>reference page</u>](https://example.com/reference).
+More information available at our [reference page](https://example.com/reference).
 
 <!-- p43 -->
 This sentence carries a second footnote for testing multi-note extraction. †<sup><u>[2]</u></sup>﻿
@@ -182,7 +182,7 @@ _— end of sample —_
 {++“Not all those who wander are lost.” — a line often quoted to test block-quote handling.++}{>>r41 @ASR<<}
 
 <!-- p91 -->
-{++More information available at our ++}{>>r42 @ASR<<}[<u>reference page</u>](https://example.com/reference){++.++}{>>r42 @ASR<<}
+{++More information available at our ++}{>>r42 @ASR<<}[reference page](https://example.com/reference){++.++}{>>r42 @ASR<<}
 
 <!-- p92 -->
 {++This sentence carries a second footnote for testing multi-note extraction. †<sup><u>[4]</u></sup>++}{>>r43+43 @ASR<<}﻿

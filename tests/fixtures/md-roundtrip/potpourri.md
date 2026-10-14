@@ -97,7 +97,7 @@ A small table with a header row:
 _“Not all those who wander are lost.” — a line often quoted to test block-quote handling._
 
 <!-- p42 -->
-More information available at our [<u>reference page</u>](https://example.com/reference).
+More information available at our [reference page](https://example.com/reference).
 
 <!-- p43 -->
 This sentence carries a second footnote for testing multi-note extraction. †[^2]
@@ -188,7 +188,7 @@ _— end of sample —_
 {++_“Not all those who wander are lost.” — a line often quoted to test block-quote handling._++}{>>r92 @ASR<<}
 
 <!-- p90 break-ins r93 @ASR -->
-{++More information available at our [<u>reference page</u>](https://example.com/reference).++}{>>r94 @ASR<<}
+{++More information available at our [reference page](https://example.com/reference).++}{>>r94 @ASR<<}
 
 <!-- p91 break-ins r95 @ASR -->
 {++This sentence carries a second footnote for testing multi-note extraction. †[^4]++}{>>r96 @ASR<<}
@@ -281,7 +281,7 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 {--_“Not all those who wander are lost.” — a line often quoted to test block-quote handling._--}{>>r164 @ASR<<}
 
 <!-- p139 break-del r165 @ASR -->
-{--More information available at our [<u>reference page</u>](https://example.com/reference).--}{>>r166 @ASR<<}
+{--More information available at our [reference page](https://example.com/reference).--}{>>r166 @ASR<<}
 
 <!-- p140 break-del r167 @ASR -->
 {--This sentence carries a second footnote for testing multi-note extraction. †[^6]--}{>>r168 @ASR<<}
