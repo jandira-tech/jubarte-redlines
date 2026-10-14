@@ -7,7 +7,7 @@ authors:
   document_owner: none             # no docProps/core.xml
   AL: Ann Lee                      # 8 revisions, 2026-03-02T10:00:00Z
   B: Bo Chen                       # 2 comments, 2026-03-02T10:00:00Z
-body: p0-p13, 1 table, 1 page      # page count estimated from breaks
+body: p0-p13, 1 table, 1 page      # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in; fmt r17 @AL
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it

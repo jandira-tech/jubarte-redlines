@@ -9,7 +9,7 @@ authors:
   BC: Bo Chen                      # 1 revision, 2026-03-03T09:15:00Z
   CD: Cy Diaz                      # 2 revisions, 2026-03-05..2026-03-05
   DE: Di Eng                       # 1 revision
-body: p0-p3, 0 tables, 1 page      # page count estimated from breaks
+body: p0-p3, 0 tables, 1 page      # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
