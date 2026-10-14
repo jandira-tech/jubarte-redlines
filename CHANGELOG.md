@@ -290,6 +290,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Markdown written to Word reads back as it was written** in five more
+  shapes the round trip lost: a link inside one tracked change stays one
+  change (a HYPERLINK field in its mark, its title and target escaped as
+  field arguments, its field in one mark when the change has two); a
+  bulleted heading keeps one bullet (`## - X`, not `## - - X`); Word's
+  built-in Grid and List Table styles (`GridTable4-Accent1`) are written as
+  Word defines them, coloured from the document's theme, so banding and
+  borders survive; and a field across paragraphs, such as a table of
+  contents, keeps its code: `{TOC \o "1-3"}` begins its first entry and
+  `{/}` closes after its last.
+
 - **The npm CLI does what the binary does where it said it could not.**
   `convert` turns Word into Word (`--track-changes accept|reject`,
   `--update-fields`, `--report`) and into its paged Markdown (`--to md`,
