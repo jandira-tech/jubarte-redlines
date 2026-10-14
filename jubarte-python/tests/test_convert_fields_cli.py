@@ -193,3 +193,12 @@ def test_word_output_host_validation_requires_refresh(output, capsys):
 
     assert error.value.code == 2
     assert "--to docx requires Markdown input" in capsys.readouterr().err
+
+
+def test_update_fields_without_an_output_says_so_as_the_binary(tmp_path, capsys):
+    # CodeRabbit on #438: `--update-fields -t docx` without -o once died on
+    # None.exists(); the binary names the missing --output.
+    source = tmp_path / "input.docx"
+    source.write_bytes(docx(NUMPAGES))
+    assert cli.main(["convert", str(source), "--update-fields", "-t", "docx"]) == 1
+    assert capsys.readouterr().err == "error: --output is required to write Word from Word\n"
