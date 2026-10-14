@@ -105,14 +105,14 @@ impl SelectionFilter for Selection {
 
 fn run_scrub(
     file: &Path,
-    output: &Path,
-    force: bool,
+    out: &Output<'_>,
     options: &jubarte::scrub::ScrubOptions,
-) -> Result<(), String> {
-    ensure_writable(output, force)?;
+) -> Result<(), ConvertFailure> {
+    check_output(out)?;
     let bytes = read_document(file)?;
-    let out = jubarte::scrub::scrub(&bytes, options).map_err(|e| format!("scrub failed: {e}"))?;
-    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
+    let scrubbed =
+        jubarte::scrub::scrub(&bytes, options).map_err(|e| format!("scrub failed: {e}"))?;
+    write_output(out, Produced::Docx(&scrubbed))
 }
 
 /// Who a patch's changes are by when `--author` does not say: git's
@@ -217,6 +217,137 @@ fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// One task's `-o`: where, as what, and how a Word result becomes it.
+struct Output<'a> {
+    kind: Format,
+    path: &'a Path,
+    force: bool,
+    quiet: bool,
+    /// The document the task read (named in a refusal).
+    input: &'a Path,
+    /// The view's options for a `.md` output and the selection for a `.json`
+    /// one: `read`'s own, the defaults elsewhere.
+    view: &'a ReadArgs,
+    /// The name a `.md` view's header gives the document.
+    source: String,
+    /// How a `.pdf` or `.png` output is drawn.
+    render: &'a RenderArgs,
+}
+
+impl<'a> Output<'a> {
+    /// The `-o` of accept, reject, append, scrub and convert: the
+    /// view's header names the Word file the task did not write.
+    fn of_task(
+        kind: Format,
+        path: &'a Path,
+        input: &'a Path,
+        render: &'a RenderArgs,
+        force: bool,
+        quiet: bool,
+    ) -> Self {
+        static VIEW: std::sync::LazyLock<ReadArgs> = std::sync::LazyLock::new(ReadArgs::default);
+        Self {
+            kind,
+            path,
+            force,
+            quiet,
+            input,
+            view: &VIEW,
+            source: format!("{} (not written)", path.with_extension("docx").display()),
+            render,
+        }
+    }
+}
+
+/// The [`Output`] of a task whose `-o` the parser checked.
+fn task_output<'a>(
+    task: Task,
+    path: &'a Path,
+    input: &'a Path,
+    render: &'a RenderArgs,
+    force: bool,
+    quiet: bool,
+) -> Result<Output<'a>, String> {
+    let kind = output_format(task, Some(path), None)?.unwrap_or(Format::Docx);
+    Ok(Output::of_task(kind, path, input, render, force, quiet))
+}
+
+/// A Word package, or text already in the output's format (CriticMarkup,
+/// convert's Markdown).
+enum Produced<'a> {
+    Docx(&'a [u8]),
+    Text(&'a str),
+}
+
+/// Refuse an existing output before any work: PNG pages are checked once
+/// their names are known.
+fn check_output(out: &Output<'_>) -> Result<(), String> {
+    if out.kind == Format::Png {
+        return Ok(());
+    }
+    ensure_writable(out.path, out.force)
+}
+
+/// Writes `produced` as `out.kind` and says `wrote …` on stderr unless `-q`.
+fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertFailure> {
+    let text = match (out.kind, produced) {
+        (Format::Pdf | Format::Png, Produced::Docx(bytes)) => {
+            let options = pdf_options(out.render, false)?;
+            let pages = out.render.pages.as_deref().map(parse_pages).transpose()?;
+            return run_convert(&ConvertJob {
+                file: out.input,
+                bytes: Some(bytes),
+                output: Some(out.path),
+                force: out.force,
+                font_report: None,
+                options,
+                to: Some(out.kind),
+                dpi: out.render.dpi,
+                report: None,
+                pages: pages.as_deref(),
+                fail_on_substitution: false,
+                quiet: out.quiet,
+            });
+        }
+        (Format::Docx, Produced::Docx(bytes)) => {
+            ensure_writable(out.path, out.force)?;
+            std::fs::write(out.path, bytes)
+                .map_err(|e| format!("writing {}: {e}", out.path.display()))?;
+            if !out.quiet {
+                eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None));
+            }
+            return Ok(());
+        }
+        (Format::Md, Produced::Text(text)) => text.to_string(),
+        (Format::Md, Produced::Docx(bytes)) => {
+            agent_view(bytes, Some(out.source.clone()), out.view)?.markdown
+        }
+        (Format::Json, Produced::Docx(bytes)) => {
+            let snapshot = jubarte::markdown::read_snapshot(
+                bytes,
+                &jubarte::markdown::ReadOptions {
+                    select: selection(out.view)?,
+                    ..jubarte::markdown::ReadOptions::default()
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+            format!("{json}\n")
+        }
+        (kind, _) => {
+            return Err(
+                format!("internal error: no {} writer for this result", kind.name()).into(),
+            );
+        }
+    };
+    ensure_writable(out.path, out.force)?;
+    std::fs::write(out.path, &text).map_err(|e| format!("writing {}: {e}", out.path.display()))?;
+    if !out.quiet {
+        eprintln!("{}", wrote_line(out.path, out.kind, text.len(), None));
+    }
+    Ok(())
+}
+
 /// A side file (`--report`, `--font-report`) is written apart from the
 /// output, after the input is read, so sharing a path with either would
 /// silently replace one with the other; `--force` never allows that.
@@ -243,8 +374,7 @@ fn check_side_file(
 /// the two arms' bodies are duplicated.
 fn run_resolution(
     file: &Path,
-    output: &Path,
-    force: bool,
+    out: &Output<'_>,
     filter: &jubarte::changes::ChangeFilter,
     apply: fn(
         &[u8],
@@ -260,16 +390,16 @@ fn run_resolution(
         let filter = filter
             .normalized()
             .map_err(|e| (ExitCode::from(2), e.to_string()))?;
-        ensure_writable(output, force).map_err(failed)?;
+        check_output(out).map_err(failed)?;
         let bytes = read_document(file).map_err(failed)?;
-        let out = apply(&bytes, &filter).map_err(|e| match e {
+        let resolved = apply(&bytes, &filter).map_err(|e| match e {
             ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
                 (ExitCode::from(2), e.to_string())
             }
             e => failed(format!("{what} failed: {e}")),
         })?;
-        std::fs::write(output, &out)
-            .map_err(|e| failed(format!("writing {}: {e}", output.display())))
+        write_output(out, Produced::Docx(&resolved))
+            .map_err(|f| (ExitCode::from(f.code), f.message))
     };
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -332,8 +462,8 @@ struct ConvertJob<'a> {
     pages: Option<&'a [usize]>,
     /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
     fail_on_substitution: bool,
-    /// Say what was written on stderr: stdout carries a patch.
-    status_to_stderr: bool,
+    /// `-q`: say nothing of what was written.
+    quiet: bool,
 }
 
 /// `convert --timeout`: the deadline passed.
@@ -446,30 +576,21 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     }
     if let Some(pdf) = &rendered.pdf {
         std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
-        say(
-            job.status_to_stderr,
-            format_args!(
-                "wrote {} ({} bytes, {pages} page{})",
-                output.display(),
-                pdf.len(),
-                if pages == 1 { "" } else { "s" }
-            ),
-        );
+        if !job.quiet {
+            eprintln!(
+                "{}",
+                wrote_line(&output, Format::Pdf, pdf.len(), Some(pages))
+            );
+        }
     }
     if png {
         for (path, png) in png_paths.iter().zip(&rendered.pngs) {
             std::fs::write(path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
         }
-        say(
-            job.status_to_stderr,
-            format_args!(
-                "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
-                rendered.pngs.len(),
-                if rendered.pngs.len() == 1 { "" } else { "s" },
-                dir.join(&stem).display(),
-                job.dpi
-            ),
-        );
+        if !job.quiet {
+            let pattern = dir.join(format!("{stem}-page-NN.png"));
+            eprintln!("{}", wrote_png_line(&pattern, rendered.pngs.len(), job.dpi));
+        }
     }
     if let Some(report) = job.font_report {
         let json = jubarte::convert::font_report_json(&rendered.report.fonts);
@@ -769,46 +890,73 @@ fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<
 }
 
 /// `read`: the agent view, with page markers from the layout pass unless
-/// `--no-page-markers` skips it.
-fn run_text(file: &Path, args: &ReadArgs) -> Result<(), String> {
+/// `--no-page-markers` skips it; or the snapshot (`--json`), or the grids
+/// (`--tables`). `-o FILE.md` writes the view, `-o FILE.json` the snapshot.
+fn run_text(
+    file: &Path,
+    args: &ReadArgs,
+    output: Option<&Path>,
+    force: bool,
+    quiet: bool,
+) -> Result<(), ConvertFailure> {
     if args.tables {
-        return run_inspect_tables(file);
+        return Ok(run_inspect_tables(file)?);
+    }
+    let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
+    if let Some(path) = output {
+        // The parser allowed only .md (any unknown extension) and .json.
+        let kind = output_format(Task::Read, Some(path), None)?.unwrap_or(Format::Md);
+        let render = RenderArgs::default();
+        let out = Output {
+            kind,
+            path,
+            force,
+            quiet,
+            input: file,
+            view: args,
+            source: source.unwrap_or_default(),
+            render: &render,
+        };
+        check_output(&out)?;
+        let bytes = read_document(file)?;
+        return write_output(&out, Produced::Docx(&bytes));
     }
     let bytes = read_document(file)?;
-    let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if args.json {
-        let select = jubarte::markdown::Select::from_flags(
-            args.paragraphs.as_deref(),
-            args.head,
-            args.tail,
-            args.changed,
-            args.by.as_deref(),
-        )?;
         let snapshot = jubarte::markdown::read_snapshot(
             &bytes,
             &jubarte::markdown::ReadOptions {
-                select,
+                select: selection(args)?,
                 source,
                 ..jubarte::markdown::ReadOptions::default()
             },
         )
         .map_err(|e| e.to_string())?;
         let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
-        return write_stdout(format!("{json}\n"));
+        return Ok(write_stdout(format!("{json}\n"))?);
     }
-    print_agent_view(&bytes, source, args)
+    Ok(print_agent_view(&bytes, source, args)?)
 }
 
-/// The agent view of `bytes` on stdout, its warnings on stderr; `source` is
-/// the name the header prints.
-fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Result<(), String> {
-    let select = jubarte::markdown::Select::from_flags(
+/// The paragraphs `-p`, `--head`, `--tail`, `--changed` and `--by` select.
+fn selection(args: &ReadArgs) -> Result<Option<jubarte::markdown::Select>, String> {
+    jubarte::markdown::Select::from_flags(
         args.paragraphs.as_deref(),
         args.head,
         args.tail,
         args.changed,
         args.by.as_deref(),
-    )?;
+    )
+}
+
+/// The agent view of `bytes`, its warnings said on stderr; `source` is the
+/// name the header prints.
+fn agent_view(
+    bytes: &[u8],
+    source: Option<String>,
+    args: &ReadArgs,
+) -> Result<jubarte::markdown::ReadView, String> {
+    let select = selection(args)?;
     let view = jubarte::markdown::read(
         bytes,
         &jubarte::markdown::ReadOptions {
@@ -824,7 +972,12 @@ fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Re
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
-    write_stdout(&view.markdown)
+    Ok(view)
+}
+
+/// The agent view of `bytes` on stdout.
+fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Result<(), String> {
+    write_stdout(&agent_view(bytes, source, args)?.markdown)
 }
 
 /// Writes a view, a conversion or a diff to stdout. A reader that stops early
@@ -1629,6 +1782,8 @@ struct DiffJob<'a> {
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
     patch: Option<usize>,
+    /// `-q`: say nothing of what was written.
+    quiet: bool,
 }
 
 /// Unified text diff uses the shared core directly, with no redline/render pass.
@@ -1786,10 +1941,12 @@ fn write_diff_output(
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
             std::fs::write(&path, out).map_err(|e| format!("writing {}: {e}", path.display()))?;
-            say(
-                patch_on_stdout,
-                format_args!("wrote {} ({} bytes)", path.display(), out.len()),
-            );
+            if !job.quiet {
+                say(
+                    patch_on_stdout,
+                    format_args!("wrote {} ({} bytes)", path.display(), out.len()),
+                );
+            }
             Ok(())
         }
         (Format::Pdf | Format::Png, output) => run_convert(&ConvertJob {
@@ -1804,7 +1961,7 @@ fn write_diff_output(
             report: None,
             pages: job.pages,
             fail_on_substitution: false,
-            status_to_stderr: patch_on_stdout,
+            quiet: job.quiet,
         })
         .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
@@ -1888,6 +2045,19 @@ fn run_convert_any(
         }
     }
     let converted = legacy.then_some(bytes.as_slice());
+    let render = RenderArgs::default();
+    // Where a Word, Markdown or JSON output goes: -o, else FILE.<ext>.
+    let output_at = |kind: Format| {
+        job.output
+            .map_or_else(|| job.file.with_extension(kind.name()), Path::to_path_buf)
+    };
+    let at = |kind: Format, path: &Path, produced: Option<Produced<'_>>| {
+        let out = Output::of_task(kind, path, job.file, &render, job.force, job.quiet);
+        match produced {
+            Some(produced) => write_output(&out, produced),
+            None => Ok(check_output(&out)?),
+        }
+    };
     let pdf_job = |bytes: Option<&[u8]>, to: Format| {
         run_convert(&ConvertJob {
             bytes,
@@ -1896,8 +2066,22 @@ fn run_convert_any(
         })
     };
     match (from, to) {
-        // The snapshot writer comes with read --json.
-        (_, Format::Json) => Err("convert does not write .json yet".into()),
+        (Format::Docx, Format::Json) => {
+            let path = output_at(Format::Json);
+            at(Format::Json, &path, None)?;
+            let resolved = match markdown.track_changes {
+                TrackChanges::All => bytes,
+                TrackChanges::Accept => jubarte::document_comparer::accept_revisions(&bytes)
+                    .map_err(|e| {
+                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                    })?,
+                TrackChanges::Reject => jubarte::document_comparer::reject_revisions(&bytes)
+                    .map_err(|e| {
+                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                    })?,
+            };
+            at(Format::Json, &path, Some(Produced::Docx(&resolved)))
+        }
         (Format::Docx, Format::Pdf | Format::Png) => match markdown.track_changes {
             TrackChanges::All => pdf_job(converted, to),
             // The pages of the document with every change accepted or rejected.
@@ -1934,13 +2118,7 @@ fn run_convert_any(
                 )
             };
             match job.output {
-                Some(output) => {
-                    ensure_writable(output, job.force)?;
-                    std::fs::write(output, &text)
-                        .map_err(|e| format!("writing {}: {e}", output.display()))?;
-                    outln!("wrote {} ({} bytes)", output.display(), text.len());
-                    Ok(())
-                }
+                Some(path) => at(Format::Md, path, Some(Produced::Text(&text))),
                 None => write_stdout(&text).map_err(ConvertFailure::from),
             }
         }
@@ -1962,16 +2140,16 @@ fn run_convert_any(
                     .into());
                 }
             };
-            let output = match job.output {
-                Some(output) => output.to_path_buf(),
+            let path = match job.output {
+                Some(path) => path.to_path_buf(),
                 None if legacy => job.file.with_extension("docx"),
                 None => return Err("--output is required to write Word from Word".into()),
             };
             if let Some(report) = job.report {
-                let others = [(output.as_path(), "Word output"), (job.file, "input")];
+                let others = [(path.as_path(), "Word output"), (job.file, "input")];
                 check_side_file(report, "--report", others, job.force)?;
             }
-            ensure_writable(&output, job.force)?;
+            ensure_writable(&path, job.force)?;
             let mut out = match resolve {
                 Some(resolve) => resolve(&bytes).map_err(|e| {
                     refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
@@ -1981,10 +2159,7 @@ fn run_convert_any(
             if update_fields {
                 out = refresh_fields(&out, job.report)?;
             }
-            std::fs::write(&output, &out)
-                .map_err(|e| format!("writing {}: {e}", output.display()))?;
-            outln!("wrote {} ({} bytes)", output.display(), out.len());
-            Ok(())
+            at(Format::Docx, &path, Some(Produced::Docx(&out)))
         }
         (Format::Md, Format::Md) => {
             let text = markdown_text(job.file, bytes)?;
@@ -1994,15 +2169,11 @@ fn run_convert_any(
                 jubarte::markdown::resolve_critic(&text, markdown.track_changes.into())
             };
             match job.output {
-                Some(output) => {
-                    ensure_writable(output, job.force)?;
-                    std::fs::write(output, &out)
-                        .map_err(|e| format!("writing {}: {e}", output.display()).into())
-                }
+                Some(path) => at(Format::Md, path, Some(Produced::Text(&out))),
                 None => write_stdout(&out).map_err(ConvertFailure::from),
             }
         }
-        (Format::Md, Format::Docx | Format::Pdf | Format::Png) => {
+        (Format::Md, Format::Docx | Format::Pdf | Format::Png | Format::Json) => {
             let text = markdown_text(job.file, bytes)?;
             let reference = markdown
                 .reference_doc
@@ -2024,17 +2195,11 @@ fn run_convert_any(
             for warning in &written.warnings {
                 eprintln!("warning: {warning}");
             }
-            if to != Format::Docx {
+            if matches!(to, Format::Pdf | Format::Png) {
                 return pdf_job(Some(&written.docx), to);
             }
-            let output = job
-                .output
-                .map_or_else(|| job.file.with_extension("docx"), Path::to_path_buf);
-            ensure_writable(&output, job.force)?;
-            std::fs::write(&output, &written.docx)
-                .map_err(|e| format!("writing {}: {e}", output.display()))?;
-            outln!("wrote {} ({} bytes)", output.display(), written.docx.len());
-            Ok(())
+            let path = output_at(to);
+            at(to, &path, Some(Produced::Docx(&written.docx)))
         }
         (Format::Pdf | Format::Png | Format::Json, _) => {
             Err(format!("{}: PDF, PNG and JSON are not inputs", job.file.display()).into())
@@ -2235,11 +2400,15 @@ fn cli_main() -> ExitCode {
             output,
             force,
             selection,
+            render,
         }) => {
+            let out = match task_output(Task::Accept, &output, &file, &render, force, quiet) {
+                Ok(out) => out,
+                Err(e) => return exit_code(Err(e)),
+            };
             return run_resolution(
                 &file,
-                &output,
-                force,
+                &out,
                 &selection.filter(),
                 jubarte::changes::accept_changes,
                 "accept",
@@ -2250,11 +2419,15 @@ fn cli_main() -> ExitCode {
             output,
             force,
             selection,
+            render,
         }) => {
+            let out = match task_output(Task::Reject, &output, &file, &render, force, quiet) {
+                Ok(out) => out,
+                Err(e) => return exit_code(Err(e)),
+            };
             return run_resolution(
                 &file,
-                &output,
-                force,
+                &out,
                 &selection.filter(),
                 jubarte::changes::reject_changes,
                 "reject",
@@ -2302,7 +2475,7 @@ fn cli_main() -> ExitCode {
                 report: report.as_deref(),
                 pages: selected.as_deref(),
                 fail_on_substitution,
-                status_to_stderr: false,
+                quiet,
             };
             return convert_exit_code(run_convert_any(&job, &markdown, update_fields));
         }
@@ -2385,6 +2558,7 @@ fn cli_main() -> ExitCode {
                 dpi: render.dpi,
                 pages: selected.as_deref(),
                 patch: (format == PatchFormat::Patch).then_some(columns),
+                quiet,
             }));
         }
         Some(Command::Inspect { file, json, tables }) => {
@@ -2394,7 +2568,14 @@ fn cli_main() -> ExitCode {
                 run_inspect(&file, json)
             });
         }
-        Some(Command::Read { file, args }) => return exit_code(run_text(&file, &args)),
+        Some(Command::Read {
+            file,
+            args,
+            output,
+            force,
+        }) => {
+            return convert_exit_code(run_text(&file, &args, output.as_deref(), force, quiet));
+        }
         Some(Command::Edit {
             file,
             plan,
@@ -2531,6 +2712,7 @@ fn cli_main() -> ExitCode {
             keep_sections,
             carry_comments,
             force,
+            render,
         }) => {
             let options = jubarte::append::AppendOptions {
                 section_break: section_break.into(),
@@ -2541,7 +2723,12 @@ fn cli_main() -> ExitCode {
                     jubarte::append::AppendComments::Drop
                 },
             };
-            return exit_code(run_append(&files, &output, &options, force, quiet));
+            let first = files.first().map_or(Path::new(""), PathBuf::as_path);
+            let out = match task_output(Task::Append, &output, first, &render, force, quiet) {
+                Ok(out) => out,
+                Err(e) => return exit_code(Err(e)),
+            };
+            return convert_exit_code(run_append(&files, &out, &options));
         }
         Some(Command::Validate {
             file,
@@ -2573,8 +2760,13 @@ fn cli_main() -> ExitCode {
             output,
             force,
             scrub,
+            render,
         }) => {
-            return exit_code(run_scrub(&file, &output, force, &scrub.options()));
+            let out = match task_output(Task::Scrub, &output, &file, &render, force, quiet) {
+                Ok(out) => out,
+                Err(e) => return exit_code(Err(e)),
+            };
+            return convert_exit_code(run_scrub(&file, &out, &scrub.options()));
         }
         Some(Command::Audit {
             file,
@@ -2595,7 +2787,8 @@ fn cli_main() -> ExitCode {
             .original
             .or(cli.compare.original_pos)
             .expect("clap requires ORIGINAL");
-        return exit_code(run_text(&file, &cli.read));
+        let output = cli.compare.output.as_deref();
+        return convert_exit_code(run_text(&file, &cli.read, output, cli.compare.force, quiet));
     }
     exit_code(run(&resolve_compare(cli.compare, cli.read, false, quiet)))
 }
@@ -2603,29 +2796,23 @@ fn cli_main() -> ExitCode {
 /// `jubarte append`: fold the documents left, `append(append(A, B), C)`.
 fn run_append(
     files: &[PathBuf],
-    output: &Path,
+    out: &Output<'_>,
     options: &jubarte::append::AppendOptions,
-    force: bool,
-    quiet: bool,
-) -> Result<(), String> {
-    ensure_writable(output, force)?;
+) -> Result<(), ConvertFailure> {
+    check_output(out)?;
     let mut paths = files.iter();
     let first = paths.next().ok_or("append needs two documents")?;
-    let mut out = read_document(first)?;
+    let mut joined = read_document(first)?;
     for path in paths {
         let next = read_document(path)?;
-        let appended = jubarte::append::append_documents(&out, &next, options)
+        let appended = jubarte::append::append_documents(&joined, &next, options)
             .map_err(|e| format!("appending {}: {e}", path.display()))?;
         for warning in &appended.warnings {
             eprintln!("warning: {}: {warning}", path.display());
         }
-        out = appended.docx;
+        joined = appended.docx;
     }
-    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))?;
-    if !quiet {
-        outln!("wrote {} ({} bytes)", output.display(), out.len());
-    }
-    Ok(())
+    write_output(out, Produced::Docx(&joined))
 }
 
 #[cfg(feature = "self-update")]
@@ -2693,10 +2880,12 @@ mod tests {
             keep_sections,
             carry_comments,
             force,
+            render,
         }) = cli.command
         else {
             panic!("not append");
         };
+        assert!(render.pages.is_none() && !render.changed_pages);
         assert_eq!(files.len(), 2);
         assert_eq!(output, PathBuf::from("out.docx"));
         assert_eq!(section_break, SectionBreakArg::NextPage);
@@ -2984,7 +3173,9 @@ mod tests {
                 output,
                 force,
                 selection,
+                render,
             }) => {
+                assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(
                     selection.filter(),
                     jubarte::changes::ChangeFilter::default()
@@ -3045,7 +3236,9 @@ mod tests {
                 output,
                 force,
                 selection,
+                render,
             }) => {
+                assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(
                     selection.filter(),
                     jubarte::changes::ChangeFilter::default()
@@ -3208,7 +3401,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
-            status_to_stderr: false,
+            quiet: false,
         })
         .expect_err("report over the PDF must be refused");
         assert!(
@@ -3232,7 +3425,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
-            status_to_stderr: false,
+            quiet: false,
         })
         .expect_err("report over the PNG output must be refused");
         assert!(
@@ -3256,7 +3449,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
-            status_to_stderr: false,
+            quiet: false,
         })
         .expect_err("report over the input must be refused");
         assert!(
@@ -3327,7 +3520,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: true,
-            status_to_stderr: false,
+            quiet: false,
         })
         .expect_err("a substituted font fails the run");
         assert_eq!(err.code, EXIT_FONT_SUBSTITUTED);
@@ -3367,7 +3560,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
-            status_to_stderr: false,
+            quiet: false,
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -3571,7 +3764,7 @@ mod tests {
             report: None,
             pages,
             fail_on_substitution: false,
-            status_to_stderr: false,
+            quiet: false,
         }
     }
 

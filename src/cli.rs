@@ -382,7 +382,9 @@ pub enum Command {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Output path.
+        /// Output path; its extension picks the format: .docx (also any
+        /// other), .md (the agent view), .pdf, .png (one file per page) or
+        /// .json (the snapshot).
         #[arg(short = 'o', long, value_name = "FILE")]
         output: PathBuf,
         /// Overwrite the output file if it already exists.
@@ -392,13 +394,19 @@ pub enum Command {
         #[command(flatten)]
         #[serde(flatten)]
         selection: Selection,
+        /// How a .pdf or .png output is drawn.
+        #[command(flatten)]
+        #[serde(flatten)]
+        render: RenderArgs,
     },
     /// Reject all tracked changes, or select by ID, author or kind.
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Output path.
+        /// Output path; its extension picks the format: .docx (also any
+        /// other), .md (the agent view), .pdf, .png (one file per page) or
+        /// .json (the snapshot).
         #[arg(short = 'o', long, value_name = "FILE")]
         output: PathBuf,
         /// Overwrite the output file if it already exists.
@@ -408,6 +416,10 @@ pub enum Command {
         #[command(flatten)]
         #[serde(flatten)]
         selection: Selection,
+        /// How a .pdf or .png output is drawn.
+        #[command(flatten)]
+        #[serde(flatten)]
+        render: RenderArgs,
     },
     /// Convert Word or Markdown to DOCX, PDF, PNG or Markdown.
     #[command(after_help = "Examples:\n  \
@@ -424,9 +436,11 @@ pub enum Command {
         /// Word 97-2003 .doc (read into a .docx first).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Output path (default: `<stem>.pdf` next to a .docx, `<stem>.docx`
-        /// next to Markdown; Markdown output goes to stdout). PNG pages are
-        /// named `<stem>-page-NN.png` beside it.
+        /// Output path; its extension picks the format: .docx, .md, .pdf,
+        /// .png (pages named `<stem>-page-NN.png` beside it) or .json (the
+        /// snapshot of the result). Without it: `<stem>.pdf` next to a
+        /// .docx, `<stem>.docx` next to Markdown, `<stem>.json` for
+        /// `--to json`; Markdown output goes to stdout.
         #[arg(short = 'o', long, value_name = "FILE")]
         output: Option<PathBuf>,
         /// Overwrite the output file if it already exists.
@@ -601,6 +615,13 @@ pub enum Command {
         /// The document (.docx) to read.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Write the view to FILE.md, or the snapshot to FILE.json,
+        /// instead of printing it.
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
         /// The view's options.
         #[command(flatten)]
         #[serde(flatten)]
@@ -887,7 +908,9 @@ pub enum Command {
         /// The documents (.docx), in order.
         #[arg(value_name = "FILE", num_args = 2.., required = true)]
         files: Vec<PathBuf>,
-        /// Output path.
+        /// Output path; its extension picks the format: .docx (also any
+        /// other), .md (the agent view), .pdf, .png (one file per page) or
+        /// .json (the snapshot).
         #[arg(short = 'o', long, value_name = "FILE")]
         output: PathBuf,
         /// What separates each document from the one before it.
@@ -905,6 +928,10 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        /// How a .pdf or .png output is drawn.
+        #[command(flatten)]
+        #[serde(flatten)]
+        render: RenderArgs,
     },
     /// Check or repair Word validity (findings: exit 2; unreadable: exit 1).
     #[command(after_help = "Examples:\n  \
@@ -942,7 +969,9 @@ pub enum Command {
         /// The document (.docx) to scrub.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Output path.
+        /// Output path; its extension picks the format: .docx (also any
+        /// other), .md (the agent view), .pdf, .png (one file per page) or
+        /// .json (the snapshot).
         #[arg(short = 'o', long, value_name = "FILE")]
         output: PathBuf,
         /// Overwrite the output file if it already exists.
@@ -952,6 +981,10 @@ pub enum Command {
         #[command(flatten)]
         #[serde(flatten)]
         scrub: ScrubSelection,
+        /// How a .pdf or .png output is drawn.
+        #[command(flatten)]
+        #[serde(flatten)]
+        render: RenderArgs,
     },
     /// Audit accessibility, style and structure (findings: exit 2).
     #[command(after_help = "Rules (code, set, severity):\n  \
@@ -1179,9 +1212,7 @@ pub enum Format {
     /// PNG pages.
     Png,
     /// The JSON snapshot (`read --json`'s object): written, never read.
-    /// Hidden until a task writes it; `-o x.json` and `--to json` exit 2
-    /// meanwhile (`json_not_yet`).
-    #[value(hide = true)]
+    /// `compare` and `diff` refuse it until they write it (`json_not_yet`).
     Json,
 }
 
@@ -1371,6 +1402,32 @@ pub fn output_format(
     } else {
         Err(task.cannot_write(format))
     }
+}
+
+/// The line a writing task prints on stderr for the file it wrote:
+/// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`; `pages` is a PDF's.
+pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize>) -> String {
+    let pages = pages.map_or_else(String::new, |n| format!(", {}", count(n, "page")));
+    format!(
+        "wrote {} ({}, {bytes} bytes{pages})",
+        path.display(),
+        format.name()
+    )
+}
+
+/// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
+/// `pattern` naming them all.
+pub fn wrote_png_line(pattern: &Path, pages: usize, dpi: f32) -> String {
+    format!(
+        "wrote {} (png, {}, {dpi} dpi)",
+        pattern.display(),
+        count(pages, "page")
+    )
+}
+
+/// `1 page`, `3 pages`.
+fn count(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
 /// A spelling 0.13 still accepts, with a note, and 0.14 removes.
@@ -2007,9 +2064,10 @@ const READ_OPTION_IDS: [&str; 11] = [
     "tables",
 ];
 
-/// Until a task writes the JSON snapshot (Tasks 11-13), its `-o x.json` and
-/// `--to json` are refused here, so the binary and both bindings exit 2
-/// alike instead of writing a document or a patch into a `.json`.
+/// Until `compare` and `diff` write the JSON snapshot (Task 13), their
+/// `-o x.json` and `--to json` are refused here, so the binary and both
+/// bindings exit 2 alike instead of writing a document or a patch into a
+/// `.json`.
 fn json_not_yet(matches: &clap::ArgMatches, task: Task) -> Option<String> {
     let to = matches.try_get_one::<Format>("to").ok().flatten().copied();
     let said = matches
@@ -2019,6 +2077,30 @@ fn json_not_yet(matches: &clap::ArgMatches, task: Task) -> Option<String> {
         .and_then(|path| task.known(path));
     (to == Some(Format::Json) || said == Some(Format::Json))
         .then(|| format!("{} does not write .json yet", task.name()))
+}
+
+/// What `read -o PATH` (and the one-document shorthand's -o) writes: `.md`
+/// the view, `.json` the snapshot. `given` says which argument ids the
+/// command line spells out.
+fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, String> {
+    let kind = output_format(Task::Read, Some(output), None)?.unwrap_or(Format::Md);
+    if given("tables") {
+        return Err("--tables prints the grids; drop -o".to_string());
+    }
+    if given("json") && kind != Format::Json {
+        return Err("--json writes the snapshot: name the file FILE.json".to_string());
+    }
+    if kind == Format::Json
+        && let Some(id) = ["track_changes", "comments", "dates", "no_page_markers"]
+            .into_iter()
+            .find(|id| given(id))
+    {
+        return Err(format!(
+            "--{} shapes the view; a .json snapshot has none",
+            id.replace('_', "-")
+        ));
+    }
+    Ok(kind)
 }
 
 fn validate_matches(
@@ -2043,29 +2125,25 @@ fn validate_matches(
         if two && given("tables") {
             return Err(command.error(ErrorKind::ArgumentConflict, "--tables reads one document"));
         }
-        if let Some(message) = json_not_yet(matches, Task::Compare) {
-            return Err(command.error(ErrorKind::ValueValidation, message));
-        }
-        // The shorthand: read options go with the printed view, which -o
-        // replaces by a file.
-        let read_option = READ_OPTION_IDS.into_iter().any(|id| {
-            matches.try_contains_id(id).unwrap_or(false)
-                && matches.value_source(id) == Some(ValueSource::CommandLine)
-        });
-        if matches.try_contains_id("output").unwrap_or(false)
-            && matches.value_source("output") == Some(ValueSource::CommandLine)
-            && read_option
-        {
-            return Err(command.error(
-                ErrorKind::ArgumentConflict,
-                "read options apply to the printed view; drop -o to print it",
-            ));
-        }
-        if given("output") && !two {
-            return Err(command.error(
-                ErrorKind::ArgumentConflict,
-                "-o writes a redline of two documents; one document alone prints its view",
-            ));
+        if !two {
+            // One document: `read`, whose -o writes the view or the snapshot.
+            if let Some(output) = matches.get_one::<PathBuf>("output") {
+                read_output(output, &given)
+                    .map_err(|message| command.error(ErrorKind::ArgumentConflict, message))?;
+            }
+        } else {
+            if let Some(message) = json_not_yet(matches, Task::Compare) {
+                return Err(command.error(ErrorKind::ValueValidation, message));
+            }
+            // Two documents: read options go with the printed view, which -o
+            // replaces by a file (until compare's -o writes the view, Task 13).
+            let read_option = READ_OPTION_IDS.into_iter().any(&given);
+            if given("output") && read_option {
+                return Err(command.error(
+                    ErrorKind::ArgumentConflict,
+                    "read options apply to the printed view; drop -o to print it",
+                ));
+            }
         }
         // `jubarte --head 2 read a.docx`: options before a task make clap read
         // the task's name as ORIGINAL.
@@ -2108,7 +2186,10 @@ fn validate_matches(
         }
         return Ok(());
     };
-    if let Some(message) = Task::of_name(name).and_then(|task| json_not_yet(args, task)) {
+    if let Some(message) = Task::of_name(name)
+        .filter(|task| matches!(task, Task::Compare | Task::Diff))
+        .and_then(|task| json_not_yet(args, task))
+    {
         let mut task = command.find_subcommand(name).expect("parsed task").clone();
         task.set_bin_name(format!("{} {name}", command.get_name()));
         return Err(task.error(ErrorKind::ValueValidation, message));
@@ -2129,6 +2210,36 @@ fn validate_matches(
     task.set_bin_name(format!("{} {name}", command.get_name()));
     let error =
         |task: &mut clap::Command, message: &str| task.error(ErrorKind::ArgumentConflict, message);
+    let given = |id: &str| {
+        args.try_contains_id(id).unwrap_or(false)
+            && args.value_source(id) == Some(ValueSource::CommandLine)
+    };
+    if name == "read"
+        && let Some(output) = args.get_one::<PathBuf>("output")
+    {
+        read_output(output, &given).map_err(|message| error(&mut task, &message))?;
+    }
+    if let Some(writer) = Task::of_name(name).filter(|task| {
+        matches!(
+            task,
+            Task::Accept | Task::Reject | Task::Append | Task::Scrub
+        )
+    }) {
+        let output = args.get_one::<PathBuf>("output").map(PathBuf::as_path);
+        let kind =
+            output_format(writer, output, None).map_err(|message| error(&mut task, &message))?;
+        if !matches!(kind, Some(Format::Pdf | Format::Png))
+            && let Some(flag) = RENDER_ONLY.into_iter().find(|flag| given(flag))
+        {
+            return Err(error(
+                &mut task,
+                &format!(
+                    "--{} applies to PDF or PNG output only",
+                    flag.replace('_', "-")
+                ),
+            ));
+        }
+    }
     if matches!(name, "edit" | "add")
         && let Some(plan) = args.get_one::<PathBuf>("plan")
     {
@@ -2474,6 +2585,20 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 )
                 .expect("format");
             }
+            let written = match &task {
+                Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),
+                Command::Reject { output, .. } => Some((Task::Reject, Some(output.as_path()))),
+                Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
+                Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
+                Command::Read { output, .. } => Some((Task::Read, output.as_deref())),
+                _ => None,
+            };
+            if let Some((writer, output)) = written {
+                // validate_matches refused a format the task cannot write.
+                value["args"]["output_format"] =
+                    serde_json::to_value(output_format(writer, output, None).ok().flatten())
+                        .expect("format");
+            }
             value["exit_code"] = 0.into();
             Ok(value)
         } else {
@@ -2506,6 +2631,15 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                     compare.original.as_ref().or(compare.original_pos.as_ref()),
                 )
                 .expect("UTF-8 path");
+                // As `read FILE -o …` has them.
+                args["output"] = serde_json::to_value(&compare.output).expect("UTF-8 path");
+                args["force"] = compare.force.into();
+                args["output_format"] = serde_json::to_value(
+                    output_format(Task::Read, compare.output.as_deref(), None)
+                        .ok()
+                        .flatten(),
+                )
+                .expect("format");
                 return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
             }
             let mut args = compare_json(&compare);

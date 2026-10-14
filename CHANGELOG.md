@@ -28,8 +28,23 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `Snapshot::retain`, `inspect::tables_text` and
   `markdown::read_snapshot`; `ReadView` and `ReadDocx` gain `selected`.
 
+- One writer for `-o`. `accept`, `reject`, `append` and `scrub` write
+  what the output's extension names: `.docx` (and any other extension),
+  `.md` (the agent view of the result), `.pdf`, `.png` (one file per page)
+  or `.json` (the snapshot), and take `--revisions`, `--revision-palette`,
+  `--dpi`, `--move-comments`, `--changed-pages` and `--pages` for a PDF or
+  PNG. `read` (and `jubarte FILE`) takes `-o FILE.md` for the view or
+  `-o FILE.json` for the snapshot, and `--force`. `convert` writes `.json`.
+  The Python and npm CLIs refuse these outputs until they share the writer.
+
 ### Changed
 
+- `accept`, `reject`, `append`, `scrub`, `convert` and `read -o` say
+  `wrote PATH (KIND, N bytes[, P pages])` on stderr, or
+  `wrote DIR/STEM-page-NN.png (png, K pages, D dpi)`; `-q` silences it
+  (and `diff`'s line too). `convert` and `append` said it on stdout;
+  `accept`, `reject` and `scrub` said nothing before. `compare` still
+  prints its line on stdout.
 - `convert --changed-only` (and the library's `PdfOptions::changed_only`)
   also keeps the pages a comment is anchored on and the first page of each
   section on which a revised header or footer paints. The comment listing's

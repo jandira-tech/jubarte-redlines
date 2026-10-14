@@ -170,6 +170,18 @@ test("read (alias text), inspect, capabilities and convert", () => {
     assert.equal(refused.code, 2, `${args}: ${refused.err}`);
     assert.match(refused.err, /not supported by the npm CLI/);
   }
+  // The engine writes a task's view, snapshot or PDF; this CLI, Word only.
+  for (const args of [
+    ["accept", tracked, "-o", path.join(tmp, "a.pdf")],
+    ["reject", tracked, "-o", path.join(tmp, "s.md")],
+    ["read", untracked, "-o", path.join(tmp, "v.md")],
+    [untracked, "-o", path.join(tmp, "v.json")],
+    ["convert", tracked, "-o", path.join(tmp, "c.json")],
+  ]) {
+    const refused = run(...args);
+    assert.equal(refused.code, 2, `${args}: ${refused.err}`);
+    assert.match(refused.err, /not supported by the npm CLI yet/);
+  }
   assert.equal(JSON.parse(run("capabilities").out).runtime, "wasm");
   const pdf = path.join(tmp, "out.pdf");
   const r = run("convert", tracked, "-o", pdf, "--revisions", "word", "--compress");
@@ -800,5 +812,51 @@ test("agent editing mode rejects keep before creating output even in dry run", (
       assert.equal(result.out, "");
       assert.equal(fs.existsSync(out), false);
     }
+  }
+});
+
+
+for (const command of ["accept", "reject"]) {
+  test(`writer refuses unsupported ${command} formats before file access`, () => {
+    for (const extension of ["md", "markdown", "PDF", "png", "JSON"]) {
+      const output = path.join(tmp, `unsupported-${command}.${extension}`);
+      fs.writeFileSync(output, "preserve output");
+      const result = run(command, "missing.docx", "-o", output, "--force", "-q");
+      assert.equal(result.code, 2, `${extension}: ${result.err}`);
+      assert.equal(result.out, "");
+      const kind = extension === "markdown" ? "md" : extension.toLowerCase();
+      assert.ok(result.err.includes(`-o FILE.${kind} is not supported by the npm CLI yet`), result.err);
+      assert.equal(fs.readFileSync(output, "utf8"), "preserve output");
+      if (kind === "png") {
+        assert.ok(!fs.existsSync(output.replace(/\.png$/, "-page-01.png")));
+      }
+    }
+  });
+}
+
+test("writer refuses read aliases and shorthand without creating output", () => {
+  for (const prefix of [["read", "missing.docx"], ["text", "missing.docx"], ["missing.docx"]]) {
+    for (const extension of ["md", "JSON", "unknown"]) {
+      const output = path.join(tmp, `unsupported-read.${extension}`);
+      const result = run(...prefix, "-o", output, "--force", "-q");
+      assert.equal(result.code, 2, result.err);
+      assert.equal(result.out, "");
+      assert.match(result.err, /read -o is not supported by the npm CLI yet/);
+      assert.ok(!fs.existsSync(output));
+    }
+  }
+});
+
+test("writer refuses convert JSON selected by format or extension", () => {
+  const output = path.join(tmp, "unsupported-convert.unknown");
+  fs.writeFileSync(output, "preserve output");
+  for (const flags of [["--to", "json"], ["-o", "unsupported-convert.JSON"], ["--to", "json", "-o", output]]) {
+    const result = run("convert", "missing.docx", ...flags, "--force", "-q");
+    assert.equal(result.code, 2, result.err);
+    assert.equal(result.out, "");
+    assert.match(result.err, /-o FILE.json is not supported by the npm CLI yet/);
+    assert.equal(fs.readFileSync(output, "utf8"), "preserve output");
+    assert.ok(!fs.existsSync(path.join(tmp, "missing.json")));
+    assert.ok(!fs.existsSync(path.join(tmp, "unsupported-convert.JSON")));
   }
 });
