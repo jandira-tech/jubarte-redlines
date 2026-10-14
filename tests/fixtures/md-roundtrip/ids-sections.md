@@ -13,6 +13,7 @@ styles:
   ListParagraph: Cambria 12pt, named List Paragraph
   Cuerpo: Calibri 11pt, after 8pt, line 1.08
   table: TableGrid, all borders 0.5pt
+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   default: {id: header1, text: ""}
 footers:

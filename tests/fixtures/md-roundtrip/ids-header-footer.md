@@ -10,6 +10,7 @@ page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Aptos 12pt, left         # default; unannotated paragraphs use it
   ListParagraph: Times 11.5pt, after 6pt, line 1.1, named List Paragraph
+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   first: {id: header3, text: ["{PAGE}1{/}", "This is my first page header, page numbers at the right"]}  # page 1 only (different first page)
   default: {id: header2, text: ["{PAGE}1{/}", "Odd page header, page numbers at the right"]}
