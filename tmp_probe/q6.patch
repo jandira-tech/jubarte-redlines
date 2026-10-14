@@ -1,4 +1,0 @@
---- a/tmp_probe/a.md
-+++ b/tmp_probe/b.md	Redline	2026-10-13T06:17:15Z
-@@ [line:1] @@
-hello{+ there+}
