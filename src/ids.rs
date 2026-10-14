@@ -330,6 +330,24 @@ pub fn parse_location(token: &str) -> Result<Location, IdError> {
     }
 }
 
+/// The story id of a part: its file stem (`word/header1.xml` → `header1`),
+/// each byte outside `A-Z`, `a-z`, `0-9`, `.`, `_` and `-` spelled `%XX`,
+/// and a leading `-` too, so every id built on it is safe unquoted in bash,
+/// csh and zsh: `word/hdr!old.xml` → `hdr%21old`.
+pub fn part_story(part: &str) -> String {
+    let file = part.rsplit('/').next().unwrap_or(part);
+    let stem = file.strip_suffix(".xml").unwrap_or(file);
+    let mut out = String::with_capacity(stem.len());
+    for (i, b) in stem.bytes().enumerate() {
+        if b.is_ascii_alphanumeric() || b"._".contains(&b) || (b == b'-' && i > 0) {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// The short form of a long paragraph id: `body:p:12` → `p12`,
 /// `header1:p:0` → `header1`, `header1:p:2` → `header1.p2`; the long id
 /// itself when its story or number has no short spelling.
@@ -746,6 +764,35 @@ mod tests {
         for id in &printed {
             assert!(safe(id), "{id}");
         }
+        // A part's stem is any file name: the story id spells what a shell
+        // reads (`!`, `$`, space, `*`, a leading `-`, non-ASCII) as `%XX`.
+        let shell_safe = |id: &str| {
+            id.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._%:+-".contains(&b))
+                && !id.starts_with('-')
+        };
+        for part in [
+            "word/hdr!old.xml",
+            "word/a$b c*.xml",
+            "word/-x.xml",
+            "word/ヘッダー.xml",
+            "word/50%.xml",
+            "word/Header_1.xml",
+        ] {
+            let story = part_story(part);
+            for id in [
+                ChangeId::new(&story, "4").short(),
+                short_paragraph(&format!("{story}:p:0")),
+                short_paragraph(&format!("{story}:p:3")),
+            ] {
+                assert!(shell_safe(&id), "{part} → {id}");
+            }
+        }
+        assert_eq!(part_story("word/hdr!old.xml"), "hdr%21old");
+        assert_eq!(part_story("word/Header_1.xml"), "Header_1");
+        assert_eq!(part_story("word/header1.xml"), "header1");
+        assert_eq!(part_story("word/50%.xml"), "50%25");
+        assert_eq!(part_story("word/-x.xml"), "%2Dx");
     }
 
     /// A seeded generator draws tokens from the grammar's alphabet: no
