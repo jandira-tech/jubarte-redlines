@@ -13,6 +13,7 @@ styles:
   "##": Heading2, Arial 9pt
   BodyText: Arial 8.5pt, named Body Text
   tables: TableGrid
+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   default: {id: header1, text: ""}
 ---

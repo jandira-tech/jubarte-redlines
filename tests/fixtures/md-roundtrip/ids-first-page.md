@@ -9,6 +9,7 @@ body: p0-p4, 0 tables, 3 pages     # pages from Word's cached layout
 page: A4 portrait, margins 1in, header/footer 0.492in
 styles:
   Normal: Calibri 11pt, after 10pt, line 1.15, left  # default; unannotated paragraphs use it
+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   first: {id: header2, text: My first page header}  # page 1 only (different first page)
   default: {id: header1, text: My header}
