@@ -240,7 +240,8 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   heading, not `Heading{level}`.
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
-  `w:ind`, in inches.
+  `w:ind`, in inches, with as many decimals (two to four) as it takes to
+  read back the same twips (`0.7875in` is 1134).
 - `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
   in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
   it is escaped with `\`). A level text naming a deeper level (`%3` on
@@ -289,6 +290,10 @@ alike, a tie or justified text prints `-`; the `center` or `right` after
 down 3` for a cell spanning grid columns or a vertical merge and the rows
 it covers (the view prints a span's other columns as empty cells, and
 leaves out empty columns at the right; the reader counts both back),
+`gaps t0.row1 before 1 after 2` for the grid columns a row leaves out
+(Word's `w:gridBefore`/`w:gridAfter`, and a row shorter than the grid),
+written back exactly as it says: empty Markdown cells past the line's
+`RxC` columns are padding, and the grid has exactly those columns,
 `break-ins r12 @AC in p9`,
 `break-del …`, `rev … in pN` (resolved views; `rev r5 @AC in t0.row1.cell2`
 for a cell's own insertion, deletion or merge in the tracked view, and
@@ -308,7 +313,12 @@ each style as its line says.
 
 Each footnote and endnote definition follows the id line of its
 paragraphs: `<!-- footnotes.p0 -->`, or `<!-- endnotes.p0-p2 -->` for a note
-of three paragraphs. `edit -p footnotes.p0` edits that note's text.
+of three paragraphs, which the definition joins with `<br>` (a table in a
+note reads as its cells' paragraphs). `edit -p footnotes.p0` edits that
+note's text. A note Word inserted or deleted whole, its reference with it,
+reads `{++[^1]: text++}{>>r10 @AL<<}`, and the marks its own text holds
+close the definition: `<!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->`.
+A label referenced twice is one note.
 
 `sha256:` is the SHA-256 of the bytes the view read: the file, or for
 `jubarte A B` the redline it prints in memory. Compare it with the file on
@@ -334,7 +344,9 @@ its container's tag.
 
 The header's `comments:` line counts open and resolved threads, and apart
 from them a comment no story anchors (no range or reference in the body or
-a note): `1 thread open, 1 unanchored`. Word draws no balloon for it.
+a note): `1 thread open, 1 unanchored`. Word draws no balloon for it. A
+comment anchored in a header or footer is unanchored too: Word shows a
+comment only from a reference in the main story.
 
 ### Tags
 
@@ -346,17 +358,33 @@ authors' tags on one id line are joined by `; ` (`rev r1 @AC; r2 @JD`).
 ```text
 {++quarterly++}{>>r0 @AC<<}
 {--ninety days--}{>>r7 @AC<<}
-{~~weekly~>monthly~~}{>>r1+2 @AC<<}          one author: one note
-{~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}        two authors: deleted side first
+{~~weekly~>monthly~~}{>>r2+1 @AC<<}          one author: one note, deleted ids first
+{~~old~>new~~}{>>r2 @JD; r1 @AC<<}            two authors: deleted side first
 {++bold words++}{>>r7+8 @AC<<}                 neighbouring marks by one author
 {++quarterly++}{>>r0 @AC 2026-10-03T14:05:00Z<<}   with --dates
 ```
 
-Neighbouring marks of one kind by one author join, then a deletion next to
-an insertion pairs as a substitution, left to right. Bookmarks, proofing
-marks and comment markers do not break adjacency, and changes inside links,
-content controls and simple fields count. The text inside the delimiters is
-the document's text exactly.
+Neighbouring marks of one kind by one author join, then an insertion
+directly followed by a deletion pairs as a substitution, left to right:
+Word's Compare writes the insertion first. A deletion followed by an
+insertion stays two changes. A bookmark the view prints (`<a id>`) and a
+comment range it prints (`{==…==}`) break adjacency; proofing marks, other
+bookmarks and comment markers, and runs that print nothing (empty,
+hidden, a page break) do not. Changes inside links, content controls and
+simple fields count, and headers and footers pair the same way
+(`{~~old~>new~~}{>>header1.r91+90 @AL<<}`). The text inside the delimiters
+is the document's text exactly.
+
+Converting back, a substitution writes its insertion, then its deletion.
+Its one tag lists the deleted side's ids, then the inserted side's: where
+the numbers drop (`r94+95+92+93`) the inserted side begins, else the
+deleted side takes one id per run it has. A side naming more ids than it
+has runs splits its text, after its last space or before its last
+character, so every id comes back on its own side.
+
+`@??` is the handle of a mark with no author's name (the attribute missing
+or empty); it is a tag, not a comment, and converts back to an empty
+author.
 
 A comment is `{==anchored text==}{>>c5 @AC: text<<}`; a reply names its
 thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
@@ -365,7 +393,10 @@ thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
 A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
 header's `authors:` line gives each handle's name, counts and its
-timestamp, or the day range when the author has several.
+timestamp, or the day range when the author has several
+(`2026-03-02..2026-03-04`). Converting back, a range's first mark or
+comment takes its first day at `00:00:00Z` and the last one its last day
+at `23:59:59Z`; one mark keeps only the first day.
 
 ### Reading back
 
@@ -396,6 +427,10 @@ is `inactive`, an active `even:` turns on even and odd headers, and a
 `sections:` entry gives its section the page and stories it names.
 
 ### Literal marks and anchors
+
+Text that reads like a field code is escaped with `\{` (`\{PAGE}`), in the
+body and in headers and footers, and text that reads like a mark has its
+delimiter broken (`{\++`); converting back restores both.
 
 Document text that CommonMark would read as markup is escaped in the agent
 view: a paragraph that starts with `# `, `- `, `> ` or `1. ` (also after a
