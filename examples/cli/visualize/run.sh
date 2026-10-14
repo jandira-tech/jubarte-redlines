@@ -109,8 +109,6 @@ show '`changes`: one line per tracked change, with the `body:rev:N` IDs that `ac
   changes "$R"
 show '`changes --json`: the same as JSON lines.' \
   changes "$R" --json
-show '`revisions`: the revision summary of a redline.' \
-  revisions "$R"
 show '`comments`: comments, their anchors, replies and resolved state. `--json`, `--author NAME` and `--latest` (newest per thread) narrow it.' \
   comments "$R"
 show '' comments "$R" --json --author "Ann Counsel"

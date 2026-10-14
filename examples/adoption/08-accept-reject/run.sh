@@ -97,9 +97,9 @@ fi
 diff reject_text_jubarte.txt text_original.txt > reject_text.diff || true
 
 # No tracked change may survive on either side.
-"$JUBARTE" revisions accepted_jubarte.docx > revisions_accepted_jubarte.log 2>&1 || true
+"$JUBARTE" changes accepted_jubarte.docx > changes_accepted_jubarte.log 2>&1 || true
 if [ -f accepted_libreoffice.docx ]; then
-  "$JUBARTE" revisions accepted_libreoffice.docx > revisions_accepted_libreoffice.log 2>&1 || true
+  "$JUBARTE" changes accepted_libreoffice.docx > changes_accepted_libreoffice.log 2>&1 || true
 fi
 
 # Page 1 of each accepted file, rendered by jubarte (72 dpi).
