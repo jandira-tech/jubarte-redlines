@@ -259,11 +259,13 @@ fn a_change_crosses_emphasis_and_links() {
     assert_eq!(accepted(&docx), ["Keep bold and a link here."]);
     assert_eq!(rejected(&docx), ["Keep  here."]);
     let xml = document_xml(&docx);
-    // The change is re-opened inside the hyperlink: w:ins cannot hold one.
-    assert!(xml.contains("<w:hyperlink r:id=\"rId"));
-    assert!(!xml.contains("00:00:00Z\"><w:hyperlink"), "{xml}");
+    // A link wholly inside the change is a HYPERLINK field in its one mark,
+    // not a w:hyperlink that parts the change in two.
+    assert_eq!(xml.matches("<w:ins ").count(), 1, "{xml}");
+    assert!(!xml.contains("<w:hyperlink"), "{xml}");
     assert!(
-        xml.contains("<w:hyperlink r:id=\"rId3\" w:history=\"1\"><w:ins "),
+        xml.contains("HYPERLINK &quot;https://example.com&quot;")
+            || xml.contains("HYPERLINK \"https://example.com\""),
         "{xml}"
     );
 }
