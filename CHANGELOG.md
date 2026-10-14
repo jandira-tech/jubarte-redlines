@@ -302,6 +302,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - `audit FILE --rules …` was told to use `validate --rules
   a11y,style,structure`, which drops the rules it asked for. With
   `--rules` given, the note says `validate` alone.
+- A `.docx` that is not a ZIP read seven ways across the tasks (`read`
+  said "Could not find EOCD", `diff` said "compare failed: cannot write
+  the document"). Every Word input now reads `INVALID_PACKAGE: FILE is
+  not a ZIP file: no end-of-central-directory record`, as `LEGACY_DOC`
+  already did.
+- A task the host lacks (npm's `visual-diff`, `validate`, `scrub`, …) said
+  "not a task", "not supported by this adapter" or a clap conflict by
+  argument count; it is now one usage error naming the task.
 - `jubarte revisions x.docx` said only "reading revisions: No such file":
   the removed task's name reads as the first file to compare. A note now
   names `changes` first, on every host.
