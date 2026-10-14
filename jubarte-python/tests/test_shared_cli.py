@@ -70,7 +70,7 @@ def test_diff_usage_errors_precede_io(tmp_path, capsys, extra):
 
 @pytest.mark.integration
 def test_unsupported_native_flags_precede_io(tmp_path):
-    for argv in (["read", "missing.docx", "--tables"], ["compare", "a", "b", "--mode", "powertools"], ["compare", "a", "b", "--detail-threshold", "0"], ["convert", "missing.docx", "--timeout", "1"]):
+    for argv in (["compare", "a", "b", "--mode", "powertools"], ["compare", "a", "b", "--detail-threshold", "0"], ["convert", "missing.docx", "--timeout", "1"]):
         with pytest.raises(SystemExit) as exit:
             main(argv)
         assert exit.value.code == 2
@@ -163,15 +163,15 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
         capsys.readouterr()
 
     # diff -o FILE.md of a Word side writes the patch; compare's is the
-    # redline's view, which this CLI does not write yet.
+    # redline's view.
     assert main(["diff", str(word), str(b), "-o", str(tmp_path / "d.md")]) == 0
     assert "[-30-]{+45+}" in (tmp_path / "d.md").read_text()
     capsys.readouterr()
-    with pytest.raises(SystemExit) as refused:
-        main(["compare", str(word), str(b), "-o", str(tmp_path / "c.md")])
-    assert refused.value.code == 2
-    assert "-o FILE.md of a Word redline is not supported by the Python CLI yet" in capsys.readouterr().err
-    assert not (tmp_path / "c.md").exists()
+    assert main(["compare", str(word), str(b), "-o", str(tmp_path / "c.md")]) == 0
+    view = (tmp_path / "c.md").read_text()
+    redline = word.with_name(f"{word.stem}_v_{b.stem}.docx")
+    assert view.startswith(f"---\nsource: {redline} (not written; -o keeps it)\n"), view
+    assert "{~~30~>45~~}" in view, view
 
     # --format critic needs two Markdown documents.
     assert main(["diff", str(word), str(b), "--format", "critic"]) == 1

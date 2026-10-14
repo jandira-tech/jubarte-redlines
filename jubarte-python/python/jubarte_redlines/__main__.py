@@ -58,11 +58,16 @@ class CliError(Exception):
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
+def _os(exc: OSError) -> str:
+    """An I/O error as Rust words it: ``No such file or directory (os error 2)``."""
+    return f"{exc.strerror} (os error {exc.errno})" if exc.errno is not None and exc.strerror else str(exc)
+
+
 def _read(path: Path) -> Document:
     try:
         doc = Document.read(path)
     except OSError as exc:
-        raise CliError(f"reading {path}: {exc}") from exc
+        raise CliError(f"reading {path}: {_os(exc)}") from exc
     if doc.to_bytes().startswith(OLE_MAGIC):
         raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
     if not doc.to_bytes().startswith(b"PK\x03\x04"):
@@ -75,7 +80,7 @@ def _read_side(path: Path, force_kind: str | None) -> bytes | str:
     try:
         data = path.read_bytes()
     except OSError as exc:
-        raise CliError(f"reading {path}: {exc}") from exc
+        raise CliError(f"reading {path}: {_os(exc)}") from exc
     if data.startswith(OLE_MAGIC):
         raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
     kind = force_kind or ("docx" if data.startswith(b"PK\x03\x04") else "md")
@@ -129,7 +134,7 @@ def _write(path: Path, data: bytes | str) -> int:
     try:
         path.write_bytes(raw)
     except OSError as exc:
-        raise CliError(f"writing {path}: {exc}") from exc
+        raise CliError(f"writing {path}: {_os(exc)}") from exc
     return len(raw)
 
 
@@ -188,6 +193,12 @@ def _parse_pages(spec: str) -> list[int]:
 
 def _print_view(docx: bytes, options: dict, source: str) -> int:
     """The agent view of ``docx`` with the read options ``options``."""
+    sys.stdout.write(_view_text(docx, options, source))
+    return EXIT_OK
+
+
+def _view_text(docx: bytes, options: dict, source: str) -> str:
+    """:func:`_print_view`'s Markdown, its warnings said on stderr."""
     from . import _native
 
     markdown, warnings = _native.read_view(
@@ -205,15 +216,70 @@ def _print_view(docx: bytes, options: dict, source: str) -> int:
     )
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    sys.stdout.write(markdown)
-    return EXIT_OK
+    return markdown
+
+
+def _selection(options: dict) -> dict:
+    """The read options that select paragraphs, as ``read_json`` takes them."""
+    return {
+        "paragraphs": options.get("paragraphs"),
+        "head": options.get("head"),
+        "tail": options.get("tail"),
+        "changed": bool(options.get("changed")),
+        "by": options.get("by"),
+    }
+
+
+def _write_result(args: argparse.Namespace, data: bytes, *, source: str, view: dict | None = None) -> None:
+    """``-o`` in the format its extension names, as the binary's writer: the
+    Word package, its agent view (.md, headed ``source``), its snapshot
+    (.json) or its drawing (.pdf, .png). ``view`` is read's options; the
+    defaults elsewhere."""
+    from . import _native
+
+    output: Path = args.output
+    kind = args.output_format or "docx"
+    view = view or {}
+    if kind in ("pdf", "png"):
+        _render_to(args, Document(data, output.name), output)
+        return
+    _ensure_writable(output, args.force)
+    if kind == "md":
+        text: bytes | str = _view_text(data, view, source)
+    elif kind == "json":
+        text = _native.read_json(data, **_selection(view)) + "\n"
+    else:
+        text = data
+    _wrote(args, output, kind, _write(output, text))
+
+
+def _not_written(args: argparse.Namespace) -> str:
+    """The name a task's .md view gives the Word file it did not write: -o
+    as typed, with .docx for its extension."""
+    stem, _ = os.path.splitext(_spelled(args, "output"))
+    return f"{stem}.docx (not written)"
 
 
 def cmd_read(args: argparse.Namespace) -> int:
-    if args.json:
-        from . import _native
+    from . import _native
 
-        print(_native.inspect_json(_read(args.file).to_bytes()))
+    if args.tables:
+        sys.stdout.write(_native.tables_text(_read(args.file).to_bytes()))
+        return EXIT_OK
+    if args.output is not None:
+        _write_result(args, _read(args.file).to_bytes(), source=args.file.name, view=vars(args))
+        return EXIT_OK
+    if args.json:
+        snapshot = _native.read_json(
+            _read(args.file).to_bytes(),
+            paragraphs=args.paragraphs,
+            head=args.head,
+            tail=args.tail,
+            changed=bool(args.changed),
+            by=args.by,
+            source=args.file.name,
+        )
+        print(snapshot)
         return EXIT_OK
     return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
 
@@ -265,14 +331,31 @@ def _print_refusal(exc: EditPlanError) -> None:
         for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
             if value is not None:
                 row[key] = value
-        print(json.dumps(row, ensure_ascii=False))
-    print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}, ensure_ascii=False))
+        print(_jsonl(row))
+    print(_jsonl({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}))
+    sys.stdout.flush()
     print(f"error: plan refused: {exc}", file=sys.stderr)
+
+
+def _jsonl(row: dict) -> str:
+    """One JSON line as the binary prints it: compact, keys sorted."""
+    return json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _spelled(args: argparse.Namespace, key: str) -> str:
     """FILE, --plan, OLD, NEW or -o as the command line spells it."""
     return getattr(args, "spelled", {}).get(key) or str(getattr(args, key))
+
+
+def _wrote(args: argparse.Namespace, path: Path, format: str, size: int, pages: int | None = None) -> None:
+    """The engine's ``wrote`` line on stderr, unless ``-q``; ``-o`` as typed."""
+    from . import _native
+
+    if getattr(args, "quiet", False):
+        return
+    shown = _spelled(args, "output") if getattr(args, "output", None) == path else str(path)
+    sys.stdout.flush()  # stdout's lines first when both streams share a pipe
+    print(_native.wrote_line(shown, format, size, pages), file=sys.stderr)
 
 
 def _read_plan_text(plan: str) -> str | None:
@@ -431,14 +514,14 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
                 outputs.append((f"{name}.pdf", rendered.pdf))
             for i, image in enumerate(rendered.pngs):
                 outputs.append((_png_name(name, i, len(rendered.pngs)), image))
-        lines.append(json.dumps({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts}, ensure_ascii=False))
+        lines.append(_jsonl({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts}))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
     for name, data in outputs:
         _write(out_dir / name, data)
         saved.append({"f": name, "bytes": len(data), "sha256": _native.source_sha256(data)})
-    lines.append(json.dumps({"ev": "save", "dir": str(out_dir), "outputs": saved}, ensure_ascii=False))
+    lines.append(_jsonl({"ev": "save", "dir": str(out_dir), "outputs": saved}))
     lines.append(summary)
     _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
     if args.quiet:
@@ -446,6 +529,7 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     print(summary)
     # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
+    sys.stdout.flush()
     print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
     for note in _edit_notes(notes, result):
         print(note, file=sys.stderr)
@@ -557,14 +641,14 @@ def cmd_convert(args: argparse.Namespace) -> int:
         if args.update_fields:
             raise CliError("--update-fields needs a Word document in")
         doc = _from_markdown(args, source)
-        # Markdown goes to Word unless a PDF or PNG is asked for.
-        if args.output_format not in ("pdf", "png"):
+        # Markdown goes to Word unless a PDF, PNG or snapshot is asked for.
+        if args.output_format not in ("pdf", "png", "json"):
             for given, flag in ((args.move_comments, "--move-comments"), (args.changed_pages, "--changed-pages"), (args.pages is not None, "--pages")):
                 if given:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
             _ensure_writable(docx_out, args.force)
-            print(f"wrote {docx_out} ({_write(docx_out, doc.to_bytes())} bytes)")
+            _wrote(args, docx_out, "docx", _write(docx_out, doc.to_bytes()))
             return EXIT_OK
     else:
         if args.output_format == "docx" and not args.update_fields:
@@ -578,10 +662,19 @@ def cmd_convert(args: argparse.Namespace) -> int:
             doc = doc.reject()
         if args.update_fields:
             return _write_updated_fields(args, doc)
-    output: Path = args.output or args.file.with_suffix(".pdf")
+    if args.output_format == "json":
+        _write_result(args, doc.to_bytes(), source=args.file.name)
+        return EXIT_OK
+    _render_to(args, doc, args.output or args.file.with_suffix(".pdf"))
+    return EXIT_OK
+
+
+def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
+    """Draw ``doc`` as ``output`` (a PDF), or as PNG pages named after it
+    when ``-o`` names a .png; the render flags are the task's own."""
     png = args.output_format == "png"
     want_pdf = not png
-    for side, flag in ((args.font_report, "--font-report"), (args.report, "--report")):
+    for side, flag in ((getattr(args, "font_report", None), "--font-report"), (getattr(args, "report", None), "--report")):
         if side is not None:
             named = "PNG output" if png else "PDF output"
             _check_side_file(side, flag, ((output, named), (args.file, "input")), args.force)
@@ -599,17 +692,20 @@ def cmd_convert(args: argparse.Namespace) -> int:
         _ensure_writable(path, args.force)
     if rendered.pdf is not None:
         _write(output, rendered.pdf)
-        print(f"wrote {output} ({len(rendered.pdf)} bytes, {pages} page{'' if pages == 1 else 's'})")
+        _wrote(args, output, "pdf", len(rendered.pdf), pages)
     if png:
+        from . import _native
+
         for path, image in zip(png_paths, rendered.pngs):
             _write(path, image)
-        print(f"wrote {len(rendered.pngs)} PNG page{'' if len(rendered.pngs) == 1 else 's'} ({output.parent / output.stem}-page-NN.png, {args.dpi} dpi)")
-    if args.font_report is not None:
+        if not args.quiet:
+            pattern = output.parent / f"{output.stem}-page-NN.png"
+            print(_native.wrote_png_line(pattern, len(rendered.pngs), args.dpi), file=sys.stderr)
+    if getattr(args, "font_report", None) is not None:
         _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
-    if args.report is not None:
+    if getattr(args, "report", None) is not None:
         report = {"page_count": pages, "document_pages": rendered.report.document_pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
         _write(args.report, json.dumps(report, ensure_ascii=False))
-    return EXIT_OK
 
 
 def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
@@ -626,7 +722,7 @@ def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
         _write(args.report, json.dumps({"page_count": updated.page_count, "fields": [asdict(f) for f in updated.fields]}, ensure_ascii=False))
     data = updated.document.to_bytes()
     _write(output, data)
-    print(f"wrote {output} ({len(data)} bytes)")
+    _wrote(args, output, "docx", len(data))
     return EXIT_OK
 
 
@@ -694,22 +790,20 @@ def cmd_compare(args: argparse.Namespace) -> int:
         redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
         return _print_view(redline, args.view, f"{default} (not written; -o keeps it)")
     output: Path = args.output
-    if args.output_format == "md":
+    if args.output_format == "md" and isinstance(original, str) and isinstance(modified, str):
         # A .md of two Markdown documents is CriticMarkup; of anything else,
-        # the redline's view, which the engine's writer brings here later.
-        if not (isinstance(original, str) and isinstance(modified, str)):
-            print("error: -o FILE.md of a Word redline is not supported by the Python CLI yet", file=sys.stderr)
-            raise SystemExit(EXIT_USAGE)
+        # the redline's view.
         if args.view_given:
             print("error: read options shape the view; two Markdown documents write CriticMarkup to a .md", file=sys.stderr)
             raise SystemExit(EXIT_USAGE)
-    _ensure_writable(output, args.force)
-    redline = (diff(original, modified, format="critic", author=args.author, date=args.date).text
-               if args.output_format == "md" else
-               _native.redline_documents(original, modified, author=args.author, date=args.date))
-    size = _write(output, redline)
-    if not args.quiet:
-        print(f"wrote {output} ({args.output_format}, {size} bytes)", file=sys.stderr)
+        _ensure_writable(output, args.force)
+        critic = diff(original, modified, format="critic", author=args.author, date=args.date).text
+        _wrote(args, output, "md", _write(output, critic))
+        return EXIT_OK
+    if args.output_format != "png":
+        _ensure_writable(output, args.force)
+    redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+    _write_result(args, redline, source=f"{default} (not written; -o keeps it)", view=getattr(args, "view", None))
     return EXIT_OK
 
 
@@ -745,44 +839,49 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _json_lines(payload: str) -> None:
+    """Each object of the engine's JSON array on its own line, as the binary prints them."""
+    for row in json.loads(payload):
+        print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+
+
 def cmd_changes(args: argparse.Namespace) -> int:
-    for change in (changes := _read(args.file).changes()):
-        row = {key: value for key, value in asdict(change).items() if value is not None}
-        if args.json:
-            print(json.dumps(row, ensure_ascii=False))
-            continue
-        preview = json.dumps(change.text[:60], ensure_ascii=False)
-        inside = f"\tinside {change.inside}" if change.inside else ""
-        print(f"{change.id}\t{change.kind}\t{change.target}\t{change.author or '-'}\t{preview}{inside}")
-    if not args.json:
-        print(f"{len(changes)} change(s)")
+    from . import _native
+
+    docx = _read(args.file).to_bytes()
+    if args.json:
+        _json_lines(_native.list_changes_json(docx))
+    else:
+        sys.stdout.write(_native.changes_text(docx))
     return EXIT_OK
 
 
 def cmd_comments(args: argparse.Namespace) -> int:
-    comments = _read(args.file).comments(author=args.author, latest=args.latest)
-    for comment in comments:
-        row = {key: value for key, value in asdict(comment).items() if value is not None}
-        if args.json:
-            print(json.dumps(row, ensure_ascii=False))
-            continue
-        text = json.dumps(comment.text[:60], ensure_ascii=False)
-        anchor = json.dumps(comment.anchor_text[:40], ensure_ascii=False)
-        thread = f"\treply to {comment.parent}" if comment.parent is not None else ""
-        done = "\tresolved" if comment.done else ""
-        print(f"{comment.id}\t{comment.paragraph or '-'}\t{comment.author}\t{text}\ton {anchor}{thread}{done}")
-    if not args.json:
-        print(f"{len(comments)} comment(s)")
+    from . import _native
+
+    docx = _read(args.file).to_bytes()
+    if args.json:
+        _json_lines(_native.list_comments_json(docx, author=args.author, latest=args.latest))
+    else:
+        sys.stdout.write(_native.comments_text(docx, author=args.author, latest=args.latest))
     return EXIT_OK
 
 
 def _resolution(args: argparse.Namespace, accept: bool) -> int:
+    from . import _native
+
     doc = _read(args.file)
     _ensure_writable(args.output, args.force)
     selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
-    result = doc.accept(**selection) if accept else doc.reject(**selection)
-    _write(args.output, result.to_bytes())
-    print(f"wrote {args.output} ({len(result.to_bytes())} bytes)")
+    try:
+        result = doc.accept(**selection) if accept else doc.reject(**selection)
+    except ValueError as exc:
+        # An id that is no change id, or names two: a usage error, as the binary's.
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE) from exc
+    except _native.JubarteError as exc:
+        raise CliError(f"{'accept' if accept else 'reject'} failed: {exc}") from exc
+    _write_result(args, result.to_bytes(), source=_not_written(args))
     return EXIT_OK
 
 
@@ -807,7 +906,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         if not args.json:
             print(f"repaired {len(repaired.repaired)} finding(s)")
         if not args.quiet:
-            print(f"wrote {_spelled(args, 'repair')} (docx, {size} bytes)", file=sys.stderr)
+            sys.stdout.flush()  # stdout's lines first when both streams share a pipe
+            print(_native.wrote_line(_spelled(args, "repair"), "docx", size), file=sys.stderr)
     original = _read(args.original).to_bytes() if args.original is not None else None
     jsonl, text, failed = _native.validate_run(
         docx, rules=list(args.rules) or None, original=original, author=args.author, strict=args.strict
@@ -882,27 +982,10 @@ class SharedParser:
                 self.error("--detail-threshold is not supported by the Python CLI")
             if values.get("no_paragraph_merge"):
                 self.error("--no-paragraph-merge is not supported by the Python CLI")
-        if command == "read" and values.get("tables"):
-            self.error("--tables is not supported by the Python CLI")
-        # The engine's -o writer (view, snapshot, PDF of a result) comes to
-        # this CLI with Task 19; until then it writes Word only.
-        written = values.get("output_format")
-        if command in ("accept", "reject", "append", "scrub") and written not in (None, "docx"):
-            self.error(f"-o FILE.{written} is not supported by the Python CLI yet")
-        if command == "read" and values.get("output") is not None:
-            self.error("read -o is not supported by the Python CLI yet")
-        if command == "convert" and written == "json":
-            self.error("-o FILE.json is not supported by the Python CLI yet")
-        if command == "compare" and written in ("pdf", "png", "json"):
-            self.error(f"-o FILE.{written} is not supported by the Python CLI yet")
         if command == "compare":
             for key in ("reference_doc", "critic", "resource_path"):
                 if values.get(key) not in (None, False):
                     self.error(f"--{key.replace('_', '-')} is not supported by the Python CLI")
-        if command == "read" and values.get("json"):
-            for key in ("paragraphs", "head", "tail", "changed", "by"):
-                if values.get(key) not in (None, False):
-                    self.error("--json with a selection is not supported by the Python CLI")
         if command == "convert":
             for key in ("from", "resource_path", "timeout", "fail_on_substitution", "no_page_markers"):
                 if values.get(key) not in (None, False):

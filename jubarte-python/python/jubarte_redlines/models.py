@@ -201,7 +201,9 @@ class Change:
     ``table_cell``, ``properties``). Both sides of a move share
     ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
     ``inside`` names the change whose content holds this one: resolving that
-    one so its content goes takes this one along.
+    one so its content goes takes this one along. ``ref`` is the short id the
+    CLI prints and ``-p``/``--id`` take (``r12``, ``header1.r3``);
+    ``paragraph`` is the id of the paragraph the change is in (``body:p:3``).
     """
 
     id: str
@@ -213,6 +215,8 @@ class Change:
     move_name: str | None
     move_side: Literal["from", "to"] | None
     inside: str | None
+    ref: str | None = None
+    paragraph: str | None = None
 
 
 class _ChangeRow(TypedDict):
@@ -227,10 +231,15 @@ class _ChangeRow(TypedDict):
     move_name: NotRequired[str]
     move_side: NotRequired[Literal["from", "to"]]
     inside: NotRequired[str]
+    ref: NotRequired[str]
+    paragraph: NotRequired[str]
 
 
 def _decode_changes(payload: str) -> tuple[Change, ...]:
-    rows: list[_ChangeRow] = json.loads(payload)
+    return _changes_of(json.loads(payload))
+
+
+def _changes_of(rows: list[_ChangeRow]) -> tuple[Change, ...]:
     return tuple(
         Change(
             id=row["id"],
@@ -242,6 +251,8 @@ def _decode_changes(payload: str) -> tuple[Change, ...]:
             move_name=row.get("move_name"),
             move_side=row.get("move_side"),
             inside=row.get("inside"),
+            ref=row.get("ref"),
+            paragraph=row.get("paragraph"),
         )
         for row in rows
     )
@@ -257,7 +268,8 @@ class Comment:
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
     is the paragraph id where the range starts (``body:p:12``);
     ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
-    up to 80 characters ``before`` and ``after`` it.
+    up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
+    the CLI prints and ``-p`` takes (``c5``).
     """
 
     id: int
@@ -271,6 +283,7 @@ class Comment:
     anchor_text: str
     before: str
     after: str
+    ref: str | None = None
 
 
 class _CommentRow(TypedDict):
@@ -287,10 +300,14 @@ class _CommentRow(TypedDict):
     anchor_text: str
     before: str
     after: str
+    ref: NotRequired[str]
 
 
 def _decode_comments(payload: str) -> tuple[Comment, ...]:
-    rows: list[_CommentRow] = json.loads(payload)
+    return _comments_of(json.loads(payload))
+
+
+def _comments_of(rows: list[_CommentRow]) -> tuple[Comment, ...]:
     return tuple(
         Comment(
             id=row["id"],
@@ -304,6 +321,7 @@ def _decode_comments(payload: str) -> tuple[Comment, ...]:
             anchor_text=row["anchor_text"],
             before=row["before"],
             after=row["after"],
+            ref=row.get("ref"),
         )
         for row in rows
     )
@@ -437,7 +455,12 @@ class Table:
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
-    """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses."""
+    """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses.
+
+    ``changes`` and ``comments`` are the tracked changes and comments, as
+    ``Document.changes()`` and ``comments()`` list them and ``read --json``
+    prints them.
+    """
 
     schema_version: int
     source_sha256: str
@@ -446,6 +469,8 @@ class Snapshot:
     stories: tuple[Story, ...] = ()
     tables: tuple[Table, ...] = ()
     controls: tuple[ContentControl, ...] = ()
+    changes: tuple[Change, ...] = ()
+    comments: tuple[Comment, ...] = ()
 
     def control(self, id: str | None = None, *, tag: str | None = None, alias: str | None = None) -> ContentControl:
         """The one control with this id (``body:sdt:N``), tag or alias; give exactly one."""
@@ -567,6 +592,8 @@ def _decode_snapshot(payload: str) -> Snapshot:
             )
             for c in data.get("controls", ())
         ),
+        changes=_changes_of(data.get("changes", [])),
+        comments=_comments_of(data.get("comments", [])),
     )
 
 

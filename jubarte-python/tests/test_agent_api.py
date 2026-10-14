@@ -392,6 +392,10 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
         ("body:rev:1", "deletion", "text", "a", "gone"),
         ("body:rev:2", "insertion", "text", "b", "new"),
     ]
+    # `ref` is the short id the CLI prints; `paragraph` the paragraph it is in.
+    assert [(c.ref, c.paragraph) for c in changes] == [("r1", "body:p:0"), ("r2", "body:p:0")]
+    # The snapshot carries them too, as `read --json` does.
+    assert doc.inspect().changes == changes and doc.inspect().comments == ()
     accepted = doc.accept(ids=["body:rev:1"])
     assert [c.id for c in accepted.changes()] == ["body:rev:2"]
     assert [p.text for p in accepted.accept().inspect().paragraphs] == ["keep new"]
@@ -405,6 +409,9 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
         doc.accept(ids="body:rev:1")  # type: ignore[arg-type]
     with pytest.raises(jubarte.JubarteError, match="no tracked change r9"):
         doc.accept(ids=["body:rev:9"])
+    # An id that is no change id is a bad argument.
+    with pytest.raises(ValueError, match="expected a change id"):
+        doc.accept(ids=["c5"])
 
 
 def test_a_plan_resolves_selected_changes_before_it_edits() -> None:

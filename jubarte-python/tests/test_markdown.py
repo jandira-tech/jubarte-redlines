@@ -7,6 +7,7 @@ and ``python -m jubarte_redlines convert draft.md``."""
 
 from __future__ import annotations
 
+import json
 import re
 from io import BytesIO
 from pathlib import Path
@@ -93,7 +94,7 @@ def test_cli_convert_writes_markdown_as_a_docx_beside_it(tmp_path: Path, capsys:
     source.write_text(DRAFT, encoding="utf-8")
     assert main(["convert", str(source), "--page", "a4", "--author", "Legal"]) == 0
     out = tmp_path / "draft.docx"
-    assert f"wrote {out}" in capsys.readouterr().out
+    assert f"wrote {out} (docx, " in capsys.readouterr().err
     data = out.read_bytes()
     assert page_width(data) == "11906"
     assert 'w:author="Legal"' in document_xml(data)
@@ -141,7 +142,7 @@ def test_cli_convert_sniffs_markdown_whose_name_does_not_say_so(
     source.write_text(DRAFT, encoding="utf-8")
     out = tmp_path / f"{name}.docx" if named_output else source.with_suffix(".docx")
     assert main(["convert", str(source), *(["-o", str(out)] if named_output else [])]) == 0
-    assert f"wrote {out}" in capsys.readouterr().out
+    assert f"wrote {out} (docx, " in capsys.readouterr().err
     assert "<w:ins " in document_xml(out.read_bytes())
 
 
@@ -178,3 +179,15 @@ def test_cli_convert_reports_a_missing_markdown_file(tmp_path: Path, capsys: pyt
     err = capsys.readouterr().err
     assert f"reading {missing}" in err and "error:" in err
     assert not (tmp_path / "missing.docx").exists()
+
+
+def test_cli_convert_writes_markdown_as_the_snapshot_of_its_docx(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # -o FILE.json is the snapshot of the Word document the Markdown makes,
+    # as the binary writes it; never the .docx bytes under a .json name.
+    source = tmp_path / "draft.md"
+    source.write_text(DRAFT, encoding="utf-8")
+    out = tmp_path / "draft.json"
+    assert main(["convert", str(source), "-o", str(out)]) == 0
+    assert capsys.readouterr().err.startswith(f"wrote {out} (json, ")
+    snapshot = json.loads(out.read_text(encoding="utf-8"))
+    assert snapshot["schema_version"] == 1 and snapshot["summary"]["paragraphs"] > 0
