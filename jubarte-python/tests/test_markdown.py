@@ -191,3 +191,41 @@ def test_cli_convert_writes_markdown_as_the_snapshot_of_its_docx(tmp_path: Path,
     assert capsys.readouterr().err.startswith(f"wrote {out} (json, ")
     snapshot = json.loads(out.read_text(encoding="utf-8"))
     assert snapshot["schema_version"] == 1 and snapshot["summary"]["paragraphs"] > 0
+
+
+STAMP_REFERENCE = Path(__file__).resolve().parents[2] / "tests/fixtures/md-roundtrip/review/ref-stamp.docx"
+
+
+def test_cli_convert_signs_by_front_matter_then_reference_then_redline_now(tmp_path: Path) -> None:
+    """What names no one: the flags, else the front matter, else the
+    reference's creator and creation time, else Redline and now."""
+    from datetime import datetime, timezone
+
+    def stamped(markdown: str, *extra: str) -> str:
+        md = tmp_path / "in.md"
+        md.write_text(markdown, encoding="utf-8")
+        out = tmp_path / "out.docx"
+        assert main(["convert", str(md), "-o", str(out), "--force", *extra]) == 0
+        xml = document_xml(out.read_bytes())
+        at = xml.index("<w:ins ")
+        return xml[at : xml.index(">", at)]
+
+    front = "---\nauthor: Fran Front\nlast_modified: 2025-01-02T03:04:05Z\n---\n\nSome {++x++} here.\n"
+    ins = stamped(front, "--reference-doc", str(STAMP_REFERENCE))
+    assert 'w:author="Fran Front"' in ins and 'w:date="2025-01-02T03:04:05Z"' in ins, ins
+    ins = stamped("Some {++x++} here.\n", "--reference-doc", str(STAMP_REFERENCE))
+    assert 'w:author="Cleo Core"' in ins and 'w:date="2025-03-04T05:06:07Z"' in ins, ins
+    ins = stamped(front, "-a", "Cli Name", "-d", "2024-02-03T04:05:06Z")
+    assert 'w:author="Cli Name"' in ins and 'w:date="2024-02-03T04:05:06Z"' in ins, ins
+    now = lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    before = now()
+    ins = stamped("Some {++x++} here.\n")
+    after = now()
+    date = re.search(r'w:date="([^"]+)"', ins).group(1)
+    assert 'w:author="Redline"' in ins and before <= date <= after, ins
+
+
+def test_markdown_stamp_reads_front_matter_then_reference() -> None:
+    assert _native.markdown_stamp("---\nauthor: Ann\ncreated: 2026-03-02\n---\n\nT.\n") == ("Ann", "2026-03-02T00:00:00Z")
+    assert _native.markdown_stamp("T.\n", STAMP_REFERENCE.read_bytes()) == ("Cleo Core", "2025-03-04T05:06:07Z")
+    assert _native.markdown_stamp("T.\n") == (None, None)
