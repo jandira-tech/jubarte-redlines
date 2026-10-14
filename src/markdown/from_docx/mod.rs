@@ -501,10 +501,31 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     .collect()
             })
             .unwrap_or_default();
+        // Without Word's cached breaks (a document jubarte or another
+        // writer made) the layout pass counts the pages; its breaks alone
+        // would call a long page-break-free document one page.
+        let laid_out = || {
+            let track_changes = match options.revisions {
+                Revisions::Markup => super::TrackChanges::All,
+                Revisions::Accept => super::TrackChanges::Accept,
+                Revisions::Reject => super::TrackChanges::Reject,
+            };
+            super::page_texts(
+                bytes,
+                track_changes,
+                crate::convert::RevisionStyle::default(),
+            )
+            .ok()
+            .map(|pages| pages.len().max(1))
+        };
         let (pages, pages_source) = match (&options.pages, rendered) {
             (Some(pages), _) => (pages.len().max(1), header::PagesSource::Layout),
             (None, n) if n > 0 => (1 + n, header::PagesSource::Cached),
-            (None, _) => (1 + hard, header::PagesSource::Estimated),
+            // With page markers wanted, layout already failed: not again.
+            (None, _) => match (!options.page_markers).then(laid_out).flatten() {
+                Some(pages) => (pages, header::PagesSource::Layout),
+                None => (1 + hard, header::PagesSource::Estimated),
+            },
         };
         let theme = package.xml("word/theme/theme1.xml").ok().flatten();
         let mut heading_styles: Vec<(usize, String)> = Vec::new();

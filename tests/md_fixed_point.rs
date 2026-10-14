@@ -26,6 +26,9 @@ use regex::Regex;
 
 const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 
+/// The page count and its source at the end of the `body:` line.
+static PAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r", \d+ pages?\s+#.*$").unwrap());
+
 /// The Markdown fixtures written by hand, in the view's dialect; every other
 /// one is a view of a docx listed in `views.txt`.
 const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
@@ -63,6 +66,15 @@ fn comparable(markdown: &str) -> String {
             front_matter = i == 0;
         }
         if front_matter && (line.starts_with("source: ") || line.starts_with("sha256: ")) {
+            continue;
+        }
+        // The page count is measured, not written: Word's cached layout
+        // counts the source, jubarte's layout counts what it wrote. Arthur,
+        // 2026-10-13: "we don't force page count into the docx".
+        if front_matter && let Some(pages) = PAGES.find(line).filter(|_| line.starts_with("body: "))
+        {
+            out.push_str(&line[..pages.start()]);
+            out.push('\n');
             continue;
         }
         out.push_str(line);
