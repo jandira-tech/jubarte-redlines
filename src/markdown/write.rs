@@ -76,6 +76,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     };
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
+    writer.note_breaks = note_breaks(&source);
     for event in Parser::new_ext(&source, parser_options()) {
         writer.event(event);
     }
@@ -137,6 +138,45 @@ enum CellShape {
     /// A grid column the cell before spans: the view prints it as an empty
     /// cell, which is no cell of its own.
     Spanned,
+}
+
+/// Whether each footnote definition of `source`, in order, ends paragraphs
+/// at its `<br>`s: when they and its id line (`<!-- footnotes.p2-p3 -->`)
+/// count the same paragraphs, as a table row's do.
+fn note_breaks(source: &str) -> Vec<bool> {
+    let mut breaks = Vec::new();
+    let mut html = String::new();
+    // The open definition's paragraphs, as its id line counts them, and
+    // its `<br>`s.
+    let mut open: Option<(usize, usize)> = None;
+    for event in Parser::new_ext(source, parser_options()) {
+        match event {
+            Event::Start(Tag::HtmlBlock) => html.clear(),
+            Event::Html(text) => html.push_str(&text),
+            Event::Start(Tag::FootnoteDefinition(_)) => {
+                let counted = html
+                    .lines()
+                    .rev()
+                    .find_map(view_notes::note_paragraphs)
+                    .unwrap_or(0);
+                open = Some((counted, 0));
+                html.clear();
+            }
+            Event::End(TagEnd::FootnoteDefinition) => {
+                if let Some((counted, lines)) = open.take() {
+                    breaks.push(counted > 1 && lines + 1 == counted);
+                }
+            }
+            Event::InlineHtml(text) if is_line_break(&text) => {
+                if let Some((_, lines)) = &mut open {
+                    *lines += 1;
+                }
+            }
+            Event::Start(_) if open.is_none() => html.clear(),
+            _ => {}
+        }
+    }
+    breaks
 }
 
 /// A plan for each table of `source`, in order; `None` for a table no table
@@ -625,6 +665,10 @@ struct Writer<'o, 'a> {
     references: Vec<(String, Option<(Kind, u32)>)>,
     /// The footnote definition being read.
     target: Option<String>,
+    /// What the comment closing a note's definition says, by label: the
+    /// marks its text does not show (`<!-- rev footnotes.r11 @AL -->`) and
+    /// its formatting changes.
+    note_clauses: HashMap<String, view_notes::IdLine>,
 
     // Block context.
     paragraph: Option<usize>,
@@ -651,6 +695,11 @@ struct Writer<'o, 'a> {
     /// end paragraphs.
     row_number: usize,
     row_breaks: bool,
+    /// Whether each footnote definition's `<br>`s end paragraphs
+    /// ([`note_breaks`]), how many definitions are read, and the open one's.
+    note_breaks: Vec<bool>,
+    note_count: usize,
+    note_paragraph_breaks: bool,
     /// The number of the next cell paragraph, when the table line counts
     /// the open row's paragraphs one by one.
     cell_paragraph: Option<usize>,
@@ -747,6 +796,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             shared_tags: Vec::new(),
             references: Vec::new(),
             target: None,
+            note_clauses: HashMap::new(),
             paragraph: None,
             paragraph_serial: 0,
             paragraph_runs: 0,
@@ -760,6 +810,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             table_count: 0,
             row_number: 0,
             row_breaks: false,
+            note_breaks: Vec::new(),
+            note_count: 0,
+            note_paragraph_breaks: false,
             cell_paragraph: None,
             row_shapes: Vec::new(),
             row_pad: Vec::new(),
@@ -924,6 +977,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                 // An id line with no text before it is a body paragraph.
                 self.textless_paragraph();
                 self.end_paragraph();
+                self.note_paragraph_breaks = self
+                    .note_breaks
+                    .get(self.note_count)
+                    .copied()
+                    .unwrap_or(false);
+                self.note_count += 1;
                 let label = critic::decode(&label);
                 // A second definition of a label is not the note's text.
                 let label = if self.definitions.contains_key(&label) {
@@ -1070,6 +1129,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             TagEnd::FootnoteDefinition => {
                 self.end_paragraph();
                 self.target = None;
+                self.note_paragraph_breaks = false;
             }
             TagEnd::Table => {
                 self.story().push(Item::TableEnd);
@@ -2103,6 +2163,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn inline_html(&mut self, html: &str) {
+        if self.note_clause(html) {
+            return;
+        }
         let Some(HtmlTag {
             name,
             closing,
@@ -2171,6 +2234,37 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// Reads the comment that closes a note's definition in the view
+    /// (`[^1]: Text. <!-- rev footnotes.r11 @AL -->`), and drops the space
+    /// before it, which the view writes only to set the comment apart.
+    fn note_clause(&mut self, html: &str) -> bool {
+        let Some(label) = self.target.clone().filter(|_| self.view) else {
+            return false;
+        };
+        let Some(line) = html
+            .trim()
+            .strip_prefix("<!--")
+            .and_then(|rest| rest.strip_suffix("-->"))
+            .and_then(|inner| view_notes::id_line(&format!("<!-- p0 {} -->", inner.trim())))
+            .filter(|line| line.style.is_none() && !(line.rev.is_empty() && line.fmt.is_empty()))
+        else {
+            return false;
+        };
+        let story = self.story();
+        if let Some(Item::Run(Run {
+            content: Content::Text(text),
+            ..
+        })) = story.last_mut()
+        {
+            text.truncate(text.trim_end().len());
+            if text.is_empty() {
+                story.pop();
+            }
+        }
+        self.note_clauses.insert(label, line);
+        true
+    }
+
     /// Closes every inline formatting mark still open.
     /// A link to `url` (`#anchor` for a heading) starts.
     fn link_start(&mut self, url: &str, title: Option<String>) {
@@ -2218,8 +2312,10 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn line_break(&mut self) {
         if let Some(comment) = &mut self.comment {
             comment.paragraphs.push(String::new());
-        } else if self.cell.is_some() && self.row_breaks {
-            // A cell's paragraphs, as the view joins them.
+        } else if (self.cell.is_some() && self.row_breaks)
+            || (self.target.is_some() && self.note_paragraph_breaks)
+        {
+            // A cell's or a note's paragraphs, as the view joins them.
             self.ensure_paragraph();
             self.end_paragraph();
             self.begin_paragraph();
@@ -2420,6 +2516,18 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// A change of its own for `tag`: attributed and numbered as it says.
+    fn tag_serial(&mut self, tag: &view_notes::Tag) -> u32 {
+        self.serial += 1;
+        let serial = self.serial;
+        let attribution = self.view_author(&tag.handle, tag.date.as_deref());
+        self.document.attributions.insert(serial, attribution);
+        if !tag.ids.is_empty() {
+            self.document.revision_ids.insert(serial, tag.ids.clone());
+        }
+        serial
+    }
+
     /// Fixes `paragraph`'s mark as a view line says it: `mark`, numbered and
     /// attributed as its tag says, or none.
     fn fix_mark(&mut self, paragraph: &mut Paragraph, mark: Option<(Kind, view_notes::Tag)>) {
@@ -2427,13 +2535,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some((kind, tag)) = mark else {
             return;
         };
-        self.serial += 1;
-        let serial = self.serial;
-        let attribution = self.view_author(&tag.handle, tag.date.as_deref());
-        self.document.attributions.insert(serial, attribution);
-        if !tag.ids.is_empty() {
-            self.document.revision_ids.insert(serial, tag.ids);
-        }
+        let serial = self.tag_serial(&tag);
         paragraph.mark = Some(kind);
         paragraph.mark_by = Some(serial);
     }
@@ -2583,6 +2685,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 })];
                 items.push(Item::ParagraphEnd);
             }
+            let clauses = self.note_clauses.remove(&label).unwrap_or_default();
             // A note without changes of its own is in its reference's
             // change, attribution and all.
             if let Some((kind, serial)) = change
@@ -2592,7 +2695,41 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             // The note's reference mark goes with its text when all of it
             // is the reference's change.
-            let change = change.filter(|(kind, _)| only_changed_by(&items, *kind));
+            let mut change = change.filter(|(kind, _)| only_changed_by(&items, *kind));
+            // Word's shape for a note inserted or deleted with its
+            // reference: each paragraph's mark a change of its own, and one
+            // more holding its text (the first's with the reference mark),
+            // numbered in that order as the view names them.
+            if let Some((kind, _)) = change
+                && !self.resolved
+                && in_one_change(&items, kind)
+                && clauses.rev.len() == 2 * paragraphs(&items)
+            {
+                let serials: Vec<u32> =
+                    clauses.rev.iter().map(|tag| self.tag_serial(tag)).collect();
+                own_note_marks(&mut items, kind, &serials);
+                change = serials.get(1).map(|&first| (kind, first));
+            } else if !self.resolved
+                && let Some(Item::Paragraph(last)) = items
+                    .iter_mut()
+                    .rev()
+                    .find(|item| matches!(item, Item::Paragraph(_)))
+            {
+                last.unshown = clauses
+                    .rev
+                    .iter()
+                    .map(|tag| self.format_mark(tag))
+                    .collect();
+            }
+            if !clauses.fmt.is_empty()
+                && let Some(Item::Paragraph(first)) = items.first_mut()
+            {
+                first.formats = clauses
+                    .fmt
+                    .iter()
+                    .map(|tag| self.format_mark(tag))
+                    .collect();
+            }
             finish_story(&mut items);
             self.document.notes.push(Note {
                 items,
@@ -3046,6 +3183,51 @@ fn only_changed_by(items: &[Item], kind: Kind) -> bool {
         Item::Run(run) => run.change.is_some_and(|(k, _)| k == kind),
         _ => true,
     })
+}
+
+/// Whether every run and every paragraph mark but the last of a note is in
+/// one change of `kind`.
+fn in_one_change(items: &[Item], kind: Kind) -> bool {
+    let last = items
+        .iter()
+        .rposition(|item| matches!(item, Item::Paragraph(_)));
+    let mut serial = None;
+    items.iter().enumerate().all(|(index, item)| {
+        let change = match item {
+            Item::Run(run) => run.change,
+            Item::Paragraph(paragraph) if Some(index) != last => {
+                paragraph.mark.zip(paragraph.mark_by)
+            }
+            _ => return true,
+        };
+        change.is_some_and(|(own, by)| own == kind && *serial.get_or_insert(by) == by)
+    })
+}
+
+fn paragraphs(items: &[Item]) -> usize {
+    items
+        .iter()
+        .filter(|item| matches!(item, Item::Paragraph(_)))
+        .count()
+}
+
+/// Gives a note in one change Word's own marks: paragraph by paragraph,
+/// its mark the change `serials` names first and its runs the next.
+fn own_note_marks(items: &mut [Item], kind: Kind, serials: &[u32]) {
+    let mut next = serials.iter().copied();
+    let mut runs = None;
+    for item in items {
+        match item {
+            Item::Paragraph(paragraph) => {
+                paragraph.mark = Some(kind);
+                paragraph.mark_by = next.next();
+                paragraph.mark_fixed = true;
+                runs = next.next();
+            }
+            Item::Run(run) => run.change = runs.map(|serial| (kind, serial)),
+            _ => {}
+        }
+    }
 }
 
 fn has_changes(items: &[Item]) -> bool {

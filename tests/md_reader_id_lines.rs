@@ -677,3 +677,114 @@ fn a_dated_range_puts_its_last_day_on_the_mark_written_last() {
         assert!(document.contains(mark), "{mark} in {document}");
     }
 }
+
+#[test]
+fn a_note_inserted_or_deleted_with_its_reference_keeps_words_shape() {
+    // Word marks such a note's paragraph mark (`footnotes.r11`) and wraps
+    // its reference mark and text in one change (`footnotes.r12`); the
+    // view prints the note in its reference's change and names both.
+    let body = "<!-- p0 -->\nAdded{++[^1]++}{>>r10 @AC<<} and cut{--[^2]--}{>>r20 @AC<<}.\n\n\
+                <!-- footnotes.p0 -->\n\
+                {++[^1]: An inserted note.++}{>>r10 @AC<<} <!-- rev footnotes.r11 @AC; footnotes.r12 @AC -->\n\
+                <!-- footnotes.p1 -->\n\
+                {--[^2]: A deleted note.--}{>>r20 @AC<<} <!-- rev footnotes.r21 @AC; footnotes.r22 @AC -->";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{AUTHORS}{body}\n")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let notes = common::docx::part_string(&docx, "word/footnotes.xml").expect("footnotes.xml");
+    for (kind, mark, run, text) in [
+        ("ins", 11, 12, "<w:t xml:space=\"preserve\">"),
+        ("del", 21, 22, "<w:delText xml:space=\"preserve\">"),
+    ] {
+        let paragraph_mark = format!("<w:rPr><w:{kind} w:id=\"{mark}\" w:author=\"Ann Counsel\"");
+        assert!(
+            notes.contains(&paragraph_mark),
+            "{paragraph_mark} in {notes}"
+        );
+        let wrap = notes
+            .split_once(&format!("<w:{kind} w:id=\"{run}\" "))
+            .map(|(_, rest)| {
+                rest.split_once(&format!("</w:{kind}>"))
+                    .map_or(rest, |(inside, _)| inside)
+            })
+            .unwrap_or_else(|| panic!("{kind} {run} in {notes}"));
+        assert!(
+            wrap.contains("Ref/>"),
+            "the reference mark in {kind} {run}: {wrap}"
+        );
+        assert!(
+            wrap.contains(text) && wrap.contains("note."),
+            "the text in {kind} {run}: {wrap}"
+        );
+    }
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
+}
+
+#[test]
+fn a_tracked_note_reads_with_one_space_after_its_label() {
+    // Word's text after the reference mark starts with a space (` An
+    // inserted note.`): the label's own space stands for it, as in an
+    // untracked note.
+    let docx = std::fs::read("tests/fixtures/md-roundtrip/edges/edge-notes-tracked.docx")
+        .expect("the edge fixture");
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    for line in [
+        "{++[^1]: An inserted note.++}{>>r10 @AL<<} <!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->",
+        "{--[^2]: A deleted note.--}{>>r20 @AL<<} <!-- rev footnotes.r21 @AL; footnotes.r22 @AL -->",
+    ] {
+        assert!(view.contains(line), "{line} in {view}");
+    }
+}
+
+#[test]
+fn a_note_of_two_paragraphs_keeps_them() {
+    // The view joins a note's paragraphs with `<br>` when its id line
+    // counts them; a note in its reference's change names every mark of its
+    // own after it, paragraph marks too.
+    let docx = std::fs::read("tests/fixtures/md-roundtrip/edges/edge-notes-tracked.docx")
+        .expect("the edge fixture");
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let line = "<!-- footnotes.p2-p3 -->\n{++[^3]: Two paragraphs,<br>inserted.++}{>>r30 @AL<<} \
+                <!-- rev footnotes.r31 @AL; footnotes.r32 @AL; footnotes.r33 @AL; footnotes.r34 @AL -->";
+    assert!(view.contains(line), "{line} in {view}");
+    for body in [
+        "<!-- p0 -->\nSee[^1].\n\n<!-- footnotes.p0-p1 -->\n[^1]: One,<br>two.",
+        "<!-- p0 -->\nSee[^1].\n\n<!-- footnotes.p0 -->\n[^1]: One,<br>broken.",
+    ] {
+        let docx = markdown_to_docx(
+            &as_view(&format!("{AUTHORS}{body}\n")),
+            &DocxOptions::default(),
+        )
+        .expect("the view reads")
+        .docx;
+        let notes = common::docx::part_string(&docx, "word/footnotes.xml").expect("footnotes.xml");
+        // The note is the part's last, after Word's separators.
+        let note = notes
+            .rsplit_once("<w:footnote ")
+            .map_or("", |(_, note)| note);
+        let paragraphs = note.matches("<w:p>").count() + note.matches("<w:p ").count();
+        let want = if body.contains("p0-p1") { 2 } else { 1 };
+        assert_eq!(paragraphs, want, "{body}: {notes}");
+        assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
+    }
+}

@@ -566,6 +566,18 @@ fn note_line<'l>(line: &'l str, part: &str) -> Option<&'l str> {
         .map(|_| id)
 }
 
+/// How many paragraphs a note definition's id line counts: one for
+/// `<!-- footnotes.p2 -->`, two for `<!-- endnotes.p2-p3, rev … -->`.
+pub(super) fn note_paragraphs(line: &str) -> Option<usize> {
+    let id = note_line(line, "footnotes").or_else(|| note_line(line, "endnotes"))?;
+    let (_, range) = id.split_once('.')?;
+    let range = range.trim_end_matches(',');
+    let (first, last) = range.split_once('-').unwrap_or((range, range));
+    let first = crate::ids::short_number(first, 'p')?;
+    let last = crate::ids::short_number(last, 'p')?;
+    last.checked_sub(first)?.checked_add(1)
+}
+
 /// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).
 pub(super) fn endnote_line(line: &str) -> bool {
     note_line(line, "endnotes").is_some()

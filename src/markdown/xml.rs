@@ -597,11 +597,22 @@ pub(super) fn story(
                         out,
                         "<w:r><w:{text} xml:space=\"preserve\"> </w:{text}></w:r>"
                     );
-                    if let Some((kind, _)) = change {
-                        out.push_str(match kind {
-                            Kind::Insert => "</w:ins>",
-                            Kind::Delete => "</w:del>",
-                        });
+                    // Word's one mark for the reference mark and the text
+                    // after it, when the text is in the same change.
+                    let text_change = items[at + 1..].iter().find_map(|item| match item {
+                        Item::Run(run) => Some(run.change),
+                        _ => None,
+                    });
+                    if let Some((kind, by)) = change {
+                        if text_change == Some(change) {
+                            spend(&mut natural, by);
+                            open = change;
+                        } else {
+                            out.push_str(match kind {
+                                Kind::Insert => "</w:ins>",
+                                Kind::Delete => "</w:del>",
+                            });
+                        }
                     }
                 }
             }

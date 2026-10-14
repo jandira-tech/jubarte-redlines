@@ -385,12 +385,14 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let around = std::mem::replace(&mut writer.revisions, changes);
         writer.lead = Some(format!("[^{index}]: "));
         writer.story = note_stories.get(&key.0).cloned();
-        let parts = note
+        let parts: Vec<critic::Part> = note
             .children_named("p")
             .map(|p| {
                 let inline = writer.paragraph_inline(p).0.into_inline();
+                // A line break is `<br>` in the agent view, as in a cell.
+                let line_break = if writer.agent { "<br>" } else { " " };
                 (
-                    inline.render(true).replace('\n', " "),
+                    inline.render(true).replace('\n', line_break),
                     writer.note_mark(p),
                     inline.edges(),
                 )
@@ -400,7 +402,19 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let story = writer.story.take();
         // Still set: no paragraph had text, so there is no note.
         if writer.lead.take().is_none() {
-            let mut def = critic::join_marked(parts, " ");
+            // The agent view joins a note's paragraphs with `<br>`, which
+            // its id line counts (`footnotes.p2-p3`), as a table's cells.
+            let mut def = if writer.agent && parts.len() > 1 {
+                critic::join_paragraphs(parts, "<br>", true)
+            } else {
+                critic::join_marked(parts, " ")
+            };
+            // The label's space stands for the one Word's text starts
+            // with, also when a change opens before the label.
+            let lead = format!("[^{index}]: ");
+            if let Some(at) = def.find(&format!("{lead} ")) {
+                def.remove(at + lead.len());
+            }
             // The tracked view names the note's changes its text cannot
             // show: formatting, a deleted reference mark, an empty run.
             if writer.agent
@@ -2762,7 +2776,12 @@ impl Writer<'_> {
             .map(|rpr| self.revision_marks(rpr))
             .unwrap_or_default();
         let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
-        marks.into_iter().nth(deleted.unwrap_or(0))
+        // A note printed in its reference's change shows a mark of that
+        // kind no further: the view names it with the note's other marks.
+        marks
+            .into_iter()
+            .nth(deleted.unwrap_or(0))
+            .filter(|(mark, _)| !self.revisions.iter().any(|(open, _)| open == mark))
     }
 
     /// The agent tag of a revision element, with its timestamp when
