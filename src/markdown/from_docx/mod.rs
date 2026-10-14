@@ -2510,7 +2510,13 @@ fn math_inner(element: &Element, depth: usize, name: bool) -> String {
                 format!("\\frac{{{num}}}{{{den}}}")
             }
         }
-        "sSup" => format!("{}^{}", base(&part("e")), group(&part("sup"))),
+        "sSup" => {
+            let sup = part("sup");
+            match super::math::prime_count(&sup) {
+                Some(count) => format!("{}{}", base(&part("e")), "'".repeat(count)),
+                None => format!("{}^{}", base(&part("e")), group(&sup)),
+            }
+        }
         "sSub" => format!("{}_{}", base(&part("e")), group(&part("sub"))),
         "sSubSup" => format!(
             "{}_{}^{}",
@@ -3232,6 +3238,19 @@ mod tests {
             (
                 format!("<m:eqArr>{}{}</m:eqArr>", e(&mr("x=1")), e(&mr("y=2"))),
                 r"\begin{aligned}x=1 \\ y=2\end{aligned}",
+            ),
+            // A prime superscript reads as the apostrophes that build it.
+            (
+                format!("<m:sSup>{}<m:sup>{}</m:sup></m:sSup>", e(&mr("f")), mr("′")),
+                "f'",
+            ),
+            (
+                format!("<m:sSup>{}<m:sup>{}</m:sup></m:sSup>", e(&mr("g")), mr("″")),
+                "g''",
+            ),
+            (
+                format!("<m:sSup>{}<m:sup>{}</m:sup></m:sSup>", e(&mr("h")), mr("′2")),
+                "h^{′2}",
             ),
             // Word aligns an array's lines at each `&` and draws none.
             (

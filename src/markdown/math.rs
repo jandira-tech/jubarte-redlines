@@ -819,6 +819,32 @@ impl Parser {
                     let node = self.scripts(base);
                     out.push(node);
                 }
+                // `f'` is `f` with a prime superscript, as Word builds it;
+                // `f'^2` puts the 2 after the prime.
+                Some(Token::Char('\'')) if !out.is_empty() => {
+                    let base = take_base(&mut out);
+                    let mut count = 0;
+                    while self.peek() == Some(&Token::Char('\'')) {
+                        self.at += 1;
+                        count += 1;
+                    }
+                    let mut sup = vec![self.text(&primes(count), Style::Math)];
+                    if self.peek() == Some(&Token::Sup) {
+                        self.at += 1;
+                        sup.extend(self.argument());
+                    }
+                    let sub = if self.peek() == Some(&Token::Sub) {
+                        self.at += 1;
+                        Some(self.argument())
+                    } else {
+                        None
+                    };
+                    out.push(Node::Scripts {
+                        base,
+                        sub,
+                        sup: Some(merge(sup)),
+                    });
+                }
                 _ => {
                     if let Some(node) = self.atom(stops) {
                         out.push(node);
@@ -1117,6 +1143,43 @@ impl Parser {
             "mathsf" => Some(styled(self.argument(), Style::Script("sans-serif"))),
             "mathtt" => Some(styled(self.argument(), Style::Script("monospace"))),
             "displaystyle" | "textstyle" | "scriptstyle" | "limits" | "nolimits" | "!" => None,
+            // A size for the bracket after it: Word's delimiter grows to its
+            // content, so the bracket alone builds it.
+            "big" | "bigl" | "bigr" | "bigm" | "Big" | "Bigl" | "Bigr" | "Bigm" | "bigg"
+            | "biggl" | "biggr" | "biggm" | "Bigg" | "Biggl" | "Biggr" | "Biggm" => None,
+            "not" => match self.peek().cloned() {
+                Some(Token::Char(c)) if !c.is_whitespace() => {
+                    self.at += 1;
+                    text(&negated(&c.to_string()))
+                }
+                Some(Token::Command(next)) => match SYMBOLS.iter().find(|(n, _)| *n == next) {
+                    Some((_, symbol)) => {
+                        self.at += 1;
+                        if next.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                            self.skip_spaces();
+                        }
+                        text(&negated(symbol))
+                    }
+                    None => text(&escaped(name)),
+                },
+                _ => text(&escaped(name)),
+            },
+            "bmod" => Some(Node::Group(vec![
+                Node::Text("mod".into(), Style::Upright, change),
+                Node::Text(" ".into(), Style::Math, change),
+            ])),
+            "pmod" => {
+                let mut body = vec![
+                    Node::Text("mod".into(), Style::Upright, change),
+                    Node::Text(" ".into(), Style::Math, change),
+                ];
+                body.extend(self.argument());
+                Some(delimiter("(", ")", merge(body)))
+            }
+            "hspace" | "hskip" | "kern" | "mspace" => {
+                let _ = self.raw_argument();
+                text(" ")
+            }
             "," | ":" | ">" => text("\u{2009}"),
             ";" => text("\u{2005}"),
             " " => text(" "),
@@ -1137,7 +1200,18 @@ impl Parser {
                 if let Some((_, symbol)) = SYMBOLS.iter().find(|(n, _)| *n == name) {
                     return text(symbol);
                 }
-                // An unknown command keeps its text and the space after it.
+                // An unknown command keeps its text and the space after it,
+                // and an argument right after it its braces.
+                if !spaced && self.peek() == Some(&Token::Open) {
+                    let mut nodes = vec![Node::Text(
+                        format!("{}{{", escaped(name)),
+                        Style::Math,
+                        change,
+                    )];
+                    nodes.extend(self.group());
+                    nodes.push(Node::Text("}".into(), Style::Math, self.change));
+                    return Some(Node::Group(nodes));
+                }
                 let space = if spaced { " " } else { "" };
                 text(&format!("{}{space}", escaped(name)))
             }
@@ -1256,7 +1330,11 @@ impl Parser {
     /// `\begin` read: a matrix or an equation array up to its `\end`.
     fn environment(&mut self) -> Node {
         let name = self.raw_argument();
-        let matrix = name.ends_with("matrix");
+        // `array`'s column spec (`{cc}`) aligns nothing Word keeps.
+        if name == "array" {
+            let _ = self.raw_argument();
+        }
+        let matrix = name.ends_with("matrix") || name == "array";
         let mut rows: Vec<Vec<Vec<Node>>> = vec![Vec::new()];
         loop {
             let cell = trimmed(self.list(Stops {
@@ -1307,6 +1385,67 @@ impl Parser {
             node
         }
     }
+}
+
+/// `count` primes as one character: ′, ″, ‴, ⁗, then ′ repeated.
+pub(super) fn primes(count: usize) -> String {
+    match count {
+        1 => "′".into(),
+        2 => "″".into(),
+        3 => "‴".into(),
+        4 => "⁗".into(),
+        n => "′".repeat(n),
+    }
+}
+
+/// How many primes `text` is, if it is only primes.
+pub(super) fn prime_count(text: &str) -> Option<usize> {
+    let mut count = 0;
+    for c in text.chars() {
+        count += match c {
+            '′' => 1,
+            '″' => 2,
+            '‴' => 3,
+            '⁗' => 4,
+            _ => return None,
+        };
+    }
+    (count > 0).then_some(count)
+}
+
+/// `relation` negated: its own negated character, or the combining long
+/// solidus (U+0338) Word overlays.
+fn negated(relation: &str) -> String {
+    const NEGATED: [(&str, &str); 24] = [
+        ("=", "≠"),
+        ("<", "≮"),
+        (">", "≯"),
+        ("∈", "∉"),
+        ("∋", "∌"),
+        ("⊂", "⊄"),
+        ("⊃", "⊅"),
+        ("⊆", "⊈"),
+        ("⊇", "⊉"),
+        ("≡", "≢"),
+        ("∼", "≁"),
+        ("≤", "≰"),
+        ("≥", "≱"),
+        ("≈", "≉"),
+        ("≅", "≇"),
+        ("≃", "≄"),
+        ("∣", "∤"),
+        ("∥", "∦"),
+        ("≺", "⊀"),
+        ("≻", "⊁"),
+        ("⊑", "⋢"),
+        ("⊒", "⋣"),
+        ("∃", "∄"),
+        ("≍", "≭"),
+    ];
+    NEGATED
+        .iter()
+        .find(|(from, _)| *from == relation)
+        .map_or_else(|| format!("{relation}\u{338}"), |(_, to)| (*to).to_string())
 }
 
 fn delimiter(open: &str, close: &str, body: Vec<Node>) -> Node {
@@ -1891,6 +2030,47 @@ mod tests {
     fn an_unknown_command_stays_as_text() {
         assert_eq!(shape(r"\foo x"), r"r(\foo x)");
         assert_eq!(shape(r"\alpha+\beta"), "r(α+β)");
+        // Its argument keeps its braces: `\foo{x}` is not `\foox`.
+        assert_eq!(shape(r"\foo{x}"), r"r(\foo{x})");
+    }
+
+    #[test]
+    fn primes_are_a_superscript_as_word_builds_them() {
+        assert_eq!(shape("f'(x)"), "sSup(e(r(f))sup(r(′)))d(e(r(x)))");
+        assert_eq!(shape("f''"), "sSup(e(r(f))sup(r(″)))");
+        assert_eq!(shape("f'''"), "sSup(e(r(f))sup(r(‴)))");
+        assert_eq!(shape("f'^2"), "sSup(e(r(f))sup(r(′2)))");
+        assert_eq!(shape("'a"), "r('a)");
+    }
+
+    #[test]
+    fn not_negates_the_next_relation() {
+        assert_eq!(shape(r"a \not\in B"), shape(r"a \notin B"));
+        assert_eq!(shape(r"a \not= b"), shape("a ≠ b"));
+        assert_eq!(shape(r"\not\subset"), "r(⊄)");
+        assert_eq!(shape(r"\not\perp"), "r(⊥\u{338})");
+    }
+
+    #[test]
+    fn sized_delimiters_are_delimiters() {
+        assert_eq!(shape(r"\bigl( x \bigr)"), shape("( x )"));
+        assert_eq!(shape(r"\Bigl[ y \Bigr]"), shape("[ y ]"));
+        assert_eq!(shape(r"\biggl\{ z \biggr\}"), shape(r"\{ z \}"));
+    }
+
+    #[test]
+    fn an_array_is_a_matrix_without_its_column_spec() {
+        assert_eq!(
+            shape(r"\begin{array}{cc} a & b \\ c & d \end{array}"),
+            shape(r"\begin{matrix} a & b \\ c & d \end{matrix}")
+        );
+    }
+
+    #[test]
+    fn modulo_and_spacing_commands() {
+        assert_eq!(shape(r"a \bmod n"), "r(a )r(mod)r( n)");
+        assert_eq!(shape(r"a \pmod{n}"), "r(a )d(e(r(mod)r( n)))");
+        assert_eq!(shape(r"x\hspace{1em}y"), "r(x y)");
     }
 
     #[test]

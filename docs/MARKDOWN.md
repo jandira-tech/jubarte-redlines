@@ -99,20 +99,24 @@ with every structure Word wrote.
 | --- | --- |
 | `\frac{a}{b}`, `\binom{n}{k}`, `\sqrt[3]{x}` | fraction, bar-less fraction in brackets, radical |
 | `x^2`, `x_i`, `x_i^2`, `\prescript{a}{b}{X}` | scripts; a script's base is the character, group or structure before it |
-| `(…)`, `[…]`, `\{…\}`; `\left⟨ a \middle\| b \right.` | a delimiter: balanced brackets build one, as Word builds `f(x)`; `\left` names any other |
+| `f'`, `f''`, `f'^2` | a prime superscript (′ ″ ‴), as Word builds `f'`; it reads back as the apostrophes |
+| `(…)`, `[…]`, `\{…\}`; `\left⟨ a \middle\| b \right.` | a delimiter: balanced brackets build one, as Word builds `f(x)`; `\left` names any other; `\bigl(` … `\Biggr)` are their bracket, as Word's delimiter grows to its content |
 | `\sin x`, `\lim_{n\to\infty} a_n`, `\operatorname{argmax}_x f` | a function, its limit under it |
 | `\sum_{i=1}^n x_i`, `\int_0^1`, `\iint`, `\bigcup` … | n-ary operator; it applies to the next character or group and its scripts |
 | `\hat`, `\tilde`, `\bar`, `\dot`, `\ddot`, `\vec`; `\overline`, `\underline` | accent; bar |
 | `\underbrace{x}_{n}`, `\overbrace{x}^{n}`, `\underset{a}{b}`, `\overset{a}{b}` | brace and limit, stacked limit |
-| `\begin{matrix}`, `pmatrix`, `bmatrix` …; `aligned`, `cases` | matrix; equation array |
+| `\begin{matrix}`, `pmatrix`, `bmatrix`, `array` …; `aligned`, `cases` | matrix (`array`'s column spec is dropped); equation array, aligned at each `&` as Word aligns it |
 | `\mathrm`, `\mathbf`, `\boldsymbol`, `\mathbb`, `\mathcal`, `\text` | the run's math style, script or ordinary text |
 | `\alpha` … `\Omega`, `\pm`, `\le`, `\to`, `\infty` … | the character itself |
+| `\not\in`, `\not=`, `\not\perp` | the negated character (∉, ≠), else the character with U+0338 over it |
+| `\bmod`, `\pmod{n}`, `\hspace{…}` | upright mod; (mod n); a space |
 | `\lparen`, `\lbrack`, `\lbrace`, `\backslash` | a bracket or backslash that is text |
 
 A top-level `\\` breaks the equation into lines of an equation array:
 Word draws the equations of one paragraph side by side. Spaces inside
 text stay, as Word keeps them; at an argument's edges they go, as LaTeX
-ignores them. An unknown command stays as its text. Inside the math,
+ignores them. An unknown command stays as its text, with the braces of
+an argument right after it (`\foo{x}`). Inside the math,
 `{++…++}` and `{--…--}` mark the runs they hold as inserted or deleted,
 the way Word marks a change inside an equation; an equation inserted or
 deleted whole reads as `{++$E=mc^2$++}`. Every run is set in Cambria
