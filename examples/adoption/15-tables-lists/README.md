@@ -96,17 +96,17 @@ Where jubarte is worse, plainly:
   already exist in `input.docx` (that is why `make_input.py` writes
   them). An agent that wants "insert new list items as a tracked list"
   must run two plans, or start from Markdown.
-- The plan field wants `kind_of_list: "bullet"`; the adoption page's
-  own word for it ("bulleted, decimal or lower-letter") is refused with
-  `INVALID_PLAN: unknown variant 'bulleted'`.
+- The plan field wants `kind_of_list: "bullet"`; `"bulleted"` is refused
+  with `INVALID_PLAN: unknown variant 'bulleted'`.
 
 Discrepancies with the adoption pages:
 
-1. `docs/adoption/openai-doc-skill.md` says the `list` operation covers
+1. `docs/adoption/openai-doc-skill.md` said the `list` operation covers
    "bulleted, decimal or lower-letter" — the accepted variant is
    `bullet`, not `bulleted` (verified: `bulleted` → exit 3,
    `INVALID_PLAN: unknown variant 'bulleted', expected one of 'bullet',
-   'decimal', 'lower_letter'`).
+   'decimal', 'lower_letter'`). The page now names `bullet`, `decimal`
+   and `lower_letter`.
 2. Same page: "`insert_table` (`rows`, `header_row`, `widths_dxa`,
    `style`) and `list` ... both tracked in the redline" — verified true
    here; no discrepancy.
