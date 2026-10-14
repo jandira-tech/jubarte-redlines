@@ -676,3 +676,118 @@ fn the_retired_cell_form_edits_the_same_cell() {
         common::docx::part_string(&b, "word/document.xml")
     );
 }
+
+fn listed(docx: &[u8]) -> Vec<String> {
+    jubarte::changes::list_changes(docx)
+        .unwrap()
+        .into_iter()
+        .map(|c| format!("{:?} {:?}", c.kind, c.text))
+        .collect()
+}
+
+/// `edit -p r0 --accept -p r1 --reject` resolves those two revisions and
+/// keeps the others; `-p c5 --reply` beside them writes the reply
+/// `add -p c5 --content` writes.
+#[test]
+fn the_cli_resolves_revisions_and_replies_by_their_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("received.docx"), received()).unwrap();
+    let run = |verb: &str, args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .arg(verb)
+            .arg("received.docx")
+            .args(args)
+            .args([
+                "--author",
+                "Ann Counsel",
+                "--datetime",
+                "2026-10-01T09:00:00Z",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(
+        "edit",
+        &[
+            "-p",
+            "r0",
+            "--accept",
+            "-p",
+            "r1",
+            "--reject",
+            "--out-dir",
+            "resolved",
+        ],
+    );
+    let resolved = std::fs::read(dir.path().join("resolved/redline.docx")).unwrap();
+    let before = listed(&received());
+    let after = listed(&resolved);
+    assert_eq!(after, before[2..], "{after:?}");
+    let text = common::docx::part_string(&resolved, "word/document.xml").unwrap();
+    assert!(
+        text.contains(">quarterly<") && text.contains(">weekly<"),
+        "the accepted insertion and the rejected deletion stay as text"
+    );
+
+    run(
+        "edit",
+        &["-p", "c5", "--reply", "Agreed.", "--out-dir", "reply"],
+    );
+    run(
+        "add",
+        &["-p", "c5", "--reply", "Agreed.", "--out-dir", "add-reply"],
+    );
+    run(
+        "add",
+        &["-p", "c5", "--content", "Agreed.", "--out-dir", "content"],
+    );
+    let comments = |out: &str| {
+        let docx = std::fs::read(dir.path().join(out).join("redline.docx")).unwrap();
+        common::docx::part_string(&docx, "word/comments.xml").unwrap()
+    };
+    let want = comments("content");
+    assert!(want.contains(">Agreed.<"), "{want}");
+    assert_eq!(comments("reply"), want);
+    assert_eq!(comments("add-reply"), want);
+}
+
+/// A revision flag on a paragraph, a reply on a revision or a lone
+/// revision is a usage error (exit 2) naming the -p.
+#[test]
+fn the_cli_refuses_revision_and_reply_flags_on_the_wrong_location() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("received.docx"), received()).unwrap();
+    for (args, message) in [
+        (
+            &["-p", "p3", "--accept"][..],
+            "-p p3: --accept and --reject take a revision (-p r12)",
+        ),
+        (
+            &["-p", "r0"][..],
+            "-p r0: a revision takes --accept or --reject",
+        ),
+        (
+            &["-p", "r0", "--accept", "--reject"][..],
+            "-p r0: --accept and --reject exclude each other",
+        ),
+        (
+            &["-p", "p3", "--reply", "x"][..],
+            "-p p3: --reply is for a comment (-p c5)",
+        ),
+        (
+            &["-p", "c5", "--reply", "x", "--resolve"][..],
+            "-p c5: --reply takes no other flag",
+        ),
+    ] {
+        let out = edit_cli(dir.path(), &[&["received.docx"][..], args].concat());
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+    }
+}

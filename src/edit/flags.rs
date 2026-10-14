@@ -2,16 +2,20 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `edit` and `add` by flags: each `-p WHERE` with its `--anchor`,
-//! `--content`, `--delete`, `--resolve`, `--before`, `--comment` and
-//! `--style` becomes one operation of an [`EditPlan`]. The binary, the
-//! Python CLI and the npm CLI all build their plan here.
+//! `--content`, `--delete`, `--resolve`, `--reply`, `--before`, `--comment`
+//! and `--style` becomes one operation of an [`EditPlan`]; a `-p r12` with
+//! `--accept` or `--reject` joins the plan's `resolve_revisions`, which runs
+//! before the operations. The binary, the Python CLI and the npm CLI all
+//! build their plan here.
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    EditPlan, ExistingRevisions, HalfPoints, Operation, OperationKind, RunFormat, RunSpec,
-    Selector, Side,
+    EditPlan, ExistingRevisions, HalfPoints, Operation, OperationKind, ResolveRevisions, RunFormat,
+    RunSpec, Selector, Side,
 };
+use crate::changes::ChangeFilter;
+use crate::ids::Location;
 
 /// One operation as the flags describe it, grouped by its `-p`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +31,12 @@ pub struct FlagOp {
     pub delete: bool,
     /// `--resolve` (`edit` only).
     pub resolve: bool,
+    /// `--accept` (`edit` only): accept the revision `at` names.
+    pub accept: bool,
+    /// `--reject` (`edit` only): reject the revision `at` names.
+    pub reject: bool,
+    /// `--reply`: a reply to the comment `at` names.
+    pub reply: Option<String>,
     /// `--before` (`add` only).
     pub before: bool,
     /// `--comment` (`add` only).
@@ -71,11 +81,21 @@ pub fn plan_from_flags(
     }
     let mut operations = Vec::with_capacity(ops.len());
     let mut notes = Vec::new();
-    for (i, op) in ops.iter().enumerate() {
+    let (mut accept, mut reject) = (Vec::new(), Vec::new());
+    for op in ops {
+        if let Some((accepted, ids)) = revision_group(op)? {
+            if accepted { &mut accept } else { &mut reject }.extend(ids);
+            continue;
+        }
         let (kind, note) = flag_operation(verb, op)?;
         operations.push(Operation { id: None, kind });
-        notes.extend(note.map(|n| format!("op-{}: {n}", i + 1)));
+        notes.extend(note.map(|n| format!("op-{}: {n}", operations.len())));
     }
+    let side = |ids: Vec<String>| (!ids.is_empty()).then(|| ChangeFilter::ids(ids));
+    let resolve_revisions = (!accept.is_empty() || !reject.is_empty()).then(|| ResolveRevisions {
+        accept: side(accept),
+        reject: side(reject),
+    });
     let existing = existing.unwrap_or_else(|| {
         if crate::changes::list_changes(source).is_ok_and(|c| !c.is_empty()) {
             ExistingRevisions::Keep
@@ -90,7 +110,7 @@ pub fn plan_from_flags(
             author: author.to_string(),
             date: date.map(str::to_string),
             initials: None,
-            resolve_revisions: None,
+            resolve_revisions,
             existing_revisions: existing,
             operations,
             update_fields: false,
@@ -167,6 +187,37 @@ fn comment_number(at: &str) -> Option<u32> {
     }
 }
 
+/// A `-p r12 --accept` (or `--reject`) group: whether it accepts, and the
+/// long ids it names. `None` for a group that is an operation.
+fn revision_group(op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
+    let at = op.at.trim();
+    let bad = |m: &str| Err(format!("-p {at}: {m}"));
+    let ids = match crate::ids::parse_location(at) {
+        Ok(Location::Changes(ids)) => Some(ids),
+        _ => None,
+    };
+    let others = op.anchor.is_some()
+        || op.content.is_some()
+        || op.delete
+        || op.resolve
+        || op.before
+        || op.comment
+        || op.reply.is_some()
+        || !op.styles.is_empty();
+    match ids {
+        None if op.accept || op.reject => bad("--accept and --reject take a revision (-p r12)"),
+        None => Ok(None),
+        Some(_) if op.accept && op.reject => bad("--accept and --reject exclude each other"),
+        Some(_) if others || !(op.accept || op.reject) => {
+            bad("a revision takes --accept or --reject")
+        }
+        Some(ids) => Ok(Some((
+            op.accept,
+            ids.iter().map(crate::ids::ChangeId::long).collect(),
+        ))),
+    }
+}
+
 /// The operation one `-p` group stands for, and a note for the report.
 fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<String>), String> {
     use OperationKind as K;
@@ -174,6 +225,26 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     let bad = |m: &str| Err(format!("-p {at}: {m}"));
     if at.is_empty() {
         return Err("-p needs a location".into());
+    }
+    if let Some(reply) = &op.reply {
+        let Some(comment_id) = comment_number(at) else {
+            return bad("--reply is for a comment (-p c5)");
+        };
+        if op.anchor.is_some()
+            || op.content.is_some()
+            || op.delete
+            || op.resolve
+            || op.before
+            || op.comment
+            || !op.styles.is_empty()
+        {
+            return bad("--reply takes no other flag");
+        }
+        let (text, note) = content_text(reply);
+        return Ok((
+            K::ReplyComment { comment_id, text },
+            note.map(str::to_string),
+        ));
     }
     if op.delete && (op.content.is_some() || op.resolve) {
         return bad("--delete excludes --content and --resolve");
@@ -854,5 +925,151 @@ mod tests {
             ["op-1: content keeps its Markdown marks as text; use --style for formatting"]
         );
         assert_eq!(plan.plan.author, "Modified User");
+    }
+
+    fn with(at: &str, set: impl Fn(&mut FlagOp)) -> FlagOp {
+        let mut o = op(at);
+        set(&mut o);
+        o
+    }
+
+    /// `-p r1 --accept` and `-p header1.r2 --reject` join the plan's
+    /// `resolve_revisions` as long ids; the other groups stay operations,
+    /// numbered among themselves.
+    #[test]
+    fn revisions_go_to_resolve_revisions() {
+        let ops = [
+            with("r1", |o| o.accept = true),
+            with("p0", |o| o.content = Some("**x**".into())),
+            with("header1.r2", |o| o.reject = true),
+            with("r3+4", |o| o.accept = true),
+        ];
+        let built = plan_from_flags(Verb::Edit, &ops, "A", None, None, b"").unwrap();
+        assert_eq!(
+            built.plan.resolve_revisions,
+            Some(ResolveRevisions {
+                accept: Some(ChangeFilter::ids([
+                    "body:rev:1",
+                    "body:rev:3",
+                    "body:rev:4"
+                ])),
+                reject: Some(ChangeFilter::ids(["header1:rev:2"])),
+            })
+        );
+        assert_eq!(built.plan.operations.len(), 1);
+        assert_eq!(
+            built.notes,
+            ["op-1: content keeps its Markdown marks as text; use --style for formatting"]
+        );
+        let only = plan_from_flags(
+            Verb::Edit,
+            &[with("#7", |o| o.reject = true)],
+            "A",
+            None,
+            None,
+            b"",
+        )
+        .unwrap();
+        assert!(only.plan.operations.is_empty());
+        assert_eq!(
+            only.plan.resolve_revisions.unwrap().reject,
+            Some(ChangeFilter::ids(["body:rev:7"]))
+        );
+    }
+
+    /// `--reply` on `edit` and `add` is the reply `add -p c5 --content`
+    /// writes.
+    #[test]
+    fn reply_answers_a_comment_on_edit_and_add() {
+        let want = kind(Verb::Add, &with("c5", |o| o.content = Some("Yes.".into()))).unwrap();
+        for verb in [Verb::Edit, Verb::Add] {
+            for at in ["c5", "#c5"] {
+                assert_eq!(
+                    kind(verb, &with(at, |o| o.reply = Some("Yes.".into()))),
+                    Ok(want.clone()),
+                    "{verb:?} {at}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn revision_and_reply_flags_pair_only_with_their_kind() {
+        let refusal =
+            |verb: Verb, o: FlagOp| plan_from_flags(verb, &[o], "A", None, None, b"").unwrap_err();
+        let cases: Vec<(FlagOp, &str)> = vec![
+            (
+                with("p1", |o| o.accept = true),
+                "-p p1: --accept and --reject take a revision (-p r12)",
+            ),
+            (
+                with("c5", |o| o.reject = true),
+                "-p c5: --accept and --reject take a revision (-p r12)",
+            ),
+            (
+                with("r0", |o| o.content = Some("x".into())),
+                "-p r0: a revision takes --accept or --reject",
+            ),
+            (
+                with("r0", |_| {}),
+                "-p r0: a revision takes --accept or --reject",
+            ),
+            (
+                with("r0", |o| {
+                    o.accept = true;
+                    o.reject = true;
+                }),
+                "-p r0: --accept and --reject exclude each other",
+            ),
+            (
+                with("r0", |o| {
+                    o.accept = true;
+                    o.delete = true;
+                }),
+                "-p r0: a revision takes --accept or --reject",
+            ),
+            (
+                with("p1", |o| o.reply = Some("x".into())),
+                "-p p1: --reply is for a comment (-p c5)",
+            ),
+            (
+                with("r1", |o| o.reply = Some("x".into())),
+                "-p r1: a revision takes --accept or --reject",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.content = Some("y".into());
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.resolve = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.comment = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+        ];
+        for (o, message) in cases {
+            assert_eq!(refusal(Verb::Edit, o), message);
+        }
+        assert_eq!(
+            refusal(
+                Verb::Add,
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.before = true;
+                })
+            ),
+            "-p c5: --reply takes no other flag"
+        );
     }
 }
