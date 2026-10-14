@@ -18,6 +18,7 @@ import json
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -237,11 +238,12 @@ def build_server(*, root: Path) -> MCPServer:
         """Compare original with modified into a tracked-changes redline written to out.
 
         author signs every change; date is an ISO-8601 timestamp with an offset
-        (default: the engine's fixed timestamp). Returns out and the change list.
+        (default: now, UTC, as the CLI). Returns out and the change list.
         """
         a, b = load(original), load(modified)
         target = fresh(contained(out), overwrite)
-        options = engine(lambda: CompareOptions(date=date))
+        when = date if date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        options = engine(lambda: CompareOptions(date=when))
         redline = engine(lambda: a.compare(b, author=author, options=options))
         return {"out": write(target, redline.to_bytes()), "changes": _plain(engine(redline.changes))}
 

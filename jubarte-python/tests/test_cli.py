@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -115,7 +116,11 @@ def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
     a, b, out = tmp_path / "a.docx", tmp_path / "b.docx", tmp_path / "redline.docx"
     a.write_bytes(docx(para("alpha beta")))
     b.write_bytes(docx(para("alpha gamma")))
-    run = subprocess.run([script, "redline", str(a), str(b), "-o", str(out)], capture_output=True, text=True)
+    run = subprocess.run(
+        [script, "redline", str(a), str(b), "-d", "1970-01-01T00:00:00Z", "-o", str(out)],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode == 0, run.stderr
     assert out.read_bytes()[:2] == b"PK"
     usage = subprocess.run([script, "--help"], capture_output=True, text=True)
@@ -127,10 +132,10 @@ def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     a.write_bytes(docx(para("alpha beta")))
     b.write_bytes(docx(para("alpha gamma")))
     # Without -o, compare (and its alias) prints the redline's agent view.
-    assert main(["redline", str(a), str(b)]) == 0
+    assert main(["redline", str(a), str(b), "-d", "1970-01-01T00:00:00Z"]) == 0
     assert capsys.readouterr().out.startswith(f"---\nsource: {tmp_path / 'a_v_b.docx'} (not written; -o keeps it)\n")
     assert not (tmp_path / "a_v_b.docx").exists()
-    assert main(["redline", str(a), str(b), "-o", str(tmp_path / "a_v_b.docx")]) == 0
+    assert main(["redline", str(a), str(b), "-d", "1970-01-01T00:00:00Z", "-o", str(tmp_path / "a_v_b.docx")]) == 0
     capsys.readouterr()
     assert main(["changes", str(tmp_path / "a_v_b.docx"), "--json"]) == 0
     assert {json.loads(l)["kind"] for l in capsys.readouterr().out.splitlines()} >= {"insertion", "deletion"}
@@ -266,7 +271,10 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     a.write_bytes(docx(para("alpha beta")))
     b.write_bytes(docx(para("alpha gamma")))
     redline = tmp_path / "redline.docx"
-    assert main(["compare", str(a), str(b), "-o", str(redline), "--author", "Legal"]) == 0
+    assert main([
+        "compare", str(a), str(b), "-o", str(redline),
+        "-d", "1970-01-01T00:00:00Z", "--author", "Legal",
+    ]) == 0
     assert redline.is_file()
     written = capsys.readouterr()
     assert written.out == "" and f"wrote {redline} (docx, " in written.err
@@ -274,6 +282,18 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
     assert {r["kind"] for r in rows} >= {"insertion", "deletion"}
     assert all(r["author"] == "Legal" for r in rows)
+    assert {r["date"] for r in rows} == {"1970-01-01T00:00:00Z"}
+    # Without -d the revisions are dated now (D17), as the native CLI does.
+    def stamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    before = stamp()
+    assert main(["compare", str(a), str(b), "-o", str(tmp_path / "now.docx"), "-q"]) == 0
+    after = stamp()
+    capsys.readouterr()
+    assert main(["changes", str(tmp_path / "now.docx"), "--json"]) == 0
+    dates = {json.loads(l)["date"] for l in capsys.readouterr().out.splitlines()}
+    assert dates and all(before <= d <= after for d in dates), (before, dates, after)
     assert main(["changes", str(redline)]) == 0
     assert "change(s)" in capsys.readouterr().out
     # `revisions` (the Docxodus GetRevisions listing) left the CLI; `changes`
@@ -677,7 +697,7 @@ def test_shorthand_view_preserves_existing_output(
     assert output.read_bytes() == sentinel
 
     # compare prints the same view; only -o writes, and never over a file.
-    assert main(["compare", str(old), str(new)]) == 0
+    assert main(["compare", str(old), str(new), "-d", "1970-01-01T00:00:00Z"]) == 0
     assert capsys.readouterr().out.startswith(f"---\nsource: {output} (not written; -o keeps it)\n")
     assert main(["compare", str(old), str(new), "-o", str(output)]) == 1
     assert "already exists" in capsys.readouterr().err
@@ -688,7 +708,10 @@ def test_shorthand_view_preserves_existing_output(
     plain_old.write_bytes(old.read_bytes())
     plain_new.write_bytes(new.read_bytes())
     critic = tmp_path / "critic.md"
-    assert main(["compare", str(plain_old), str(plain_new), "-o", str(critic)]) == 0
+    assert main([
+        "compare", str(plain_old), str(plain_new),
+        "-d", "1970-01-01T00:00:00Z", "-o", str(critic),
+    ]) == 0
     assert "{~~30~>45~~}" in critic.read_text(encoding="utf-8")
     assert f"wrote {critic} (md, " in capsys.readouterr().err
     with pytest.raises(SystemExit) as refused:

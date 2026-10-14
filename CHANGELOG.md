@@ -50,6 +50,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **Breaking: `compare` (and `jubarte OLD NEW`) dates its revisions now.**
+  Without `-d/--date` the shared parser fills the current UTC time, to the
+  second, so the binary, Python and npm hand the same value to the engine;
+  `-d 1970-01-01T00:00:00Z` pins it for reproducible output (the old
+  default). `diff`'s patch header already said now; Python and npm no longer
+  fill it themselves. MCP `docx_compare` without `date` follows the CLI. The
+  library default (`document_comparer::DEFAULT_DATE`, Python
+  `Document.compare`, WASM `redlineDocuments`) stays the epoch, and
+  `convert`'s Markdown-to-Word date is unchanged. `cli::CompareArgs::date`
+  is `Option<String>`.
 - **Breaking: the default author of `edit` and `add` is `Redline`** (was
   `Modified User`), so the agent view's handle is `@R`. A plan recorded
   from operation flags (`--plan X -p …`), WASM `flagPlan` and the hosts'

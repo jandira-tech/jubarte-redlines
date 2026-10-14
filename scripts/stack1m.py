@@ -32,8 +32,10 @@ def jobs(bench, out, csv_path):
         # A versioned CSV stem has dots; with_suffix would cut it at the last.
         target = "{}/{}_{}".format(out, Path(csv_path).stem, index)
         if "next" in row:
+            # -d pins the epoch so a rerun after the now-default change
+            # writes the same bytes.
             yield label, ["compare", str(bench / row["base"]), str(bench / row["next"]),
-                          "-o", target + ".docx", "--force"]
+                          "-o", target + ".docx", "--force", "-d", "1970-01-01T00:00:00Z"]
         else:
             yield label, ["convert", str(bench / row["docx"]), "-o", target + ".pdf",
                           "--force"]

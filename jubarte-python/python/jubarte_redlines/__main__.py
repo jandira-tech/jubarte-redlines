@@ -718,7 +718,6 @@ def cmd_diff(args: argparse.Namespace) -> int:
     Markdown documents) CriticMarkup, on stdout or in -o's file."""
     from . import _native
     from .document import _decode_diff
-    from datetime import datetime, timezone
 
     output = args.output
     # An existing output is refused before any work.
@@ -734,9 +733,9 @@ def cmd_diff(args: argparse.Namespace) -> int:
         if critic and not (isinstance(old, str) and isinstance(new, str)):
             raise CliError("--format critic needs both documents in Markdown; "
                            "`jubarte compare OLD NEW` prints their redline as the agent view")
-        date = args.date if args.date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # The shared parser dated the run (D17).
         text = _decode_diff(_native.diff_json(old, new, old_name=_spelled(args, "old"), new_name=_spelled(args, "new"),
-                                              author=args.author, date=date, columns=args.columns, critic=critic)).text
+                                              author=args.author, date=args.date, columns=args.columns, critic=critic)).text
     if output is None:
         sys.stdout.write(text)
         return EXIT_OK

@@ -77,7 +77,10 @@ test("removed command help and legacy listing flags are unavailable", () => {
 
 test("redline writes a Word redline and refuses to overwrite it", () => {
   const out = path.join(tmp, "redline.docx");
-  const r = run("redline", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out, "--author", "Legal");
+  const r = run(
+    "redline", path.join(pair, "base.docx"), path.join(pair, "next.docx"),
+    "-d", "1970-01-01T00:00:00Z", "-o", out, "--author", "Legal",
+  );
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out, "");
   assert.match(r.err, /^wrote .*redline\.docx \(docx, \d+ bytes\)\n$/);
@@ -87,13 +90,16 @@ test("redline writes a Word redline and refuses to overwrite it", () => {
   const again = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
   assert.equal(again.code, 1);
   assert.match(again.err, /already exists \(use --force to overwrite\)/);
-  assert.equal(run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out, "--force").code, 0);
+  assert.equal(run(
+    "compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"),
+    "-d", "1970-01-01T00:00:00Z", "-o", out, "--force",
+  ).code, 0);
 });
 
 test("redline prints the view without -o and writes nothing", () => {
   const a = copy(path.join(pair, "base.docx"), "a.docx");
   const b = copy(path.join(pair, "next.docx"), "b.docx");
-  const result = run("redline", a, b);
+  const result = run("redline", a, b, "-d", "1970-01-01T00:00:00Z");
   assert.equal(result.code, 0, result.err);
   assert.ok(result.out.startsWith(`---\nsource: ${path.join(tmp, "a_v_b.docx")} (not written; -o keeps it)\n`), result.out);
   assert.ok(!fs.existsSync(path.join(tmp, "a_v_b.docx")));
@@ -470,25 +476,25 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.equal(run("diff", a, b, "--format", "critic").out, "Due in {~~30~>45~~} days.\n");
   // The shorthand prints the redline's agent view and writes nothing; -o writes it.
   const word = path.join(tmp, "short-a_v_short-b.docx");
-  const shown = run(a, b);
+  const shown = run(a, b, "-d", "1970-01-01T00:00:00Z");
   assert.equal(shown.code, 0, shown.err);
   assert.ok(shown.out.startsWith(`---\nsource: ${word} (not written; -o keeps it)\n`), shown.out);
   assert.ok(shown.out.includes("{~~30~>45~~}"), shown.out);
   assert.ok(!fs.existsSync(word));
   // The view is the output, so --quiet does not hide it (pi review av5 F6);
   // read options apply to it.
-  assert.ok(run(a, b, "--quiet").out.includes("{~~30~>45~~}"));
-  const acceptedView = run(a, b, "--track-changes", "accept");
+  assert.ok(run(a, b, "--quiet", "-d", "1970-01-01T00:00:00Z").out.includes("{~~30~>45~~}"));
+  const acceptedView = run(a, b, "--track-changes", "accept", "-d", "1970-01-01T00:00:00Z");
   assert.equal(acceptedView.code, 0, acceptedView.err);
   assert.ok(!acceptedView.out.includes("{~~") && acceptedView.out.includes("<!-- p0 rev r"), acceptedView.out);
-  const compared = run(a, b, "-o", word, "--quiet");
+  const compared = run(a, b, "-d", "1970-01-01T00:00:00Z", "-o", word, "--quiet");
   assert.equal(compared.code, 0, compared.err);
   assert.equal(compared.out, "");
   assert.equal(fs.readFileSync(word).subarray(0, 2).toString(), "PK");
   // --changed --by keeps the author's block, by handle or by name (pi
   // review av3 F8: only the (none) path was tested).
   const signed = path.join(tmp, "signed.docx");
-  assert.equal(run(a, b, "-o", signed, "--author", "Ann Counsel", "--quiet").code, 0);
+  assert.equal(run(a, b, "-d", "1970-01-01T00:00:00Z", "-o", signed, "--author", "Ann Counsel", "--quiet").code, 0);
   for (const by of ["AC", "Ann Counsel"]) {
     const mine = run("read", signed, "--changed", "--by", by, "--no-page-markers");
     assert.equal(mine.code, 0, mine.err);
@@ -599,7 +605,17 @@ test("a redline's PDF forwards page options; diff writes none (integration)", ()
   assert.equal(refused.code, 2, refused.err);
   assert.match(refused.err, /`compare OLD NEW -o .*diff-refused\.pdf`/);
   const redline = path.join(tmp, "page-options-redline.docx");
-  assert.equal(run("compare", a, b, "-o", redline).code, 0);
+  assert.equal(run("compare", a, b, "-d", "1970-01-01T00:00:00Z", "-o", redline).code, 0);
+  // Without -d the revisions are dated now (D17): the shared parser fills it.
+  const stamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const before = stamp();
+  const dated = path.join(tmp, "page-options-now.docx");
+  assert.equal(run("compare", a, b, "-o", dated).code, 0);
+  const after = stamp();
+  const dates = run("changes", dated, "--json").out.trim().split("\n").map((line) => JSON.parse(line).date);
+  assert.ok(dates.length > 0 && dates.every((d) => before <= d && d <= after), `${before} ${dates} ${after}`);
+  const pinned = run("changes", redline, "--json").out.trim().split("\n").map((line) => JSON.parse(line).date);
+  assert.deepEqual([...new Set(pinned)], ["1970-01-01T00:00:00Z"]);
   const all = path.join(tmp, "diff-all.pdf"), kept = path.join(tmp, "diff-kept.pdf");
   for (const [output, flags] of [[all, []], [kept, ["--changed-only"]]]) {
     const result = run("convert", redline, "-o", output, ...flags);
@@ -759,7 +775,7 @@ test("compare reports the bytes a Markdown redline takes (integration)", () => {
   const a = path.join(tmp, "bytes-a.md"), b = path.join(tmp, "bytes-b.md"), out = path.join(tmp, "bytes-redline.md");
   fs.writeFileSync(a, "Prazo de 30 días — ok.\n");
   fs.writeFileSync(b, "Prazo de 45 días — ok.\n");
-  const result = run("compare", a, b, "-o", out);
+  const result = run("compare", a, b, "-d", "1970-01-01T00:00:00Z", "-o", out);
   assert.equal(result.code, 0, result.err);
   const size = fs.statSync(out).size;
   assert.ok(size > fs.readFileSync(out, "utf8").length);
@@ -887,7 +903,7 @@ test("agent shorthand reads an in-memory redline without touching an existing de
   const sentinel = Buffer.from("existing output must survive");
   fs.writeFileSync(fallback, sentinel);
   for (const [mode, kept, removed] of [["accept", "45", "30"], ["reject", "30", "45"]]) {
-    const result = run(a, b, "--track-changes", mode, "--changed", "--by", "Legal", "--author", "Legal", "--no-page-markers");
+    const result = run(a, b, "--track-changes", mode, "--changed", "--by", "Legal", "--author", "Legal", "--no-page-markers", "-d", "1970-01-01T00:00:00Z");
     assert.equal(result.code, 0, result.err);
     assert.ok(result.out.startsWith(`---\nsource: ${fallback} (not written; -o keeps it)\n`));
     assert.ok(result.out.includes(`Due in ${kept} days.`), result.out);
@@ -896,7 +912,7 @@ test("agent shorthand reads an in-memory redline without touching an existing de
     assert.deepEqual(fs.readFileSync(fallback), sentinel);
   }
   // compare prints the same view; only -o writes, and never over a file.
-  const explicit = run("compare", a, b);
+  const explicit = run("compare", a, b, "-d", "1970-01-01T00:00:00Z");
   assert.equal(explicit.code, 0, explicit.err);
   assert.ok(explicit.out.startsWith(`---\nsource: ${fallback} (not written; -o keeps it)\n`));
   const written = run("compare", a, b, "-o", fallback);
@@ -909,7 +925,7 @@ test("agent shorthand reads an in-memory redline without touching an existing de
   fs.copyFileSync(a, plainA);
   fs.copyFileSync(b, plainB);
   const critic = path.join(tmp, "sentinel-critic.md");
-  const made = run("compare", plainA, plainB, "-o", critic);
+  const made = run("compare", plainA, plainB, "-d", "1970-01-01T00:00:00Z", "-o", critic);
   assert.equal(made.code, 0, made.err);
   assert.match(fs.readFileSync(critic, "utf8"), /\{~~30~>45~~\}/);
   const refused = run("compare", plainA, plainB, "-o", path.join(tmp, "sentinel-h.md"), "--head", "1");

@@ -53,7 +53,12 @@ fn every_writing_task_writes_what_its_output_names() {
     std::fs::copy(TRACKED, dir.path().join("t.docx")).unwrap();
     std::fs::write(dir.path().join("d.md"), DRAFT).unwrap();
     let tasks: [(&str, &[&str], &str, bool); 7] = [
-        ("compare", &["compare", "t.docx", "t.docx"], "docx", true),
+        (
+            "compare",
+            &["compare", "t.docx", "t.docx", "-d", "1970-01-01T00:00:00Z"],
+            "docx",
+            true,
+        ),
         ("accept", &["accept", "t.docx"], "docx", true),
         ("reject", &["reject", "t.docx"], "docx", true),
         ("scrub", &["scrub", "t.docx"], "docx", true),
@@ -121,7 +126,18 @@ fn compare_writes_criticmarkup_for_two_markdown_documents() {
         "# Terms\n\nPayment is due in 45 days.\n",
     )
     .unwrap();
-    let out = jubarte(dir.path(), &["compare", "a.md", "b.md", "-o", "c.md"]);
+    let out = jubarte(
+        dir.path(),
+        &[
+            "compare",
+            "a.md",
+            "b.md",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "c.md",
+        ],
+    );
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("c.md")).unwrap(),
@@ -131,7 +147,18 @@ fn compare_writes_criticmarkup_for_two_markdown_documents() {
     // still give CriticMarkup.
     std::fs::copy(dir.path().join("a.md"), dir.path().join("a")).unwrap();
     std::fs::copy(dir.path().join("b.md"), dir.path().join("b.json")).unwrap();
-    let out = jubarte(dir.path(), &["compare", "a", "b.json", "-o", "n.md"]);
+    let out = jubarte(
+        dir.path(),
+        &[
+            "compare",
+            "a",
+            "b.json",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "n.md",
+        ],
+    );
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("n.md")).unwrap(),
@@ -207,8 +234,25 @@ fn png_pages_and_quiet() {
         &["reject", "d.docx", "-o", "q.pdf", "-q"],
         &["read", "d.docx", "-o", "q.json", "-q"],
         &["scrub", "d.docx", "-o", "q.md", "--quiet"],
-        &["compare", "d.docx", "d.docx", "-o", "q3.png", "-q"],
-        &["d.docx", "d.docx", "-o", "q3.json", "-q"],
+        &[
+            "compare",
+            "d.docx",
+            "d.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "q3.png",
+            "-q",
+        ],
+        &[
+            "d.docx",
+            "d.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "q3.json",
+            "-q",
+        ],
         &["diff", "d.docx", "d.docx", "-o", "q2.patch", "-q"],
     ] {
         let out = jubarte(dir.path(), args);

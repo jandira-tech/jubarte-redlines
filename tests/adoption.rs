@@ -607,6 +607,8 @@ fn compare_writes_a_word_redline_by_the_author_named() {
             "v2.docx",
             "-o",
             "redline.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
             "--author",
             "Reviewer",
         ],

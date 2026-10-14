@@ -29,6 +29,52 @@ fn seed(dir: &Path) -> (PathBuf, PathBuf) {
     (a, b)
 }
 
+#[test]
+fn a_redline_is_dated_now_unless_d_pins_it() {
+    // D17: without -d the revisions carry the run's time; -d pins it.
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    let dated = |name: &str, pin: Option<&str>| {
+        let out_path = dir.path().join(name);
+        let mut command = Command::new(BIN);
+        command
+            .arg("compare")
+            .arg(&a)
+            .arg(&b)
+            .arg("-o")
+            .arg(&out_path);
+        if let Some(date) = pin {
+            command.args(["-d", date]);
+        }
+        let out = command.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let xml = common::docx::part_string(&std::fs::read(out_path).unwrap(), "word/document.xml")
+            .unwrap();
+        let dates: Vec<String> = xml
+            .split("w:date=\"")
+            .skip(1)
+            .map(|rest| rest[..rest.find('"').unwrap()].to_string())
+            .collect();
+        assert!(!dates.is_empty(), "the pair has revisions");
+        dates
+    };
+    let before = jubarte::convert::utc_now_iso8601();
+    let now = dated("now.docx", None);
+    let after = jubarte::convert::utc_now_iso8601();
+    for date in &now {
+        assert!(before <= *date && *date <= after, "{before} {date} {after}");
+    }
+    let pinned = dated("pinned.docx", Some("1970-01-01T00:00:00Z"));
+    assert!(
+        pinned.iter().all(|d| d == "1970-01-01T00:00:00Z"),
+        "{pinned:?}"
+    );
+}
+
 fn assert_loadable(path: &Path) {
     let bytes = std::fs::read(path).unwrap();
     let doc =
@@ -50,6 +96,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
         .arg("compare")
         .arg(&a)
         .arg(&b)
+        .args(["-d", "1970-01-01T00:00:00Z"])
         .output()
         .unwrap();
     assert!(
@@ -70,7 +117,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
         .arg("compare")
         .arg(&a)
         .arg(&b)
-        .arg("-o")
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&expected)
         .output()
         .unwrap();
@@ -100,7 +147,7 @@ fn explicit_flags_output_author_and_quiet() {
         .arg(&b)
         .args(["-o"])
         .arg(&out_path)
-        .args(["--author", "Legal", "--quiet"])
+        .args(["-d", "1970-01-01T00:00:00Z", "--author", "Legal", "--quiet"])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -120,7 +167,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
     let first = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .output()
         .unwrap();
@@ -129,7 +176,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
     let second = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .output()
         .unwrap();
@@ -139,7 +186,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
     let third = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .arg("--force")
         .output()
@@ -212,7 +259,7 @@ fn make_redline(dir: &Path, author: &str) -> PathBuf {
     let out = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .args(["--author", author, "--quiet"])
         .output()
@@ -276,7 +323,7 @@ fn changes_subcommand_json_escapes_quotes_in_author() {
     let cmp = Command::new(BIN)
         .arg(&a)
         .arg(&b)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(&out_path)
         .args(["--author", "Legal \"Team\"", "--quiet"])
         .output()
@@ -427,7 +474,7 @@ fn run_cli(out_path: &Path, extra: &[&str]) -> Vec<u8> {
     let out = Command::new(BIN)
         .arg(ORIG)
         .arg(MOD)
-        .args(["-o"])
+        .args(["-d", "1970-01-01T00:00:00Z", "-o"])
         .arg(out_path)
         .arg("--quiet")
         .args(extra)

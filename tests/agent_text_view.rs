@@ -3123,7 +3123,10 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         docx(&BASE.replace("thirty", "forty-five")),
     )
     .unwrap();
-    let out = ok(&["old.docx", "new.docx"], dir.path());
+    let out = ok(
+        &["old.docx", "new.docx", "-d", "1970-01-01T00:00:00Z"],
+        dir.path(),
+    );
     assert!(
         out.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"),
         "{out}"
@@ -3143,7 +3146,17 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         !dir.path().join("old_v_new.docx").exists(),
         "nothing written without -o"
     );
-    let written = jubarte(&["old.docx", "new.docx", "-o", "r.docx"], dir.path());
+    let written = jubarte(
+        &[
+            "old.docx",
+            "new.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "r.docx",
+        ],
+        dir.path(),
+    );
     assert!(written.status.success());
     assert!(written.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&written.stderr);
@@ -3151,7 +3164,16 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     assert!(dir.path().join("r.docx").is_file());
     // -o FILE.md writes the view, read options included.
     let view = jubarte(
-        &["old.docx", "new.docx", "-o", "v.md", "--head", "1"],
+        &[
+            "old.docx",
+            "new.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "-o",
+            "v.md",
+            "--head",
+            "1",
+        ],
         dir.path(),
     );
     assert!(
@@ -3161,7 +3183,16 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     );
     let view = std::fs::read_to_string(dir.path().join("v.md")).unwrap();
     assert!(view.contains("\nrange: "), "{view}");
-    let changed = ok(&["old.docx", "new.docx", "--changed"], dir.path());
+    let changed = ok(
+        &[
+            "old.docx",
+            "new.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+            "--changed",
+        ],
+        dir.path(),
+    );
     assert!(
         changed.contains("\nrange: changed (p1) of p0-p2\n"),
         "{changed}"
