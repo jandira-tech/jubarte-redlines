@@ -7,7 +7,7 @@ authors:
   document_owner: Cuenta Microsoft  # dc:creator
   LW: Lucy Wallis                  # 1647 revisions, 2026-09-25T19:59:00Z
 body: p0-p827, 8 tables, 2 pages   # pages from Word's cached layout
-page: A4 portrait, margins 1in, header/footer 0.49in
+page: A4 portrait, margins 1in, header/footer 0.492in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   changes: {Normal: styles.r0 @LW}  # tracked changes to the styles
@@ -17,7 +17,7 @@ headers:
 footers:
   default: {id: footer1, text: "", fmt: footer1.r903 @LW}
 sections:
-  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.49in, fmt: r1650 @LW, headers: {first: none}, footers: {first: none, default: {id: footer2, text: "{--{FIELD}--}{>>footer2.r1648 @LW<<}", right, rev: break-del footer2.r1647 @LW in footer2, fmt: footer2.r1649 @LW}}}
+  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.4924in, fmt: r1650 @LW, headers: {first: none}, footers: {first: none, default: {id: footer2, text: "{--{FIELD}--}{>>footer2.r1648 @LW<<}", right, rev: break-del footer2.r1647 @LW in footer2, fmt: footer2.r1649 @LW}}}
 ---
 
 <!-- p0 center, break-ins r5 @LW -->

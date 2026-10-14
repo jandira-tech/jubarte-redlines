@@ -310,10 +310,10 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- footnotes.p1 -->
 [^2]: Footnote two: cross-reference target for extraction tools that map markers to notes.
 <!-- footnotes.p2 -->
-{++[^3]:  Footnote one: this footnote is attached to the introductory paragraph.++}{>>r8 @ASR<<} <!-- rev footnotes.r9 @ASR; footnotes.r10 @ASR -->
+{++[^3]: Footnote one: this footnote is attached to the introductory paragraph.++}{>>r8 @ASR<<} <!-- rev footnotes.r9 @ASR; footnotes.r10 @ASR -->
 <!-- footnotes.p3 -->
-{++[^4]:  Footnote two: cross-reference target for extraction tools that map markers to notes.++}{>>r96 @ASR<<} <!-- rev footnotes.r97 @ASR; footnotes.r98 @ASR -->
+{++[^4]: Footnote two: cross-reference target for extraction tools that map markers to notes.++}{>>r96 @ASR<<} <!-- rev footnotes.r97 @ASR; footnotes.r98 @ASR -->
 <!-- footnotes.p4 -->
 [^5]: Footnote one: this footnote is attached to the introductory paragraph.
 <!-- footnotes.p5 -->
-{--[^6]:  Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r168 @ASR<<} <!-- rev footnotes.r169 @ASR; footnotes.r170 @ASR -->
+{--[^6]: Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r168 @ASR<<} <!-- rev footnotes.r169 @ASR; footnotes.r170 @ASR -->

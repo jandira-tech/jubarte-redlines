@@ -7,7 +7,7 @@ authors:
   document_owner: Christoffer Krogager  # dc:creator
   APS: Alcaldia Pasto SSI          # 2 revisions, 2026-09-22T12:47:00Z
 body: p0-p142, 1 table, 2 pages    # pages from layout
-page: 8.26x11.69in portrait, margins top 1.18in, right 0.79in, bottom 1.18in, left 0.79in, header/footer 0.49in
+page: 8.264x11.6944in portrait, margins top 1.181in, right 0.7875in, bottom 1.181in, left 0.7875in, header/footer 0.492in
 styles:
   Normal: Cambria 12pt, left       # default; unannotated paragraphs use it
   ListParagraph: Cambria 12pt, named List Paragraph
@@ -18,7 +18,7 @@ headers:
 footers:
   default: {id: footer1, text: ""}
 sections:
-  2: {p142-p142, page: Letter portrait, margins top 0.98in, right 1.18in, bottom 0.98in, left 1.18in, header 0in, footer 0.03in, fmt: r1 @APS}
+  2: {p142-p142, page: Letter portrait, margins top 0.984in, right 1.181in, bottom 0.984in, left 1.181in, header 0in, footer 0.026in, fmt: r1 @APS}
 ---
 
 <!-- p0 empty -->
