@@ -116,7 +116,7 @@ def first_difference(a, b) -> str:
     if isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             return f"{len(a)} items -> {len(b)}"
-        for i, (x, y) in enumerate(zip(a, b)):
+        for i, (x, y) in enumerate(zip(a, b, strict=True)):
             if x != y:
                 return f"[{i}] {str(x)[:80]!r} -> {str(y)[:80]!r}"
         return "same lines; the difference is outside line content (a trailing newline?)"
@@ -208,8 +208,10 @@ def main() -> int:
     docs = documents(args.paths, args.every)
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         try:
-            results = dict(zip(docs, pool.map(measure, docs)))
+            results = dict(zip(docs, pool.map(measure, docs), strict=True))
         except HarnessError as error:
+            # The documents still queued would each run up to two timeouts.
+            pool.shutdown(wait=False, cancel_futures=True)
             print(f"harness error: {error}", file=sys.stderr)
             return 1
     # Every document counts: a source jubarte cannot read scores zero on every dimension.
