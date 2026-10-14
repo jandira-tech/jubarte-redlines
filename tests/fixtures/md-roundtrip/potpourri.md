@@ -176,13 +176,13 @@ _— end of sample —_
 <!-- p66 break-ins r41 @ASR -->
 {++A small table with a header row:++}{>>r42 @ASR<<}
 
-<!-- t1 5x4, cells p67-p86 by row, break-ins r44 @ASR in p67; r46 @ASR in p68; r48 @ASR in p69; r50 @ASR in p70; r53 @ASR in p71; r55 @ASR in p72; r57 @ASR in p73; r59 @ASR in p74; r62 @ASR in p75; r64 @ASR in p76; r66 @ASR in p77; r68 @ASR in p78; r71 @ASR in p79; r73 @ASR in p80; r75 @ASR in p81; r77 @ASR in p82; r80 @ASR in p83; r82 @ASR in p84; r84 @ASR in p85; r86 @ASR in p86 -->
-|{++Region++}{>>r43 @ASR<<}|{++Q1++}{>>r43 @ASR<<}|{++Q2++}{>>r43 @ASR<<}|{++Q3++}{>>r43 @ASR<<}|
+<!-- t1 5x4, cells p67-p86 by row, break-ins r44 @ASR in p67; r46 @ASR in p68; r48 @ASR in p69; r50 @ASR in p70; r53 @ASR in p71; r55 @ASR in p72; r57 @ASR in p73; r59 @ASR in p74; r62 @ASR in p75; r64 @ASR in p76; r66 @ASR in p77; r68 @ASR in p78; r71 @ASR in p79; r73 @ASR in p80; r75 @ASR in p81; r77 @ASR in p82; r80 @ASR in p83; r82 @ASR in p84; r84 @ASR in p85; r86 @ASR in p86, rev r43 @ASR in t1.row0; r52 @ASR in t1.row1; r61 @ASR in t1.row2; r70 @ASR in t1.row3; r79 @ASR in t1.row4 -->
+|{++Region++}{>>r45 @ASR<<}|{++Q1++}{>>r47 @ASR<<}|{++Q2++}{>>r49 @ASR<<}|{++Q3++}{>>r51 @ASR<<}|
 |-|-|-|-|
-|{++North++}{>>r52 @ASR<<}|{++$120k++}{>>r52 @ASR<<}|{++$135k++}{>>r52 @ASR<<}|{++$150k++}{>>r52 @ASR<<}|
-|{++South++}{>>r61 @ASR<<}|{++$98k++}{>>r61 @ASR<<}|{++$110k++}{>>r61 @ASR<<}|{++$128k++}{>>r61 @ASR<<}|
-|{++East++}{>>r70 @ASR<<}|{++$143k++}{>>r70 @ASR<<}|{++$151k++}{>>r70 @ASR<<}|{++$162k++}{>>r70 @ASR<<}|
-|{++West++}{>>r79 @ASR<<}|{++$87k++}{>>r79 @ASR<<}|{++$92k++}{>>r79 @ASR<<}|{++$104k++}{>>r79 @ASR<<}|
+|{++North++}{>>r54 @ASR<<}|{++$120k++}{>>r56 @ASR<<}|{++$135k++}{>>r58 @ASR<<}|{++$150k++}{>>r60 @ASR<<}|
+|{++South++}{>>r63 @ASR<<}|{++$98k++}{>>r65 @ASR<<}|{++$110k++}{>>r67 @ASR<<}|{++$128k++}{>>r69 @ASR<<}|
+|{++East++}{>>r72 @ASR<<}|{++$143k++}{>>r74 @ASR<<}|{++$151k++}{>>r76 @ASR<<}|{++$162k++}{>>r78 @ASR<<}|
+|{++West++}{>>r81 @ASR<<}|{++$87k++}{>>r83 @ASR<<}|{++$92k++}{>>r85 @ASR<<}|{++$104k++}{>>r87 @ASR<<}|
 
 <!-- p87 empty, break-ins r88 @ASR -->
 
@@ -269,13 +269,13 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p115 break-del r113 @ASR -->
 {--A small table with a header row:--}{>>r114 @ASR<<}
 
-<!-- t2 5x4, cells p116-p135 by row, break-del r116 @ASR in p116; r118 @ASR in p117; r120 @ASR in p118; r122 @ASR in p119; r125 @ASR in p120; r127 @ASR in p121; r129 @ASR in p122; r131 @ASR in p123; r134 @ASR in p124; r136 @ASR in p125; r138 @ASR in p126; r140 @ASR in p127; r143 @ASR in p128; r145 @ASR in p129; r147 @ASR in p130; r149 @ASR in p131; r152 @ASR in p132; r154 @ASR in p133; r156 @ASR in p134; r158 @ASR in p135 -->
-|{--Region--}{>>r115 @ASR<<}|{--Q1--}{>>r115 @ASR<<}|{--Q2--}{>>r115 @ASR<<}|{--Q3--}{>>r115 @ASR<<}|
+<!-- t2 5x4, cells p116-p135 by row, break-del r116 @ASR in p116; r118 @ASR in p117; r120 @ASR in p118; r122 @ASR in p119; r125 @ASR in p120; r127 @ASR in p121; r129 @ASR in p122; r131 @ASR in p123; r134 @ASR in p124; r136 @ASR in p125; r138 @ASR in p126; r140 @ASR in p127; r143 @ASR in p128; r145 @ASR in p129; r147 @ASR in p130; r149 @ASR in p131; r152 @ASR in p132; r154 @ASR in p133; r156 @ASR in p134; r158 @ASR in p135, rev-del r115 @ASR in t2.row0; r124 @ASR in t2.row1; r133 @ASR in t2.row2; r142 @ASR in t2.row3; r151 @ASR in t2.row4 -->
+|{--Region--}{>>r117 @ASR<<}|{--Q1--}{>>r119 @ASR<<}|{--Q2--}{>>r121 @ASR<<}|{--Q3--}{>>r123 @ASR<<}|
 |-|-|-|-|
-|{--North--}{>>r124 @ASR<<}|{--$120k--}{>>r124 @ASR<<}|{--$135k--}{>>r124 @ASR<<}|{--$150k--}{>>r124 @ASR<<}|
-|{--South--}{>>r133 @ASR<<}|{--$98k--}{>>r133 @ASR<<}|{--$110k--}{>>r133 @ASR<<}|{--$128k--}{>>r133 @ASR<<}|
-|{--East--}{>>r142 @ASR<<}|{--$143k--}{>>r142 @ASR<<}|{--$151k--}{>>r142 @ASR<<}|{--$162k--}{>>r142 @ASR<<}|
-|{--West--}{>>r151 @ASR<<}|{--$87k--}{>>r151 @ASR<<}|{--$92k--}{>>r151 @ASR<<}|{--$104k--}{>>r151 @ASR<<}|
+|{--North--}{>>r126 @ASR<<}|{--$120k--}{>>r128 @ASR<<}|{--$135k--}{>>r130 @ASR<<}|{--$150k--}{>>r132 @ASR<<}|
+|{--South--}{>>r135 @ASR<<}|{--$98k--}{>>r137 @ASR<<}|{--$110k--}{>>r139 @ASR<<}|{--$128k--}{>>r141 @ASR<<}|
+|{--East--}{>>r144 @ASR<<}|{--$143k--}{>>r146 @ASR<<}|{--$151k--}{>>r148 @ASR<<}|{--$162k--}{>>r150 @ASR<<}|
+|{--West--}{>>r153 @ASR<<}|{--$87k--}{>>r155 @ASR<<}|{--$92k--}{>>r157 @ASR<<}|{--$104k--}{>>r159 @ASR<<}|
 
 <!-- p136 empty, break-del r160 @ASR -->
 
