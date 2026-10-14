@@ -308,7 +308,7 @@ def build_server(*, root: Path) -> MCPServer:
     def docx_validate(
         path: str, original: str | None = None, author: str | None = None, rules: list[str] | None = None
     ) -> list[dict[str, Any]]:
-        """Findings in one shape (code, set, severity, part, location, message, word_fatal, repairable). By default the Word-validity set: what would make Word refuse or repair path. With original and author, also the edits set: every edit against original must be a tracked change by author. rules picks sets (word, edits, a11y, style, structure) or audit codes."""
+        """Findings in one shape (code, set, severity, part, location, ref, message, word_fatal, repairable; ref is the short id the CLI prints for location). By default the Word-validity set: what would make Word refuse or repair path. With original and author, also the edits set: every edit against original must be a tracked change by author. rules picks sets (word, edits, a11y, style, structure) or audit codes."""
         doc = load(path)
         base = load(original) if original is not None else None
         if not hasattr(Document, "validate"):
