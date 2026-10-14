@@ -602,4 +602,4 @@ Six items from a file-by-file scout of `arthrod/anymd`, one PR each:
 - [ ] 3. Pictures in the Markdown view: none lost for want of alt text; `extract_media` wired.
 - [ ] 4. Charts in docx read as tables, read-only (and, separately, PPTX to Markdown).
 - [ ] 5. `read --outline`: an outline of the view.
-- [ ] 6. `read --max-tokens`/`--cursor`: a long view read in parts.
+- [ ] 6. `read --max-tokens`/`--cursor`: a long view read in parts; `--head`/`--tail` take a token budget (`--head 8000t`).
