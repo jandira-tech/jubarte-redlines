@@ -848,6 +848,32 @@ fn edit_core(xml: &str, edits: &[CoreEdit<'_>]) -> Option<String> {
             .ok()?;
         writer.write_event(Event::End(end)).ok()
     }
+    /// The edits the root lacks, written last in it.
+    fn missing(
+        writer: &mut quick_xml::Writer<Vec<u8>>,
+        edits: &[CoreEdit<'_>],
+        written: &[bool],
+        prefixes: &HashMap<String, String>,
+    ) -> Option<()> {
+        for (edit, _) in edits.iter().zip(written).filter(|(_, done)| !**done) {
+            let Some(value) = edit.value else {
+                continue;
+            };
+            let (name, declare) = match prefixes.get(edit.namespace) {
+                Some(prefix) => (format!("{prefix}:{}", edit.local), None),
+                None => {
+                    let prefix = if edit.namespace == DC_NS { "dc" } else { "cp" };
+                    (format!("{prefix}:{}", edit.local), Some(prefix))
+                }
+            };
+            let mut start = BytesStart::new(name.as_str());
+            if let Some(prefix) = declare {
+                start.push_attribute((format!("xmlns:{prefix}").as_str(), edit.namespace));
+            }
+            element(writer, start, value)?;
+        }
+        Some(())
+    }
     let mut reader = quick_xml::NsReader::from_str(xml);
     let mut writer = quick_xml::Writer::new(Vec::new());
     let mut depth = 0usize;
@@ -889,6 +915,19 @@ fn edit_core(xml: &str, edits: &[CoreEdit<'_>]) -> Option<String> {
                 depth += 1;
                 writer.write_event(Event::Start(start)).ok()?;
             }
+            Event::Empty(empty) if depth == 0 => {
+                // `<cp:coreProperties/>`: a root with no properties yet
+                // opens to take the edits.
+                for attribute in empty.attributes().flatten() {
+                    if let Some(prefix) = attribute.key.as_ref().strip_prefix("xmlns:") {
+                        prefixes.insert(attribute.value.to_string(), prefix.to_string());
+                    }
+                }
+                let end = BytesEnd::new(empty.name().as_ref().to_owned());
+                writer.write_event(Event::Start(empty)).ok()?;
+                missing(&mut writer, edits, &written, &prefixes)?;
+                writer.write_event(Event::End(end)).ok()?;
+            }
             Event::Empty(empty) => {
                 if depth == 1
                     && let Some(at) = edited(&resolved, empty.local_name().as_ref())
@@ -904,26 +943,7 @@ fn edit_core(xml: &str, edits: &[CoreEdit<'_>]) -> Option<String> {
             Event::End(end) => {
                 depth = depth.checked_sub(1)?;
                 if depth == 0 {
-                    for (edit, _) in edits.iter().zip(&written).filter(|(_, done)| !**done) {
-                        let Some(value) = edit.value else {
-                            continue;
-                        };
-                        let (name, declare) = match prefixes.get(edit.namespace) {
-                            Some(prefix) => (format!("{prefix}:{}", edit.local), None),
-                            None => {
-                                let prefix = if edit.namespace == DC_NS { "dc" } else { "cp" };
-                                (format!("{prefix}:{}", edit.local), Some(prefix))
-                            }
-                        };
-                        let mut start = BytesStart::new(name.as_str());
-                        if let Some(prefix) = declare {
-                            start.push_attribute((
-                                format!("xmlns:{prefix}").as_str(),
-                                edit.namespace,
-                            ));
-                        }
-                        element(&mut writer, start, value)?;
-                    }
+                    missing(&mut writer, edits, &written, &prefixes)?;
                 }
                 writer.write_event(Event::End(end)).ok()?;
             }
@@ -1222,6 +1242,24 @@ mod literal_package_metadata_contract_tests {
             core_properties(&mut package, &document);
             assert_eq!(package.part_string("docProps/core.xml").unwrap(), again);
         }
+    }
+
+    #[test]
+    fn a_self_closing_core_root_opens_to_take_the_owner() {
+        let source = r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"/>"#;
+        let edits = [CoreEdit {
+            namespace: DC_NS,
+            local: "creator",
+            value: Some("Ada"),
+            clear: false,
+        }];
+        assert_eq!(
+            edit_core(source, &edits).unwrap(),
+            format!(
+                "{}><dc:creator>Ada</dc:creator></cp:coreProperties>",
+                source.trim_end_matches("/>")
+            )
+        );
     }
 
     #[test]

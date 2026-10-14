@@ -29,6 +29,10 @@ pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
     let mut table = HashMap::new();
     let mut inside = false;
     for line in yaml.lines() {
+        // A blank or comment line does not end the block, as in YAML.
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
         if !line.starts_with(' ') {
             inside = line.trim_end() == "authors:";
             continue;
@@ -111,6 +115,10 @@ pub(crate) enum Owner {
 pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
     let mut inside = false;
     for line in yaml.lines() {
+        // A blank or comment line does not end the block, as in YAML.
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
         if !line.starts_with(' ') {
             inside = line.trim_end() == "authors:";
             continue;
@@ -859,6 +867,17 @@ mod tests {
             scalar_and_comment("plain # c"),
             ("plain".to_string(), Some("c"))
         );
+    }
+
+    #[test]
+    fn a_blank_line_inside_authors_keeps_the_block_open() {
+        let yaml = "authors:\n  AL: Ann Lee\n\n# a note\n  document_owner: Bo Ray # dc:creator\n";
+        assert_eq!(
+            document_owner(yaml),
+            Some(Owner::Creator("Bo Ray".to_string()))
+        );
+        let yaml = "authors:\n\n  AL: Ann Lee\n";
+        assert!(authors(yaml).contains_key("AL"));
     }
 
     #[test]
