@@ -179,13 +179,13 @@ _— end of sample —_
 <!-- p67 break-ins r43 @AS -->
 {++A small table with a header row:++}{>>r44 @AS<<}
 
-<!-- t1 5x4, cells p68-p87 by row, break-ins r46 @AS in p68; r48 @AS in p69; r50 @AS in p70; r52 @AS in p71; r55 @AS in p72; r57 @AS in p73; r59 @AS in p74; r61 @AS in p75; r64 @AS in p76; r66 @AS in p77; r68 @AS in p78; r70 @AS in p79; r73 @AS in p80; r75 @AS in p81; r77 @AS in p82; r79 @AS in p83; r82 @AS in p84; r84 @AS in p85; r86 @AS in p86; r88 @AS in p87 -->
-|{++Region++}{>>r45 @AS<<}|{++Q1++}{>>r45 @AS<<}|{++Q2++}{>>r45 @AS<<}|{++Q3++}{>>r45 @AS<<}|
+<!-- t1 5x4, cells p68-p87 by row, break-ins r46 @AS in p68; r48 @AS in p69; r50 @AS in p70; r52 @AS in p71; r55 @AS in p72; r57 @AS in p73; r59 @AS in p74; r61 @AS in p75; r64 @AS in p76; r66 @AS in p77; r68 @AS in p78; r70 @AS in p79; r73 @AS in p80; r75 @AS in p81; r77 @AS in p82; r79 @AS in p83; r82 @AS in p84; r84 @AS in p85; r86 @AS in p86; r88 @AS in p87, rev r45 @AS in t1.row0; r54 @AS in t1.row1; r63 @AS in t1.row2; r72 @AS in t1.row3; r81 @AS in t1.row4 -->
+|{++Region++}{>>r47 @AS<<}|{++Q1++}{>>r49 @AS<<}|{++Q2++}{>>r51 @AS<<}|{++Q3++}{>>r53 @AS<<}|
 |-|-|-|-|
-|{++North++}{>>r54 @AS<<}|{++$120k++}{>>r54 @AS<<}|{++$135k++}{>>r54 @AS<<}|{++$150k++}{>>r54 @AS<<}|
-|{++South++}{>>r63 @AS<<}|{++$98k++}{>>r63 @AS<<}|{++$110k++}{>>r63 @AS<<}|{++$128k++}{>>r63 @AS<<}|
-|{++East++}{>>r72 @AS<<}|{++$143k++}{>>r72 @AS<<}|{++$151k++}{>>r72 @AS<<}|{++$162k++}{>>r72 @AS<<}|
-|{++West++}{>>r81 @AS<<}|{++$87k++}{>>r81 @AS<<}|{++$92k++}{>>r81 @AS<<}|{++$104k++}{>>r81 @AS<<}|
+|{++North++}{>>r56 @AS<<}|{++$120k++}{>>r58 @AS<<}|{++$135k++}{>>r60 @AS<<}|{++$150k++}{>>r62 @AS<<}|
+|{++South++}{>>r65 @AS<<}|{++$98k++}{>>r67 @AS<<}|{++$110k++}{>>r69 @AS<<}|{++$128k++}{>>r71 @AS<<}|
+|{++East++}{>>r74 @AS<<}|{++$143k++}{>>r76 @AS<<}|{++$151k++}{>>r78 @AS<<}|{++$162k++}{>>r80 @AS<<}|
+|{++West++}{>>r83 @AS<<}|{++$87k++}{>>r85 @AS<<}|{++$92k++}{>>r87 @AS<<}|{++$104k++}{>>r89 @AS<<}|
 
 <!-- p88 empty, break-ins r90 @AS -->
 
@@ -272,13 +272,13 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p116 break-del r115 @AS -->
 {--A small table with a header row:--}{>>r116 @AS<<}
 
-<!-- t2 5x4, cells p117-p136 by row, break-del r118 @AS in p117; r120 @AS in p118; r122 @AS in p119; r124 @AS in p120; r127 @AS in p121; r129 @AS in p122; r131 @AS in p123; r133 @AS in p124; r136 @AS in p125; r138 @AS in p126; r140 @AS in p127; r142 @AS in p128; r145 @AS in p129; r147 @AS in p130; r149 @AS in p131; r151 @AS in p132; r154 @AS in p133; r156 @AS in p134; r158 @AS in p135; r160 @AS in p136 -->
-|{--Region--}{>>r117 @AS<<}|{--Q1--}{>>r117 @AS<<}|{--Q2--}{>>r117 @AS<<}|{--Q3--}{>>r117 @AS<<}|
+<!-- t2 5x4, cells p117-p136 by row, break-del r118 @AS in p117; r120 @AS in p118; r122 @AS in p119; r124 @AS in p120; r127 @AS in p121; r129 @AS in p122; r131 @AS in p123; r133 @AS in p124; r136 @AS in p125; r138 @AS in p126; r140 @AS in p127; r142 @AS in p128; r145 @AS in p129; r147 @AS in p130; r149 @AS in p131; r151 @AS in p132; r154 @AS in p133; r156 @AS in p134; r158 @AS in p135; r160 @AS in p136, rev-del r117 @AS in t2.row0; r126 @AS in t2.row1; r135 @AS in t2.row2; r144 @AS in t2.row3; r153 @AS in t2.row4 -->
+|{--Region--}{>>r119 @AS<<}|{--Q1--}{>>r121 @AS<<}|{--Q2--}{>>r123 @AS<<}|{--Q3--}{>>r125 @AS<<}|
 |-|-|-|-|
-|{--North--}{>>r126 @AS<<}|{--$120k--}{>>r126 @AS<<}|{--$135k--}{>>r126 @AS<<}|{--$150k--}{>>r126 @AS<<}|
-|{--South--}{>>r135 @AS<<}|{--$98k--}{>>r135 @AS<<}|{--$110k--}{>>r135 @AS<<}|{--$128k--}{>>r135 @AS<<}|
-|{--East--}{>>r144 @AS<<}|{--$143k--}{>>r144 @AS<<}|{--$151k--}{>>r144 @AS<<}|{--$162k--}{>>r144 @AS<<}|
-|{--West--}{>>r153 @AS<<}|{--$87k--}{>>r153 @AS<<}|{--$92k--}{>>r153 @AS<<}|{--$104k--}{>>r153 @AS<<}|
+|{--North--}{>>r128 @AS<<}|{--$120k--}{>>r130 @AS<<}|{--$135k--}{>>r132 @AS<<}|{--$150k--}{>>r134 @AS<<}|
+|{--South--}{>>r137 @AS<<}|{--$98k--}{>>r139 @AS<<}|{--$110k--}{>>r141 @AS<<}|{--$128k--}{>>r143 @AS<<}|
+|{--East--}{>>r146 @AS<<}|{--$143k--}{>>r148 @AS<<}|{--$151k--}{>>r150 @AS<<}|{--$162k--}{>>r152 @AS<<}|
+|{--West--}{>>r155 @AS<<}|{--$87k--}{>>r157 @AS<<}|{--$92k--}{>>r159 @AS<<}|{--$104k--}{>>r161 @AS<<}|
 
 <!-- p137 empty, break-del r162 @AS -->
 

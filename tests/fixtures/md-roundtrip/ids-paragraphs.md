@@ -1,4 +1,5 @@
 ---
+title: rlt_trustAgreement
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
 revisions: 0
