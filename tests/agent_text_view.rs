@@ -737,8 +737,8 @@ fn a_header_change_is_visible_on_the_headers_line() {
 }
 
 /// Task 5b: a change whose text the view cannot show still prints its id
-/// once: a section's `w:sectPrChange` on `page:`, a style's change under
-/// `styles: changes:`, a header's formatting on its `headers:` entry, and a
+/// once: a section's `w:sectPrChange` on `page:`, a style's change on
+/// `style_changes:`, a header's formatting on its `headers:` entry, and a
 /// footnote's formatting on its definition line. The resolved views print
 /// none of them.
 #[test]
@@ -795,7 +795,7 @@ fn changes_without_text_name_their_ids() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("  changes: {Normal: styles.r9 @AC}")),
+            .any(|l| l.starts_with("style_changes: {Normal: styles.r9 @AC}")),
         "{out}"
     );
     assert!(
@@ -1023,6 +1023,27 @@ fn changes_printed_nowhere_else_are_unplaced() {
     assert!(
         !agent(&docx(&format!("<w:p>{}</w:p>", ins(1, "Ann Counsel", "x")))).contains("unplaced:")
     );
+}
+
+/// A textless change inside a printed container is not shown by the
+/// container's tag: accepting the inserted row keeps the row and leaves
+/// the deleted drawing tracked, so the drawing's own id must be printed.
+#[test]
+fn a_textless_change_in_a_printed_row_is_unplaced() {
+    let body = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        ins(3, "Ann Counsel", "Cell")
+    );
+    let out = agent(&docx(&body));
+    let lines = header_lines(&out);
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r2 @AC"), "{out}");
+    // The row's own tag and the cell text's print, so neither is unplaced.
+    assert!(!unplaced.contains("r1 "), "{out}");
+    assert!(!unplaced.contains("r3 "), "{out}");
 }
 
 /// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
@@ -5191,7 +5212,7 @@ fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
 }
 
 #[test]
-fn pr392_alternate_content_uses_only_the_rendered_branch_for_authors_and_counts() {
+fn pr392_alternate_content_renders_one_branch_and_names_every_listed_author() {
     let choice = format!(
         r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
         ins(1, "Ann Counsel", "Chosen")
@@ -5226,10 +5247,19 @@ fn pr392_alternate_content_uses_only_the_rendered_branch_for_authors_and_counts(
         // A Fallback change that is no twin of the Choice's (another text)
         // is still a change of the file: listed and counted (D8), though
         // the view shows the Choice only.
-        let listed = jubarte::changes::list_changes(&bytes).unwrap().len();
-        // Handles name the authors the view shows: the only other entry is
+        let changes = jubarte::changes::list_changes(&bytes).unwrap();
+        let listed = changes.len();
+        // Handles name the authors of the listed changes: a Fallback
+        // change the Choice does not twin prints on `unplaced:` with its
+        // author's handle (codex 4244120690). The only other entry is
         // document_owner.
-        assert_eq!(yaml["authors"].as_mapping().unwrap().len(), 2, "{view}");
+        let authors: std::collections::BTreeSet<_> =
+            changes.iter().filter_map(|c| c.author.as_deref()).collect();
+        assert_eq!(
+            yaml["authors"].as_mapping().unwrap().len(),
+            1 + authors.len(),
+            "{view}"
+        );
         assert!(
             header_lines(&view)
                 .iter()
@@ -5502,4 +5532,113 @@ fn an_empty_table_row_keeps_its_place_in_the_agent_view() {
         .unwrap()
         .docx;
     assert_eq!(body(&agent(&back)), view);
+}
+
+/// codex 4244120690: a change only a text box's `mc:Fallback` holds is
+/// listed, so its author, with no change in the `mc:Choice`, gets a handle
+/// and a legend line, and the `unplaced:` entry names it.
+#[test]
+fn a_fallback_only_author_gets_a_handle() {
+    let body = format!(
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+        drawing_box(r#"<w:r><w:t>Box</w:t></w:r>"#),
+        pict_box(&format!(
+            r#"<w:r><w:t>Box</w:t></w:r>{}"#,
+            ins(21, "Zoe Fallback", "Other")
+        ))
+    );
+    let out = agent(&docx(&body));
+    let lines = header_lines(&out);
+    assert!(
+        lines.iter().any(|l| l.starts_with("  ZF: Zoe Fallback")),
+        "{out}"
+    );
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r21 @ZF"), "{out}");
+}
+
+/// codex 4244378287: free-text header fields (the title, the owner, an
+/// author's name) that read like a tag do not count as printing it.
+#[test]
+fn a_title_or_name_that_reads_like_a_tag_prints_no_change() {
+    let body = format!(
+        r#"<w:p>{}</w:p><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+        ins(1, "Ann Counsel", "x"),
+        drawing_box(
+            r#"<w:r><w:t>Box</w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>"#
+        ),
+        pict_box(r#"<w:r><w:t>Box</w:t></w:r>"#)
+    );
+    let sect = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#;
+    let bytes = common::docx::docx_with_sect_pr(
+        &body,
+        &[core(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>r3 @AC</dc:title><dc:creator>r3 @AC</dc:creator></cp:coreProperties>"#,
+        )],
+        sect,
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert!(lines.iter().any(|l| l.starts_with("title: ")), "{out}");
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r3 @AC"), "{out}");
+}
+
+/// codex 4244378292: a story id outside the short grammar
+/// (`Header_1:p:0`) holds colons, so its flow-map value is quoted.
+#[test]
+fn a_long_story_id_is_quoted_in_the_header() {
+    let header =
+        format!(r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:hdr>"#);
+    let bytes = common::docx::docx_with_sect_pr(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/Header_1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    assert!(out.contains(r#"{id: "Header_1:p:0", text: Head}"#), "{out}");
+    let yaml = header_yaml(&out);
+    assert_eq!(
+        yaml["headers"]["default"]["id"].as_str(),
+        Some("Header_1:p:0")
+    );
+}
+
+/// codex 4244378295: a default style whose id is `changes` keeps its
+/// `styles:` entry; the style changes print under `style_changes:`.
+#[test]
+fn a_style_named_changes_does_not_collide_with_the_style_changes() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="changes"><w:name w:val="changes"/><w:rPr><w:b/><w:rPrChange w:id="9" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        "<w:p><w:r><w:t>Text</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+        r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    let yaml = header_yaml(&out);
+    assert!(yaml["styles"]["changes"].as_str().is_some(), "{out}");
+    assert_eq!(
+        yaml["style_changes"]["changes"].as_str(),
+        Some("styles.r9 @AC"),
+        "{out}"
+    );
+    assert!(!out.contains("unplaced:"), "{out}");
 }
