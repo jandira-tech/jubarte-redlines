@@ -417,6 +417,32 @@ fn images_are_embedded_through_the_loader() {
 }
 
 #[test]
+fn math_in_an_image_description_stays_in_the_alt_text() {
+    // pulldown-cmark parses the description of `![…]` as inline events, so
+    // `$…$` there is InlineMath with the image open: it joins the alt text,
+    // never a body run before the picture.
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&[0u8; 200 * 100], 200, 100, image::ExtendedColorType::L8)
+        .unwrap();
+    let loader = |_: &str| Some(png.clone());
+    let written = markdown_to_docx(
+        "![area $x^2$](a.png)\n",
+        &DocxOptions {
+            images: Some(&loader),
+            ..DocxOptions::default()
+        },
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(xml.contains("descr=\"area $x^2$\""), "{xml}");
+    assert_eq!(texts(&written.docx), [""]);
+    // Without a loader, the alt text — math included — is the body text.
+    let written = markdown_to_docx("![area $x^2$](a.png)\n", &DocxOptions::default()).unwrap();
+    assert_eq!(texts(&written.docx), ["area $x^2$"]);
+}
+
+#[test]
 fn caret_and_single_tilde_mark_superscript_and_subscript() {
     // `^x^` and `~x~` at word edges, as pulldown-cmark reads them; two
     // tildes stay strikethrough and `{~~a~>b~~}` stays a change. Inside a
