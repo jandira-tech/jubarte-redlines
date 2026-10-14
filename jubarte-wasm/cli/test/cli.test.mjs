@@ -73,6 +73,13 @@ test("removed command help and legacy listing flags are unavailable", () => {
     assert.equal(result.out, "");
     assert.ok(!fs.existsSync(path.join(tmp, "unused.docx")));
   }
+  // `revisions` reads as a file name again; a note names `changes` first.
+  const note = "note: revisions is no longer a task, so it reads as a file name; use changes\n";
+  assert.ok(run("revisions", "missing.docx", "--json").err.startsWith(note));
+  const legacy = run("revisions", "missing.docx");
+  assert.equal(legacy.code, 1, legacy.err);
+  assert.ok(legacy.err.startsWith(note), legacy.err);
+  assert.match(legacy.err, /reading revisions/);
 });
 
 test("redline writes a Word redline and refuses to overwrite it", () => {

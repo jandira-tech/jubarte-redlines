@@ -315,9 +315,12 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     assert main(["changes", str(redline)]) == 0
     assert "change(s)" in capsys.readouterr().out
     # `revisions` (the Docxodus GetRevisions listing) left the CLI; `changes`
-    # is the one listing. The word is the two-file compare's ORIGINAL again.
+    # is the one listing. The word is the two-file compare's ORIGINAL again,
+    # and a note names `changes` first.
     assert main(["revisions", str(redline)]) == 1
-    assert "reading revisions" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.startswith("note: revisions is no longer a task, so it reads as a file name; use changes\n"), err
+    assert "reading revisions" in err
     clean = tmp_path / "clean.docx"
     assert main(["accept", str(redline), "-o", str(clean)]) == 0
     assert main(["text", str(clean)]) == 0
