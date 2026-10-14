@@ -139,7 +139,9 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
             lines.push(format!("  ✗ docx {name} lost: the whole part"));
         } else if let Some(name) = line.strip_suffix(": only in B") {
             lines.push(format!("  ✗ docx {name} new: the whole part"));
-        } else if let Some((name, _)) = line.split_once(": ").filter(|(_, r)| r.ends_with("differ"))
+        } else if let Some((name, _)) = line
+            .split_once(": ")
+            .filter(|(_, r)| r.ends_with("differ") || r.ends_with("differs"))
         {
             part = format!("{name} ");
         }
@@ -168,6 +170,13 @@ static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
     [
         // A font set on a run, not through a style: the view has no run font.
         (r#"^rfonts "[^"]*" ×"#, "direct run font"),
+        // The style a font comes through (`via "Normal"`, or the document
+        // defaults): the legend gives each style's effective font, which
+        // the Markdown comparison checks; where it is set, it does not say.
+        (
+            r#"^rfonts "[^"]*" via "[^"]*" ×"#,
+            "where a style's font is set",
+        ),
         (r"^color ", "text colour, set on a run or by a style"),
         (r"^(para|run)-shd ", "shading"),
         // The package's font list and theme, the defaults under every

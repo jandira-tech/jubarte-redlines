@@ -20,3 +20,15 @@ ids-fonts.md tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/44f83e9351_
 ids-font-sizes.md tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/24d37f7b5e_rejected_tracking.docx
 mix.md tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/25f1d6ecc3.docx
 math.md tests/fixtures/agent-view/quadratic.docx
+# Edge documents: tests/fixtures/md-roundtrip/edges/make_edges.py writes them; each is one behaviour both directions must keep.
+edge-anchors.md tests/fixtures/md-roundtrip/edges/edge-anchors.docx
+edge-cells.md tests/fixtures/md-roundtrip/edges/edge-cells.docx
+edge-change-ids.md tests/fixtures/md-roundtrip/edges/edge-change-ids.docx
+edge-clauses.md tests/fixtures/md-roundtrip/edges/edge-clauses.docx
+edge-dates.md tests/fixtures/md-roundtrip/edges/edge-dates.docx
+edge-notes.md tests/fixtures/md-roundtrip/edges/edge-notes.docx
+edge-order.md tests/fixtures/md-roundtrip/edges/edge-order.docx
+edge-owner-creator.md tests/fixtures/md-roundtrip/edges/edge-owner-creator.docx
+edge-owner-modifier.md tests/fixtures/md-roundtrip/edges/edge-owner-modifier.docx
+edge-stories.md tests/fixtures/md-roundtrip/edges/edge-stories.docx
+edge-table-styles.md tests/fixtures/md-roundtrip/edges/edge-table-styles.docx
