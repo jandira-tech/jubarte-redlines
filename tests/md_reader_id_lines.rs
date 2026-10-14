@@ -788,3 +788,215 @@ fn a_note_of_two_paragraphs_keeps_them() {
         assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
     }
 }
+
+#[test]
+fn gaps_and_rows_past_the_grid_come_back_as_the_table_line_says() {
+    // A row's gaps are written as the table line counts them, even where
+    // the view shows no empty cell for them; an empty cell past the grid's
+    // columns is the view's padding, not a cell.
+    for table in [
+        // A full row with a grid column after it.
+        "<!-- t0 2x2, cells p1-p4 by row, gaps t0.row1 after 1 -->\n|a|b|\n|-|-|\n|c|d|",
+        // Rows wider and narrower than the grid.
+        "<!-- t0 3x3, cells p1-p10 by row, gaps t0.row1 after 1 -->\n|a|b|c|||\n|-|-|-|-|-|\n|d|e||||\n|f|g|h|i|j|",
+        "<!-- t0 2x2, cells p1-p5 by row, gaps t0.row1 before 1 -->\n|a|b|||\n|-|-|-|-|\n||x|y|z|",
+        // Empty rows: a span and a gap the view has no cell for.
+        "<!-- t0 3x3, cells p1-p6 by row, merged t0.row1.cell1 across 2, gaps t0.row2 before 2 -->\n||\n|-|\n||\n||",
+    ] {
+        let body = format!(
+            "<!-- p0 -->\nBefore.\n\n{table}\n\n<!-- p{} -->\nAfter.",
+            last_paragraph(table) + 1
+        );
+        assert_eq!(round_trip(&format!("{body}\n")), body, "{table}");
+    }
+}
+
+/// The last paragraph a table line's `cells pA-pB` counts.
+fn last_paragraph(table: &str) -> usize {
+    let cells = table.split_once("cells p").map_or("", |(_, rest)| rest);
+    let range = cells.split_once(' ').map_or(cells, |(range, _)| range);
+    range
+        .rsplit_once("-p")
+        .and_then(|(_, last)| last.trim_end_matches(',').parse().ok())
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_note_whose_own_marks_the_view_does_not_name_keeps_its_text_unmarked() {
+    // A reference deleted with no mark on its note's text (`{--[^1]: …--}`
+    // with no `rev` after it): the note keeps its text, and the body's mark
+    // keeps the reference's id.
+    let body = "<!-- p0 -->\nBefore{--[^1]--}{>>r1 @AC<<} after.\n\n<!-- footnotes.p0 -->\n\
+                {--[^1]: Still here.--}{>>r1 @AC<<}";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{AUTHORS}{body}\n")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    let notes = common::docx::part_string(&docx, "word/footnotes.xml").expect("footnotes.xml");
+    assert!(!notes.contains("<w:del "), "{notes}");
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    assert!(document.contains("<w:del w:id=\"1\" "), "{document}");
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
+}
+
+#[test]
+fn a_note_referenced_twice_is_one_note() {
+    let body = "<!-- p0 -->\nSee[^1] and again[^1].\n\n<!-- footnotes.p0 -->\n[^1]: Once.";
+    let docx = markdown_to_docx(&as_view(&format!("{body}\n")), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    let notes = common::docx::part_string(&docx, "word/footnotes.xml").expect("footnotes.xml");
+    assert_eq!(notes.matches("Once.").count(), 1, "{notes}");
+    assert_eq!(round_trip(&format!("{body}\n")), body);
+}
+
+#[test]
+fn a_table_in_a_note_keeps_its_text() {
+    // The view has no table in a note: its cells' paragraphs are the
+    // note's, joined as its other paragraphs are, and its id line counts
+    // them all.
+    let docx = std::fs::read("tests/fixtures/md-roundtrip/edges/edge-notes-table.docx")
+        .expect("the edge fixture");
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let line = "<!-- footnotes.p0-p5 -->\n[^1]: Note<br>fn-a<br>fn-b<br>fn-c<br>fn-d<br>After.";
+    assert!(view.contains(line), "{line} in {view}");
+}
+
+#[test]
+fn a_dated_range_survives_on_comments_and_paragraph_marks() {
+    // The range needs two dated things to tell its ends apart, whatever
+    // they are: two comments, or two paragraph marks.
+    for (authors, body) in [
+        (
+            "AC: Ann Counsel                  # 2 comments, 2026-03-02..2026-03-04",
+            "<!-- p0 -->\n{==One==}{>>c0 @AC: first<<} and {==two==}{>>c1 @AC: second<<}.",
+        ),
+        (
+            "AC: Ann Counsel                  # 2 revisions, 2026-03-02..2026-03-04",
+            "<!-- p0 break-ins r1 @AC -->\nOne.\n\n<!-- p1 break-ins r2 @AC -->\nTwo.\n\n<!-- p2 -->\nThree.",
+        ),
+    ] {
+        let view = format!("---\nauthors:\n  {authors}\n---\n\n{body}\n");
+        let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
+            .expect("the view reads")
+            .docx;
+        let again = read(
+            &docx,
+            &ReadOptions {
+                page_markers: false,
+                ..ReadOptions::default()
+            },
+        )
+        .expect("the docx reads")
+        .markdown;
+        assert!(
+            again.contains("2026-03-02..2026-03-04"),
+            "{authors}: {again}"
+        );
+    }
+}
+
+#[test]
+fn a_comment_inside_a_substitution_side_keeps_the_pair() {
+    // The comment's range sits in the old text: the writer still writes the
+    // insertion first, and the view pairs the two sides again.
+    let body = "<!-- p0 -->\nA {~~aa {==bb==}{>>c0 @AC: Inside.<<} cc~>NEW~~}{>>r3+1 @AC<<} z.";
+    let view = format!("{AUTHORS}{body}\n");
+    let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&docx);
+    let ids = marks(&docx);
+    assert_eq!(ids.first().map(String::as_str), Some("ins1"), "{ids:?}");
+    let again = round_trip(&view);
+    assert!(again.contains("{~~aa {==bb==}"), "{again}");
+    assert!(again.contains("~>NEW~~}"), "{again}");
+}
+
+#[test]
+fn a_heading_slug_bookmark_between_marks_keeps_the_pair_and_its_count() {
+    // The heading's own bookmark prints no anchor, so the text pairs the
+    // marks around it; the `revisions:` count must say the same.
+    let mark = |kind: &str, id: u32, text: &str| {
+        let t = if kind == "del" { "delText" } else { "t" };
+        format!(
+            "<w:{kind} w:id=\"{id}\" w:author=\"Ann Lee\" w:date=\"2026-03-02T00:00:00Z\">\
+             <w:r><w:{t}>{text}</w:{t}></w:r></w:{kind}>"
+        )
+    };
+    let body = format!(
+        "<w:p><w:pPr><w:outlineLvl w:val=\"0\"/></w:pPr>{}\
+         <w:bookmarkStart w:id=\"0\" w:name=\"hello\"/><w:bookmarkEnd w:id=\"0\"/>{}</w:p>\
+         <w:p><w:hyperlink w:anchor=\"hello\"><w:r><w:t>the heading</w:t></w:r></w:hyperlink></w:p>",
+        mark("ins", 54, "Hello"),
+        mark("del", 55, "Old"),
+    );
+    let view = read(
+        &common::docx::docx(&body),
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert!(
+        view.contains("# {~~Old~>Hello~~}{>>r55+54 @AL<<}"),
+        "{view}"
+    );
+    assert!(view.contains("1 change: 1 substitution"), "{view}");
+}
+
+#[test]
+fn a_run_that_prints_nothing_keeps_no_two_marks_apart() {
+    // An empty run, a vanished run and a page break between an insertion
+    // and a deletion: the text pairs them, and so does the count.
+    let mark = |kind: &str, id: u32, text: &str| {
+        let t = if kind == "del" { "delText" } else { "t" };
+        format!(
+            "<w:{kind} w:id=\"{id}\" w:author=\"Ann Lee\" w:date=\"2026-03-02T00:00:00Z\">\
+             <w:r><w:{t}>{text}</w:{t}></w:r></w:{kind}>"
+        )
+    };
+    let between = [
+        "<w:r><w:rPr><w:b/></w:rPr></w:r>",
+        "<w:r><w:rPr><w:vanish/></w:rPr><w:t>HID</w:t></w:r>",
+        "<w:r><w:br w:type=\"page\"/></w:r>",
+    ];
+    let body: String = between
+        .iter()
+        .enumerate()
+        .map(|(n, run)| {
+            let id = 10 + 2 * n as u32;
+            format!(
+                "<w:p><w:r><w:t xml:space=\"preserve\">A </w:t></w:r>{}{run}{}</w:p>",
+                mark("ins", id, "new"),
+                mark("del", id + 1, "old"),
+            )
+        })
+        .collect();
+    let view = read(
+        &common::docx::docx(&body),
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert_eq!(view.matches("{~~old~>new~~}").count(), 3, "{view}");
+    assert!(
+        view.contains("6 marks shown as 3 changes: 3 substitutions"),
+        "{view}"
+    );
+}

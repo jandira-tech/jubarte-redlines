@@ -330,6 +330,25 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         threads: threads.clone(),
         story: None,
     };
+    // A heading's own slug bookmark prints no anchor (the link reaches the
+    // heading by its slug): it keeps no two marks apart.
+    let body_paragraphs = agent::paragraphs(&document);
+    for p in body_paragraphs {
+        if writer.heading_of(p).is_none() {
+            continue;
+        }
+        let slug = super::write::github_slug(&shown_text(p));
+        for bookmark in p.children_named("bookmarkStart") {
+            if let Some(name) = bookmark.attr("name")
+                && is_slug_of(name, &slug)
+            {
+                writer.handles.shown_bookmarks.remove(name);
+            }
+        }
+    }
+    handles
+        .shown_bookmarks
+        .clone_from(&writer.handles.shown_bookmarks);
     if let Some(root) = &comments {
         writer.comments = root
             .children_named("comment")
@@ -385,8 +404,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let around = std::mem::replace(&mut writer.revisions, changes);
         writer.lead = Some(format!("[^{index}]: "));
         writer.story = note_stories.get(&key.0).cloned();
-        let parts: Vec<critic::Part> = note
-            .children_named("p")
+        // Every paragraph the id line counts, a table's cells' too: the
+        // view has no table in a note, so they are the note's paragraphs.
+        let parts: Vec<critic::Part> = agent::paragraphs(note)
+            .into_iter()
             .map(|p| {
                 let inline = writer.paragraph_inline(p).0.into_inline();
                 // A line break is `<br>` in the agent view, as in a cell.
@@ -1035,6 +1056,18 @@ fn majority(aligns: impl Iterator<Item = Option<&'static str>>) -> Option<&'stat
 
 /// Rows as a Markdown pipe table; the first row is the header, and the
 /// delimiter row aligns each column as `aligns` says.
+/// Whether `name` is a heading's bookmark for `slug`: the slug itself, or
+/// the slug and a number Word or the writer added to keep it unique.
+fn is_slug_of(name: &str, slug: &str) -> bool {
+    !slug.is_empty()
+        && name.strip_prefix(slug).is_some_and(|rest| {
+            rest.is_empty()
+                || rest
+                    .strip_prefix('-')
+                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
 fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) -> String {
     // A table of empty cells keeps one column, so it stays a table.
     let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
@@ -1717,15 +1750,27 @@ impl Writer<'_> {
     /// `name` is the bookmark the writer gives the heading being read: its
     /// slug, or the slug and `-1`, `-2`, … for a repeated heading.
     fn slug_of_heading(&self, name: &str) -> bool {
-        self.heading_slug.as_deref().is_some_and(|slug| {
-            !slug.is_empty()
-                && name.strip_prefix(slug).is_some_and(|rest| {
-                    rest.is_empty()
-                        || rest
-                            .strip_prefix('-')
-                            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-                })
-        })
+        self.heading_slug
+            .as_deref()
+            .is_some_and(|slug| is_slug_of(name, slug))
+    }
+
+    /// A paragraph's heading level: its own outline level, else its
+    /// style's; `None` for body text.
+    fn heading_of(&self, p: &Element) -> Option<usize> {
+        let ppr = p.child("pPr");
+        let direct_outline = ppr
+            .and_then(|pr| pr.child("outlineLvl"))
+            .and_then(|o| o.attr("val"))
+            .and_then(|v| v.parse::<usize>().ok())
+            .map(|l| if l < 9 { Some((l + 1).min(6)) } else { None });
+        match direct_outline {
+            Some(level) => level,
+            None => ppr
+                .and_then(|pr| pr.child("pStyle"))
+                .and_then(|s| s.attr("val"))
+                .and_then(|s| self.styles.heading_level(s)),
+        }
     }
 
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
@@ -1801,15 +1846,7 @@ impl Writer<'_> {
             .and_then(|pr| pr.child("pStyle"))
             .and_then(|s| s.attr("val"))
             .map(str::to_string);
-        let direct_outline = ppr
-            .and_then(|pr| pr.child("outlineLvl"))
-            .and_then(|o| o.attr("val"))
-            .and_then(|v| v.parse::<usize>().ok())
-            .map(|l| if l < 9 { Some((l + 1).min(6)) } else { None });
-        let heading = match direct_outline {
-            Some(level) => level,
-            None => style.as_deref().and_then(|s| self.styles.heading_level(s)),
-        };
+        let heading = self.heading_of(p);
         let num = ppr
             .and_then(|pr| pr.child("numPr"))
             .and_then(num_pr)

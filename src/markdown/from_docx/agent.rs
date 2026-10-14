@@ -106,6 +106,25 @@ fn hollow(e: &Element) -> bool {
             .all(|r| r.local() == "r" && r.elements().all(|c| c.local() == "rPr"))
 }
 
+/// A run the text prints nothing for: vanished, or holding only empty
+/// text and page breaks (the page break is the paragraph's id line). It
+/// keeps no two marks apart, as in the text.
+fn silent_run(e: &Element) -> bool {
+    if e.local() != "r" {
+        return false;
+    }
+    let rpr = e.child("rPr");
+    if rpr.and_then(|r| r.toggle("vanish")).unwrap_or(false) {
+        return true;
+    }
+    e.elements().all(|c| match c.local() {
+        "rPr" | "lastRenderedPageBreak" => true,
+        "t" | "delText" => c.text().is_empty(),
+        "br" | "cr" => c.attr("type") == Some("page"),
+        _ => false,
+    })
+}
+
 /// `12@AC`: the element's `w:id` and its author's handle (`??` for an
 /// author the legend does not know: a malformed file, or Word's
 /// `w:tblGridChange`, which has no author).
@@ -272,6 +291,7 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
                 | "customXmlMoveToRangeStart"
                 | "customXmlMoveToRangeEnd"
         ) || hollow(e)
+            || silent_run(e)
         {
             continue;
         }

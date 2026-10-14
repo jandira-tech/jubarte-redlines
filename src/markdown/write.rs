@@ -5,7 +5,7 @@
 //! Markdown events to Word items, CriticMarkup to tracked changes.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
@@ -122,9 +122,8 @@ struct RowPlan {
     first: Option<usize>,
     /// Each Markdown cell's shape, in order.
     cells: Vec<CellShape>,
-    /// The empty cells the view left out at the row's end, each one's
-    /// vertical merge (as [`Item::Cell`]).
-    pad: Vec<Option<bool>>,
+    /// The empty cells the view left out at the row's end.
+    pad: Vec<Pad>,
     /// The grid columns the row leaves out before and after its cells.
     gaps: (usize, usize),
 }
@@ -231,12 +230,16 @@ fn table_plans(source: &str) -> Vec<Option<TablePlan>> {
     plans
 }
 
+/// One empty cell the view left out at a row's end: the grid columns it
+/// spans, and its vertical merge (as [`Item::Cell`]).
+type Pad = (usize, Option<bool>);
+
 /// The plan a table line makes for a table whose rows hold `rows` (each
 /// Markdown cell's emptiness, and the row's `<br>`s).
 fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> TablePlan {
     // The last row each grid column's vertical merge reaches.
     let mut merged_until: HashMap<usize, usize> = HashMap::new();
-    let mut shaped: Vec<(Vec<CellShape>, usize, Vec<Option<bool>>)> = Vec::new();
+    let mut shaped: Vec<(Vec<CellShape>, usize, Vec<Pad>)> = Vec::new();
     let mut gaps: Vec<(usize, usize)> = Vec::new();
     for (r, (cells, _)) in rows.iter().enumerate() {
         let mut shapes = Vec::with_capacity(cells.len());
@@ -247,16 +250,26 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
             .take(before)
             .take_while(|&&empty| empty)
             .count();
-        let tail = cells
+        // Empty cells past the grid's columns pad the row to the view's
+        // widest: they are no cells.
+        let mut len = cells.len();
+        if let Some(columns) = line.columns {
+            while len > lead && before + (len - lead) > columns && cells[len - 1] {
+                len -= 1;
+            }
+        }
+        let tail = cells[..len]
             .iter()
             .skip(lead)
             .rev()
             .take(after)
             .take_while(|&&empty| empty)
             .count();
-        let (mut cell, mut column, mut spanned) = (0, lead, 0);
+        // The gap before is the line's, also where the view shows fewer
+        // empty cells for it (a row of empty cells shows one).
+        let (mut cell, mut column, mut spanned) = (0, before, 0);
         for (at, &empty) in cells.iter().enumerate() {
-            if at < lead || at >= cells.len() - tail {
+            if at < lead || at >= len - tail {
                 shapes.push(CellShape::Spanned);
                 continue;
             }
@@ -283,29 +296,32 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         // `column` already counts a span the view cut at the right edge.
         // The view leaves out empty cells at a row's end: they come back,
         // but for the grid columns its `after` gap names past them.
-        let missing = line
+        // The gap after is the line's too: the cells it leaves out of the
+        // grid come back, each with its span and vertical merge as the
+        // table line names them.
+        let end = line
             .columns
-            .map_or(0, |columns| columns.saturating_sub(column + tail));
-        let beyond = after.saturating_sub(tail).min(missing);
-        // Each one's vertical merge, as the table line names it.
-        let pad: Vec<Option<bool>> = (cell..cell + missing - beyond)
-            .map(|at| {
-                let (_, down) = line.merges.get(&(r, at)).copied().unwrap_or((1, 1));
-                let merge = if down > 1 {
-                    merged_until.insert(column, r + down - 1);
-                    Some(true)
-                } else {
-                    merged_until
-                        .get(&column)
-                        .is_some_and(|&until| until >= r)
-                        .then_some(false)
-                };
-                column += 1;
-                merge
-            })
-            .collect();
+            .map_or(0, |columns| columns.saturating_sub(after.max(tail)));
+        let mut pad = Vec::new();
+        let mut at = cell;
+        while column < end {
+            let (across, down) = line.merges.get(&(r, at)).copied().unwrap_or((1, 1));
+            let across = across.clamp(1, end - column);
+            let merge = if down > 1 {
+                merged_until.insert(column, r + down - 1);
+                Some(true)
+            } else {
+                merged_until
+                    .get(&column)
+                    .is_some_and(|&until| until >= r)
+                    .then_some(false)
+            };
+            pad.push((across, merge));
+            column += across;
+            at += 1;
+        }
         shaped.push((shapes, cell, pad));
-        gaps.push((lead, tail + beyond));
+        gaps.push((before, after.max(tail)));
     }
     let rows: Vec<RowPlan> = match (&line.row_paragraphs, line.one_per_cell) {
         // One paragraph a cell: a `<br>` is a line break.
@@ -705,7 +721,7 @@ struct Writer<'o, 'a> {
     cell_paragraph: Option<usize>,
     /// The open row's planned cells, and its left-out empty cells.
     row_shapes: Vec<CellShape>,
-    row_pad: Vec<Option<bool>>,
+    row_pad: Vec<Pad>,
     /// Whether the open Markdown cell is a grid column the cell before
     /// spans ([`CellShape::Spanned`]).
     spanned: bool,
@@ -986,6 +1002,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 let label = critic::decode(&label);
                 // A second definition of a label is not the note's text.
                 let label = if self.definitions.contains_key(&label) {
+                    self.document.warnings.push(format!(
+                        "a second definition of [^{label}] was dropped: the first is the note's text"
+                    ));
                     format!("\u{0}{label}")
                 } else {
                     label
@@ -1004,9 +1023,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .cloned()
                     .flatten()
                     .filter(|_| self.view);
-                // The grid keeps the columns the view left out.
-                if let Some(grid) = self.table_plan.as_ref().and_then(|plan| plan.columns) {
-                    columns.resize(grid.max(columns.len()), None);
+                // The grid is the line's: it keeps the columns the view left
+                // out, and has none for the view's padding past it.
+                let mut grid = columns.clone();
+                if let Some(count) = self.table_plan.as_ref().and_then(|plan| plan.columns) {
+                    grid.resize(count, None);
+                    columns.resize(count.max(columns.len()), None);
                 }
                 let align = self.table_plan.as_ref().and_then(|plan| plan.align);
                 // The style the table's line names, else the legend's for
@@ -1031,7 +1053,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 let formats = self.table_formats();
                 self.story().push(Item::Table {
-                    columns: columns.clone(),
+                    columns: grid,
                     align,
                     style,
                     formats,
@@ -1146,11 +1168,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::TableHead | TagEnd::TableRow => {
                 // The empty cells the view left out at the row's end.
-                for merge in std::mem::take(&mut self.row_pad) {
+                for (across, merge) in std::mem::take(&mut self.row_pad) {
                     self.cell = Some(None);
                     self.story().push(Item::Cell {
                         align: None,
-                        across: 1,
+                        across,
                         merge,
                     });
                     self.begin_paragraph();
@@ -1866,22 +1888,25 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// `{~~old~>new~~}` is Word's substitution: the inserted text, then
     /// the deleted text, as Word's Compare writes them. The view reads a
     /// deletion before an insertion as two changes, so they keep that
-    /// order. Each side moves whole with its links and bookmarks; a side
-    /// holding more (a comment, a paragraph's end, half a link) stays where
-    /// it is.
+    /// order. Each side moves whole with its links, bookmarks and comments;
+    /// a side holding more (a paragraph's end, half a link or comment range)
+    /// stays where it is.
     fn inserted_side_first(&mut self) {
-        /// Runs, bookmarks and links that open and close within.
+        /// Runs, bookmarks, and links and comment ranges that open and
+        /// close within.
         fn whole(items: &[Item]) -> bool {
-            let mut links = 0usize;
+            let (mut links, mut ranges) = (0usize, 0usize);
             for item in items {
                 match item {
-                    Item::Run(_) | Item::Bookmark(_) => {}
+                    Item::Run(_) | Item::Bookmark(_) | Item::CommentReference(_) => {}
                     Item::LinkStart(..) => links += 1,
                     Item::LinkEnd if links > 0 => links -= 1,
+                    Item::RangeStart(_) => ranges += 1,
+                    Item::RangeEnd(_) if ranges > 0 => ranges -= 1,
                     _ => return false,
                 }
             }
-            links == 0
+            links == 0 && ranges == 0
         }
         let Some((start, Some(split))) = self.substitution.take() else {
             return;
@@ -2157,8 +2182,19 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             return;
         }
-        self.references.push((label, self.change));
-        let position = u32::try_from(self.references.len()).unwrap_or(u32::MAX);
+        // A label referenced again names the same note.
+        let at = match self
+            .references
+            .iter()
+            .position(|(known, _)| *known == label)
+        {
+            Some(at) => at,
+            None => {
+                self.references.push((label, self.change));
+                self.references.len() - 1
+            }
+        };
+        let position = u32::try_from(at + 1).unwrap_or(u32::MAX);
         self.push(Content::NoteReference(position));
     }
 
@@ -2520,6 +2556,19 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn tag_serial(&mut self, tag: &view_notes::Tag) -> u32 {
         self.serial += 1;
         let serial = self.serial;
+        // An undated tag of an author dated `first..last` may be the end
+        // of the range ([`Self::range_ends`]).
+        if tag.date.is_none()
+            && self
+                .authors
+                .get(&tag.handle)
+                .is_some_and(|known| known.range.is_some())
+        {
+            self.ranged
+                .entry(tag.handle.clone())
+                .or_default()
+                .push(serial);
+        }
         let attribution = self.view_author(&tag.handle, tag.date.as_deref());
         self.document.attributions.insert(serial, attribution);
         if !tag.ids.is_empty() {
@@ -2688,8 +2737,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             let clauses = self.note_clauses.remove(&label).unwrap_or_default();
             // A note without changes of its own is in its reference's
             // change, attribution and all.
+            let wrapped = has_changes(&items);
             if let Some((kind, serial)) = change
-                && !has_changes(&items)
+                && !wrapped
             {
                 mark_whole(&mut items, kind, serial);
             }
@@ -2709,6 +2759,24 @@ impl<'o, 'a> Writer<'o, 'a> {
                     clauses.rev.iter().map(|tag| self.tag_serial(tag)).collect();
                 own_note_marks(&mut items, kind, &serials);
                 change = serials.get(1).map(|&first| (kind, first));
+            } else if let Some((kind, _)) = change
+                && wrapped
+                && clauses.rev.is_empty()
+                && in_one_change(&items, kind)
+            {
+                // The view prints a note in its reference's change and names
+                // no mark of its own: its text has none.
+                for item in &mut items {
+                    match item {
+                        Item::Run(run) => run.change = None,
+                        Item::Paragraph(paragraph) => {
+                            paragraph.mark = None;
+                            paragraph.mark_by = None;
+                        }
+                        _ => {}
+                    }
+                }
+                change = None;
             } else if !self.resolved
                 && let Some(Item::Paragraph(last)) = items
                     .iter_mut()
@@ -2744,19 +2812,45 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.document
     }
 
-    /// An author dated `first..last` gets two timestamps back: the last
-    /// mark of their last change is stamped on the last day, when they
-    /// have two marks or more to tell apart.
+    /// An author dated `first..last` gets two timestamps back, when they
+    /// have two marks or comments or more to tell apart: everything is
+    /// stamped on the first day, and their last comment, else the last mark
+    /// of their last change, on the last day.
     fn range_ends(&mut self) {
-        for (handle, serials) in std::mem::take(&mut self.ranged) {
-            let Some(last) = self
-                .authors
-                .get(&handle)
-                .and_then(|known| known.range.as_ref())
-                .map(|(_, last)| format!("{last}T23:59:59Z"))
-            else {
+        let mut ranged = std::mem::take(&mut self.ranged);
+        let mut handles: BTreeSet<String> = ranged.keys().cloned().collect();
+        handles.extend(
+            self.authors
+                .iter()
+                .filter(|(_, known)| known.range.is_some())
+                .map(|(handle, _)| handle.clone()),
+        );
+        for handle in handles {
+            let serials = ranged.remove(&handle).unwrap_or_default();
+            let Some((name, first, last)) = self.authors.get(&handle).and_then(|known| {
+                let (first, last) = known.range.as_ref()?;
+                Some((
+                    known.name.clone(),
+                    format!("{first}T00:00:00Z"),
+                    format!("{last}T23:59:59Z"),
+                ))
+            }) else {
                 continue;
             };
+            // The comments the range's first day stamped.
+            let comments: Vec<usize> = self
+                .document
+                .comments
+                .iter()
+                .enumerate()
+                .filter(|(_, comment)| {
+                    comment
+                        .by
+                        .as_ref()
+                        .is_some_and(|(author, date)| *author == name && *date == first)
+                })
+                .map(|(at, _)| at)
+                .collect();
             let marks: usize = serials
                 .iter()
                 .map(|s| {
@@ -2766,7 +2860,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .map_or(1, |ids| ids.len().max(1))
                 })
                 .sum();
-            if let Some(&serial) = serials.last()
+            if let Some(&at) = comments.last()
+                && marks + comments.len() > 1
+            {
+                if let Some((_, date)) = &mut self.document.comments[at].by {
+                    date.clone_from(&last);
+                }
+            } else if let Some(&serial) = serials.last()
                 && marks > 1
             {
                 self.document.range_ends.insert(serial, last);
