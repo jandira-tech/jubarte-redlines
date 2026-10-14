@@ -474,14 +474,24 @@ pub(crate) fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// How a stretch of inline text is set: the marks printed around it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Marks {
+    pub bold: bool,
+    pub italic: bool,
+    /// Agent view only, as the two below: `<u>…</u>`.
+    pub underline: bool,
+    /// `==…==`: a highlight of any colour.
+    pub highlight: bool,
+    /// `~~…~~`.
+    pub strike: bool,
+}
+
 /// One formatted stretch of inline text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Span {
     pub text: String,
-    pub bold: bool,
-    pub italic: bool,
-    /// Agent view only: `<u>…</u>`, innermost.
-    pub underline: bool,
+    pub marks: Marks,
     pub link: Option<String>,
 }
 
@@ -517,21 +527,14 @@ impl Inline {
         (leading, trailing)
     }
 
-    /// Appends text with its bold, italic and underline (underline only in
-    /// the agent view), merging into the last span when they all match.
-    pub(crate) fn push_styled(
-        &mut self,
-        text: &str,
-        (bold, italic, underline): (bool, bool, bool),
-        link: Option<&str>,
-    ) {
+    /// Appends text with its marks, merging into the last span when they
+    /// and the link match.
+    pub(crate) fn push_styled(&mut self, text: &str, marks: Marks, link: Option<&str>) {
         if text.is_empty() {
             return;
         }
         if let Some(last) = self.spans.last_mut()
-            && last.bold == bold
-            && last.italic == italic
-            && last.underline == underline
+            && last.marks == marks
             && last.link.as_deref() == link
         {
             last.text.push_str(text);
@@ -539,9 +542,7 @@ impl Inline {
         }
         self.spans.push(Span {
             text: text.to_string(),
-            bold,
-            italic,
-            underline,
+            marks,
             link: link.map(str::to_string),
         });
     }
@@ -583,45 +584,45 @@ impl Inline {
 
 fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     let mut out = String::new();
-    // Merge neighbours with identical emphasis (links already grouped).
-    let mut merged: Vec<(bool, bool, bool, String)> = Vec::new();
+    // Merge neighbours with identical marks (links already grouped).
+    let mut merged: Vec<(Marks, String)> = Vec::new();
     for span in spans {
         let style = if emphasis {
-            (span.bold, span.italic, span.underline)
+            span.marks
         } else {
-            (false, false, false)
+            Marks::default()
         };
         // Whitespace-only spans inherit the previous formatting so markers do not split.
-        let (bold, italic, underline) = if span.text.trim().is_empty() {
-            merged
-                .last()
-                .map(|(b, i, u, _)| (*b, *i, *u))
-                .unwrap_or(style)
+        let marks = if span.text.trim().is_empty() {
+            merged.last().map_or(style, |(m, _)| *m)
         } else {
             style
         };
         match merged.last_mut() {
-            Some((b, i, u, text)) if *b == bold && *i == italic && *u == underline => {
-                text.push_str(&span.text);
-            }
-            _ => merged.push((bold, italic, underline, span.text.clone())),
+            Some((m, text)) if *m == marks => text.push_str(&span.text),
+            _ => merged.push((marks, span.text.clone())),
         }
     }
-    for (bold, italic, underline, text) in merged {
+    for (marks, text) in merged {
         let (lead, core, trail) = split_ws(&text);
-        if core.is_empty() || (!bold && !italic && !underline) {
+        if core.is_empty() || marks == Marks::default() {
             out.push_str(&text);
             continue;
         }
-        let (emphasis_open, emphasis_close) = match (bold, italic) {
+        let (emphasis_open, emphasis_close) = match (marks.bold, marks.italic) {
             (true, true) => ("**_", "_**"),
             (true, false) => ("**", "**"),
             (false, true) => ("_", "_"),
             (false, false) => ("", ""),
         };
-        let (u_open, u_close) = if underline { ("<u>", "</u>") } else { ("", "") };
-        let open = format!("{emphasis_open}{u_open}");
-        let close = format!("{u_close}{emphasis_close}");
+        let pair = |on: bool, open: &'static str, close: &'static str| {
+            if on { (open, close) } else { ("", "") }
+        };
+        let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
+        let (h_open, h_close) = pair(marks.highlight, "==", "==");
+        let (s_open, s_close) = pair(marks.strike, "~~", "~~");
+        let open = format!("{emphasis_open}{u_open}{h_open}{s_open}");
+        let close = format!("{s_close}{h_close}{u_close}{emphasis_close}");
         out.push_str(lead);
         // Markers cannot wrap line breaks; apply them per line.
         let lines: Vec<String> = core
@@ -897,7 +898,12 @@ mod tests {
 
     impl Inline {
         pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
-            self.push_styled(text, (bold, italic, false), link);
+            let marks = Marks {
+                bold,
+                italic,
+                ..Marks::default()
+            };
+            self.push_styled(text, marks, link);
         }
     }
 

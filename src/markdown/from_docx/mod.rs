@@ -21,7 +21,7 @@ mod ooxml;
 mod revise;
 
 use critic::{Change, Critic, Mark};
-use ooxml::{Blocks, Element, ListIndent, Media, Package, Rels};
+use ooxml::{Blocks, Element, ListIndent, Marks, Media, Package, Rels};
 
 /// How tracked changes and comments come out.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1834,7 +1834,7 @@ impl Writer<'_> {
             inline.set_inline_end();
         }
         if self.agent {
-            inline.set_keep_spaces();
+            inline.set_agent();
         }
         let mut extra = Vec::new();
         let mut fields = Vec::new();
@@ -1975,6 +1975,21 @@ impl Writer<'_> {
                         .and_then(|s| self.styles.underline(s))
                 })
                 .unwrap_or(false);
+        // Agent view only, as underline: a highlight of any colour and a
+        // single strike (spec §3).
+        let highlight = self.agent
+            && rpr
+                .and_then(|r| r.child("highlight"))
+                .and_then(|h| h.attr("val"))
+                .is_some_and(|val| val != "none");
+        let strike = self.agent && rpr.and_then(|r| r.toggle("strike")).unwrap_or(false);
+        let marks = Marks {
+            bold,
+            italic,
+            underline,
+            highlight,
+            strike,
+        };
         // A raised or lowered run keeps its tags, which the Markdown
         // reader takes back to w:vertAlign; a note reference is already
         // `[^n]`.
@@ -1996,7 +2011,7 @@ impl Writer<'_> {
         }
         let opened = out.len();
         for child in run.elements() {
-            self.run_child(child, link, (bold, italic, underline), fields, out, extra);
+            self.run_child(child, link, marks, fields, out, extra);
         }
         if let Some((_, close)) = tags {
             if out.len() == opened {
@@ -2011,7 +2026,7 @@ impl Writer<'_> {
         &mut self,
         child: &Element,
         link: Option<&str>,
-        style: (bool, bool, bool),
+        style: Marks,
         fields: &mut Vec<Field>,
         out: &mut Critic,
         extra: &mut Vec<String>,
@@ -2020,13 +2035,7 @@ impl Writer<'_> {
         let field_link = fields.iter().rev().find_map(|f| f.link.clone());
         let link = field_link.as_deref().or(link);
         match child.local() {
-            "t" | "delText" if !hidden => {
-                if self.agent {
-                    out.push_styled(&agent::escape_markdown(&child.text()), style, link);
-                } else {
-                    out.push_styled(&child.text(), style, link);
-                }
-            }
+            "t" | "delText" if !hidden => out.push_styled(&child.text(), style, link),
             "tab" | "ptab" if !hidden => out.push_styled("\t", style, link),
             "br" | "cr" if !hidden => {
                 if child.attr("type") != Some("page") {

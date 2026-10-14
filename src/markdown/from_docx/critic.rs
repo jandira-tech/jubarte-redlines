@@ -27,7 +27,7 @@
 //! with a Markdown backslash (`{\++`), which renders as the original characters
 //! but no longer matches the delimiter.
 
-use super::ooxml::Inline;
+use super::ooxml::{Inline, Marks};
 
 /// A CriticMarkup span kind. Moves are an insertion at their destination and a
 /// deletion at their source.
@@ -125,10 +125,7 @@ enum Leaf {
     /// Document text: escaped when rendered.
     Text {
         text: String,
-        bold: bool,
-        italic: bool,
-        /// Agent view only: `<u>…</u>`.
-        underline: bool,
+        marks: Marks,
         link: Option<String>,
     },
     /// Markdown built by the converter (images, math, note references).
@@ -170,8 +167,9 @@ pub(crate) struct Critic {
     /// The paragraph is joined to more text on the same line (a flattened
     /// table's cells): see [`space_into_last_change`].
     inline_end: bool,
-    /// Agent view: runs of spaces stay as the file holds them.
-    keep_spaces: bool,
+    /// Agent view: runs of spaces stay as the file holds them, and Markdown
+    /// syntax in the text is escaped once neighbouring runs are joined.
+    agent: bool,
 }
 
 impl Critic {
@@ -184,9 +182,11 @@ impl Critic {
         }
     }
 
-    /// Agent view: keeps runs of spaces as the file holds them.
-    pub(crate) fn set_keep_spaces(&mut self) {
-        self.keep_spaces = true;
+    /// Agent view: keeps runs of spaces as the file holds them and escapes
+    /// Markdown syntax in the text. Word splits runs anywhere, so `==` or
+    /// `~~` can straddle two runs: the escaping waits for the joined text.
+    pub(crate) fn set_agent(&mut self) {
+        self.agent = true;
     }
 
     /// Marks the paragraph as joined to more text on the same line.
@@ -195,22 +195,20 @@ impl Critic {
     }
 
     pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
-        self.push_styled(text, (bold, italic, false), link);
+        let marks = Marks {
+            bold,
+            italic,
+            ..Marks::default()
+        };
+        self.push_styled(text, marks, link);
     }
 
     /// [`Critic::push`] with underline, which only the agent view sets.
-    pub(crate) fn push_styled(
-        &mut self,
-        text: &str,
-        (bold, italic, underline): (bool, bool, bool),
-        link: Option<&str>,
-    ) {
+    pub(crate) fn push_styled(&mut self, text: &str, marks: Marks, link: Option<&str>) {
         if !text.is_empty() {
             self.tokens.push(Token::Leaf(Leaf::Text {
                 text: text.to_string(),
-                bold,
-                italic,
-                underline,
+                marks,
                 link: link.map(str::to_string),
             }));
         }
@@ -294,19 +292,19 @@ impl Critic {
         if self.inline_end {
             space_into_last_change(&mut nodes);
         }
+        let escaping = Escaping {
+            plain: self.plain,
+            agent: self.agent,
+        };
         let mut pieces = Vec::new();
-        render(&nodes, &mut pieces, self.plain, &mut 0);
+        render(&nodes, &mut pieces, escaping, &mut 0);
         wrap_markers(&mut pieces);
         let mut inline = Inline::default();
-        if self.keep_spaces {
+        if self.agent {
             inline.keep_spaces();
         }
         for piece in pieces {
-            inline.push_styled(
-                &piece.text,
-                (piece.bold, piece.italic, piece.underline),
-                piece.link.as_deref(),
-            );
+            inline.push_styled(&piece.text, piece.marks, piece.link.as_deref());
         }
         inline
     }
@@ -417,19 +415,11 @@ fn join_text(nodes: Vec<Node>) -> Vec<Node> {
             (
                 Some(Node::Leaf(Leaf::Text {
                     text: before,
-                    bold: b,
-                    italic: i,
-                    underline: u,
+                    marks: m,
                     link: l,
                 })),
-                Node::Leaf(Leaf::Text {
-                    text,
-                    bold,
-                    italic,
-                    underline,
-                    link,
-                }),
-            ) if *b == bold && *i == italic && *u == underline && *l == link => {
+                Node::Leaf(Leaf::Text { text, marks, link }),
+            ) if *m == marks && *l == link => {
                 before.push_str(&text);
             }
             (_, node) => out.push(node),
@@ -486,16 +476,34 @@ fn lift_comments(nodes: Vec<Node>, comments: &mut Vec<Node>) -> Vec<Node> {
 /// notes, which take a link only from the text around them.
 struct Piece {
     text: String,
-    bold: bool,
-    italic: bool,
-    underline: bool,
+    marks: Marks,
     link: Option<String>,
     /// For a marker, the change or comment it belongs to: all of one change's
     /// markers join a link, or none do, so brackets never cross.
     marker: Option<usize>,
 }
 
-fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
+/// How [`render`] escapes document text.
+#[derive(Clone, Copy)]
+struct Escaping {
+    /// No tracked change or comment: nothing can open a CriticMarkup span.
+    plain: bool,
+    /// Agent view: Markdown syntax is escaped too.
+    agent: bool,
+}
+
+impl Escaping {
+    fn text(self, text: &str) -> String {
+        match (self.agent, self.plain) {
+            (true, true) => super::agent::escape_markdown(text),
+            (true, false) => escape(&super::agent::escape_markdown(text)),
+            (false, true) => text.to_string(),
+            (false, false) => escape(text),
+        }
+    }
+}
+
+fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut usize) {
     let mut index = 0;
     while index < nodes.len() {
         match (&nodes[index], nodes.get(index + 1)) {
@@ -510,9 +518,9 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 *ids += 1;
                 let id = *ids;
                 marker(out, "{~~", id);
-                render(old, out, plain, ids);
+                render(old, out, escaping, ids);
                 marker(out, "~>", id);
-                render(new, out, plain, ids);
+                render(new, out, escaping, ids);
                 marker(out, "~~}", id);
                 match (tag(old_by.as_deref()), tag(new_by.as_deref())) {
                     (Some(a), Some(b)) if same_author(old_by.as_deref(), new_by.as_deref()) => {
@@ -534,38 +542,25 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 let id = *ids;
                 let (open, close) = mark.delimiters();
                 marker(out, open, id);
-                render(nodes, out, plain, ids);
+                render(nodes, out, escaping, ids);
                 marker(out, close, id);
                 attribution(out, by.as_deref(), id);
             }
-            (
-                Node::Leaf(Leaf::Text {
-                    text,
-                    bold,
-                    italic,
-                    underline,
-                    link,
-                }),
-                _,
-            ) => {
+            (Node::Leaf(Leaf::Text { text, marks, link }), _) => {
                 out.push(Piece {
-                    text: if plain { text.clone() } else { escape(text) },
-                    bold: *bold,
-                    italic: *italic,
-                    underline: *underline,
+                    text: escaping.text(text),
+                    marks: *marks,
                     link: link.clone(),
                     marker: None,
                 });
             }
             (Node::Leaf(Leaf::Raw(markdown)), _) => out.push(Piece {
-                text: math_changes(&if plain {
+                text: math_changes(&if escaping.plain {
                     markdown.clone()
                 } else {
                     defuse(markdown)
                 }),
-                bold: false,
-                italic: false,
-                underline: false,
+                marks: Marks::default(),
                 link: None,
                 marker: None,
             }),
@@ -581,9 +576,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
 fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
     out.push(Piece {
         text: text.to_string(),
-        bold: false,
-        italic: false,
-        underline: false,
+        marks: Marks::default(),
         link: None,
         marker: Some(id),
     });
@@ -596,15 +589,8 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
 /// resolve. A change joins only if all its markers do; one that starts inside
 /// the link and ends after it stays outside.
 fn wrap_markers(pieces: &mut [Piece]) {
-    type Format = (bool, bool, bool, Option<String>);
-    let format = |piece: &Piece| -> Format {
-        (
-            piece.bold,
-            piece.italic,
-            piece.underline,
-            piece.link.clone(),
-        )
-    };
+    type Format = (Marks, Option<String>);
+    let format = |piece: &Piece| -> Format { (piece.marks, piece.link.clone()) };
     let mut joined: Vec<Option<Format>> = vec![None; pieces.len()];
     let mut start = 0;
     while start < pieces.len() {
@@ -618,7 +604,7 @@ fn wrap_markers(pieces: &mut [Piece]) {
         let before = start.checked_sub(1).map(|at| format(&pieces[at]));
         let after = pieces.get(end).map(format);
         if let Some(around) =
-            before.filter(|f| *f != (false, false, false, None) && Some(f) == after.as_ref())
+            before.filter(|f| *f != (Marks::default(), None) && Some(f) == after.as_ref())
         {
             joined[start..end].fill(Some(around));
         }
@@ -631,12 +617,10 @@ fn wrap_markers(pieces: &mut [Piece]) {
         .filter_map(|(piece, _)| piece.marker)
         .collect();
     for (piece, around) in pieces.iter_mut().zip(joined) {
-        if let Some((bold, italic, underline, link)) =
+        if let Some((marks, link)) =
             around.filter(|_| piece.marker.is_some_and(|id| !refused.contains(&id)))
         {
-            piece.bold = bold;
-            piece.italic = italic;
-            piece.underline = underline;
+            piece.marks = marks;
             piece.link = link;
         }
     }

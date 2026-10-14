@@ -227,7 +227,7 @@ fn strict_text_boxes_leave_the_paragraph_ids_alone() {
         "{kept}"
     );
     assert!(
-        view.contains("<!-- p131 -->\n**_<u>Video provides"),
+        view.contains("<!-- p131 -->\n**_<u>==Video provides"),
         "{view}"
     );
     assert!(
