@@ -1903,6 +1903,9 @@ struct TextRun {
     /// mathematical alphanumerics: they still read back as Word's
     /// (U+1D44E for a), not as the ASCII they are painted with.
     math_ascii: bool,
+    /// A laid-out bar fraction, radical, or delimiter. Glyphs and rules
+    /// are positioned from the run's baseline. `None` for every other run.
+    math: Option<math_layout::MathBox>,
 }
 
 impl TextRun {
@@ -1937,6 +1940,7 @@ impl TextRun {
             checkbox: None,
             strut: false,
             math_ascii: false,
+            math: None,
         }
     }
 
@@ -37431,14 +37435,35 @@ mod field_tests {
 
     #[test]
     fn omml_delimiters_take_the_script_placement() {
-        // An m:d inside a superscript is raised with its contents.
+        // An m:d inside a superscript is raised with its contents. The
+        // shift is baked into the box; the run stays on the baseline so
+        // paint does not raise it a second time.
         let runs = math_runs(
             r#"<w:p><m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:d><m:e><m:r><m:t>n</m:t></m:r></m:e></m:d></m:sup></m:sSup></m:oMath></w:p>"#,
         );
-        for text in ["(", "\u{1D45B}", ")"] {
-            let run = runs.iter().find(|r| r.text == text).expect(text);
-            assert!(run.style.vert == VertAlign::Super, "{text}");
-        }
+        let sup = runs
+            .iter()
+            .find(|r| r.math.is_some())
+            .expect("delimiter box");
+        assert!(sup.style.vert == VertAlign::Baseline);
+        let n = sup
+            .math
+            .as_ref()
+            .unwrap()
+            .glyphs
+            .iter()
+            .find(|g| g.text.contains('\u{1D45B}'))
+            .expect("n");
+        assert!(
+            (n.y - 11.0 * 0.35).abs() < 0.05,
+            "delimiter contents sit at +0.35 em, got {}",
+            n.y
+        );
+        assert!(
+            (n.size - 11.0 * 0.65).abs() < 0.05,
+            "script size {}",
+            n.size
+        );
     }
 
     #[test]
@@ -37731,8 +37756,12 @@ mod field_tests {
             "\u{1D465},\u{1D466})"
         );
         let runs = math_runs(&format!("<w:p><m:oMath><m:d>{x}</m:d></m:oMath></w:p>"));
-        let open = runs.iter().find(|r| r.text == "(").expect("(");
+        let open = runs.iter().find(|r| r.text.contains('(')).expect("(");
         assert_eq!(open.style.family, "Cambria Math");
+        assert!(
+            open.math.is_some(),
+            "a delimiter is one box, not a flat run of characters"
+        );
     }
 
     #[test]
@@ -49353,19 +49382,47 @@ mod coverage_round_three_tests {
     #[test]
     fn fractions_with_and_without_bars_preserve_operand_order() {
         let _face = MathAlphanumerics::only([]);
-        for (kind, num, den) in [
-            ("noBar", VertAlign::StackNum, VertAlign::StackDen),
-            ("bar", VertAlign::Baseline, VertAlign::Baseline),
-        ] {
-            let collected = runs(&format!(
-                r#"<m:oMath><m:f><m:fPr><m:type m:val="{kind}"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#
-            ));
-            assert_eq!(text(&collected), "ndend");
-            assert!(
-                collected.iter().map(|r| r.style.vert).collect::<Vec<_>>()
-                    == vec![num, den, VertAlign::Baseline]
-            );
-        }
+        let nobar = runs(
+            r#"<m:oMath><m:f><m:fPr><m:type m:val="noBar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#,
+        );
+        assert_eq!(text(&nobar), "ndend");
+        assert!(
+            nobar.iter().map(|r| r.style.vert).collect::<Vec<_>>()
+                == vec![
+                    VertAlign::StackNum,
+                    VertAlign::StackDen,
+                    VertAlign::Baseline
+                ]
+        );
+        let bar = runs(
+            r#"<m:oMath><m:f><m:fPr><m:type m:val="bar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#,
+        );
+        assert_eq!(text(&bar), "\u{1D45B}\u{1D451}end");
+        assert_eq!(bar.len(), 2, "a bar fraction is one box, then end");
+        let frac = bar[0].math.as_ref().expect("bar fraction is a box");
+        assert_eq!(frac.rules.len(), 1, "the bar is a rule");
+        let glyph_text: String = frac.glyphs.iter().map(|g| g.text.as_str()).collect();
+        assert_eq!(glyph_text, "\u{1D45B}\u{1D451}");
+        assert!(frac.glyphs[0].y > frac.rules[0].y_top);
+        assert!(bar[0].style.vert == VertAlign::Baseline);
+        assert_eq!(bar[1].text, "end");
+        assert!(bar[1].style.vert == VertAlign::Baseline);
+    }
+
+    #[test]
+    fn omml_rad_emits_a_radical_sign() {
+        let collected = runs(
+            r#"<m:oMath><m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>x</m:t></m:r></m:e></m:rad></m:oMath>"#,
+        );
+        let joined = text(&collected);
+        assert!(
+            joined.contains('\u{221A}'),
+            "a radical must draw its sign, got {joined:?}"
+        );
+        assert!(
+            collected.iter().any(|r| r.math.is_some()),
+            "a radical is a box"
+        );
     }
 
     #[test]
