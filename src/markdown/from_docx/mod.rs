@@ -644,6 +644,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             unplaced: Vec::new(),
             note_changes,
             source: options.source.as_deref().unwrap_or("(bytes)"),
+            sha256: crate::inspect::source_sha256(bytes),
             resolved: accept,
             comments_inline: options.comments,
             tracking_on: settings

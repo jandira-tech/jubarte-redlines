@@ -1485,29 +1485,33 @@ fn header_counts_revisions_comments_and_authors() {
     assert_eq!(lines[0], "source: sample.docx");
     assert_eq!(
         lines[1],
-        "view: tracked                      # revisions as CriticMarkup, comments inline"
+        format!("sha256: {}", jubarte::inspect::source_sha256(&bytes))
     );
     assert_eq!(
         lines[2],
-        "track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it"
+        "view: tracked                      # revisions as CriticMarkup, comments inline"
     );
     assert_eq!(
         lines[3],
+        "track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it"
+    );
+    assert_eq!(
+        lines[4],
         "revisions: 3                       # 3 marks shown as 2 changes: 1 insertion, 1 substitution"
     );
-    assert_eq!(lines[4], "comments: 0");
-    assert_eq!(lines[5], "authors:");
-    assert_eq!(lines[6], "  document_owner: Jane Owner       # dc:creator");
+    assert_eq!(lines[5], "comments: 0");
+    assert_eq!(lines[6], "authors:");
+    assert_eq!(lines[7], "  document_owner: Jane Owner       # dc:creator");
     assert_eq!(
-        lines[7],
+        lines[8],
         "  AC: Ann Counsel                  # 2 revisions, 2026-10-01T09:00:00Z"
     );
     assert_eq!(
-        lines[8],
+        lines[9],
         "  JD: John Doe                     # 1 revision, 2026-10-01T09:00:00Z"
     );
     assert_eq!(
-        lines[9],
+        lines[10],
         "body: p0-p0, 0 tables, 1 page      # page count estimated from breaks"
     );
 }
@@ -1523,13 +1527,13 @@ fn header_without_core_properties_names_no_owner_and_reads_tracking_from_setting
     let out = agent(&common::docx::docx_with(&para("x"), &[settings]));
     let lines = header_lines(&out);
     assert_eq!(
-        lines[2],
+        lines[3],
         "track_changes: on                  # w:trackRevisions set; edits are tracked"
     );
-    assert_eq!(lines[3], "revisions: 0");
-    assert_eq!(lines[5], "authors:");
+    assert_eq!(lines[4], "revisions: 0");
+    assert_eq!(lines[6], "authors:");
     assert_eq!(
-        lines[6],
+        lines[7],
         "  document_owner: none             # no docProps/core.xml"
     );
 }
@@ -1538,20 +1542,20 @@ fn header_without_core_properties_names_no_owner_and_reads_tracking_from_setting
 fn header_view_lines_for_hidden_comments_accept_and_reject() {
     let bytes = commented_docx(THREADED);
     assert_eq!(
-        header_lines(&agent_with(&bytes, TrackChanges::All, false))[1],
+        header_lines(&agent_with(&bytes, TrackChanges::All, false))[2],
         "view: tracked, comments hidden     # 2 threads open (3 comments); carrying paragraphs are marked"
     );
     let p = format!("<w:p>{}{}</w:p>", run("a "), ins(0, "Ann Counsel", "b"));
     assert_eq!(
-        header_lines(&agent_with(&docx(&p), TrackChanges::Accept, true))[1],
+        header_lines(&agent_with(&docx(&p), TrackChanges::Accept, true))[2],
         "view: accept-all                   # 1 revision by AC shown as accepted; file unchanged"
     );
     assert_eq!(
-        header_lines(&agent_with(&docx(&p), TrackChanges::Reject, true))[1],
+        header_lines(&agent_with(&docx(&p), TrackChanges::Reject, true))[2],
         "view: reject-all                   # 1 revision by AC shown as rejected; file unchanged"
     );
     assert_eq!(
-        header_lines(&agent(&bytes))[4],
+        header_lines(&agent(&bytes))[5],
         "comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11"
     );
 }
@@ -1567,9 +1571,9 @@ fn header_prints_a_day_range_for_an_author_with_several_timestamps() {
     );
     let out = agent(&docx(&p));
     let lines = header_lines(&out);
-    // lines[6] is the owner line, which every header prints.
+    // lines[7] is the owner line, which every header prints.
     assert_eq!(
-        lines[7],
+        lines[8],
         "  AC: Ann Counsel                  # 2 revisions, 2026-10-01..2026-10-03"
     );
 }
@@ -1823,7 +1827,10 @@ fn cli_read_prints_the_agent_view_with_flags() {
         "text is an alias of read"
     );
     assert!(
-        tracked.starts_with("---\nsource: received.docx\nview: tracked "),
+        tracked.starts_with(&format!(
+            "---\nsource: received.docx\nsha256: {}\nview: tracked ",
+            jubarte::inspect::source_sha256(&std::fs::read(fixture("received.docx")).unwrap())
+        )),
         "{tracked}"
     );
     assert!(tracked.contains("# pages from layout\n"), "{tracked}");
@@ -2419,7 +2426,10 @@ fn header_counts_formatting_only_changes() {
 fn an_orphan_comment_reference_in_a_cell_is_not_listed() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r><w:r><w:commentReference w:id="9"/></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = agent_with(&docx(tbl), TrackChanges::All, false);
-    assert!(!out.contains("c9"), "{out}");
+    assert!(
+        !regex::Regex::new(r"\bc9\b").unwrap().is_match(&out),
+        "{out}"
+    );
 }
 
 /// Review t09-15: the header's style facts skip text boxes, as every other
@@ -2888,10 +2898,9 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         ],
         dir.path(),
     );
-    assert!(
-        !out.contains("c0") && !out.contains("c1"),
-        "the thread is gone: {out}"
-    );
+    // As words: the `sha256:` line's hex may hold `c0` by chance.
+    let gone = regex::Regex::new(r"\bc[01]\b").unwrap();
+    assert!(!gone.is_match(&out), "the thread is gone: {out}");
     assert!(
         out.contains("\nrange: changed by @MU (p0) of p0-p2\n") && out.contains("c2 @MU"),
         "{out}"
@@ -3097,6 +3106,12 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n",
     );
     assert!(out.contains("R: Redline"), "{out}");
+    // The digest is the in-memory redline's, neither input's.
+    let digest = captures(&out, r"\nsha256: ([0-9a-f]{64})\n")[0].to_string();
+    for input in ["old.docx", "new.docx"] {
+        let bytes = std::fs::read(dir.path().join(input)).unwrap();
+        assert_ne!(digest, jubarte::inspect::source_sha256(&bytes), "{input}");
+    }
     assert!(
         !dir.path().join("old_v_new.docx").exists(),
         "nothing written without -o"
@@ -4589,7 +4604,17 @@ fn resolved_boolean_true_is_equivalent_to_one_on_comment_threads() {
     let boolean = THREADED.replacen("w15:done=\"0\"", "w15:done=\"true\"", 1);
     let out = agent(&commented_docx(&boolean));
     assert!(body(&out).contains("c5 @AC resolved:"), "{out}");
-    assert_eq!(out, agent(&commented_docx(&numeric)));
+    // Two files, two digests; every other line is the same.
+    let without_digest = |view: &str| -> String {
+        view.lines()
+            .filter(|l| !l.starts_with("sha256: "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(
+        without_digest(&out),
+        without_digest(&agent(&commented_docx(&numeric)))
+    );
 }
 
 #[test]
