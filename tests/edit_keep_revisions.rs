@@ -604,3 +604,24 @@ fn tables_and_lists_are_tracked_under_keep() {
     .unwrap();
     assert!(accepted.contains("<w:tbl>") && accepted.contains("<w:numPr>"));
 }
+
+#[test]
+fn the_report_skips_a_source_change_that_shares_the_plans_stamp() {
+    // A change already in the source, stamped exactly as the plan stamps
+    // its own: same author, same date.
+    let same = OTHER
+        .replace("Other", "Me")
+        .replace("2026-09-01T00:00:00Z", "2026-10-02T00:00:00Z");
+    let source = docx(&(same + &para("Governing law: Delaware.")));
+    let out = apply_plan(
+        &source,
+        &keep(r#"[{"kind":"insert","paragraph":"body:p:1","position":"end","text":" Only."}]"#),
+    )
+    .unwrap();
+    let r = &out.report.revisions;
+    assert_eq!(
+        (r.inserted, r.deleted, r.total),
+        (1, 0, 1),
+        "the source's two same-stamp changes are not the plan's"
+    );
+}
