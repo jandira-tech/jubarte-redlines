@@ -44,6 +44,7 @@ themselves.
 | paragraph | `Normal` |
 | `**bold**`, `*italic*`, `~~struck~~` | bold, italic, strikethrough |
 | `==marked==` | yellow highlight; `==` beside a space, inside a longer `=` run, escaped or unclosed in its paragraph is text. The agent view prints a highlight of any colour this way, and strike as `~~struck~~` |
+| `{REF _Ref1 \h}Section 2{/}` | a field (`fldChar begin`, `instrText`, `separate`, the result, `end`). The code must start with a field name ECMA-376 lists (any case) and close with `{/}` in the same paragraph, so a placeholder such as `{Client Name}` stays text; `\{` makes a brace literal. The agent view prints a body field this way when it opens and closes in one paragraph, has no field inside its code and is not a hyperlink; otherwise it prints the result only |
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
