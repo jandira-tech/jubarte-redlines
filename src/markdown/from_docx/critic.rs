@@ -170,6 +170,8 @@ pub(crate) struct Critic {
     /// Agent view: runs of spaces stay as the file holds them, and Markdown
     /// syntax in the text is escaped once neighbouring runs are joined.
     agent: bool,
+    /// A code block's paragraph: its text is written as is, spaces and all.
+    code_block: bool,
 }
 
 impl Critic {
@@ -187,6 +189,12 @@ impl Critic {
     /// `~~` can straddle two runs: the escaping waits for the joined text.
     pub(crate) fn set_agent(&mut self) {
         self.agent = true;
+    }
+
+    /// A code block's paragraph (`SourceCode`): its text goes in a fence
+    /// unescaped, with its runs of spaces.
+    pub(crate) fn set_code_block(&mut self) {
+        self.code_block = true;
     }
 
     /// Marks the paragraph as joined to more text on the same line.
@@ -295,12 +303,15 @@ impl Critic {
         let escaping = Escaping {
             plain: self.plain,
             agent: self.agent,
+            code_block: self.code_block,
         };
         let mut pieces = Vec::new();
         render(&nodes, &mut pieces, escaping, &mut 0);
         wrap_markers(&mut pieces);
         let mut inline = Inline::default();
-        if self.agent {
+        if self.code_block {
+            inline.verbatim();
+        } else if self.agent {
             inline.keep_spaces();
         }
         for piece in pieces {
@@ -490,10 +501,17 @@ struct Escaping {
     plain: bool,
     /// Agent view: Markdown syntax is escaped too.
     agent: bool,
+    /// A code block: nothing is escaped.
+    code_block: bool,
 }
 
 impl Escaping {
-    fn text(self, text: &str) -> String {
+    /// `text` escaped; a code span's or a code block's text is written as
+    /// is, since a backslash shows there.
+    fn text(self, text: &str, marks: Marks) -> String {
+        if self.code_block || marks.code {
+            return text.to_string();
+        }
         match (self.agent, self.plain) {
             (true, true) => super::agent::escape_markdown(text),
             (true, false) => escape(&super::agent::escape_markdown(text)),
@@ -548,7 +566,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
             }
             (Node::Leaf(Leaf::Text { text, marks, link }), _) => {
                 out.push(Piece {
-                    text: escaping.text(text),
+                    text: escaping.text(text, *marks),
                     marks: *marks,
                     link: link.clone(),
                     marker: None,

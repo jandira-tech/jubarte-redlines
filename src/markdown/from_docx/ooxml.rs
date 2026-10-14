@@ -485,6 +485,8 @@ pub(crate) struct Marks {
     pub highlight: bool,
     /// `~~…~~`.
     pub strike: bool,
+    /// `` `…` ``: a `VerbatimChar` run.
+    pub code: bool,
 }
 
 /// One formatted stretch of inline text.
@@ -501,12 +503,20 @@ pub(crate) struct Inline {
     spans: Vec<Span>,
     /// Agent view: runs of spaces are not collapsed.
     keep_spaces: bool,
+    /// A code block: a line's leading spaces stay too.
+    verbatim: bool,
 }
 
 impl Inline {
     /// Agent view: keeps runs of spaces as the file holds them.
     pub(crate) fn keep_spaces(&mut self) {
         self.keep_spaces = true;
+    }
+
+    /// A code block: keeps every space, a line's indent included.
+    pub(crate) fn verbatim(&mut self) {
+        self.keep_spaces = true;
+        self.verbatim = true;
     }
 
     /// Whether the text starts and ends with a space, which rendering trims.
@@ -578,7 +588,7 @@ impl Inline {
             }
             index = end;
         }
-        tidy_inline(&out, self.keep_spaces)
+        tidy_inline(&out, self.keep_spaces, self.verbatim)
     }
 }
 
@@ -631,6 +641,9 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
                 let (l, c, t) = split_ws(line);
                 if c.is_empty() {
                     line.to_string()
+                } else if marks.code {
+                    let (fence_open, fence_close) = code_fence(c);
+                    format!("{l}{open}{fence_open}{c}{fence_close}{close}{t}")
                 } else {
                     format!("{l}{open}{c}{close}{t}")
                 }
@@ -642,6 +655,19 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     out
 }
 
+/// The backticks around a code span's text: one more than its longest run
+/// of backticks, and a space inside when the text starts or ends with one.
+fn code_fence(text: &str) -> (String, String) {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    (format!("{fence}{pad}"), format!("{pad}{fence}"))
+}
+
 fn split_ws(s: &str) -> (&str, &str, &str) {
     let start = s.len() - s.trim_start().len();
     let end = s.trim_end().len().max(start);
@@ -649,7 +675,7 @@ fn split_ws(s: &str) -> (&str, &str, &str) {
 }
 
 /// Collapse runs of spaces, trim line ends, and drop empty lines inside a paragraph.
-fn tidy_inline(s: &str, keep_spaces: bool) -> String {
+fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     let mut lines = Vec::new();
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
@@ -665,7 +691,7 @@ fn tidy_inline(s: &str, keep_spaces: bool) -> String {
             }
             prev_space = is_space;
         }
-        lines.push(out.trim().to_string());
+        lines.push(if verbatim { out.trim_end() } else { out.trim() }.to_string());
     }
     while lines.last().is_some_and(String::is_empty) {
         lines.pop();

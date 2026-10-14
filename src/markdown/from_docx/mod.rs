@@ -780,6 +780,18 @@ fn resolve_author(by: &str, handles: &agent::Handles) -> String {
         .map_or_else(|| bare.to_string(), |handle| format!("@{handle}"))
 }
 
+/// A code block's text in a fence of backticks, longer than any run of
+/// backticks that opens one of its lines.
+fn fenced(code: &str) -> String {
+    let longest = code
+        .lines()
+        .map(|line| line.trim_start().chars().take_while(|&c| c == '`').count())
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    format!("{fence}\n{code}\n{fence}")
+}
+
 /// A paragraph's line breaks (`w:br`) as Markdown hard breaks, which a
 /// bare newline is not: it reads as a space.
 fn hard_breaks(text: &str) -> String {
@@ -1472,7 +1484,11 @@ impl Writer<'_> {
             .or_else(|| style.as_deref().and_then(|s| self.styles.num(s)));
 
         let open_before = self.open_ranges().to_vec();
-        let (inline, extra) = self.paragraph_inline(p);
+        let (mut inline, extra) = self.paragraph_inline(p);
+        let code_block = style.as_deref() == Some("SourceCode");
+        if code_block {
+            inline.set_code_block();
+        }
         let written = !inline.is_blank();
         let inline = inline.into_inline();
         // Comment threads whose range runs past this paragraph, for its id
@@ -1608,6 +1624,9 @@ impl Writer<'_> {
                 let item = list.item(level, &marker, &hard_breaks(&text));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
+            } else if code_block {
+                list.reset();
+                blocks.push_paragraph("", &fenced(&inline.render(false)), false, edges);
             } else {
                 list.reset();
                 let text = self.block_text(inline.render(true));
@@ -1986,12 +2005,17 @@ impl Writer<'_> {
                 .and_then(|h| h.attr("val"))
                 .is_some_and(|val| val != "none");
         let strike = self.agent && rpr.and_then(|r| r.toggle("strike")).unwrap_or(false);
+        let code = rpr
+            .and_then(|r| r.child("rStyle"))
+            .and_then(|s| s.attr("val"))
+            == Some("VerbatimChar");
         let marks = Marks {
             bold,
             italic,
             underline,
             highlight,
             strike,
+            code,
         };
         // A raised or lowered run keeps its tags, which the Markdown
         // reader takes back to w:vertAlign; a note reference is already

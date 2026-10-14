@@ -14,7 +14,7 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 
 | Write | Word | Notes |
 | --- | --- | --- |
-| `**b**` `*i*` `~~s~~` `` `c` `` | bold, italic, strike, `VerbatimChar` | `__b__` is bold too (CommonMark) |
+| `**b**` `*i*` `~~s~~` `` `c` `` | bold, italic, strike, `VerbatimChar` | `__b__` is bold too (CommonMark); a `VerbatimChar` run reads back as `` `c` ``, a `SourceCode` paragraph as a fence |
 | `==h==` | highlight (yellow) | any colour reads as `==h==` in the agent view, which also prints `~~s~~` and `<u>u</u>` |
 | `<u>u</u>` `<sup>2</sup>` `<sub>2</sub>` `<br>` | underline, superscript, subscript, line break | what the reader prints |
 | `<b>` `<i>` `<s>` `<code>` `<mark>` (and `<strong>` `<em>` `<del>`) | bold, italic, strike, code, highlight | read only; other tags warn |
