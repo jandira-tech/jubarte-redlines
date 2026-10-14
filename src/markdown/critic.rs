@@ -255,7 +255,7 @@ impl Literal {
                         continue;
                     }
                     None => {
-                        for b in [b'`', b'~'] {
+                        for b in *b"`~" {
                             let width = run(b);
                             let info = &line[indent + width..];
                             if width >= 3 && !(b == b'`' && info.contains('`')) {
