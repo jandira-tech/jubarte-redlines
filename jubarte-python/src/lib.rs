@@ -1159,74 +1159,41 @@ fn capabilities_text() -> String {
 
 /// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
 ///
-/// `page` is `letter` or `a4` and applies when there is no `reference`
-/// (a `.docx` whose styles and page setup are taken). `track_changes` is
-/// `all`, `accept` or `reject`. A change or comment that names no author or
-/// date takes `author` and `date` when given, else the front matter's
-/// (`author:`; `last_modified:`, `modified:`, `date:`, `created:`), else
+/// `options_json` holds [`jubarte::markdown::docx_options_from_json`]'s
+/// fields, each optional: `page` (`letter` or `a4`, when there is no
+/// `reference`, a `.docx` whose styles and page setup are taken),
+/// `track_changes` (`all`, `accept` or `reject`), `author` and `date` (for
+/// a change or comment that names none; else the front matter's, else
 /// `Redline` and the engine's fixed epoch, so the same Markdown writes the
-/// same bytes (the CLI dates them now instead). Images are written as their
-/// alt text: this entry point reads no files. Each engine warning (such as
-/// a `page` overridden by the reference) is raised as a `UserWarning`.
+/// same bytes), `critic`, `tracking` (Word's Track Changes switch) and
+/// `scholar`. Images are written as their alt text: this entry point reads
+/// no files. Each engine warning (such as a `page` overridden by the
+/// reference) is raised as a `UserWarning`.
 #[pyfunction]
-#[pyo3(signature = (
-    text,
-    *,
-    reference = None,
-    page = "letter",
-    author = None,
-    date = None,
-    critic = true,
-    track_changes = "all",
-))]
+#[pyo3(signature = (text, options_json = None, reference = None))]
 fn markdown_to_docx(
+    py: Python<'_>,
     text: &str,
+    options_json: Option<&str>,
     reference: Option<&[u8]>,
-    page: &str,
-    author: Option<&str>,
-    date: Option<&str>,
-    critic: bool,
-    track_changes: &str,
 ) -> PyResult<Py<PyBytes>> {
-    let page = jubarte::markdown::PageSize::parse(page)
-        .ok_or_else(|| JubarteError::new_err(format!("page must be letter or a4, not {page:?}")))?;
-    let track_changes = jubarte::markdown::TrackChanges::parse(track_changes).ok_or_else(|| {
-        JubarteError::new_err(format!(
-            "track_changes must be all, accept or reject, not {track_changes:?}"
-        ))
-    })?;
-    // Seven parameters keep clippy's argument limit; the interpreter is
-    // reached through `attach`, which only borrows the caller's.
-    Python::attach(|py| {
-        let written = py
-            .detach(|| {
-                // Built here: `DocxOptions` can hold an image loader, which
-                // is not `Send`, so it cannot cross into the detached call.
-                let mut options = jubarte::markdown::DocxOptions {
-                    reference,
-                    critic,
-                    track_changes,
-                    page,
-                    ..jubarte::markdown::DocxOptions::default()
-                };
-                if let Some(author) = author {
-                    options.author = author.to_string();
-                    options.author_fixed = true;
-                }
-                if let Some(date) = date {
-                    options.date = date.to_string();
-                    options.date_fixed = true;
-                }
-                jubarte::markdown::markdown_to_docx(text, &options)
-            })
-            .map_err(err)?;
-        let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
-        for warning in &written.warnings {
-            let message = std::ffi::CString::new(warning.as_str()).map_err(err)?;
-            PyErr::warn(py, &category, &message, 1)?;
-        }
-        Ok(PyBytes::new(py, &written.docx).unbind())
-    })
+    let written = py
+        .detach(|| {
+            // Built here: `DocxOptions` can hold an image loader, which is
+            // not `Send`, so it cannot cross into the detached call.
+            let options = jubarte::markdown::docx_options_from_json(
+                options_json.unwrap_or("{}"),
+                reference,
+            )?;
+            jubarte::markdown::markdown_to_docx(text, &options).map_err(|e| e.to_string())
+        })
+        .map_err(JubarteError::new_err)?;
+    let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+    for warning in &written.warnings {
+        let message = std::ffi::CString::new(warning.as_str()).map_err(err)?;
+        PyErr::warn(py, &category, &message, 1)?;
+    }
+    Ok(PyBytes::new(py, &written.docx).unbind())
 }
 
 /// `{findings, rules, layout}` from `jubarte::audit` as JSON; `rules`

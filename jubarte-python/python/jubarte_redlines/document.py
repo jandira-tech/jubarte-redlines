@@ -655,6 +655,8 @@ def from_markdown(
     date: str | None = None,
     critic: bool = True,
     track_changes: Literal["all", "accept", "reject"] = "all",
+    tracking: bool | None = None,
+    scholar: bool = False,
 ) -> Document:
     """Write Markdown as a Word document, as ``jubarte convert draft.md``.
 
@@ -667,19 +669,21 @@ def from_markdown(
     ``track_changes`` keeps them (``all``) or writes the document with each
     accepted or rejected. ``reference`` lends its styles and page setup;
     without it ``page`` picks US Letter or A4, both with one-inch margins.
+    ``tracking`` turns Word's Track Changes on or off in the document,
+    whatever the front matter's ``track_changes:`` says (``None`` follows
+    it). ``scholar`` sets the document as LaTeX's article class does (Latin
+    Modern Roman 10pt, justified, bold headings) and numbers its pages from
+    page 2, as ``--scholar``; the front matter's own styles and footers win.
     Engine warnings, such as a ``page`` the reference overrides, are raised
     as ``UserWarning``. Images are written as their alt text.
     """
     if isinstance(reference, Document):
         reference = reference.to_bytes()
-    return Document.from_bytes(
-        _native.markdown_to_docx(
-            text,
-            reference=reference,
-            page=page,
-            author=author,
-            date=date,
-            critic=critic,
-            track_changes=track_changes,
-        )
-    )
+    options = {"page": page, "critic": critic, "track_changes": track_changes, "scholar": scholar}
+    if author is not None:
+        options["author"] = author
+    if date is not None:
+        options["date"] = date
+    if tracking is not None:
+        options["tracking"] = tracking
+    return Document.from_bytes(_native.markdown_to_docx(text, json.dumps(options), reference))

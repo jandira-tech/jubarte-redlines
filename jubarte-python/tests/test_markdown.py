@@ -39,19 +39,19 @@ def test_native_writes_a_docx_on_letter_by_default_and_a4_on_request() -> None:
     letter = _native.markdown_to_docx("# Terms\n\nBody.\n")
     assert letter.startswith(b"PK")
     assert page_width(letter) == "12240"
-    assert page_width(_native.markdown_to_docx("Body.\n", page="a4")) == "11906"
-    assert page_width(_native.markdown_to_docx("Body.\n", page="letter")) == "12240"
+    assert page_width(_native.markdown_to_docx("Body.\n", json.dumps({"page": "a4"}))) == "11906"
+    assert page_width(_native.markdown_to_docx("Body.\n", json.dumps({"page": "letter"}))) == "12240"
 
 
 def test_native_refuses_an_unknown_page_or_track_changes_value() -> None:
     with pytest.raises(jubarte.JubarteError, match="legal"):
-        _native.markdown_to_docx("Body.\n", page="legal")
+        _native.markdown_to_docx("Body.\n", json.dumps({"page": "legal"}))
     with pytest.raises(jubarte.JubarteError, match="keep"):
-        _native.markdown_to_docx("Body.\n", track_changes="keep")
+        _native.markdown_to_docx("Body.\n", json.dumps({"track_changes": "keep"}))
 
 
 def test_native_stamps_the_author_and_date_and_resolves_changes() -> None:
-    kept = document_xml(_native.markdown_to_docx(DRAFT, author="Legal", date="2026-10-02T00:00:00Z"))
+    kept = document_xml(_native.markdown_to_docx(DRAFT, json.dumps({"author": "Legal", "date": "2026-10-02T00:00:00Z"})))
     assert 'w:author="Legal"' in kept
     assert 'w:date="2026-10-02T00:00:00Z"' in kept
     assert "<w:ins " in kept and "<w:del " in kept
@@ -81,7 +81,7 @@ def test_from_markdown_returns_a_document_that_round_trips() -> None:
 def test_a_reference_wins_over_page_with_a_warning() -> None:
     reference = docx(para("Template text."))
     with pytest.warns(UserWarning, match="page size a4 ignored"):
-        data = _native.markdown_to_docx("Body.\n", reference=reference, page="a4")
+        data = _native.markdown_to_docx("Body.\n", json.dumps({"page": "a4"}), reference)
     assert page_width(data) == "12240"
 
     # A Document is accepted as the reference too, and the default page warns about nothing.
@@ -102,6 +102,36 @@ def test_cli_convert_writes_markdown_as_a_docx_beside_it(tmp_path: Path, capsys:
     # An existing output is refused without --force.
     assert main(["convert", str(source)]) == 1
     assert "already exists" in capsys.readouterr().err
+
+
+def part(data: bytes, name: str) -> str:
+    with ZipFile(BytesIO(data)) as package:
+        return package.read(name).decode("utf-8")
+
+
+def test_from_markdown_takes_scholar_and_tracking() -> None:
+    doc = jubarte.from_markdown("# Title\n\nBody.\n", scholar=True, tracking=True)
+    data = doc.to_bytes()
+    assert "Latin Modern Roman" in part(data, "word/styles.xml")
+    assert "<w:trackRevisions" in part(data, "word/settings.xml")
+    assert "<w:titlePg/>" in document_xml(data)
+    plain = jubarte.from_markdown("Body.\n").to_bytes()
+    assert "Latin Modern Roman" not in part(plain, "word/styles.xml")
+    assert "<w:trackRevisions" not in part(plain, "word/settings.xml")
+
+
+def test_cli_convert_honours_scholar_and_tracking(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = tmp_path / "paper.md"
+    source.write_text("# Title\n\nBody.\n", encoding="utf-8")
+    assert main(["convert", str(source), "--scholar", "--tracking", "on"]) == 0
+    data = (tmp_path / "paper.docx").read_bytes()
+    assert "Latin Modern Roman" in part(data, "word/styles.xml")
+    assert "<w:trackRevisions" in part(data, "word/settings.xml")
+    # --tracking off wins over the front matter's track_changes: on.
+    source.write_text("---\ntrack_changes: on\n---\n\nBody.\n", encoding="utf-8")
+    assert main(["convert", str(source), "--tracking", "off", "--force"]) == 0
+    assert "<w:trackRevisions" not in part((tmp_path / "paper.docx").read_bytes(), "word/settings.xml")
+    capsys.readouterr()
 
 
 def test_cli_convert_renders_markdown_to_pdf_and_resolves_changes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

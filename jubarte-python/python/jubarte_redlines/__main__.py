@@ -628,6 +628,8 @@ def _from_markdown(args: argparse.Namespace, text: str) -> Document:
             date=date,
             critic=not args.no_critic,
             track_changes=args.track_changes,
+            tracking=None if args.tracking is None else args.tracking == "on",
+            scholar=args.scholar,
         )
     for warning in caught:
         print(f"warning: {warning.message}", file=sys.stderr)
