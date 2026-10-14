@@ -2975,6 +2975,14 @@ fn error_json(error: &clap::Error) -> String {
 /// document or `out_dir` for the bundle, both null while recording into a plan. Informational/error results contain
 /// `{exit_code, stream, text}`.
 /// This function performs no document, filesystem, network or process I/O.
+/// The usage error for a task the host (`program`) does not have.
+fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap::Error {
+    command.error(
+        clap::error::ErrorKind::InvalidSubcommand,
+        format!("this {program} has no {task} task; the `jubarte` binary has it"),
+    )
+}
+
 pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> String {
     let model = top_level_command();
     let accepts = |name: &str| supported.is_empty() || supported.iter().any(|s| s == name);
@@ -3025,6 +3033,17 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     let argv = std::iter::once(program.to_string()).chain(arguments.iter().cloned());
     let mut quiet = false;
     let result = (|| {
+        // A task this host lacks is one error, whatever follows its name.
+        if let Some(name) = arguments
+            .iter()
+            .take_while(|token| *token != "--")
+            .find(|token| !token.starts_with('-'))
+            .and_then(|name| model.find_subcommand(name))
+            .map(|task| task.get_name().to_string())
+            .filter(|name| !accepts(name))
+        {
+            return Err(missing_task(&mut command, program, &name));
+        }
         let tokens: Vec<String> = hoist_quiet(&command, &argv.collect::<Vec<_>>());
         let matches = command
             .try_get_matches_from_mut(tokens.clone())
@@ -3140,20 +3159,15 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         } else {
             let mut compare = CompareArgs::from_arg_matches(&matches)?;
             fill_date(&mut compare.datetime);
-            if compare
+            if let Some(name) = compare
                 .original_pos
                 .as_ref()
                 .and_then(|p| p.to_str())
-                .is_some_and(|name| {
-                    model
-                        .find_subcommand(name)
-                        .is_some_and(|task| !accepts(task.get_name()))
-                })
+                .and_then(|name| model.find_subcommand(name))
+                .map(|task| task.get_name().to_string())
+                .filter(|name| !accepts(name))
             {
-                return Err(command.error(
-                    clap::error::ErrorKind::InvalidSubcommand,
-                    "this task is not supported by this adapter",
-                ));
+                return Err(missing_task(&mut command, program, &name));
             }
             if compare.modified.is_none() && compare.modified_pos.is_none() {
                 if !accepts("read") {

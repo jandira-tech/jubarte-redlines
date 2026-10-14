@@ -2282,3 +2282,43 @@ fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
         assert_eq!(result["args"]["quiet"], true);
     }
 }
+
+/// A task the host lacks is one usage error, whatever follows it: before,
+/// `visual-diff` alone was "not a task", with a file "not supported by this
+/// adapter", and with two files a clap conflict (ledger review of #454,
+/// finding 8).
+#[test]
+fn a_task_the_host_lacks_is_one_usage_error_whatever_follows() {
+    let npm = [
+        "compare",
+        "diff",
+        "changes",
+        "accept",
+        "reject",
+        "read",
+        "convert",
+        "edit",
+        "add",
+        "capabilities",
+    ];
+    for (task, args) in [
+        ("visual-diff", &["visual-diff"][..]),
+        ("visual-diff", &["visual-diff", "a.docx"]),
+        ("visual-diff", &["visual-diff", "a.docx", "b.docx"]),
+        ("scrub", &["-q", "scrub", "a.docx", "-o", "b.docx"]),
+        ("validate", &["validate", "a.docx"]),
+        ("comments", &["comments", "a.docx", "--json"]),
+        ("append", &["append", "a.docx", "b.docx", "-o", "c.docx"]),
+    ] {
+        let result = parse(args, &npm);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(result["stream"], "stderr", "{args:?}");
+        let text = result["text"].as_str().unwrap();
+        let expected =
+            format!("error: this jubarte-python has no {task} task; the `jubarte` binary has it\n");
+        assert!(text.starts_with(&expected), "{args:?}: {text}");
+    }
+    // A host with the task parses it as before.
+    let result = parse(&["validate", "a.docx"], &[]);
+    assert_eq!(result["command"], "validate", "{result}");
+}

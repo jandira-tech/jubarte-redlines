@@ -868,3 +868,39 @@ fn edit_writes_a_docx_under_an_unknown_extension() {
     );
     assert_eq!(refused.status.code(), Some(2), "{refused:?}");
 }
+
+/// A Word input that is not a ZIP package reads the same on every task: the
+/// code, the file, and what it is instead (ledger review of #454, finding 3).
+#[test]
+fn a_word_input_that_is_not_a_zip_reads_the_same_on_every_task() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("fake.docx"), b"hello, not a zip").unwrap();
+    std::fs::write(dir.path().join("good.docx"), docx(&para("Plain"))).unwrap();
+    let expected =
+        "error: INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record\n";
+    for args in [
+        &["read", "fake.docx"][..],
+        &["read", "fake.docx", "--json"],
+        &["read", "fake.docx", "--tables"],
+        &["read", "fake.docx", "-o", "v.json"],
+        &["changes", "fake.docx"],
+        &["comments", "fake.docx"],
+        &["accept", "fake.docx", "-o", "a.docx"],
+        &["reject", "fake.docx", "-o", "a.docx"],
+        &["scrub", "fake.docx", "-o", "a.docx"],
+        &["convert", "fake.docx", "-o", "a.pdf"],
+        &["convert", "fake.docx", "-o", "a.md"],
+        &["compare", "fake.docx", "good.docx"],
+        &["compare", "good.docx", "fake.docx", "-o", "c.docx"],
+        &["diff", "fake.docx", "good.docx"],
+        &["edit", "fake.docx", "-p", "p0", "--delete"],
+        &["add", "fake.docx", "-p", "p0", "--content", "x"],
+        &["append", "good.docx", "fake.docx", "-o", "j.docx"],
+        &["visual-diff", "fake.docx", "good.docx"],
+    ] {
+        let out = run(dir.path(), args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), expected, "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+    }
+}
