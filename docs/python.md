@@ -654,8 +654,8 @@ Options:
 
 Review:
   -o, --output <FILE>
-          Write to FILE. Text views default to stdout and write only text. Patch/critic
-          infer Word, Markdown, PDF or PNG from the extension
+          Write the view to FILE (.md, .markdown, .txt, .patch or .diff; stdout
+          otherwise)
 
       --format <FORMAT>
           Choose the review view; word accepts ALL input changes first
@@ -695,9 +695,17 @@ Paragraph patch:
 
           [default: 72]
 
+  -a, --author <NAME>
+          Who made the changes: the patch's owner
+
+          [default: Redline]
+
+  -d, --date <ISO8601>
+          When (ISO 8601) [default: now]; pin it for reproducible output
+
 Formats:
   -t, --to <FORMAT>
-          Output format, when --output does not say
+          Output format: md only (the patch, CriticMarkup or a text view are all text)
 
           Possible values:
           - docx: Word (.docx)
@@ -713,87 +721,15 @@ Formats:
 
           [possible values: docx, md, markdown]
 
-Word redline:
-  -a, --author <NAME>
-          Who made the changes: the patch's owner and the revisions' author [default:
-          `git config user.name`, else Redline]
-
-  -d, --date <ISO8601>
-          When (ISO 8601) [default: now]; pin it for reproducible output
-
-      --mode <MODE>
-          Whose redline to reproduce (see `jubarte --help`)
-
-          Possible values:
-          - word:       Microsoft Word Compare's layout: word-level detail, replaced
-            paragraphs merged, Word's alignment passes
-          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
-            no Word alignment passes
-
-          [default: word]
-
-      --detail-threshold <RATIO>
-          LCS detail threshold (see `jubarte --help`)
-
-      --reference-doc <FILE>
-          Two Markdown documents written as Word take styles, page setup, headers and
-          footers from this .docx
-
-      --critic
-          Read CriticMarkup in the Markdown documents as tracked changes (Word output).
-          By default a document compared is text
-
-      --resource-path <DIR>
-          Where images named by the Markdown are found [default: the old document's
-          directory when it is Markdown, else the new's]
-
-Rendering (-o FILE.pdf or FILE.png):
-      --revisions <REVISIONS>
-          How tracked changes are painted: `conventional` (deletions red struck through,
-          insertions blue underlined, moves green: double-struck where they left,
-          double-underlined where they landed), `word` (what Microsoft Word's Save as
-          PDF paints), or `custom` (see --revision-palette)
-
-          Possible values:
-          - conventional: Red strike, blue underline, green double marks for moves
-          - word:         Microsoft Word's own markup
-          - custom:       --revision-palette
-
-          [default: conventional]
-
-      --revision-palette <SPEC>
-          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
-          inserted, moved-from, moved-to and lines strike, double-strike, underline,
-          double-underline, plain. Kinds left out keep their conventional mark
-
-      --dpi <DPI>
-          PNG resolution in dots per inch (1-1200)
-
-          [default: 96]
-
-      --move-comments
-          List the comments after the last page instead of in balloons beside the text.
-          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
-          their own width
-
-      --changed-pages
-          Keep only the pages a change touches: a body or note revision, a comment
-          anchor, or the first page on which a revised header or footer paints (the
-          first page when none does). Page numbers stay the document's
-
-      --pages <SPEC>
-          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
-          covers the whole document; the PDF carries these pages and PNGs are named by
-          them (`STEM-page-03.png`)
-
 Examples:
   jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout
   jubarte diff old.md new.md                       the patch on stdout
   jubarte diff old.md new.md --format critic       CriticMarkup on stdout, as pandiff
-  jubarte diff old.md new.md -o changes.docx       Word tracked changes
-  jubarte diff old.md new.md -o changes.pdf        the changes painted in a PDF
-  jubarte diff contract.docx edited.md -o redline.docx
-      the Markdown's edits as tracked changes on the Word document
+  jubarte diff old.docx new.docx -o changes.patch  the patch in a file
+  jubarte compare old.md new.md -o changes.docx    Word tracked changes (compare writes
+  redlines)
+  jubarte compare contract.docx edited.md -o redline.pdf
+      the Markdown's edits painted on the Word document
 
 GIT:
   git config --global difftool.jubarte.cmd 'jubarte diff "$LOCAL" "$REMOTE"'

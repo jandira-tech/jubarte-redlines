@@ -391,19 +391,24 @@ fn diff_prints_critic_markup_like_pandiff() {
         stdout,
         "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery\n- {++Returns++}\n- Warranty\n"
     );
-    // Written to a file, the patch is still printed.
+    // Written to a file, the view is not printed too.
     let printed = ok(&jubarte(
-        &["diff", "old.md", "new.md", "-o", "changes.md"],
+        &[
+            "diff",
+            "old.md",
+            "new.md",
+            "--format",
+            "critic",
+            "-o",
+            "changes.md",
+        ],
         dir.path(),
     ));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("changes.md")).unwrap(),
         stdout
     );
-    assert!(
-        printed.starts_with("--- a/old.md\n+++ b/new.md\t"),
-        "{printed}"
-    );
+    assert_eq!(printed, "");
 }
 
 const OWNER: [&str; 4] = ["-a", "Arthur Rodrigues", "-d", "2026-09-30T14:05:00Z"];
@@ -465,7 +470,7 @@ fn diff_wraps_at_72_columns_unless_told_otherwise() {
 }
 
 #[test]
-fn the_owner_is_git_user_name_or_redline_and_the_date_now() {
+fn the_owner_is_redline_whatever_git_says() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
     let header = |name: Option<&str>| {
@@ -474,7 +479,7 @@ fn the_owner_is_git_user_name_or_redline_and_the_date_now() {
     };
     let named = header(Some("Ana Lima"));
     let fields: Vec<&str> = named.split('\t').collect();
-    assert_eq!(fields[..2], ["+++ b/new.md", "Ana Lima"], "{named}");
+    assert_eq!(fields[..2], ["+++ b/new.md", "Redline"], "{named}");
     // YYYY-MM-DDTHH:MM:SSZ, this year or later.
     let date = fields[2];
     assert_eq!(date.len(), 20, "{date}");
@@ -490,10 +495,17 @@ fn diff_takes_quiet_after_the_task() {
     let out = jubarte(&["diff", "-q", "old.md", "new.md"], dir.path());
     assert!(!ok(&out).is_empty(), "-q quiets stderr, not the diff");
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    let out = jubarte(
+        &["diff", "-q", "old.md", "new.md", "-o", "changes.patch"],
+        dir.path(),
+    );
+    assert_eq!(ok(&out), "");
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    assert!(dir.path().join("changes.patch").exists());
 }
 
 #[test]
-fn diff_with_a_word_side_prints_paragraph_ids_and_says_what_it_wrote_on_stderr() {
+fn diff_with_a_word_side_prints_paragraph_ids_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
     ok(&jubarte(
@@ -512,17 +524,34 @@ fn diff_with_a_word_side_prints_paragraph_ids_and_says_what_it_wrote_on_stderr()
         "{stdout}"
     );
     assert!(!stdout.contains("{>>Arthur Rodrigues ("), "{stdout}");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("contract_v_new.docx"), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    assert!(!dir.path().join("contract_v_new.docx").exists());
+}
+
+/// Task 14: diff writes text only; a Word or PDF output names compare.
+#[test]
+fn diff_refuses_a_word_or_pdf_output_naming_compare() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
+    for output in ["changes.docx", "changes.pdf"] {
+        let out = jubarte(&["diff", "old.md", "new.md", "-o", output], dir.path());
+        assert_eq!(out.status.code(), Some(2), "{output}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("compare OLD NEW -o changes.") && stderr.contains("Usage:"),
+            "{output}: {stderr}"
+        );
+        assert!(!dir.path().join(output).exists(), "{output}");
+    }
 }
 
 #[test]
-fn diff_writes_a_word_redline_or_a_pdf() {
+fn compare_writes_the_redline_markdown_asks_for() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
-    ok(&jubarte(
+    wrote(&jubarte(
         &[
-            "diff",
+            "compare",
             "old.md",
             "new.md",
             "-o",
@@ -553,8 +582,8 @@ fn diff_writes_a_word_redline_or_a_pdf() {
             "Warranty"
         ]
     );
-    ok(&jubarte(
-        &["diff", "old.md", "new.md", "-o", "changes.pdf"],
+    wrote(&jubarte(
+        &["compare", "old.md", "new.md", "-o", "changes.pdf"],
         dir.path(),
     ));
     assert!(
@@ -564,46 +593,47 @@ fn diff_writes_a_word_redline_or_a_pdf() {
     );
 }
 
-/// A patch printed beside a PDF or PNG output is printed only once the
-/// output is written: a refused output prints no patch, and what was
-/// written is said on stderr so stdout holds the patch alone.
+/// Written to a file, the patch is said on stderr and printed nowhere; an
+/// existing file is refused, and a picture is compare's.
 #[test]
-fn diff_prints_the_patch_only_after_its_pdf_or_png_is_written() {
+fn diff_writes_the_patch_once_and_never_over_a_file() {
     let dir = tempfile::tempdir().unwrap();
     seed(
         dir.path(),
-        &[
-            ("old.md", OLD),
-            ("new.md", NEW),
-            ("taken.pdf", "keep"),
-            ("pages-page-01.png", "keep"),
-        ],
+        &[("old.md", OLD), ("new.md", NEW), ("taken.patch", "keep")],
     );
-    for output in ["taken.pdf", "pages.png"] {
-        let out = jubarte(&["diff", "old.md", "new.md", "-o", output], dir.path());
-        assert!(failed(&out).contains("already exists"), "{output}");
-        assert!(out.stdout.is_empty(), "{output}: {:?}", out.stdout);
-    }
+    let out = jubarte(
+        &["diff", "old.md", "new.md", "-o", "taken.patch"],
+        dir.path(),
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(failed(&out).contains("already exists"));
+    assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+    // Before the inputs are read: missing ones are not what it says.
+    let out = jubarte(
+        &["diff", "missing.md", "gone.md", "-o", "taken.patch"],
+        dir.path(),
+    );
+    assert!(failed(&out).contains("already exists"));
     assert_eq!(
-        std::fs::read(dir.path().join("taken.pdf")).unwrap(),
+        std::fs::read(dir.path().join("taken.patch")).unwrap(),
         b"keep"
     );
 
-    for (output, written) in [
-        ("fresh.pdf", "fresh.pdf"),
-        ("fresh.png", "fresh-page-01.png"),
-    ] {
-        let out = jubarte(&["diff", "old.md", "new.md", "-o", output], dir.path());
-        let stdout = ok(&out);
-        assert!(
-            stdout.starts_with("--- a/old.md\n+++ b/new.md\t"),
-            "{stdout}"
-        );
-        assert!(!stdout.contains("wrote"), "{stdout}");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("wrote"), "{output}: {stderr}");
-        assert!(dir.path().join(written).exists(), "{written}");
-    }
+    let stderr = wrote(&jubarte(
+        &["diff", "old.md", "new.md", "-o", "fresh.patch"],
+        dir.path(),
+    ));
+    assert!(stderr.contains("wrote fresh.patch (md, "), "{stderr}");
+    assert!(
+        std::fs::read_to_string(dir.path().join("fresh.patch"))
+            .unwrap()
+            .starts_with("--- a/old.md\n+++ b/new.md\t")
+    );
+
+    let out = jubarte(&["diff", "old.md", "new.md", "-o", "fresh.png"], dir.path());
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!dir.path().join("fresh-page-01.png").exists());
 }
 
 #[test]
@@ -615,10 +645,36 @@ fn diff_and_compare_take_word_against_markdown() {
         &["convert", "old.md", "-o", "contract.docx"],
         dir.path(),
     ));
+    // diff prints the patch and writes nothing.
     let out = jubarte(&["diff", "contract.docx", "new.md"], dir.path());
-    ok(&out);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("contract_v_new.docx"), "{stderr}");
+    assert!(
+        ok(&out).contains("Payment is due in [-30-]{+45+} days."),
+        "{out:?}"
+    );
+    assert!(!dir.path().join("contract_v_new.docx").exists());
+    // CriticMarkup needs Markdown on both sides; compare gives the rest.
+    let out = jubarte(
+        &["diff", "contract.docx", "new.md", "--format", "critic"],
+        dir.path(),
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = failed(&out);
+    assert!(
+        stderr.contains("--format critic needs both documents in Markdown")
+            && stderr.contains("jubarte compare OLD NEW"),
+        "{stderr}"
+    );
+    let redline_out = wrote(&jubarte(
+        &[
+            "compare",
+            "contract.docx",
+            "new.md",
+            "-o",
+            "contract_v_new.docx",
+        ],
+        dir.path(),
+    ));
+    assert!(redline_out.contains("contract_v_new.docx"), "{redline_out}");
     let redline = std::fs::read(dir.path().join("contract_v_new.docx")).unwrap();
     assert_word_valid_package(&redline);
     assert_eq!(
@@ -630,15 +686,6 @@ fn diff_and_compare_take_word_against_markdown() {
             "Returns",
             "Warranty"
         ]
-    );
-    // Markdown output needs Markdown on both sides for now.
-    let stderr = failed(&jubarte(
-        &["diff", "contract.docx", "new.md", "-t", "md"],
-        dir.path(),
-    ));
-    assert!(
-        stderr.contains("Markdown output needs both documents in Markdown"),
-        "{stderr}"
     );
     // compare takes Markdown too, and without -o prints the redline's view.
     let view = ok(&jubarte(&["compare", "old.md", "new.md"], dir.path()));

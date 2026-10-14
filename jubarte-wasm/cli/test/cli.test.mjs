@@ -515,8 +515,10 @@ test("patch output txt inference and unknown suffix fallback match native (integ
   for (const suffix of ["txt", "unknown"]) {
     const out = path.join(tmp, `inference.${suffix}`), result = run("diff", a, b, "-o", out);
     assert.equal(result.code, 0, result.err);
-    assert.equal(fs.readFileSync(out, "utf8"), "Due in {~~30~>45~~} days.\n");
-    assert.match(result.out, /\[-30-\]\{\+45\+\}/);
+    // The file holds the patch; stdout holds nothing.
+    assert.match(fs.readFileSync(out, "utf8"), /\[-30-\]\{\+45\+\}/);
+    assert.equal(result.out, "");
+    assert.ok(result.err.startsWith(`wrote ${out} (md, `), result.err);
   }
 });
 
@@ -550,12 +552,12 @@ test("CLI accepts both revision histories and word always accepts (integration)"
   assert.equal(word.out, "");
 });
 
-test("unknown output suffix defaults to Word for Word inputs (integration)", () => {
+test("unknown output suffix writes the patch for Word inputs (integration)", () => {
   const out = path.join(tmp, "word-fallback.unknown");
   const result = run("diff", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
   assert.equal(result.code, 0, result.err);
-  assert.equal(fs.readFileSync(out).subarray(0, 4).toString("hex"), "504b0304");
-  assert.ok(result.out.length > 0);
+  assert.match(fs.readFileSync(out, "utf8"), /^--- a\//);
+  assert.equal(result.out, "");
 });
 
 
@@ -569,21 +571,26 @@ test("explicit Markdown input and UTF-8 BOM share native text behavior", () => {
 });
 
 
-test("diff PDF forwards page options (integration)", () => {
+test("a redline's PDF forwards page options; diff writes none (integration)", () => {
   const wasm = createRequire(bin)("jubarte-wasm");
   const long = Array.from({ length: 120 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
   const a = path.join(tmp, "page-options-old.md"), b = path.join(tmp, "page-options-new.md");
   fs.writeFileSync(a, long);
   fs.writeFileSync(b, long.replace("Paragraph 0.", "Paragraph zero."));
+  const refused = run("diff", a, b, "-o", path.join(tmp, "diff-refused.pdf"));
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /`compare OLD NEW -o .*diff-refused\.pdf`/);
+  const redline = path.join(tmp, "page-options-redline.docx");
+  assert.equal(run("compare", a, b, "-o", redline).code, 0);
   const all = path.join(tmp, "diff-all.pdf"), kept = path.join(tmp, "diff-kept.pdf");
   for (const [output, flags] of [[all, []], [kept, ["--changed-only"]]]) {
-    const result = run("diff", a, b, "-o", output, ...flags);
+    const result = run("convert", redline, "-o", output, ...flags);
     assert.equal(result.code, 0, result.err);
   }
   assert.ok(wasm.pdfPageCount(fs.readFileSync(all)) > 1);
   assert.equal(wasm.pdfPageCount(fs.readFileSync(kept)), 1);
   const end = path.join(tmp, "diff-end.pdf");
-  const moved = run("diff", tracked, tracked, "-o", end, "--move-comments");
+  const moved = run("convert", tracked, "-o", end, "--move-comments");
   assert.equal(moved.code, 0, moved.err);
   assert.equal(wasm.pdfPageCount(fs.readFileSync(end)), 2);
 });
@@ -649,7 +656,8 @@ test("comparison refuses Markdown output of Word inputs and sniffs unknown input
   const b = copy(path.join(pair, "next.docx"), "sniff-b.bin");
   const inferred = run("diff", a, b);
   assert.equal(inferred.code, 0, inferred.err);
-  assert.equal(fs.readFileSync(path.join(tmp, "sniff-a_v_sniff-b.docx")).subarray(0, 4).toString("hex"), "504b0304");
+  assert.match(inferred.out, /^--- a\//);
+  assert.ok(!fs.existsSync(path.join(tmp, "sniff-a_v_sniff-b.docx")));
 });
 
 test("edit previews write nothing and quiet application still writes its report (integration)", () => {
@@ -748,11 +756,15 @@ test("diff, compare and convert follow the native input and output contract (int
   const word = path.join(tmp, "contract-a.docx");
   assert.equal(run("convert", a, "--to", "docx", "-o", word).code, 0);
 
-  // diff's Markdown output needs both documents in Markdown; compare's is
-  // the redline's view, which this CLI does not write yet.
+  // diff -o FILE.md of a Word side writes the patch; compare's .md is the
+  // redline's view, which this CLI does not write yet; diff writes no Word.
+  const written = path.join(tmp, "contract-d.md");
+  const patched = run("diff", word, b, "-o", written);
+  assert.equal(patched.code, 0, patched.err);
+  assert.match(fs.readFileSync(written, "utf8"), /\[-30-\]\{\+45\+\}/);
   for (const [args, code, message] of [
-    [["diff", word, b, "-o", path.join(tmp, "contract-d.md")], 1, /Markdown output needs both documents in Markdown/],
     [["compare", word, b, "-o", path.join(tmp, "contract-c.md")], 2, /not supported by the npm CLI yet/],
+    [["diff", word, b, "-o", path.join(tmp, "contract-patch.docx")], 2, /`compare OLD NEW -o /],
   ]) {
     const result = run(...args);
     assert.equal(result.code, code, result.out);
@@ -760,17 +772,11 @@ test("diff, compare and convert follow the native input and output contract (int
     assert.ok(!fs.existsSync(args.at(-1)));
   }
 
-  // --format critic writing a redline says so and prints no CriticMarkup;
-  // the patch keeps stdout to itself.
-  const redline = path.join(tmp, "contract-critic.docx");
-  const critic = run("diff", word, b, "--format", "critic", "-o", redline);
-  assert.equal(critic.code, 0, critic.err);
-  assert.doesNotMatch(critic.out, /\{~~/);
-  assert.match(critic.out, /^wrote /);
-  const patch = run("diff", word, b, "-o", path.join(tmp, "contract-patch.docx"));
-  assert.equal(patch.code, 0, patch.err);
-  assert.doesNotMatch(patch.out, /wrote/);
-  assert.match(patch.err, /wrote/);
+  // --format critic needs two Markdown documents.
+  const critic = run("diff", word, b, "--format", "critic");
+  assert.equal(critic.code, 1, critic.err);
+  assert.equal(critic.out, "");
+  assert.match(critic.err, /--format critic needs both documents in Markdown/);
 
   // --from md holds for the paragraph patch: Word bytes are not UTF-8.
   const forced = run("diff", word, word, "--from", "md");

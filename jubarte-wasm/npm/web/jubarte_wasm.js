@@ -1346,7 +1346,8 @@ export function readView(docx, options_json) {
  * summary}}`: preview `plan`, write `json`, print `notes` and `summary`.
  * On failure `{ok: false, usage, message}`: a usage error (exit 2), or
  * `held` is not a plan (exit 3). Options (JSON): `author`, `date`,
- * `existingRevisions`, `file`, `plan`, `dryRun`.
+ * `existingRevisions`, `file`, `plan`, `defaultPlan` (a bare `--plan`),
+ * `dryRun`.
  *
  * Mirrors `jubarte::edit::record::record`.
  * @param {string} verb

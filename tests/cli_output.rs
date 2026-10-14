@@ -209,9 +209,7 @@ fn png_pages_and_quiet() {
         &["scrub", "d.docx", "-o", "q.md", "--quiet"],
         &["compare", "d.docx", "d.docx", "-o", "q3.png", "-q"],
         &["d.docx", "d.docx", "-o", "q3.json", "-q"],
-        &[
-            "diff", "d.docx", "d.docx", "-t", "pdf", "-o", "q2.pdf", "-q",
-        ],
+        &["diff", "d.docx", "d.docx", "-o", "q2.patch", "-q"],
     ] {
         let out = jubarte(dir.path(), args);
         assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));

@@ -120,7 +120,7 @@ test("view JSON strictly validates all typed options and explicit sides", () => 
 });
 
 test("shared parser emits adapter format metadata and new view switches", () => {
-  for (const [suffix, expected] of [["txt", "md"], ["mdown", "md"], ["unknown", null]]) {
+  for (const [suffix, expected] of [["txt", "md"], ["mdown", "md"], ["unknown", "md"]]) {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(["diff", "a.txt", "b.markdown", "-o", `out.${suffix}`])));
     assert.equal(parsed.args.old_format, "md");
     assert.equal(parsed.args.new_format, "md");

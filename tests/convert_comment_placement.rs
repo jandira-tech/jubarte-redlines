@@ -386,9 +386,12 @@ fn the_page_flags_are_refused_where_nothing_is_laid_out() {
     std::fs::write(&old, &old_bytes).unwrap();
     std::fs::write(&new, &new_bytes).unwrap();
     for flag in ["--move-comments", "--changed-pages"] {
-        for command in ["convert", "diff"] {
+        for command in ["convert", "compare"] {
             for format in ["docx", "md"] {
                 for explicit_format in [false, true] {
+                    if explicit_format && command == "compare" {
+                        continue;
+                    }
                     let output = dir.path().join(format!("output.{format}"));
                     let sentinel = b"existing output must survive refusal";
                     std::fs::write(&output, sentinel).unwrap();
@@ -397,7 +400,7 @@ fn the_page_flags_are_refused_where_nothing_is_laid_out() {
                     if explicit_format {
                         cmd.args(["-t", format]);
                     }
-                    if command == "diff" {
+                    if command == "compare" {
                         cmd.arg(&old);
                     }
                     let result = cmd.arg(&new).output().unwrap();

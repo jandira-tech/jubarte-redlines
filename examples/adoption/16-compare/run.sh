@@ -58,10 +58,7 @@ fi
 # ---------- jubarte: compare + diff --------------------------------------------
 "$JUBARTE" v1.docx v2.docx -o redline_jubarte.docx --author Reviewer --force
 "$JUBARTE" diff v1.docx v2.docx --author Reviewer --date 2026-10-04T12:00:00Z \
-  --force > diff_jubarte.patch
-# jubarte diff also writes a default redline (<old>_v_<new>.docx) next to the
-# old file; the compare above already wrote ours, so drop the duplicate.
-rm -f v1_v_v2.docx
+  > diff_jubarte.patch
 "$JUBARTE" changes redline_jubarte.docx > changes_jubarte.txt
 
 # ---------- render page 1 of the redline ---------------------------------------

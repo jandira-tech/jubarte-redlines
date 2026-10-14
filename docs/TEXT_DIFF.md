@@ -74,7 +74,7 @@ story XML are validated; malformed input is an error, not an empty snapshot.
 These are differences between extracted text snapshots, not binary DOCX patches.
 Formatting, images, field instructions, comment authors and range anchors are
 outside this view. Use `debug -c runs`, `debug -c xml`, `debug diff` or
-`diff-render` for those comparisons. Use `compare A B -o redline.docx` to produce
+`visual-diff` for those comparisons. Use `compare A B -o redline.docx` to produce
 a Word document with tracked changes.
 
 ## Python

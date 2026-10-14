@@ -696,10 +696,10 @@ pub enum Command {
         jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout\n  \
         jubarte diff old.md new.md                       the patch on stdout\n  \
         jubarte diff old.md new.md --format critic       CriticMarkup on stdout, as pandiff\n  \
-        jubarte diff old.md new.md -o changes.docx       Word tracked changes\n  \
-        jubarte diff old.md new.md -o changes.pdf        the changes painted in a PDF\n  \
-        jubarte diff contract.docx edited.md -o redline.docx\n      \
-        the Markdown's edits as tracked changes on the Word document\n\n\
+        jubarte diff old.docx new.docx -o changes.patch  the patch in a file\n  \
+        jubarte compare old.md new.md -o changes.docx    Word tracked changes (compare writes redlines)\n  \
+        jubarte compare contract.docx edited.md -o redline.pdf\n      \
+        the Markdown's edits painted on the Word document\n\n\
         GIT:\n  \
         git config --global difftool.jubarte.cmd 'jubarte diff \"$LOCAL\" \"$REMOTE\"'\n  \
         git difftool -t jubarte -y -- '*.md'")]
@@ -710,8 +710,8 @@ pub enum Command {
         /// The new document: .docx or Markdown.
         #[arg(value_name = "NEW")]
         new: PathBuf,
-        /// Write to FILE. Text views default to stdout and write only text.
-        /// Patch/critic infer Word, Markdown, PDF or PNG from the extension.
+        /// Write the view to FILE (.md, .markdown, .txt, .patch or .diff;
+        /// stdout otherwise).
         #[arg(short = 'o', long, value_name = "FILE", help_heading = "Review")]
         output: Option<PathBuf>,
         /// Choose the review view; word accepts ALL input changes first.
@@ -729,12 +729,15 @@ pub enum Command {
         /// Show complete lines instead of a 70-character window around changes.
         #[arg(long, help_heading = "Review")]
         full_lines: bool,
-        /// Output format, when --output does not say.
+        /// Output format: md only (the patch, CriticMarkup or a text view
+        /// are all text).
+        // Every format parses, so another one is refused naming compare.
         #[arg(
             short = 't',
             long = "to",
             value_enum,
             value_name = "FORMAT",
+            hide_possible_values = true,
             help_heading = "Formats"
         )]
         to: Option<Format>,
@@ -750,41 +753,24 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long, help_heading = "Review")]
         force: bool,
-        /// Who made the changes: the patch's owner and the revisions'
-        /// author [default: `git config user.name`, else Redline].
-        #[arg(short = 'a', long, value_name = "NAME", help_heading = "Word redline")]
-        author: Option<String>,
+        /// Who made the changes: the patch's owner.
+        #[arg(
+            short = 'a',
+            long,
+            value_name = "NAME",
+            default_value = "Redline",
+            help_heading = "Paragraph patch"
+        )]
+        author: String,
         /// When (ISO 8601) [default: now]; pin it for reproducible output.
         #[arg(
             short = 'd',
             long,
             value_name = "ISO8601",
-        value_parser = parse_datetime,
-            help_heading = "Word redline"
+            value_parser = parse_datetime,
+            help_heading = "Paragraph patch"
         )]
         date: Option<String>,
-        /// Whose redline to reproduce (see `jubarte --help`).
-        #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word, help_heading = "Word redline")]
-        mode: CompareMode,
-        /// LCS detail threshold (see `jubarte --help`).
-        #[arg(long, value_name = "RATIO", value_parser = parse_threshold, help_heading = "Word redline")]
-        detail_threshold: Option<f64>,
-        /// Two Markdown documents written as Word take styles, page setup,
-        /// headers and footers from this .docx.
-        #[arg(long, value_name = "FILE", help_heading = "Word redline")]
-        reference_doc: Option<PathBuf>,
-        /// Read CriticMarkup in the Markdown documents as tracked changes
-        /// (Word output). By default a document compared is text.
-        #[arg(long, help_heading = "Word redline")]
-        critic: bool,
-        /// Where images named by the Markdown are found [default: the
-        /// old document's directory when it is Markdown, else the new's].
-        #[arg(long, value_name = "DIR", help_heading = "Word redline")]
-        resource_path: Option<PathBuf>,
-        /// How a PDF or PNG output is rendered.
-        #[command(flatten)]
-        #[serde(flatten)]
-        render: RenderArgs,
     },
     /// Inspect document facts, paragraphs, styles and tables.
     Inspect {
@@ -1557,16 +1543,22 @@ impl Task {
         Format::of_path(path)
     }
 
-    /// The refusal for a format this task cannot write.
-    fn cannot_write(self, format: Format) -> String {
+    /// The refusal for a format this task cannot write; the advice names
+    /// the file as typed (`c.EXT`/`v.EXT` when `--to` said the format).
+    fn cannot_write(self, format: Format, typed: Option<&str>) -> String {
         let ext = format.name();
+        let named = |stem: &str| typed.map_or_else(|| format!("{stem}.{ext}"), str::to_string);
         match (self, format) {
             (Self::Diff, Format::Json) => "diff does not write .json yet".to_string(),
             (Self::Diff, _) => format!(
-                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o c.{ext}` writes the redline as {ext}"
+                "diff writes text (.md, .markdown, .txt, .patch, .diff); `compare OLD NEW -o {}` writes the redline as {ext}",
+                named("c")
             ),
             (Self::Read, _) => {
-                format!("read writes .md or .json; `convert FILE -o v.{ext}` writes {ext}")
+                format!(
+                    "read writes .md or .json; `convert FILE -o {}` writes {ext}",
+                    named("v")
+                )
             }
             _ => format!("{} does not write .{ext}", self.name()),
         }
@@ -1584,13 +1576,15 @@ pub fn output_format(
     to: Option<Format>,
 ) -> Result<Option<Format>, String> {
     let said = output.and_then(|path| task.known(path));
-    if let (Some(path), Some(said), Some(to)) = (output, said, to)
-        && said != to
-    {
-        let name = path.file_name().map_or_else(
+    let name = output.map(|path| {
+        path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
-        );
+        )
+    });
+    if let (Some(name), Some(said), Some(to)) = (&name, said, to)
+        && said != to
+    {
         return Err(format!(
             "-o {name} says {} and --to says {}: drop one",
             said.name(),
@@ -1609,7 +1603,11 @@ pub fn output_format(
     if task.allowed().contains(&format) {
         Ok(Some(format))
     } else {
-        Err(task.cannot_write(format))
+        // The typed name only when it said the format; `--to` names its own.
+        let typed = output
+            .filter(|_| said == Some(format))
+            .map(|path| path.display().to_string());
+        Err(task.cannot_write(format, typed.as_deref()))
     }
 }
 
@@ -1666,7 +1664,27 @@ pub const RETIRED: &[Retired] = &[
     Retired {
         old: "--changed-only",
         now: "--changed-pages",
-        on: Some("diff"),
+        on: Some("compare"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("accept"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("reject"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("append"),
+    },
+    Retired {
+        old: "--changed-only",
+        now: "--changed-pages",
+        on: Some("scrub"),
     },
     Retired {
         old: "--pdf",
@@ -1789,8 +1807,9 @@ fn spelled_options<'a>(cmd: &clap::Command, tokens: &[&'a str]) -> (Vec<Spelled<
 
 /// The retired spellings in `argv` (the arguments after the program name),
 /// each once, in the order they first appear. The task is the first token
-/// before `--` that is neither an option nor an option's value; a retired
-/// flag counts only on the task it is retired on, and a `-p`/`--location`
+/// before `--` that is neither an option nor an option's value, compare
+/// when that is no task (the shorthand); a retired flag counts only on the
+/// task it is retired on, and a `-p`/`--location`
 /// value of `edit` or `add` in 0.12's cell form counts as [`RETIRED_CELL`].
 /// Pure: no I/O.
 pub fn retired_spellings<'a>(
@@ -1810,12 +1829,14 @@ pub fn retired_spellings<'a>(
         }
         None => task,
     };
-    let Some(sub) = model.find_subcommand(task) else {
-        return found;
+    // The shorthand `jubarte A B` is compare, with the top level's options
+    // (zcode-14 F1).
+    let (sub, task, from) = match model.find_subcommand(task) {
+        Some(sub) => (sub, sub.get_name(), at + 1),
+        None => (&model, "compare", at),
     };
-    let task = sub.get_name();
     // Options and positionals interleave after the task.
-    let mut rest = &argv[at + 1..];
+    let mut rest = &argv[from..];
     while !rest.is_empty() {
         let (options, next) = spelled_options(sub, rest);
         for option in options {
@@ -2542,7 +2563,7 @@ fn validate_matches(
             &format!("{name} writes a .docx; {how} writes .{ext} from it"),
         ));
     }
-    if matches!(name, "convert" | "edit" | "diff")
+    if matches!(name, "convert" | "edit")
         && args.get_one::<String>("revision_palette").is_some()
         && args.get_one::<Revisions>("revisions") != Some(&Revisions::Custom)
     {
@@ -2552,89 +2573,47 @@ fn validate_matches(
         ));
     }
     if name == "diff" {
-        let output_format = args.get_one::<Format>("to").copied().or_else(|| {
-            args.get_one::<PathBuf>("output")
-                .and_then(|path| Format::of_path(path))
-        });
-        if !matches!(output_format, Some(Format::Pdf | Format::Png)) {
-            for flag in RENDER_ONLY {
-                if args.value_source(flag) == Some(ValueSource::CommandLine) {
-                    return Err(error(
-                        &mut task,
-                        &format!(
-                            "--{} applies to PDF or PNG output only",
-                            flag.replace('_', "-")
-                        ),
-                    ));
-                }
-            }
-        }
+        // Text only: Word, PDF and PNG redlines are compare's.
+        output_format(
+            Task::Diff,
+            args.get_one::<PathBuf>("output").map(PathBuf::as_path),
+            args.get_one::<Format>("to").copied(),
+        )
+        .map_err(|message| error(&mut task, &message))?;
         let format = *args
             .get_one::<PatchFormat>("format")
             .expect("default format");
-        let github = format.is_text_view();
-        if !github {
-            for flag in ["context", "accept_changes", "full_lines"] {
-                if args.value_source(flag) == Some(ValueSource::CommandLine) {
-                    return Err(error(
-                        &mut task,
-                        &format!(
-                            "--{} requires a text diff format (github, word, normal, context or side-by-side)",
-                            flag.replace('_', "-")
-                        ),
-                    ));
-                }
-            }
+        let (text_view, theirs) = if format.is_text_view() {
+            (true, &["columns", "author", "date"][..])
+        } else {
+            (false, &["context", "accept_changes", "full_lines"][..])
+        };
+        // CriticMarkup carries no owner and is not wrapped: the patch's
+        // flags would be dropped silently (pi-14 C3).
+        let patch_only: &[&str] = if format == PatchFormat::Critic {
+            &["columns", "author", "date"]
+        } else {
+            &[]
+        };
+        let given = |flag: &&&str| args.value_source(flag) == Some(ValueSource::CommandLine);
+        if let Some(flag) = patch_only.iter().find(given) {
+            return Err(error(
+                &mut task,
+                &format!("--{flag} applies to the paragraph patch only (--format patch)"),
+            ));
         }
-        if github {
-            if args
-                .get_one::<Format>("to")
-                .is_some_and(|f| *f != Format::Md)
-            {
-                return Err(error(
-                    &mut task,
-                    "this diff format writes text; --to must be md (markdown)",
-                ));
-            }
-            if args.get_one::<PathBuf>("output").is_some_and(|path| {
-                !path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                    matches!(
-                        e.to_ascii_lowercase().as_str(),
-                        "patch" | "diff" | "txt" | "md" | "markdown"
+        if let Some(flag) = theirs.iter().find(given) {
+            let flag = flag.replace('_', "-");
+            return Err(error(
+                &mut task,
+                &if text_view {
+                    format!("--{flag} does not apply to this text diff format")
+                } else {
+                    format!(
+                        "--{flag} requires a text diff format (github, word, normal, context or side-by-side)"
                     )
-                })
-            }) {
-                return Err(error(
-                    &mut task,
-                    "text diff output must end in .patch, .diff, .txt or .md",
-                ));
-            }
-            for flag in [
-                "columns",
-                "move_comments",
-                "changed_pages",
-                "pages",
-                "dpi",
-                "revisions",
-                "revision_palette",
-                "reference_doc",
-                "resource_path",
-                "critic",
-                "mode",
-                "detail_threshold",
-                "author",
-                "date",
-            ] {
-                if args.value_source(flag) == Some(ValueSource::CommandLine) {
-                    return Err(error(
-                        &mut task,
-                        &format!(
-                            "--{} does not apply to this text diff format",
-                            flag.replace('_', "-")
-                        ),
-                    ));
-                }
-            }
+                },
+            ));
         }
     }
     if name == "convert" {
@@ -2927,7 +2906,9 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 value["args"]["new_format"] =
                     serde_json::to_value(input_format(new)).expect("format");
                 value["args"]["output_format"] = serde_json::to_value(
-                    to.or_else(|| output.as_deref().and_then(Format::of_path)),
+                    output_format(Task::Diff, output.as_deref(), *to)
+                        .ok()
+                        .flatten(),
                 )
                 .expect("format");
             }
