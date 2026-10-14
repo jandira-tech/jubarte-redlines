@@ -1000,3 +1000,78 @@ fn a_run_that_prints_nothing_keeps_no_two_marks_apart() {
         "{view}"
     );
 }
+
+#[test]
+fn a_header_substitution_pairs_and_keeps_each_id_on_its_side() {
+    // As in the body: Word's insertion then deletion is one substitution,
+    // marks of one kind by one author join, and writing it back puts every
+    // id on the side it came from.
+    let mark = |kind: &str, id: u32, text: &str| {
+        let t = if kind == "del" { "delText" } else { "t" };
+        format!(
+            "<w:{kind} w:id=\"{id}\" w:author=\"Ann Lee\" w:date=\"2026-03-02T00:00:00Z\">\
+             <w:r><w:{t}>{text}</w:{t}></w:r></w:{kind}>"
+        )
+    };
+    let text = |t: &str| format!("<w:r><w:t xml:space=\"preserve\">{t}</w:t></w:r>");
+    let header = format!(
+        "<w:hdr xmlns:w=\"{}\"><w:p>{}{}{}{}</w:p><w:p>{}{}{}{}{}{}</w:p></w:hdr>",
+        common::docx::W_NS,
+        text("Sub "),
+        mark("ins", 90, "new"),
+        mark("del", 91, "old"),
+        text("."),
+        text("Runs "),
+        mark("ins", 92, "A"),
+        mark("ins", 93, "B"),
+        mark("del", 94, "C"),
+        mark("del", 95, "D"),
+        text("."),
+    );
+    let docx = common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[common::docx::Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let options = ReadOptions {
+        page_markers: false,
+        ..ReadOptions::default()
+    };
+    let view = read(&docx, &options).expect("the docx reads").markdown;
+    for want in [
+        "Sub {~~old~>new~~}{>>header1.r91+90 @AL<<}.",
+        "Runs {~~CD~>AB~~}{>>header1.r94+95+92+93 @AL<<}.",
+    ] {
+        assert!(view.contains(want), "{want} in {view}");
+    }
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let part = common::docx::part_string(&written, "word/header1.xml").expect("header1.xml");
+    let order: Vec<&str> = ["\"90\"", "\"91\"", "\"92\"", "\"93\"", "\"94\"", "\"95\""]
+        .into_iter()
+        .filter(|id| part.contains(&format!("w:id={id}")))
+        .collect();
+    assert_eq!(order.len(), 6, "{part}");
+    for (ins, del) in [("90", "91"), ("93", "94")] {
+        let at = |id: &str| part.find(&format!("w:id=\"{id}\"")).expect("the id");
+        assert!(
+            at(ins) < at(del),
+            "insertion {ins} before deletion {del} in {part}"
+        );
+    }
+    let again = read(&written, &options).expect("the docx reads").markdown;
+    let headers = |v: &str| {
+        v.lines()
+            .filter(|l| l.contains("header1."))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(headers(&again), headers(&view));
+}

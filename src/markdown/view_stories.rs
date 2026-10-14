@@ -74,10 +74,21 @@ impl Marks<'_> {
     /// `w:ins w:id="5" w:author="…" w:date="…"`: the start tag's name and
     /// attributes, for `tag` or the document's author.
     fn mark(&mut self, name: &str, tag: Option<&super::view_notes::Tag>, at: usize) -> String {
-        // The tag's `at`th id; a side the tag numbers none for (`r5` after
-        // a substitution names its deleted side) takes a fresh one.
-        let id = match tag.and_then(|tag| tag.ids.get(at)) {
-            Some(&id) => id,
+        let id = tag.and_then(|tag| tag.ids.get(at)).copied();
+        self.mark_id(name, tag, id)
+    }
+
+    /// The mark `name` with `id`, by the tag's author; a side the tag
+    /// numbers none for (`r5` after a substitution names its deleted side)
+    /// takes a fresh id.
+    fn mark_id(
+        &mut self,
+        name: &str,
+        tag: Option<&super::view_notes::Tag>,
+        id: Option<u32>,
+    ) -> String {
+        let id = match id {
+            Some(id) => id,
             None => {
                 self.next_id = self.next_id.saturating_add(1);
                 self.next_id
@@ -413,22 +424,26 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
             flush(&mut plain, &mut out, false);
             let (tags, after) = tags_after(after);
             match change {
-                Change::Insert(inner) => {
-                    tracked(&mut out, marks, "w:ins", tags.first(), 0, inner);
-                }
-                Change::Delete(inner) => {
-                    tracked(&mut out, marks, "w:del", tags.first(), 0, inner);
+                Change::Insert(inner) | Change::Delete(inner) => {
+                    let name = if matches!(change, Change::Insert(_)) {
+                        "w:ins"
+                    } else {
+                        "w:del"
+                    };
+                    let tag = tags.first();
+                    let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
+                    tracked(&mut out, marks, name, tag, ids, inner);
                 }
                 Change::Substitute(old, new) => {
                     // One tag names both sides (`r5+6`, old first), or
                     // each side has its own.
-                    let (old_tag, new_tag, new_at) = match tags.as_slice() {
-                        [one] => (Some(one), Some(one), 1),
-                        [old, new, ..] => (Some(old), Some(new), 0),
-                        [] => (None, None, 0),
+                    let (old_tag, new_tag, (old_ids, new_ids)) = match tags.as_slice() {
+                        [one] => (Some(one), Some(one), substitution_ids(&one.ids)),
+                        [old, new, ..] => (Some(old), Some(new), (&old.ids[..], &new.ids[..])),
+                        [] => (None, None, (&[][..], &[][..])),
                     };
-                    tracked(&mut out, marks, "w:ins", new_tag, new_at, new);
-                    tracked(&mut out, marks, "w:del", old_tag, 0, old);
+                    tracked(&mut out, marks, "w:ins", new_tag, new_ids, new);
+                    tracked(&mut out, marks, "w:del", old_tag, old_ids, old);
                 }
             }
             rest = after;
@@ -540,16 +555,63 @@ fn flush(plain: &mut String, out: &mut String, deleted: bool) {
 
 /// `inner` inside a `w:ins` or `w:del`: its text and its fields, which
 /// are complex there (a `w:fldSimple` cannot sit in a mark).
+/// A substitution's one tag (`r94+95+92+93`) lists the deleted side's ids,
+/// then the inserted side's: Word numbers marks in document order and
+/// writes the insertion first, so the inserted side begins where the
+/// numbers drop. With no drop the deleted side takes one id, as in the
+/// body.
+fn substitution_ids(ids: &[u32]) -> (&[u32], &[u32]) {
+    let cut = ids
+        .windows(2)
+        .position(|pair| pair[1] < pair[0])
+        .map_or(1, |at| at + 1)
+        .min(ids.len());
+    ids.split_at(cut)
+}
+
+/// One change's marks: a side whose tag names several ids (`r92+93`) is a
+/// mark per id, its text split as the body splits a run (after its last
+/// space, else before its last character); a side holding a field stays
+/// one mark.
 fn tracked(
     out: &mut String,
     marks: &mut Marks<'_>,
     name: &str,
     tag: Option<&super::view_notes::Tag>,
-    at: usize,
+    ids: &[u32],
+    inner: &str,
+) {
+    let has_field = inner
+        .char_indices()
+        .any(|(at, c)| c == '{' && field(&inner[at..]).is_some());
+    let mut pieces = vec![inner];
+    while !has_field && pieces.len() < ids.len() {
+        let Some((at, cut)) = pieces.iter().enumerate().rev().find_map(|(at, piece)| {
+            // Never between an escape and the character it escapes.
+            super::xml::split_point(piece)
+                .filter(|&cut| !piece[..cut].ends_with('\\'))
+                .map(|cut| (at, cut))
+        }) else {
+            break;
+        };
+        let (head, tail) = pieces[at].split_at(cut);
+        pieces.splice(at..=at, [head, tail]);
+    }
+    for (n, piece) in pieces.into_iter().enumerate() {
+        tracked_piece(out, marks, name, tag, ids.get(n).copied(), piece);
+    }
+}
+
+fn tracked_piece(
+    out: &mut String,
+    marks: &mut Marks<'_>,
+    name: &str,
+    tag: Option<&super::view_notes::Tag>,
+    id: Option<u32>,
     inner: &str,
 ) {
     let deleted = name == "w:del";
-    let _ = write!(out, "<{}>", marks.mark(name, tag, at));
+    let _ = write!(out, "<{}>", marks.mark_id(name, tag, id));
     let mut plain = String::new();
     let mut rest = inner;
     while let Some(c) = rest.chars().next() {

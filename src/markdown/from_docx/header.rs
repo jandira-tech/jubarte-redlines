@@ -1141,6 +1141,24 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         view: StoryView<'a>,
         /// Inside deleted text the view shows.
         deleting: bool,
+        /// The tagged view's last change, while nothing follows it yet.
+        last: Option<Shown>,
+    }
+    /// One side of a change the tagged view printed: its text, its marks'
+    /// tags, and their author.
+    struct Side {
+        text: String,
+        tags: Vec<String>,
+        author: Option<String>,
+    }
+    /// A change the tagged view printed from `start` to `end`: an
+    /// insertion, a deletion, or the insertion then the deletion Word's
+    /// Compare writes for a substitution.
+    struct Shown {
+        start: usize,
+        end: usize,
+        new: Option<Side>,
+        old: Option<Side>,
     }
     /// A complex field being read.
     #[derive(Default)]
@@ -1208,16 +1226,15 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     if let Some((handles, stem)) = tagged {
                         let text = s.out.split_off(start);
                         if !text.is_empty() {
-                            let (open, close) = if inserted {
-                                ("{++", "++}")
-                            } else {
-                                ("{--", "--}")
-                            };
                             let tag = format!("{stem}#{}", super::agent::tag_of(run, handles));
-                            s.out.push_str(&format!(
-                                "{open}{text}{close}{{>>{}<<}}",
-                                super::agent::format_tag(&tag)
-                            ));
+                            s.change(
+                                inserted,
+                                Side {
+                                    text,
+                                    tags: vec![tag],
+                                    author: run.attr("author").map(str::to_string),
+                                },
+                            );
                         }
                     }
                 }
@@ -1285,6 +1302,61 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         }
     }
     impl State<'_> {
+        /// A tagged change, as the body prints its neighbours: marks of one
+        /// kind by one author join, and an insertion directly followed by
+        /// a deletion is one substitution.
+        fn change(&mut self, inserted: bool, side: Side) {
+            let at = self.out.len();
+            let mut shown = match self.last.take().filter(|last| last.end == at) {
+                Some(mut last) => {
+                    let joins = |own: &Option<Side>| {
+                        own.as_ref().is_some_and(|own| own.author == side.author)
+                    };
+                    if inserted && last.old.is_none() && joins(&last.new) {
+                        let new = last.new.as_mut().expect("checked above");
+                        new.text.push_str(&side.text);
+                        new.tags.extend(side.tags);
+                        last
+                    } else if !inserted && joins(&last.old) {
+                        let old = last.old.as_mut().expect("checked above");
+                        old.text.push_str(&side.text);
+                        old.tags.extend(side.tags);
+                        last
+                    } else if !inserted && last.old.is_none() && last.new.is_some() {
+                        last.old = Some(side);
+                        last
+                    } else {
+                        Shown::alone(at, inserted, side)
+                    }
+                }
+                None => Shown::alone(at, inserted, side),
+            };
+            self.out.truncate(shown.start);
+            let tag = |side: &Side| super::agent::join_tags(&side.tags);
+            let printed = match (&shown.old, &shown.new) {
+                (Some(old), Some(new)) => format!(
+                    "{{~~{}~>{}~~}}{{>>{}<<}}",
+                    old.text,
+                    new.text,
+                    super::agent::format_tag(&super::agent::join_tags(&[tag(old), tag(new)]))
+                ),
+                (None, Some(new)) => format!(
+                    "{{++{}++}}{{>>{}<<}}",
+                    new.text,
+                    super::agent::format_tag(&tag(new))
+                ),
+                (Some(old), None) => format!(
+                    "{{--{}--}}{{>>{}<<}}",
+                    old.text,
+                    super::agent::format_tag(&tag(old))
+                ),
+                (None, None) => String::new(),
+            };
+            self.out.push_str(&printed);
+            shown.end = self.out.len();
+            self.last = Some(shown);
+        }
+
         /// Document text; the tagged view escapes what reads like a mark.
         fn push_text(&mut self, text: &str) {
             match self.view {
@@ -1293,11 +1365,27 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
             }
         }
     }
+    impl Shown {
+        fn alone(start: usize, inserted: bool, side: Side) -> Self {
+            let (new, old) = if inserted {
+                (Some(side), None)
+            } else {
+                (None, Some(side))
+            };
+            Shown {
+                start,
+                end: start,
+                new,
+                old,
+            }
+        }
+    }
     let mut s = State {
         out: String::new(),
         fields: Vec::new(),
         view,
         deleting: false,
+        last: None,
     };
     walk(p, &mut s);
     s.out.trim().to_string()

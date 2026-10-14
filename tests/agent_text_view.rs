@@ -1112,7 +1112,8 @@ fn numbering_and_styles_authors_get_handles_after_comment_authors() {
 
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own
 /// way, moves included, and the tracked view escapes document text that
-/// reads like a mark.
+/// reads like a mark. An insertion directly followed by a deletion is one
+/// substitution, as in the body.
 #[test]
 fn header_text_follows_each_view() {
     let header = format!(
@@ -1141,7 +1142,7 @@ fn header_text_follows_each_view() {
     };
     assert_eq!(
         text(&agent(&bytes)),
-        r#"  default: {id: header1, text: "Status: {++DRAFT++}{>>header1.r1 @AC<<}{--FINAL--}{>>header1.r2 @AC<<} {\\>>x<<\\} Page {++2++}{>>header1.r9 @AC<<}{--7--}{>>header1.r8 @AC<<} of 3"}"#
+        r#"  default: {id: header1, text: "Status: {~~FINAL~>DRAFT~~}{>>header1.r2+1 @AC<<} {\\>>x<<\\} Page {~~7~>2~~}{>>header1.r8+9 @AC<<} of 3"}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Accept, true)),

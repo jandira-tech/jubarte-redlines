@@ -1112,7 +1112,7 @@ fn split_for_ids<'i>(context: &Context<'_>, items: &'i [Item]) -> Cow<'i, [Item]
 
 /// Where a run's text splits in two: after its last space with text after
 /// it, else before its last character; `None` for one character.
-fn split_point(text: &str) -> Option<usize> {
+pub(super) fn split_point(text: &str) -> Option<usize> {
     text.char_indices()
         .rev()
         .find(|&(at, c)| c == ' ' && at + 1 < text.len())
