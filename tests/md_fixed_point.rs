@@ -456,7 +456,9 @@ fn ids(view: &str) -> Vec<(String, String)> {
     let mut block: Option<(String, Vec<&str>)> = None;
     let mut blocks: Vec<(String, String)> = Vec::new();
     for line in &body {
+        // A nested list item's id line is indented with its item.
         let id = line
+            .trim_start()
             .strip_prefix("<!-- ")
             .and_then(|rest| rest.split_whitespace().next());
         match id {

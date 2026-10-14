@@ -1273,6 +1273,13 @@ impl<'o, 'a> Writer<'o, 'a> {
         match event {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
+            // Inside a list item, pulldown-cmark hands an HTML block's
+            // indentation past the item's content column over as text.
+            Event::Text(text) if self.html_block.is_some() => {
+                if let Some(block) = &mut self.html_block {
+                    block.push_str(&text);
+                }
+            }
             Event::Text(text) => self.text(&text),
             Event::Code(text) => {
                 self.code += 1;
