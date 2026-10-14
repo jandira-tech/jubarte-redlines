@@ -8,9 +8,12 @@ authors:
 body: p0-p68, 1 table, 1 page      # page count estimated from breaks
 page: A4 portrait, margins 1in, header/footer 0.49in
 styles:
-  "1": Arial 12pt, left            # default; unannotated paragraphs use it
-  "#": 2, Calibri bold 16pt, before 12pt, after 6pt
-  "##": 3, Calibri bold 14pt, before 9pt, after 4.5pt
+  "1": Arial 12pt, left, named Normal  # default; unannotated paragraphs use it
+  "#": 2, Calibri bold 16pt, before 12pt, after 6pt, named heading 1
+  "##": 3, Calibri bold 14pt, before 9pt, after 4.5pt, named heading 2
+  "13": Arial 28pt, named Title
+  "17": Arial bold 12pt, before 6pt, after 6pt, named Highlighted Style
+  "14": Arial 12pt, named List Paragraph
   table: "9"
 ---
 

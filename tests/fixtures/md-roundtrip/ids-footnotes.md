@@ -12,6 +12,11 @@ styles:
   Normal: Aptos 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it
   "#": Heading1, Aptos Display 20pt, before 18pt, after 4pt, keep-next
   "##": Heading2, Aptos Display 16pt, before 8pt, after 4pt, keep-next
+  Title: Aptos Display 28pt, after 4pt
+  Subtitle: Aptos 14pt
+  ListBullet: Aptos 12pt, named List Bullet
+  ListNumber: Aptos 12pt, named List Number
+  Quote: Aptos italic 12pt, before 8pt, center
   table: GridTable4-Accent1, all borders 0.5pt
 headers:
   first: {id: header3, text: "", inactive}  # defined, but different first page is off

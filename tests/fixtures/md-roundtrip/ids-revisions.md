@@ -10,6 +10,7 @@ body: p0-p737, 18 tables, 2 pages  # pages from Word's cached layout
 page: Letter portrait, margins top 0.95in, right 1.67in, bottom 2.42in, left 1.58in, header 0.5in, footer 1.88in; fmt r1667 @AB
 styles:
   Normal: Times New Roman 11.5pt, after 2.6pt, line 0.98, justify  # default; unannotated paragraphs use it
+  ListParagraph: Times New Roman 11.5pt, named List Paragraph
   table: TableGrid0
   changes: {Normal: styles.r0 @AB}  # tracked changes to the styles
 headers:

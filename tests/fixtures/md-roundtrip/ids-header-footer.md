@@ -9,6 +9,7 @@ body: p0-p109, 0 tables, 11 pages  # pages from Word's cached layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Aptos 12pt, left         # default; unannotated paragraphs use it
+  ListParagraph: Times 11.5pt, after 6pt, line 1.1, named List Paragraph
 headers:
   first: {id: header3, text: "{PAGE}"}  # page 1 only (different first page)
   default: {id: header2, text: "{PAGE}"}
