@@ -263,6 +263,23 @@ fn png_pages_and_quiet() {
             "{args:?}"
         );
     }
+    // -q silences the report, never the write (ledger review of #444, L5).
+    for name in [
+        "q.docx",
+        "q.pdf",
+        "q.json",
+        "q.md",
+        "q3-page-01.png",
+        "q3.json",
+    ] {
+        let len = std::fs::metadata(dir.path().join(name))
+            .unwrap_or_else(|error| panic!("{name}: {error}"))
+            .len();
+        assert!(len > 0, "{name} is empty");
+    }
+    // The same document on both sides has no diff: the patch is empty.
+    let patch = std::fs::read(dir.path().join("q2.patch")).unwrap();
+    assert_eq!(text(&patch), "");
 }
 
 #[test]
