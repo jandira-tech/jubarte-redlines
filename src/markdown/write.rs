@@ -5,15 +5,15 @@
 //! Markdown events to Word items, CriticMarkup to tracked changes.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
 use super::xml::{
-    Comment, Content, Document, Indent, Item, Kind, Label, LabelUse, Link, List, Note, Paragraph,
-    Picture, Run, RunFormat,
+    Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link, List, Note,
+    Paragraph, Picture, Run, RunFormat, TableFormats,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 use super::{math, view_notes, view_stories, view_styles};
@@ -95,6 +95,14 @@ struct TablePlan {
     marks: HashMap<usize, (bool, view_notes::Tag)>,
     /// Cell paragraphs aligned against their column, by paragraph number.
     aligns: HashMap<usize, &'static str>,
+    /// The style the table's line names (`style Ledger`).
+    style: Option<String>,
+    /// A comment's range runs through the table (`in c5`).
+    in_comment: bool,
+    /// The formatting changes the line names.
+    fmt: Option<view_notes::Tag>,
+    row_fmt: HashMap<usize, view_notes::Tag>,
+    cell_fmt: HashMap<(usize, usize), view_notes::Tag>,
 }
 
 /// One row of a [`TablePlan`].
@@ -109,6 +117,8 @@ struct RowPlan {
     cells: Vec<CellShape>,
     /// The empty cells the view left out at the row's end.
     pad: usize,
+    /// The grid columns the row leaves out before and after its cells.
+    gaps: (usize, usize),
 }
 
 /// What one Markdown cell of a planned row is.
@@ -180,10 +190,29 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
     // The last row each grid column's vertical merge reaches.
     let mut merged_until: HashMap<usize, usize> = HashMap::new();
     let mut shaped: Vec<(Vec<CellShape>, usize, usize)> = Vec::new();
+    let mut gaps: Vec<(usize, usize)> = Vec::new();
     for (r, (cells, _)) in rows.iter().enumerate() {
         let mut shapes = Vec::with_capacity(cells.len());
-        let (mut cell, mut column, mut spanned) = (0, 0, 0);
-        for &empty in cells {
+        // The empty cells that stand for grid columns the row leaves out.
+        let (before, after) = line.gaps.get(&r).copied().unwrap_or((0, 0));
+        let lead = cells
+            .iter()
+            .take(before)
+            .take_while(|&&empty| empty)
+            .count();
+        let tail = cells
+            .iter()
+            .skip(lead)
+            .rev()
+            .take(after)
+            .take_while(|&&empty| empty)
+            .count();
+        let (mut cell, mut column, mut spanned) = (0, lead, 0);
+        for (at, &empty) in cells.iter().enumerate() {
+            if at < lead || at >= cells.len() - tail {
+                shapes.push(CellShape::Spanned);
+                continue;
+            }
             if spanned > 0 && empty {
                 spanned -= 1;
                 shapes.push(CellShape::Spanned);
@@ -207,10 +236,11 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         // `column` already counts a span the view cut at the right edge.
         let pad = line
             .columns
-            .map_or(0, |columns| columns.saturating_sub(column));
+            .map_or(0, |columns| columns.saturating_sub(column + tail));
         shaped.push((shapes, cell, pad));
+        gaps.push((lead, tail));
     }
-    let rows = match (&line.row_paragraphs, line.one_per_cell) {
+    let rows: Vec<RowPlan> = match (&line.row_paragraphs, line.one_per_cell) {
         // One paragraph a cell: a `<br>` is a line break.
         (_, Some(first)) => {
             let mut at = first;
@@ -222,6 +252,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
                         first: Some(at),
                         cells,
                         pad,
+                        gaps: (0, 0),
                     };
                     at = at.saturating_add(count + pad);
                     row
@@ -241,6 +272,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
                     first: exact.then_some(first),
                     cells,
                     pad,
+                    gaps: (0, 0),
                 }
             })
             .collect(),
@@ -252,6 +284,11 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
             })
             .collect(),
     };
+    let rows: Vec<RowPlan> = rows
+        .into_iter()
+        .zip(gaps.into_iter().chain(std::iter::repeat((0, 0))))
+        .map(|(row, gaps)| RowPlan { gaps, ..row })
+        .collect();
     TablePlan {
         header_repeats: line.header_repeats,
         columns: line.columns,
@@ -259,7 +296,28 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         rows,
         marks: line.marks,
         aligns: line.aligns,
+        style: line.style,
+        in_comment: line.in_comment,
+        fmt: line.fmt,
+        row_fmt: line.row_fmt,
+        cell_fmt: line.cell_fmt,
     }
+}
+
+/// A `{>>…<<}` in a header's or footer's text that is no change's tag.
+fn has_comment(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(at) = rest.find("{>>") {
+        let after = &rest[at + 3..];
+        let Some(end) = after.find("<<}") else {
+            return false;
+        };
+        if view_notes::revision_tags(&after[..end]).is_none() {
+            return true;
+        }
+        rest = &after[end + 3..];
+    }
+    false
 }
 
 /// `<br>`, `<br/>` or `<br class="x">`, as the view and authors write a
@@ -521,6 +579,11 @@ struct Writer<'o, 'a> {
     body: Vec<Item>,
     /// Footnote definitions by label.
     definitions: HashMap<String, Vec<Item>>,
+    /// The labels whose definition the view names an endnote
+    /// (`<!-- endnotes.p0 -->` before `[^2]:`).
+    endnotes: HashSet<String>,
+    /// The id line just read names an endnote: the next definition is one.
+    endnote_next: bool,
     /// The label of each footnote reference, in order, with its change.
     references: Vec<(String, Option<(Kind, u32)>)>,
     /// The footnote definition being read.
@@ -598,6 +661,9 @@ struct Writer<'o, 'a> {
     closed: Option<u32>,
     /// The deleted side's serial while a substitution's inserted side is open.
     substituted: Option<u32>,
+    /// Where the open substitution's deleted and inserted sides start in
+    /// the story: Word writes the inserted side first.
+    substitution: Option<(usize, Option<usize>)>,
     /// The change the open comment follows, while the comment may still
     /// turn out to be the change's attribution.
     comment_anchor: Option<Anchor>,
@@ -617,6 +683,9 @@ struct Writer<'o, 'a> {
     page_break_due: bool,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
     authors: HashMap<String, view_notes::Author>,
+    /// The changes of each author the view dates with a range of days, in
+    /// the order their tags come.
+    ranged: BTreeMap<String, Vec<u32>>,
 
     document: Document,
 }
@@ -627,6 +696,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             options,
             body: Vec::new(),
             definitions: HashMap::new(),
+            endnotes: HashSet::new(),
+            endnote_next: false,
             references: Vec::new(),
             target: None,
             paragraph: None,
@@ -675,6 +746,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             span_start: None,
             closed: None,
             substituted: None,
+            substitution: None,
             comment_anchor: None,
             pending_highlights: Vec::new(),
             id_line: None,
@@ -686,6 +758,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             comment: None,
             field_code: None,
             authors: HashMap::new(),
+            ranged: BTreeMap::new(),
             document: Document::default(),
         }
     }
@@ -808,12 +881,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 } else {
                     label
                 };
+                if std::mem::take(&mut self.endnote_next) {
+                    self.endnotes.insert(label.clone());
+                }
                 self.target = Some(label);
             }
             Tag::Table(alignments) => {
                 self.end_paragraph();
                 let mut columns: Vec<_> = alignments.iter().map(|a| alignment(*a)).collect();
-                self.document.styles.insert("TableGrid");
                 self.table_plan = self
                     .tables
                     .get(self.table_count)
@@ -825,9 +900,32 @@ impl<'o, 'a> Writer<'o, 'a> {
                     columns.resize(grid.max(columns.len()), None);
                 }
                 let align = self.table_plan.as_ref().and_then(|plan| plan.align);
+                // The style the table's line names, else the legend's for
+                // every table, else none (Word's Normal Table).
+                let style = self
+                    .table_plan
+                    .as_ref()
+                    .and_then(|plan| plan.style.clone())
+                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()));
+                if let Some(id) = &style {
+                    if id == "TableGrid" {
+                        self.document.styles.insert("TableGrid");
+                    } else {
+                        let border = self
+                            .document
+                            .table_style
+                            .as_ref()
+                            .filter(|(legend, _)| legend == id)
+                            .and_then(|(_, border)| *border);
+                        self.document.table_styles.insert(id.clone(), border);
+                    }
+                }
+                let formats = self.table_formats();
                 self.story().push(Item::Table {
                     columns: columns.clone(),
                     align,
+                    style,
+                    formats,
                 });
                 self.table = Some(columns);
                 self.table_count += 1;
@@ -925,7 +1023,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::Table => {
                 self.story().push(Item::TableEnd);
-                self.pending_highlights.clear();
+                if !self.table_in_range() {
+                    self.pending_highlights.clear();
+                }
                 self.table = None;
                 self.table_plan = None;
                 self.row_breaks = false;
@@ -957,7 +1057,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.cell = None;
                 self.story().push(Item::CellEnd);
-                self.pending_highlights.clear();
+                if !self.table_in_range() {
+                    self.pending_highlights.clear();
+                }
             }
             TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
             TagEnd::Strong => self.bold = self.bold.saturating_sub(1),
@@ -1027,6 +1129,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.story().push(Item::Row {
             header,
             change: None,
+            gaps: row.gaps,
         });
         self.row = Some((index, self.change));
         self.row_cells = RowCells::Empty;
@@ -1070,6 +1173,12 @@ impl<'o, 'a> Writer<'o, 'a> {
         for line in html.lines() {
             // A page marker sits between blocks: it ends no paragraph.
             if line.trim_start().starts_with("<!-- page ") {
+                continue;
+            }
+            // A note's id line says which part the definition after it is
+            // in; it describes no body paragraph.
+            self.endnote_next = view_notes::endnote_line(line);
+            if self.endnote_next || view_notes::footnote_line(line) {
                 continue;
             }
             self.textless_paragraph();
@@ -1159,8 +1268,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             if self.quote > 1 {
                 paragraph.indent = Some(720 * self.quote);
             }
-        } else if self.target.is_some() {
-            paragraph.style = Some("FootnoteText".into());
+        } else if let Some(target) = &self.target {
+            paragraph.style = Some(if self.endnotes.contains(target) {
+                "EndnoteText".into()
+            } else {
+                "FootnoteText".into()
+            });
         }
         if let Some(align) = self.cell {
             paragraph.align = align;
@@ -1209,6 +1322,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                     }
                 }
             }
+            paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
+            paragraph.unshown = line.rev.iter().map(|tag| self.format_mark(tag)).collect();
             let mark = line
                 .break_ins
                 .map(|tag| (Kind::Insert, tag))
@@ -1253,6 +1368,45 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.paragraph_serial += 1;
         self.paragraph_runs = 0;
         self.prefix_runs.clear();
+    }
+
+    /// The formatting changes the open table's line names.
+    fn table_formats(&mut self) -> TableFormats {
+        let Some(plan) = self.table_plan.as_ref() else {
+            return TableFormats::default();
+        };
+        let (table, rows, cells) = (
+            plan.fmt.clone(),
+            plan.row_fmt.clone(),
+            plan.cell_fmt.clone(),
+        );
+        TableFormats {
+            table: table.map(|tag| self.format_mark(&tag)),
+            rows: rows
+                .into_iter()
+                .map(|(row, tag)| (row, self.format_mark(&tag)))
+                .collect(),
+            cells: cells
+                .into_iter()
+                .map(|(cell, tag)| (cell, self.format_mark(&tag)))
+                .collect(),
+        }
+    }
+
+    /// A formatting change or unshown mark as its tag names it.
+    fn format_mark(&mut self, tag: &view_notes::Tag) -> FormatMark {
+        let (author, date) = self.view_author(&tag.handle, tag.date.as_deref());
+        let id = tag.ids.first().copied();
+        if let Some(id) = id {
+            self.document.reserved_ids.insert(id);
+        }
+        FormatMark { id, author, date }
+    }
+
+    /// The open table lies in a comment's range (`in c5`): its cells'
+    /// highlights are pieces of that range, which goes on past them.
+    fn table_in_range(&self) -> bool {
+        self.table_plan.as_ref().is_some_and(|plan| plan.in_comment)
     }
 
     fn ensure_paragraph(&mut self) {
@@ -1559,6 +1713,27 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.run_after_close = false;
     }
 
+    /// `{~~old~>new~~}` is Word's substitution: the inserted text, then
+    /// the deleted text, as Word's Compare writes them. The view reads a
+    /// deletion before an insertion as two changes, so they keep that
+    /// order. A side holding more than runs (a comment, a paragraph's end)
+    /// stays where it is.
+    fn inserted_side_first(&mut self) {
+        let Some((start, Some(split))) = self.substitution.take() else {
+            return;
+        };
+        let story = self.story();
+        let end = story.len();
+        if start <= split
+            && split <= end
+            && story[start..end]
+                .iter()
+                .all(|item| matches!(item, Item::Run(_)))
+        {
+            story[start..end].rotate_left(split - start);
+        }
+    }
+
     fn token(&mut self, token: Token) {
         if self.comment.is_some() {
             if token == Token::CommentEnd {
@@ -1568,14 +1743,26 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         match token {
             Token::InsertStart => self.open(Kind::Insert),
-            Token::DeleteStart | Token::SubstituteStart => self.open(Kind::Delete),
+            Token::DeleteStart => self.open(Kind::Delete),
+            Token::SubstituteStart => {
+                self.open(Kind::Delete);
+                self.substitution = Some((self.story().len(), None));
+            }
             Token::SubstituteSeparator => {
                 self.substituted = self.change.map(|(_, serial)| serial);
                 self.serial += 1;
                 self.change = Some((Kind::Insert, self.serial));
                 self.span_start = None;
+                let at = self.story().len();
+                if let Some((_, split)) = &mut self.substitution {
+                    *split = Some(at);
+                }
             }
-            Token::InsertEnd | Token::DeleteEnd | Token::SubstituteEnd => self.close(),
+            Token::InsertEnd | Token::DeleteEnd => self.close(),
+            Token::SubstituteEnd => {
+                self.close();
+                self.inserted_side_first();
+            }
             Token::HighlightStart => {
                 self.ensure_paragraph();
                 let slot = self.new_slot();
@@ -1683,6 +1870,17 @@ impl<'o, 'a> Writer<'o, 'a> {
                     };
                     let (author, date) = self.view_author(&tag.handle, tag.date.as_deref());
                     self.document.attributions.insert(*serial, (author, date));
+                    if tag.date.is_none()
+                        && self
+                            .authors
+                            .get(&tag.handle)
+                            .is_some_and(|known| known.date.is_none() && known.range.is_some())
+                    {
+                        self.ranged
+                            .entry(tag.handle.clone())
+                            .or_default()
+                            .push(*serial);
+                    }
                     if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
                         self.document.revision_ids.insert(*serial, ids.clone());
                     }
@@ -1780,8 +1978,6 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         self.references.push((label, self.change));
         let position = u32::try_from(self.references.len()).unwrap_or(u32::MAX);
-        self.document.styles.insert("FootnoteReference");
-        self.document.styles.insert("FootnoteText");
         self.push(Content::NoteReference(position));
     }
 
@@ -1992,6 +2188,8 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// block.
     fn metadata(&mut self, text: &str) {
         self.authors = view_notes::authors(text);
+        self.document.owner = view_notes::document_owner(text);
+        self.document.table_style = view_styles::table_style(text);
         self.stories(1, view_stories::first_section(text));
         self.document.style_specs = view_styles::legend(text);
         let mut key_above = "";
@@ -2008,6 +2206,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 if let Some((_, entry)) = line.trim().split_once(": ") {
                     self.stories(number, view_stories::section(entry));
+                    if let Some(tag) = view_notes::section_format(entry) {
+                        let mark = self.format_mark(&tag);
+                        self.document.section_formats.insert(number, mark);
+                    }
                 }
             }
             // A key under another (`options:` then `  track_changes: on`)
@@ -2043,18 +2245,32 @@ impl<'o, 'a> Writer<'o, 'a> {
                     if let Some(page) = view_notes::page_setup(value) {
                         self.document.pages.insert(1, page);
                     }
+                    if let Some(tag) = view_notes::section_format(value) {
+                        let mark = self.format_mark(&tag);
+                        self.document.section_formats.insert(1, mark);
+                    }
                 }
                 _ => {}
             }
         }
+        let handles: Vec<String> = self.authors.keys().cloned().collect();
+        for handle in handles {
+            let person = self.view_author(&handle, None);
+            self.document.people.insert(handle, person);
+        }
         // Word lets no one comment in a header or footer, and shows no
-        // comment from one: the text stays, the comment goes.
+        // comment from one: the text stays, the comment goes. A change's
+        // tag (`{>>header1.r3 @AC<<}`) is no comment.
         let mut dropped: Vec<String> = self
             .document
             .stories
             .values()
             .flat_map(|stories| &stories.stories)
-            .filter(|story| story.text.contains("{>>") && story.text.contains("<<}"))
+            .filter(|story| {
+                std::iter::once(&story.text)
+                    .chain(&story.more)
+                    .any(|text| has_comment(text))
+            })
             .map(|story| story.part.clone())
             .collect();
         dropped.sort_unstable();
@@ -2124,7 +2340,14 @@ impl<'o, 'a> Writer<'o, 'a> {
         let author = known.map_or_else(|| handle.to_string(), |a| a.name.clone());
         let date = match (date, known) {
             (Some(date), _) => date.to_string(),
-            (None, Some(known)) => known.date.clone().unwrap_or_default(),
+            (None, Some(known)) => known.date.clone().unwrap_or_else(|| {
+                // A range's first day; its last mark takes the last day.
+                known
+                    .range
+                    .as_ref()
+                    .map(|(first, _)| format!("{first}T00:00:00Z"))
+                    .unwrap_or_default()
+            }),
             (None, None) => self.options.date.clone(),
         };
         (author, date)
@@ -2206,10 +2429,18 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         self.document.body = body;
         for (label, change) in std::mem::take(&mut self.references) {
+            let endnote = self.endnotes.contains(&label);
+            let (text, reference) = if endnote {
+                ("EndnoteText", "EndnoteReference")
+            } else {
+                ("FootnoteText", "FootnoteReference")
+            };
+            self.document.styles.insert(text);
+            self.document.styles.insert(reference);
             let mut items = self.definitions.get(&label).cloned().unwrap_or_default();
             if items.is_empty() {
                 items = vec![Item::Paragraph(Paragraph {
-                    style: Some("FootnoteText".into()),
+                    style: Some(text.into()),
                     ..Paragraph::default()
                 })];
                 items.push(Item::ParagraphEnd);
@@ -2225,11 +2456,46 @@ impl<'o, 'a> Writer<'o, 'a> {
             // is the reference's change.
             let change = change.filter(|(kind, _)| only_changed_by(&items, *kind));
             finish_story(&mut items);
-            self.document.notes.push(Note { items, change });
+            self.document.notes.push(Note {
+                items,
+                change,
+                endnote,
+            });
         }
+        self.range_ends();
         self.comments_out_of_notes();
         renumber_comments(&mut self.document);
         self.document
+    }
+
+    /// An author dated `first..last` gets two timestamps back: the last
+    /// mark of their last change is stamped on the last day, when they
+    /// have two marks or more to tell apart.
+    fn range_ends(&mut self) {
+        for (handle, serials) in std::mem::take(&mut self.ranged) {
+            let Some(last) = self
+                .authors
+                .get(&handle)
+                .and_then(|known| known.range.as_ref())
+                .map(|(_, last)| format!("{last}T23:59:59Z"))
+            else {
+                continue;
+            };
+            let marks: usize = serials
+                .iter()
+                .map(|s| {
+                    self.document
+                        .revision_ids
+                        .get(s)
+                        .map_or(1, |ids| ids.len().max(1))
+                })
+                .sum();
+            if let Some(&serial) = serials.last()
+                && marks > 1
+            {
+                self.document.range_ends.insert(serial, last);
+            }
+        }
     }
 }
 

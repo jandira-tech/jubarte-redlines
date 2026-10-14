@@ -21,6 +21,7 @@
 //! title page, an even one without even and odd headers).
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write as _;
 
 use super::package::{related, sibling};
 use crate::opc::{PartFs, relative_rel_target};
@@ -41,9 +42,66 @@ pub(super) struct Story {
     /// The paragraph the view printed, after as many empty ones.
     pub paragraph: usize,
     pub text: String,
+    /// The paragraphs after it (`text: [first, second]`).
+    pub more: Vec<String>,
     /// `center` or `right`; `None` for left.
     pub align: Option<&'static str>,
     pub active: bool,
+    /// The marks the text shows no tag for (`rev: footer1.r24 @BC;
+    /// break-del footer1.r25 @BC in footer1.p1`), and the formatting
+    /// changes (`fmt: header1.r22 @AL`).
+    pub rev: Vec<String>,
+    pub fmt: Vec<String>,
+}
+
+/// Who made a story's changes: each handle's name and date, and the
+/// document's for a change no tag names.
+#[derive(Clone, Debug, Default)]
+pub(super) struct People {
+    pub by_handle: HashMap<String, (String, String)>,
+    pub author: String,
+    pub date: String,
+}
+
+/// The marks of one story part being written: their people and the next
+/// `w:id` for a mark no tag numbers.
+struct Marks<'p> {
+    people: &'p People,
+    next_id: u32,
+}
+
+impl Marks<'_> {
+    /// `w:ins w:id="5" w:author="…" w:date="…"`: the start tag's name and
+    /// attributes, for `tag` or the document's author.
+    fn mark(&mut self, name: &str, tag: Option<&super::view_notes::Tag>, at: usize) -> String {
+        // The tag's `at`th id; a side the tag numbers none for (`r5` after
+        // a substitution names its deleted side) takes a fresh one.
+        let id = match tag.and_then(|tag| tag.ids.get(at)) {
+            Some(&id) => id,
+            None => {
+                self.next_id = self.next_id.saturating_add(1);
+                self.next_id
+            }
+        };
+        let (author, date) = tag
+            .and_then(|tag| {
+                let (name, date) = self.people.by_handle.get(&tag.handle)?;
+                Some((
+                    name.clone(),
+                    tag.date.clone().unwrap_or_else(|| date.clone()),
+                ))
+            })
+            .unwrap_or_else(|| (self.people.author.clone(), self.people.date.clone()));
+        let date = if date.is_empty() {
+            String::new()
+        } else {
+            format!(" w:date=\"{}\"", super::xml::escape(&date))
+        };
+        format!(
+            "{name} w:id=\"{id}\" w:author=\"{}\"{date}",
+            super::xml::escape(&author)
+        )
+    }
 }
 
 /// A value of a YAML flow map as the view prints it.
@@ -52,6 +110,8 @@ enum Value {
     /// A key with no value (`inactive`, `center`).
     Flag,
     Text(String),
+    /// `[a, "b"]`: a flow sequence of scalars.
+    List(Vec<String>),
     Map(Vec<(String, Value)>),
 }
 
@@ -79,6 +139,10 @@ fn flow_map(text: &str, depth: usize) -> Option<(Vec<(String, Value)>, &str)> {
                 let (map, after) = flow_map(rest, depth + 1)?;
                 rest = after;
                 Value::Map(map)
+            } else if let Some(after) = rest.strip_prefix('[') {
+                let (items, after) = flow_list(after)?;
+                rest = after;
+                Value::List(items)
             } else {
                 let (text, after) = scalar(rest)?;
                 rest = after;
@@ -93,6 +157,25 @@ fn flow_map(text: &str, depth: usize) -> Option<(Vec<(String, Value)>, &str)> {
             rest = after;
         } else if !rest.starts_with('}') {
             return None;
+        }
+    }
+}
+
+/// The scalars of a flow sequence after its `[`, and what follows its `]`.
+fn flow_list(text: &str) -> Option<(Vec<String>, &str)> {
+    let mut items = Vec::new();
+    let mut rest = text.trim_start();
+    if let Some(after) = rest.strip_prefix(']') {
+        return Some((items, after));
+    }
+    loop {
+        let (item, after) = scalar(rest.trim_start())?;
+        items.push(item);
+        rest = after.trim_start();
+        if let Some(after) = rest.strip_prefix(',') {
+            rest = after;
+        } else {
+            return Some((items, rest.strip_prefix(']')?));
         }
     }
 }
@@ -178,13 +261,29 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
     };
     let flag = |key: &str| entries.iter().any(|(k, v)| k == key && *v == Value::Flag);
     let (part, paragraph) = story_id(text_of("id")?)?;
+    // The writer reads the front matter with CriticMarkup encoded.
+    let mut texts: Vec<String> = match entries.iter().find(|(k, _)| k == "text") {
+        Some((_, Value::List(items))) => items.iter().map(|t| super::critic::restore(t)).collect(),
+        _ => vec![super::critic::restore(text_of("text").unwrap_or(""))],
+    };
+    if texts.is_empty() {
+        texts.push(String::new());
+    }
+    let more = texts.split_off(1);
+    let tags = |key: &str| -> Vec<String> {
+        text_of(key)
+            .map(|t| t.split("; ").map(str::to_string).collect())
+            .unwrap_or_default()
+    };
     Some(Story {
         kind,
         ty,
         part,
         paragraph,
-        // The writer reads the front matter with CriticMarkup encoded.
-        text: super::critic::restore(text_of("text").unwrap_or("")),
+        text: texts.pop().unwrap_or_default(),
+        more,
+        rev: tags("rev"),
+        fmt: tags("fmt"),
         align: if flag("center") {
             Some("center")
         } else if flag("right") {
@@ -291,23 +390,18 @@ pub(super) fn section(entry: &str) -> Stories {
 }
 
 /// A story's text as paragraph content: a field printed as the body prints
-/// it (`{PAGE \* roman}i{/}`) becomes a simple field with that code and
-/// result, and a bare `{PAGE}` or other `{NAME}` one with the result `1`; the tracked view's changes (`{++…++}`,
-/// `{--…--}` with their `{>>…<<}` tags) come back as the text Word shows
-/// once they are accepted.
-pub(super) fn runs(text: &str) -> String {
+/// it (`{PAGE \\* roman}i{/}`) becomes a simple field with that code and
+/// result, and a bare `{PAGE}` or other `{NAME}` one with the result `1`;
+/// a line break is a `w:br`. The tracked view's changes come back as
+/// Word's marks: `{++…++}` a `w:ins`, `{--…--}` a `w:del`, and
+/// `{~~old~>new~~}` the insertion then the deletion, as Word's Compare
+/// writes them, each with the author, date and `w:id` its `{>>…<<}` tag
+/// names. Any other `{>>…<<}` is a comment, which Word does not take in a
+/// header or footer.
+fn runs(text: &str, marks: &mut Marks<'_>) -> String {
     let mut out = String::new();
     let mut plain = String::new();
     let mut rest = text;
-    let flush = |plain: &mut String, out: &mut String| {
-        if !plain.is_empty() {
-            out.push_str(&format!(
-                "<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r>",
-                super::xml::escape(plain)
-            ));
-            plain.clear();
-        }
-    };
     while let Some(c) = rest.chars().next() {
         if let Some(after) = rest.strip_prefix("{>>")
             && let Some(end) = after.find("<<}")
@@ -315,55 +409,179 @@ pub(super) fn runs(text: &str) -> String {
             rest = &after[end + 3..];
             continue;
         }
-        if let Some(after) = rest.strip_prefix("{++") {
+        if let Some((change, after)) = change(rest) {
+            flush(&mut plain, &mut out, false);
+            let (tags, after) = tags_after(after);
+            match change {
+                Change::Insert(inner) => {
+                    tracked(&mut out, marks, "w:ins", tags.first(), 0, inner);
+                }
+                Change::Delete(inner) => {
+                    tracked(&mut out, marks, "w:del", tags.first(), 0, inner);
+                }
+                Change::Substitute(old, new) => {
+                    // One tag names both sides (`r5+6`, old first), or
+                    // each side has its own.
+                    let (old_tag, new_tag, new_at) = match tags.as_slice() {
+                        [one] => (Some(one), Some(one), 1),
+                        [old, new, ..] => (Some(old), Some(new), 0),
+                        [] => (None, None, 0),
+                    };
+                    tracked(&mut out, marks, "w:ins", new_tag, new_at, new);
+                    tracked(&mut out, marks, "w:del", old_tag, 0, old);
+                }
+            }
             rest = after;
             continue;
         }
-        if let Some(after) = rest.strip_prefix("++}") {
+        if let Some((field, after)) = field(rest) {
+            flush(&mut plain, &mut out, false);
+            match field {
+                Field::Coded(code, result) => out.push_str(&format!(
+                    "<w:fldSimple w:instr=\" {} \">{}</w:fldSimple>",
+                    super::xml::escape(code.trim()),
+                    runs(result, marks)
+                )),
+                Field::Bare(name) => out.push_str(&format!(
+                    "<w:fldSimple w:instr=\" {name} \"><w:r><w:t>1</w:t></w:r></w:fldSimple>"
+                )),
+            }
             rest = after;
-            continue;
-        }
-        if let Some(after) = rest.strip_prefix("{--")
-            && let Some(end) = after.find("--}")
-        {
-            rest = &after[end + 3..];
-            continue;
-        }
-        if let Some(after) = rest.strip_prefix('{')
-            && let Some(close) = super::critic::field_code_close(after.char_indices())
-            && super::critic::is_field_code(&after[..close])
-            && let Some(end) = result_end(&after[close + 1..])
-        {
-            flush(&mut plain, &mut out);
-            let result = &after[close + 1..close + 1 + end];
-            out.push_str(&format!(
-                "<w:fldSimple w:instr=\" {} \">{}</w:fldSimple>",
-                super::xml::escape(after[..close].trim()),
-                runs(result)
-            ));
-            rest = &after[close + 1 + end + FIELD_END.len()..];
-            continue;
-        }
-        if let Some(after) = rest.strip_prefix('{')
-            && let Some(end) = after.find('}')
-            && end > 0
-            && after[..end]
-                .bytes()
-                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-        {
-            flush(&mut plain, &mut out);
-            out.push_str(&format!(
-                "<w:fldSimple w:instr=\" {} \"><w:r><w:t>1</w:t></w:r></w:fldSimple>",
-                &after[..end]
-            ));
-            rest = &after[end + 1..];
             continue;
         }
         plain.push(c);
         rest = &rest[c.len_utf8()..];
     }
-    flush(&mut plain, &mut out);
+    flush(&mut plain, &mut out, false);
     out
+}
+
+/// One tracked change at the start of a story's text, and what follows it.
+enum Change<'t> {
+    Insert(&'t str),
+    Delete(&'t str),
+    Substitute(&'t str, &'t str),
+}
+
+fn change(text: &str) -> Option<(Change<'_>, &str)> {
+    if let Some(after) = text.strip_prefix("{++") {
+        let end = after.find("++}")?;
+        return Some((Change::Insert(&after[..end]), &after[end + 3..]));
+    }
+    if let Some(after) = text.strip_prefix("{--") {
+        let end = after.find("--}")?;
+        return Some((Change::Delete(&after[..end]), &after[end + 3..]));
+    }
+    let after = text.strip_prefix("{~~")?;
+    let end = after.find("~~}")?;
+    let (old, new) = after[..end].split_once("~>")?;
+    Some((Change::Substitute(old, new), &after[end + 3..]))
+}
+
+/// The revision tags right after a change (`{>>r5 @AC<<}{>>r6 @JD<<}`),
+/// and what follows them.
+fn tags_after(mut text: &str) -> (Vec<super::view_notes::Tag>, &str) {
+    let mut tags = Vec::new();
+    while let Some(after) = text.strip_prefix("{>>")
+        && let Some(end) = after.find("<<}")
+        && let Some(found) = super::view_notes::revision_tags(&after[..end])
+    {
+        tags.extend(found);
+        text = &after[end + 3..];
+    }
+    (tags, text)
+}
+
+/// A field at the start of a story's text, and what follows it.
+enum Field<'t> {
+    /// `{PAGE \* roman}i{/}`: the code and its result.
+    Coded(&'t str, &'t str),
+    /// `{PAGE}`: a name alone.
+    Bare(&'t str),
+}
+
+fn field(text: &str) -> Option<(Field<'_>, &str)> {
+    let after = text.strip_prefix('{')?;
+    if let Some(close) = super::critic::field_code_close(after.char_indices())
+        && super::critic::is_field_code(&after[..close])
+        && let Some(end) = result_end(&after[close + 1..])
+    {
+        let result = &after[close + 1..close + 1 + end];
+        return Some((
+            Field::Coded(&after[..close], result),
+            &after[close + 1 + end + FIELD_END.len()..],
+        ));
+    }
+    let end = after.find('}')?;
+    (end > 0
+        && after[..end]
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()))
+    .then(|| (Field::Bare(&after[..end]), &after[end + 1..]))
+}
+
+/// Plain text as runs, a line break as a `w:br`; deleted text as
+/// `w:delText`.
+fn flush(plain: &mut String, out: &mut String, deleted: bool) {
+    let element = if deleted { "w:delText" } else { "w:t" };
+    for (i, line) in plain.split('\n').enumerate() {
+        if i > 0 {
+            out.push_str("<w:r><w:br/></w:r>");
+        }
+        if !line.is_empty() {
+            out.push_str(&format!(
+                "<w:r><{element} xml:space=\"preserve\">{}</{element}></w:r>",
+                super::xml::escape(line)
+            ));
+        }
+    }
+    plain.clear();
+}
+
+/// `inner` inside a `w:ins` or `w:del`: its text and its fields, which
+/// are complex there (a `w:fldSimple` cannot sit in a mark).
+fn tracked(
+    out: &mut String,
+    marks: &mut Marks<'_>,
+    name: &str,
+    tag: Option<&super::view_notes::Tag>,
+    at: usize,
+    inner: &str,
+) {
+    let deleted = name == "w:del";
+    let _ = write!(out, "<{}>", marks.mark(name, tag, at));
+    let mut plain = String::new();
+    let mut rest = inner;
+    while let Some(c) = rest.chars().next() {
+        if let Some((field, after)) = field(rest) {
+            flush(&mut plain, out, deleted);
+            let (code, result) = match field {
+                Field::Coded(code, result) => (code.trim().to_string(), result.to_string()),
+                Field::Bare(name) => (name.to_string(), "1".to_string()),
+            };
+            let instr = if deleted {
+                "w:delInstrText"
+            } else {
+                "w:instrText"
+            };
+            let _ = write!(
+                out,
+                "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+                 <w:r><{instr} xml:space=\"preserve\"> {} </{instr}></w:r>\
+                 <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>",
+                super::xml::escape(&code)
+            );
+            let mut result = result;
+            flush(&mut result, out, deleted);
+            out.push_str("<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>");
+            rest = after;
+            continue;
+        }
+        plain.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    flush(&mut plain, out, deleted);
+    let _ = write!(out, "</{name}>");
 }
 
 /// What closes a field's result, as in the body.
@@ -473,6 +691,8 @@ pub(super) fn write(
     main: &str,
     sections: &BTreeMap<usize, Stories>,
     count: usize,
+    people: &People,
+    first_id: u32,
 ) -> SectionStories {
     if sections
         .values()
@@ -495,6 +715,10 @@ pub(super) fn write(
     }
     let mut parts: HashMap<String, String> = HashMap::new();
     let mut by_section = HashMap::new();
+    let mut marks = Marks {
+        people,
+        next_id: first_id,
+    };
     let mut even = false;
     for number in 1..=count.max(1) {
         // Word reads w:titlePg per section; the view names it on each
@@ -511,7 +735,7 @@ pub(super) fn write(
                 let id = match parts.get(&story.part) {
                     Some(id) => id.clone(),
                     None => {
-                        let id = story_part(package, main, story);
+                        let id = story_part(package, main, story, &mut marks);
                         parts.insert(story.part.clone(), id.clone());
                         id
                     }
@@ -534,15 +758,95 @@ pub(super) fn write(
 }
 
 /// Writes `story`'s part and relates it to `main`: its relationship id.
-fn story_part(package: &mut PartFs, main: &str, story: &Story) -> String {
+/// Its paragraphs take Word's Header or Footer style; the first one with
+/// text takes each formatting change the view names (a `w:pPrChange` that
+/// keeps what the paragraph has: the view names who, not what), and each
+/// paragraph mark the view names (`break-del footer1.r25 @BC in
+/// footer1.p1`) its change. A mark it names no more of (`footer1.r9 @AC`)
+/// is an empty insertion at the end.
+fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks<'_>) -> String {
     let root = if story.kind == "header" { "hdr" } else { "ftr" };
-    let mut body = "<w:p/>".repeat(story.paragraph);
-    body.push_str("<w:p>");
-    if let Some(align) = story.align {
-        body.push_str(&format!("<w:pPr><w:jc w:val=\"{align}\"/></w:pPr>"));
+    let style = if story.kind == "header" {
+        "Header"
+    } else {
+        "Footer"
+    };
+    let mut texts: Vec<&str> = vec![""; story.paragraph];
+    texts.push(&story.text);
+    texts.extend(story.more.iter().map(String::as_str));
+    let mut paragraph_marks: HashMap<usize, (&str, super::view_notes::Tag)> = HashMap::new();
+    let mut unplaced = Vec::new();
+    for entry in &story.rev {
+        let placed = ["break-ins ", "break-del "].iter().find_map(|word| {
+            let (tag, at) = entry.strip_prefix(word)?.rsplit_once(" in ")?;
+            let (part, index) = story_id(at)?;
+            let tag = super::view_notes::revision_tags(tag)?.into_iter().next()?;
+            (part == story.part).then_some((
+                index,
+                (
+                    if *word == "break-ins " {
+                        "w:ins"
+                    } else {
+                        "w:del"
+                    },
+                    tag,
+                ),
+            ))
+        });
+        match placed {
+            Some((index, mark)) => {
+                paragraph_marks.insert(index, mark);
+            }
+            None => unplaced.extend(
+                super::view_notes::revision_tags(entry)
+                    .into_iter()
+                    .flatten(),
+            ),
+        }
     }
-    body.push_str(&runs(&story.text));
-    body.push_str("</w:p>");
+    let formats: Vec<super::view_notes::Tag> = story
+        .fmt
+        .iter()
+        .filter_map(|entry| super::view_notes::revision_tags(entry))
+        .flatten()
+        .collect();
+    let mut body = String::new();
+    let last = texts.len() - 1;
+    for (index, text) in texts.iter().enumerate() {
+        let mut base = format!("<w:pStyle w:val=\"{style}\"/>");
+        if let Some(align) = story.align.filter(|_| index >= story.paragraph) {
+            let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
+        }
+        let mut properties = base.clone();
+        if let Some((name, tag)) = paragraph_marks.get(&index) {
+            let _ = write!(
+                properties,
+                "<w:rPr><{}/></w:rPr>",
+                marks.mark(name, Some(tag), 0)
+            );
+        }
+        if let Some(tag) = index
+            .checked_sub(story.paragraph)
+            .and_then(|i| formats.get(i))
+        {
+            let _ = write!(
+                properties,
+                "<{}><w:pPr>{base}</w:pPr></w:pPrChange>",
+                marks.mark("w:pPrChange", Some(tag), 0)
+            );
+        }
+        let _ = write!(
+            body,
+            "<w:p><w:pPr>{properties}</w:pPr>{}",
+            runs(text, marks)
+        );
+        if index == last {
+            for tag in &unplaced {
+                let _ = write!(body, "<{}/>", marks.mark("w:ins", Some(tag), 0));
+            }
+        }
+        body.push_str("</w:p>");
+    }
     let part = sibling(main, &format!("{}.xml", story.part));
     package.set_part(
         &part,
@@ -714,27 +1018,74 @@ mod tests {
         assert_eq!(section(&deep).stories, []);
     }
 
+    /// `text` as runs, with Ann Counsel as `@AC`.
+    fn written(text: &str) -> String {
+        let people = People {
+            by_handle: HashMap::from([(
+                "AC".to_string(),
+                (
+                    "Ann Counsel".to_string(),
+                    "2026-10-01T09:00:00Z".to_string(),
+                ),
+            )]),
+            author: "Redline".into(),
+            date: "2026-01-01T00:00:00Z".into(),
+        };
+        runs(
+            text,
+            &mut Marks {
+                people: &people,
+                next_id: 100,
+            },
+        )
+    }
+
     #[test]
-    fn fields_and_changes_become_runs() {
+    fn fields_and_changes_become_runs_and_marks() {
         assert_eq!(
-            runs("p {PAGE} {++new++}{>>header1#r3 @AC<<}{--old--}{>>header1#r4 @AC<<}"),
+            written("p {PAGE} {++new++}{>>header1.r3 @AC<<}{--old--}{>>header1.r4 @AC<<}"),
             "<w:r><w:t xml:space=\"preserve\">p </w:t></w:r>\
              <w:fldSimple w:instr=\" PAGE \"><w:r><w:t>1</w:t></w:r></w:fldSimple>\
-             <w:r><w:t xml:space=\"preserve\"> new</w:t></w:r>"
+             <w:r><w:t xml:space=\"preserve\"> </w:t></w:r>\
+             <w:ins w:id=\"3\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
+             <w:r><w:t xml:space=\"preserve\">new</w:t></w:r></w:ins>\
+             <w:del w:id=\"4\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
+             <w:r><w:delText xml:space=\"preserve\">old</w:delText></w:r></w:del>"
+        );
+        // A substitution is Word's: the insertion, then the deletion; a
+        // field inside a mark is a complex one; a comment is dropped.
+        assert_eq!(
+            written("{~~a~>{PAGE}2{/}~~}{>>header1.r5+6 @AC 2026-10-02T00:00:00Z<<}{>>note<<}"),
+            "<w:ins w:id=\"6\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\">\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+             <w:r><w:t xml:space=\"preserve\">2</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins>\
+             <w:del w:id=\"5\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\">\
+             <w:r><w:delText xml:space=\"preserve\">a</w:delText></w:r></w:del>"
+        );
+        // No tag: the document's author and a fresh id; a newline breaks
+        // the line.
+        assert_eq!(
+            written("{++x\ny++}"),
+            "<w:ins w:id=\"101\" w:author=\"Redline\" w:date=\"2026-01-01T00:00:00Z\">\
+             <w:r><w:t xml:space=\"preserve\">x</w:t></w:r><w:r><w:br/></w:r>\
+             <w:r><w:t xml:space=\"preserve\">y</w:t></w:r></w:ins>"
         );
     }
 
     #[test]
     fn a_field_with_its_result_keeps_its_code_and_result() {
         assert_eq!(
-            runs(r#"{PAGE \* roman}i{/} · {HYPERLINK "https://x.example"}site{/}"#),
+            written(r#"{PAGE \* roman}i{/} · {HYPERLINK "https://x.example"}site{/}"#),
             "<w:fldSimple w:instr=\" PAGE \\* roman \"><w:r><w:t xml:space=\"preserve\">i</w:t></w:r></w:fldSimple>\
              <w:r><w:t xml:space=\"preserve\"> · </w:t></w:r>\
              <w:fldSimple w:instr=\" HYPERLINK &quot;https://x.example&quot; \"><w:r><w:t xml:space=\"preserve\">site</w:t></w:r></w:fldSimple>"
         );
         // A brace that opens no field is text.
         assert_eq!(
-            runs("{Client Name}"),
+            written("{Client Name}"),
             "<w:r><w:t xml:space=\"preserve\">{Client Name}</w:t></w:r>"
         );
     }

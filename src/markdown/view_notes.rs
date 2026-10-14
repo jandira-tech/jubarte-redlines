@@ -18,6 +18,9 @@ use super::xml::Label;
 pub(super) struct Author {
     pub name: String,
     pub date: Option<String>,
+    /// The first and last days of an author whose marks have several
+    /// timestamps (`# 2 revisions, 2026-03-02..2026-03-04`).
+    pub range: Option<(String, String)>,
 }
 
 /// The `authors:` table of a YAML header, by handle. `document_owner` is
@@ -43,14 +46,97 @@ pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
         if value.is_empty() {
             continue;
         }
-        let date = comment
-            .and_then(|c| c.rsplit(',').next())
-            .map(str::trim)
+        let last = comment.and_then(|c| c.rsplit(',').next()).map(str::trim);
+        let date = last
             .filter(|d| super::write::is_date(d))
             .map(str::to_string);
-        table.insert(handle.to_string(), Author { name: value, date });
+        let range = last.and_then(day_range);
+        table.insert(
+            handle.to_string(),
+            Author {
+                name: value,
+                date,
+                range,
+            },
+        );
     }
     table
+}
+
+/// The formatting change a page or section entry names: `Letter
+/// portrait, margins 1in; fmt r17 @AL` or `{p2-p9, fmt: r5 @AC, …}`.
+pub(super) fn section_format(text: &str) -> Option<Tag> {
+    let at = text
+        .find("; fmt ")
+        .map(|at| at + 6)
+        .or_else(|| text.find("fmt: ").map(|at| at + 5))?;
+    let rest = &text[at..];
+    let rest = rest.strip_prefix('"').map_or(rest, |quoted| quoted);
+    let end = [
+        ", headers: ",
+        ", footers: ",
+        ", columns: ",
+        ", page: ",
+        "\"",
+        "}",
+    ]
+    .iter()
+    .filter_map(|key| rest.find(key))
+    .min()
+    .unwrap_or(rest.len());
+    first_tag(rest[..end].trim())
+}
+
+/// `2026-03-02..2026-03-04`: the first and last days.
+fn day_range(text: &str) -> Option<(String, String)> {
+    let (first, last) = text.split_once("..")?;
+    let day = |d: &str| super::write::is_date(&format!("{d}T00:00:00Z"));
+    (day(first) && day(last) && first <= last).then(|| (first.to_string(), last.to_string()))
+}
+
+/// Who owns the document, as `authors: document_owner:` and its note say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Owner {
+    /// `dc:creator`; a name with no note, too.
+    Creator(String),
+    /// `cp:lastModifiedBy`, and no `dc:creator`.
+    LastModifiedBy(String),
+    /// `none`: core properties naming nobody.
+    Unnamed,
+    /// `none # no docProps/core.xml`: no core properties.
+    NoPart,
+}
+
+/// The `document_owner:` of a YAML header's `authors:`.
+pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
+    let mut inside = false;
+    for line in yaml.lines() {
+        if !line.starts_with(' ') {
+            inside = line.trim_end() == "authors:";
+            continue;
+        }
+        let Some(rest) = line
+            .trim_start()
+            .strip_prefix("document_owner:")
+            .filter(|_| inside)
+        else {
+            continue;
+        };
+        let (value, comment) = scalar_and_comment(rest.trim_start());
+        let comment = comment.unwrap_or("");
+        return Some(if value == "none" {
+            if comment.starts_with("no docProps/core.xml") {
+                Owner::NoPart
+            } else {
+                Owner::Unnamed
+            }
+        } else if comment.starts_with("cp:lastModifiedBy") {
+            Owner::LastModifiedBy(value)
+        } else {
+            Owner::Creator(value)
+        });
+    }
+    None
 }
 
 /// Letters and digits: the view's handles (`from_docx::agent`).
@@ -161,6 +247,18 @@ pub(super) struct TableLine {
     /// Cell paragraphs aligned against their column (`p5 center`), as
     /// Word's `jc` value, by paragraph.
     pub aligns: HashMap<usize, &'static str>,
+    /// The table's style (`style Ledger`) when tables differ in theirs.
+    pub style: Option<String>,
+    /// A comment's range runs through the table (`in c5`).
+    pub in_comment: bool,
+    /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
+    /// r15 @AL in t0.row1.cell0`): its own, its rows' and its cells'.
+    pub fmt: Option<Tag>,
+    pub row_fmt: HashMap<usize, Tag>,
+    pub cell_fmt: HashMap<(usize, usize), Tag>,
+    /// The grid columns each row leaves out before and after its cells
+    /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
+    pub gaps: HashMap<usize, (usize, usize)>,
 }
 
 /// The most grid columns a table has, and rows one merged cell reaches: a
@@ -185,6 +283,12 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         align: None,
         merges: HashMap::new(),
         aligns: HashMap::new(),
+        style: None,
+        in_comment: false,
+        fmt: None,
+        row_fmt: HashMap::new(),
+        cell_fmt: HashMap::new(),
+        gaps: HashMap::new(),
     };
     for (i, clause) in rest.split(", ").enumerate() {
         // `p5 center`: a cell paragraph aligned against its column.
@@ -203,6 +307,49 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         }
         if clause == "header row repeats" {
             parsed.header_repeats = true;
+        }
+        if clause.strip_prefix("in ").is_some_and(comment_numbers) {
+            parsed.in_comment = true;
+        }
+        if let Some(rows) = clause.strip_prefix("gaps ") {
+            for row in rows.split("; ") {
+                let mut words = row.split(' ');
+                let Some(r) = words.next().and_then(row_of) else {
+                    continue;
+                };
+                let (mut before, mut after) = (0, 0);
+                while let (Some(word), Some(Ok(n))) =
+                    (words.next(), words.next().map(str::parse::<usize>))
+                {
+                    match word {
+                        "before" => before = n.min(MOST_GRID),
+                        "after" => after = n.min(MOST_GRID),
+                        _ => {}
+                    }
+                }
+                parsed.gaps.insert(r, (before, after));
+            }
+        }
+        if let Some(changes) = clause.strip_prefix("fmt ") {
+            for change in changes.split("; ") {
+                let (tag, at) = change
+                    .rsplit_once(" in ")
+                    .map_or((change, None), |(tag, at)| (tag, Some(at)));
+                let Some(tag) = first_tag(tag) else { continue };
+                match at {
+                    None => parsed.fmt = Some(tag),
+                    Some(at) => {
+                        if let Some(cell) = row_and_cell(at) {
+                            parsed.cell_fmt.insert(cell, tag);
+                        } else if let Some(row) = row_of(at) {
+                            parsed.row_fmt.insert(row, tag);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(style) = clause.strip_prefix("style ").filter(|s| !s.is_empty()) {
+            parsed.style = Some(style.to_string());
         }
         // The size opens the clauses, after the alignment: `center 3x2`.
         if i == 0
@@ -276,6 +423,13 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
 }
 
 /// The row and cell of `t0.row2.cell1`.
+/// `t0.row2` → 2.
+fn row_of(id: &str) -> Option<usize> {
+    let mut parts = id.split('.').skip(1);
+    let row = parts.next()?.strip_prefix("row")?.parse().ok()?;
+    parts.next().is_none().then_some(row)
+}
+
 fn row_and_cell(id: &str) -> Option<(usize, usize)> {
     let mut parts = id.split('.').skip(1);
     let row = parts.next()?.strip_prefix("row")?.parse().ok()?;
@@ -286,6 +440,33 @@ fn row_and_cell(id: &str) -> Option<(usize, usize)> {
 /// The most empty paragraphs one id line stands for: a bound on what a
 /// hand-edited range (`p0-p4294967295 empty`) can make the reader write.
 const MOST_EMPTY: usize = 100_000;
+
+/// The id of a note definition's id line, `endnotes.p0` in
+/// `<!-- endnotes.p0 -->`, when it starts with `part`.
+fn note_line<'l>(line: &'l str, part: &str) -> Option<&'l str> {
+    let id = line
+        .trim()
+        .strip_prefix("<!--")?
+        .split_whitespace()
+        .next()?
+        .trim_end_matches("-->");
+    id.strip_prefix(part)
+        .filter(|rest| {
+            rest.split_once('.')
+                .is_some_and(|(_, p)| p.starts_with('p'))
+        })
+        .map(|_| id)
+}
+
+/// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).
+pub(super) fn endnote_line(line: &str) -> bool {
+    note_line(line, "endnotes").is_some()
+}
+
+/// Whether `line` is a footnote definition's id line (`<!-- footnotes.p1 -->`).
+pub(super) fn footnote_line(line: &str) -> bool {
+    note_line(line, "footnotes").is_some()
+}
 
 /// How many empty paragraphs an id line stands for: `<!-- p2 empty -->`
 /// one, `<!-- p2-p4 BodyText empty -->` three; `None` for any other line.
@@ -365,6 +546,10 @@ pub(super) struct IdLine {
     pub break_ins: Option<Tag>,
     /// The paragraph mark's deletion (`break-del r6 @AC`).
     pub break_del: Option<Tag>,
+    /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
+    pub fmt: Vec<Tag>,
+    /// The marks its text shows nothing of (`rev r9 @AL`).
+    pub rev: Vec<Tag>,
 }
 
 /// The id line of one paragraph (`pN`, not a range); `None` for any
@@ -431,9 +616,19 @@ impl IdLine {
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
+            Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
+            Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
             Some(_) => {}
         }
     }
+}
+
+/// `c5 c6`: the comment numbers of an `in` clause.
+fn comment_numbers(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .split(' ')
+            .all(|id| crate::ids::short_number(id, 'c').is_some())
 }
 
 /// The clauses without their `num "…"` one, and its label (`\\` and `\"`
@@ -530,6 +725,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn note_id_lines_name_their_part() {
+        assert!(endnote_line("<!-- endnotes.p0 -->"));
+        assert!(endnote_line("<!-- endnotes.p1-p2, rev endnotes.r4 @AL -->"));
+        assert!(endnote_line("<!-- endnotes.p3-->"));
+        assert!(!endnote_line("<!-- footnotes.p0 -->"));
+        assert!(footnote_line("<!-- footnotes.p1 -->"));
+        assert!(!footnote_line("<!-- p1 -->"));
+        assert!(!footnote_line("<!-- footnotes -->"));
+        assert!(!endnote_line("endnotes.p0"));
+    }
+
+    #[test]
     fn id_lines_carry_alignment_and_indents() {
         let line =
             id_line("<!-- p0 BodyText center, first-line 0.5in, left -0.25in, right 1in -->")
@@ -619,7 +826,8 @@ mod tests {
             table["AC"],
             Author {
                 name: "Ann Counsel".into(),
-                date: Some("2026-10-01T09:00:00Z".into())
+                date: Some("2026-10-01T09:00:00Z".into()),
+                range: None,
             }
         );
         assert_eq!(table["AS"].date.as_deref(), Some("2026-10-09T16:13:00Z"));
@@ -627,7 +835,8 @@ mod tests {
             table["JD"],
             Author {
                 name: "Jo #1 Doe".into(),
-                date: None
+                date: None,
+                range: Some(("2026-10-01".into(), "2026-10-02".into())),
             }
         );
         assert_eq!(table["R"].date, None);

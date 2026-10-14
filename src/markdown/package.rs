@@ -5,7 +5,7 @@
 //! The `.docx` package around the written items: built-in parts, or a
 //! reference document's styles, numbering, page setup, headers and footers.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Write as _};
 
 use super::xml::{self, Context, Document, Relate, escape};
@@ -122,10 +122,19 @@ pub(super) fn assemble(
     let styles_part = styles_part(&mut package, &main);
     let mut wanted: BTreeSet<&str> = BASE_STYLES.into_iter().collect();
     wanted.extend(document.styles.iter().copied());
+    // The headers and footers the view names take Word's styles for them.
+    for story in document.stories.values().flat_map(|s| &s.stories) {
+        wanted.insert(if story.kind == "header" {
+            "Header"
+        } else {
+            "Footer"
+        });
+    }
     if let Some(styles) = package.part_string(&styles_part) {
         let styles = with_styles(&styles, &wanted);
         let styles = with_named_styles(&styles, &document.named_styles);
         let styles = super::view_styles::apply(&styles, &document.style_specs);
+        let styles = with_table_styles(&styles, &document.table_styles);
         package.set_part(&styles_part, styles.into_bytes());
     }
 
@@ -133,8 +142,29 @@ pub(super) fn assemble(
     let label_nums = label_numbering(&mut package, &main, document);
     // A view's YAML header names its sections' pages, headers and footers.
     let sections = document.section_breaks() + 1;
-    let section_stories =
-        super::view_stories::write(&mut package, &main, &document.stories, sections);
+    let next_revision = document
+        .revision_ids
+        .values()
+        .flatten()
+        .chain(&document.reserved_ids)
+        .max()
+        .map_or(1, |max| max.saturating_add(1));
+    let people = super::view_stories::People {
+        by_handle: document.people.clone(),
+        author: options.author.clone(),
+        date: options.date.clone(),
+    };
+    // A header's fresh ids sit far above the body's.
+    let section_stories = super::view_stories::write(
+        &mut package,
+        &main,
+        &document.stories,
+        sections,
+        &people,
+        next_revision
+            .saturating_add(1_000_000)
+            .min(super::view_notes::MOST_ID / 2),
+    );
     let default_section = section.clone();
     let section = section_stories.apply(sections, &document.section(sections, &section));
     let text_width = text_width(&section);
@@ -143,17 +173,13 @@ pub(super) fn assemble(
         document,
         author: escape(&options.author).into_owned(),
         date: escape(&options.date).into_owned(),
-        next_revision: document
-            .revision_ids
-            .values()
-            .flatten()
-            .max()
-            .map_or(1, |max| max.saturating_add(1)),
+        next_revision,
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
         num_ids,
         label_nums,
-        note_base: 0,
+        note_ids: Vec::new(),
+        in_endnote: false,
         next_drawing,
         next_bookmark: 0,
         text_width,
@@ -393,6 +419,38 @@ fn separators_only(xml: &str) -> String {
 }
 
 /// `styles` with a definition added for each wanted style it lacks.
+/// `styles` with a definition for each table style the view names that it
+/// lacks: the name is the id, on Word's Normal Table, with the legend's
+/// border all round when it gives one.
+fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>) -> String {
+    let missing: String = wanted
+        .iter()
+        .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
+        .map(|(id, border)| {
+            let borders = border.map_or_else(String::new, |sz| {
+                let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+                    .iter()
+                    .map(|side| {
+                        format!("<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
+                    })
+                    .collect();
+                format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
+            });
+            format!(
+                "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{id}\"/>\
+                 <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
+                id = escape(id)
+            )
+        })
+        .collect();
+    match styles.rfind("</w:styles>") {
+        Some(at) if !missing.is_empty() => {
+            format!("{}{missing}{}", &styles[..at], &styles[at..])
+        }
+        _ => styles.to_string(),
+    }
+}
+
 fn with_styles(styles: &str, wanted: &BTreeSet<&str>) -> String {
     let missing: String = wanted
         .iter()
@@ -549,28 +607,39 @@ pub(crate) fn append_numbering(
 /// continuation separator notes, its relationship and its content type when
 /// absent.
 pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String {
-    related(package, main, "/footnotes").unwrap_or_else(|| {
-        let part = sibling(main, "footnotes.xml");
+    ensure_notes_part(package, main, "footnote")
+}
+
+/// The notes part of `kind` (`footnote`, `endnote`) `main` relates to,
+/// made as [`ensure_footnotes_part`] makes one.
+fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
+    related(package, main, &format!("/{kind}s")).unwrap_or_else(|| {
+        let part = sibling(main, &format!("{kind}s.xml"));
         package.add_document_relationship(
             main,
-            &format!("{RELS}/footnotes"),
+            &format!("{RELS}/{kind}s"),
             &relative_rel_target(main, &part),
         );
         package.add_content_type_override(
             &format!("/{part}"),
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            &format!(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}s+xml"
+            ),
         );
+        let separator = |id: i32, name: &str| {
+            format!(
+                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                 <w:r><w:{name}/></w:r></w:p></w:{kind}>"
+            )
+        };
         package.set_part(
             &part,
             format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
-                 <w:footnotes xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\">\
-                 <w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:pPr>\
-                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
-                 <w:r><w:separator/></w:r></w:p></w:footnote>\
-                 <w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:pPr>\
-                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
-                 <w:r><w:continuationSeparator/></w:r></w:p></w:footnote></w:footnotes>"
+                 <w:{kind}s xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\">{}{}</w:{kind}s>",
+                separator(-1, "separator"),
+                separator(0, "continuationSeparator"),
             )
             .into_bytes(),
         );
@@ -578,43 +647,62 @@ pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String 
     })
 }
 
-/// Writes the footnotes into the notes part, making one if needed.
+/// Writes the footnotes and the endnotes into their notes parts, making
+/// each part a kind of note needs.
 fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
-    let part = ensure_footnotes_part(package, main);
-    let Some(existing) = package.part_string(&part) else {
-        return;
-    };
-    let highest = max_attribute(&existing, "w:footnote", "w:id")
-        .unwrap_or(0)
-        .max(0);
-    context.note_base = u32::try_from(highest).unwrap_or(0);
     let document = context.document;
-    let mut notes = String::new();
-    {
-        let mut relate = PartRelate {
-            package,
-            part: part.clone(),
-            media,
-            document,
+    context.note_ids = vec![0; document.notes.len()];
+    for (kind, endnote) in [("footnote", false), ("endnote", true)] {
+        if !document.notes.iter().any(|note| note.endnote == endnote) {
+            continue;
+        }
+        let part = ensure_notes_part(package, main, kind);
+        let Some(existing) = package.part_string(&part) else {
+            continue;
         };
+        let highest = max_attribute(&existing, &format!("w:{kind}"), "w:id")
+            .unwrap_or(0)
+            .max(0);
+        let mut next = u32::try_from(highest).unwrap_or(0);
         for (index, note) in document.notes.iter().enumerate() {
-            let id = context.note_base + u32::try_from(index + 1).unwrap_or(0);
-            let body = xml::story(context, &note.items, &mut relate, Some(note.change));
-            notes.push_str(&format!("<w:footnote w:id=\"{id}\">{body}</w:footnote>"));
+            if note.endnote == endnote {
+                next += 1;
+                context.note_ids[index] = next;
+            }
         }
-    }
-    let mut root = existing;
-    for (prefix, namespace) in [("r", R_NS), ("wp", WP_NS)] {
-        if let Some(at) = root.find("<w:footnotes")
-            && let Some(end) = root[at..].find('>').map(|i| at + i)
-            && !root[at..end].contains(&format!("xmlns:{prefix}="))
+        let mut notes = String::new();
         {
-            root.insert_str(end, &format!(" xmlns:{prefix}=\"{namespace}\""));
+            let mut relate = PartRelate {
+                package,
+                part: part.clone(),
+                media,
+                document,
+            };
+            context.in_endnote = endnote;
+            for (index, note) in document.notes.iter().enumerate() {
+                if note.endnote != endnote {
+                    continue;
+                }
+                let id = context.note_ids[index];
+                let body = xml::story(context, &note.items, &mut relate, Some(note.change));
+                notes.push_str(&format!("<w:{kind} w:id=\"{id}\">{body}</w:{kind}>"));
+            }
+            context.in_endnote = false;
         }
-    }
-    if let Some(at) = root.rfind("</w:footnotes>") {
-        root.insert_str(at, &notes);
-        package.set_part(&part, root.into_bytes());
+        let mut root = existing;
+        let open = format!("<w:{kind}s");
+        for (prefix, namespace) in [("r", R_NS), ("wp", WP_NS)] {
+            if let Some(at) = root.find(&open)
+                && let Some(end) = root[at..].find('>').map(|i| at + i)
+                && !root[at..end].contains(&format!("xmlns:{prefix}="))
+            {
+                root.insert_str(end, &format!(" xmlns:{prefix}=\"{namespace}\""));
+            }
+        }
+        if let Some(at) = root.rfind(&format!("</w:{kind}s>")) {
+            root.insert_str(at, &notes);
+            package.set_part(&part, root.into_bytes());
+        }
     }
 }
 
@@ -631,12 +719,12 @@ pub(crate) fn max_drawing_id(package: &PartFs) -> u32 {
         .unwrap_or(0)
 }
 
-/// `dc:title` and `dc:creator` from the front matter, when the package has
-/// core properties.
+/// `dc:title`, and the owner (`dc:creator`, or `cp:lastModifiedBy` alone)
+/// from the front matter, when the package has core properties. A view
+/// whose document had none (`document_owner: none # no docProps/core.xml`)
+/// writes none.
 fn core_properties(package: &mut PartFs, document: &Document) {
-    if document.title.is_none() && document.author.is_none() {
-        return;
-    }
+    use super::view_notes::Owner;
     let Some(part) = package
         .parts()
         .into_iter()
@@ -644,30 +732,64 @@ fn core_properties(package: &mut PartFs, document: &Document) {
     else {
         return;
     };
+    let owner = document.owner.as_ref();
+    if owner == Some(&Owner::NoPart) && document.title.is_none() && document.author.is_none() {
+        package.remove_part(&part);
+        package.remove_content_type_override(&part);
+        package.remove_package_relationships_by_type(CORE_PROPERTIES);
+        return;
+    }
+    let (creator, editor) = match owner {
+        Some(Owner::Creator(name)) => (Some(name), None),
+        Some(Owner::LastModifiedBy(name)) => (None, Some(name)),
+        _ => (None, None),
+    };
+    // A top-level `author:` names the creator.
+    let creator = document.author.as_ref().or(creator);
+    // The view says who the owner is, so whoever the template names goes.
+    let named = owner.is_some_and(|o| o != &Owner::NoPart);
+    let edits = [
+        ("dc:title", document.title.as_ref(), false),
+        ("dc:creator", creator, named),
+        ("cp:lastModifiedBy", editor, named),
+    ];
+    if edits
+        .iter()
+        .all(|(_, value, clear)| value.is_none() && !clear)
+    {
+        return;
+    }
     let Some(mut xml) = package.part_string(&part) else {
         return;
     };
-    for (element, value) in [
-        ("dc:title", &document.title),
-        ("dc:creator", &document.author),
-    ] {
-        let Some(value) = value else {
-            continue;
-        };
-        let replacement = format!("<{element}>{}</{element}>", escape(value));
+    for (element, value, clear) in edits {
         let open = format!("<{element}>");
         let close = format!("</{element}>");
         let empty = format!("<{element}/>");
-        if let (Some(start), Some(end)) = (xml.find(&open), xml.find(&close)) {
-            xml.replace_range(start..end + close.len(), &replacement);
-        } else if let Some(start) = xml.find(&empty) {
-            xml.replace_range(start..start + empty.len(), &replacement);
-        } else if let Some(at) = xml.rfind("</cp:coreProperties>") {
-            xml.insert_str(at, &replacement);
+        let found = match (xml.find(&open), xml.find(&close)) {
+            (Some(start), Some(end)) => Some(start..end + close.len()),
+            _ => xml.find(&empty).map(|start| start..start + empty.len()),
+        };
+        let replacement = match value {
+            Some(value) => format!("<{element}>{}</{element}>", escape(value)),
+            None if clear => String::new(),
+            None => continue,
+        };
+        match found {
+            Some(range) => xml.replace_range(range, &replacement),
+            None => {
+                if let Some(at) = xml.rfind("</cp:coreProperties>") {
+                    xml.insert_str(at, &replacement);
+                }
+            }
         }
     }
     package.set_part(&part, xml.into_bytes());
 }
+
+/// The package relationship to the core properties part.
+const CORE_PROPERTIES: &str =
+    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 
 /// Picture parts added so far, by picture index.
 #[derive(Default)]
