@@ -116,6 +116,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
+    writer.item_levels = item_levels(&source);
     writer.label_definitions = label_definitions(&source);
     for event in Parser::new_ext(&source, parser_options()) {
         writer.event(event);
@@ -382,6 +383,106 @@ fn note_breaks(source: &str) -> Vec<(usize, usize)> {
         }
     }
     breaks
+}
+
+/// For each list item of `source`, in order, its level by its marker's
+/// column: one deeper than an open item whose text column it reaches, as
+/// CommonMark nests an item. An id line between items ends the parser's
+/// list but not this nesting; any other block does. `None` for an item in
+/// a quote, a note or a table, which keeps the parser's nesting.
+fn item_levels(source: &str) -> Vec<Option<u32>> {
+    let mut levels = Vec::new();
+    // The open items' marker and text columns, outermost first.
+    let mut open: Vec<(usize, usize)> = Vec::new();
+    // Lists open, and quotes, notes and tables open.
+    let (mut lists, mut aside) = (0usize, 0usize);
+    for (event, range) in Parser::new_ext(source, parser_options()).into_offset_iter() {
+        let block = matches!(event, Event::Rule)
+            || matches!(&event, Event::Start(tag) if !matches!(tag, Tag::List(_) | Tag::HtmlBlock));
+        if block && lists == 0 && aside == 0 {
+            open.clear();
+        }
+        match event {
+            Event::Start(Tag::List(_)) => lists += 1,
+            Event::End(TagEnd::List(_)) => lists -= 1,
+            Event::Start(Tag::BlockQuote(_) | Tag::FootnoteDefinition(_) | Tag::Table(_)) => {
+                aside += 1;
+            }
+            Event::End(TagEnd::BlockQuote(_) | TagEnd::FootnoteDefinition | TagEnd::Table) => {
+                aside -= 1;
+            }
+            Event::Start(Tag::Item) if aside > 0 => levels.push(None),
+            Event::Start(Tag::Item) => {
+                let (marker, text) = item_columns(source, range.start);
+                while open.last().is_some_and(|&(_, column)| marker < column) {
+                    open.pop();
+                }
+                levels.push(u32::try_from(open.len()).ok().map(|level| level.min(8)));
+                open.push((marker, text));
+            }
+            _ => {}
+        }
+    }
+    levels
+}
+
+/// The columns of a list item's marker and of its text, for the item that
+/// starts at `at` (at its marker or at the indentation before it): a tab
+/// stops at the next multiple of 4, and text five or more columns past the
+/// marker, or none, starts one column past it.
+fn item_columns(source: &str, at: usize) -> (usize, usize) {
+    let start = source[..at].rfind('\n').map_or(0, |line| line + 1);
+    let end = source[at..]
+        .find('\n')
+        .map_or(source.len(), |line| at + line);
+    let mut column = 0;
+    let mut marker = None;
+    let mut chars = source[start..end].char_indices().peekable();
+    while let Some((offset, c)) = chars.next() {
+        let past = start + offset >= at;
+        match c {
+            '\t' => column += 4 - column % 4,
+            ' ' => column += 1,
+            '-' | '*' | '+' if past => {
+                marker = Some(column);
+                column += 1;
+                break;
+            }
+            '0'..='9' if past => {
+                marker = Some(column);
+                column += 1;
+                while chars.next_if(|(_, c)| c.is_ascii_digit()).is_some() {
+                    column += 1;
+                }
+                if chars.next_if(|(_, c)| matches!(c, '.' | ')')).is_some() {
+                    column += 1;
+                }
+                break;
+            }
+            _ => column += 1,
+        }
+    }
+    let Some(marker) = marker else {
+        return (column, column);
+    };
+    let after = column;
+    for (_, c) in chars {
+        match c {
+            ' ' => column += 1,
+            '\t' => column += 4 - column % 4,
+            _ => {
+                return (
+                    marker,
+                    if column - after > 4 {
+                        after + 1
+                    } else {
+                        column
+                    },
+                );
+            }
+        }
+    }
+    (marker, after + 1)
 }
 
 /// How many definitions each footnote label has in `source`: a footnote
@@ -961,6 +1062,10 @@ struct Writer<'o, 'a> {
     /// Whether each footnote definition's `<br>`s end paragraphs
     /// ([`note_breaks`]), how many definitions are read, and the open one's.
     note_breaks: Vec<(usize, usize)>,
+    /// Each list item's level by its indentation ([`item_levels`]), and
+    /// how many items are read.
+    item_levels: Vec<Option<u32>>,
+    item_count: usize,
     /// How many definitions each label has, how many of them are read, and
     /// how many times the body referenced it: a label defined twice (a
     /// footnote and an endnote both `[^1]`) is two notes, the first
@@ -1093,6 +1198,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_number: 0,
             row_breaks: false,
             note_breaks: Vec::new(),
+            item_levels: Vec::new(),
+            item_count: 0,
             label_definitions: HashMap::new(),
             label_defined: HashMap::new(),
             label_uses: HashMap::new(),
@@ -1231,7 +1338,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Tag::List(first) => {
                 self.end_paragraph();
-                let level = u32::try_from(self.lists.len()).unwrap_or(8).min(8);
+                let level = self
+                    .item_levels
+                    .get(self.item_count)
+                    .copied()
+                    .flatten()
+                    .unwrap_or_else(|| u32::try_from(self.lists.len()).unwrap_or(8).min(8));
                 let instance = match first {
                     Some(start) => {
                         self.document.lists.push(List {
@@ -1258,8 +1370,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Tag::Item => {
                 self.end_paragraph();
+                let level = self.item_levels.get(self.item_count).copied().flatten();
+                self.item_count += 1;
                 if let Some(list) = self.lists.last_mut() {
                     list.paragraphs = 0;
+                    list.level = level.unwrap_or(list.level);
                 }
             }
             Tag::FootnoteDefinition(label) => {

@@ -410,3 +410,35 @@ fn a_comment_moved_out_of_a_note_leaves_its_change_there() {
     let notes = part(&docx, "word/footnotes.xml");
     assert!(notes.contains("<w:ins "), "{notes}");
 }
+
+/// An item an id line parts from the list before it nests by its
+/// indentation, as a hand-written view nests it (`   - X` under `2. Y`);
+/// a level the id line names wins. Only three spaces can say it: after an
+/// id line, four are an indented code block.
+#[test]
+fn an_indented_item_after_an_id_line_nests_under_the_item_before() {
+    let body = "<!-- p0 ListParagraph num \"1.\" -->\n1. One.\n\n\
+                <!-- p1 ListParagraph bullet -->\n   - Sub.\n\n\
+                <!-- p2 ListParagraph bullet -->\n   - Sub two.\n\n\
+                <!-- p3 ListParagraph bullet, level 3 -->\n   - Named.\n\n\
+                <!-- p4 ListParagraph bullet -->\n- Out.\n";
+    let (got, docx) = round_trip(body);
+    for line in [
+        "<!-- p1 ListParagraph bullet, level 1 -->\n- Sub.\n",
+        "<!-- p2 ListParagraph bullet, level 1 -->\n- Sub two.\n",
+        "<!-- p3 ListParagraph bullet, level 3 -->\n- Named.\n",
+        "<!-- p4 ListParagraph bullet -->\n- Out.\n",
+    ] {
+        assert!(got.contains(line), "{line}\n{got}");
+    }
+    let document = part(&docx, "word/document.xml");
+    let levels: Vec<&str> = document
+        .match_indices("<w:ilvl w:val=\"")
+        .map(|(at, found)| &document[at + found.len()..at + found.len() + 1])
+        .collect();
+    assert_eq!(levels, ["0", "1", "1", "3", "0"], "{document}");
+    // A list's own nesting is untouched.
+    let (got, _) = round_trip("1. One\n2. Two\n   - Sub\n3. Three\n");
+    assert!(got.contains("bullet, level 1 -->\n- Sub\n"), "{got}");
+    assert!(got.contains("num \"3.\" -->\n3. Three\n"), "{got}");
+}
