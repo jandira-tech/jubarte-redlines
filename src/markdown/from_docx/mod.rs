@@ -533,10 +533,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         for (_, root) in &note_roots {
             agent::comment_anchors(root, &mut anchored);
         }
-        // Headers and footers are stories too: Word balloons their comments.
-        for root in &story_roots {
-            agent::comment_anchors(root, &mut anchored);
-        }
+        // Word shows a comment only from a reference in a main-story
+        // paragraph (probe 2026-10-10): one anchored in a header or footer
+        // is no anchored comment.
         let comment_facts: Vec<header::CommentFact> = comments_root
             .as_ref()
             .map(|root| {

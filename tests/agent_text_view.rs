@@ -4150,7 +4150,7 @@ fn an_unanchored_comment_is_not_an_open_thread() {
     assert!(
         line.starts_with("comments: 1 thread open, 1 unanchored ")
             && line
-                .contains("# 2 comments: c9, c54 (unanchored: in no story, Word shows no balloon)"),
+                .contains("# 2 comments: c9, c54 (unanchored: not in the body or a note, Word shows no balloon)"),
         "{line}"
     );
     assert!(!body(&view).contains("c54"), "{view}");
@@ -4263,10 +4263,11 @@ fn changed_keeps_every_paragraph_inside_a_comment_range() {
     }
 }
 
-/// pi review r392b F1: a comment anchored in a header is an open thread, as
-/// `jubarte comments` lists it; only a comment no story holds is unanchored.
+/// A comment anchored in a header is unanchored: Word opens such a file and
+/// shows no balloon for it (Word probe d27_comment_in_header, 2026-10-10),
+/// and the view cannot carry it back into the header.
 #[test]
-fn a_comment_anchored_in_a_header_is_an_open_thread() {
+fn a_comment_anchored_in_a_header_is_unanchored() {
     let comments = format!(
         r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
         comment(
@@ -4315,9 +4316,9 @@ fn a_comment_anchored_in_a_header_is_an_open_thread() {
         .find(|l| l.starts_with("comments: "))
         .unwrap_or_default();
     assert!(
-        line.starts_with("comments: 1 thread open, 1 unanchored ")
-            && line.contains("c5, c7 (unanchored")
-            && !line.contains("c5 (unanchored"),
+        line.starts_with("comments: 0 threads open, 2 unanchored ")
+            && line.contains("c5 (unanchored: not in the body or a note")
+            && line.contains("c7 (unanchored"),
         "{line}"
     );
 }
