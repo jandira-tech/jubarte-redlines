@@ -1771,6 +1771,29 @@ pub const RETIRED: &[Retired] = &[
     },
 ];
 
+/// Every task name that is gone and parses as the shorthand's first file
+/// again (`jubarte revisions x.docx` compares a file called `revisions`):
+/// a [`removed_task_note`] names what to say instead.
+pub const REMOVED_TASKS: &[Retired] = &[Retired {
+    old: "revisions",
+    now: "changes",
+    on: None,
+}];
+
+/// Each [`REMOVED_TASKS`] name `argv` puts where the task goes, as
+/// [`retired_spellings`] finds them.
+pub fn removed_tasks<'a>(
+    argv: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, &'static str)> {
+    spellings_in(REMOVED_TASKS, argv)
+}
+
+/// The note a removed task name earns: the run goes on, reading it as a
+/// file.
+pub fn removed_task_note(old: &str, now: &str) -> String {
+    format!("note: {old} is no longer a task, so it reads as a file name; use {now}")
+}
+
 /// Every flag that is gone: it no longer parses, and the error names what
 /// to say instead, where clap's own tip may name a lookalike (`compare
 /// --date` would be told `--dates`). Arthur (2026-10-14): `--date` is gone.
@@ -3144,9 +3167,15 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     match result {
         Ok(mut value) => {
             value["args"]["quiet"] = quiet.into();
-            value["notes"] = retired_spellings(arguments.iter().map(String::as_str))
+            let argv = || arguments.iter().map(String::as_str);
+            value["notes"] = retired_spellings(argv())
                 .into_iter()
                 .map(|(old, now)| retired_note(old, now))
+                .chain(
+                    removed_tasks(argv())
+                        .into_iter()
+                        .map(|(old, now)| removed_task_note(old, now)),
+                )
                 .collect();
             value.to_string()
         }
@@ -3167,6 +3196,14 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                         .into_iter()
                         .map(|(old, now)| retired_note(old, now))
                         .collect();
+                } else if let Some(text) = value["text"].as_str() {
+                    // `revisions FILE --json` fails as a compare: say why
+                    // first.
+                    let notes: String = removed_tasks(arguments.iter().map(String::as_str))
+                        .into_iter()
+                        .map(|(old, now)| removed_task_note(old, now) + "\n")
+                        .collect();
+                    value["text"] = (notes + text).into();
                 }
                 value.to_string()
             }

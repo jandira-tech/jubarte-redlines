@@ -2359,11 +2359,19 @@ fn cli_main() -> ExitCode {
             for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
                 eprintln!("{}", jubarte::cli::retired_note(old, now));
             }
+        } else {
+            // `revisions FILE --json` fails as a compare: say why first.
+            for (old, now) in jubarte::cli::removed_tasks(argv.iter().map(String::as_str)) {
+                eprintln!("{}", jubarte::cli::removed_task_note(old, now));
+            }
         }
         error.exit()
     });
     for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
         eprintln!("{}", jubarte::cli::retired_note(old, now));
+    }
+    for (old, now) in jubarte::cli::removed_tasks(argv.iter().map(String::as_str)) {
+        eprintln!("{}", jubarte::cli::removed_task_note(old, now));
     }
     let quiet = cli.quiet;
     match cli.command {

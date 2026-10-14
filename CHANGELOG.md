@@ -284,6 +284,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- `jubarte revisions x.docx` said only "reading revisions: No such file":
+  the removed task's name reads as the first file to compare. A note now
+  names `changes` first, on every host.
 - A plan's `"comment_id": "c5"` was refused. (`#c5`, which an unquoted
   shell reads as a comment, is now refused too; write `c5`.)
 - `changes` listed a text box's change twice, once per

@@ -1915,6 +1915,61 @@ fn retired_spellings_are_scoped_and_listed_once() {
     );
 }
 
+/// The `revisions` task is gone (`changes` lists what a document tracks),
+/// and its name parses as the shorthand's first file again
+/// (`removed_commands_leave_help_and_restore_legacy_filename_parsing`). So
+/// `jubarte revisions x.docx` failed with only "reading revisions: No such
+/// file" (pi review of #422): a note now names `changes`, on every host.
+/// An explicit `compare`, or the name in second place, earns no note.
+#[test]
+fn the_removed_revisions_task_names_changes() {
+    let note = "note: revisions is no longer a task, so it reads as a file name; use changes";
+    for args in [
+        &["revisions", "x.docx"][..],
+        &["-q", "revisions", "x.docx"][..],
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(
+            result["args"]["original"], "revisions",
+            "{args:?}: {result}"
+        );
+        assert_eq!(
+            result["notes"],
+            serde_json::json!([note]),
+            "{args:?}: {result}"
+        );
+    }
+    // `revisions FILE --json` is no compare (the legacy-filename test pins
+    // exit 2); the note leads the error.
+    let result = parse(&["revisions", "x.docx", "--json"], &[]);
+    assert_eq!(result["exit_code"], 2, "{result}");
+    let text = result["text"].as_str().unwrap_or_default();
+    assert!(text.starts_with(&format!("{note}\n")), "{result}");
+    for args in [
+        &["compare", "revisions", "b.docx"][..],
+        &["a.docx", "revisions"][..],
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(result["notes"], serde_json::json!([]), "{args:?}: {result}");
+    }
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["revisions", "x.docx"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with(&format!("{note}\n")), "{stderr}");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["revisions", "x.docx", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with(&format!("{note}\n")), "{stderr}");
+}
+
 /// Arthur (2026-10-13): one spelling for the timestamp flag: `-d,
 /// --datetime` on edit, add, compare, diff and convert (md->docx). Arthur
 /// (2026-10-14): `--date` is gone, not an alias; the error names
