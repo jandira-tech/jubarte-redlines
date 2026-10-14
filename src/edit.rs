@@ -237,6 +237,7 @@ pub enum OperationKind {
         /// end of this one (same story, not before `paragraph`); `find`
         /// must be left out.
         through: Option<Selector>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,

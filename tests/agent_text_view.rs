@@ -2650,8 +2650,9 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         !again.status.success(),
         "base.edit exists: --force or --out-dir"
     );
-    for bad in [
-        &["edit", "base.docx"][..],
+    // --plan with operation flags records them into the plan, editing
+    // nothing (tests/cli_plan_record.rs covers recording).
+    let recorded = jubarte(
         &[
             "edit",
             "base.docx",
@@ -2660,7 +2661,13 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
             "-p",
             "p1",
             "--delete",
-        ][..],
+        ],
+        dir.path(),
+    );
+    assert!(recorded.status.success(), "{recorded:?}");
+    assert!(dir.path().join("x.json").exists());
+    for bad in [
+        &["edit", "base.docx"][..],
         &[
             "edit",
             "base.docx",

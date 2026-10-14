@@ -1109,6 +1109,7 @@ struct EditFlags<'a> {
     verb: jubarte::edit::flags::Verb,
     file: &'a Path,
     plan: Option<&'a Path>,
+    consume: bool,
     operations: &'a [FlagOp],
     options: &'a EditOptions,
     dry_run: bool,
@@ -1120,6 +1121,26 @@ struct EditFlags<'a> {
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     let source = read_document(flags.file).map_err(|m| (1u8, m))?;
+    if let Some(path) = flags.plan {
+        if !flags.operations.is_empty() {
+            return record_plan(flags, path, &source);
+        }
+        let options = flags.options;
+        let named = [
+            (options.author != "Modified User", "--author"),
+            (options.datetime.is_some(), "--datetime"),
+            (
+                options.existing_revisions != ExistingArg::Auto,
+                "--existing-revisions",
+            ),
+        ];
+        if let Some((_, flag)) = named.iter().find(|(given, _)| *given) {
+            return Err((
+                EXIT_USAGE,
+                format!("{flag} belongs to recorded operations; the plan names its own"),
+            ));
+        }
+    }
     let (plan, notes) = edit_plan(
         flags.verb,
         flags.plan,
@@ -1153,7 +1174,109 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         revisions: flags.revisions,
         quiet: flags.options.quiet,
     };
-    run_edit(&job, &plan, &source, &notes)
+    run_edit(&job, &plan, &source, &notes)?;
+    if let Some(path) = flags.plan.filter(|_| flags.consume && !flags.dry_run) {
+        std::fs::remove_file(path).map_err(|e| {
+            (
+                1,
+                format!(
+                    "the plan was applied, but {} was not deleted: {e}",
+                    path.display()
+                ),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// `--plan PLAN.json` with operation flags: the operations go into the plan
+/// (created on first use) instead of into FILE. They are checked against
+/// FILE first, so a plan only ever holds operations that apply; a refusal
+/// leaves PLAN.json as it was.
+fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), (u8, String)> {
+    let options = flags.options;
+    let later = [
+        (flags.consume, "--consume"),
+        (options.out_dir.is_some(), "--out-dir"),
+        (options.force, "--force"),
+        (options.editing_mode, "--editing-mode"),
+        (options.suggesting_mode, "--suggesting-mode"),
+        (flags.pdf, "--pdf"),
+        (flags.png, "--png"),
+    ];
+    if let Some((_, flag)) = later.iter().find(|(given, _)| *given) {
+        return Err((
+            EXIT_USAGE,
+            format!(
+                "{flag} takes effect when the plan is applied (jubarte edit FILE --plan {}), and is not recorded",
+                path.display()
+            ),
+        ));
+    }
+    let held = match std::fs::read_to_string(path) {
+        Ok(json) => Some(
+            jubarte::edit::EditPlan::from_json(&json)
+                .map_err(|e| (EXIT_PLAN_REFUSED, format!("{}: {e}", path.display())))?,
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err((1, format!("reading {}: {e}", path.display()))),
+    };
+    let before = held.as_ref().map_or(0, |p| p.operations.len());
+    let mut built = jubarte::edit::flags::plan_from_flags(
+        flags.verb,
+        flags.operations,
+        &options.author,
+        options.datetime.as_deref(),
+        options.existing_revisions.plan_value(),
+        source,
+    )
+    .map_err(|m| (EXIT_USAGE, m))?;
+    built.plan.source_sha256 = Some(jubarte::inspect::source_sha256(source));
+    let plan = jubarte::edit::flags::record_into(held, built.plan).map_err(|m| (EXIT_USAGE, m))?;
+    jubarte::edit::preview_plan(source, &plan).map_err(|e| refused(&e))?;
+    let quiet = options.quiet;
+    for note in jubarte::edit::flags::renumber_notes(built.notes, before) {
+        if !quiet {
+            outln!("note: {note}");
+        }
+    }
+    if !flags.dry_run {
+        let json = serde_json::to_string_pretty(&plan)
+            .map_err(|e| (1, format!("writing the plan: {e}")))?;
+        let partial = path.with_extension("json.partial");
+        std::fs::write(&partial, json + "\n")
+            .and_then(|()| std::fs::rename(&partial, path))
+            .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
+    }
+    if !quiet {
+        let added = plan.operations.len() - before;
+        let resolve = plan.resolve_revisions.as_ref();
+        let count = |f: Option<&jubarte::changes::ChangeFilter>| {
+            f.and_then(|f| f.ids.as_ref()).map_or(0, Vec::len)
+        };
+        outln!(
+            "{} {added} operation{} in {}: {} operation{}, {} revision{} to accept, {} to reject; apply with: jubarte edit {} --plan {}",
+            if flags.dry_run {
+                "would record"
+            } else {
+                "recorded"
+            },
+            if added == 1 { "" } else { "s" },
+            path.display(),
+            plan.operations.len(),
+            if plan.operations.len() == 1 { "" } else { "s" },
+            count(resolve.and_then(|r| r.accept.as_ref())),
+            if count(resolve.and_then(|r| r.accept.as_ref())) == 1 {
+                ""
+            } else {
+                "s"
+            },
+            count(resolve.and_then(|r| r.reject.as_ref())),
+            flags.file.display(),
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn edit_exit(result: Result<(), (u8, String)>) -> ExitCode {
@@ -2279,6 +2402,7 @@ fn cli_main() -> ExitCode {
         Some(Command::Edit {
             file,
             plan,
+            consume,
             options,
             dry_run,
             pdf,
@@ -2297,6 +2421,7 @@ fn cli_main() -> ExitCode {
                 verb: jubarte::edit::flags::Verb::Edit,
                 file: &file,
                 plan: plan.as_deref(),
+                consume,
                 operations: &operations,
                 options: &options,
                 dry_run,
@@ -2309,6 +2434,8 @@ fn cli_main() -> ExitCode {
         }
         Some(Command::Add {
             file,
+            plan,
+            consume,
             options,
             operations,
             ..
@@ -2316,7 +2443,8 @@ fn cli_main() -> ExitCode {
             let flags = EditFlags {
                 verb: jubarte::edit::flags::Verb::Add,
                 file: &file,
-                plan: None,
+                plan: plan.as_deref(),
+                consume,
                 operations: &operations,
                 options: &options,
                 dry_run: false,
