@@ -59,6 +59,8 @@ pub(crate) fn layout_node(
 
 /// Lay out the first `m:oMath` child of `omml`. `display` selects the
 /// display MATH constants (an `m:oMathPara` ancestor in the document).
+/// The collector calls [`layout_node`] on the element it already holds.
+#[cfg(test)]
 pub(crate) fn layout_omml(font: &MathFont, size: f32, display: bool, omml: &str) -> MathBox {
     let xml = format!(
         r#"<?xml version="1.0"?>
@@ -126,11 +128,11 @@ fn is_property(dom: &Dom, node: NodeId) -> bool {
         .is_some_and(|n| n.local_name().ends_with("Pr"))
 }
 
-fn child<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<NodeId> {
+fn child(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
     dom.element(node, &M::name(local))
 }
 
-fn val_of<'a>(dom: &'a Dom, node: NodeId) -> Option<&'a str> {
+fn val_of(dom: &Dom, node: NodeId) -> Option<&str> {
     dom.attribute(node, &M::name("val"))
         .or_else(|| super::attr_any(dom, node, "val"))
 }
@@ -798,7 +800,7 @@ mod tests {
         }
     }
 
-    fn glyph<'a>(b: &'a MathBox, ascii: char) -> &'a MathGlyph {
+    fn glyph(b: &MathBox, ascii: char) -> &MathGlyph {
         let want = italic(ascii);
         b.glyphs
             .iter()
@@ -806,7 +808,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no {want:?} in {b:?}; layout returned an empty box"))
     }
 
-    fn radical<'a>(b: &'a MathBox) -> &'a MathGlyph {
+    fn radical(b: &MathBox) -> &MathGlyph {
         b.glyphs
             .iter()
             .find(|g| g.text.contains('\u{221A}'))

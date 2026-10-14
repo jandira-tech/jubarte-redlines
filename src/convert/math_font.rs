@@ -81,7 +81,6 @@ pub(crate) struct MathFont {
     upem: f32,
     has_math: bool,
     c: MathConstants,
-    family: String,
 }
 
 impl MathFont {
@@ -95,7 +94,6 @@ impl MathFont {
     pub(crate) fn from_collection(bytes: &[u8], index: u32) -> Option<Self> {
         let face = ttf_parser::Face::parse(bytes, index).ok()?;
         let upem = f32::from(face.units_per_em());
-        let family = family_name(&face);
         let (has_math, c) = match face.tables().math.and_then(|m| m.constants) {
             Some(k) => (true, read_constants(&k)),
             None => (false, fallback_constants(upem)),
@@ -106,7 +104,6 @@ impl MathFont {
             upem,
             has_math,
             c,
-            family,
         })
     }
 
@@ -119,10 +116,10 @@ impl MathFont {
             upem,
             has_math: false,
             c: fallback_constants(upem),
-            family: String::new(),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn has_math_table(&self) -> bool {
         self.has_math
     }
@@ -143,8 +140,11 @@ impl MathFont {
         units * size_pt / self.upem
     }
 
-    pub(crate) fn family_name(&self) -> &str {
-        &self.family
+    /// The name table's family. Tests check Cambria Math is the face
+    /// they opened. Layout does not branch on the name.
+    #[cfg(test)]
+    pub(crate) fn family_name(&self) -> String {
+        self.with_face(family_name).unwrap_or_default()
     }
 
     pub(crate) fn glyph_id(&self, ch: char) -> Option<u16> {
@@ -165,6 +165,10 @@ impl MathFont {
     /// (height + depth). Variants first, then an assembly, then the
     /// tallest variant, then `base` itself.
     pub(crate) fn stretch_vertical(&self, base: u16, target: f32) -> Stretch {
+        // No MATH table means no variants and no assembly.
+        if !self.has_math {
+            return Stretch::Single(base);
+        }
         self.with_face(|face| stretch_vertical(face, base, target))
             .unwrap_or(Stretch::Single(base))
     }
@@ -173,6 +177,41 @@ impl MathFont {
         let face = ttf_parser::Face::parse(&self.bytes, self.index).ok()?;
         Some(f(&face))
     }
+}
+
+thread_local! {
+    static CURRENT_MATH_FONT: std::cell::RefCell<Option<MathFont>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Installs the conversion's math font, restoring the previous one on drop.
+pub(crate) struct MathFontGuard(Option<MathFont>);
+
+impl MathFontGuard {
+    pub(crate) fn set(font: MathFont) -> Self {
+        Self(CURRENT_MATH_FONT.with(|slot| slot.replace(Some(font))))
+    }
+}
+
+impl Drop for MathFontGuard {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        CURRENT_MATH_FONT.with(|slot| {
+            slot.replace(previous);
+        });
+    }
+}
+
+/// The font installed for this conversion, or the TeX fallback.
+pub(crate) fn with_current_math_font<T>(f: impl FnOnce(&MathFont) -> T) -> T {
+    CURRENT_MATH_FONT.with(|slot| {
+        let borrowed = slot.borrow();
+        if let Some(font) = borrowed.as_ref() {
+            f(font)
+        } else {
+            drop(borrowed);
+            f(&MathFont::fallback(1000.0))
+        }
+    })
 }
 
 /// TeXbook Appendix G / plain TeX at 10pt, scaled into `upem`.
@@ -229,6 +268,7 @@ fn read_constants(k: &ttf_parser::math::Constants<'_>) -> MathConstants {
     }
 }
 
+#[cfg(test)]
 fn family_name(face: &ttf_parser::Face<'_>) -> String {
     face.names()
         .into_iter()
