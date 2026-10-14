@@ -38,7 +38,7 @@ footers:
 A Sampler Document for Extraction Testing
 
 <!-- p3 -->
-This document is intentionally varied{==. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on. **_Emphasis lives here._** ==}**_{>>c2 @AS: Testing.<<}{>>c3 @AS re c2: Nested 1.<<}{>>c4 @AS re c2: Nested 2.<<}See note._**[^1]
+This document is intentionally varied{==. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on. **_Emphasis lives here._** ==}{>>c2 @AS: Testing.<<}{>>c3 @AS re c2: Nested 1.<<}{>>c4 @AS re c2: Nested 2.<<}**_See note._**[^1]
 
 <!-- p4 -->
 # 1. Typography Samples

@@ -629,24 +629,50 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
             _ => merged.push((marks, span.text.clone())),
         }
     }
-    for (marks, text) in merged {
+    let firsts: Vec<Option<char>> = merged.iter().map(|(_, text)| text.chars().next()).collect();
+    for (k, (marks, text)) in merged.into_iter().enumerate() {
         let (lead, core, trail) = split_ws(&text);
         if core.is_empty() || marks == Marks::default() {
             out.push_str(&text);
             continue;
         }
-        let (emphasis_open, emphasis_close) = match (marks.bold, marks.italic) {
-            (true, true) => ("**_", "_**"),
-            (true, false) => ("**", "**"),
-            (false, true) => ("_", "_"),
-            (false, false) => ("", ""),
-        };
         let pair = |on: bool, open: &'static str, close: &'static str| {
             if on { (open, close) } else { ("", "") }
         };
         let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
         let (h_open, h_close) = pair(marks.highlight, "==", "==");
         let (s_open, s_close) = pair(marks.strike, "~~", "~~");
+        // `**`/`_` read only where CommonMark lets them open and close
+        // (`0.081**\***` is text); elsewhere `<b>`/`<i>` say the same.
+        let before = if lead.is_empty() {
+            out.chars().last()
+        } else {
+            Some(' ')
+        };
+        let after = if trail.is_empty() {
+            firsts.get(k + 1).copied().flatten()
+        } else {
+            Some(' ')
+        };
+        let inner = format!("{u_open}{h_open}{s_open}{core}{s_close}{h_close}{u_close}");
+        // Line by line, a line's inner edges are its own: only the first
+        // opening and the last closing meet the text around.
+        // `**_…_**`: the `_` always reads beside the `*`; the `**` meets
+        // the text around with `_` inside it.
+        let reads = if marks.bold && marks.italic {
+            delimiters_read(before, &format!("_{inner}_"), after, false)
+        } else {
+            delimiters_read(before, &inner, after, marks.italic)
+        };
+        let (emphasis_open, emphasis_close) = match (marks.bold, marks.italic, reads) {
+            (true, true, true) => ("**_", "_**"),
+            (true, false, true) => ("**", "**"),
+            (false, true, true) => ("_", "_"),
+            (true, true, false) => ("<b><i>", "</i></b>"),
+            (true, false, false) => ("<b>", "</b>"),
+            (false, true, false) => ("<i>", "</i>"),
+            (false, false, _) => ("", ""),
+        };
         let open = format!("{emphasis_open}{u_open}{h_open}{s_open}");
         let close = format!("{s_close}{h_close}{u_close}{emphasis_close}");
         out.push_str(lead);
@@ -669,6 +695,29 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         out.push_str(trail);
     }
     out
+}
+
+/// Whether emphasis delimiters around `inner`, between `before` and
+/// `after` (None: the line's edge), open and close as CommonMark reads
+/// them: an opener before punctuation needs space or punctuation before
+/// it, a closer after punctuation the same after it; `_` (`underscore`)
+/// also opens or closes nowhere inside a word.
+fn delimiters_read(
+    before: Option<char>,
+    inner: &str,
+    after: Option<char>,
+    underscore: bool,
+) -> bool {
+    let punctuation =
+        |c: char| c.is_ascii_punctuation() || !(c.is_alphanumeric() || c.is_whitespace());
+    let open_side = |c: Option<char>| c.is_none_or(|c| c.is_whitespace() || punctuation(c));
+    let (Some(first), Some(last)) = (inner.chars().next(), inner.chars().last()) else {
+        return false;
+    };
+    let opens = !first.is_whitespace() && (!punctuation(first) || open_side(before));
+    let closes = !last.is_whitespace() && (!punctuation(last) || open_side(after));
+    let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    opens && closes && !(underscore && (word(before) || word(after)))
 }
 
 /// The backticks around a code span's text: one more than its longest run

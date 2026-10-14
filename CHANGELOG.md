@@ -301,6 +301,15 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   contents, keeps its code: `{TOC \o "1-3"}` begins its first entry and
   `{/}` closes after its last.
 
+- **Markdown written to Word reads back as it was written** in four more:
+  a comment range that ends before its notes' paragraph (`in c2` left off
+  the id line) stays out of that paragraph; a comment whose note sits inside
+  a tracked change (`{++{>>c1 …<<}more++}`) stays in the change; emphasis
+  whose `**` or `_` could not open or close where it stands (`0.081*`
+  bolded) reads `<b>\*</b>`, so its neighbours keep their own marks; and a
+  run of tracked-change markers beside one emphasis or link joins it
+  together or not at all, so a raised link of several runs stays one link.
+
 - **The npm CLI does what the binary does where it said it could not.**
   `convert` turns Word into Word (`--track-changes accept|reject`,
   `--update-fields`, `--report`) and into its paged Markdown (`--to md`,

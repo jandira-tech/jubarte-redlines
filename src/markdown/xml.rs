@@ -258,6 +258,10 @@ pub(super) struct Document {
     pub shared: HashMap<usize, Vec<u32>>,
     /// Highlight groups that became a comment's range.
     pub commented: HashSet<usize>,
+    /// The change a comment's note sits in, by comment id, and whether its
+    /// range ends there too: its reference (and range end) open the
+    /// change's mark (`{++{>>c1 re c0<<}text++}`).
+    pub note_changes: HashMap<u32, (Change, bool)>,
     pub pictures: Vec<Picture>,
     pub lists: Vec<List>,
     pub styles: HashSet<&'static str>,
@@ -526,7 +530,7 @@ pub(super) fn story(
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
     // (`{--plain _italic_--}{>>r43+44 @AL<<}` is two marks).
-    let mut natural = natural_marks(items);
+    let mut natural = natural_marks(items, &context.document.note_changes);
     // The open row's own change: its mark carries the text the view tags
     // with the row's id alone.
     let mut row_change: Option<Change> = None;
@@ -566,8 +570,10 @@ pub(super) fn story(
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
+        let in_note = note_change(&context.document.note_changes, item);
         let inside = match item {
             Item::Run(_) => true,
+            _ if in_note.is_some() => true,
             Item::LinkStart(..) | Item::LinkEnd if field.is_some() => true,
             Item::RangeEnd(_) if ends_inserted_side(&items[at + 1..], open) => true,
             // Inside a tracked link's field they stay in its mark, which
@@ -582,6 +588,15 @@ pub(super) fn story(
         };
         if !inside {
             close_mark(context, &natural, &mut out, &mut open);
+        }
+        if let Some(change) = in_note
+            && open != Some(change)
+        {
+            close_mark(context, &natural, &mut out, &mut open);
+            spend(&mut natural, change.1);
+            let wrap = context.revision(change.0, Some(change.1));
+            let _ = write!(out, "<{wrap}>");
+            open = Some(change);
         }
         match item {
             Item::Bookmark(name) => {
@@ -1067,6 +1082,19 @@ fn field_link(rest: &[Item]) -> Option<Change> {
     None
 }
 
+/// The change a comment's reference, or its range end, sits in, when the
+/// view put the comment's note inside one (see `Document::note_changes`).
+fn note_change(notes: &HashMap<u32, (Change, bool)>, item: &Item) -> Option<Change> {
+    match item {
+        Item::CommentReference(id) => notes.get(id).map(|(change, _)| *change),
+        Item::RangeEnd(id) => notes
+            .get(id)
+            .filter(|(_, end)| *end)
+            .map(|(change, _)| *change),
+        _ => None,
+    }
+}
+
 fn continues(rest: &[Item], open: Option<Change>) -> bool {
     open.is_some()
         && rest
@@ -1146,7 +1174,7 @@ fn close_mark(
 
 /// The marks each numbered change opens in `items` when no change splits:
 /// a run that does not continue the open mark, a paragraph mark, a row.
-fn natural_marks(items: &[Item]) -> HashMap<u32, usize> {
+fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMap<u32, usize> {
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
@@ -1170,6 +1198,12 @@ fn natural_marks(items: &[Item]) -> HashMap<u32, usize> {
                 if fields.pop().flatten().is_none() {
                     open = None;
                 }
+            }
+            _ if let Some(change) = note_change(notes, item) => {
+                if open != Some(change) {
+                    *marks.entry(change.1).or_default() += 1;
+                }
+                open = Some(change);
             }
             Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
                 if continues(&items[at + 1..], open) => {}

@@ -2720,8 +2720,11 @@ impl Writer<'_> {
             Some("subscript") => Some(("<sub>", "</sub>")),
             _ => None,
         };
+        // A raised run right after another one goes on inside its tags:
+        // `<sup>[\[2\]](#n)</sup>`, not one link cut in two.
+        let continued = tags.is_some_and(|(_, close)| out.reopen(close));
         let start = out.len();
-        if let Some((open, _)) = tags {
+        if let Some((open, _)) = tags.filter(|_| !continued) {
             out.raw(open);
         }
         let opened = out.len();
@@ -2729,7 +2732,7 @@ impl Writer<'_> {
             self.run_child(child, link, marks, fields, out, extra);
         }
         if let Some((_, close)) = tags {
-            if out.len() == opened {
+            if out.len() == opened && !continued {
                 out.truncate(start);
             } else {
                 out.raw(close);
