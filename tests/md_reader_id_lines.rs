@@ -534,6 +534,31 @@ fn a_later_sections_title_page_comes_back() {
 }
 
 #[test]
+fn a_later_sections_first_story_is_per_kind() {
+    // w:titlePg names each kind's first-page story: a first footer leaves
+    // the first header `none`, and a first header leaves the footer's.
+    let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n";
+    let header = "---\nheaders:\n  default: {id: header2, text: X}\n\
+                  sections:\n  2: {p1-p1, footers: {first: {id: footer3, text: F}}}\n---\n\n";
+    let view = view_round_trip(header, body);
+    assert!(
+        view.lines().any(|l| l.starts_with(
+            "  2: {p1-p1, headers: {first: none}, footers: {first: {id: footer3, text: F}}}"
+        )),
+        "{view}"
+    );
+    let header = "---\nheaders:\n  default: {id: header2, text: X}\n\
+                  sections:\n  2: {p1-p1, headers: {first: {id: header3, text: H}}}\n---\n\n";
+    let view = view_round_trip(header, body);
+    assert!(
+        view.lines().any(|l| l.starts_with(
+            "  2: {p1-p1, headers: {first: {id: header3, text: H}}, footers: {first: none}}"
+        )),
+        "{view}"
+    );
+}
+
+#[test]
 fn a_hash_inside_quotes_is_no_yaml_comment() {
     let header = "---\nheaders:\n  default: {id: header2, text: \"Totals  #3\", center}\n---\n\n";
     let view = view_round_trip(header, "<!-- p0 -->\nOne.\n");

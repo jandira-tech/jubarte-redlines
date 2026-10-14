@@ -765,6 +765,27 @@ struct Parser {
     at: usize,
     /// The change the text read now is in.
     change: Option<Kind>,
+    /// How deep the atom read now nests.
+    depth: usize,
+}
+
+/// Deeper than any equation Word builds. Past it a token reads as text, so
+/// untrusted Markdown cannot nest the parser (and the tree the writer walks)
+/// off the end of the stack.
+const MOST_NESTING: usize = 64;
+
+/// A token as the LaTeX it was read from.
+fn token_latex(token: &Token) -> String {
+    match token {
+        Token::Char(c) => c.to_string(),
+        Token::Command(name) => format!("\\{name}"),
+        Token::Open => "{".into(),
+        Token::Close => "}".into(),
+        Token::Sup => "^".into(),
+        Token::Sub => "_".into(),
+        Token::Amp => "&".into(),
+        Token::Change(_) => String::new(),
+    }
 }
 
 impl Parser {
@@ -776,6 +797,7 @@ impl Parser {
             pairs,
             at: 0,
             change: None,
+            depth: 0,
         }
     }
 
@@ -979,7 +1001,21 @@ impl Parser {
     }
 
     /// The next node, from the token at the cursor.
+    /// One atom: every nesting construct is read through here, so this
+    /// bounds the depth ([`MOST_NESTING`]).
     fn atom(&mut self, stops: Stops) -> Option<Node> {
+        if self.depth >= MOST_NESTING {
+            let token = self.peek()?.clone();
+            self.at += 1;
+            return Some(self.text(&token_latex(&token), Style::Math));
+        }
+        self.depth += 1;
+        let node = self.nested_atom(stops);
+        self.depth -= 1;
+        node
+    }
+
+    fn nested_atom(&mut self, stops: Stops) -> Option<Node> {
         let token = self.peek()?.clone();
         let start = self.at;
         self.at += 1;
