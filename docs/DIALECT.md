@@ -18,7 +18,7 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | `==h==` | highlight (yellow) | any colour reads as `==h==` in the agent view, which also prints `~~s~~` and `<u>u</u>` |
 | `{DATE \@ "MMMM d, yyyy"}March 1, 2026{/}` | field: its code, then its result | ECMA-376 field names only, closed by `{/}` in the paragraph; `{Client Name}` stays text, `\{PAGE}` and `\{/}` are literal. The agent view prints body fields this way, except hyperlinks (links), fields with a field in their code, and fields that run past their paragraph (a table of contents), which show their result |
 | `<u>u</u>` `<sup>2</sup>` `<sub>2</sub>` `<br>` | underline, superscript, subscript, line break | what the reader prints |
-| `<b>` `<i>` `<s>` `<code>` `<mark>` (and `<strong>` `<em>` `<del>`) | bold, italic, strike, code, highlight | read only; other tags warn |
+| `<b>` `<i>` `<s>` `<code>` `<mark>` (and `<strong>` `<em>` `<del>`), `<a href>` | bold, italic, strike, code, highlight, link | read only; other tags warn, and an HTML block keeps only its text |
 | `x ^2^`, `x ~2~` | superscript, subscript | word edges only: `H~2~O` stays text |
 | `$x$`, `$$x$$` | equation (`m:oMath`, `m:oMathPara`) | LaTeX both ways; `{++…++}` inside marks a change in the math; see MARKDOWN.md, Equations |
 | `#`–`######` | `Heading1`–`Heading6` | or the `styles:` legend's heading style |

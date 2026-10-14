@@ -49,7 +49,7 @@ themselves.
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
 | table | table in `TableGrid`, header row repeated, column alignment kept |
-| `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning |
+| `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
 | `[^note]` | footnote |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
 | `---` | a paragraph with a bottom border |
@@ -612,7 +612,9 @@ them accepted.
 - `jubarte diff --format critic` needs two Markdown documents; with a
   Word side it exits 1, and `jubarte compare OLD NEW` prints the redline
   as the agent view, CriticMarkup included.
-- Definition lists and raw HTML blocks are not written.
+- Definition lists are not written. A raw HTML block (`<div>` up to a
+  blank line) keeps only its text, a paragraph per block element, with a
+  warning.
 - The PDF renderer sets an equation's text on one line: fractions,
   radicals, matrices and limits are not laid out yet.
 - Changes have one author and date; CriticMarkup has no syntax for more.
