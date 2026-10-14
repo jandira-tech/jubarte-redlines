@@ -192,6 +192,18 @@ fn comment_number(at: &str) -> Option<u32> {
 /// A `-p r12 --accept` (or `--reject`) group: whether it accepts, and the
 /// long ids it names. `None` for a group that is an operation. Only `edit`
 /// resolves revisions.
+/// On `-p` a bare number (`5`, `1+2`) names a paragraph (D7), so a
+/// revision or comment flag beside one is refused with the spelling that
+/// works: `r1+2`, `c5`.
+fn is_bare_number(at: &str) -> bool {
+    !at.is_empty()
+        && at
+            .split('+')
+            .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+const BARE_NUMBER: &str = "on -p a bare number names a paragraph";
+
 fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
     let at = op.at.trim();
     let bad = |m: &str| Err(format!("-p {at}: {m}"));
@@ -215,6 +227,14 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         || op.reply.is_some()
         || !op.styles.is_empty();
     match ids {
+        None if (op.accept || op.reject) && is_bare_number(at) => {
+            let kind = if at.contains('+') {
+                "revisions are"
+            } else {
+                "revision is"
+            };
+            bad(&format!("{BARE_NUMBER}; the {kind} r{at}"))
+        }
         None if op.accept || op.reject => bad("--accept and --reject take a revision (-p r12)"),
         None => Ok(None),
         Some(_) if op.accept && op.reject => bad("--accept and --reject exclude each other"),
@@ -238,6 +258,9 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     }
     if let Some(reply) = &op.reply {
         let Some(comment_id) = comment_number(at) else {
+            if is_bare_number(at) && !at.contains('+') {
+                return bad(&format!("{BARE_NUMBER}; the comment is c{at}"));
+            }
             return bad("--reply is for a comment (-p c5)");
         };
         if op.anchor.is_some()
@@ -352,6 +375,9 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
         (Verb::Add, None, _, None) => return bad("add needs --content"),
         // Edit.
         (Verb::Edit, None, _, _) if op.resolve => {
+            if is_bare_number(at) && !at.contains('+') {
+                return bad(&format!("{BARE_NUMBER}; the comment is c{at}"));
+            }
             return bad("--resolve is for a comment (-p c5)");
         }
         (Verb::Edit, None, _, _) if op.before || op.comment => {

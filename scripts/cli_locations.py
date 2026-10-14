@@ -44,6 +44,7 @@ import concurrent.futures
 import difflib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -145,7 +146,19 @@ DEPRECATED = Deprecated()
 
 
 def run(binary: Path, args: list[str], cwd: Path) -> tuple[int, str, str]:
-    done = subprocess.run([str(binary), *args], cwd=cwd, capture_output=True, text=True, timeout=120)
+    # UTF-8 whatever the locale: the view prints em dashes, and a C-locale
+    # host would otherwise fail to decode them.
+    try:
+        done = subprocess.run(
+            [str(binary), *args],
+            cwd=cwd,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", "timed out after 120s"
     return done.returncode, done.stdout, done.stderr
 
 
@@ -446,12 +459,13 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="exit 1 when docs/locations.md drifted")
     parser.add_argument("--strict", action="store_true", help="exit 1 while any deprecated id is in use")
     args = parser.parse_args()
-    subprocess.run(["cargo", "build", "--quiet", "--bin", "jubarte"], cwd=ROOT, check=True)
+    cargo = shutil.which("cargo") or str(Path.home() / ".cargo" / "bin" / "cargo")
+    subprocess.run([cargo, "build", "--quiet", "--bin", "jubarte"], cwd=ROOT, check=True)
     fresh = render(BINARY)
     if warn_deprecated() and args.strict:
         return 1
     if args.check:
-        current = TARGET.read_text() if TARGET.exists() else ""
+        current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else ""
         if current != fresh:
             sys.stdout.writelines(
                 difflib.unified_diff(current.splitlines(True), fresh.splitlines(True), str(TARGET), "fresh")
@@ -462,7 +476,7 @@ def main() -> int:
             )
             return 1
         return 0
-    TARGET.write_text(fresh)
+    TARGET.write_text(fresh, encoding="utf-8")
     print(f"wrote {TARGET.relative_to(ROOT)}", file=sys.stderr)
     return 0
 

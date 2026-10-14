@@ -88,7 +88,7 @@ nothing; `-o redline.pdf` renders it instead.
 ### Inspect and resolve tracked changes
 
 ```sh
-jubarte changes redline.docx          # one change per line: r12, kind, author, paragraph, text
+jubarte changes redline.docx          # one mark per line (a substitution is two): r12, kind, author, paragraph, text
 
 # Resolve one specific change and leave the others tracked:
 jubarte accept redline.docx \
