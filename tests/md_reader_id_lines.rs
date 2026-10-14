@@ -1233,3 +1233,42 @@ fn a_note_whose_breaks_disagree_with_its_id_line_warns() {
         out.warnings
     );
 }
+
+#[test]
+fn a_footnote_and_an_endnote_sharing_a_label_stay_two_notes() {
+    // The label's first reference names its first definition; the next
+    // reference the next one, which takes a number of its own.
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nFoot[^1] and end[^1].\n\n\
+                <!-- footnotes.p0 -->\n[^1]: foot text\n\n<!-- endnotes.p0 -->\n[^1]: end text\n";
+    let (again, _) = full_trip(view);
+    for line in [
+        "Foot[^1] and end[^2].",
+        "<!-- footnotes.p0 -->",
+        "[^1]: foot text",
+        "<!-- endnotes.p0 -->",
+        "[^2]: end text",
+    ] {
+        assert!(again.lines().any(|l| l == line), "no {line:?} in\n{again}");
+    }
+    // Written the other way round, the endnote is referenced first.
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nEnd[^1] and foot[^1].\n\n\
+                <!-- endnotes.p0 -->\n[^1]: end text\n\n<!-- footnotes.p0 -->\n[^1]: foot text\n";
+    let (again, _) = full_trip(view);
+    assert!(
+        again.contains("<!-- endnotes.p0 -->\n[^1]: end text"),
+        "{again}"
+    );
+    assert!(
+        again.contains("<!-- footnotes.p0 -->\n[^2]: foot text"),
+        "{again}"
+    );
+}
+
+#[test]
+fn a_label_defined_once_and_referenced_twice_is_one_note() {
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nOne[^1] and again[^1].\n\n\
+                <!-- footnotes.p0 -->\n[^1]: the note\n";
+    let (again, _) = full_trip(view);
+    assert!(again.contains("One[^1] and again[^1]."), "{again}");
+    assert!(!again.contains("[^2]"), "{again}");
+}
