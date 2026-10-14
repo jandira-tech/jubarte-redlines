@@ -450,9 +450,31 @@ def edge_notes_tracked():
             styles_extra=styles, settings=settings)
 
 
+# 16. A table inside a footnote: its text must reach the view.
+def edge_notes_table():
+    ref = '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r>'
+    sep = '<w:footnote w:type="separator" w:id="-1">' + p('<w:r><w:separator/></w:r>') + '</w:footnote><w:footnote w:type="continuationSeparator" w:id="0">' + p('<w:r><w:continuationSeparator/></w:r>') + '</w:footnote>'
+    ppr = '<w:pStyle w:val="FootnoteText"/>'
+    grid = '<w:tblGrid><w:gridCol w:w="2400"/><w:gridCol w:w="2400"/></w:tblGrid>'
+    cell = lambda text: '<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr>' + p(r(text), ppr=ppr) + '</w:tc>'
+    tbl = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' + grid
+           + '<w:tr>' + cell("fn-a") + cell("fn-b") + '</w:tr><w:tr>' + cell("fn-c") + cell("fn-d") + '</w:tr></w:tbl>')
+    fn = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:footnotes {W}>{sep}'
+          '<w:footnote w:id="1">' + p(ref, r(" Note"), ppr=ppr) + tbl + p(r("After."), ppr=ppr) + '</w:footnote></w:footnotes>')
+    styles = ('<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style>'
+              '<w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>')
+    body = p(r("Table"), '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r>', r("."))
+    settings = '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>'
+    package("edge-notes-table.docx", body,
+            parts={"word/footnotes.xml": fn},
+            rels=[("rIdFn", f"{REL}/footnotes", "footnotes.xml")],
+            types=[("/word/footnotes.xml", f"{CT}.footnotes+xml")],
+            styles_extra=styles, settings=settings)
+
+
 if __name__ == "__main__":
     for make in (edge_clauses, edge_clauses_more, edge_stories, edge_owner, edge_table_styles, edge_notes, edge_cells,
                  edge_change_ids, edge_order, edge_dates, edge_anchors, edge_change_ids_more, edge_cells_more,
-                 edge_order_more, edge_notes_tracked):
+                 edge_order_more, edge_notes_tracked, edge_notes_table):
         make()
     print("\n".join(sorted(p.name for p in HERE.glob("*.docx"))))

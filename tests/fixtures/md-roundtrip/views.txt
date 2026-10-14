@@ -39,3 +39,4 @@ edge-table-styles.md tests/fixtures/md-roundtrip/edges/edge-table-styles.docx
 edge-cells-more.md tests/fixtures/md-roundtrip/edges/edge-cells-more.docx
 edge-order-more.md tests/fixtures/md-roundtrip/edges/edge-order-more.docx
 edge-notes-tracked.md tests/fixtures/md-roundtrip/edges/edge-notes-tracked.docx
+edge-notes-table.md tests/fixtures/md-roundtrip/edges/edge-notes-table.docx
