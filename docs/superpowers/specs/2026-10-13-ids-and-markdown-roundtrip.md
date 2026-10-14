@@ -209,7 +209,8 @@ renaming would break them. A bookmark whose name repeats (34 in the corpus, most
 `_GoBack` and Docxodus fixtures) is keyed by its `w:id`, which is required and unique:
 `document.w:bookmarkStart.w:id.17`.
 
-**Revisions** keep `w:id`; the 11 repeated revision ids in the corpus follow the first-holder rule.
+**Revisions** keep `w:id`; the 11 repeated revision ids in the corpus follow the first-holder rule
+(later holders are re-keyed, §4.3).
 
 ### 4.4 Determinism
 
@@ -387,6 +388,13 @@ their result only, and the reader has no endnotes.
 | equation | 125 | 30 | Markdown |
 | table of contents | 67 | 67 | `toc0` |
 | nested table | 11 | 9 | `t0.row1.cell2.t0` |
+
+The census counted a row's own `w:trPr/w:ins` and `w:trPr/w:del` as paragraph-mark revisions; they
+insert or delete the row, a table-structure revision (CodeRabbit on #462, fixed in the script with
+`scripts/test_id_census.py`). On `tests/corpus` (689 documents) the fix moves 2,313 revisions from
+the paragraph-mark row (21,130 → 18,817) to the table-structure row (77 → 2,390). The table above
+predates the fix: read its paragraph-mark count as high and its table-structure count as low by
+about that share. Both are reached by `r12` either way.
 
 `scripts/id_census.py` as shipped (re-run in the pi review of #462): short ids reach 152,953
 objects (53.39%), the Markdown 133,076 (46.45%), and one equation reaches neither. The script counts

@@ -65,8 +65,8 @@ Red: `tests/id_types.rs` parses every id the view prints for the fixtures of tas
 
 - clap fields take the types (`value_parser`): `--id`, `-p/--location`, `read -p`, `--reply`,
   `--resolve`. A bad id exits 2 with one message, in the binary, Python and npm.
-- `read -p` drops `Select::parse` and its private grammar; `-p 12` keeps working with the
-  bare-number note (spec §2).
+- `read -p` drops `Select::parse` and its private grammar; `-p 12` is refused (exit 2) with the
+  settled spelling the option takes (`p12`), as every expired id is (spec §2, decided 2026-10-13).
 - The view, JSON, hints and notes print ids through `Display`; the `format!` spellings above go.
 - The wrappers of task 2 are deleted once unused.
 
@@ -75,7 +75,8 @@ Red: `tests/id_types.rs` parses every id the view prints for the fixtures of tas
 Rows, nested tables, text-box paragraphs, ranges, `sN`, `tocN`, `ccN` in the types and in every
 option that takes a location; the YAML `sections:` map prints `s1:` (today `2:`); `read --tables`
 numbers nested tables as the view does; shift notes after an edit that adds or removes a block;
-bare-number deprecation notes; help and `capabilities` stop advertising bare numbers.
+refusals of expired ids that name the settled spelling; help and `capabilities` stop advertising
+bare numbers.
 
 ### 5. The drift check
 
@@ -129,7 +130,8 @@ the view dialect, `--plain` (11). Anchored mode (12). Long ids, then stamping be
 
 ## Open with Arthur
 
-1. The plan's Q19 recommended `body:para:3F2A1B7C`; the spec's §4.1 settled
-   `PART.ELEMENT.ATTRIBUTE.VALUE` since. Today's `body:rev:12` long change ids: accept with a note
-   through 0.13 and refuse in 0.14, as bare numbers? (Recommended.)
+1. Decided (Arthur, 2026-10-13): only the settled ids parse (spec §2). The plan's Q19 recommended
+   `body:para:3F2A1B7C`; the spec's §4.1 settled `PART.ELEMENT.ATTRIBUTE.VALUE` since. Today's
+   `body:rev:12` long change ids parse, unadvertised, only until `read --json` prints the §4 long
+   ids (task 12), and expire in that same change.
 2. Q20 (deprecating `cN.text`) stays open until the Word investigation of the plan runs.

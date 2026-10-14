@@ -48,6 +48,7 @@ inserted or deleted row.
 | `{~~a~>b~~}{>>r1 @AC<<}{>>r2 @JD<<}` | substitution by two authors, deleted side first |
 | `{>>c5 @AC: text<<}`, `re c5`, `resolved` | comment, reply, resolved thread |
 | `header1.r3 @AC`, `footnotes.r7 @AC` | change in another story |
+| `@??` | a mark with no author's name; written back as an empty `w:author` |
 | no tag | new, by the plan author |
 
 **Id lines**: `<!-- pN[ Style][, clause…] -->` above every body paragraph
@@ -58,7 +59,9 @@ inserted or deleted row.
 `in cN` · `empty` (`<!-- p4-p7 empty -->`)
 
 Table: `<!-- tN [center|right] RxC, cells pA-pB by row, pN center, header row repeats,
-merged tN.rowR.cellC across N down N, break-ins TAGS in pN, rev …, fmt … -->`.
+style S, merged tN.rowR.cellC across N down N, gaps tN.rowR before N after N,
+break-ins TAGS in pN, rev …, fmt … -->` (`cells tN.row0 pA-pB tN.row1 …` when
+a cell holds other than one paragraph).
 `pN center|right|left|justify` is a cell paragraph aligned against its column's
 `:-`/`:-:`/`-:` (most of the column decides); `tN center` places the table. Notes: `<!-- footnotes.p0 -->`. Pages: `<!-- page 2 of 5 -->`.
 
@@ -81,7 +84,11 @@ sections:
 ```
 
 Read back: `page:`, `styles:`, `headers:`/`footers:` and `sections:` are
-honoured in any YAML header; id lines and tags only under `view:`.
+honoured in any YAML header; id lines and tags only under `view:`. A
+change or comment naming no author or date takes `-a`/`-d`, else the front
+matter's `author:` and `last_modified:` (or `modified:`, `date:`,
+`created:`), else the `--reference-doc`'s `dc:creator` and
+`dcterms:created`, else `Redline` and now.
 `  # …` after a value is a comment unless it sits inside quotes.
 
 **Escapes the view prints**: a line starting `# ` `- ` `> ` `1. `; `*`
