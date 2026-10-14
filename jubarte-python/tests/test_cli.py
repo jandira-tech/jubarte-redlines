@@ -122,7 +122,11 @@ def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
     # names the script: `uv run --with` (uv 0.13) runs an overlay interpreter
     # whose directory is not the one the script went to.
     record = importlib.metadata.distribution("jubarte-redlines").files or []
-    found = [f.locate() for f in record if f.name == "jubarte-redlines" and f.parent.name == "bin"]
+    found = [
+        f.locate()
+        for f in record
+        if f.name in ("jubarte-redlines", "jubarte-redlines.exe") and f.parent.name in ("bin", "Scripts")
+    ]
     script = shutil.which(str(found[0])) if found else None
     assert script is not None, "the wheel installs no jubarte-redlines script"
     a, b, out = tmp_path / "a.docx", tmp_path / "b.docx", tmp_path / "redline.docx"

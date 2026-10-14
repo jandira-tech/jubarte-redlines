@@ -673,7 +673,7 @@ fn mark_close(source: &str, literal: &Literal, at: usize, until: usize) -> Optio
     let end = source[at + 2..until]
         .find("\n\n")
         .map_or(until, |blank_line| at + 2 + blank_line);
-    let mut from = at + 3;
+    let mut from = at + 2 + source[at + 2..].chars().next().map_or(1, char::len_utf8);
     while let Some(found) = source.get(from..end)?.find("==") {
         let close = from + found;
         let fits = !blank(close - 1)
@@ -1074,6 +1074,25 @@ mod tests {
         );
         assert_eq!(resolve("{==a{++b++}{--c--}==}{>>n<<}", true), "ab");
         assert_eq!(resolve("{==a{++b++}{--c--}==}{>>n<<}", false), "ac");
+    }
+
+    #[test]
+    fn a_mark_run_closes_past_a_wide_first_character() {
+        // The closer search starts past the first inner character, and `é`
+        // is two bytes and `→` three: an `==` run starting with either still
+        // finds its `==`.
+        assert_eq!(
+            pieces(&encode("==é== and ==→x==")),
+            [
+                "<MarkStart>",
+                "é",
+                "<MarkEnd>",
+                " and ",
+                "<MarkStart>",
+                "→x",
+                "<MarkEnd>"
+            ]
+        );
     }
 
     #[test]

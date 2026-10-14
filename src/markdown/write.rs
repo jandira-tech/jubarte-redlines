@@ -1438,7 +1438,14 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn math(&mut self, latex: &str, display: bool) {
         if self.metadata.is_some() || self.image.is_some() || self.comment.is_some() {
             let fence = if display { "$$" } else { "$" };
-            self.plain(&format!("{fence}{}{fence}", critic::restore(latex)));
+            let text = format!("{fence}{}{fence}", critic::restore(latex));
+            if let Some(metadata) = &mut self.metadata {
+                metadata.push_str(&text);
+            } else if let Some((_, alt)) = &mut self.image {
+                alt.push_str(&text);
+            } else {
+                self.plain(&text);
+            }
             return;
         }
         // An insertion or deletion inside the math (`$A={--π--}r^2$`) marks

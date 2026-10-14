@@ -2061,6 +2061,16 @@ mod tests {
     }
 
     #[test]
+    fn nesting_past_the_limit_reads_as_text_instead_of_overflowing() {
+        // Markdown is untrusted: 50,000 nested groups must not take the
+        // stack down with the process.
+        let deep = format!("{}x{}", "{".repeat(50_000), "}".repeat(50_000));
+        let _ = shape(&deep);
+        let fracs = format!("{}x{}", r"\frac{".repeat(20_000), "}{y}".repeat(20_000));
+        let _ = shape(&fracs);
+    }
+
+    #[test]
     fn an_array_is_a_matrix_without_its_column_spec() {
         assert_eq!(
             shape(r"\begin{array}{cc} a & b \\ c & d \end{array}"),
