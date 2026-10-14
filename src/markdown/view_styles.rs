@@ -164,6 +164,35 @@ fn unquote(value: &str) -> Option<String> {
 /// style's line (`Normal: …`, its id quoted when it must be), each
 /// heading's (`"#": Heading1, …`) and each other style's (`TOC2: …`), after
 /// the default's. Lines that do not read are left out.
+/// The legend's `table:` style, which every table takes: its id and, when
+/// the legend says `all borders 0.5pt`, that border in eighths of a point.
+pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>)> {
+    let mut inside = false;
+    for line in yaml.lines() {
+        if !line.starts_with(' ') {
+            inside = line.trim_end() == "styles:";
+            continue;
+        }
+        let Some(value) = without_comment(line)
+            .trim()
+            .strip_prefix("table: ")
+            .filter(|_| inside)
+            .and_then(|v| unquote(v.trim()))
+        else {
+            continue;
+        };
+        let (id, rest) = value.split_once(", ").unwrap_or((&value, ""));
+        let border = rest
+            .strip_prefix("all borders ")
+            .and_then(|pt| pt.strip_suffix("pt"))
+            .and_then(|pt| pt.parse::<f64>().ok())
+            .filter(|pt| (0.25..=6.0).contains(pt))
+            .map(|pt| (pt * 8.0).round() as u32);
+        return unquote(id).map(|id| (id, border));
+    }
+    None
+}
+
 pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {
     let mut specs = Vec::new();
     let mut inside = false;

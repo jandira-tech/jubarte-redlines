@@ -275,6 +275,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         lead: None,
         flattening: 0,
         heading_slug: None,
+        tables_differ: {
+            let (styles, unstyled) = table_styles(document.child("body").unwrap_or(&document));
+            styles.len() > 1 || (!styles.is_empty() && unstyled)
+        },
         bookmarks: bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
@@ -286,6 +290,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         comments: HashMap::new(),
         notes: HashMap::new(),
         referenced: HashSet::new(),
+        noted_at_end: HashSet::new(),
+        noted_at_reference: HashSet::new(),
         open_comments: Vec::new(),
         hidden_ranges: Vec::new(),
         pending_notes: Vec::new(),
@@ -384,7 +390,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 && !writer.resolved
                 && let Some(story) = story
             {
-                let (rev, fmt) = agent::story_unshown(note, &story, &def, &writer.handles);
+                let (rev, fmt) =
+                    agent::story_unshown(note, &story, &def, &HashSet::new(), &writer.handles);
                 let mut clauses = Vec::new();
                 if !rev.is_empty() {
                     clauses.push(format!("rev {}", rev.join("; ")));
@@ -538,16 +545,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 }
             }
         }
-        let mut table_styles: Vec<String> = Vec::new();
-        {
-            for t in agent::tables(body) {
-                if let Some(s) = t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val"))
-                    && !table_styles.iter().any(|x| x == s)
-                {
-                    table_styles.push(s.to_string());
-                }
-            }
-        }
+        let (table_styles, _) = table_styles(body);
         let even_odd = settings
             .as_ref()
             .is_some_and(|s| s.child("evenAndOddHeaders").is_some());
@@ -602,7 +600,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         continue;
                     };
                     let paragraphs = header::story_paragraphs(&root);
-                    let (index, text, align) = paragraphs
+                    let read: Vec<(usize, String, Option<&'static str>)> = paragraphs
                         .iter()
                         .enumerate()
                         .map(|(i, p)| {
@@ -623,10 +621,32 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             };
                             (i, header::story_text(p, view), align)
                         })
-                        .find(|(_, text, _)| !text.is_empty())
-                        .unwrap_or((0, String::new(), None));
+                        .collect();
+                    // From the first paragraph with text to the last.
+                    let first = read.iter().position(|(_, text, _)| !text.is_empty());
+                    let last = read.iter().rposition(|(_, text, _)| !text.is_empty());
+                    let (index, text, align, more) = match (first, last) {
+                        (Some(first), Some(last)) => (
+                            read[first].0,
+                            read[first].1.clone(),
+                            read[first].2,
+                            read[first + 1..=last]
+                                .iter()
+                                .map(|(_, text, _)| text.clone())
+                                .collect(),
+                        ),
+                        _ => (0, String::new(), None, Vec::new()),
+                    };
                     let (rev, fmt) = if accept.is_none() && options.ids {
-                        agent::story_unshown(&root, &stem, &text, &handles)
+                        let shown = std::iter::once(&text)
+                            .chain(&more)
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let (mut marks, ids) = agent::story_paragraph_marks(&root, &stem, &handles);
+                        let (rev, fmt) =
+                            agent::story_unshown(&root, &stem, &shown.join("\n"), &ids, &handles);
+                        marks.extend(rev);
+                        (marks, fmt)
                     } else {
                         (Vec::new(), Vec::new())
                     };
@@ -638,6 +658,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         ty,
                         id: crate::ids::short_paragraph(&format!("{stem}:p:{index}")),
                         text,
+                        more,
                         align,
                         active: match ty {
                             "first" => title_page,
@@ -690,7 +711,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     if defined.contains(&(endnote, id)) {
                         continue;
                     }
-                    let (rev, fmt) = agent::story_unshown(note, story, "", &handles);
+                    let (rev, fmt) =
+                        agent::story_unshown(note, story, "", &HashSet::new(), &handles);
                     note_changes.0.extend(rev);
                     note_changes.1.extend(fmt);
                 }
@@ -724,6 +746,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             heading_styles,
             other_styles,
             table_styles,
+            tables_differ: writer.tables_differ,
             sections,
         };
         let mut head = header::render(&facts);
@@ -1478,6 +1501,9 @@ struct Writer<'a> {
     /// The bookmarks a link or a reference field names, which print as
     /// `<a id="name"></a>` where they start.
     bookmarks: HashSet<String>,
+    /// The tables differ in style (two styles, or one and none): each
+    /// table line names its own, `style Ledger`.
+    tables_differ: bool,
     /// In a heading: the slug a Markdown link names it by, whose bookmark
     /// the writer makes again and so prints no `<a id>`.
     heading_slug: Option<String>,
@@ -1497,6 +1523,13 @@ struct Writer<'a> {
     /// Comments with a `commentReference`, where their note goes. Others get
     /// their note where their range ends.
     referenced: HashSet<String>,
+    /// Comments whose note followed their range's end, inside a paragraph
+    /// and outside any change: there Word puts the reference, and the
+    /// writer takes the note back as the range's own comment. Their
+    /// reference, wherever it sits, prints nothing more.
+    noted_at_end: HashSet<String>,
+    /// Comments whose note a reference printed.
+    noted_at_reference: HashSet<String>,
     /// Comment ranges open at this point, in the order they started.
     open_comments: Vec<String>,
     /// Agent view, comments hidden: the ranges open at this point. They
@@ -1572,6 +1605,9 @@ impl Writer<'_> {
                     if self.agent
                         && let Some(line) = agent::table_line(
                             child,
+                            self.tables_differ
+                                .then(|| child.path(&["tblPr", "tblStyle"])?.attr("val"))
+                                .flatten(),
                             &self.column_alignments(child).1,
                             self.resolved,
                             (!self.comments_inline).then_some(&self.comments),
@@ -1674,17 +1710,27 @@ impl Writer<'_> {
             }
             (false, Some(at)) => {
                 self.open_comments.remove(at);
-                let note = (!self.referenced.contains(id))
-                    .then(|| self.note(id))
-                    .flatten();
                 match out {
                     Some(out) => {
                         out.close(Mark::Highlight);
-                        if let Some(note) = note {
+                        // Inside a change the note waits for the reference:
+                        // `{++…{>>note<<}…++}` is no range's comment.
+                        let unprinted = if self.revisions.is_empty() {
+                            !self.noted_at_reference.contains(id)
+                        } else {
+                            !self.referenced.contains(id)
+                        };
+                        if unprinted && let Some(note) = self.note(id) {
                             out.comment(&note);
+                            self.noted_at_end.insert(id.to_string());
                         }
                     }
-                    None => self.pending_notes.extend(note),
+                    None => {
+                        let note = (!self.referenced.contains(id))
+                            .then(|| self.note(id))
+                            .flatten();
+                        self.pending_notes.extend(note);
+                    }
                 }
             }
             _ => {}
@@ -2415,8 +2461,12 @@ impl Writer<'_> {
                         return;
                     }
                 }
+                if self.noted_at_end.contains(id) {
+                    return;
+                }
                 if let Some(note) = self.note(id) {
                     out.comment(&note);
+                    self.noted_at_reference.insert(id.to_string());
                 }
             }
             "drawing" | "pict" | "object" if !hidden => self.drawing(child, out, extra),
@@ -3258,6 +3308,24 @@ fn hyperlink_instruction(instruction: &str) -> Option<String> {
     link_target(url, anchor).map(|t| ooxml::titled(&t, title))
 }
 
+/// The table styles of `body`'s tables, in the order they first come, and
+/// whether a table has none.
+fn table_styles(body: &Element) -> (Vec<String>, bool) {
+    let mut styles: Vec<String> = Vec::new();
+    let mut unstyled = false;
+    for t in agent::tables(body) {
+        match t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
+            Some(s) => {
+                if !styles.iter().any(|x| x == s) {
+                    styles.push(s.to_string());
+                }
+            }
+            None => unstyled = true,
+        }
+    }
+    (styles, unstyled)
+}
+
 /// The text of `p` the accepted document shows: its `w:t`, not deleted
 /// or moved-away text.
 fn shown_text(p: &Element) -> String {
@@ -3913,7 +3981,7 @@ mod tests {
         let body = [
             p(
                 "",
-                r#"<w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:del w:id="1"><w:r><w:rPr><w:i/></w:rPr><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2"><w:r><w:rPr><w:b/></w:rPr><w:t>new</w:t></w:r></w:ins><w:r><w:t>.</w:t></w:r>"#,
+                r#"<w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:ins w:id="2"><w:r><w:rPr><w:b/></w:rPr><w:t>new</w:t></w:r></w:ins><w:del w:id="1"><w:r><w:rPr><w:i/></w:rPr><w:delText>old</w:delText></w:r></w:del><w:r><w:t>.</w:t></w:r>"#,
             ),
             p(
                 "",
@@ -3922,8 +3990,8 @@ mod tests {
         ]
         .concat();
 
-        // A deletion next to an insertion is a replacement: CriticMarkup's
-        // substitution, as pandiff writes it.
+        // An insertion then a deletion is a replacement, as Word Compare
+        // writes it: CriticMarkup's substitution, as pandiff writes it.
         assert_eq!(
             md(&docx(&body, &[])),
             "Keep {~~_old_~>**new**~~}.\n\n{++destination++} / {--source--}\n"
@@ -4468,9 +4536,9 @@ mod tests {
             p("", &format!("{}{}{}{}", r("a"), ins(""), del(&r("")), ins(&r(" ")))),
             // Inserted by one author and deleted by another.
             p("", &format!("{}{}", r("x"), ins(&del(&dr("y"))))),
-            // Moves are an insertion and a deletion; next to each other they read
-            // as a substitution.
-            p("", r#"<w:moveFrom w:id="3"><w:r><w:delText>here</w:delText></w:r></w:moveFrom><w:moveTo w:id="4"><w:r><w:t>there</w:t></w:r></w:moveTo>"#),
+            // Moves are an insertion and a deletion; the inserted side then
+            // the deleted one read as a substitution.
+            p("", r#"<w:moveTo w:id="4"><w:r><w:t>there</w:t></w:r></w:moveTo><w:moveFrom w:id="3"><w:r><w:delText>here</w:delText></w:r></w:moveFrom>"#),
         ]
         .concat();
         assert_eq!(
@@ -4737,8 +4805,8 @@ mod tests {
                 "",
                 &format!(
                     "{}{}",
-                    by("del", "Ana Lima", t1, &dr("fonts")),
-                    by("ins", "Ana Lima", t1, &r("styles"))
+                    by("ins", "Ana Lima", t1, &r("styles")),
+                    by("del", "Ana Lima", t1, &dr("fonts"))
                 ),
             ),
             // Two people's: both notes, old side first.
@@ -4746,8 +4814,8 @@ mod tests {
                 "",
                 &format!(
                     "{}{}",
-                    by("del", "Ana Lima", t1, &dr("old")),
-                    by("ins", "Bo Chen", t2, &r("new"))
+                    by("ins", "Bo Chen", t2, &r("new")),
+                    by("del", "Ana Lima", t1, &dr("old"))
                 ),
             ),
             // The same author at two times stays two changes.

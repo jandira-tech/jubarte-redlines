@@ -525,11 +525,11 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
     let mut index = 0;
     while index < nodes.len() {
         match (&nodes[index], nodes.get(index + 1)) {
+            // The new text, then the old it replaces: Word's Compare
+            // writes a substitution so, and so the writer puts
+            // `{~~old~>new~~}` back. A deletion before an insertion stays
+            // two changes, in their order.
             (
-                Node::Span(Mark::Deletion, old_by, old),
-                Some(Node::Span(Mark::Insertion, new_by, new)),
-            )
-            | (
                 Node::Span(Mark::Insertion, new_by, new),
                 Some(Node::Span(Mark::Deletion, old_by, old)),
             ) => {
@@ -918,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn deletion_next_to_insertion_becomes_a_substitution_in_either_order() {
+    fn an_insertion_then_a_deletion_is_a_substitution_and_the_reverse_two_changes() {
         let del_ins = [
             ("open", "-"),
             ("t", "old"),
@@ -935,9 +935,11 @@ mod tests {
             ("t", "old"),
             ("close", "-"),
         ];
-        assert_eq!(script(&del_ins), "{~~old~>new~~}");
+        // Word's Compare writes the new text first; the writer puts
+        // `{~~old~>new~~}` back so. The other order keeps its two changes.
         assert_eq!(script(&ins_del), "{~~old~>new~~}");
-        // Only one pair: a third span stays on its own.
+        assert_eq!(script(&del_ins), "{--old--}{++new++}");
+        // Only one pair: a span before it stays on its own.
         let triple = [
             ("open", "-"),
             ("t", "a"),
@@ -949,7 +951,7 @@ mod tests {
             ("t", "c"),
             ("close", "-"),
         ];
-        assert_eq!(script(&triple), "{~~a~>b~~}{--c--}");
+        assert_eq!(script(&triple), "{--a--}{~~c~>b~~}");
     }
 
     #[test]
@@ -1349,16 +1351,15 @@ mod tests {
     #[test]
     fn a_substitution_names_one_author_or_both() {
         let same = [
-            ("by-", "Ana"),
-            ("t", "old"),
-            ("close", "-"),
             ("by+", "Ana"),
             ("t", "new"),
             ("close", "+"),
+            ("by-", "Ana"),
+            ("t", "old"),
+            ("close", "-"),
         ];
         assert_eq!(script(&same), "{~~old~>new~~}{>>Ana<<}");
-        // Insertion first still reads old ~> new, and each author follows in
-        // the order of old then new.
+        // Each author follows in the order of old then new.
         let different = [
             ("by+", "Bo"),
             ("t", "new"),
@@ -1369,21 +1370,21 @@ mod tests {
         ];
         assert_eq!(script(&different), "{~~old~>new~~}{>>Ana<<}{>>Bo<<}");
         let one_side = [
-            ("open", "-"),
-            ("t", "old"),
-            ("close", "-"),
             ("by+", "Bo"),
             ("t", "new"),
             ("close", "+"),
+            ("open", "-"),
+            ("t", "old"),
+            ("close", "-"),
         ];
         assert_eq!(script(&one_side), "{~~old~>new~~}{>>Bo<<}");
         let other_side = [
-            ("by-", "Ana"),
-            ("t", "old"),
-            ("close", "-"),
             ("open", "+"),
             ("t", "new"),
             ("close", "+"),
+            ("by-", "Ana"),
+            ("t", "old"),
+            ("close", "-"),
         ];
         assert_eq!(script(&other_side), "{~~old~>new~~}{>>Ana<<}");
     }

@@ -39,6 +39,9 @@ pub(crate) struct StoryFact {
     /// `header2` (the part `header2.xml`, first paragraph), `footer1`, `header2.p2`.
     pub id: String,
     pub text: String,
+    /// The paragraphs after it, to the last with text: `text` then prints
+    /// as a list (`text: [Page 1, Draft]`).
+    pub more: Vec<String>,
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
     pub active: bool,
@@ -101,6 +104,9 @@ pub(crate) struct Facts<'a> {
     /// Every other paragraph style the body uses, in first-use order.
     pub other_styles: Vec<String>,
     pub table_styles: Vec<String>,
+    /// The tables differ in style: their lines name theirs, and the
+    /// legend lists them all as `tables:`.
+    pub tables_differ: bool,
     /// The body's sections in order; the first one is described in full.
     pub sections: Vec<SectionFact>,
     /// Tracked view: the changes (`rev`, `fmt`) of the notes no definition
@@ -756,7 +762,16 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
 }
 
 fn entry(s: &StoryFact) -> String {
-    let mut inner = format!("id: {}, text: {}", s.id, scalar(&s.text, true));
+    let text = if s.more.is_empty() {
+        scalar(&s.text, true)
+    } else {
+        let all: Vec<String> = std::iter::once(&s.text)
+            .chain(&s.more)
+            .map(|t| scalar(t, true))
+            .collect();
+        format!("[{}]", all.join(", "))
+    };
+    let mut inner = format!("id: {}, text: {text}", s.id);
     if let Some(align) = s.align {
         inner.push_str(&format!(", {align}"));
     }
@@ -1003,7 +1018,7 @@ fn part_two(out: &mut String, f: &Facts) {
     }
     match f.table_styles.as_slice() {
         [] => {}
-        [one] => kv(
+        [one] if !f.tables_differ => kv(
             out,
             &format!(
                 "  table: {}",

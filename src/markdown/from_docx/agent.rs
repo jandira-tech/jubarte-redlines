@@ -192,8 +192,8 @@ pub(crate) fn format_tags(tags: &[String]) -> String {
 
 /// The revisions among a paragraph's direct children, in order, as the
 /// renderer shows them: neighbouring marks of one kind by one author join
-/// (`7+8@AC`), then a deletion directly followed by an insertion (or the
-/// reverse) pairs as a substitution, greedily left to right. Bookmarks,
+/// (`7+8@AC`), then an insertion directly followed by a deletion pairs as
+/// a substitution, greedily left to right. Bookmarks,
 /// proofing marks and comment markers do not break adjacency; a run does.
 /// Revisions inside links, content controls and simple fields count.
 pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
@@ -264,7 +264,7 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
             (_, slot) => joined.push(slot),
         }
     }
-    // 2. Pair a deletion with the insertion beside it.
+    // 2. Pair an insertion with the deletion after it.
     let mut out = Vec::new();
     let mut i = 0;
     while i < joined.len() {
@@ -273,10 +273,10 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
             continue;
         };
         let next_kind = joined.get(i + 1).and_then(|n| n.as_ref()).map(|n| n.kind);
-        let pair = matches!(
-            (current.kind, next_kind),
-            ("del", Some("ins")) | ("ins", Some("del"))
-        );
+        // Word Compare's order: the insertion, then the deletion. A
+        // deletion before an insertion stays two changes, as the text
+        // shows it.
+        let pair = matches!((current.kind, next_kind), ("ins", Some("del")));
         if pair {
             let next = joined[i + 1].take().expect("checked above");
             let (old, new) = if current.kind == "del" {
@@ -790,6 +790,7 @@ pub(crate) fn story_unshown(
     root: &Element,
     story: &str,
     shown: &str,
+    skip: &HashSet<String>,
     handles: &Handles,
 ) -> (Vec<String>, Vec<String>) {
     fn walk<'e>(e: &'e Element, out: &mut Vec<(bool, &'e Element)>) {
@@ -816,7 +817,7 @@ pub(crate) fn story_unshown(
         let Some(id) = carrier.attr("id") else {
             continue;
         };
-        if printed.contains(id) {
+        if printed.contains(id) || skip.contains(id) {
             continue;
         }
         let tag = format_tag(&format!("{story}#{}", tag_of(carrier, handles)));
@@ -826,6 +827,36 @@ pub(crate) fn story_unshown(
         }
     }
     (rev, fmt)
+}
+
+/// A header's or footer's paragraph marks that are tracked: `break-del
+/// footer1.r25 @BC in footer1.p1` each, and their `w:id`s.
+pub(crate) fn story_paragraph_marks(
+    root: &Element,
+    story: &str,
+    handles: &Handles,
+) -> (Vec<String>, HashSet<String>) {
+    let mut entries = Vec::new();
+    let mut ids = HashSet::new();
+    for (index, p) in paragraphs(root).into_iter().enumerate() {
+        for mark in p
+            .path(&["pPr", "rPr"])
+            .into_iter()
+            .flat_map(Element::elements)
+        {
+            let word = match mark.local() {
+                "ins" => "break-ins",
+                "del" => "break-del",
+                _ => continue,
+            };
+            let Some(id) = mark.attr("id") else { continue };
+            ids.insert(id.to_string());
+            let tag = format_tag(&format!("{story}#{}", tag_of(mark, handles)));
+            let at = crate::ids::short_paragraph(&format!("{story}:p:{index}"));
+            entries.push(format!("{word} {tag} in {at}"));
+        }
+    }
+    (entries, ids)
 }
 
 /// An empty paragraph that still says something the `pN empty` run would
@@ -1296,6 +1327,7 @@ fn merged_cells(t: &str, grid: &[Vec<(usize, usize, Option<bool>)>]) -> Vec<Stri
 /// are the comment threads whose range runs through the table (`in c5`).
 pub(crate) fn table_line(
     tbl: &Element,
+    style: Option<&str>,
     aligned: &[String],
     resolved: bool,
     comments: Option<&HashMap<String, Element>>,
@@ -1335,6 +1367,7 @@ pub(crate) fn table_line(
     let mut fmt: Vec<String> = Vec::new();
     let mut held: Vec<String> = Vec::new();
     let mut held_ids: Vec<String> = Vec::new();
+    let mut gaps: Vec<String> = Vec::new();
     // The tracked view names the table's own property changes (Word's
     // `tblPrChange`, `tblGridChange`, `trPrChange`, `tblPrExChange`,
     // `tcPrChange`) and its cell insertions, deletions and merges, where
@@ -1377,11 +1410,26 @@ pub(crate) fn table_line(
                 }
             }
         }
-        let mut column = tr
-            .path(&["trPr", "gridBefore"])
-            .and_then(|g| g.attr("val"))
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0);
+        let grid_skip = |name: &str| {
+            tr.path(&["trPr", name])
+                .and_then(|g| g.attr("val"))
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0)
+        };
+        let mut column = grid_skip("gridBefore");
+        // Grid columns a row leaves out before or after its cells: the
+        // view prints them as empty cells, which are no cells.
+        let after = grid_skip("gridAfter");
+        let mut gap = Vec::new();
+        if column > 0 {
+            gap.push(format!("before {column}"));
+        }
+        if after > 0 {
+            gap.push(format!("after {after}"));
+        }
+        if !gap.is_empty() {
+            gaps.push(format!("t{t}.row{r} {}", gap.join(" ")));
+        }
         let mut cells = Vec::new();
         for (c, tc) in super::row_cells(tr).enumerate() {
             let span = tc
@@ -1491,9 +1539,15 @@ pub(crate) fn table_line(
     {
         clauses.push("header row repeats".to_string());
     }
+    if let Some(style) = style {
+        clauses.push(format!("style {style}"));
+    }
     let merged = merged_cells(t, &grid);
     if !merged.is_empty() {
         clauses.push(format!("merged {}", merged.join("; ")));
+    }
+    if !gaps.is_empty() {
+        clauses.push(format!("gaps {}", gaps.join("; ")));
     }
     if !break_ins.is_empty() {
         clauses.push(format!("break-ins {}", break_ins.join("; ")));
@@ -2202,9 +2256,11 @@ mod tests {
     }
 
     #[test]
-    fn revision_tags_join_neighbours_then_pair_a_deletion_with_the_insertion_beside_it() {
+    fn revision_tags_join_neighbours_then_pair_an_insertion_with_the_deletion_after_it() {
+        // Word Compare's substitution is the insertion, then the deletion;
+        // a deletion before an insertion stays two changes.
         let d = doc(
-            r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:bookmarkStart w:id="9" w:name="_b"/><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t> u </w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins></w:p>"#,
+            r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:bookmarkStart w:id="9" w:name="_b"/><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:r><w:t> u </w:t></w:r><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:r><w:t> v </w:t></w:r><w:del w:id="4" w:author="Ann Counsel"><w:r><w:delText>f</w:delText></w:r></w:del><w:ins w:id="5" w:author="Ann Counsel"><w:r><w:t>g</w:t></w:r></w:ins></w:p>"#,
         );
         let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
@@ -2212,7 +2268,16 @@ mod tests {
             .into_iter()
             .map(|t| format!("{}:{}", t.kind, t.tag))
             .collect();
-        assert_eq!(tags, ["ins:0@AC", "sub:1+2@AC", "sub:3+7+8@AC"]);
+        assert_eq!(
+            tags,
+            [
+                "ins:0@AC",
+                "sub:1+2@AC",
+                "sub:3+7+8@AC",
+                "del:4@AC",
+                "ins:5@AC"
+            ]
+        );
     }
 
     #[test]
@@ -2287,7 +2352,7 @@ mod tests {
     #[test]
     fn range_markers_do_not_break_a_move_or_a_substitution() {
         let d = doc(
-            r#"<w:p><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permStart w:id="30"/><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permEnd w:id="30"/></w:p>"#,
+            r#"<w:p><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permStart w:id="30"/><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permEnd w:id="30"/></w:p>"#,
         );
         let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
