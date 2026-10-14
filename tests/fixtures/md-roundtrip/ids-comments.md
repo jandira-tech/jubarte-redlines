@@ -13,7 +13,7 @@ body: p0-p36, 1 table, 1 page      # page count estimated from breaks
 page: A4 portrait, margins 0.79in, header/footer 0in
 styles:
   Normal: Liberation Serif 12pt, left  # default; unannotated paragraphs use it
-  "#": Heading1, Liberation Sans bold 18pt, before 12pt, after 6pt, keep-next
+  "#": Heading1, Liberation Sans bold 18pt, before 12pt, after 6pt, keep-next, named Heading 1
 ---
 
 <!-- p0 left, hanging 0in, left 0in -->

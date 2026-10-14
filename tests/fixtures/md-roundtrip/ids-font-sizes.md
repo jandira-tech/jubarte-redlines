@@ -11,6 +11,7 @@ page: 8.26x11.68in portrait, margins top 1.2in, right 0.76in, bottom 0.62in, lef
 styles:
   Normal: Calibri 12pt, left       # default; unannotated paragraphs use it
   "##": Heading2, Arial 9pt
+  BodyText: Arial 8.5pt, named Body Text
   table: TableGrid, all borders 0.5pt
 headers:
   default: {id: header1, text: ""}

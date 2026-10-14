@@ -12,6 +12,7 @@ styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   "#": Heading1, Calibri Light 16pt, before 12pt, keep-next
   "##": Heading2, Calibri Light 13pt, before 2pt, keep-next
+  NoSpacing: Calibri 11pt, named No Spacing
   table: TableGrid, all borders 0.5pt
 ---
 
