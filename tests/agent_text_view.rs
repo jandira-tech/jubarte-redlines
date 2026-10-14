@@ -5642,3 +5642,25 @@ fn a_style_named_changes_does_not_collide_with_the_style_changes() {
     );
     assert!(!out.contains("unplaced:"), "{out}");
 }
+
+/// coderabbit 4269828968 (#427): a `w:id` that holds a `+` (`1+2`, only a
+/// malformed file has one) is one change. Its tag prints the long id
+/// `jubarte changes` lists, never `r1+2`, which names r1 and r2.
+#[test]
+fn a_revision_id_holding_a_plus_prints_as_one_change() {
+    let bytes = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Lead </w:t></w:r><w:ins w:id="1+2" w:author="Ann Counsel"><w:r><w:t>new</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> mid </w:t></w:r>{}</w:p>"#,
+        ins(1, "Ann Counsel", "one")
+    ));
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert!(listed.contains(&"body:rev:1+2".to_string()), "{listed:?}");
+    let out = agent(&bytes);
+    assert!(out.contains("{>>body:rev:1+2 @AC<<}"), "{out}");
+    assert!(out.contains("{>>r1 @AC<<}"), "{out}");
+    assert!(!out.contains("r1+2 @AC"), "{out}");
+    assert!(!out.contains("unplaced:"), "{out}");
+}

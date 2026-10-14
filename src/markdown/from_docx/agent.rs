@@ -168,9 +168,48 @@ fn half_ranges(mark: &Element, handles: &Handles) -> (bool, bool) {
 /// author the legend does not know: a malformed file, or Word's
 /// `w:tblGridChange`, which has no author).
 pub(crate) fn tag_of(element: &Element, handles: &Handles) -> String {
-    let id = element.attr("id").unwrap_or("?");
+    let id = element.attr("id").map_or_else(|| "?".to_string(), tag_id);
     let handle = handles.of(element.attr("author")).unwrap_or("??");
     format!("{id}@{handle}")
+}
+
+/// A `w:id` as an internal tag holds it: the characters tags join and
+/// split on (`+`, `|`, `@`, `#`, `?`) and `%` itself spelled `%XX`, so a
+/// malformed id such as `1+2` stays one id. [`untag_id`] reverses it.
+fn tag_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for c in id.chars() {
+        if matches!(c, '+' | '|' | '@' | '#' | '?' | '%') {
+            out.push_str(&format!("%{:02X}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The `w:id` one piece of an internal tag spells ([`tag_id`]).
+fn untag_id(piece: &str) -> String {
+    let mut out = String::with_capacity(piece.len());
+    let mut rest = piece;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        match rest
+            .get(at + 1..at + 3)
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            Some(byte) => {
+                out.push(char::from(byte));
+                rest = &rest[at + 3..];
+            }
+            None => {
+                out.push('%');
+                rest = &rest[at + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// One internal tag's parts: `header1#1+2@AC` → (`Some("header1")`,
@@ -233,7 +272,7 @@ pub(crate) fn format_tag(tag: &str) -> String {
             }
             let changes: Vec<crate::ids::ChangeId> = ids
                 .split('+')
-                .map(|w| crate::ids::ChangeId::new(story.unwrap_or("body"), w))
+                .map(|w| crate::ids::ChangeId::new(story.unwrap_or("body"), untag_id(w)))
                 .collect();
             let short: Vec<String> = changes.iter().map(crate::ids::ChangeId::short).collect();
             if changes.iter().zip(&short).all(|(c, s)| *s != c.long()) {
