@@ -43,6 +43,7 @@ themselves.
 | `#` to `######` | `Heading1` to `Heading6` |
 | paragraph | `Normal` |
 | `**bold**`, `*italic*`, `~~struck~~` | bold, italic, strikethrough |
+| `==marked==` | yellow highlight; `==` beside a space, inside a longer `=` run, escaped or unclosed in its paragraph is text. The agent view prints a highlight of any colour this way, and strike as `~~struck~~` |
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
