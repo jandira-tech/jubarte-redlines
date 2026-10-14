@@ -357,7 +357,7 @@ pub(crate) fn render(f: &Facts) -> String {
         list.extend(
             unanchored
                 .iter()
-                .map(|c| format!("c{} (unanchored: in no story, Word shows no balloon)", c.id)),
+                .map(|c| format!("c{} (unanchored: not in the body or a note, Word shows no balloon)", c.id)),
         );
         kv(
             &mut out,
@@ -1280,7 +1280,7 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                                 }
                                 _ => {}
                             },
-                            "instrText" => {
+                            "instrText" | "delInstrText" => {
                                 if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
                                     field.instr.push_str(&child.text());
                                 }
@@ -1357,11 +1357,14 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
             self.last = Some(shown);
         }
 
-        /// Document text; the tagged view escapes what reads like a mark.
+        /// Document text; the tagged view escapes what reads like a mark,
+        /// and every view text that reads like a field code (`\{PAGE}`),
+        /// as the body does.
         fn push_text(&mut self, text: &str) {
+            let text = escape_field_codes(text);
             match self.view {
-                StoryView::Tagged(..) => self.out.push_str(&super::critic::escape(text)),
-                _ => self.out.push_str(text),
+                StoryView::Tagged(..) => self.out.push_str(&super::critic::escape(&text)),
+                _ => self.out.push_str(&text),
             }
         }
     }
@@ -1389,6 +1392,27 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
     };
     walk(p, &mut s);
     s.out.trim().to_string()
+}
+
+/// `text` with a backslash before each `{` that opens what reads like a
+/// field code, so `{PAGE}` typed in a header stays text.
+fn escape_field_codes(text: &str) -> std::borrow::Cow<'_, str> {
+    use crate::markdown::critic::{field_code_close, is_field_code};
+    let opens = |at: usize| {
+        let after = &text[at + 1..];
+        field_code_close(after.char_indices()).is_some_and(|close| is_field_code(&after[..close]))
+    };
+    if !text.char_indices().any(|(at, c)| c == '{' && opens(at)) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 2);
+    for (at, c) in text.char_indices() {
+        if c == '{' && opens(at) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 #[cfg(test)]

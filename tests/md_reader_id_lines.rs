@@ -1075,3 +1075,74 @@ fn a_header_substitution_pairs_and_keeps_each_id_on_its_side() {
     };
     assert_eq!(headers(&again), headers(&view));
 }
+
+/// The whole view `markdown` reads into, read again, without its
+/// `source:` and `sha256:` lines; and the docx it wrote.
+fn full_trip(markdown: &str) -> (String, Vec<u8>) {
+    let docx = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&docx);
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let kept: Vec<&str> = view
+        .lines()
+        .filter(|l| !l.starts_with("source: ") && !l.starts_with("sha256: "))
+        .collect();
+    (kept.join("\n"), docx)
+}
+
+#[test]
+fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
+    // A mark on a trailing empty paragraph, two marks on one paragraph
+    // mark, a deleted field, text that reads like a field code, and text
+    // that reads like a mark.
+    let view = "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n  \
+                BC: Bo Chen                      # 2026-03-02T10:00:00Z\n\
+                headers:\n  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}\n\
+                footers:\n  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
+                rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
+                break-del footer1.r40 @BC in footer1.p1}\n---\n\n<!-- p0 -->\nBody.\n";
+    let (again, docx) = full_trip(view);
+    for line in [
+        "  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}",
+        "  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
+         rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
+         break-del footer1.r40 @BC in footer1.p1}",
+    ] {
+        assert!(again.contains(line), "{line} in {again}");
+    }
+    let header = common::docx::part_string(&docx, "word/header1.xml").expect("header1.xml");
+    assert!(
+        header.contains(">Text with {++literal++} braces and {PAGE} too<"),
+        "{header}"
+    );
+    assert!(!header.contains("fldSimple"), "{header}");
+}
+
+#[test]
+fn a_mark_with_no_author_keeps_its_id_and_takes_no_comment() {
+    // `@??`: the reader's handle for a mark without an author's name. It
+    // is a tag, not a comment, in the body and in a header.
+    let view = "---\nview: tracked\nheaders:\n  default: {id: header1, text: \"Keep {++new++}{>>header1.r3 @??<<}\"}\n\
+                ---\n\n<!-- p0 -->\nKeep {++new++}{>>r5 @??<<} it.\n";
+    let (again, docx) = full_trip(view);
+    assert!(again.contains("Keep {++new++}{>>r5 @??<<} it."), "{again}");
+    assert!(
+        again.contains("text: \"Keep {++new++}{>>header1.r3 @??<<}\""),
+        "{again}"
+    );
+    assert!(again.contains("comments: 0"), "{again}");
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    assert!(
+        document.contains("<w:ins w:id=\"5\" w:author=\"\""),
+        "{document}"
+    );
+}

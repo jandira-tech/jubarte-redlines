@@ -2626,7 +2626,17 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// conversion is.
     fn view_author(&self, handle: &str, date: Option<&str>) -> (String, String) {
         let known = self.authors.get(handle);
-        let author = known.map_or_else(|| handle.to_string(), |a| a.name.clone());
+        // `??` names no one: the mark's author is empty, as it was.
+        let author = known.map_or_else(
+            || {
+                if handle == view_notes::UNNAMED {
+                    String::new()
+                } else {
+                    handle.to_string()
+                }
+            },
+            |a| a.name.clone(),
+        );
         let date = match (date, known) {
             (Some(date), _) => date.to_string(),
             (None, Some(known)) => known.date.clone().unwrap_or_else(|| {

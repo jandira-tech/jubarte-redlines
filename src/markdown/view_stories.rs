@@ -96,11 +96,15 @@ impl Marks<'_> {
         };
         let (author, date) = tag
             .and_then(|tag| {
-                let (name, date) = self.people.by_handle.get(&tag.handle)?;
-                Some((
-                    name.clone(),
-                    tag.date.clone().unwrap_or_else(|| date.clone()),
-                ))
+                // `??` names no one: the mark's author is empty, as it was.
+                let (name, date) = match self.people.by_handle.get(&tag.handle) {
+                    Some(known) => known.clone(),
+                    None if tag.handle == super::view_notes::UNNAMED => {
+                        (String::new(), self.people.date.clone())
+                    }
+                    None => return None,
+                };
+                Some((name, tag.date.clone().unwrap_or(date)))
             })
             .unwrap_or_else(|| (self.people.author.clone(), self.people.date.clone()));
         let date = if date.is_empty() {
@@ -420,6 +424,12 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
             rest = &after[end + 3..];
             continue;
         }
+        // `\{PAGE}`: text that reads like a field code.
+        if let Some(after) = rest.strip_prefix("\\{") {
+            plain.push('{');
+            rest = after;
+            continue;
+        }
         if let Some((change, after)) = change(rest) {
             flush(&mut plain, &mut out, false);
             let (tags, after) = tags_after(after);
@@ -539,7 +549,8 @@ fn field(text: &str) -> Option<(Field<'_>, &str)> {
 /// `w:delText`.
 fn flush(plain: &mut String, out: &mut String, deleted: bool) {
     let element = if deleted { "w:delText" } else { "w:t" };
-    for (i, line) in plain.split('\n').enumerate() {
+    let text = unescape(plain);
+    for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
             out.push_str("<w:r><w:br/></w:r>");
         }
@@ -553,8 +564,30 @@ fn flush(plain: &mut String, out: &mut String, deleted: bool) {
     plain.clear();
 }
 
-/// `inner` inside a `w:ins` or `w:del`: its text and its fields, which
-/// are complex there (a `w:fldSimple` cannot sit in a mark).
+/// Document text the view escaped back as it was: a mark's delimiter
+/// (`{\++`, `~\>`) whole again.
+fn unescape(text: &str) -> String {
+    const DELIMITERS: [(&str, &str); 11] = [
+        ("{\\++", "{++"),
+        ("{\\--", "{--"),
+        ("{\\~~", "{~~"),
+        ("{\\>>", "{>>"),
+        ("{\\==", "{=="),
+        ("++\\}", "++}"),
+        ("--\\}", "--}"),
+        ("~~\\}", "~~}"),
+        ("<<\\}", "<<}"),
+        ("==\\}", "==}"),
+        ("~\\>", "~>"),
+    ];
+    if !text.contains('\\') {
+        return text.to_string();
+    }
+    DELIMITERS
+        .iter()
+        .fold(text.to_string(), |text, (from, to)| text.replace(from, to))
+}
+
 /// A substitution's one tag (`r94+95+92+93`) lists the deleted side's ids,
 /// then the inserted side's: Word numbers marks in document order and
 /// writes the insertion first, so the inserted side begins where the
@@ -583,7 +616,7 @@ fn tracked(
 ) {
     let has_field = inner
         .char_indices()
-        .any(|(at, c)| c == '{' && field(&inner[at..]).is_some());
+        .any(|(at, c)| c == '{' && !inner[..at].ends_with('\\') && field(&inner[at..]).is_some());
     let mut pieces = vec![inner];
     while !has_field && pieces.len() < ids.len() {
         let Some((at, cut)) = pieces.iter().enumerate().rev().find_map(|(at, piece)| {
@@ -602,6 +635,8 @@ fn tracked(
     }
 }
 
+/// `inner` inside a `w:ins` or `w:del`: its text and its fields, which
+/// are complex there (a `w:fldSimple` cannot sit in a mark).
 fn tracked_piece(
     out: &mut String,
     marks: &mut Marks<'_>,
@@ -615,6 +650,11 @@ fn tracked_piece(
     let mut plain = String::new();
     let mut rest = inner;
     while let Some(c) = rest.chars().next() {
+        if let Some(after) = rest.strip_prefix("\\{") {
+            plain.push('{');
+            rest = after;
+            continue;
+        }
         if let Some((field, after)) = field(rest) {
             flush(&mut plain, out, deleted);
             let (code, result) = match field {
@@ -824,8 +864,10 @@ pub(super) fn write(
 /// text takes each formatting change the view names (a `w:pPrChange` that
 /// keeps what the paragraph has: the view names who, not what), and each
 /// paragraph mark the view names (`break-del footer1.r25 @BC in
-/// footer1.p1`) its change. A mark it names no more of (`footer1.r9 @AC`)
-/// is an empty insertion at the end.
+/// footer1.p1`) its change, empty paragraphs standing for any the text
+/// does not reach; one mark may hold an insertion and a deletion. A mark
+/// it names no more of (`footer1.r9 @AC`) is an empty insertion at the
+/// end.
 fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks<'_>) -> String {
     let root = if story.kind == "header" { "hdr" } else { "ftr" };
     let style = if story.kind == "header" {
@@ -836,7 +878,7 @@ fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks
     let mut texts: Vec<&str> = vec![""; story.paragraph];
     texts.push(&story.text);
     texts.extend(story.more.iter().map(String::as_str));
-    let mut paragraph_marks: HashMap<usize, (&str, super::view_notes::Tag)> = HashMap::new();
+    let mut paragraph_marks: HashMap<usize, Vec<(&str, super::view_notes::Tag)>> = HashMap::new();
     let mut unplaced = Vec::new();
     for entry in &story.rev {
         let placed = ["break-ins ", "break-del "].iter().find_map(|word| {
@@ -857,7 +899,7 @@ fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks
         });
         match placed {
             Some((index, mark)) => {
-                paragraph_marks.insert(index, mark);
+                paragraph_marks.entry(index).or_default().push(mark);
             }
             None => unplaced.extend(
                 super::view_notes::revision_tags(entry)
@@ -865,6 +907,9 @@ fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks
                     .flatten(),
             ),
         }
+    }
+    if let Some(&deepest) = paragraph_marks.keys().max() {
+        texts.resize(texts.len().max(deepest + 1), "");
     }
     let formats: Vec<super::view_notes::Tag> = story
         .fmt
@@ -880,12 +925,14 @@ fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks
             let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
         }
         let mut properties = base.clone();
-        if let Some((name, tag)) = paragraph_marks.get(&index) {
-            let _ = write!(
-                properties,
-                "<w:rPr><{}/></w:rPr>",
-                marks.mark(name, Some(tag), 0)
-            );
+        if let Some(mut named) = paragraph_marks.remove(&index) {
+            // `w:ins` comes before `w:del` in `w:rPr`.
+            named.sort_by_key(|(name, _)| *name != "w:ins");
+            properties.push_str("<w:rPr>");
+            for (name, tag) in &named {
+                let _ = write!(properties, "<{}/>", marks.mark(name, Some(tag), 0));
+            }
+            properties.push_str("</w:rPr>");
         }
         if let Some(tag) = index
             .checked_sub(story.paragraph)

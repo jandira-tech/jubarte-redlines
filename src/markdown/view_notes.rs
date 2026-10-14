@@ -154,9 +154,14 @@ pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
 }
 
 /// Letters and digits: the view's handles (`from_docx::agent`).
+/// An author's handle: letters and digits, or `??`, the reader's handle
+/// for a mark whose author is missing or empty.
 fn is_handle(text: &str) -> bool {
-    !text.is_empty() && text.chars().all(char::is_alphanumeric)
+    text == UNNAMED || (!text.is_empty() && text.chars().all(char::is_alphanumeric))
 }
+
+/// The handle of a mark with no author's name.
+pub(super) const UNNAMED: &str = "??";
 
 /// A YAML scalar as `header::scalar` writes it (plain, or a JSON-quoted
 /// string), and the `# comment` after it.
@@ -409,8 +414,10 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 let (tag, at) = change
                     .rsplit_once(" in ")
                     .map_or((change, None), |(tag, at)| (tag, Some(at)));
-                let Some(tag) = first_tag(tag) else {
-                    // The grid's change has no author to name.
+                // The grid's change has no author to name: `@??` on the
+                // table itself.
+                let grid = at.is_none() && tag.ends_with(&format!(" @{UNNAMED}"));
+                let Some(tag) = first_tag(tag).filter(|_| !grid) else {
                     if at.is_none()
                         && let Some(id) = tag.strip_suffix(" @??").and_then(|id| {
                             crate::ids::parse_change_ids(id)
