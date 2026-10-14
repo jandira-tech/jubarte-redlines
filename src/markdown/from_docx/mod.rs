@@ -274,6 +274,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         note_changes: Vec::new(),
         lead: None,
         flattening: 0,
+        monospace_paragraph: false,
         revisions: Vec::new(),
         comments: HashMap::new(),
         notes: HashMap::new(),
@@ -934,11 +935,17 @@ struct Style {
     underline: Option<bool>,
     /// `w:jc`, as Word writes it.
     jc: Option<String>,
+    /// The `w:rFonts` face its runs are set in.
+    font: Option<String>,
 }
 
 #[derive(Default)]
 struct Styles {
     by_id: HashMap<String, Style>,
+    /// The face the document's defaults set (`w:docDefaults`).
+    default_font: Option<String>,
+    /// The paragraph style a paragraph without `w:pStyle` has.
+    default_paragraph: Option<String>,
 }
 
 impl Styles {
@@ -974,10 +981,39 @@ impl Styles {
                         .and_then(|p| p.child("jc"))
                         .and_then(|j| j.attr("val"))
                         .map(str::to_string),
+                    font: rpr.and_then(font_of),
                 },
             );
         }
-        Self { by_id }
+        let default_font = root
+            .path(&["docDefaults", "rPrDefault", "rPr"])
+            .and_then(font_of);
+        let default_paragraph = root
+            .children_named("style")
+            .find(|s| s.attr("type") == Some("paragraph") && s.attr("default") == Some("1"))
+            .and_then(|s| s.attr("styleId"))
+            .map(str::to_string);
+        Self {
+            by_id,
+            default_font,
+            default_paragraph,
+        }
+    }
+
+    /// The face a run of style `id` is set in, nearest style first.
+    fn font(&self, id: &str) -> Option<&str> {
+        self.chain(id)
+            .into_iter()
+            .find_map(|style| style.font.as_deref())
+    }
+
+    /// Whether a paragraph of style `id` (or the default paragraph style)
+    /// is set in a monospace face: its monospace runs are then not code.
+    fn monospace_paragraph(&self, id: Option<&str>) -> bool {
+        id.or(self.default_paragraph.as_deref())
+            .and_then(|id| self.font(id))
+            .or(self.default_font.as_deref())
+            .is_some_and(is_monospace)
     }
 
     /// The alignment a paragraph of style `id` has, nearest first.
@@ -1049,6 +1085,39 @@ impl Styles {
     fn underline(&self, id: &str) -> Option<bool> {
         self.chain(id).iter().find_map(|s| s.underline)
     }
+}
+
+/// The face `w:rFonts` names for Latin text in `rpr`.
+fn font_of(rpr: &Element) -> Option<String> {
+    let fonts = rpr.child("rFonts")?;
+    fonts
+        .attr("ascii")
+        .or_else(|| fonts.attr("hAnsi"))
+        .map(str::to_string)
+}
+
+/// Whether `font` is a monospace face: the common code and typewriter faces,
+/// and any whose name says so.
+fn is_monospace(font: &str) -> bool {
+    const FACES: [&str; 12] = [
+        "consolas",
+        "lucida console",
+        "lucida sans typewriter",
+        "menlo",
+        "monaco",
+        "inconsolata",
+        "andale mono",
+        "ocr a extended",
+        "letter gothic",
+        "prestige elite",
+        "fixedsys",
+        "terminal",
+    ];
+    let font = font.trim().to_ascii_lowercase();
+    font.starts_with("courier")
+        || font.contains("mono")
+        || font.contains("code")
+        || FACES.contains(&font.as_str())
 }
 
 /// `w:u` underlines unless its value is `none`.
@@ -1272,6 +1341,8 @@ struct Writer<'a> {
     lead: Option<String>,
     /// Inside a nested table, whose cells are flattened onto one line.
     flattening: usize,
+    /// The paragraph being written is set in a monospace face.
+    monospace_paragraph: bool,
     /// Tracked changes around the content being written, outermost first.
     revisions: Vec<Change>,
     /// Comment id → its `w:comment` element.
@@ -1866,6 +1937,9 @@ impl Writer<'_> {
             .map(|s| self.styles.emphasis(s))
             .unwrap_or((None, None));
         let base = (bold.unwrap_or(false), italic.unwrap_or(false));
+        self.monospace_paragraph = self
+            .styles
+            .monospace_paragraph(p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")));
         if !self.in_comment {
             for note in std::mem::take(&mut self.pending_notes) {
                 inline.comment(&note);
@@ -2005,10 +2079,18 @@ impl Writer<'_> {
                 .and_then(|h| h.attr("val"))
                 .is_some_and(|val| val != "none");
         let strike = self.agent && rpr.and_then(|r| r.toggle("strike")).unwrap_or(false);
-        let code = rpr
+        // Code: a `VerbatimChar` run, or a run in a monospace face inside
+        // a paragraph that is not (spec §3).
+        let run_style = rpr
             .and_then(|r| r.child("rStyle"))
-            .and_then(|s| s.attr("val"))
-            == Some("VerbatimChar");
+            .and_then(|s| s.attr("val"));
+        let font = rpr.and_then(font_of).or_else(|| {
+            run_style
+                .and_then(|s| self.styles.font(s))
+                .map(str::to_string)
+        });
+        let code = run_style == Some("VerbatimChar")
+            || (font.as_deref().is_some_and(is_monospace) && !self.monospace_paragraph);
         let marks = Marks {
             bold,
             italic,

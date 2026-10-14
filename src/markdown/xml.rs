@@ -663,6 +663,11 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     if let Some(style) = style {
         let _ = write!(out, "<w:rStyle w:val=\"{style}\"/>");
     }
+    // A run has one character style: code in a link takes the face
+    // `VerbatimChar` gives, so it still reads as code.
+    if format.code && style != Some("VerbatimChar") {
+        out.push_str("<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/>");
+    }
     if format.bold {
         out.push_str("<w:b/><w:bCs/>");
     }

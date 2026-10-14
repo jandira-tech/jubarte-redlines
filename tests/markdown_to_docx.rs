@@ -576,6 +576,17 @@ fn inline_html_bold_italic_strike_code_and_mark() {
 }
 
 #[test]
+fn code_inside_a_link_keeps_its_face() {
+    // A run has one character style: inside a link it is `Hyperlink`, so
+    // code there takes `VerbatimChar`'s face directly and reads back as code.
+    let xml = document_xml(&write("See [`open()`](https://a.example/b) now.\n"));
+    assert!(
+        xml.contains(r#"<w:rStyle w:val="Hyperlink"/><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>"#),
+        "{xml}"
+    );
+}
+
+#[test]
 fn double_equals_is_a_highlight() {
     // `==x==` is a highlight (spec §3), the run property `<mark>` writes; it
     // may hold emphasis. An `==` with spaces on both sides, one inside code

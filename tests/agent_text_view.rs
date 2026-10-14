@@ -1593,6 +1593,44 @@ fn code_reads_as_code_spans_and_fences() {
     assert_eq!(body(&agent(&back)), view);
 }
 
+#[test]
+fn a_monospace_run_is_code_unless_its_paragraph_is_monospace_too() {
+    // Spec §3: `` `x` `` is a run in a monospace font. A paragraph whose
+    // own font is monospace (a contract set in Courier) is not code, and
+    // neither are its runs.
+    let mono = |font: &str, t: &str| {
+        format!(
+            r#"<w:r><w:rPr><w:rFonts w:ascii="{font}" w:hAnsi="{font}"/></w:rPr><w:t xml:space="preserve">{t}</w:t></w:r>"#
+        )
+    };
+    let body_xml = [
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Call </w:t></w:r>{}<w:r><w:t xml:space="preserve"> with </w:t></w:r>{}<w:r><w:t>.</w:t></w:r></w:p>"#,
+            mono("Courier New", "open()"),
+            mono("Consolas", "a*b")
+        ),
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Typed"/></w:pPr><w:r><w:t xml:space="preserve">Typed </w:t></w:r>{}</w:p>"#,
+            mono("Courier New", "clause")
+        ),
+    ]
+    .concat();
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Typed"><w:name w:val="Typed"/><w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr></w:style></w:styles>"#
+        ),
+    };
+    let full = agent(&common::docx::docx_with(&body_xml, &[styles]));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nCall `open()` with `a*b`.\n\n<!-- p1 Typed -->\nTyped clause\n"
+    );
+}
+
 const CORE_CT: &str = "application/vnd.openxmlformats-package.core-properties+xml";
 
 fn core(xml: &str) -> Part<'_> {
