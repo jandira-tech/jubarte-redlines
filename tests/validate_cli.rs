@@ -137,7 +137,11 @@ fn validate_audits_tracked_edits_against_an_original() {
     assert_eq!(row["severity"], "error");
     assert_eq!(row["location"], "body:p:0");
     assert_eq!(row["ref"], "p0");
-    assert!(row["message"].as_str().unwrap().contains("body:p:0"));
+    // The JSON location keeps the long id; the message prints the short one.
+    assert!(
+        row["message"].as_str().unwrap().starts_with("p0 differs"),
+        "{row}"
+    );
 
     let (code, _, _) = run(
         dir.path(),

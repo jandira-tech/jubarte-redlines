@@ -107,7 +107,7 @@ Fixtures: `tests/fixtures/agent-view/received.docx`, `tests/fixtures/from-docx/c
 | `footnotes:rev:N` | `footnotes:rev:2`, `footnotes:rev:3` | change (deletion, text); change (insertion, text) | read --json changes[].id |
 | `headerN` | `header1`, `header2` | header story | read --json stories[].id; view header |
 | `headerN:p:N` | `header1:p:0`, `header1:p:1`, `header2:p:0` | header paragraph | read --json stories[].paragraphs[].id |
-| `pN` | `p0`, `p1`, `p2` |  | changes (paragraph); comments (paragraph); read --tables; view id line |
+| `pN` | `p0`, `p1`, `p2` |  | changes (paragraph); comments (paragraph); read --tables; validate (ref); view id line |
 | `pN,pN` | `p6,p7` |  | read --tables |
 | `pN,pN,pN` | `p3,p4,p5` |  | read --tables |
 | `pN-pN` | `p108-p109` |  | view id line |

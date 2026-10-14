@@ -349,8 +349,9 @@ pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
 /// Tables as `read --tables` prints them: a `table N: RxC header_rows=H
 /// widths=W` line per table, then a line per row of tab-separated
 /// `ids=text` cells (`-` for a cell with no paragraph; `\`, newlines and
-/// tabs escaped), or `no tables`. Cell ids are the short ids the agent view
-/// prints (`p1`, `p3,p4`), via [`crate::ids::short_paragraph`]. Every line
+/// tabs escaped), or `no tables`. Cell ids are short paragraph ids (`p1`),
+/// via [`crate::ids::short_paragraph`]; a cell of several paragraphs joins
+/// them with commas (`p3,p4`), a spelling only this listing prints. Every line
 /// ends with a newline.
 pub fn tables_text(tables: &[Table]) -> String {
     use std::fmt::Write as _;

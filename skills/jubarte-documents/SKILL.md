@@ -77,7 +77,8 @@ author's, `--latest` the newest of each thread.
 `tables` reads each body table as a grid: `rows` of cells, each cell with
 its `paragraph_ids` and `text`, plus `header_rows` and `widths_dxa`. Edit a
 cell through its paragraph id, or as `t0.row1.cell2`.
-`jubarte read contract.docx --tables` prints the same grids.
+`jubarte read contract.docx --tables` prints the same grids with short
+ids (`p8`, not the JSON's `body:p:8`).
 `read --json` also lists the body's content controls under `controls`: `id`
 (`body:sdt:N`), `tag`, `alias`, `kind` (`text`, `rich_text`, `drop_down`,
 `combo_box`, `date`, `checkbox`, `picture`, ...), `text`, `paragraph_ids`,

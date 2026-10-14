@@ -469,6 +469,17 @@ editReportJsonl(report_json: string): string
 The JSON-lines form of a report (`load`, one `op` per operation,
 `summary`), for agent logs.
 
+### `editingModeConflict`
+
+```typescript
+editingModeConflict(plan: string, docx: Uint8Array): string | undefined
+```
+
+Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
+it keeps and does not itself accept or reject; `undefined` when none.
+
+Mirrors `jubarte::edit::flags::editing_mode_conflict`.
+
 ### `flagPlan`
 
 ```typescript
@@ -540,10 +551,22 @@ listComments(docx: Uint8Array, author?: string | null, latest?: boolean | null):
 
 List every comment as a JSON array string (the objects `jubarte comments
 --json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
-`done`, `paragraph`, `anchor_text`, `before`, `after`). `author` keeps
-one author's comments; `latest` keeps the newest comment of each thread.
+`done`, `paragraph`, `last_paragraph` when the range ends in a later
+paragraph, `anchor_text`, `before`, `after`). `author` keeps one
+author's comments; `latest` keeps the newest comment of each thread.
 
 Mirrors `jubarte::comments::list_comments` and `select_comments`.
+
+### `markdownStamp`
+
+```typescript
+markdownStamp(text: string, reference?: Uint8Array | null): string
+```
+
+The author and timestamp a Markdown document gives the changes and
+comments that name none, as JSON `[author, date]` (`null` for each it
+does not tell): its front matter, else the reference `.docx`'s creator
+and creation time. The CLI falls back to `Redline` and now.
 
 ### `markdownToDocx`
 
@@ -554,9 +577,12 @@ markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Arra
 Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
 
 `optionsJson` (every field optional): `page` (`"letter"` default, or
-`"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
-writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
-changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+`"a4"`), `author` and `date` (for a change or comment that names none;
+given, they beat the front matter's `author:` and `last_modified:`,
+`modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
+epoch, so the same Markdown writes the same bytes; the CLI dates them now
+instead), `critic` (`true`: CriticMarkup becomes tracked changes and
+comments) and `track_changes` (or `trackChanges`: `"all"`,
 `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
 `.docx`, lends its styles and page setup, and then `page` is ignored.
 Images are written as their alt text, and the engine's warnings are not
@@ -735,7 +761,8 @@ validateDocument(docx: Uint8Array): string
 ```
 
 Word-validity findings beyond the schema as a JSON array (`code`, `set`,
-`severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+`severity`, `part`, `location`, `ref`, `message`, `word_fatal`,
+`repairable`; `ref` is the short id the CLI prints for `location`);
 `[]` is a pass.
 
 Mirrors `jubarte::validate::validate`.

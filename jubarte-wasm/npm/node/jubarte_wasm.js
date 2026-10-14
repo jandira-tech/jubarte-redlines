@@ -1926,7 +1926,8 @@ exports.updateFields = updateFields;
 
 /**
  * Word-validity findings beyond the schema as a JSON array (`code`, `set`,
- * `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+ * `severity`, `part`, `location`, `ref`, `message`, `word_fatal`,
+ * `repairable`; `ref` is the short id the CLI prints for `location`);
  * `[]` is a pass.
  *
  * Mirrors `jubarte::validate::validate`.
