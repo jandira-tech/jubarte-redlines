@@ -124,7 +124,13 @@ pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
         };
         let (value, comment) = scalar_and_comment(rest.trim_start());
         let comment = comment.unwrap_or("");
-        return Some(if value == "none" {
+        // `none` names nobody, unless quoted or noted as the element that
+        // holds it (`none # dc:creator`: someone called none).
+        let nobody = value == "none"
+            && !rest.trim_start().starts_with(['"', '\''])
+            && !comment.starts_with("dc:creator")
+            && !comment.starts_with("cp:lastModifiedBy");
+        return Some(if nobody {
             if comment.starts_with("no docProps/core.xml") {
                 Owner::NoPart
             } else {
@@ -146,12 +152,28 @@ fn is_handle(text: &str) -> bool {
 
 /// A YAML scalar as `header::scalar` writes it (plain, or a JSON-quoted
 /// string), and the `# comment` after it.
-fn scalar_and_comment(text: &str) -> (String, Option<&str>) {
+pub(super) fn scalar_and_comment(text: &str) -> (String, Option<&str>) {
     if text.starts_with('"') {
         let mut de = serde_json::Deserializer::from_str(text).into_iter::<String>();
         if let Some(Ok(value)) = de.next() {
             let rest = text[de.byte_offset()..].trim_start();
             return (value, rest.strip_prefix('#').map(str::trim));
+        }
+        return (String::new(), None);
+    }
+    // A YAML single-quoted scalar: `''` is one quote, the next lone `'` ends it.
+    if let Some(body) = text.strip_prefix('\'') {
+        let mut value = String::new();
+        let mut chars = body.char_indices().peekable();
+        while let Some((at, c)) = chars.next() {
+            if c != '\'' {
+                value.push(c);
+            } else if chars.next_if(|&(_, next)| next == '\'').is_some() {
+                value.push('\'');
+            } else {
+                let rest = body[at + 1..].trim_start();
+                return (value, rest.strip_prefix('#').map(str::trim));
+            }
         }
         return (String::new(), None);
     }
@@ -254,11 +276,51 @@ pub(super) struct TableLine {
     /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
     /// r15 @AL in t0.row1.cell0`): its own, its rows' and its cells'.
     pub fmt: Option<Tag>,
+    /// Word's `w:tblGridChange`, which names no author (`r17 @??`).
+    pub grid_fmt: Option<u32>,
     pub row_fmt: HashMap<usize, Tag>,
     pub cell_fmt: HashMap<(usize, usize), Tag>,
+    /// The cell paragraphs' formatting changes (`fmt r9 @AL in p4`), by
+    /// paragraph number.
+    pub para_fmt: HashMap<usize, Vec<Tag>>,
+    /// A row's own insertion or deletion, when it has no text to show it
+    /// (`rev r6 @AC in t0.row1`, `rev-del …`): whether it is inserted.
+    pub row_marks: HashMap<usize, (bool, Tag)>,
+    /// A cell's own insertion, deletion or merge (`rev r5 @AC in
+    /// t0.row1.cell2`, `rev-del …`, `rev-merge …`).
+    pub cell_marks: HashMap<(usize, usize), (CellMark, Tag)>,
     /// The grid columns each row leaves out before and after its cells
     /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
     pub gaps: HashMap<usize, (usize, usize)>,
+}
+
+/// A cell's own change: `w:cellIns`, `w:cellDel` or `w:cellMerge`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellMark {
+    Insert,
+    Delete,
+    Merge,
+}
+
+/// The header's `unplaced: [r40 @AL in p1, …]`: each change no other line
+/// shows, and the paragraph it is in. One without a paragraph, or not a
+/// change's tag, is left out.
+pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
+    let (list, _) = value.split_once(" #").unwrap_or((value, ""));
+    let Some(list) = list
+        .trim()
+        .strip_prefix('[')
+        .and_then(|l| l.strip_suffix(']'))
+    else {
+        return Vec::new();
+    };
+    list.split(", ")
+        .filter_map(|entry| {
+            let (entry, _) = scalar_and_comment(entry.trim());
+            let (tag, at) = entry.rsplit_once(" in ")?;
+            Some((crate::ids::short_number(at, 'p')?, first_tag(tag)?))
+        })
+        .collect()
 }
 
 /// The most grid columns a table has, and rows one merged cell reaches: a
@@ -286,8 +348,12 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         style: None,
         in_comment: false,
         fmt: None,
+        grid_fmt: None,
         row_fmt: HashMap::new(),
         cell_fmt: HashMap::new(),
+        para_fmt: HashMap::new(),
+        row_marks: HashMap::new(),
+        cell_marks: HashMap::new(),
         gaps: HashMap::new(),
     };
     for (i, clause) in rest.split(", ").enumerate() {
@@ -335,7 +401,22 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 let (tag, at) = change
                     .rsplit_once(" in ")
                     .map_or((change, None), |(tag, at)| (tag, Some(at)));
-                let Some(tag) = first_tag(tag) else { continue };
+                let Some(tag) = first_tag(tag) else {
+                    // The grid's change has no author to name.
+                    if at.is_none()
+                        && let Some(id) = tag.strip_suffix(" @??").and_then(|id| {
+                            crate::ids::parse_change_ids(id)
+                                .ok()?
+                                .first()?
+                                .wid
+                                .parse()
+                                .ok()
+                        })
+                    {
+                        parsed.grid_fmt = Some(id);
+                    }
+                    continue;
+                };
                 match at {
                     None => parsed.fmt = Some(tag),
                     Some(at) => {
@@ -343,8 +424,35 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                             parsed.cell_fmt.insert(cell, tag);
                         } else if let Some(row) = row_of(at) {
                             parsed.row_fmt.insert(row, tag);
+                        } else if let Some(p) = crate::ids::short_number(at, 'p') {
+                            parsed.para_fmt.entry(p).or_default().push(tag);
                         }
                     }
+                }
+            }
+        }
+        for (word, kind) in [
+            ("rev ", CellMark::Insert),
+            ("rev-del ", CellMark::Delete),
+            ("rev-merge ", CellMark::Merge),
+        ] {
+            let Some(marks) = clause.strip_prefix(word) else {
+                continue;
+            };
+            // `r6 @AC in t0.row1; r5 @AC in t0.row1.cell2`
+            for mark in marks.split("; ") {
+                let Some((tag, at)) = mark.rsplit_once(" in ") else {
+                    continue;
+                };
+                let Some(tag) = first_tag(tag) else { continue };
+                if let Some(cell) = row_and_cell(at) {
+                    parsed.cell_marks.insert(cell, (kind, tag));
+                } else if let Some(row) = row_of(at)
+                    && kind != CellMark::Merge
+                {
+                    parsed
+                        .row_marks
+                        .insert(row, (kind == CellMark::Insert, tag));
                 }
             }
         }
@@ -723,6 +831,23 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quoted_scalars_unescape_and_keep_their_comment() {
+        assert_eq!(
+            scalar_and_comment(r#""a \"b\" #c" # note"#),
+            (r#"a "b" #c"#.to_string(), Some("note"))
+        );
+        assert_eq!(
+            scalar_and_comment("'it''s #1' # note"),
+            ("it's #1".to_string(), Some("note"))
+        );
+        assert_eq!(scalar_and_comment("'open"), (String::new(), None));
+        assert_eq!(
+            scalar_and_comment("plain # c"),
+            ("plain".to_string(), Some("c"))
+        );
+    }
 
     #[test]
     fn note_id_lines_name_their_part() {

@@ -1127,6 +1127,165 @@ fn the_document_owner_is_written_where_the_view_read_it() {
     assert_word_valid_package(&written.docx);
 }
 
+/// The text of every `<{name}>` element in `core`, outside comments and
+/// CDATA, unescaped.
+fn core_values(core: &str, name: &str) -> Vec<String> {
+    let mut reader = quick_xml::Reader::from_str(core);
+    let mut values = Vec::new();
+    let mut inside: Option<String> = None;
+    loop {
+        match reader.read_event().unwrap() {
+            quick_xml::events::Event::Start(e) if e.name().as_ref() == name => {
+                inside = Some(String::new());
+            }
+            quick_xml::events::Event::Empty(e) if e.name().as_ref() == name => {
+                values.push(String::new());
+            }
+            quick_xml::events::Event::Text(t) => {
+                if let Some(text) = inside.as_mut() {
+                    text.push_str(&t.xml10_content());
+                }
+            }
+            quick_xml::events::Event::GeneralRef(r) => {
+                if let Some(text) = inside.as_mut() {
+                    let entity: &str = &r;
+                    text.push_str(match entity {
+                        "amp" => "&",
+                        "lt" => "<",
+                        "gt" => ">",
+                        "quot" => "\"",
+                        "apos" => "'",
+                        other => panic!("entity {other}"),
+                    });
+                }
+            }
+            quick_xml::events::Event::End(e) if e.name().as_ref() == name => {
+                values.extend(inside.take());
+            }
+            quick_xml::events::Event::Eof => return values,
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn the_document_owner_replaces_whatever_the_reference_names() {
+    // The owner is written into the reference's core properties however
+    // they spell the element, and only into the element itself: never into
+    // a comment or CDATA that mentions it. A reference with no core
+    // properties gets them.
+    const NAME: &str = r#"Ada & Bo <C> "Q""#;
+    let view = "---\nview: tracked\nauthors:\n  document_owner: \"Ada & Bo <C> \\\"Q\\\"\"  # dc:creator\n---\n\nText.\n";
+    let core = |inner: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">{inner}</cp:coreProperties>"#
+        )
+    };
+    let template = write("Text.\n");
+    for inner in [
+        "<dc:creator>Someone Else</dc:creator>",
+        r#"<dc:creator xml:space="preserve">Someone Else</dc:creator>"#,
+        r#"<dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Someone Else</dc:creator>"#,
+        "<!-- <dc:creator>decoy</dc:creator> --><dc:creator>Someone Else</dc:creator>",
+        "<dc:description><![CDATA[<dc:creator>decoy</dc:creator>]]></dc:description><dc:creator>Someone Else</dc:creator>",
+        "<dc:description><![CDATA[</dc:creator>]]></dc:description><dc:creator>Someone Else</dc:creator>",
+        "<dc:creator /><cp:lastModifiedBy>Someone Else</cp:lastModifiedBy>",
+        "<dc:creator />",
+    ] {
+        let reference =
+            common::docx::replace_entry(&template, "docProps/core.xml", core(inner).as_bytes());
+        let written = write_with(
+            view,
+            &DocxOptions {
+                reference: Some(&reference),
+                ..DocxOptions::default()
+            },
+        );
+        let out = part_string(&written, "docProps/core.xml").unwrap();
+        assert_eq!(core_values(&out, "dc:creator"), [NAME], "{inner}\n{out}");
+        assert!(!out.contains("Someone Else"), "{inner}\n{out}");
+        assert!(core_values(&out, "cp:lastModifiedBy").is_empty(), "{out}");
+        if inner.contains("decoy") {
+            assert!(out.contains("decoy"), "{out}");
+        }
+    }
+    // No core properties in the reference: the owner makes them.
+    let bare = common::docx::docx(&common::docx::para("Text."));
+    let written = write_with(
+        view,
+        &DocxOptions {
+            reference: Some(&bare),
+            ..DocxOptions::default()
+        },
+    );
+    let out = part_string(&written, "docProps/core.xml").expect("core properties written");
+    assert_eq!(core_values(&out, "dc:creator"), [NAME], "{out}");
+    let rels = part_string(&written, "_rels/.rels").unwrap();
+    assert!(rels.contains("core-properties"), "{rels}");
+    let types = part_string(&written, "[Content_Types].xml").unwrap();
+    assert!(types.contains("/docProps/core.xml"), "{types}");
+}
+
+#[test]
+fn an_owner_named_none_is_a_name_and_the_owner_line_outranks_author() {
+    let core = |front: &str| {
+        let written = write(&format!("---\nview: tracked\n{front}---\n\nText.\n"));
+        part_string(&written, "docProps/core.xml").unwrap_or_default()
+    };
+    // The note says a creator holds the name: `none` is that name.
+    let named = core("authors:\n  document_owner: none             # dc:creator\n");
+    assert_eq!(core_values(&named, "dc:creator"), ["none"], "{named}");
+    let quoted = core("authors:\n  document_owner: \"none\"\n");
+    assert_eq!(core_values(&quoted, "dc:creator"), ["none"], "{quoted}");
+    let editor = core("authors:\n  document_owner: none   # cp:lastModifiedBy; no dc:creator\n");
+    assert_eq!(
+        core_values(&editor, "cp:lastModifiedBy"),
+        ["none"],
+        "{editor}"
+    );
+    assert!(core_values(&editor, "dc:creator").is_empty(), "{editor}");
+    // `document_owner:` says who the file names; `author:` does not undo it.
+    let both = core(
+        "author: Override\nauthors:\n  document_owner: Last Editor  # cp:lastModifiedBy; no dc:creator\n",
+    );
+    assert!(core_values(&both, "dc:creator").is_empty(), "{both}");
+    assert_eq!(
+        core_values(&both, "cp:lastModifiedBy"),
+        ["Last Editor"],
+        "{both}"
+    );
+    // A quoted title keeps its quotes inside.
+    let title = core("title: \"Quarterly & <Report> \\\"Q\\\"\"\n");
+    assert_eq!(
+        core_values(&title, "dc:title"),
+        [r#"Quarterly & <Report> "Q""#],
+        "{title}"
+    );
+}
+
+#[test]
+fn no_core_properties_with_a_title_keeps_the_title_and_names_nobody() {
+    let template = write("Text.\n");
+    let reference = common::docx::replace_entry(
+        &template,
+        "docProps/core.xml",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Someone Else</dc:creator><cp:lastModifiedBy>Other Editor</cp:lastModifiedBy></cp:coreProperties>"#,
+    );
+    let written = write_with(
+        "---\ntitle: Quarterly\nauthors:\n  document_owner: none             # no docProps/core.xml\n---\n\nText.\n",
+        &DocxOptions {
+            reference: Some(&reference),
+            ..DocxOptions::default()
+        },
+    );
+    let out = part_string(&written, "docProps/core.xml").unwrap();
+    assert_eq!(core_values(&out, "dc:title"), ["Quarterly"], "{out}");
+    assert!(core_values(&out, "dc:creator").is_empty(), "{out}");
+    assert!(core_values(&out, "cp:lastModifiedBy").is_empty(), "{out}");
+}
+
 #[test]
 fn an_anchor_tag_is_the_bookmark_a_link_names() {
     // `<a id="name"></a>` is a bookmark where it stands (the view prints

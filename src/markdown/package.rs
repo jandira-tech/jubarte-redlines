@@ -484,7 +484,12 @@ fn with_named_styles(styles: &str, named: &BTreeSet<String>) -> String {
 
 /// The largest value of attribute `name` on elements `element` in `xml`.
 fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
-    let mut best = None;
+    attribute_values(xml, element, name).into_iter().max()
+}
+
+/// Every numeric `name` attribute of `element` in `xml`.
+fn attribute_values(xml: &str, element: &str, name: &str) -> Vec<i64> {
+    let mut values = Vec::new();
     let mut rest = xml;
     let open = format!("<{element} ");
     let key = format!("{name}=\"");
@@ -496,11 +501,11 @@ fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
             .map(|i| &tag[i + key.len()..])
             .and_then(|v| v[..v.find('"')?].parse::<i64>().ok())
         {
-            best = Some(best.map_or(value, |b: i64| b.max(value)));
+            values.push(value);
         }
         rest = &rest[tag_end..];
     }
-    best
+    values
 }
 
 /// The numbering part `main` relates to, made empty when there is none.
@@ -671,6 +676,14 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
             }
         }
         let mut notes = String::new();
+        // Revision ids are unique within a part, not across them: a note's
+        // mark keeps the id its reference's has in the body.
+        let in_part: HashSet<u32> = ["w:ins", "w:del", "w:moveFrom", "w:moveTo"]
+            .iter()
+            .flat_map(|element| attribute_values(&existing, element, "w:id"))
+            .filter_map(|id| u32::try_from(id).ok())
+            .collect();
+        let outside = std::mem::replace(&mut context.used_revisions, in_part);
         {
             let mut relate = PartRelate {
                 package,
@@ -689,6 +702,7 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
             }
             context.in_endnote = false;
         }
+        context.used_revisions = outside;
         let mut root = existing;
         let open = format!("<w:{kind}s");
         for (prefix, namespace) in [("r", R_NS), ("wp", WP_NS)] {
@@ -720,71 +734,206 @@ pub(crate) fn max_drawing_id(package: &PartFs) -> u32 {
 }
 
 /// `dc:title`, and the owner (`dc:creator`, or `cp:lastModifiedBy` alone)
-/// from the front matter, when the package has core properties. A view
-/// whose document had none (`document_owner: none # no docProps/core.xml`)
-/// writes none.
+/// from the front matter. A view whose document had no core properties
+/// (`document_owner: none # no docProps/core.xml`) and no title writes
+/// none; a reference without them gets them when the view names someone.
 fn core_properties(package: &mut PartFs, document: &Document) {
     use super::view_notes::Owner;
-    let Some(part) = package
+    let part = package
         .parts()
         .into_iter()
-        .find(|name| name.ends_with("core.xml") && name.starts_with("docProps/"))
-    else {
-        return;
-    };
+        .find(|name| name.ends_with("core.xml") && name.starts_with("docProps/"));
     let owner = document.owner.as_ref();
     if owner == Some(&Owner::NoPart) && document.title.is_none() && document.author.is_none() {
-        package.remove_part(&part);
-        package.remove_content_type_override(&part);
-        package.remove_package_relationships_by_type(CORE_PROPERTIES);
+        if let Some(part) = part {
+            package.remove_part(&part);
+            package.remove_content_type_override(&part);
+            package.remove_package_relationships_by_type(CORE_PROPERTIES);
+        }
         return;
     }
-    let (creator, editor) = match owner {
-        Some(Owner::Creator(name)) => (Some(name), None),
-        Some(Owner::LastModifiedBy(name)) => (None, Some(name)),
-        _ => (None, None),
+    // The owner line says whom the file names, and so whom the template's
+    // names give way to; a top-level `author:` names the creator only when
+    // there is no owner line.
+    let (creator, editor, named) = match owner {
+        Some(Owner::Creator(name)) => (Some(name), None, true),
+        Some(Owner::LastModifiedBy(name)) => (None, Some(name), true),
+        Some(Owner::Unnamed | Owner::NoPart) => (None, None, true),
+        None => (document.author.as_ref(), None, false),
     };
-    // A top-level `author:` names the creator.
-    let creator = document.author.as_ref().or(creator);
-    // The view says who the owner is, so whoever the template names goes.
-    let named = owner.is_some_and(|o| o != &Owner::NoPart);
     let edits = [
-        ("dc:title", document.title.as_ref(), false),
-        ("dc:creator", creator, named),
-        ("cp:lastModifiedBy", editor, named),
+        CoreEdit {
+            namespace: DC_NS,
+            local: "title",
+            value: document.title.as_deref(),
+            clear: false,
+        },
+        CoreEdit {
+            namespace: DC_NS,
+            local: "creator",
+            value: creator.map(String::as_str),
+            clear: named,
+        },
+        CoreEdit {
+            namespace: CP_NS,
+            local: "lastModifiedBy",
+            value: editor.map(String::as_str),
+            clear: named,
+        },
     ];
-    if edits
-        .iter()
-        .all(|(_, value, clear)| value.is_none() && !clear)
-    {
+    if edits.iter().all(|edit| edit.value.is_none()) && (part.is_none() || !named) {
         return;
     }
-    let Some(mut xml) = package.part_string(&part) else {
-        return;
+    let (part, xml) = match part {
+        Some(part) => {
+            let Some(xml) = package.part_string(&part) else {
+                return;
+            };
+            (part, xml)
+        }
+        None => {
+            let part = "docProps/core.xml".to_string();
+            package.add_content_type_override(
+                &part,
+                "application/vnd.openxmlformats-package.core-properties+xml",
+            );
+            package.add_package_relationship(CORE_PROPERTIES, &part);
+            let xml = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n\
+                 <cp:coreProperties xmlns:cp=\"{CP_NS}\" xmlns:dc=\"{DC_NS}\" \
+                 xmlns:dcterms=\"http://purl.org/dc/terms/\" \
+                 xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" \
+                 xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"></cp:coreProperties>"
+            );
+            (part, xml)
+        }
     };
-    for (element, value, clear) in edits {
-        let open = format!("<{element}>");
-        let close = format!("</{element}>");
-        let empty = format!("<{element}/>");
-        let found = match (xml.find(&open), xml.find(&close)) {
-            (Some(start), Some(end)) => Some(start..end + close.len()),
-            _ => xml.find(&empty).map(|start| start..start + empty.len()),
+    if let Some(xml) = edit_core(&xml, &edits) {
+        package.set_part(&part, xml.into_bytes());
+    }
+}
+
+/// The Dublin Core namespace of `dc:title` and `dc:creator`.
+const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
+/// The core properties namespace of `cp:lastModifiedBy`.
+const CP_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+
+/// One core property the view sets (`value`), or clears (`clear`).
+struct CoreEdit<'a> {
+    namespace: &'static str,
+    local: &'static str,
+    value: Option<&'a str>,
+    clear: bool,
+}
+
+/// `xml` with each edited property's first element given its value in
+/// place, keeping its own tag, its later copies dropped, and a property
+/// the part lacks written last in the root. Elements are matched by
+/// namespace, not by spelling, and comments and CDATA pass through
+/// untouched. `None` for XML the reader refuses: the part is then left as
+/// it is.
+fn edit_core(xml: &str, edits: &[CoreEdit<'_>]) -> Option<String> {
+    use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+    use quick_xml::name::ResolveResult;
+    /// `start` holding `value`.
+    fn element(
+        writer: &mut quick_xml::Writer<Vec<u8>>,
+        start: BytesStart<'_>,
+        value: &str,
+    ) -> Option<()> {
+        let end = BytesEnd::new(start.name().as_ref().to_owned());
+        writer.write_event(Event::Start(start)).ok()?;
+        writer
+            .write_event(Event::Text(BytesText::new(value)))
+            .ok()?;
+        writer.write_event(Event::End(end)).ok()
+    }
+    let mut reader = quick_xml::NsReader::from_str(xml);
+    let mut writer = quick_xml::Writer::new(Vec::new());
+    let mut depth = 0usize;
+    // The prefix the root binds to each namespace.
+    let mut prefixes: HashMap<String, String> = HashMap::new();
+    // The edits whose element is written.
+    let mut written = vec![false; edits.len()];
+    let edited = |resolved: &ResolveResult<'_>, local: &str| {
+        let ResolveResult::Bound(namespace) = resolved else {
+            return None;
         };
-        let replacement = match value {
-            Some(value) => format!("<{element}>{}</{element}>", escape(value)),
-            None if clear => String::new(),
-            None => continue,
-        };
-        match found {
-            Some(range) => xml.replace_range(range, &replacement),
-            None => {
-                if let Some(at) = xml.rfind("</cp:coreProperties>") {
-                    xml.insert_str(at, &replacement);
+        edits.iter().position(|edit| {
+            (edit.value.is_some() || edit.clear)
+                && namespace.as_ref() == edit.namespace
+                && local == edit.local
+        })
+    };
+    loop {
+        let (resolved, event) = reader.read_resolved_event().ok()?;
+        match event {
+            Event::Start(start) => {
+                if depth == 0 {
+                    for attribute in start.attributes().flatten() {
+                        if let Some(prefix) = attribute.key.as_ref().strip_prefix("xmlns:") {
+                            prefixes.insert(attribute.value.to_string(), prefix.to_string());
+                        }
+                    }
                 }
+                if depth == 1
+                    && let Some(at) = edited(&resolved, start.local_name().as_ref())
+                {
+                    reader.read_to_end(start.name()).ok()?;
+                    if let Some(value) = edits[at].value.filter(|_| !written[at]) {
+                        element(&mut writer, start.into_owned(), value)?;
+                    }
+                    written[at] = true;
+                    continue;
+                }
+                depth += 1;
+                writer.write_event(Event::Start(start)).ok()?;
+            }
+            Event::Empty(empty) => {
+                if depth == 1
+                    && let Some(at) = edited(&resolved, empty.local_name().as_ref())
+                {
+                    if let Some(value) = edits[at].value.filter(|_| !written[at]) {
+                        element(&mut writer, empty.into_owned(), value)?;
+                    }
+                    written[at] = true;
+                    continue;
+                }
+                writer.write_event(Event::Empty(empty)).ok()?;
+            }
+            Event::End(end) => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    for (edit, _) in edits.iter().zip(&written).filter(|(_, done)| !**done) {
+                        let Some(value) = edit.value else {
+                            continue;
+                        };
+                        let (name, declare) = match prefixes.get(edit.namespace) {
+                            Some(prefix) => (format!("{prefix}:{}", edit.local), None),
+                            None => {
+                                let prefix = if edit.namespace == DC_NS { "dc" } else { "cp" };
+                                (format!("{prefix}:{}", edit.local), Some(prefix))
+                            }
+                        };
+                        let mut start = BytesStart::new(name.as_str());
+                        if let Some(prefix) = declare {
+                            start.push_attribute((
+                                format!("xmlns:{prefix}").as_str(),
+                                edit.namespace,
+                            ));
+                        }
+                        element(&mut writer, start, value)?;
+                    }
+                }
+                writer.write_event(Event::End(end)).ok()?;
+            }
+            Event::Eof => break,
+            other => {
+                writer.write_event(other).ok()?;
             }
         }
     }
-    package.set_part(&part, xml.into_bytes());
+    String::from_utf8(writer.into_inner()).ok()
 }
 
 /// The package relationship to the core properties part.
