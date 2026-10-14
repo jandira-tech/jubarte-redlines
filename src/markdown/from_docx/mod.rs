@@ -274,7 +274,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         note_changes: Vec::new(),
         lead: None,
         flattening: 0,
-        anchor_links: 0,
+        heading_slug: None,
+        bookmarks: bookmark_targets(
+            std::iter::once(&document)
+                .chain(note_roots.iter().map(|(_, root)| root))
+                .chain(comments_root.as_ref()),
+        ),
         monospace_paragraph: false,
         closing_fields: HashSet::new(),
         revisions: Vec::new(),
@@ -1470,9 +1475,12 @@ struct Writer<'a> {
     lead: Option<String>,
     /// Inside a nested table, whose cells are flattened onto one line.
     flattening: usize,
-    /// Inside a link to a bookmark (`w:hyperlink w:anchor`), which prints
-    /// as text but still wears the Hyperlink style's look.
-    anchor_links: usize,
+    /// The bookmarks a link or a reference field names, which print as
+    /// `<a id="name"></a>` where they start.
+    bookmarks: HashSet<String>,
+    /// In a heading: the slug a Markdown link names it by, whose bookmark
+    /// the writer makes again and so prints no `<a id>`.
+    heading_slug: Option<String>,
     /// The paragraph being written is set in a monospace face.
     monospace_paragraph: bool,
     /// The `fldChar begin` of each field whose `end` lies in the paragraph
@@ -1612,6 +1620,20 @@ impl Writer<'_> {
     /// paragraph, because CriticMarkup cannot cross a block. With them hidden
     /// (the agent view's `--comments none`), nothing is highlighted: the range
     /// is only tracked, so each line it covers can name it.
+    /// `name` is the bookmark the writer gives the heading being read: its
+    /// slug, or the slug and `-1`, `-2`, … for a repeated heading.
+    fn slug_of_heading(&self, name: &str) -> bool {
+        self.heading_slug.as_deref().is_some_and(|slug| {
+            !slug.is_empty()
+                && name.strip_prefix(slug).is_some_and(|rest| {
+                    rest.is_empty()
+                        || rest
+                            .strip_prefix('-')
+                            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                })
+        })
+    }
+
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
         if self.agent
             && !self.in_comment
@@ -1690,7 +1712,9 @@ impl Writer<'_> {
             .or_else(|| style.as_deref().and_then(|s| self.styles.num(s)));
 
         let open_before = self.open_ranges().to_vec();
+        self.heading_slug = heading.map(|_| super::write::github_slug(&shown_text(p)));
         let (mut inline, extra) = self.paragraph_inline(p);
+        self.heading_slug = None;
         let code_block = style.as_deref() == Some("SourceCode");
         if code_block {
             inline.set_code_block();
@@ -2117,10 +2141,17 @@ impl Writer<'_> {
                 "r" => self.run(child, link, base, fields, out, extra),
                 "hyperlink" => {
                     let url = child.rel_attr("id").and_then(|id| self.rels.link(id));
-                    let anchor = url.is_none() && child.attr("anchor").is_some();
-                    self.anchor_links += usize::from(anchor);
-                    self.inline(child, url.as_deref().or(link), base, fields, out, extra);
-                    self.anchor_links -= usize::from(anchor);
+                    let target = link_target(url.as_deref(), child.attr("anchor"))
+                        .map(|t| ooxml::titled(&t, child.attr("tooltip")));
+                    self.inline(child, target.as_deref().or(link), base, fields, out, extra);
+                }
+                "bookmarkStart" => {
+                    if let Some(name) = child
+                        .attr("name")
+                        .filter(|n| self.bookmarks.contains(*n) && !self.slug_of_heading(n))
+                    {
+                        out.raw(&format!("<a id=\"{}\"></a>", super::xml::escape(name)));
+                    }
                 }
                 "fldSimple" => {
                     let instruction = child.attr("instr").unwrap_or_default();
@@ -2214,8 +2245,7 @@ impl Writer<'_> {
         // to a bookmark too, the character style's underline is the link's
         // look (Word's Hyperlink style), not formatting: only a direct `w:u`
         // counts.
-        let in_link =
-            link.is_some() || self.anchor_links > 0 || fields.iter().any(|f| f.link.is_some());
+        let in_link = link.is_some() || fields.iter().any(|f| f.link.is_some());
         let underline = self.agent
             && rpr
                 .and_then(|r| r.child("u"))
@@ -3197,18 +3227,160 @@ fn base(s: &str) -> String {
     if command { s.to_string() } else { group(s) }
 }
 
-/// The URL of a `HYPERLINK "url"` field instruction; internal `\l` anchors are ignored.
+/// The link of a `HYPERLINK` field instruction: its URL, `#bookmark` for
+/// `\l "bookmark"`, both (`url#bookmark`), titled with `\o`'s tooltip.
 fn hyperlink_instruction(instruction: &str) -> Option<String> {
-    let rest = instruction.trim().strip_prefix("HYPERLINK")?.trim();
-    if rest.starts_with("\\l") {
+    let words = field_words(instruction);
+    let ((name, false), rest) = words.split_first()? else {
+        return None;
+    };
+    if !name.eq_ignore_ascii_case("HYPERLINK") {
         return None;
     }
-    let url = if let Some(quoted) = rest.strip_prefix('"') {
-        quoted.split('"').next()?
-    } else {
-        rest.split_whitespace().next()?
-    };
-    (!url.is_empty()).then(|| url.to_string())
+    let (mut url, mut anchor, mut title) = (None, None, None);
+    let mut rest = rest.iter();
+    while let Some((word, quoted)) = rest.next() {
+        if *quoted || !word.starts_with('\\') {
+            url.get_or_insert(word.as_str());
+            continue;
+        }
+        // `\l`, `\o` and `\t` take an argument; `\h`, `\m`, `\n` none.
+        let argument = matches!(word.to_ascii_lowercase().as_str(), "\\l" | "\\o" | "\\t")
+            .then(|| rest.next())
+            .flatten()
+            .map(|(w, _)| w.as_str());
+        match word.to_ascii_lowercase().as_str() {
+            "\\l" => anchor = argument,
+            "\\o" => title = argument,
+            _ => {}
+        }
+    }
+    link_target(url, anchor).map(|t| ooxml::titled(&t, title))
+}
+
+/// The text of `p` the accepted document shows: its `w:t`, not deleted
+/// or moved-away text.
+fn shown_text(p: &Element) -> String {
+    fn walk(e: &Element, out: &mut String) {
+        for c in e.elements() {
+            match c.local() {
+                "del" | "moveFrom" | "pPr" | "rPr" => {}
+                "t" => out.push_str(&c.text()),
+                _ => walk(c, out),
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(p, &mut out);
+    out
+}
+
+/// A link's destination from its URL and its bookmark: `url`, `#bookmark`,
+/// or `url#bookmark`.
+fn link_target(url: Option<&str>, anchor: Option<&str>) -> Option<String> {
+    match (
+        url.filter(|u| !u.is_empty()),
+        anchor.filter(|a| !a.is_empty()),
+    ) {
+        (Some(url), Some(anchor)) => Some(format!("{url}#{anchor}")),
+        (Some(url), None) => Some(url.to_string()),
+        (None, Some(anchor)) => Some(format!("#{anchor}")),
+        (None, None) => None,
+    }
+}
+
+/// A field instruction's words, each with whether it was quoted: `"a b"`
+/// is one word, and `\"` inside quotes is a quote.
+fn field_words(instruction: &str) -> Vec<(String, bool)> {
+    let mut words = Vec::new();
+    let mut chars = instruction.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else if c == '"' {
+            chars.next();
+            let mut word = String::new();
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' => break,
+                    '\\' if chars.peek() == Some(&'"') => {
+                        word.push('"');
+                        chars.next();
+                    }
+                    _ => word.push(c),
+                }
+            }
+            words.push((word, true));
+        } else {
+            let mut word = String::new();
+            while let Some(&c) = chars.peek().filter(|c| !c.is_whitespace() && **c != '"') {
+                word.push(c);
+                chars.next();
+            }
+            words.push((word, false));
+        }
+    }
+    words
+}
+
+/// The bookmarks under `roots` a link (`w:hyperlink w:anchor`, `HYPERLINK
+/// \l`) or a reference field (`REF`, `PAGEREF`, `NOTEREF`) names.
+fn bookmark_targets<'e>(roots: impl Iterator<Item = &'e Element>) -> HashSet<String> {
+    fn walk(e: &Element, codes: &mut Vec<String>, out: &mut HashSet<String>) {
+        for c in e.elements() {
+            match c.local() {
+                "hyperlink" => {
+                    if let Some(anchor) = c.attr("anchor").filter(|a| !a.is_empty()) {
+                        out.insert(anchor.to_string());
+                    }
+                    walk(c, codes, out);
+                }
+                "fldSimple" => {
+                    codes.push(c.attr("instr").unwrap_or_default().to_string());
+                    walk(c, codes, out);
+                }
+                "fldChar" if c.attr("fldCharType") == Some("begin") => codes.push(String::new()),
+                "instrText" | "delInstrText" => {
+                    if let Some(code) = codes.last_mut() {
+                        code.push_str(&c.text());
+                    }
+                }
+                _ => walk(c, codes, out),
+            }
+        }
+    }
+    let mut codes = Vec::new();
+    let mut out = HashSet::new();
+    for root in roots {
+        walk(root, &mut codes, &mut out);
+    }
+    for code in &codes {
+        let words = field_words(code);
+        match words
+            .first()
+            .map(|(w, _)| w.to_ascii_uppercase())
+            .as_deref()
+        {
+            Some("HYPERLINK") => {
+                if let Some(target) = hyperlink_instruction(code)
+                    && let Some((_, anchor)) = target
+                        .split(ooxml::TITLE)
+                        .next()
+                        .unwrap_or("")
+                        .split_once('#')
+                {
+                    out.insert(anchor.to_string());
+                }
+            }
+            Some("REF" | "PAGEREF" | "NOTEREF") => {
+                if let Some((name, _)) = words.get(1) {
+                    out.insert(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -3677,6 +3849,48 @@ mod tests {
             md(&bytes),
             "Claim[^1]\n\n[field link](https://f.example)\n\n![A chart of sales](image1.png)\n\n[^1]: Source: survey.\n"
         );
+    }
+
+    #[test]
+    fn a_link_to_a_bookmark_is_a_markdown_link_and_its_bookmark_an_anchor() {
+        // `w:hyperlink w:anchor` and a `HYPERLINK \l` field both lead to a
+        // bookmark: standard Markdown `[t](#name)`, the tooltip its title.
+        // The bookmark a link or a reference field names prints where it
+        // starts, `<a id="name"></a>`; one nothing names prints nothing.
+        let body = format!(
+            "{}{}{}{}{}",
+            p(
+                "",
+                r#"<w:bookmarkStart w:id="0" w:name="exec_summary"/><w:r><w:t>Summary</w:t></w:r><w:bookmarkEnd w:id="0"/><w:bookmarkStart w:id="1" w:name="unused"/><w:bookmarkEnd w:id="1"/>"#
+            ),
+            p(
+                "",
+                r#"<w:r><w:t xml:space="preserve">Back to </w:t></w:r><w:hyperlink w:anchor="exec_summary" w:tooltip="Go up"><w:r><w:t>the summary</w:t></w:r></w:hyperlink><w:r><w:t>.</w:t></w:r>"#
+            ),
+            p(
+                "",
+                r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> HYPERLINK \l "exec_summary" \o "Say \"up\"" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Jump</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+            ),
+            p(
+                "",
+                r#"<w:bookmarkStart w:id="2" w:name="_Ref9"/><w:r><w:t>Target</w:t></w:r><w:bookmarkEnd w:id="2"/>"#
+            ),
+            p(
+                "",
+                r#"<w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGEREF _Ref9 \h "><w:r><w:t>2</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> and </w:t></w:r><w:fldSimple w:instr=" HYPERLINK &quot;https://x.example/a&quot; \l &quot;part&quot; \t &quot;_blank&quot; "><w:r><w:t>there</w:t></w:r></w:fldSimple>"#
+            ),
+        );
+        assert_eq!(
+            md(&docx(&body, &[])),
+            "<a id=\"exec_summary\"></a>Summary\n\nBack to [the summary](#exec_summary \"Go up\").\n\n\
+             [Jump](#exec_summary \"Say \\\"up\\\"\")\n\n<a id=\"_Ref9\"></a>Target\n\n\
+             See page 2 and [there](https://x.example/a#part)\n"
+        );
+        assert_eq!(
+            hyperlink_instruction(r#" HYPERLINK \l "bookmark" "#),
+            Some("#bookmark".to_string())
+        );
+        assert_eq!(hyperlink_instruction(" HYPERLINK "), None);
     }
 
     #[test]
@@ -5041,7 +5255,10 @@ mod markdown_source_owner_boundary_tests {
             "Unnumbered\n\n1. First\n2. Second\n"
         );
         assert_eq!(bytes, frozen);
-        assert_eq!(hyperlink_instruction(" HYPERLINK \\l bookmark "), None);
+        assert_eq!(
+            hyperlink_instruction(" HYPERLINK \\l bookmark "),
+            Some("#bookmark".to_string())
+        );
         assert_eq!(
             hyperlink_instruction(" HYPERLINK https://example.invalid "),
             Some("https://example.invalid".to_string())

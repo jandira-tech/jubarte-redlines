@@ -1030,6 +1030,54 @@ fn the_tracking_option_overrides_the_key() {
 }
 
 #[test]
+fn an_anchor_tag_is_the_bookmark_a_link_names() {
+    // `<a id="name"></a>` is a bookmark where it stands (the view prints
+    // the bookmarks links and reference fields name); a link to it is no
+    // missing heading, and no heading takes its name.
+    let written = markdown_to_docx(
+        "# Up\n\n<a id=\"exec_summary\"></a>Summary and <a name=\"_Ref9\"></a>more.\n\n\
+         Back [up](#exec_summary \"Go up\") and [there](#_Ref9).\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(
+        xml.contains(
+            r#"<w:bookmarkStart w:id="0" w:name="exec_summary"/><w:bookmarkEnd w:id="0"/>"#
+        ),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:bookmarkStart w:id="1" w:name="_Ref9"/><w:bookmarkEnd w:id="1"/>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:hyperlink w:anchor="exec_summary" w:tooltip="Go up""#),
+        "{xml}"
+    );
+    assert!(xml.contains(r#"w:anchor="_Ref9""#), "{xml}");
+    assert!(
+        !written.warnings.iter().any(|w| w.contains("link")),
+        "{:?}",
+        written.warnings
+    );
+    let view = jubarte::markdown::docx_to_markdown(
+        &written.docx,
+        &jubarte::markdown::MarkdownOptions::default(),
+    )
+    .unwrap()
+    .markdown;
+    assert!(
+        view.contains("<a id=\"exec_summary\"></a>Summary and <a id=\"_Ref9\"></a>more."),
+        "{view}"
+    );
+    assert!(
+        view.contains("Back [up](#exec_summary \"Go up\") and [there](#_Ref9)."),
+        "{view}"
+    );
+}
+
+#[test]
 fn a_link_to_no_heading_is_written_and_warned_once() {
     let written = markdown_to_docx(
         "# Intro\n\n[a](#intro) [b](#nowhere) [c](#nowhere) [d](#gone)\n\n{--\n# Gone\n--}\n",
@@ -1302,9 +1350,15 @@ fn a_front_matter_story_that_does_not_read_warns() {
         written.warnings
     );
     // The front matter is no Markdown: a field in it is not encoded, so
-    // its code keeps its characters as written.
+    // its code keeps its characters and is written as the field it names.
     let header = part_string(&written.docx, "word/header1.xml").unwrap();
-    assert!(header.contains(r"{REF _R \h}hi{/}"), "{header}");
+    assert!(
+        header.contains(r#"<w:fldSimple w:instr=" REF _R \h "><w:r><w:t xml:space="preserve">hi</w:t></w:r></w:fldSimple>"#),
+        "{header}"
+    );
     let first = part_string(&written.docx, "word/header2.xml").unwrap();
-    assert!(first.contains("{REF _R}hi{/}"), "{first}");
+    assert!(
+        first.contains(r#"<w:fldSimple w:instr=" REF _R ">"#),
+        "{first}"
+    );
 }

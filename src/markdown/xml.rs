@@ -135,6 +135,8 @@ pub(super) enum Item {
     CommentReference(u32),
     /// A link and its title (`w:tooltip`).
     LinkStart(Link, Option<String>),
+    /// A bookmark where it stands (`<a id="name"></a>`).
+    Bookmark(String),
     LinkEnd,
     Table {
         columns: Vec<Option<&'static str>>,
@@ -422,10 +424,20 @@ pub(super) fn story(
         }
     };
     for item in items {
-        if !matches!(item, Item::Run(_)) {
+        // A bookmark may sit inside a `w:ins`/`w:del`: it splits no change.
+        if !matches!(item, Item::Run(_) | Item::Bookmark(_)) {
             close(&mut out, &mut open);
         }
         match item {
+            Item::Bookmark(name) => {
+                let id = context.next_bookmark;
+                context.next_bookmark += 1;
+                let _ = write!(
+                    out,
+                    "<w:bookmarkStart w:id=\"{id}\" w:name=\"{}\"/><w:bookmarkEnd w:id=\"{id}\"/>",
+                    escape(name)
+                );
+            }
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
                 paragraph_properties(context, paragraph, &mut out);

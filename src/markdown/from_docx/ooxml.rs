@@ -229,6 +229,18 @@ impl Rels {
     }
 }
 
+/// Between a link's destination and its title where the two travel as one
+/// string; the link is written `[t](url "title")`.
+pub(crate) const TITLE: char = '\u{1f}';
+
+/// A link destination carrying `title` (a tooltip), if it has one.
+pub(crate) fn titled(url: &str, title: Option<&str>) -> String {
+    match title.filter(|t| !t.is_empty()) {
+        Some(title) => format!("{url}{TITLE}{title}"),
+        None => url.to_string(),
+    }
+}
+
 /// A parsed XML element. Names keep their prefix; lookups match local names.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Element {
@@ -569,12 +581,16 @@ impl Inline {
             }
             let group = &self.spans[index..end];
             match link {
-                Some(url) if !group.iter().all(|s| s.text.trim().is_empty()) => {
+                Some(link) if !group.iter().all(|s| s.text.trim().is_empty()) => {
                     let inner = render_emphasis(group, emphasis);
                     let (lead, core, trail) = split_ws(&inner);
                     let label = core.replace('[', "\\[").replace(']', "\\]");
+                    let (url, title) = link.split_once(TITLE).unwrap_or((&link, ""));
                     let url = url.replace(' ', "%20").replace(')', "%29");
-                    if label == url
+                    if !title.is_empty() {
+                        let title = title.replace('\\', "\\\\").replace('"', "\\\"");
+                        out.push_str(&format!("{lead}[{label}]({url} \"{title}\"){trail}"));
+                    } else if label == url
                         || (label.contains('@')
                             && label.trim_start_matches("mailto:")
                                 == url.trim_start_matches("mailto:"))

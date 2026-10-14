@@ -1817,6 +1817,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 let title = html_attribute(html, "title");
                 self.link_start(&href, title);
                 self.html_links += u32::from(self.link > before);
+            } else if let Some(name) =
+                html_attribute(html, "id").or_else(|| html_attribute(html, "name"))
+                && !name.is_empty()
+                && self.comment.is_none()
+                && self.image.is_none()
+            {
+                self.ensure_paragraph();
+                self.story().push(Item::Bookmark(name));
             }
             return;
         }
@@ -2140,10 +2148,25 @@ impl<'o, 'a> Writer<'o, 'a> {
                 _ => None,
             })
             .collect();
-        let headings = heading_bookmarks(&body, &targets);
+        // `<a id>` bookmarks are where their links land; no heading takes
+        // their names.
+        let anchors: HashSet<&str> = body
+            .iter()
+            .chain(self.definitions.values().flatten())
+            .filter_map(|item| match item {
+                Item::Bookmark(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let to_headings: HashSet<&str> = targets.difference(&anchors).copied().collect();
+        let headings = heading_bookmarks(&body, &to_headings);
         // A link whose heading is missing still goes in; Word's jump goes
         // nowhere, so say so, once per name.
-        let landed: HashSet<&str> = headings.iter().map(|(_, slug)| slug.as_str()).collect();
+        let landed: HashSet<&str> = headings
+            .iter()
+            .map(|(_, slug)| slug.as_str())
+            .chain(anchors.iter().copied())
+            .collect();
         let mut missing: Vec<&str> = targets.difference(&landed).copied().collect();
         missing.sort_unstable();
         for name in missing {
@@ -2157,6 +2180,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             .iter()
             .filter(|(_, slug)| word_takes(slug))
             .map(|(_, slug)| slug.clone())
+            .chain(anchors.iter().map(|name| (*name).to_string()))
             .collect();
         for (at, slug) in headings {
             let name = bookmark_name(&slug, &used);
@@ -2251,7 +2275,7 @@ fn bookmark_name(slug: &str, used: &HashSet<String>) -> String {
 /// The slug github-slugger gives a heading's text: lowercase, then every
 /// character dropped that is no letter, mark, decimal or letter number,
 /// connector punctuation (`_`) or `-`, and each plain space made `-`.
-fn github_slug(text: &str) -> String {
+pub(super) fn github_slug(text: &str) -> String {
     text.to_lowercase()
         .chars()
         .filter_map(|c| match c {
