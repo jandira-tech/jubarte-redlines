@@ -18,7 +18,7 @@
 
 Three read-only surveys of the tree on 2026-10-10 found the following; every line number was re-checked against ab96fe0f on 2026-10-11:
 
-- **`-o` lies.** `Format::of_path` (src/cli.rs:1153) knows docx/md/pdf/png only; `.json` and unknown extensions fall through to each task's default. `convert -o x.json` writes a PDF (src/bin/jubarte.rs:1759-1767); `diff -o x.json` with a Word input writes Word (`run_diff` 1586-1593); `compare -o x.pdf` writes Word bytes (jubarte.rs:1328-1346); `convert --pdf -o x.png` writes a PDF named x.png (jubarte.rs:1761; `want_pdf` at :387). `diff` with a Word input and no `-o` silently writes `<old>_v_<new>.docx` beside the input (jubarte.rs:1604; the Docx default at 1607). `compare A B` writes `_v_.docx`; `jubarte A B` prints the agent view (jubarte.rs:1242-1267, 1348-1352). diff's `--to` beats `-o` at runtime while its help says the opposite (cli.rs:513).
+- **`-o` lies.** `Format::of_path` (src/cli.rs:1153) knows docx/md/pdf/png only; `.json` and unknown extensions fall through to each task's default. `convert -o x.json` writes a PDF (src/bin/jubarte.rs:1759-1767); `diff -o x.json` with a Word input writes Word (`run_diff` 1586-1593); `compare -o x.pdf` writes Word bytes (jubarte.rs:1338-1341 pick it, 1351 writes); `convert --pdf -o x.png` writes a PDF named x.png (jubarte.rs:1761; `want_pdf` at :387). `diff` with a Word input and no `-o` silently writes `<old>_v_<new>.docx` beside the input (jubarte.rs:1604; the Docx default at 1607). `compare A B` writes `_v_.docx`; `jubarte A B` prints the agent view (jubarte.rs:1242-1267, 1348-1352). diff's `--to` beats `-o` at runtime while its help says the opposite (cli.rs:513).
 - **Three id families, no bridge.** The view prints `#12 @AC` (agent.rs:130-138); `accept --id` matches only the long `body:rev:12` by string equality (`ChangeFilter::matches`, changes.rs:112-123); nothing parses `#12`. Comments are `5`, `c5`, `#c5`, `comment_id: 5` in four places; `-p #c5` fails. Footnote changes print a bare `#N` that can clash with the body; header/footer changes get no tag at all.
 - **Six revision counts** (`changes`, `inspect` summary, `read` header, two edit-report paths, the comparer) disagree on scope, grouping and nesting. A text box's `mc:Fallback` copy is listed twice; Word gives that copy a different, consecutive `w:id` (10 of the 100 `rejected_tracking` redlines in `tests/corpus/neurotic_docx_bench`). Word also gives a style's `w:pPrChange` and `w:rPrChange` one `w:id` (62 of those 100), so a `w:id` is not unique within a story.
 - **Two "changed"s.** `read --changed` counts comments; `--changed-only` does not, and ignores header/footer revisions (`!in_chrome`, convert/mod.rs:25273). `--pages` is convert-only, PNG-only, and under `--changed-only` names PNGs by kept-page index.
@@ -54,7 +54,7 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 | D5 | `--changed-only` → `--changed-pages` (hidden alias). Keeps: pages a body or note revision touches (as today), pages with a comment anchor, and the **first page of each section on which a revised header or footer paints** (Q2); the first page when none. `--pages` narrows the PDF too; PNG names use the **document** page number. Both live in `RenderArgs`, flattened into every task that can render. |
 | D6 | `--pdf`/`--png` → hidden aliases of `--to pdf`/`--to png` on `convert` (so `--pdf --png` and `--to md --png` exit 2; `edit --pdf/--png` keep their "also write" meaning). `--quiet/-q` on every task (`global = true`; like every option it goes after the task, since `args_conflicts_with_subcommands` reads a task named after an option as a document). One `write_output` prints `wrote PATH (FORMAT, N bytes)` on **stderr**. |
 | D7 | **One id grammar** (`src/ids.rs`; the table is in Task 2). Each kind of id takes every spelling of its kind wherever that kind is accepted. **Revisions (changes):** `r12`, `12`, `r1+2`/`1+2` (= both), `header1.r1`, `footnotes.r3`, long `body:rev:12`/`header1:rev:1`. **Comments:** `c27`, `27`. **Paragraphs:** `p12`, `12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2[.p1]`, long `body:p:12`. **Tables:** `t0`; rows `row1`, cells `cell2`, always under their table (`t0.row1.cell2`). 0.12's printed forms stay accepted as input and are never printed again: `#12`, `#1+2`, `#c27`. 0.12's cell form `t0.r1.c2[.p1]` parses through 0.13 with a `note:` and is removed in 0.14. A story is a part stem (`changes::story_id`, `inspect::story_parts`), checked syntactically and resolved against the document, never against a fixed list. Body ids print without a story (`r12`); every other story prints `{story}.r{id}` (`header1.r1`, `footnotes.r3`), as paragraphs print `header1.p2`. No printed id contains `#`. Word's own pairs are one change: a style's `w:pPrChange` + `w:rPrChange` sharing a `w:id` (Task 3), and a text box's `mc:Fallback` copy (Task 4). Any other `w:id` that names two listed changes in one story exits 2, listing the candidates. Text listings print short ids. JSON keeps `id` (long) and adds `ref` (short). Machine hints and error payloads keep the long id. |
-| D7b | **`edit` resolves single changes and replies by flag.** `edit FILE -p r12 --accept` / `--reject` fills the plan's `resolve_revisions`, which runs before the plan's operations whatever the flag order; `-p` repeats (`-p r1 --accept -p r3 --reject`). `--reply TEXT` on `edit` and `add` with `-p c5` writes a `ReplyComment`; `add -p c5 --content TEXT` keeps meaning a reply. A change takes only `--accept` or `--reject`; `--accept`/`--reject` take only a change; `--reply` takes only a comment and excludes `--content`, `--delete`, `--resolve`, `--anchor` and `--style`. Any other mix exits 2 naming what fits (Task 3b). |
+| D7b | **`edit` resolves single changes and replies by flag.** `edit FILE -p r12 --accept` / `--reject` fills the plan's `resolve_revisions`, which runs before the plan's operations whatever the flag order; `-p` repeats (`-p r1 --accept -p r3 --reject`). `--reply TEXT` on `edit` and `add` with `-p c5` writes a `ReplyComment`; `add -p c5 --content TEXT` keeps meaning a reply. A change takes only `--accept` or `--reject`; `--accept`/`--reject` take only a change; `--reply` takes only a comment and excludes `--content`, `--delete`, `--resolve`, `--anchor`, `--style`, `--before` and `--comment`. Any other mix exits 2 naming what fits (Task 3b). |
 | D8 | **One revision count = `list_changes(docx).len()`:** one per listed change over the six revision-bearing parts that `accept`/`reject` process (main, headers, footers, footnotes, endnotes, styles; `revision_processor.rs:3371-3409`). Formatting changes count; Word's one-id style pair and a text box's twins count once. Strict documents are normalized first. Marks in other parts (`comments.xml`, `numbering.xml`) leave `inspect`'s count. `changes`, `inspect`, `read`'s header and both edit-report paths agree. |
 | D9 | `Snapshot` gains `changes` and `comments` (each item with `ref`); `schema_version` stays 1 (it is shared with edit plans). `read --json` prints it, and the selection flags filter it (Q4). `changes --json` / `comments --json` stay JSON Lines whose lines are the snapshot's items. `read` gains `--json` and `--tables` (in `ReadArgs`; refused with two inputs, Q3), `-o .md\|.json`, and a `sha256:` line after `source:` (the follow-ups plan's `digest:` line becomes this one). |
 | D10 | `validate --rules word\|edits\|a11y\|style\|structure` (default `word`; `--original --author` adds `edits`), `--strict`, one `Finding` shape. **Exit rule: any `word` or `edits` finding exits 2 as today; a11y/style/structure findings exit 2 on `error`, and on `warning` only with `--strict`.** A usage error in `--rules` (an unknown set or code, `edits` without `--original`) exits 2 (Q5; today `audit --rules BOGUS` exits 1). `audit` → hidden alias of `validate --rules a11y,style,structure`; `audit --json`'s one object becomes JSON Lines. MCP `docx_audit` stays. |
@@ -83,7 +83,7 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 6. **Shell-safe ids.** In bash and zsh an unquoted word that starts with `#` begins a comment, so `--id #12` and `-p #c5` pass nothing. No printed id starts with `#` any more (`r12`, `c5`).
    - Help, docs, examples and error hints write `r12`, `12`, `r1+2`, `c5`; never `#12` or `#c5`.
    - Tests pass argv directly and may use `#12` to prove the 0.12 spelling still parses.
-   - **bash, csh/tcsh and zsh alike:** every printed id and every documented spelling uses only `[a-z0-9.+:-]`. It never starts with `#`, `=`, `~` or `-` (zsh's `EQUALS` expands a leading `=`; `extendedglob` makes `#`, `^` and `~` glob operators), and never holds `!` (csh/bash history), `*`, `?`, `[`, `{`, `$` or a space. `ids` has a unit test over `CHANGE_SPELLINGS`, `COMMENT_SPELLINGS` and `PARAGRAPH_SPELLINGS` and over `short()`/`short_paragraph()` output that enforces this character set.
+   - **bash, csh/tcsh and zsh alike:** every short id jubarte prints and every documented spelling uses only `[a-z0-9.+:-]`. A long id printed for a story outside the stem rule (`Header_1:rev:4`) or a `w:id` that is not a plain decimal carries the document's own characters; it holds no shell metacharacter in practice, and the round trip (Task 5b) checks it. It never starts with `#`, `=`, `~` or `-` (zsh's `EQUALS` expands a leading `=`; `extendedglob` makes `#`, `^` and `~` glob operators), and never holds `!` (csh/bash history), `*`, `?`, `[`, `{`, `$` or a space. `ids` has a unit test over `CHANGE_SPELLINGS`, `COMMENT_SPELLINGS` and `PARAGRAPH_SPELLINGS` and over `short()`/`short_paragraph()` output that enforces this character set.
    - Docs quote free text (`--reply "Yes."`, `--content '…'`) with the quotes all three shells share; never `$'…'`, which csh lacks.
 7. Generated files are regenerated, never edited:
    - `README.crates.md` and the three library READMEs;
@@ -101,7 +101,7 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 - [ ] `git status` shows only the three untracked docs. Branch from main at ab96fe0f or later (`git switch -c cli-standardisation`). There is nothing in flight to land: the `same_path` hardening is in (jubarte.rs:150-189, `ensure_writable` 197-198).
 - [ ] Move this plan to `docs/superpowers/plans/2026-10-10-cli-standardisation.md`. Commit it with `docs/glm_new_cli_review.md` and `docs/2026-10-09-agent-edit-follow-ups.md` on the branch (Q8: `jubarte-wasm/build-npm.sh:17-26` refuses any dirty tree, untracked files included). Commit: `docs: the CLI standardisation plan and its companions`.
 
-### Task 1: The examples and README list with `changes`
+### Task 1: The examples and README list with `changes` (done: 97dbdef1, 26780659, fc84cc8a, f6870c25, PR #422)
 **Files:**
 - `examples/cli/visualize/run.sh:112-113`; `VISUALIZE.md:266-280` regenerates in Task 21.
 - `examples/adoption/08-accept-reject/run.sh:100, 102` (the LibreOffice line sits inside the `if` at 101-103), its committed `revisions_accepted_{jubarte,libreoffice}.log`, and its `README.md:65, 71`.
@@ -148,7 +148,7 @@ Steps:
 Every `-p` refusal reads `{given}: {why}`; the `why` is the row's message above. Every `--id` and plan-id refusal reads `{given}: expected a change id such as r12, header1.r1 or body:rev:12`. Every `comment_id` refusal reads `{given}: expected a comment id such as c27 or 27`.
 
 Rules behind the table:
-- **Short story stem:** `[a-z][a-z0-9]*` that is not itself shaped `p12`, `t0`, `c5`, `r1`, `row1` or `cell1`.
+- **Short story stem:** `[a-z][a-z0-9]*` that is neither a bare `p`, `t`, `c` or `r` nor shaped `p12`, `t0`, `c5`, `r1`, `row1` or `cell1`. That exclusion is itself a fixed list: a part named `t0.xml` or `row1.xml` keeps only its long id.
   - It is checked syntactically and resolved against the document's stories. A fixed list would refuse `hdr:rev:N`, which jubarte prints for a part named `hdr.xml`.
   - A stem outside the rule (uppercase, `_`, `-`, `.`) or a `w:id` that is not a plain decimal keeps only its long id. `short()` prints the long form for them, so every printed id parses.
 - **Long ids** (`{story}:rev:{wid}`, `{story}:p:{n}`) accept any story without `:`.
@@ -228,7 +228,7 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
 - `tests/edit_short_ids.rs`:
   - Plan `comment_id:"c0"` and `"#c0"` apply.
   - `-p #c0` (argv); `-p 6` ≡ `-p p6`; `-p footnotes.p0` edits the note.
-  - The cell tests (220-264) write `t0.row0.cell1`; one row keeps `t0.r0.c1` and expects the same edit.
+  - `the_cli_p_flag_takes_cell_and_story_ids` (222-264) writes `t0.row1.cell1.p1`; a copy keeps `t0.r1.c1.p1` and expects the same redline.
   - The 17 malformed ids (266-296) stay ANCHOR_NOT_FOUND.
 - `tests/edit_opaque_refusals.rs:57, :71`: the machine hints keep the long id. Unchanged.
 - `tests/m_cli_comments.rs`: rows start `c0\tp0\t…`; the text pin at :89 loses `body:p:0`; `reply to c0`; JSON `"ref":"c0"`.
@@ -263,7 +263,7 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
 **The pairing rules** (each refusal is `-p {at}: {why}`, exit 2):
 - A change (`r12`, `header1.r1`, `r1+2`, a long `…:rev:…`) takes exactly one of `--accept`/`--reject` and nothing else: "a revision takes --accept or --reject".
 - `--accept`/`--reject` with anything that is not a change: "--accept and --reject take a revision (-p r12)". Both on one `-p`: "--accept and --reject exclude each other".
-- `--reply` with anything that is not a comment: "--reply is for a comment (-p c5)". With `--content`, `--delete`, `--resolve`, `--anchor` or `--style`: "--reply takes no other flag".
+- `--reply` with anything that is not a comment: "--reply is for a comment (-p c5)". With `--content`, `--delete`, `--resolve`, `--anchor`, `--style`, `--before` or `--comment`: "--reply takes no other flag".
 - `add -p c5 --content TEXT` still replies; `add -p c5 --reply TEXT` is the same plan.
 - The same change accepted and rejected: the engine's `REVISION_CONFLICT`, unchanged.
 - A change group is not an operation: `op-N` notes number the operations only.
@@ -334,10 +334,10 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
 - `src/markdown/from_docx/agent.rs`:
   - `tag_of` 97-101, `handle_of` 104-109, `join_tags` 113-127, `format_tag` 130-138 (doc 129). New `split_tag`.
   - The comment ids: id lines 882, 886 (`comments c5`, `in c9`); the table line 1011, 1069; the comment head 1123 (`c5`) and 1132 (` re c5`).
-  - The table line's rows and cells: 968 (`in row{r}`), 976 (`in row{r}.cell{c}`), 1036/1038 (`row{i} p{a}[-p{b}]`).
+  - The table line's rows and cells print full paths, so every cell id the line shows is a valid `-p`: 968 (`in t{n}.row{r}`), 976 (`in t{n}.row{r}.cell{c}`), 1036/1038 (`t{n}.row{i} p{a}[-p{b}]`). A row path (`t0.row1`) is a label; `-p t0.row1` is refused with the table message.
   - `has_handle` (1326-1345) reads comment words through one helper that takes `c5` and the old `#c5`; its doc comment shows the new tags.
 - `src/markdown/from_docx/mod.rs`:
-  - `Writer.story: Option<&'static str>`, in `Writer` 1013-1087.
+  - `Writer.story: Option<String>`, in `Writer` 1013-1087 (stems are runtime strings: `hdr`).
   - `agent_tag` 1984-1996 and its callers, `change_of` 1998-2007 and `revision_marks` 2009-2025.
   - The note loop at 297.
   - The header/footer `StoryFact` loop 476-541: the literal is at 525-540, and `story_text` is called at 519.
@@ -354,7 +354,7 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
 **What the view prints** (received.docx, plus shapes it lacks):
 - `{++quarterly++}{>>r0 @AC<<}`, `{~~weekly~>monthly~~}{>>r1+2 @AC<<}`, two authors `{>>r1 @AC; r2 @JD<<}`.
 - `{==Late amounts…==}{>>c5 @AC: Is one percent…<<}{>>c6 @AS re c5: Disagree.<<}`.
-- Id lines `rev r12 @AC`, `comments c5`, `in c9`; table lines `cells row0 p8 row1 p9-p10`, `rev r3 @AC in row1.cell2`, `c7 in p9`.
+- Id lines `rev r12 @AC`, `comments c5`, `in c9`; table lines `cells t0.row0 p8 t0.row1 p9-p10`, `rev r3 @AC in t0.row1.cell2`, `c7 in p9`.
 - The header's legend line (`# 3 comments: c5 (+ reply c6), c11`) already has no `#`.
 
 **Goldens:** all four `tests/fixtures/agent-view/received.*.md` move (every tag and comment id). Regenerate them with the test's own update path, then read the diff: only `#N` → `rN`, `#cN` → `cN` and `rN.cM` → `rowN.cellM` may change.
@@ -386,11 +386,11 @@ Arthur (2026-10-11): "a neurotic multi-document test to correctly parse from the
 - **Tables:** a 120-row × 12-cell table (`t0.row119.cell11`), a cell holding three paragraphs (`.p2`), merged cells (`gridSpan`, `vMerge`), a nested table (not numbered, as in the view), 12 tables in a row (`t11`), and a table whose row and cell hold revisions and a comment.
 - **Every story:** `header1`–`header3`, `footer1`–`footer3` (default, first, even), footnotes and endnotes (ids up to 51000), a style's `pPrChange`+`rPrChange` pair sharing one `w:id`, and a text box with its `mc:Fallback` twin.
 - **Collisions on purpose:** body change `r5` and footnote change `footnotes.r5`; comment `c5` and change `r5` and paragraph `p5`; a header story whose part is named `hdr.xml` (prints `hdr.r1`), and one named `Header_1.xml` (outside the stem rule; prints the long `Header_1:rev:1`).
-- **Real redlines:** the 100 `tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/*.docx` and the 25 `…/corpus/word/with_comments_tracking/` documents.
+- **Real redlines:** the 100 `tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/*.docx` and the 25 `tests/corpus/neurotic_docx_bench/corpus/word/with_comments_tracking/*.docx`.
 
 **Markdown → docx, for every document:**
 - Read the view (`markdown::read`, no selection). Extract every id the view prints: tags (`{>>r12 @AC<<}`, `{>>header1.r1 @AC; r2 @JD<<}`), comment notes (`{>>c5 …<<}`, `re c5`), id lines (`<!-- p12 … rev r12 @AC; comments c5; in c9 -->`), table lines (`t0`, `row1`, `row1.cell2`, `p8-p16`), header lines (`id: header1`) and the legend (`c5 (+ reply c6)`). The extractor is one regex per form, written in the test and not shared with the engine.
-- Each extracted change id: `ids::parse_change_ids` → long ids; each is in `list_changes(docx)`, and the change's `ref` equals the printed token. `accept --id TOKEN` on the CLI exits 0 and removes exactly those changes (`changes` before minus after == the token's set) for one id per document plus every collision case.
+- Each extracted change id: `ids::parse_change_ids` → long ids; each is in `list_changes(docx)`, and the change's `ref` equals the printed token. `accept FILE -o out.docx --id TOKEN` on the CLI exits 0 and removes exactly those changes (`changes` before minus after == the token's set) for one id per document plus every collision case.
 - Each comment id: `parse_comment_id` → an id `list_comments` has; `ref == "c{id}"`.
 - Each paragraph id: `edit::origin::Ids::long_id` resolves it, and `inspect::paragraphs` at that long id has the text the view printed after that id line (whitespace and marks normalized with `anchor::plain_anchor`).
 - Each `t0.rowR.cellC[.pK]` built from a table line's row and cell resolves to the paragraph the view prints at that position; the retired `t0.rR.cC` of the same cell resolves to the same long id.
@@ -403,9 +403,9 @@ Arthur (2026-10-11): "a neurotic multi-document test to correctly parse from the
 **Grammar edges, in `src/ids.rs`:**
 - Widths: `p0` … `p51000`, `p4294967295` (accepted), `p18446744073709551615` (accepted as `usize` where 64-bit), `p18446744073709551616` (refused); `r4294967295` and `c4294967295` accepted, `c4294967296` refused (`u32`).
 - Leading zeros are refused (`p012`, `r007`, `c05`, `t01`, `t0.row01.cell2`): the printed form is the only spelling of a number, so two tokens never name one element. Today `-p p012` is accepted as `p12`: CHANGELOG (Breaking, tiny).
-- Unicode digits (`p１`, `r٣`), whitespace inside (`p 1`, `r1 +2`), empty parts (`r1+`, `+2`, `r1++2`, `t0..row1`), trailing dots, uppercase (`P1`, `R1`, `C5`, `ROW1`), `rows1`, `cells2`, `row`, `cell`, `r-1`, `r+1`: all refused with the row's message.
+- Unicode digits (`p１`, `r٣`), whitespace inside (`p 1`, `r1 +2`), empty parts (`r1+`, `+2`, `r1++2`, `t0..row1`), trailing dots, uppercase (`P1`, `R1`, `C5`, `ROW1`), `r-1`, `r+1`: all refused by the parser with the row's message. `rows1`, `cells2`, `row`, `cell` are well-formed story stems and are refused at resolution ("no story named rows1").
 - A deterministic generator (seeded xorshift in the test, no new dependency) draws 200,000 tokens from the grammar's alphabet (`prc#t.+:-` digits and the stems `body`, `header1`, `footnotes`, `row`, `cell`). For each: if a parser accepts it, printing the result and parsing again gives the same value; no parser panics; the three parsers never accept one token as two different kinds except where the table says so (`12`).
-- The printed-set property of Rule 6: every printed id matches `^[a-z][a-z0-9.+:-]*$` or `^[0-9]+$`.
+- The printed-set property of Rule 6: every short id printed matches `^[a-z][a-z0-9.+:-]*$` or `^[0-9]+$`; a long id of an out-of-rule story holds no shell metacharacter (`Header_1:rev:1` passes).
 
 **Speed:** the long body's view must stay fast enough to test in debug. If the round trip over 51,200 paragraphs takes more than 60 s under `cargo test`, the test reads the view once and checks ids in one pass (no per-id CLI calls beyond the named ones); it never becomes `#[ignore]`.
 
@@ -865,8 +865,8 @@ pub fn top_level_command() -> clap::Command {
 ### Task 17: `capabilities` text by default; `formats`, `ids`
 **Files:**
 - `src/capabilities.rs`: `Capabilities` (21-40) gains:
-  - `formats: BTreeMap<String, Vec<String>>`, from `OUTPUT_FORMATS` (Task 7).
-  - `ids: Ids { change, comment, paragraph: Vec<String>, r#ref: String }`, from `ids::*_SPELLINGS` plus the sentence "body ids print without a story (r12); every other story prints {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under their table (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh".
+  - `formats: BTreeMap<String, Vec<String>>`, from `OUTPUT_FORMATS` (Task 7). `formats` and `ids` carry `#[serde(default)]` (as `validate_rules` does), so an older stored manifest still deserializes (`tests/agent_contracts.rs:81-85`).
+  - `ids: Ids { change, comment, paragraph, table: Vec<String>, note: String }`, from `ids::*_SPELLINGS` (Task 2 adds `TABLE_SPELLINGS = ["t0"]`) plus the `note` sentence "body ids print without a story (r12); every other story prints {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under their table (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh".
   - `pub fn capabilities_text(&Capabilities) -> String`.
 - `src/cli.rs:728-733`: the `json` doc reads "The manifest as JSON instead of the text summary".
 - `src/bin/jubarte.rs:2333-2336`.
@@ -1082,7 +1082,7 @@ The `jubarte` on PATH is 0.11.2, so always pass `JUBARTE`. Verify with `scripts/
 - **Deprecated:** `text`, `inspect`, `audit`, `diff-render`, `--changed-only`, `--pdf`, `--png` and the cell id `t0.r1.c2` keep working and print `note: X is now Y; X is removed in 0.14` (a plan's JSON prints none); `debug` is hidden.
 - **Fixed:**
   - `convert -o x.json` wrote a PDF; `diff -o x.json` wrote Word; `diff` wrote `_v_.docx` beside the input without `-o`; `convert --pdf -o x.png` wrote a PDF named x.png.
-  - `--pages 3` under `--changed-only` wrote `-page-01.png`.
+  - `--changed-only` named PNG pages by kept-page index (document page 3, kept alone, was written as `-page-01.png`).
   - `changes` listed a text box's change twice.
   - `edit -p #c5` and plan `"comment_id":"c5"` were refused; `accept --id #12` was refused.
 - **The released `[0.12.0]` section** still says `fields update` (:20, :72-78), which shipped as `convert --update-fields`. Its :14 links `VERSIONING.md` instead of `docs/VERSIONING.md`. Fix both in place (Q1).

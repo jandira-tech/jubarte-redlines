@@ -67,6 +67,7 @@ fn comments_lists_json_lines_and_filters() {
     assert_eq!(rows[0]["text"], "Too low");
     assert_eq!(rows[0]["anchor_text"], "cap");
     assert_eq!(rows[0]["paragraph"], "body:p:0");
+    assert_eq!(rows[0]["ref"], "c0");
     assert_eq!(rows[1]["parent"], 0);
     assert_eq!(rows[1]["done"], false);
 
@@ -85,10 +86,13 @@ fn comments_lists_json_lines_and_filters() {
 
     let (code, stdout, _) = run(&["comments", file]);
     assert_eq!(code, 0);
+    let lines: Vec<&str> = stdout.lines().collect();
     assert!(
-        stdout.contains("Too low") && stdout.contains("body:p:0"),
+        lines[0].starts_with("c0\tp0\t") && lines[0].contains("\"Too low\""),
         "{stdout}"
     );
+    assert!(!stdout.contains("body:p:0"), "{stdout}");
+    assert!(lines[1].contains("\treply to c0"), "{stdout}");
     assert!(stdout.contains("3 comment(s)"), "{stdout}");
 }
 

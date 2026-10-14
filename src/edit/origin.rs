@@ -4,7 +4,7 @@
 
 //! Paragraph ids, and what they name once tracked changes are settled.
 //!
-//! A plan's positional ids (`body:p:3`, `p3`, `t0.r1.c2`, `header1.p1`,
+//! A plan's positional ids (`body:p:3`, `p3`, `t0.row1.cell2`, `header1.p1`,
 //! `{"index": 3}`) name paragraphs of the document its author read. When
 //! `resolve_revisions` or `existing_revisions` settles tracked changes
 //! first, paragraphs merge and vanish and every later id shifts. [`Origin`]
@@ -37,30 +37,32 @@ pub(super) struct Ids<'a> {
 pub(super) type Miss = (String, String, usize);
 
 impl Ids<'_> {
-    /// The long id of a short one, as the agent view prints them: `p3` →
-    /// `body:p:3`; `header1` and `header1.p1` → `header1:p:0` and
-    /// `header1:p:1` (the part stem, Word's own numbering); `footer2`
-    /// likewise; `t0.r1.c2` and `t0.r1.c2.p1` → that cell's first (or K-th)
-    /// paragraph. `None` when `id` is not a short id.
+    /// The long id of a short one, as the agent view prints them: `p3` and
+    /// `3` → `body:p:3`; a story's stem and `{stem}.p1` (`header1`,
+    /// `footnotes.p1`) → `header1:p:0` and `footnotes:p:1` (the part stem,
+    /// Word's own numbering); `t0.row1.cell2[.p1]` (or 0.12's `t0.r1.c2`)
+    /// → that cell's first (or K-th) paragraph. `None` when `id` is not a
+    /// short id ([`crate::ids`] is the grammar).
     pub(super) fn long_id(&self, id: &str) -> Option<Result<String, String>> {
-        let (head, rest): (&str, Vec<&str>) = match id.split_once('.') {
-            Some((head, rest)) => (head, rest.split('.').collect()),
-            None => (id, Vec::new()),
-        };
-        if let Some(n) = short_number(head, 'p') {
-            return rest.is_empty().then(|| Ok(format!("body:p:{n}")));
+        if let Some(n) = crate::ids::paragraph_number(id) {
+            return Some(Ok(format!("body:p:{n}")));
         }
+        let parts: Vec<&str> = id.split('.').collect();
+        let head = parts[0];
         if let Some(n) = short_number(head, 't') {
-            return Some(self.table_paragraph(head, n, &rest));
+            return Some(match crate::ids::cell_path(id) {
+                Some((_, row, cell, index)) => {
+                    self.table_paragraph(head, n, row, cell, index.unwrap_or(0))
+                }
+                None => Err(crate::ids::parse_location(id)
+                    .err()
+                    .map_or_else(|| format!("unknown paragraph id {id}"), |e| e.to_string())),
+            });
         }
-        let is_part = ["header", "footer"].iter().any(|kind| {
-            head.strip_prefix(kind)
-                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        });
-        if !is_part {
+        if !crate::ids::is_story(head) {
             return None;
         }
-        let index = match rest.as_slice() {
+        let index = match &parts[1..] {
             [] => 0,
             [p] => short_number(p, 'p')?,
             _ => return None,
@@ -68,29 +70,26 @@ impl Ids<'_> {
         Some(if self.story_ids.contains(&head) {
             Ok(format!("{head}:p:{index}"))
         } else {
-            let known: Vec<&str> = self
-                .story_ids
-                .iter()
-                .copied()
-                .filter(|s| s.starts_with("header") || s.starts_with("footer"))
-                .collect();
             Err(format!(
-                "{head} is not a part of this document (headers and footers: {})",
-                if known.is_empty() {
-                    "none".to_string()
-                } else {
-                    known.join(", ")
-                }
+                "{head} is not a story of this document (stories: {})",
+                self.story_ids.join(", ")
             ))
         })
     }
 
-    /// `t{n}.r{R}.c{C}[.p{K}]`: the long id of that cell's K-th own
-    /// paragraph. Tables are the body's top-level `w:tbl` elements outside
-    /// text boxes, in document order (nested tables are not numbered, as in
-    /// the agent view); rows and cells count as they appear in the XML, a
-    /// merged cell once.
-    fn table_paragraph(&self, head: &str, n: usize, rest: &[&str]) -> Result<String, String> {
+    /// Table `n`, row `row`, cell `cell`: the long id of that cell's
+    /// `index`-th own paragraph. Tables are the body's top-level `w:tbl`
+    /// elements outside text boxes, in document order (nested tables are
+    /// not numbered, as in the agent view); rows and cells count as they
+    /// appear in the XML, a merged cell once.
+    fn table_paragraph(
+        &self,
+        head: &str,
+        n: usize,
+        row: usize,
+        cell: usize,
+        index: usize,
+    ) -> Result<String, String> {
         let dom = self.dom;
         let (tc, tr, tbl, p, txbx) = (W::tc(), W::name("tr"), W::tbl(), W::p(), W::txbx_content());
         let nearest = |node: NodeId, name: &crate::xmllinq::XName| {
@@ -106,20 +105,6 @@ impl Ids<'_> {
             return Err(format!(
                 "{head} is not a table of this document ({})",
                 plural(tables.len(), "table")
-            ));
-        };
-        let (row, cell, index) = match rest {
-            [r, c] => (short_number(r, 'r'), short_number(c, 'c'), Some(0)),
-            [r, c, k] => (
-                short_number(r, 'r'),
-                short_number(c, 'c'),
-                short_number(k, 'p'),
-            ),
-            _ => (None, None, None),
-        };
-        let (Some(row), Some(cell), Some(index)) = (row, cell, index) else {
-            return Err(format!(
-                "{head}: a table id needs a row and a cell, as t0.r1.c2"
             ));
         };
         let rows: Vec<NodeId> = dom
@@ -140,7 +125,7 @@ impl Ids<'_> {
             .collect();
         let Some(&cell_node) = cells.get(cell) else {
             return Err(format!(
-                "{head}.r{row} has {}, no cell {cell}",
+                "{head}.row{row} has {}, no cell {cell}",
                 plural(cells.len(), "cell")
             ));
         };
@@ -153,7 +138,7 @@ impl Ids<'_> {
             .collect();
         let Some(&node) = own.get(index) else {
             return Err(format!(
-                "{head}.r{row}.c{cell} has {}, no p{index}",
+                "{head}.row{row}.cell{cell} has {}, no p{index}",
                 plural(own.len(), "paragraph")
             ));
         };

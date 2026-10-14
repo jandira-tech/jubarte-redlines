@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Short paragraph ids (`p3`, `header1.p1`, `t0.r1.c2`) in edit selectors.
+//! Short paragraph ids (`p3`, `header1.p1`, `t0.row1.cell2`) in edit selectors.
 
 mod common;
 
@@ -49,8 +49,8 @@ fn short_ids_resolve_to_the_long_ids_the_report_prints() {
         &plan(
             r#"[
         {"kind":"replace","paragraph":"p6","find":"Six","replacement":"Seven"},
-        {"kind":"replace","paragraph":"t0.r1.c1","find":"Day 10","replacement":"Day 12"},
-        {"kind":"replace","paragraph":"t0.r1.c1.p1","find":"later","replacement":"earlier"},
+        {"kind":"replace","paragraph":"t0.row1.cell1","find":"Day 10","replacement":"Day 12"},
+        {"kind":"replace","paragraph":"t0.row1.cell1.p1","find":"later","replacement":"earlier"},
         {"kind":"replace","paragraph":"header1","find":"DRAFT","replacement":"FINAL"},
         {"kind":"replace","paragraph":{"id":"header1.p1"},"find":"Confidential","replacement":"Public"}]"#,
         ),
@@ -73,22 +73,42 @@ fn a_short_id_that_points_nowhere_is_refused_and_named() {
         ),
         (
             "header2",
-            "header2 is not a part of this document (headers and footers: header1)",
+            "header2 is not a story of this document (stories: body, header1)",
         ),
         (
             "footer1",
-            "footer1 is not a part of this document (headers and footers: header1)",
+            "footer1 is not a story of this document (stories: body, header1)",
         ),
         (
             "header1.p2",
             "paragraph index 2 does not exist in header1 (2 paragraphs)",
         ),
-        ("t1.r0.c0", "t1 is not a table of this document (1 table)"),
-        ("t0.r2.c0", "t0 has 2 rows, no row 2"),
-        ("t0.r0.c2", "t0.r0 has 2 cells, no cell 2"),
-        ("t0.r0.c0.p1", "t0.r0.c0 has 1 paragraph, no p1"),
-        ("t0", "t0: a table id needs a row and a cell, as t0.r1.c2"),
-        ("px", "unknown paragraph id px"),
+        (
+            "t1.row0.cell0",
+            "t1 is not a table of this document (1 table)",
+        ),
+        ("t0.row2.cell0", "t0 has 2 rows, no row 2"),
+        ("t0.row0.cell2", "t0.row0 has 2 cells, no cell 2"),
+        ("t0.r0.c2", "t0.row0 has 2 cells, no cell 2"),
+        ("t0.row0.cell0.p1", "t0.row0.cell0 has 1 paragraph, no p1"),
+        (
+            "t0",
+            "t0: a table id needs a row and a cell, as t0.row1.cell2",
+        ),
+        (
+            "t0.row1",
+            "t0.row1: a table id needs a row and a cell, as t0.row1.cell2",
+        ),
+        (
+            "t0.r01.c1",
+            "t0.r01.c1: -p takes a paragraph (p12 or 12), a story paragraph",
+        ),
+        ("header", "header is not a story of this document"),
+        (
+            "px",
+            "px is not a story of this document (stories: body, header1)",
+        ),
+        ("p012", "unknown paragraph id p012"),
     ] {
         let e = apply_plan(
             &source(),
@@ -118,8 +138,8 @@ fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
         &source,
         &plan(
             r#"[
-        {"kind":"replace","paragraph":"t0.r0.c0.p1","find":"ALPHA","replacement":"Alpha"},
-        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"BETA","replacement":"Beta"}]"#,
+        {"kind":"replace","paragraph":"t0.row0.cell0.p1","find":"ALPHA","replacement":"Alpha"},
+        {"kind":"replace","paragraph":"t0.row0.cell0.p2","find":"BETA","replacement":"Beta"}]"#,
         ),
     )
     .unwrap();
@@ -128,7 +148,9 @@ fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
     assert_eq!(at(&out, 1), "body:p:3");
     let refused = apply_plan(
         &source,
-        &plan(r#"[{"kind":"replace","paragraph":"t0.r0.c0.p3","find":"x","replacement":"y"}]"#),
+        &plan(
+            r#"[{"kind":"replace","paragraph":"t0.row0.cell0.p3","find":"x","replacement":"y"}]"#,
+        ),
     );
     let message = match refused {
         Ok(result) => format!("{:?}", result.report.operations),
@@ -166,8 +188,8 @@ fn a_cell_paragraph_id_counts_the_nested_table_as_the_view_does() {
         &source,
         &plan(
             r#"[
-        {"kind":"replace","paragraph":"t0.r0.c0.p1","find":"INNER","replacement":"Inner"},
-        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"TAIL","replacement":"Tail"}]"#,
+        {"kind":"replace","paragraph":"t0.row0.cell0.p1","find":"INNER","replacement":"Inner"},
+        {"kind":"replace","paragraph":"t0.row0.cell0.p2","find":"TAIL","replacement":"Tail"}]"#,
         ),
     )
     .unwrap();
@@ -187,9 +209,9 @@ fn pr392_nested_cell_paragraphs_skip_text_boxes_and_stop_at_the_outer_cell() {
     );
     let source = docx_with_sect(&table, &[], "");
     for (short, find, paragraph) in [
-        ("t0.r0.c0.p1", "INNER", "body:p:1"),
-        ("t0.r0.c0.p2", "TAIL", "body:p:2"),
-        ("t0.r0.c1", "NEIGHBOR", "body:p:3"),
+        ("t0.row0.cell0.p1", "INNER", "body:p:1"),
+        ("t0.row0.cell0.p2", "TAIL", "body:p:2"),
+        ("t0.row0.cell1", "NEIGHBOR", "body:p:3"),
     ] {
         let out = apply_plan(
             &source,
@@ -209,7 +231,7 @@ fn pr392_nested_cell_paragraphs_skip_text_boxes_and_stop_at_the_outer_cell() {
         assert!(clean.contains("Edited"), "{short}: {clean}");
         assert!(!clean.contains(find), "{short}: {clean}");
     }
-    let error = apply_plan(&source, &plan(r#"[{"kind":"replace","paragraph":"t0.r0.c0.p3","find":"NEIGHBOR","replacement":"Wrong"}]"#)).unwrap_err();
+    let error = apply_plan(&source, &plan(r#"[{"kind":"replace","paragraph":"t0.row0.cell0.p3","find":"NEIGHBOR","replacement":"Wrong"}]"#)).unwrap_err();
     assert_eq!(error.code, "ANCHOR_NOT_FOUND");
     assert!(
         error.to_string().contains("has 3 paragraphs, no p3"),
@@ -228,7 +250,7 @@ fn the_cli_p_flag_takes_cell_and_story_ids() {
             "edit",
             "src.docx",
             "-p",
-            "t0.r1.c1.p1",
+            "t0.row1.cell1.p1",
             "--anchor",
             "later",
             "--content",
@@ -283,6 +305,16 @@ fn malformed_short_ids_never_fall_back_to_a_valid_paragraph() {
         "t0.r0.c0.p",
         "t0.r0.c0.p0.extra",
         "t0.r0.c18446744073709551616",
+        "t0.row0",
+        "t0.row-1.cell0",
+        "t0.row0.cell+1",
+        "t0.row0.cell0.p",
+        "t0.row0.cell0.p0.extra",
+        "t0.row0.cell18446744073709551616",
+        "p012",
+        "t0.row01.cell0",
+        "r1.c2",
+        "row0.cell0",
     ] {
         for selector in [serde_json::json!(id), serde_json::json!({ "id": id })] {
             let operations = serde_json::json!([{
@@ -300,7 +332,7 @@ fn equivalent_short_and_long_selectors_edit_the_same_content() {
     for (short, long, find) in [
         ("p0", "body:p:0", "Zero"),
         ("p6", "body:p:6", "Six"),
-        ("t0.r1.c1.p0", "body:p:4", "Day 10"),
+        ("t0.row1.cell1.p0", "body:p:4", "Day 10"),
         ("header1.p0", "header1:p:0", "DRAFT"),
     ] {
         let edit = |selector| {
@@ -384,8 +416,8 @@ fn table_ids_skip_nested_tables_and_cell_indices_count_nested_paragraphs() {
         &bytes,
         &plan(
             r#"[
-        {"kind":"replace","paragraph":"t0.r0.c0.p2","find":"After","replacement":"Later"},
-        {"kind":"replace","paragraph":"t1.r0.c0","find":"Next","replacement":"Last"}
+        {"kind":"replace","paragraph":"t0.row0.cell0.p2","find":"After","replacement":"Later"},
+        {"kind":"replace","paragraph":"t1.row0.cell0","find":"Next","replacement":"Last"}
     ]"#,
         ),
     )
@@ -410,7 +442,7 @@ fn content_controls_and_merged_cells_keep_physical_cell_indices() {
         &bytes,
         &plan(
             r#"[
-        {"kind":"replace","paragraph":"t0.r0.c1","find":"Target","replacement":"Changed"}
+        {"kind":"replace","paragraph":"t0.row0.cell1","find":"Target","replacement":"Changed"}
     ]"#,
         ),
     )
@@ -420,14 +452,14 @@ fn content_controls_and_merged_cells_keep_physical_cell_indices() {
         &bytes,
         &plan(
             r#"[
-        {"kind":"replace","paragraph":"t0.r0.c2","find":"Target","replacement":"Changed"}
+        {"kind":"replace","paragraph":"t0.row0.cell2","find":"Target","replacement":"Changed"}
     ]"#,
         ),
     )
     .unwrap_err();
     assert_eq!(error.code, "ANCHOR_NOT_FOUND");
     assert!(
-        error.to_string().contains("t0.r0 has 2 cells, no cell 2"),
+        error.to_string().contains("t0.row0 has 2 cells, no cell 2"),
         "{error}"
     );
 }
@@ -438,9 +470,12 @@ fn missing_parts_and_tables_report_empty_inventories() {
     for (id, message) in [
         (
             "header1",
-            "header1 is not a part of this document (headers and footers: none)",
+            "header1 is not a story of this document (stories: body)",
         ),
-        ("t0.r0.c0", "t0 is not a table of this document (0 tables)"),
+        (
+            "t0.row0.cell0",
+            "t0 is not a table of this document (0 tables)",
+        ),
     ] {
         let error = apply_plan(
             &bytes,
@@ -452,4 +487,192 @@ fn missing_parts_and_tables_report_empty_inventories() {
         assert_eq!(error.code, "ANCHOR_NOT_FOUND");
         assert!(error.to_string().contains(message), "{error}");
     }
+}
+
+fn received() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/agent-view/received.docx"
+    ))
+    .unwrap()
+}
+
+/// A plan's `comment_id` takes the view's `c5`, 0.12's `#c5` and the
+/// number; all three write the same reply.
+#[test]
+fn a_plan_comment_id_takes_every_comment_spelling() {
+    let reply = |id: serde_json::Value| {
+        let operations = serde_json::json!([{
+            "kind": "reply_comment", "comment_id": id, "text": "Yes."
+        }]);
+        let plan = EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"Ann Counsel","date":"2026-10-01T09:00:00Z","existing_revisions":"keep","operations":{operations}}}"#
+        ))
+        .unwrap();
+        let out = apply_plan(&received(), &plan).unwrap();
+        assert!(out.report.ok, "{id}: {:?}", out.report.operations);
+        common::docx::part_string(&out.redline, "word/comments.xml").unwrap()
+    };
+    let want = reply(serde_json::json!(5));
+    for id in [
+        serde_json::json!("c5"),
+        serde_json::json!("#c5"),
+        serde_json::json!("5"),
+    ] {
+        assert_eq!(reply(id.clone()), want, "{id}");
+    }
+    let operations = r#"[{"kind":"reply_comment","comment_id":"p5","text":"Yes."}]"#;
+    let error = EditPlan::from_json(&format!(
+        r#"{{"schema_version":1,"author":"A","operations":{operations}}}"#
+    ))
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("p5: expected a comment id such as c27 or 27"),
+        "{error}"
+    );
+}
+
+fn edit_cli(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .arg("edit")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+/// `-p 6` is `-p p6`; `-p '#c5'` (0.12's spelling, passed as argv) is
+/// `-p c5`; `-p footnotes.p0` edits the note.
+#[test]
+fn the_cli_p_flag_takes_bare_numbers_hash_comments_and_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("src.docx"), source()).unwrap();
+    for (n, at) in ["6", "p6"].iter().enumerate() {
+        let out_dir = format!("out{n}");
+        let out = edit_cli(
+            dir.path(),
+            &[
+                "src.docx",
+                "-p",
+                at,
+                "--anchor",
+                "Six",
+                "--content",
+                "Seven",
+                "--out-dir",
+                &out_dir,
+            ],
+        );
+        assert!(
+            out.status.success(),
+            "{at}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let a = std::fs::read(dir.path().join("out0/redline.docx")).unwrap();
+    let b = std::fs::read(dir.path().join("out1/redline.docx")).unwrap();
+    assert_eq!(
+        common::docx::part_string(&a, "word/document.xml"),
+        common::docx::part_string(&b, "word/document.xml")
+    );
+
+    std::fs::write(dir.path().join("received.docx"), received()).unwrap();
+    for (n, at) in ["c5", "#c5"].iter().enumerate() {
+        let out_dir = format!("reply{n}");
+        let out = edit_cli(
+            dir.path(),
+            &[
+                "received.docx",
+                "-p",
+                at,
+                "--resolve",
+                "--out-dir",
+                &out_dir,
+            ],
+        );
+        assert!(
+            out.status.success(),
+            "{at}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t>Source note</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+    );
+    let noted = docx_with_sect(
+        r#"<w:p><w:r><w:t>Body</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+            xml: &footnotes,
+        }],
+        "",
+    );
+    std::fs::write(dir.path().join("noted.docx"), noted).unwrap();
+    let out = edit_cli(
+        dir.path(),
+        &[
+            "noted.docx",
+            "-p",
+            "footnotes.p0",
+            "--anchor",
+            "Source",
+            "--content",
+            "Cited",
+            "--out-dir",
+            "notes",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let redline = std::fs::read(dir.path().join("notes/redline.docx")).unwrap();
+    let notes = common::docx::part_string(&redline, "word/footnotes.xml").unwrap();
+    assert!(
+        notes.contains(">Cited<") && notes.contains(">Source<"),
+        "{notes}"
+    );
+}
+
+/// 0.12's cell form `t0.r1.c1.p1` edits what `t0.row1.cell1.p1` edits.
+#[test]
+fn the_retired_cell_form_edits_the_same_cell() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("src.docx"), source()).unwrap();
+    for (n, at) in ["t0.row1.cell1.p1", "t0.r1.c1.p1"].iter().enumerate() {
+        let out_dir = format!("out{n}");
+        let out = edit_cli(
+            dir.path(),
+            &[
+                "src.docx",
+                "-p",
+                at,
+                "--anchor",
+                "later",
+                "--content",
+                "earlier",
+                "--out-dir",
+                &out_dir,
+            ],
+        );
+        assert!(
+            out.status.success(),
+            "{at}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let a = std::fs::read(dir.path().join("out0/redline.docx")).unwrap();
+    let b = std::fs::read(dir.path().join("out1/redline.docx")).unwrap();
+    let body = common::docx::part_string(&a, "word/document.xml").unwrap();
+    assert!(body.contains(">earlier<"), "{body}");
+    assert_eq!(
+        Some(body),
+        common::docx::part_string(&b, "word/document.xml")
+    );
 }

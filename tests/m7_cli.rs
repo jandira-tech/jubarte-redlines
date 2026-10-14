@@ -306,15 +306,20 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         "one row per revision before the summary"
     );
     for line in &lines {
-        // id \t kind \t target \t author \t {text:?}
-        // This 5-field count assumes the fixture's revision authors contain no
+        // ref \t kind \t target \t author \t paragraph \t {text:?}
+        // This 6-field count assumes the fixture's revision authors contain no
         // literal tab (they don't). The human row format is tab-delimited by
         // contract, so a tab inside an author would need `changes` to escape
         // it before this could stay parseable.
         assert_eq!(
             line.split('\t').count(),
-            5,
-            "row has 5 tab-separated fields: {line:?}"
+            6,
+            "row has 6 tab-separated fields: {line:?}"
+        );
+        let short = line.split('\t').next().unwrap();
+        assert!(
+            short.starts_with('r') && jubarte::ids::parse_change_ids(short).is_ok(),
+            "rows start with the short id: {line:?}"
         );
         assert!(line.contains("\tTester\t"), "{line:?}");
     }

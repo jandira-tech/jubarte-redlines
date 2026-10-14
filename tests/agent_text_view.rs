@@ -1412,20 +1412,49 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     assert_eq!(by_id(del_id)["text"], "thirty");
     assert_eq!(by_id(ins_id)["kind"], "insertion");
     assert_eq!(by_id(ins_id)["text"], "forty-five");
+    assert_eq!(by_id(del_id)["ref"], format!("r{del_id}"));
+    assert_eq!(by_id(ins_id)["ref"], format!("r{ins_id}"));
 
-    ok(
-        &[
+    // The short id the view prints, a bare number and 0.12's `#N` (argv,
+    // no shell) select the same change as the long id.
+    for (one, other) in [
+        (format!("r{del_id}"), format!("body:rev:{ins_id}")),
+        (del_id.to_string(), format!("r{ins_id}")),
+        (format!("#{del_id}"), ins_id.to_string()),
+    ] {
+        ok(
+            &[
+                "reject",
+                "review/redline.docx",
+                "-o",
+                "rejected.docx",
+                "--force",
+                "--id",
+                &one,
+                "--id",
+                &other,
+            ],
+            dir.path(),
+        );
+    }
+    let bad = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args([
             "reject",
             "review/redline.docx",
             "-o",
-            "rejected.docx",
+            "bad.docx",
             "--id",
-            &format!("body:rev:{del_id}"),
-            "--id",
-            &format!("body:rev:{ins_id}"),
-        ],
-        dir.path(),
+            "c5",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8_lossy(&bad.stderr),
+        "error: c5: expected a change id such as r12, header1.r1 or body:rev:12\n"
     );
+    assert!(!dir.path().join("bad.docx").exists());
     let rejected = ok(&["read", "rejected.docx", "--no-page-markers"], dir.path());
     assert!(
         rejected.contains(

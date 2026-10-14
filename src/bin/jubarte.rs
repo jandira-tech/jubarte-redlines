@@ -239,38 +239,47 @@ fn run_resolution(
         &jubarte::changes::ChangeFilter,
     ) -> Result<Vec<u8>, jubarte::changes::ChangeError>,
     what: &str,
-) -> Result<(), String> {
-    ensure_writable(output, force)?;
-    let bytes = read_document(file)?;
-    let out = apply(&bytes, filter).map_err(|e| format!("{what} failed: {e}"))?;
-    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
+) -> ExitCode {
+    use jubarte::changes::ChangeError;
+    let run = || -> Result<(), (ExitCode, String)> {
+        let failed = |e: String| (ExitCode::FAILURE, e);
+        // An id that is not a change id, or names two changes, is a usage
+        // error: exit 2, as clap's own.
+        let filter = filter
+            .normalized()
+            .map_err(|e| (ExitCode::from(2), e.to_string()))?;
+        ensure_writable(output, force).map_err(failed)?;
+        let bytes = read_document(file).map_err(failed)?;
+        let out = apply(&bytes, &filter).map_err(|e| match e {
+            ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
+                (ExitCode::from(2), e.to_string())
+            }
+            e => failed(format!("{what} failed: {e}")),
+        })?;
+        std::fs::write(output, &out)
+            .map_err(|e| failed(format!("writing {}: {e}", output.display())))
+    };
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err((code, e)) => {
+            eprintln!("error: {e}");
+            code
+        }
+    }
 }
 
 fn run_changes(file: &Path, json: bool) -> Result<(), String> {
     let bytes = read_document(file)?;
     let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
-    for c in &changes {
-        if json {
-            outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
-            continue;
-        }
-        let kind = serde_json::to_value(c.kind).map_err(|e| e.to_string())?;
-        let preview: String = c.text.chars().take(60).collect();
-        let inside = c
-            .inside
-            .as_deref()
-            .map(|id| format!("\tinside {id}"))
-            .unwrap_or_default();
-        outln!(
-            "{}\t{}\t{}\t{}\t{preview:?}{inside}",
-            c.id,
-            kind.as_str().unwrap_or("?"),
-            c.target,
-            c.author.as_deref().unwrap_or("-"),
-        );
-    }
     if !json {
-        outln!("{} change(s)", changes.len());
+        outln!(
+            "{}",
+            jubarte::changes::changes_text(&changes).trim_end_matches('\n')
+        );
+        return Ok(());
+    }
+    for c in &changes {
+        outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
     }
     Ok(())
 }
@@ -279,27 +288,15 @@ fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> 
     let bytes = read_document(file)?;
     let comments = jubarte::comments::list_comments(&bytes).map_err(|e| e.to_string())?;
     let comments = jubarte::comments::select_comments(comments, author, latest);
-    for c in &comments {
-        if json {
-            outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
-            continue;
-        }
-        let text: String = c.text.chars().take(60).collect();
-        let anchor: String = c.anchor_text.chars().take(40).collect();
-        let thread = c
-            .parent
-            .map(|p| format!("\treply to {p}"))
-            .unwrap_or_default();
-        let done = if c.done { "\tresolved" } else { "" };
-        outln!(
-            "{}\t{}\t{}\t{text:?}\ton {anchor:?}{thread}{done}",
-            c.id,
-            c.paragraph.as_deref().unwrap_or("-"),
-            c.author,
-        );
-    }
     if !json {
-        outln!("{} comment(s)", comments.len());
+        outln!(
+            "{}",
+            jubarte::comments::comments_text(&comments).trim_end_matches('\n')
+        );
+        return Ok(());
+    }
+    for c in &comments {
+        outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
     }
     Ok(())
 }
@@ -2120,14 +2117,14 @@ fn cli_main() -> ExitCode {
             force,
             selection,
         }) => {
-            return exit_code(run_resolution(
+            return run_resolution(
                 &file,
                 &output,
                 force,
                 &selection.filter(),
                 jubarte::changes::accept_changes,
                 "accept",
-            ));
+            );
         }
         Some(Command::Reject {
             file,
@@ -2135,14 +2132,14 @@ fn cli_main() -> ExitCode {
             force,
             selection,
         }) => {
-            return exit_code(run_resolution(
+            return run_resolution(
                 &file,
                 &output,
                 force,
                 &selection.filter(),
                 jubarte::changes::reject_changes,
                 "reject",
-            ));
+            );
         }
         Some(Command::Convert {
             file,

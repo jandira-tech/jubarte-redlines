@@ -54,6 +54,10 @@ pub enum MoveSide {
 pub struct Change {
     /// `{story}:rev:{w:id}`.
     pub id: String,
+    /// The id the view and `jubarte changes` print: `r12` in the body,
+    /// `header1.r1` in another story ([`crate::ids::ChangeId::short`]).
+    #[serde(rename = "ref")]
+    pub r#ref: String,
     /// What the change does.
     pub kind: ChangeKind,
     /// What it applies to: `text`, `paragraph_mark`, `table_row`,
@@ -68,6 +72,11 @@ pub struct Change {
     /// The text the change covers: inserted, deleted or moved text, or the
     /// text of the run or paragraph whose properties changed.
     pub text: String,
+    /// The paragraph the change sits in (`body:p:12`, `header1:p:0`): the
+    /// nearest listed paragraph around it, or a row's, cell's or table's
+    /// first. `None` in `styles` and outside any paragraph.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paragraph: Option<String>,
     /// The move's name, shared by both of its sides.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub move_name: Option<String>,
@@ -109,6 +118,50 @@ impl ChangeFilter {
         }
     }
 
+    /// The filter with every id in long form: `r12`, `12`, `header1.r1`,
+    /// `r1+2` (both) and 0.12's `#12` become `body:rev:12`, ...; an id that
+    /// is not a change id is [`ChangeError::InvalidId`].
+    pub fn normalized(&self) -> Result<Self, ChangeError> {
+        let Some(ids) = &self.ids else {
+            return Ok(self.clone());
+        };
+        let mut long: Vec<String> = Vec::with_capacity(ids.len());
+        for id in ids {
+            let parsed = crate::ids::parse_change_ids(id)
+                .map_err(|e| ChangeError::InvalidId(e.to_string()))?;
+            for one in parsed {
+                let one = one.long();
+                if !long.contains(&one) {
+                    long.push(one);
+                }
+            }
+        }
+        Ok(Self {
+            ids: Some(long),
+            ..self.clone()
+        })
+    }
+
+    /// The first error the filter's ids meet in `listed`: an id that names
+    /// no change, or one that names several. Expects a [`Self::normalized`]
+    /// filter.
+    pub fn check(&self, listed: &[Change]) -> Result<(), ChangeError> {
+        for id in self.ids.iter().flatten() {
+            let named: Vec<&Change> = listed.iter().filter(|c| &c.id == id).collect();
+            match named.len() {
+                0 => return Err(ChangeError::UnknownChange(id.clone())),
+                1 => {}
+                _ => {
+                    return Err(ChangeError::Ambiguous {
+                        id: id.clone(),
+                        candidates: named.into_iter().cloned().collect(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Whether `change` is selected.
     pub fn matches(&self, change: &Change) -> bool {
         self.ids.as_ref().is_none_or(|ids| ids.contains(&change.id))
@@ -128,20 +181,100 @@ impl ChangeFilter {
 pub enum ChangeError {
     /// The package could not be read or written.
     Package(String),
-    /// A filter id names no change in the document.
+    /// A filter id (long form) names no change in the document.
     UnknownChange(String),
+    /// A filter id is not a change id ([`crate::ids::parse_change_ids`]).
+    InvalidId(String),
+    /// A filter id (long form) names more than one listed change: a
+    /// duplicate `w:id` in one story.
+    Ambiguous {
+        /// The id, long form.
+        id: String,
+        /// The changes it names, in document order.
+        candidates: Vec<Change>,
+    },
 }
 
 impl fmt::Display for ChangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ChangeError::Package(m) => write!(f, "invalid package: {m}"),
-            ChangeError::UnknownChange(id) => write!(f, "no tracked change {id}"),
+            ChangeError::UnknownChange(id) => write!(f, "no tracked change {}", short_of(id)),
+            ChangeError::InvalidId(message) => f.write_str(message),
+            ChangeError::Ambiguous { id, candidates } => {
+                // Only these elements' ids are renumbered by validate --repair.
+                let repairable = candidates.iter().all(|c| {
+                    matches!(
+                        c.kind,
+                        ChangeKind::Insertion | ChangeKind::Deletion | ChangeKind::Move
+                    ) && c.target != "table_cell"
+                });
+                let short = short_of(id);
+                write!(f, "{short} names {} changes", candidates.len())?;
+                if repairable {
+                    f.write_str(" (duplicate w:id; validate --repair renumbers them)")?;
+                }
+                let listed: Vec<String> = candidates
+                    .iter()
+                    .map(|c| {
+                        let place = c
+                            .paragraph
+                            .as_deref()
+                            .map(|p| format!(" in {}", crate::ids::short_paragraph(p)))
+                            .unwrap_or_default();
+                        format!("{short} {} {:?}{place}", kind_name(c.kind), c.text)
+                    })
+                    .collect();
+                write!(f, ": {}", listed.join("; "))
+            }
         }
     }
 }
 
 impl std::error::Error for ChangeError {}
+
+/// The short form of a long change id, or the id itself.
+fn short_of(id: &str) -> String {
+    crate::ids::ChangeId::from_long(id).map_or_else(|| id.to_string(), |c| c.short())
+}
+
+fn kind_name(kind: ChangeKind) -> &'static str {
+    match kind {
+        ChangeKind::Insertion => "insertion",
+        ChangeKind::Deletion => "deletion",
+        ChangeKind::Move => "move",
+        ChangeKind::Formatting => "formatting",
+    }
+}
+
+/// `jubarte changes`' listing: one line per change, `{ref}\t{kind}\t{target}
+/// \t{author}\t{paragraph}\t{text}[\tinside {ref}]` (`-` for an absent
+/// author or paragraph; the text quoted, its first 60 characters), then
+/// `{n} change(s)`.
+pub fn changes_text(changes: &[Change]) -> String {
+    let mut out = String::new();
+    for c in changes {
+        let preview: String = c.text.chars().take(60).collect();
+        let paragraph = c
+            .paragraph
+            .as_deref()
+            .map_or_else(|| "-".to_string(), crate::ids::short_paragraph);
+        let inside = c
+            .inside
+            .as_deref()
+            .map(|id| format!("\tinside {}", short_of(id)))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
+            c.r#ref,
+            kind_name(c.kind),
+            c.target,
+            c.author.as_deref().unwrap_or("-"),
+        ));
+    }
+    out.push_str(&format!("{} change(s)\n", changes.len()));
+    out
+}
 
 /// Every tracked change, story by story (body, headers, footers, endnotes,
 /// footnotes, styles), in document order.
@@ -183,15 +316,9 @@ fn resolve(
     filter: &ChangeFilter,
     resolution: Resolution,
 ) -> Result<Vec<u8>, ChangeError> {
+    let filter = &filter.normalized()?;
     let listed = list_changes(docx)?;
-    if let Some(unknown) = filter
-        .ids
-        .iter()
-        .flatten()
-        .find(|id| !listed.iter().any(|c| &c.id == *id))
-    {
-        return Err(ChangeError::UnknownChange(unknown.clone()));
-    }
+    filter.check(&listed)?;
     // Nothing selected: nothing to resolve, and nothing else to touch.
     if !listed.iter().any(|c| filter.matches(c)) {
         return Ok(docx.to_vec());
@@ -357,11 +484,13 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
             group: move_name.clone().map_or(Group::Own(e), Group::Move),
             change: Some(Change {
                 id: format!("{story}:rev:{id}"),
+                r#ref: crate::ids::ChangeId::new(story, id.as_str()).short(),
                 kind,
                 target,
                 author: dom.attribute(e, &W::name("author")).map(str::to_string),
                 date: dom.attribute(e, &W::name("date")).map(str::to_string),
                 text,
+                paragraph: None,
                 move_name,
                 move_side: match local {
                     "moveFrom" => Some(MoveSide::From),
@@ -372,16 +501,83 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
             }),
         });
     }
+    fold_style_pairs(dom, &mut out);
     let ids: HashMap<NodeId, String> = out
         .iter()
         .filter_map(|c| Some((c.node, c.change.as_ref()?.id.clone())))
         .collect();
+    let paragraphs = (story != "styles").then(|| paragraph_index(dom, root));
     for c in &mut out {
         if let Some(change) = &mut c.change {
             change.inside = holder(dom, c.node, &ids);
+            change.paragraph = paragraphs
+                .as_ref()
+                .and_then(|index| paragraph_of(dom, c.node, index))
+                .map(|n| format!("{story}:p:{n}"));
         }
     }
     out
+}
+
+/// Word records a style's paragraph and run formatting changes
+/// (`w:pPrChange`, `w:rPrChange`) under one `w:id`: one change. The first
+/// carrier is listed; the others join its group unlisted, so resolving it
+/// resolves them all.
+fn fold_style_pairs(dom: &Dom, carriers: &mut [Carrier]) {
+    let style = W::name("style");
+    let mut first: HashMap<(NodeId, String), Group> = HashMap::new();
+    for c in carriers.iter_mut() {
+        let Some(change) = &c.change else { continue };
+        if change.kind != ChangeKind::Formatting {
+            continue;
+        }
+        let Some(&owner) = dom.ancestors(c.node, Some(&style)).first() else {
+            continue;
+        };
+        let wid = change
+            .id
+            .rsplit_once(":rev:")
+            .map_or("", |(_, w)| w)
+            .to_string();
+        match first.get(&(owner, wid.clone())) {
+            Some(group) => {
+                c.group = group.clone();
+                c.change = None;
+            }
+            None => {
+                first.insert((owner, wid), c.group.clone());
+            }
+        }
+    }
+}
+
+/// Each listed paragraph of the story under `root` (the body's or a
+/// header's, footer's or notes part's, as `inspect` numbers them) by node.
+fn paragraph_index(dom: &Dom, root: NodeId) -> HashMap<NodeId, usize> {
+    crate::inspect::story_paragraph_nodes(dom, root)
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| (p, i))
+        .collect()
+}
+
+/// The paragraph a revision element sits in: the nearest listed paragraph
+/// around it (a text box's paragraphs are not listed, so its anchor's), or
+/// the first listed paragraph of the row, cell or table around it.
+fn paragraph_of(dom: &Dom, e: NodeId, index: &HashMap<NodeId, usize>) -> Option<usize> {
+    let ancestors = dom.ancestors(e, None);
+    if let Some(n) = ancestors.iter().find_map(|a| index.get(a)) {
+        return Some(*n);
+    }
+    let holders = [W::tc(), W::tr(), W::tbl()];
+    std::iter::once(e)
+        .chain(ancestors)
+        .filter(|&a| dom.name(a).is_some_and(|n| holders.contains(&n)))
+        .find_map(|a| {
+            dom.descendants(a, Some(&W::p()))
+                .into_iter()
+                .find_map(|p| index.get(&p).copied())
+        })
 }
 
 /// True when `e` sits in the properties a formatting change records: a mark

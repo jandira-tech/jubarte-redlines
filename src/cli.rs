@@ -1323,7 +1323,8 @@ pub enum Revisions {
 #[derive(clap::Args, Debug, Default, PartialEq, Serialize)]
 /// Filters selecting individual tracked changes.
 pub struct Selection {
-    /// Only this change (`body:rev:12`, as `jubarte changes` lists it).
+    /// Only this change: `r12` (as the view and `jubarte changes` print
+    /// it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`.
     /// Repeatable.
     #[arg(long = "id", value_name = "ID")]
     pub ids: Vec<String>,

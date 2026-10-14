@@ -15,9 +15,11 @@
 //! This module reads syntax only. Whether a story, paragraph, change or
 //! comment exists is decided against a document by `edit` (`-p`) and
 //! [`crate::changes`] (`--id`). Every number has one spelling: ASCII digits
-//! without leading zeros, so two tokens never name one element. Every id it
-//! prints uses only `[a-z0-9.+:-]` and never starts with `#`, `=`, `~` or
-//! `-`, so it is safe unquoted in bash, csh and zsh.
+//! without leading zeros, so two tokens never name one element. Every short
+//! id it prints uses only `[a-z0-9.+:-]` and never starts with `#`, `=`, `~`
+//! or `-`, so it is safe unquoted in bash, csh and zsh; a long id carries
+//! the story and `w:id` the document gives it. `body.r12` and `body.p2`
+//! parse (the body is a story too) but are never printed.
 
 use std::fmt;
 use std::str::FromStr;
@@ -57,6 +59,10 @@ pub const PARAGRAPH_SPELLINGS: &[&str] = &[
     "t0.row1.cell2.p1",
     "body:p:12",
 ];
+
+/// The table spellings the manifest advertises (rows and cells sit under
+/// their table, as in [`PARAGRAPH_SPELLINGS`]).
+pub const TABLE_SPELLINGS: &[&str] = &["t0"];
 
 /// A refused id: what was given and what was expected.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,10 +130,18 @@ impl ChangeId {
         }
     }
 
-    /// The change a long id names; `None` when `long` is not one.
+    /// The change a long id names; `None` when `long` is not one. A
+    /// numeric `w:id` has one spelling (a canonical `u32`); another `w:id`
+    /// is taken as the document spells it, without `:`, `+` or whitespace.
     pub fn from_long(long: &str) -> Option<Self> {
         let (story, wid) = long.split_once(":rev:")?;
-        (!story.is_empty() && !story.contains(':') && !wid.is_empty() && !wid.contains(':'))
+        let numeric = wid.bytes().all(|b| b.is_ascii_digit());
+        let wid_ok = if numeric {
+            number::<u32>(wid).is_some()
+        } else {
+            !wid.contains([':', '+']) && !wid.contains(char::is_whitespace)
+        };
+        (!story.is_empty() && !story.contains(':') && !wid.is_empty() && wid_ok)
             .then(|| Self::new(story, wid))
     }
 }
@@ -277,7 +291,10 @@ pub fn is_retired_cell(token: &str) -> bool {
 pub fn parse_location(token: &str) -> Result<Location, IdError> {
     let refuse = |why| Err(IdError::new(token, why));
     if digit_shaped(token, "c") || digit_shaped(token, "#c") {
-        return parse_comment_id(token).map(Location::Comment);
+        return match parse_comment_id(token) {
+            Ok(id) => Ok(Location::Comment(id)),
+            Err(_) => refuse(LOCATION_EXPECTED),
+        };
     }
     let change_shaped = token.starts_with('#')
         || token.contains(":rev:")
@@ -304,10 +321,20 @@ pub fn parse_location(token: &str) -> Result<Location, IdError> {
     }
     let head = token.split('.').next().unwrap_or(token);
     if short_number(head, 't').is_some() {
-        return match cell_path(token) {
-            Some(_) => Ok(Location::Paragraph(token.to_string())),
-            None => refuse(TABLE_NEEDS_CELL),
+        if cell_path(token).is_some() {
+            return Ok(Location::Paragraph(token.to_string()));
+        }
+        // Only a table, or a table and a row, lacks its cell.
+        let missing_cell = match token.split('.').collect::<Vec<_>>().as_slice() {
+            [_] => true,
+            [_, row] => word_number(row, "row").is_some() || short_number(row, 'r').is_some(),
+            _ => false,
         };
+        return refuse(if missing_cell {
+            TABLE_NEEDS_CELL
+        } else {
+            LOCATION_EXPECTED
+        });
     }
     let rest_follows = token.len() > head.len();
     if word_number(head, "row").is_some()
@@ -407,6 +434,20 @@ mod tests {
         assert_eq!(ChangeId::new("Header_1", "4").short(), "Header_1:rev:4");
         assert_eq!(ChangeId::new("r1", "4").short(), "r1:rev:4");
         assert_eq!(body("007").short(), "body:rev:007");
+        for long in [
+            "body:rev:007",
+            "body:rev:4294967296",
+            "body:rev: 7",
+            "body:rev:12+13",
+            "body:rev:1:2",
+        ] {
+            assert_eq!(ChangeId::from_long(long), None, "{long}");
+            assert!(parse_change_ids(long).is_err(), "{long}");
+        }
+        assert_eq!(
+            ChangeId::from_long("body:rev:x9"),
+            Some(ChangeId::new("body", "x9"))
+        );
         assert_eq!(body("x").short(), "body:rev:x");
         assert_eq!(
             ChangeId::from_long("header1:rev:2"),
@@ -557,7 +598,24 @@ mod tests {
                 format!("{token}: a row or cell needs its table, as t0.row1.cell2"),
             );
         }
-        for token in ["1+2", "p5-p7", "p5-", "-p7", "5-7", "#x", "#c", "Header_1"] {
+        for token in [
+            "1+2",
+            "p5-p7",
+            "p5-",
+            "-p7",
+            "5-7",
+            "#x",
+            "#c",
+            "Header_1",
+            "c05",
+            "#c05",
+            "c4294967296",
+            "t0.p1",
+            "t0.row1.c2",
+            "t0.r1.cell2",
+            "t0.row01.cell2",
+            "t0.row1.cell2.p1.p2",
+        ] {
             assert_eq!(
                 why(token),
                 format!(
@@ -685,11 +743,16 @@ mod tests {
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".+:-".contains(&b))
                 && !id.starts_with(['#', '=', '~', '-'])
         };
-        let mut printed: Vec<String> = [CHANGE_SPELLINGS, COMMENT_SPELLINGS, PARAGRAPH_SPELLINGS]
-            .concat()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let mut printed: Vec<String> = [
+            CHANGE_SPELLINGS,
+            COMMENT_SPELLINGS,
+            PARAGRAPH_SPELLINGS,
+            TABLE_SPELLINGS,
+        ]
+        .concat()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         for story in ["body", "header1", "footnotes", "styles", "hdr"] {
             for wid in ["0", "9", "51000", "4294967295"] {
                 printed.push(ChangeId::new(story, wid).short());
