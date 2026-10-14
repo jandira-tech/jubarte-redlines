@@ -1725,8 +1725,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             if let Some(label) = line.label {
                 // The label stands for the list's own number, and a heading
                 // prints it before its text.
-                if let (Some(_), Label::Text(text)) = (self.heading, &label) {
-                    self.label_prefix = Some(format!("{text} "));
+                match (self.heading, &label) {
+                    (Some(_), Label::Text(text)) => self.label_prefix = Some(format!("{text} ")),
+                    // `## - Economics`: the bullet is the list's.
+                    (Some(_), Label::Bullet) => self.label_prefix = Some("- ".to_string()),
+                    _ => {}
                 }
                 let level = line
                     .level
