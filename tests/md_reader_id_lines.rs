@@ -527,8 +527,9 @@ fn a_later_sections_title_page_comes_back() {
     let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n";
     let view = view_round_trip(header, body);
     assert!(
-        view.lines()
-            .any(|l| l.starts_with("  2: {p1-p1, headers: {first: none}}")),
+        view.lines().any(|l| {
+            l.starts_with("  2: {p1-p1, headers: {first: none}, footers: {first: none}}")
+        }),
         "{view}"
     );
 }

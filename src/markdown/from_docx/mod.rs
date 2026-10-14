@@ -2403,8 +2403,11 @@ impl Writer<'_> {
             }
             rows.push(row);
         }
-        // Drop trailing empty columns and fully empty rows.
-        rows.retain(|r| r.iter().any(|c| !c.trim().is_empty()));
+        // Drop trailing empty columns and fully empty rows; the agent view
+        // keeps every row, which its id line counts (row1, row2...).
+        if !self.agent {
+            rows.retain(|r| r.iter().any(|c| !c.trim().is_empty()));
+        }
         if rows.is_empty() {
             return String::new();
         }
