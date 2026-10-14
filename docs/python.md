@@ -511,15 +511,16 @@ Options:
           directory]
 
   -a, --author <NAME>
-          Markdown to Word: author of the tracked changes and comments
-
-          [default: Redline]
+          Markdown to Word: author of the tracked changes and comments that name none
+          [default: the front matter's `author:`, else the --reference-doc's creator,
+          else Redline]
 
   -d, --datetime <ISO8601>
-          Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible
+          Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments
+          that carry none [default: the front matter's
+          `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's
+          creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible
           output
-
-          [default: 1970-01-01T00:00:00Z]
 
       --page <SIZE>
           Markdown to Word: the page size when there is no --reference-doc (one-inch
@@ -540,13 +541,19 @@ Options:
           - on:  New edits in Word are tracked
           - off: New edits in Word are not tracked
 
-      --no-page-markers
-          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
-          pass that places them
-
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
+
+      --scholar
+          Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern
+          Roman 10pt on 12pt lines, justified, bold headings) and number its pages from
+          page 2, centered in the footer. The front matter's own `styles:` entries,
+          headers and footers win
+
+      --no-page-markers
+          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
+          pass that places them
 
   -h, --help
           Print help (see a summary with '-h')
@@ -886,7 +893,7 @@ Options:
           highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a
           paragraph style (Heading2)
 
-      --author <NAME>
+  -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
           [default: Redline]
@@ -918,12 +925,13 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
+          too; .md, .json, .pdf and .png name the task that writes them
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
-          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
+          `<FILE's directory>/<stem>.edit`)
 
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
@@ -1033,7 +1041,7 @@ Options:
           Formatting for the new paragraph's text (bold, italic, underline,
           highlight=yellow) or its paragraph style (Heading2)
 
-      --author <NAME>
+  -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
           [default: Redline]
@@ -1065,12 +1073,13 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
+          too; .md, .json, .pdf and .png name the task that writes them
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
-          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
+          `<FILE's directory>/<stem>.edit`)
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1330,8 +1339,6 @@ Raised when the jubarte-redlines engine cannot process a document.
 ```python
 accept_revisions(docx)
 ```
-
-Accept every tracked revision (package-wide) → clean DOCX bytes.
 
 ### `compare_documents`
 
@@ -1800,6 +1807,7 @@ Comment(
     before: str,
     after: str,
     ref: str | None = None,
+    last_paragraph: str | None = None,
 )
 ```
 
@@ -1809,7 +1817,8 @@ One comment with its thread position and the text it is anchored to.
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
     ``parent`` is the id of the comment it replies to (Word threads are one
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
-    is the paragraph id where the range starts (``body:p:12``);
+    is the paragraph id where the range starts (``body:p:12``), and
+    ``last_paragraph`` the one where it ends when that is a later one;
     ``anchor_text`` is the commented text, paragraphs joined by ``
 ``, with
     up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id

@@ -192,6 +192,35 @@ readonly json: string
 
 `{"page_count", "fields": [{"kind", "code", "paragraph", "old", "new"}]}`.
 
+### `RenderOutput`
+
+```typescript
+class RenderOutput {
+    readonly json: string
+    readonly pdf: Uint8Array
+}
+```
+
+What `renderPdf` returns.
+
+#### `RenderOutput.json`
+
+```typescript
+readonly json: string
+```
+
+`{"page_count", "page_starts"}`: the pages written and each one's
+first line (60 characters at most), as an edit bundle's `render`
+line lists them.
+
+#### `RenderOutput.pdf`
+
+```typescript
+readonly pdf: Uint8Array
+```
+
+The PDF.
+
 ### `RepairOutput`
 
 ```typescript
@@ -308,10 +337,12 @@ Mirrors `jubarte::capabilities::capabilities`.
 ### `capabilitiesText`
 
 ```typescript
-capabilitiesText(): string
+capabilitiesText(manifest_json?: string | null): string
 ```
 
-[`capabilities`] as the text summary `jubarte capabilities` prints.
+[`capabilities`] as the text summary `jubarte capabilities` prints; of
+`manifestJson` when given (a manifest a host narrowed to what it does),
+else of this build's.
 
 Mirrors `jubarte::capabilities::capabilities_text`.
 
@@ -379,6 +410,21 @@ Mirrors `jubarte::document_comparer::compare_documents`.
 throws with `INPUT_LIMIT`; an unknown key throws `invalid input limits`.
 The default budget allows 2 GiB inflated, more than a 32-bit WASM heap
 holds, so browser hosts should lower it.
+
+### `convertMarkdown`
+
+```typescript
+convertMarkdown(docx: Uint8Array, track_changes: string, page_markers: boolean, revisions?: string | null, revision_palette?: string | null): string
+```
+
+A Word document as `convert --to md` writes it: Markdown with its
+changes kept, accepted or rejected (`trackChanges`: `all`, `accept`,
+`reject`), and unless `pageMarkers` is false `<!-- page N of M -->` lines
+from the layout, its changes painted as `revisions`. JSON
+`{"markdown", "warning"}`: the warning says why the markers are missing.
+Full build only.
+
+Mirrors `jubarte::markdown::with_page_markers`.
 
 ### `diffDocuments`
 
@@ -607,6 +653,18 @@ readable PDF).
 
 Mirrors `jubarte::convert::pdf_page_count`.
 
+### `planError`
+
+```typescript
+planError(plan_json: string): string | undefined
+```
+
+Why `planJson` is no edit plan, as the binary prints it (`INVALID_PLAN:
+…`); `undefined` for a plan. A plan that parses can still be refused when
+applied; that refusal carries the per-operation report.
+
+Mirrors `jubarte::edit::EditPlan::from_json`.
+
 ### `previewEditPlan`
 
 ```typescript
@@ -673,6 +731,18 @@ redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string
 
 DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
 
+### `refusedInput`
+
+```typescript
+refusedInput(path: string, bytes: Uint8Array, word: boolean): string | undefined
+```
+
+The error line for an input no task reads, as the binary prints it:
+`LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
+a.docx is not a ZIP file: …`; `undefined` when the bytes may be read.
+
+Mirrors `jubarte::cli::refused_input`.
+
 ### `rejectChanges`
 
 ```typescript
@@ -693,6 +763,19 @@ rejectRevisions(docx: Uint8Array): Uint8Array
 Reject every tracked revision (package-wide) → base DOCX bytes.
 
 Mirrors `jubarte::document_comparer::reject_revisions`.
+
+### `renderPdf`
+
+```typescript
+renderPdf(docx: Uint8Array, revisions?: string | null, revision_palette?: string | null): RenderOutput
+```
+
+An edited document's PDF, compressed, its changes painted as
+`revisions` (`conventional`, `word` or `custom` with
+`revisionPalette`), with the page facts `edit --pdf` reports. Full build
+only.
+
+Mirrors `jubarte::convert::render`.
 
 ### `repairDocument`
 
@@ -840,8 +923,10 @@ Tasks:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
-  -q, --quiet    Print nothing on success (files are still written; warnings and errors
-                 still print)
+  -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
+                 `edit`/`add` changed. Files are still written; a reading task (`read`,
+                 `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+                 what it read, and warnings and errors still print
   -h, --help     Print help
   -V, --version  Print version
 
@@ -910,8 +995,10 @@ Options:
           [default: word]
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1045,8 +1132,10 @@ Arguments:
 
 Options:
       --json   Emit one JSON object per line
-  -q, --quiet  Print nothing on success (files are still written; warnings and errors
-               still print)
+  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
+               `edit`/`add` changed. Files are still written; a reading task (`read`,
+               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+               what it read, and warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -1087,8 +1176,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1170,8 +1261,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1275,15 +1368,16 @@ Options:
           directory]
 
   -a, --author <NAME>
-          Markdown to Word: author of the tracked changes and comments
-
-          [default: Redline]
+          Markdown to Word: author of the tracked changes and comments that name none
+          [default: the front matter's `author:`, else the --reference-doc's creator,
+          else Redline]
 
   -d, --datetime <ISO8601>
-          Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible
+          Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments
+          that carry none [default: the front matter's
+          `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's
+          creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible
           output
-
-          [default: 1970-01-01T00:00:00Z]
 
       --page <SIZE>
           Markdown to Word: the page size when there is no --reference-doc (one-inch
@@ -1295,13 +1389,24 @@ Options:
 
           [default: letter]
 
+      --tracking <SWITCH>
+          Markdown to Word: turn Word's Track Changes on or off in the .docx written,
+          whatever the Markdown's `track_changes:` key says [default: the key; without
+          one, the --reference-doc's setting, else off]
+
+          Possible values:
+          - on:  New edits in Word are tracked
+          - off: New edits in Word are not tracked
+
       --no-page-markers
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
           pass that places them
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1413,8 +1518,10 @@ Arguments:
 
 Options:
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1520,8 +1627,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1641,7 +1750,7 @@ Options:
           highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a
           paragraph style (Heading2)
 
-      --author <NAME>
+  -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
           [default: Redline]
@@ -1673,16 +1782,19 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
+          too; .md, .json, .pdf and .png name the task that writes them
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
-          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
+          `<FILE's directory>/<stem>.edit`)
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1788,7 +1900,7 @@ Options:
           Formatting for the new paragraph's text (bold, italic, underline,
           highlight=yellow) or its paragraph style (Heading2)
 
-      --author <NAME>
+  -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
           [default: Redline]
@@ -1820,19 +1932,22 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
+          too; .md, .json, .pdf and .png name the task that writes them
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
-          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
+          `<FILE's directory>/<stem>.edit`)
 
       --force
           Replace an existing output (the bundle directory's files)
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1859,8 +1974,10 @@ Usage: jubarte-redlines capabilities [OPTIONS]
 
 Options:
       --json   The manifest as JSON instead of the text summary
-  -q, --quiet  Print nothing on success (files are still written; warnings and errors
-               still print)
+  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
+               `edit`/`add` changed. Files are still written; a reading task (`read`,
+               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+               what it read, and warnings and errors still print
   -h, --help   Print help
 ```
 <!-- gen:cli-npm:end -->
