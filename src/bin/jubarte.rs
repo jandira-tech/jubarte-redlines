@@ -558,6 +558,15 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         .collect();
     for path in &png_paths {
         ensure_writable(path, job.force)?;
+        // `-o r.png --report r-page-01.png` would write the page, then
+        // the report over it.
+        for (side, flag) in [(job.font_report, "--font-report"), (job.report, "--report")] {
+            if let Some(side) = side.filter(|side| same_path(side, path)) {
+                return Err(
+                    format!("{flag} '{}' is the same file as the PNG output", side.display()).into(),
+                );
+            }
+        }
     }
     if let Some(pdf) = &rendered.pdf {
         std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
@@ -1310,7 +1319,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         &source,
     )?;
     if flags.options.editing_mode
-        && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan)
+        && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan, &source)
     {
         return Err((EXIT_USAGE, message.to_string()));
     }
@@ -2342,6 +2351,12 @@ fn cli_main() -> ExitCode {
         {
             eprintln!("{}", jubarte::cli::removed_error(old, now));
             std::process::exit(2);
+        }
+        // `diff-render --help` still says the name is retired.
+        if !error.use_stderr() {
+            for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
+                eprintln!("{}", jubarte::cli::retired_note(old, now));
+            }
         }
         error.exit()
     });

@@ -181,15 +181,20 @@ pub fn record(
         .transpose()
         .map_err(|e| RecordError::Plan(e.to_string()))?;
     let before = held.as_ref().map_or(0, |p| p.operations.len());
-    let revisions = |plan: Option<&EditPlan>| {
+    // Each id once and in long form, as `record_into` joins them: `r1+2`
+    // is two ids, `r1` and `body:rev:1` one, so a recording that names an
+    // id the plan already holds adds nothing.
+    let revisions = |plan: Option<&EditPlan>| -> std::collections::HashSet<String> {
         plan.and_then(|p| p.resolve_revisions.as_ref())
-            .map_or(0, |r| {
+            .map(|r| {
                 [&r.accept, &r.reject]
-                    .iter()
-                    .filter_map(|f| f.as_ref().and_then(|f| f.ids.as_ref()))
-                    .map(Vec::len)
-                    .sum::<usize>()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|f| f.normalized().unwrap_or_else(|_| f.clone()).ids)
+                    .flatten()
+                    .collect()
             })
+            .unwrap_or_default()
     };
     let revisions_before = revisions(held.as_ref());
     let mut built =
@@ -198,7 +203,7 @@ pub fn record(
     let plan = record_into(held, built.plan).map_err(RecordError::Usage)?;
     Ok(Recorded {
         added: plan.operations.len() - before,
-        added_revisions: revisions(Some(&plan)) - revisions_before,
+        added_revisions: revisions(Some(&plan)).difference(&revisions_before).count(),
         notes: renumber_notes(built.notes, before),
         plan,
     })
@@ -362,6 +367,28 @@ mod tests {
             "{}",
             only.summary("a.docx", "p.json", false, false)
         );
+    }
+
+    /// Codex on #433: a held plan's ids count as `record_into` joins them,
+    /// so `r1+2` held is two ids and a duplicate spelling one.
+    #[test]
+    fn recorded_revisions_count_each_long_id_once() {
+        let held = |ids: &[&str]| {
+            let mut plan: serde_json::Value =
+                serde_json::from_str(&once(&[rewrite("p1", "One.")], None).unwrap().json())
+                    .unwrap();
+            plan["resolve_revisions"] = serde_json::json!({"accept": {"ids": ids}});
+            plan.to_string()
+        };
+        let accept = |at: &str| FlagOp {
+            at: at.into(),
+            accept: true,
+            ..FlagOp::default()
+        };
+        let compound = once(&[accept("r3")], Some(&held(&["r1+2"]))).unwrap();
+        assert_eq!(compound.added_revisions, 1);
+        let twice = once(&[accept("r1")], Some(&held(&["r1", "body:rev:1"]))).unwrap();
+        assert_eq!(twice.added_revisions, 0);
     }
 
     #[test]

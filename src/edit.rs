@@ -1166,6 +1166,19 @@ fn resolve_selected(
     Ok((Some(bytes), resolved))
 }
 
+/// Whether `source` still carries a tracked change of its text (body,
+/// headers, footers, notes; a style's recorded formatting is not one) once
+/// `plan`'s `resolve_revisions` has accepted and rejected what it selects.
+/// A selection that does not resolve is the plan's error, reported when it
+/// runs; here it leaves every change in place.
+pub fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
+    let resolved = resolve_selected(source, plan.resolve_revisions.as_ref())
+        .ok()
+        .and_then(|(bytes, _)| bytes);
+    crate::changes::list_changes(resolved.as_deref().unwrap_or(source))
+        .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with("styles:")))
+}
+
 /// The document a plan edits once `resolve_revisions` and
 /// `existing_revisions` have settled the tracked changes they select.
 struct Settled {
@@ -1282,8 +1295,9 @@ fn load_stories(opened: &mut Opened) -> Result<Loaded, EditError> {
 /// `header1.p1` → `header1:p:1`, `t0.row1.cell2[.p1]` (or 0.12's
 /// `t0.r1.c2`) → that cell's paragraph. A long id comes back as given. An
 /// id that names no table cell or story of `docx`, or is no paragraph id,
-/// gives its `Err` message; a body or story index is not checked against
-/// the paragraph count.
+/// gives its `Err` message, as `edit -p` does: a long id whose story is
+/// not the document's or whose index is no number too. A body or story
+/// index is not checked against the paragraph count.
 pub fn long_paragraph_ids(
     docx: &[u8],
     ids: &[&str],
@@ -1305,8 +1319,20 @@ pub fn long_paragraph_ids(
         .iter()
         .map(|id| match resolver.long_id(id) {
             Some(found) => found,
-            None if id.contains(":p:") => Ok(id.to_string()),
-            None => Err(format!("{id} is not a paragraph id")),
+            None => match id.rsplit_once(":p:") {
+                Some((story, n)) if n.parse::<usize>().is_ok() => {
+                    if resolver.story_ids.contains(&story) {
+                        Ok(id.to_string())
+                    } else {
+                        Err(format!(
+                            "unknown story {story:?}; this document has {}",
+                            resolver.story_ids.join(", ")
+                        ))
+                    }
+                }
+                Some(_) => Err(format!("unknown paragraph id {id}")),
+                None => Err(format!("{id} is not a paragraph id")),
+            },
         })
         .collect())
 }
