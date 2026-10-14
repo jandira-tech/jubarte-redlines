@@ -19,8 +19,8 @@ headers:
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: footer2, text: "{PAGE}"}
-  even: {id: footer1, text: "{PAGE}", inactive}  # defined, but even/odd headers are off
+  default: {id: footer2, text: "{PAGE}1{/}"}
+  even: {id: footer1, text: "{PAGE}{/}", inactive}  # defined, but even/odd headers are off
 ---
 
 <!-- p0 center -->

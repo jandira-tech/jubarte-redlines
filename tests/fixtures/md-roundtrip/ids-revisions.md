@@ -16,9 +16,9 @@ styles:
 headers:
   default: {id: header1, text: "", rev: header1.r1654 @AB}
 footers:
-  first: {id: footer3, text: "{++{PAGE} ++}{>>footer3.r1664 @AB<<}", center, inactive, rev: footer3.r1663 @AB; footer3.r1666 @AB, fmt: footer3.r1665 @AB}  # defined, but different first page is off
-  default: {id: footer2, text: "{++{PAGE} ++}{>>footer2.r1660 @AB<<}", center, rev: footer2.r1659 @AB; footer2.r1662 @AB, fmt: footer2.r1661 @AB}
-  even: {id: footer1, text: "{++{PAGE} ++}{>>footer1.r1656 @AB<<}", center, inactive, rev: footer1.r1655 @AB; footer1.r1658 @AB, fmt: footer1.r1657 @AB}  # defined, but even/odd headers are off
+  first: {id: footer3, text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer3.r1664 @AB<<}", center, inactive, rev: footer3.r1663 @AB; footer3.r1666 @AB, fmt: footer3.r1665 @AB}  # defined, but different first page is off
+  default: {id: footer2, text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer2.r1660 @AB<<}", center, rev: footer2.r1659 @AB; footer2.r1662 @AB, fmt: footer2.r1661 @AB}
+  even: {id: footer1, text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer1.r1656 @AB<<}", center, inactive, rev: footer1.r1655 @AB; footer1.r1658 @AB, fmt: footer1.r1657 @AB}  # defined, but even/odd headers are off
 ---
 
 <!-- p0 center, left 0.01in, right -0.01in, break-ins r1 @AB -->

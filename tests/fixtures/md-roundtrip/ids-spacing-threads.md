@@ -21,7 +21,7 @@ The Pot-Pourri Compendium
 A Sampler Document for Extraction Testing
 
 <!-- p2 -->
-This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on. **Emphasis lives here. See note.**<sup>[1]</sup>﻿
+This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on. **Emphasis lives here. See note.**<sup>[\[1\]](#footnote-1)</sup>﻿
 
 <!-- p3 -->
 # 1. Typography Samples
@@ -91,7 +91,7 @@ A small table with a header row:
 More information available at our [reference page](https://example.com/reference).
 
 <!-- p43 -->
-This sentence carries a second footnote for testing multi-note extraction. †<sup>[2]</sup>﻿
+This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[2\]](#footnote-2)</sup>﻿
 
 <!-- p44 -->
 # 5. Color Callouts
@@ -112,7 +112,7 @@ _— end of sample —_
 {++A Sampler Document for Extraction Testing++}{>>r2 @ASR<<}
 
 <!-- p50 -->
-{++This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on.++}{>>r3 @ASR<<} **Emphasis lives here. See note.**{++<sup>[3]</sup>++}{>>r3 @ASR<<}﻿
+{++This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on.++}{>>r3 @ASR<<} **Emphasis lives here. See note.**{++<sup>[\[3\]](#footnote-3)</sup>++}{>>r3 @ASR<<}﻿
 
 <!-- p51 -->
 # {++1. Typography Samples++}{>>r4 @ASR<<}
@@ -185,7 +185,7 @@ _— end of sample —_
 {++More information available at our ++}{>>r42 @ASR<<}[reference page](https://example.com/reference){++.++}{>>r42 @ASR<<}
 
 <!-- p92 -->
-{++This sentence carries a second footnote for testing multi-note extraction. †<sup>[4]</sup>++}{>>r43+43 @ASR<<}﻿
+{++This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[4\]](#footnote-4)</sup>++}{>>r43+43 @ASR<<}﻿
 
 <!-- p93 -->
 # {++5. Color Callouts++}{>>r44 @ASR<<}
@@ -209,7 +209,7 @@ The Pot-Pourri Compendium
 A Sampler Document for Extraction Testing
 
 <!-- p100 -->
-This document is intentionally {--varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a --}{>>r48 @ASR<<}block quote so an extraction tool has plenty to chew on. **Emphasis lives here. See note.**<sup>[5]</sup>﻿
+This document is intentionally {--varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a --}{>>r48 @ASR<<}block quote so an extraction tool has plenty to chew on. **Emphasis lives here. See note.**<sup>[\[5\]](#footnote-5)</sup>﻿
 
 <!-- p101 -->
 # 1. Typography Samples
@@ -272,7 +272,7 @@ Add a pinch of salt.
 {--More information available at our reference page.--}{>>r54 @ASR<<}
 
 <!-- p121 -->
-{--This sentence carries a second footnote for testing multi-note extraction. †<sup>[6]</sup>--}{>>r55+55 @ASR<<}﻿
+{--This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[6\]](#footnote-6)</sup>--}{>>r55+55 @ASR<<}﻿
 
 <!-- p122 -->
 # {--5. Color Callouts--}{>>r56 @ASR<<}
@@ -287,19 +287,19 @@ Add a pinch of salt.
 {--_— end of sample —_--}{>>r59 @ASR<<}
 
 <!-- p126 -->
-Footnote one: this footnote is attached to the introductory paragraph. ↑﻿
+Footnote one: this footnote is attached to the introductory paragraph. [↑](#footnote-ref-1)﻿
 
 <!-- p127 -->
-Footnote two: cross-reference target for extraction tools that map markers to notes. ↑﻿
+Footnote two: cross-reference target for extraction tools that map markers to notes. [↑](#footnote-ref-2)﻿
 
 <!-- p128 -->
-{++ Footnote one: this footnote is attached to the introductory paragraph.++}{>>r60 @ASR<<} ↑﻿
+{++ Footnote one: this footnote is attached to the introductory paragraph.++}{>>r60 @ASR<<} [↑](#footnote-ref-3)﻿
 
 <!-- p129 -->
-{++ Footnote two: cross-reference target for extraction tools that map markers to notes.++}{>>r61 @ASR<<} ↑﻿
+{++ Footnote two: cross-reference target for extraction tools that map markers to notes.++}{>>r61 @ASR<<} [↑](#footnote-ref-4)﻿
 
 <!-- p130 -->
-Footnote one: this footnote is attached to the introductory paragraph. ↑﻿
+Footnote one: this footnote is attached to the introductory paragraph. [↑](#footnote-ref-5)﻿
 
 <!-- p131 -->
-{-- Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r62 @ASR<<} ↑﻿
+{-- Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r62 @ASR<<} [↑](#footnote-ref-6)﻿
