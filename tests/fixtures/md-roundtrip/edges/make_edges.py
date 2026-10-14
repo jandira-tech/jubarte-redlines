@@ -156,6 +156,49 @@ def edge_clauses():
             rels=[COMMENTS[0]], types=[COMMENTS[1]])
 
 
+# 1b. More clauses: three format changes on one paragraph; an inserted
+#     empty row, an inserted cell, a cell paragraph's format change and two
+#     table format changes (properties and grid); an inserted row whose text
+#     carries no marks of its own; a comment range from one cell to another;
+#     two comment ranges over one table; an empty mark in an empty cell.
+def edge_clauses_more():
+    def fmt(tag, i, inner):
+        return f'<w:{tag} w:id="{i}" w:author="Ann Lee" w:date="{D1}">{inner}</w:{tag}>'
+    w = '<w:tcW w:w="2400" w:type="dxa"/>'
+    body = (
+        p(r("Three", "<w:b/>" + fmt("rPrChange", 101, "<w:rPr/>")),
+          r(" format changes.", "<w:i/>" + fmt("rPrChange", 102, "<w:rPr/>")),
+          ppr='<w:jc w:val="center"/>' + fmt("pPrChange", 100, '<w:pPr><w:jc w:val="left"/></w:pPr>'))
+        + p(r("Changed table:"))
+        + table([
+            tr(tc(p()), tc(p()), trpr=f'<w:ins w:id="103" w:author="Ann Lee" w:date="{D1}"/>'),
+            tr(tc(p(r("a2"), ppr='<w:jc w:val="center"/>' + fmt("pPrChange", 105, "<w:pPr/>"))),
+               tc(p(r("b2")), tcpr=w + f'<w:cellIns w:id="104" w:author="Ann Lee" w:date="{D1}"/>')),
+        ], tblpr='<w:tblW w:w="0" w:type="auto"/>' + fmt("tblPrChange", 106, '<w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>'),
+           grid=(2400, 2400)).replace(
+            '</w:tblGrid>', '<w:tblGridChange w:id="107"><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2800"/></w:tblGrid></w:tblGridChange>' + '</w:tblGrid>')
+        + p(r("Inserted row:"))
+        + table([
+            tr(tc(p(r("x0"))), tc(p(r("y0")))),
+            tr(tc(p(r("x1"))), tc(p(r("y1"))), trpr=f'<w:ins w:id="108" w:author="Ann Lee" w:date="{D1}"/>'),
+        ], grid=(2400, 2400))
+        + p(r("Cell to cell:"))
+        + table([
+            tr(tc(p('<w:commentRangeStart w:id="0"/>', r("a1"))), tc(p(r("b1")))),
+            tr(tc(p(r("a2"))), tc(p(r("b2"), '<w:commentRangeEnd w:id="0"/>', '<w:r><w:commentReference w:id="0"/></w:r>'))),
+        ], grid=(2400, 2400))
+        + '<w:commentRangeStart w:id="1"/><w:commentRangeStart w:id="2"/>'
+        + table([tr(tc(p(r("m1"))), tc(p(r("n1"))))], grid=(2400, 2400))
+        + p(r("After two ranges."), '<w:commentRangeEnd w:id="1"/>', '<w:r><w:commentReference w:id="1"/></w:r>',
+            '<w:commentRangeEnd w:id="2"/>', '<w:r><w:commentReference w:id="2"/></w:r>')
+        + table([tr(tc(p(r("e1"))), tc(p(f'<w:ins w:id="109" w:author="Ann Lee" w:date="{D1}"/>')))], grid=(2400, 2400))
+        + p(r("End."))
+    )
+    package("edge-clauses-more.docx", body,
+            parts={"word/comments.xml": comments((0, "Bo Chen", "From cell to cell."), (1, "Bo Chen", "First over the table."), (2, "Bo Chen", "Second over the table."))},
+            rels=[COMMENTS[0]], types=[COMMENTS[1]])
+
+
 # 2. Header and footer tracked changes: insertions, deletions, a deleted and
 #    an inserted field, a formatting change, a paragraph-mark change, two
 #    paragraphs in one footer.
@@ -183,6 +226,11 @@ def edge_owner():
             core="<dc:creator>Jones, SA</dc:creator><cp:lastModifiedBy>Someone Else</cp:lastModifiedBy>")
     package("edge-owner-modifier.docx", p(r("Edited.")),
             core="<cp:lastModifiedBy>Last Editor</cp:lastModifiedBy>")
+    # Someone called none, and a title; XML specials in both.
+    package("edge-owner-none.docx", p(r("Nobody?")),
+            core='<dc:title>Quarterly &amp; &lt;Report&gt; "Q"</dc:title><dc:creator>none</dc:creator>')
+    package("edge-owner-specials.docx", p(r("Specials.")),
+            core='<dc:title>none</dc:title><dc:creator xml:space="preserve">Ada &amp; Bo &lt;C&gt; "Q"</dc:creator>')
 
 
 # 4. Table styles: none, the built-in Table Grid, and a custom style.
@@ -311,8 +359,70 @@ def edge_anchors():
     package("edge-anchors.docx", body, rels=[("rIdLink", f"{REL}/hyperlink", "https://example.com/a")], styles_extra=hl)
 
 
+# 11. More of one change in several marks: a comment range and its
+#     reference inside one deletion; a substitution whose deleted side is
+#     two runs (`r5+6+7`); more marks than characters (empty marks); one id
+#     on both sides of a substitution (`r43+43`).
+def edge_change_ids_more():
+    ref = '<w:r><w:commentReference w:id="0"/></w:r>'
+    body = (
+        p(r("Inside "), dele(40, "Ann Lee", dr("cut ") + '<w:commentRangeStart w:id="0"/>' + dr("by a")
+                             + '<w:commentRangeEnd w:id="0"/>' + ref + dr(" comment")), r(" after."))
+        + p(r("Sub "), ins(7, "Ann Lee", r("x")), dele(5, "Ann Lee", dr("plain ")),
+            dele(6, "Ann Lee", dr("italic", "<w:i/>")), r(" end."))
+        + p(r("Empty "), ins(8, "Ann Lee", r("a")), '<w:ins w:id="9" w:author="Ann Lee" w:date="2026-03-02T10:00:00Z"/>',
+            '<w:ins w:id="10" w:author="Ann Lee" w:date="2026-03-02T10:00:00Z"/>', r(" end."))
+    )
+    package("edge-change-ids-more.docx", body,
+            parts={"word/comments.xml": comments((0, "Bo Chen", "Inside the deletion."))},
+            rels=[COMMENTS[0]], types=[COMMENTS[1]])
+
+
+# 12. Cells the view leaves out: a row short of the grid without gridAfter,
+#     gridAfter past the last column with text, a vertical merge in a
+#     column with no text, a table of empty cells.
+def edge_cells_more():
+    w = '<w:tcW w:w="2400" w:type="dxa"/>'
+    after = '<w:gridAfter w:val="1"/><w:wAfter w:w="2400" w:type="dxa"/>'
+    short = table([tr(tc(p(r("a"))), tc(p(r("b"))), tc(p(r("c")))),
+                   tr(tc(p(r("d"))), tc(p(r("e")))),
+                   tr(tc(p(r("g"))), tc(p(r("h"))), tc(p(r("i"))))])
+    past = table([tr(tc(p(r("j"))), tc(p(r("k"))), tc(p(r("l"))), trpr=after),
+                  tr(tc(p(r("m"))), tc(p(r("n"))), tc(p(r("o"))), trpr=after)],
+                 grid=(2400, 2400, 2400, 2400))
+    merged = table([tr(tc(p(r("q"))), tc(tcpr=w + '<w:vMerge w:val="restart"/>')),
+                    tr(tc(p(r("s"))), tc(tcpr=w + '<w:vMerge/>'))], grid=(2400, 2400))
+    empty = table([tr(tc(), tc()), tr(tc(), tc())], grid=(2400, 2400))
+    package("edge-cells-more.docx", p(r("Short:")) + short + p(r("Past:")) + past + p(r("Merged:")) + merged
+            + p(r("Empty:")) + empty + p(r("After.")))
+
+
+# 13. Revision order around other things: a substitution inside a link, a
+#     bookmark a link names between an insertion and a deletion, a comment
+#     range between them, insertions then deletions by one author numbered
+#     in document order, a substitution whose sides differ in day.
+def edge_order_more():
+    a = "Ann Lee"
+    hl = '<w:rStyle w:val="Hyperlink"/>'
+    body = (
+        p(r("Link: "), '<w:hyperlink r:id="rIdLink">' + ins(80, a, r("new", hl)) + dele(81, a, dr("old", hl)) + '</w:hyperlink>', r("."))
+        + p(r("Mark: "), ins(82, a, r("new")), '<w:bookmarkStart w:id="0" w:name="mark"/><w:bookmarkEnd w:id="0"/>',
+            dele(83, a, dr("old")), r(" "), '<w:hyperlink w:anchor="mark">' + r("go", hl) + '</w:hyperlink>', r("."))
+        + p(r("Range: "), ins(84, a, r("new")), '<w:commentRangeStart w:id="0"/>', dele(85, a, dr("old")),
+            '<w:commentRangeEnd w:id="0"/>', '<w:r><w:commentReference w:id="0"/></w:r>', r("."))
+        + p(r("Runs: "), ins(86, a, r("AA ")), ins(87, a, r("BB ")), dele(88, a, dr("CC ")), dele(89, a, dr("DD")), r("."))
+        + p(r("Days: "), ins(90, "Eve Fox", r("new"), D1), dele(91, "Eve Fox", dr("old"), D2), r("."))
+    )
+    styles = '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>'
+    package("edge-order-more.docx", body,
+            parts={"word/comments.xml": comments((0, "Bo Chen", "On the deletion."))},
+            rels=[COMMENTS[0], ("rIdLink", f"{REL}/hyperlink", "https://example.com/")],
+            types=[COMMENTS[1]], styles_extra=styles)
+
+
 if __name__ == "__main__":
-    for make in (edge_clauses, edge_stories, edge_owner, edge_table_styles, edge_notes, edge_cells,
-                 edge_change_ids, edge_order, edge_dates, edge_anchors):
+    for make in (edge_clauses, edge_clauses_more, edge_stories, edge_owner, edge_table_styles, edge_notes, edge_cells,
+                 edge_change_ids, edge_order, edge_dates, edge_anchors, edge_change_ids_more, edge_cells_more,
+                 edge_order_more):
         make()
     print("\n".join(sorted(p.name for p in HERE.glob("*.docx"))))

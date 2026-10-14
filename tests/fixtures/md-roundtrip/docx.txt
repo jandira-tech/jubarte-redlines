@@ -10,11 +10,17 @@ tests/fixtures/agent-view/quadratic.docx
 tests/fixtures/md-roundtrip/edges/edge-anchors.docx
 tests/fixtures/md-roundtrip/edges/edge-cells.docx
 tests/fixtures/md-roundtrip/edges/edge-change-ids.docx
+tests/fixtures/md-roundtrip/edges/edge-change-ids-more.docx
 tests/fixtures/md-roundtrip/edges/edge-clauses.docx
+tests/fixtures/md-roundtrip/edges/edge-clauses-more.docx
 tests/fixtures/md-roundtrip/edges/edge-dates.docx
 tests/fixtures/md-roundtrip/edges/edge-notes.docx
 tests/fixtures/md-roundtrip/edges/edge-order.docx
 tests/fixtures/md-roundtrip/edges/edge-owner-creator.docx
 tests/fixtures/md-roundtrip/edges/edge-owner-modifier.docx
+tests/fixtures/md-roundtrip/edges/edge-owner-none.docx
+tests/fixtures/md-roundtrip/edges/edge-owner-specials.docx
 tests/fixtures/md-roundtrip/edges/edge-stories.docx
 tests/fixtures/md-roundtrip/edges/edge-table-styles.docx
+tests/fixtures/md-roundtrip/edges/edge-cells-more.docx
+tests/fixtures/md-roundtrip/edges/edge-order-more.docx

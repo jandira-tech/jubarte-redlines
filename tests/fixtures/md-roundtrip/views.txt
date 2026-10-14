@@ -24,11 +24,17 @@ math.md tests/fixtures/agent-view/quadratic.docx
 edge-anchors.md tests/fixtures/md-roundtrip/edges/edge-anchors.docx
 edge-cells.md tests/fixtures/md-roundtrip/edges/edge-cells.docx
 edge-change-ids.md tests/fixtures/md-roundtrip/edges/edge-change-ids.docx
+edge-change-ids-more.md tests/fixtures/md-roundtrip/edges/edge-change-ids-more.docx
 edge-clauses.md tests/fixtures/md-roundtrip/edges/edge-clauses.docx
+edge-clauses-more.md tests/fixtures/md-roundtrip/edges/edge-clauses-more.docx
 edge-dates.md tests/fixtures/md-roundtrip/edges/edge-dates.docx
 edge-notes.md tests/fixtures/md-roundtrip/edges/edge-notes.docx
 edge-order.md tests/fixtures/md-roundtrip/edges/edge-order.docx
 edge-owner-creator.md tests/fixtures/md-roundtrip/edges/edge-owner-creator.docx
 edge-owner-modifier.md tests/fixtures/md-roundtrip/edges/edge-owner-modifier.docx
+edge-owner-none.md tests/fixtures/md-roundtrip/edges/edge-owner-none.docx
+edge-owner-specials.md tests/fixtures/md-roundtrip/edges/edge-owner-specials.docx
 edge-stories.md tests/fixtures/md-roundtrip/edges/edge-stories.docx
 edge-table-styles.md tests/fixtures/md-roundtrip/edges/edge-table-styles.docx
+edge-cells-more.md tests/fixtures/md-roundtrip/edges/edge-cells-more.docx
+edge-order-more.md tests/fixtures/md-roundtrip/edges/edge-order-more.docx
