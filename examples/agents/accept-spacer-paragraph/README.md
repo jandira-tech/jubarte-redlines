@@ -13,7 +13,7 @@ with `jubarte accept` and with LibreOffice, and prints what both leave.
 ```bash
 python3 make_redline.py                        # redline.docx, the base case
 jubarte accept redline.docx -o clean.docx
-jubarte text clean.docx                        # "Keep this item", spacer, "Next section"
+jubarte read clean.docx                        # "Keep this item", spacer, "Next section"
 
 # Both tools over every case (needs soffice with Writer and python3-uno):
 JUBARTE=$(command -v jubarte) /usr/bin/python3 compare.py out

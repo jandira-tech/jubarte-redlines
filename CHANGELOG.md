@@ -11,12 +11,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
+See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
 ### Added
 
+- **One id grammar** (`jubarte::ids`), the same in every place an id goes:
+  revisions `r12`, `12`, `r1+2` (both marks of one change), `header1.r1`,
+  `footnotes.r3`, `body:rev:12`; comments `c27`, `27`; paragraphs `p12`,
+  `12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2` (`.p1` for a cell's
+  second paragraph), `body:p:12`. `accept`/`reject --id`, `edit`/`add -p`,
+  a plan's `paragraph`, `resolve_revisions` ids and `comment_id` take them
+  all. 0.12's `#12`, `#1+2` and `#c27` still parse and are never printed.
+  Every printed id is safe unquoted in bash, zsh and csh, and each number
+  has one spelling (`p012` is refused).
+- `edit FILE -p r12 --accept` (or `--reject`) resolves one tracked change,
+  before the command's other operations; `-p` repeats. `--reply TEXT` on
+  `edit` and `add` with `-p c5` answers a comment.
+- `changes --json` and `comments --json` lines, and the snapshot's
+  `changes` and `comments`, carry `ref`, the short id (`r12`, `c5`), beside
+  the long `id`; a change also names its `paragraph`, and the `changes`
+  text listing gains a paragraph column.
 - `c5.text` names the text comment c5 covers, for `edit -p` and a plan's
   `paragraph`. `edit X -p c5.text --content "new"` replaces it as one
   tracked substitution inside the comment (a range over two paragraphs
@@ -61,6 +77,20 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- **Breaking: jubarte prints short ids.** The agent view tags revisions
+  `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
+  (a reply names its root, `re c5`); table lines name rows and cells
+  `row1` and `row1.cell2`. `changes` and `comments` list the same ids.
+  JSON keeps the long `id` and adds `ref`; machine hints and refusals keep
+  the long id.
+- **Breaking: one revision count.** `summary.revisions`, the view's
+  `revisions:`, the edit report and `changes` count each listed change once
+  across the six parts `accept` and `reject` process (body, headers,
+  footers, footnotes, endnotes, styles), formatting changes included. Word's
+  own pairs count once: a style's `w:pPrChange` and `w:rPrChange` sharing a
+  `w:id`, and a text box's `mc:Fallback` copy. Marks in `comments.xml` and
+  `numbering.xml` no longer count.
+- **Breaking: `edit -p 6` means `p6`**; it was refused as an unknown id.
 - **Breaking: `compare` (and `jubarte OLD NEW`) dates its revisions now.**
   Without `-d/--date` the shared parser fills the current UTC time, to the
   second, so the binary, Python and npm hand the same value to the engine;
@@ -180,6 +210,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- `edit -p #c5`, a plan's `"comment_id": "c5"` and `accept --id #12` were
+  refused. (Unquoted, `#c5` starts a shell comment; write `c5`.)
+- `changes` listed a text box's change twice, once per
+  `mc:AlternateContent` branch.
+- `convert --changed-only` named PNG pages by their index among the kept
+  pages (document page 3, kept alone, was `-page-01.png`).
+- `convert -o x.json` wrote a PDF, `diff -o x.json` wrote Word, `diff`
+  wrote `OLD_v_NEW.docx` beside a Word input without `-o`, and `convert
+  --pdf -o x.png` wrote a PDF named `x.png`.
 - `edit`: replacing exactly the text a comment covers keeps both the
   deletion and the insertion inside the comment's range, so Accept All
   leaves the comment on the new text and Reject All on the old. The
@@ -230,7 +269,7 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [0.12.0] - 2026-10-11
 
-> **Summary.** jubarte FILE and jubarte read print an agent view (a YAML header, then the document as Markdown with paragraph ids, CriticMarkup changes and comments), and jubarte A B prints its redline's view instead of writing a file (-o writes it; compare A B is unchanged). jubarte edit and the new jubarte add take their operations from flags. Text diffs come as github, word, normal, context and side-by-side views. convert --move-comments lists comments after the last page with [JR1] markers, --changed-only keeps only the pages a change touches, and fields update writes Roman and letter NUMPAGES, PAGEREF and SEQ results as Word does. Redlines no longer hang Word 16.115 on a deleted empty PAGE field or a header table only one version has, and drop headers and footers no section uses. PDF text no font has glyphs for stays searchable, and math letters painted from their ASCII italic read back as math letters. rdocx-opc 0.2 fixes RUSTSEC-2026-0194. On two 600-item samples scored against Word's own output: redlines mean 71.89 (Docxodus 64.95), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document.
+> **Summary.** jubarte FILE and jubarte read print an agent view (a YAML header, then the document as Markdown with paragraph ids, CriticMarkup changes and comments), and jubarte A B prints its redline's view instead of writing a file (-o writes it; compare A B is unchanged). jubarte edit and the new jubarte add take their operations from flags. Text diffs come as github, word, normal, context and side-by-side views. convert --move-comments lists comments after the last page with [JR1] markers, --changed-only keeps only the pages a change touches, and convert --update-fields writes Roman and letter NUMPAGES, PAGEREF and SEQ results as Word does. Redlines no longer hang Word 16.115 on a deleted empty PAGE field or a header table only one version has, and drop headers and footers no section uses. PDF text no font has glyphs for stays searchable, and math letters painted from their ASCII italic read back as math letters. rdocx-opc 0.2 fixes RUSTSEC-2026-0194. On two 600-item samples scored against Word's own output: redlines mean 71.89 (Docxodus 64.95), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document.
 >
 > **Docs.** docs/rust.md, docs/python.md and docs/javascript.md carry the regenerated CLI and API references; docs/TEXT_DIFF.md is new; examples/cli/help-cli.md and examples/cli/visualize/ show the agent view and every command's help; the library READMEs and their fragments document read, edit, add and the new PDF options; KNOWN_ISSUES.md records #9 (WASM fonts, text layer fixed) and #10 (float re-layout); docs/WORD_DIFFERENCES.md lists the open Word differences; the root plan files moved under docs/.
 
@@ -282,7 +321,7 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   In JavaScript they are `docxToPdf`'s two trailing arguments and
   `npx jubarte-redlines convert --move-comments / --changed-only`.
 
-- `fields update` writes `NUMPAGES`, `PAGEREF` and `SEQ` results in
+- `convert --update-fields` writes `NUMPAGES`, `PAGEREF` and `SEQ` results in
   `\* roman` and `\* alphabetic` as Word does: the switch's first letter
   picks the case, letters past z repeat (aa, bb, ...), the last `\*`
   switch wins, and past 780 in letters or 32767 in Roman numerals the

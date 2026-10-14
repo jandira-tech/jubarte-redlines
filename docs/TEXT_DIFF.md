@@ -53,7 +53,9 @@ its own row's mark right.
 
 Text views go to stdout and create no Word file. `-o review.patch` writes only
 the named text file, with a status message on stderr. `.patch`, `.diff`, `.txt`,
-`.md` and `.markdown` are supported; existing files require `--force`. Equal
+`.md` and `.markdown` are supported; existing files require `--force`. Any
+other extension exits 2: `-o x.docx`, `.pdf` or `.png` names `compare`, which
+writes the redline, and `.json` is not written yet. Equal
 snapshots produce empty output. Explicit rendering or redline options that do
 not apply to a text view are usage errors before any input is read.
 

@@ -1,67 +1,92 @@
-[body:p:0 Heading1] Professional Services Agreement
+---
+source: input.docx
+sha256: 0d36dc75661f1b85faec19957f4b5229742ddc4a9388bc5853667b8bcf989159
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 0
+comments: 0
+authors:
+  document_owner: python-docx      # dc:creator
+body: p0-p30, 1 table, 2 pages     # pages from layout
+page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in
+styles:
+  Normal: Cambria 11pt, after 10pt, line 1.15, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 14pt, before 24pt, keep-next
+  "##": Heading2, Calibri bold 13pt, before 10pt, keep-next
+  table: TableGrid, all borders 0.5pt
+headers:
+  default: {id: header1, text: "Jandira Technologies, LLC - Professional Services Agreement (Draft 3)"}
+footers:
+  default: {id: footer1, text: Confidential draft - do not circulate}
+---
 
-[body:p:1] This Agreement is made between Jandira Technologies, LLC ("the Company") and Northwind Traders Ltd. ("the Client"), effective as of 2 March 2026.
+<!-- page 1 of 2 -->
 
-[body:p:2 Heading2] 1. Scope of Services
+<!-- p0 -->
+# Professional Services Agreement
 
-[body:p:3] **Scope.** The Company will design, implement and document the document-generation pipeline described in Statement of Work 1, including acceptance tests.
+<!-- p1 -->
+This Agreement is made between Jandira Technologies, LLC ("the Company") and Northwind Traders Ltd. ("the Client"), effective as of 2 March 2026.
 
-[body:p:4] The deliverables are:
+<!-- p2 -->
+## 1. Scope of Services
 
-[body:p:5 ListBullet] a written architecture summary
+<!-- p3 -->
+**Scope.** The Company will design, implement and document the document-generation pipeline described in Statement of Work 1, including acceptance tests.
 
-[body:p:6 ListBullet] the pipeline source and its tests
+<!-- p4 -->
+The deliverables are:
 
-[body:p:7 ListBullet] a runbook for the operations team
+<!-- p5 ListBullet bullet -->
+- a written architecture summary
 
-[body:p:8 ListBullet] one training session of up to three hours
+<!-- p6 ListBullet bullet -->
+- the pipeline source and its tests
 
-[body:p:9 Heading2] 2. Fees and Payment
+<!-- p7 ListBullet bullet -->
+- a runbook for the operations team
 
-[body:p:10] **Fees.** *Invoices are payable* net thirty (30) days, by wire transfer to the account stated on each invoice.
+<!-- p8 ListBullet bullet -->
+- one training session of up to three hours
 
-[body:p:11] An invoice that is not disputed within ten business days is deemed accepted.
+<!-- p9 -->
+## 2. Fees and Payment
 
-[body:p:12] Payment schedule:
+<!-- p10 -->
+**Fees.** _Invoices are payable_ net thirty (30) days, by wire transfer to the account stated on each invoice.[^1]
 
-[body:p:13] **Milestone**
+<!-- p11 -->
+An invoice that is not disputed within ten business days is deemed accepted.
 
-[body:p:14] **Deliverable**
+<!-- p12 -->
+Payment schedule:
 
-[body:p:15] **Fee (USD)**
+<!-- t0 4x3, cells p13-p24 by row -->
+|**Milestone**|**Deliverable**|**Fee (USD)**|
+|-|-|-|
+|M1|Architecture summary accepted|12,000|
+|M2|Pipeline passes acceptance tests|30,000|
+|M3|Runbook and training delivered|8,000|
 
-[body:p:16] M1
+<!-- p25 -->
+## 3. Confidentiality
 
-[body:p:17] Architecture summary accepted
+<!-- p26 -->
+Each party keeps the other's non-public information secret and uses it only to perform this Agreement. The obligation survives termination by three years.
 
-[body:p:18] 12,000
+<!-- p27 -->
+## 4. Termination
 
-[body:p:19] M2
+<!-- p28 -->
+Either party may terminate for material breach on fifteen days' written notice if the breach remains uncured. The Company is paid for work performed up to the termination date.
 
-[body:p:20] Pipeline passes acceptance tests
+<!-- p29 -->
+Signed for the Company: \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
-[body:p:21] 30,000
+<!-- page 2 of 2 -->
 
-[body:p:22] M3
+<!-- p30 -->
+Signed for the Client:  \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
-[body:p:23] Runbook and training delivered
-
-[body:p:24] 8,000
-
-[body:p:25 Heading2] 3. Confidentiality
-
-[body:p:26] Each party keeps the other's non-public information secret and uses it only to perform this Agreement. The obligation survives termination by three years.
-
-[body:p:27 Heading2] 4. Termination
-
-[body:p:28] Either party may terminate for material breach on fifteen days' written notice if the breach remains uncured. The Company is paid for work performed up to the termination date.
-
-[body:p:29] Signed for the Company: ______________________
-
-[body:p:30] Signed for the Client:  ______________________
-
-[header1:p:0 Header] Jandira Technologies, LLC - Professional Services Agreement (Draft 3)
-
-[footer1:p:0 Footer] Confidential draft - do not circulate
-
-[footnotes:p:0 FootnoteText]  Net thirty (30) days from the invoice date.
+<!-- footnotes.p0 -->
+[^1]: Net thirty (30) days from the invoice date.

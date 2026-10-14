@@ -1,15 +1,42 @@
-[body:p:0 Heading1] Consulting Services Letter
+---
+source: accepted_jubarte.docx
+sha256: 7dddfeff0344b1cbcfc891f75f8fd652db863e0d2d4aa2f24437b4c16ee200ef
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 0
+comments: 0
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+body: p0-p7, 0 tables, 1 page      # pages from layout
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+---
 
-[body:p:1] This letter confirms the consulting engagement between Jandira Technologies, LLC ("the Company") and Northwind Traders Ltd. (the "Client"), starting on 16 March 2026.
+<!-- page 1 of 1 -->
 
-[body:p:2 Heading2] Services
+<!-- p0 -->
+# Consulting Services Letter
 
-[body:p:3] The Company will provide document-automation consulting up to fifteen days per month, remotely, with one on-site day per quarter.
+<!-- p1 -->
+This letter confirms the consulting engagement between Jandira Technologies, LLC ("the Company") and Northwind Traders Ltd. (the "Client"), starting on 16 March 2026.
 
-[body:p:4 Heading2] Fees
+<!-- p2 -->
+## Services
 
-[body:p:5] The fee is 1,100 USD per day, invoiced monthly, payable net thirty (30) days.
+<!-- p3 -->
+The Company will provide document-automation consulting up to fifteen days per month, remotely, with one on-site day per quarter.
 
-[body:p:6 Heading2] Term
+<!-- p4 -->
+## Fees
 
-[body:p:7] Either party may end this letter on twenty days' written notice to the address in the signature block.
+<!-- p5 -->
+The fee is 1,100 USD per day, invoiced monthly, payable net thirty (30) days.
+
+<!-- p6 -->
+## Term
+
+<!-- p7 -->
+Either party may end this letter on twenty days' written notice to the address in the signature block.

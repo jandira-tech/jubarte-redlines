@@ -240,6 +240,10 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 `comments c9 in p11`, and `in c5` for a comment range open across it.
 `tN` counts top-level body tables.
 
+Each footnote and endnote definition follows the id line of its
+paragraphs: `<!-- footnotes.p0 -->`, or `<!-- endnotes.p0-p2 -->` for a note
+of three paragraphs. `edit -p footnotes.p0` edits that note's text.
+
 `sha256:` is the SHA-256 of the bytes the view read: the file, or for
 `jubarte A B` the redline it prints in memory. Compare it with the file on
 disk before editing to know the view is current.
@@ -314,7 +318,7 @@ Defaults when the Markdown is incomplete, in order: `source:` names a base
 document, and everything not stated comes from it by id; a note's own
 `@handle` and timestamp; the handle's single timestamp from `authors:`; if
 `authors:` lists exactly one non-owner author, that author; else the author
-`Modified User`; a missing date is the conversion time in UTC, with a
+`Redline`; a missing date is the conversion time in UTC, with a
 warning; `document_owner` missing is
 `Original User`; with no header at all, Letter portrait, one-inch margins,
 Normal Calibri 11pt and the writer's other defaults. A header without
@@ -345,9 +349,10 @@ name) keeps one author's. A selection keeps the footnotes its blocks cite;
 ### Commands
 
 ```text
-jubarte read FILE                      the view (alias: text); jubarte FILE is the same
+jubarte read FILE                      the view; jubarte FILE is the same
   -p p5,p12-p20,t0   --head N   --tail N   --changed [--by AC]
   --track-changes accept|reject   --comments none   --dates   --no-page-markers
+  --json (the snapshot)   --tables (the grids)   -o FILE.md|FILE.json
 jubarte A B                            accept both sides' changes, compare, print the redline's view
                                        (read options apply; -o FILE writes the file instead)
 jubarte compare A B                    the same; -o FILE writes the redline (.docx, .pdf, .png, .md)
@@ -358,9 +363,12 @@ jubarte edit FILE -p WHERE --content TEXT                      rewrite the parag
 jubarte edit FILE -p WHERE [--anchor FIND] --delete            delete FIND, or the paragraph
 jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or set the paragraph style
 jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment
+jubarte edit FILE -p c5 --reply TEXT                           a reply
+jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
+jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change
 jubarte add  FILE -p WHERE --content TEXT [--before]           a new paragraph after (or before) WHERE
 jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND (--comment: on the whole paragraph)
-jubarte add  FILE -p c5 --content TEXT                         a reply
+jubarte add  FILE -p c5 --content TEXT                         a reply (also --reply TEXT)
 ```
 
 The printed view is the output of `jubarte FILE` and `jubarte A B`, so `-q`
@@ -368,22 +376,28 @@ does not hide it (it silences the `wrote …` line of `-o`). Options go after
 the task: `jubarte --head 2 read a.docx` is refused, since the parser would
 take `read` for a document.
 
-`WHERE` is an id the view prints (`p12`, `header1`, `footer2.p1`,
-`t0.row1.cell2`, `c5`); `edit` plans take the same ids. One command carries
+`WHERE` is an id the view prints (`p12` or `12`, `header1`, `footer2.p1`,
+`footnotes.p0`, `t0.row1.cell2`, `c5`, `c5.text`, `r12`); `edit` plans take
+the same ids. No id needs quoting in bash, zsh or csh. One command carries
 several operations: every `-p` starts one, and the flags after it belong to
 it. `--plan PLAN.json` stays for batches and the other operation kinds, and
 excludes the operation flags.
 
+The command writes one file, `<stem>_modified.docx` beside FILE (`-o
+FILE.docx` names it; an existing one needs `--force`): the redline in
+suggesting mode, the edited document in editing mode. Editing
+`X_modified.docx` again writes `X_modified.docx`. `--out-dir [DIR]` writes
+the bundle instead, in `<stem>.edit` by default.
+
 The options apply to every operation of the command: `--author NAME`
 (default `Redline`), `--datetime ISO8601` (default now, UTC),
-`--suggesting-mode` (the default: tracked changes; `redline.docx`,
-`clean.docx`, `patch.diff` and `report.jsonl` are written) or
-`--editing-mode` (the edits land directly: `clean.docx` and `report.jsonl`
-only), `--existing-revisions auto|keep|accept|reject|refuse` (default `auto`:
-`keep` when the file has tracked changes; `--editing-mode` refuses
-`keep`, so pass `accept` or `reject` for such a file), `--out-dir DIR`
-(default `<stem>.edit` beside the file; refused when it exists unless
-`--force`).
+`--suggesting-mode` (the default: tracked changes; the bundle holds
+`redline.docx`, `clean.docx`, `patch.diff` and `report.jsonl`) or
+`--editing-mode` (the edits land directly; the bundle holds `clean.docx`
+and `report.jsonl` only), `--existing-revisions auto|keep|accept|reject|refuse`
+(default `auto`: `keep` when the file has tracked changes; `--editing-mode`
+refuses `keep`, so pass `accept` or `reject` for such a file). `--plan`
+without a value reads or records `<stem>_plan.json` beside FILE.
 `--style` takes `bold`, `italic`, `underline`, `strike`, `caps`,
 `highlight=yellow`, `font=Calibri`, `size=11` and `color=FF0000`; any other
 value is a paragraph style (`Heading2`). After applying, the command prints

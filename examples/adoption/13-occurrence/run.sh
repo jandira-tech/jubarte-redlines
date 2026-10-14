@@ -13,8 +13,8 @@ rm -rf review occurrence_page_1_jubarte.png read_jubarte.md refusal.txt
 "$JUBARTE" edit input.docx --plan plan-occurrence-2.json --out-dir review \
   --png --dpi 72
 cp review/redline-page-01.png occurrence_page_1_jubarte.png
-# clean.docx has the edit applied; jubarte text shows the bold survived.
-"$JUBARTE" text review/clean.docx > read_jubarte.md
+# clean.docx has the edit applied; jubarte read shows the bold survived.
+"$JUBARTE" read review/clean.docx > read_jubarte.md
 
 # The same plan WITHOUT "occurrence": the anchor occurs three times, so
 # the plan is refused with AMBIGUOUS_ANCHOR naming the count and the
@@ -32,7 +32,7 @@ if command -v python3 >/dev/null && python3 -c 'import docx' >/dev/null 2>&1; th
   rm -f occurrence_pydocx.docx occurrence_pydocx-page-01.png \
         occurrence_page_1_pydocx.png pydocx_runs.txt read_pandoc.md
   python3 edit_pydocx.py > pydocx_runs.txt
-  "$JUBARTE" convert occurrence_pydocx.docx --png --dpi 72 --force
+  "$JUBARTE" convert occurrence_pydocx.docx -o occurrence_pydocx.png --dpi 72 --force
   mv occurrence_pydocx-page-01.png occurrence_page_1_pydocx.png
   if command -v pandoc >/dev/null; then
     # pandoc renders bold runs as **...**: after the rebuild the paragraph

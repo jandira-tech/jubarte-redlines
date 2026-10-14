@@ -13,7 +13,7 @@ if command -v python3 >/dev/null && python3 -c 'import docx' >/dev/null 2>&1; th
   rm -f comment_pydocx.docx comment_pydocx-page-01.png comment_page_1_pydocx.png \
         pydocx_anchor.txt comments_pydocx.jsonl
   python3 comment_pydocx.py > pydocx_anchor.txt
-  "$JUBARTE" convert comment_pydocx.docx --png --dpi 72 --force
+  "$JUBARTE" convert comment_pydocx.docx -o comment_pydocx.png --dpi 72 --force
   mv comment_pydocx-page-01.png comment_page_1_pydocx.png
   # Read the python-docx comment back with jubarte: one comment, no
   # parent, not resolved, anchored on whole runs.

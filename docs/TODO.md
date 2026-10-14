@@ -224,36 +224,54 @@ Status: SHIPPED except the last item (`comments::list_comments`,
   its neighbours), so a reader can tell what the comment is about. Shipped
   as `anchor_text` with up to 80 characters `before` and `after` it, plus
   the `paragraph` id; neighbouring paragraphs are read by that id
-  (`jubarte text`), not returned with the comment.
+  (`jubarte read`), not returned with the comment.
 - [x] **Resolve** comments and sub-comments (`w15:done="1"`), and reopen them.
 - [ ] **Remember which party cares a lot** — keep a per-party (author) record
   of which points that party presses hard on, so later edits and replies can
   take it into account.
 
-## 7. Changed pages only (NEXT VERSION — not 0.10.x)
+## 7. Changed pages only
 
-Status: OPEN. Requested 2026-09-29. A long redline is mostly unchanged
-pages. Add an option to `jubarte convert` and to the redline PDF from
-`jubarte edit` (`--pdf`), with the same flag in the Rust, Python and WASM
-APIs, that renders the redline PDF as usual and then keeps only the pages
-that carry a change:
+Status: SHIPPED (0.12 as `--changed-only`, renamed `--changed-pages` in
+0.13; `--changed-only` stays a hidden alias until 0.14). `convert` and
+every task whose `-o` renders (`compare`, `accept`, `reject`, `append`,
+`scrub`) take it, and so do Python's `changed_only=True` and WASM's
+`docxToPdf(..., changed_only)`.
+The whole document is laid out first, so the kept pages carry the numbers
+the full document prints. A page is kept when a body or note revision or a
+comment anchor paints on it, and so is the first page on which a revised
+header or footer paints. Where it differs from the request above:
 
-- [ ] Render the whole document first, so pagination is exactly the full
-  PDF's; never re-lay out a subset (the page numbers would move).
-- [ ] A page counts as changed when it draws any revision mark: an insertion,
-  deletion, move, formatting change, table-row or cell change, or a change in
-  that page's header, footer, footnote or text box. Record this in the layout
-  pass, not by scanning the PDF for red ink.
-- [ ] Keep the page numbers the full document prints, and label each kept
-  page with its original number in the PDF page labels.
-- [ ] Optionally keep N pages of context on either side of a changed page.
-- [ ] Report the kept pages in the JSON page report (`--report`).
-- [ ] A document with no changes writes no pages and says so; it is not an
-  error.
+- [x] Render the whole document first; never re-lay out a subset.
+- [x] Revision marks recorded in the layout pass, not by scanning the PDF.
+  A header or footer change keeps only the first page it paints on, not
+  every page that repeats it.
+- [ ] Page labels: the kept pages carry no PDF `/PageLabels`; the PNGs are
+  named by the document's page number (`STEM-page-07.png`) and the
+  `--report` lists each kept page's `number`.
+- [ ] N pages of context on either side of a changed page.
+- [ ] `edit --pdf/--png` take neither `--changed-pages` nor `--pages`;
+  render the bundle's `redline.docx` with `convert` meanwhile.
+- [x] The `--report` lists the kept pages (`pages[].number`, with
+  `document_pages` for the whole document).
+- [ ] A document with no changes keeps its first page (an empty PDF is not
+  a valid PDF), rather than writing no pages.
 
-Builds on `RenderRequest.pages` (`convert --pages`, added with
-`diff-render`): the layout's revision marks pick the pages instead of a user
-list.
+## 7b. Retired spellings go in 0.14
+
+Status: OPEN. 0.13 keeps 0.12's names as hidden aliases that print `note:
+X is now Y; X is removed in 0.14` once: the tasks `text`, `inspect`
+(→ `read`), `audit` (→ `validate --rules a11y,style,structure`) and
+`diff-render` (→ `visual-diff`); the flags `--changed-only`
+(→ `--changed-pages`) and `convert --pdf`/`--png` (→ `-o FILE.pdf|.png` or
+`-t`); the cell id `t0.r1.c2` (→ `t0.row1.cell2`). 0.12's `#12`, `#1+2` and
+`#c27` ids stay accepted as input and are never printed.
+
+- [ ] Remove the aliases, their notes and their tests in 0.14, and say so in
+  the CHANGELOG's Removed section.
+- [ ] Remove the `sha1_fingerprint*` aliases (`src/util/sha1.rs`),
+  deprecated since 0.10.2 and still present: the last promise of this kind
+  was not kept.
 
 ## 8. `existing_revisions: "keep"` follow-ups (S19)
 
@@ -269,7 +287,7 @@ important first:
   balloons (screenshot through `scripts/word_pdf.py`), `jubarte changes
   --json` listing both authors, and the two invariant commands (`jubarte
   accept --author Me` equals clean, `jubarte reject --author Me` equals the
-  source) with their `jubarte text` outputs.
+  source) with their `jubarte read` outputs.
 - [ ] **OOXML validator on keep redlines**: run `tools/validate-docx` on the
   redlines `tests/edit_keep_revisions.rs` writes (text, marks, tables, lists,
   threads). Only the Ring-1 checks have run so far; the session that built

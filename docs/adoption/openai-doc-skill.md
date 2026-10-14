@@ -41,17 +41,17 @@ included), `3` edit plan refused (nothing written).
 
 | Today | jubarte | Status |
 |---|---|---|
-| `soffice` + `pdftoppm` / `render_docx.py` | `jubarte convert file.docx --png --dpi 100` writes `file-page-NN.png` from jubarte's own layout engine: one binary or one wheel, no system packages. `--report pages.json` gives `page_count`, each page's text and how each requested font resolved. | released |
-| Page ranges and a timeout (#38313) | `jubarte convert file.docx --png --pages 1-3,7` rasterizes only those pages (layout still runs over the whole document); a page past the end exits 1 where `pdftoppm -l` clamps. `--timeout 60` exits 124 once 60 seconds pass. | released |
-| "Did my edit change the layout?" | `jubarte diff-render before.docx after.docx --out-dir d` lays out and rasterizes both at one DPI, writes the changed pages with overlays and `diff.json`, and exits `5` when any page differs (`0` when none does). | released |
+| `soffice` + `pdftoppm` / `render_docx.py` | `jubarte convert file.docx -o file.png --dpi 100` writes `file-page-NN.png` from jubarte's own layout engine: one binary or one wheel, no system packages. `--report pages.json` gives `page_count`, each page's text and how each requested font resolved. | released |
+| Page ranges and a timeout (#38313) | `jubarte convert file.docx -o file.png --pages 1-3,7` rasterizes only those pages, named by their page numbers (layout still runs over the whole document; `-o file.pdf --pages 1-3,7` makes a four-page PDF); a page past the end exits 1 where `pdftoppm -l` clamps. `--timeout 60` exits 124 once 60 seconds pass. | released |
+| "Did my edit change the layout?" | `jubarte visual-diff before.docx after.docx --out-dir d` lays out and rasterizes both at one DPI, writes the changed pages with overlays and `diff.json`, and exits `5` when any page differs (`0` when none does). | released |
 | "Did a font fall back?" | the font report lists `requested`, `step`, `physical` and `substituted` per face; `--fail-on-substitution` exits 4 with every output still written. | released |
-| python-docx text extraction | `jubarte text file.docx` (Markdown with `[body:p:N]` ids, headers, footers and notes as their own stories), `jubarte inspect file.docx --json`, or `jubarte convert file.docx -t md` (plain Markdown with `<!-- page N of M -->` before the first block on each page) | released |
-| python-docx edits | `jubarte edit file.docx --plan plan.json --out-dir review --png`: Word tracked changes and comments, a clean copy, a per-operation report and the rendered pages in one call. | released |
+| python-docx text extraction | `jubarte read file.docx` (Markdown with a `<!-- p12 -->` id line before every paragraph, tracked changes and comments with their ids, headers, footers and notes), `jubarte read file.docx --json`, or `jubarte convert file.docx -t md` (plain Markdown with `<!-- page N of M -->` before the first block on each page) | released |
+| python-docx edits | `jubarte edit file.docx -p p12 --anchor "thirty" --content "sixty"` writes `file_modified.docx` with the edit as a tracked change; `jubarte edit file.docx --plan plan.json --out-dir review --png` gives Word tracked changes and comments, a clean copy, a per-operation report and the rendered pages in one call. | released |
 | Editing a document that already carries the other side's tracked changes | `"existing_revisions": "keep"` in the plan: their changes stay tracked under their name, and yours become new revisions beside them under the plan's `author`. Without the field, such a document is refused with `EXISTING_REVISIONS`; `accept` or `reject` flatten theirs first. | released |
 | python-docx tables and lists | `insert_table` (`rows`, `header_row`, `widths_dxa`, `style`) and `list` (`kind_of_list`: `bullet`, `decimal` or `lower_letter`; `level`, `restart`) plan operations, both tracked in the redline | released |
 | python-docx run formatting, footnotes, images, page setup | structural plan operations | released |
 | Comparing two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` | released |
-| Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id`, `--author`, `--kind`) | released |
+| Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id r12`, `--author`, `--kind`); `jubarte edit FILE -p r12 --accept` for one | released |
 | Legacy `.doc` (LibreOffice in the install section) | `jubarte convert old.doc` writes `old.docx`: text, headings, lists, bold, italic, tables ([plans.md](plans.md) §1 for the rest) | released |
 | Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
 
@@ -77,9 +77,9 @@ included), `3` edit plan refused (nothing written).
 ## 4. Check it without trusting us
 
 ```bash
-uv run --no-project --with jubarte-redlines python -m jubarte_redlines convert your.docx --png --dpi 100
+uv run --no-project --with jubarte-redlines python -m jubarte_redlines convert your.docx -o your.png --dpi 100
 # Compare the pages with your current soffice + pdftoppm output, side by side.
-uv run --no-project --with jubarte-redlines python -m jubarte_redlines text your.docx
+uv run --no-project --with jubarte-redlines python -m jubarte_redlines read your.docx
 ```
 
 Every row above has a side-by-side folder in

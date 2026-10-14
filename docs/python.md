@@ -27,9 +27,9 @@ uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --autho
 
 `redline` is an alias of `compare`; `python -m jubarte_redlines` runs the
 same commands. The wheel speaks the shared command set — `compare`/`redline`,
-`revisions`, `changes`, `accept`, `reject`, `inspect`, `text`, `edit`,
-`convert`, `capabilities` — but not the whole Rust binary surface: it has no
-`diff`, `debug` or `self-update`. Exit codes: 0 success, 1 error, 2 usage,
+`changes`, `accept`, `reject`, `convert`, `diff`, `read`, `edit`, `add`,
+`capabilities`, `visual-diff`, `comments`, `validate` — but not the whole
+Rust binary surface: it has no `append`, `scrub`, `debug` or `self-update`. Exit codes: 0 success, 1 error, 2 usage,
 3 edit plan refused. Inputs are `.docx`; save a Word 97-2003 `.doc` as
 `.docx` first.
 
@@ -841,9 +841,9 @@ Options:
           --plan and no operation flags)
 
   -p, --location <WHERE>
-          Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment) or r12 (a
-          revision, with --accept or --reject). Each -p starts an operation; the flags
-          after it belong to it
+          Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the
+          text c5 covers) or r12 (a revision, with --accept or --reject). Each -p starts
+          an operation; the flags after it belong to it
 
       --anchor <TEXT>
           Text inside WHERE the operation applies to (must occur once)
@@ -958,6 +958,7 @@ Examples:
   jubarte edit a.docx -p p4 --anchor Fees --style bold -p p5 --style Heading2
   jubarte edit a.docx -p c5 --content "Agreed." -p c7 --resolve
   jubarte edit a.docx -p c5 --reply "Agreed, will fix."
+  jubarte edit a.docx -p c5.text --content "net 30"   the text c5 covers
   jubarte edit a.docx -p r3 --accept -p header1.r1 --reject
   jubarte edit a.docx -p p3 --delete -o b.docx --pdf   b.docx and b.pdf
   jubarte edit a.docx --plan plan.json --out-dir review   the bundle in review/
@@ -965,8 +966,8 @@ Examples:
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
 WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
-t0.row1.cell2, c5 (a comment), r12 (a revision), or a long id
-(body:p:12).
+t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12
+(a revision), or a long id (body:p:12).
 ```
 
 #### `jubarte-redlines add`
@@ -1250,7 +1251,7 @@ doc.markdown()    # every story as Markdown with [body:p:N] ids
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations)
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change with its stable id
-doc.accept(ids=["body:rev:12"])              # or doc.reject(...): resolve a
+doc.accept(ids=["r12"])                      # or doc.reject(...): resolve a
                                              # selection, keep the rest tracked
 result = doc.render(pdf=True, png_dpi=144)   # Rendered: pdf, pngs, page report
 ```

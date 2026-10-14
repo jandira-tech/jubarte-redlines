@@ -18,18 +18,18 @@ if command -v soffice >/dev/null; then
   mkdir -p lo && soffice -env:UserInstallation=file:///tmp/lo_adopt_18 --headless \
     --convert-to docx --outdir lo input.doc >/dev/null
   mv lo/input.docx docx_soffice.docx && rmdir lo
-  "$JUBARTE" text docx_soffice.docx > text_soffice.txt
-  "$JUBARTE" convert docx_soffice.docx --png --dpi 72 --pages 1 -o docx_soffice.pdf --force >/dev/null
-  mv docx_soffice-page-01.png docx_page_1_soffice.png && rm -f docx_soffice.pdf
+  "$JUBARTE" read docx_soffice.docx > text_soffice.txt
+  "$JUBARTE" convert docx_soffice.docx --dpi 72 --pages 1 -o docx_soffice.png --force >/dev/null
+  mv docx_soffice-page-01.png docx_page_1_soffice.png
 else
   echo "skip: soffice not installed"
 fi
 
 # --- jubarte: convert reads the .doc itself -----------------------------------
 "$JUBARTE" convert input.doc -o docx_jubarte.docx --force
-"$JUBARTE" text docx_jubarte.docx > text_jubarte.txt
+"$JUBARTE" read docx_jubarte.docx > text_jubarte.txt
 "$JUBARTE" convert input.doc -t md -o read_jubarte.md --force
-"$JUBARTE" convert docx_jubarte.docx --png --dpi 72 --pages 1 -o docx_jubarte.pdf --force >/dev/null
-mv docx_jubarte-page-01.png docx_page_1_jubarte.png && rm -f docx_jubarte.pdf
+"$JUBARTE" convert docx_jubarte.docx --dpi 72 --pages 1 -o docx_jubarte.png --force >/dev/null
+mv docx_jubarte-page-01.png docx_page_1_jubarte.png
 # Every other command still refuses a .doc, and names the convert step.
-"$JUBARTE" text input.doc 2> refusal_text.txt || true
+"$JUBARTE" read input.doc 2> refusal_text.txt || true

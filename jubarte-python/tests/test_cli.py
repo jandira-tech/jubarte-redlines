@@ -7,6 +7,7 @@ exit codes as the ``jubarte`` binary, driven in-process."""
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 import shutil
@@ -110,8 +111,12 @@ def test_the_module_runs_as_a_program(letter: Path) -> None:
 def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
     # `uvx jubarte-redlines redline a.docx b.docx -o redline.docx`: the wheel
     # installs a `jubarte-redlines` script beside the interpreter, and
-    # `redline` is `compare` under the name the task has.
-    script = shutil.which("jubarte-redlines", path=str(Path(sys.executable).parent))
+    # `redline` is `compare` under the name the task has. The wheel's RECORD
+    # names the script: `uv run --with` (uv 0.13) runs an overlay interpreter
+    # whose directory is not the one the script went to.
+    record = importlib.metadata.distribution("jubarte-redlines").files or []
+    found = [f.locate() for f in record if f.name == "jubarte-redlines" and f.parent.name == "bin"]
+    script = shutil.which(str(found[0])) if found else None
     assert script is not None, "the wheel installs no jubarte-redlines script"
     a, b, out = tmp_path / "a.docx", tmp_path / "b.docx", tmp_path / "redline.docx"
     a.write_bytes(docx(para("alpha beta")))

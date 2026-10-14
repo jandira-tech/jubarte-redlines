@@ -16,9 +16,9 @@ else
   echo "skip: pandoc not installed"
 fi
 
-# Side 2: jubarte text (the coordinates edit plans use, then header, footer
-# and notes stories) and jubarte convert -t md (plain Markdown, no ids).
-"$JUBARTE" text input.docx > read_jubarte.md
+# Side 2: jubarte read (the agent view: ids, headers and footers, pages)
+# and jubarte convert -t md (plain Markdown, no ids).
+"$JUBARTE" read input.docx > read_jubarte.md
 "$JUBARTE" convert input.docx -t md > read_jubarte_convert.md
 
 {

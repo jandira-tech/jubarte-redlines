@@ -63,8 +63,8 @@ Every option of every command is listed in [`../help-cli.md`](../help-cli.md).
 
 An agent has three kinds of eyes:
 
-- **Text views** (`text`, `convert -t md`, `diff`, `changes`, `comments`,
-  `inspect`): cheap, exact, greppable, and carry the IDs edit plans need.
+- **Text views** (`read`, `convert -t md`, `diff`, `changes`, `comments`):
+  cheap, exact, greppable, and carry the IDs edits need.
 - **Page views** (`convert -o x.png`/`x.pdf`, `edit --png`, `compare -o x.png`):
   what a person sees in Word, for layout, balloons and revision colours.
 - **Machine views** (`--json` everywhere, `--report`, `visual-diff --json`):
@@ -89,14 +89,14 @@ R=out/received.docx
 # ---------------------------------------------------------------------------
 say '## 1. Visualize a document'
 say '### 1.1 Read it as text'
-show 'The edit view: Markdown with the `[body:p:N]` IDs an edit plan names. Revisions show as their current text.' \
-  text "$R"
-show '`--track-changes all`: the tracked changes and comments as CriticMarkup, with author and date.' \
-  text "$R" --track-changes all
-show '`--track-changes accept`: the text as it reads once every change is accepted.' \
-  text "$R" --track-changes accept
+show 'The agent view: a YAML header (the file'"'"'s `sha256:`, counts, authors and their handles, page setup, styles, headers and footers), then Markdown with the `<!-- pN -->` IDs an edit names, and every tracked change and comment as CriticMarkup with its ID (`r1+2`, `c5`).' \
+  read "$R"
+show '`--track-changes accept`: the text as it reads once every change is accepted; the ID lines list what changed.' \
+  read "$R" --track-changes accept
 show '`--track-changes reject`: the text as it read before the changes.' \
-  text "$R" --track-changes reject
+  read "$R" --track-changes reject
+show '`-p` reads only some blocks (`p3`, `p5-p7`, `t0`); `--comments none` moves the comment IDs onto the ID lines.' \
+  read "$R" -p p5,t0 --comments none
 
 say '### 1.2 Read it as Markdown with pages'
 show '`convert -t md`: CriticMarkup plus `<!-- page N of M -->` lines from the layout, so an agent knows which page text lands on.' \
@@ -105,21 +105,19 @@ show '`--no-page-markers` skips the layout pass; `--track-changes accept|reject`
   convert "$R" -t md --no-page-markers --track-changes accept
 
 say '### 1.3 List what changed and who said what'
-show '`changes`: one line per tracked change, with the `body:rev:N` IDs that `accept`, `reject` and edit plans select.' \
+show '`changes`: one line per tracked change, with the IDs (`r3`) that `accept --id`, `reject --id`, `edit -p r3 --accept` and edit plans select.' \
   changes "$R"
-show '`changes --json`: the same as JSON lines.' \
+show '`changes --json`: the same as JSON lines, with the long `id` and the short `ref`.' \
   changes "$R" --json
 show '`comments`: comments, their anchors, replies and resolved state. `--json`, `--author NAME` and `--latest` (newest per thread) narrow it.' \
   comments "$R"
 show '' comments "$R" --json --author "Ann Counsel"
 
-say '### 1.4 Inspect the structure'
-show '`inspect`: document facts, paragraph styles and tables.' \
-  inspect "$R"
-show '`inspect --tables`: each table as a grid, with cell IDs.' \
-  inspect "$R" --tables
-"$JUBARTE" inspect "$R" --json > out/inspect.json
-say '`inspect --json` writes the full snapshot (`schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`): [`out/inspect.json`](out/inspect.json). Its `source_sha256` is the value an edit plan pins.'
+say '### 1.4 Read the structure as data'
+show '`read --tables`: each table as a grid, with cell IDs.' \
+  read "$R" --tables
+"$JUBARTE" read "$R" -o out/read.json --force 2> /dev/null
+say '`read --json` (or `-o FILE.json`) writes the full snapshot (`schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`): [`out/read.json`](out/read.json). Its `source_sha256` is the value an edit plan pins.'
 show '`debug --check render`: what each story should put on the page (tables, fonts and what replaces them, revisions, sections).' \
   debug "$R" --check render
 
@@ -144,13 +142,13 @@ show '`--move-comments`: comments listed after the last page; the commented text
 image 'received.docx, comments after the text, page 1' out/received-endnotes-page-01.png
 image 'received.docx, the comment listing' out/received-endnotes-page-02.png
 
-show '`-o x.pdf` (the default for Word) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-pages` keeps only pages a tracked change touches.' \
+show '`-o x.pdf` (the default for Word) writes the PDF; `--compress` deflates its streams. `--pages 1` rasterizes only page 1 (layout still covers the whole document); `--changed-pages` keeps only the pages a change or a comment touches.' \
   convert "$R" --compress -o out/received-compressed.pdf --force
 show '' convert "$R" --pages 1 --changed-pages --dpi "$DPI" -o out/received-changed.png --force
 
 say '### 1.6 Check it before trusting it'
 show '`validate`: will Word open it without a repair prompt? (findings: exit 2)' validate "$R"
-show '`audit`: accessibility, style and structure findings (findings: exit 2).' audit "$R"
+show '`validate --rules a11y,style,structure`: accessibility, style and structure findings (an error: exit 2).' validate "$R" --rules a11y,style,structure
 
 # ---------------------------------------------------------------------------
 say '## 2. Edit a document that already has tracked changes and comments'
@@ -183,8 +181,8 @@ show '`comments` on the redline: the reply names its parent and the resolved com
   comments out/edited/redline.docx
 show '`comments --latest`: one comment per thread, the newest.' \
   comments out/edited/redline.docx --latest
-show '`text --track-changes all` on the redline: the whole document with every change and comment.' \
-  text out/edited/redline.docx --track-changes all
+show '`read --changed --by Agent` on the redline: only the blocks carrying the agent'"'"'s changes and comments.' \
+  read out/edited/redline.docx --changed --by Agent
 
 say '### 2.2 What the edit did, as pages'
 show '`visual-diff`: which rendered pages moved, and where (different pages: exit 5). With `--out-dir`, each changed page is written as before, after and a magenta overlay.' \
@@ -255,14 +253,14 @@ cat >> "$GUIDE" <<'EOF'
 
 | View | Command | Options that change what is shown |
 |---|---|---|
-| Edit view with IDs | `text FILE` | `--track-changes all\|accept\|reject` (CriticMarkup, no IDs) |
+| Agent view with IDs | `read FILE` | `--track-changes accept\|reject`, `--comments none`, `-p`, `--head`, `--tail`, `--changed`, `--by`, `-o FILE.md` |
 | Markdown with pages | `convert FILE -t md` | `--no-page-markers`, `--track-changes all\|accept\|reject`, `-o FILE` |
 | Tracked changes | `changes FILE` | `--json` |
 | Comments | `comments FILE` | `--json`, `--author NAME`, `--latest` |
-| Structure | `inspect FILE` | `--json`, `--tables` |
+| Structure | `read FILE --json` / `--tables` | `-o FILE.json` |
 | Render triage | `debug FILE --check render` | `--check text\|runs\|xml\|changes\|…`, two files print only differences |
 | Pages | `convert FILE -o x.png` / `x.pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-pages`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout` |
-| Validity | `validate FILE`, `audit FILE` | `validate --repair`, `--json` (see `--help`) |
+| Validity | `validate FILE` | `--rules word,a11y,style,structure`, `--strict`, `--repair`, `--json` (see `--help`) |
 | Edit result | `edit FILE --plan P --out-dir D` | `--dry-run`, `--pdf`, `--png`, `--dpi`, `--revisions`, `--revision-palette`, `--quiet`; writes `patch.diff`, `report.jsonl`, `clean.*`, `redline.*` |
 | Text diff | `diff OLD NEW` | `--format patch\|critic\|github\|word\|normal\|context\|side-by-side`, `-U N`, `--accept-changes`, `--full-lines`, `--columns N`, `-f md\|docx`, `-o FILE.md\|.txt\|.patch\|.diff` |
 | Word redline | `compare OLD NEW -o x.docx` | `--mode word\|powertools`, `--detail-threshold`, `-a`, `-d`, `--reference-doc` |
@@ -272,7 +270,7 @@ cat >> "$GUIDE" <<'EOF'
 
 Which to reach for:
 
-- To decide what to edit: `text` (IDs) and `changes`/`comments` (revision
+- To decide what to edit: `read` (IDs) and `changes`/`comments` (revision
   and comment IDs).
 - To check an edit: `edit`'s `report.jsonl` (status), `patch.diff` (just the
   touched paragraphs), then `visual-diff` (did the layout move, exit 5).

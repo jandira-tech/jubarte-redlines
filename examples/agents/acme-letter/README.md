@@ -11,8 +11,8 @@ containing those paragraphs works.
 
 ```bash
 python3 make_letter.py                         # writes letter.docx (deterministic)
-jubarte text letter.docx                       # find the anchors and paragraph ids
-sha=$(jubarte inspect letter.docx --json | jq -r .source_sha256)
+jubarte read letter.docx                       # find the anchors and paragraph ids
+sha=$(jubarte read letter.docx --json | jq -r .source_sha256)
 jq --arg sha "$sha" '.source_sha256 = $sha' plan.json > bound.json   # bind the plan
 jubarte edit letter.docx --plan bound.json --out-dir review --pdf --png --dpi 100
 ```

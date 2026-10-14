@@ -1,7 +1,7 @@
-body:rev:1	formatting	properties	Reviewer	""
-body:rev:2	formatting	properties	-	""
-body:rev:3	insertion	text	Reviewer	"fifteen"
-body:rev:4	deletion	text	Reviewer	"thirty"
-body:rev:5	deletion	paragraph_mark	Reviewer	""
-body:rev:6	deletion	text	Reviewer	"This Agreement begins on January 1, 2026 and continues for t"
+r1	formatting	properties	Reviewer	p8	""
+r2	formatting	properties	-	p8	""
+r3	insertion	text	Reviewer	p17	"fifteen"
+r4	deletion	text	Reviewer	p17	"thirty"
+r5	deletion	paragraph_mark	Reviewer	p20	""
+r6	deletion	text	Reviewer	p20	"This Agreement begins on January 1, 2026 and continues for t"
 6 change(s)

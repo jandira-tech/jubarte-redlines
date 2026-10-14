@@ -33,7 +33,7 @@ the changed pages with overlays plus `diff.json`, and exits 5 when any
 page differs (0 when none does):
 
 ```sh
-jubarte diff-render before.docx after.docx --out-dir diff --dpi 72
+jubarte visual-diff before.docx after.docx --out-dir diff --dpi 72
 # -> diff/a-page-NN.png, diff/b-page-NN.png, diff/diff-page-NN.png, diff/diff.json
 ```
 
@@ -73,7 +73,7 @@ differently; what matters — which pages, and where on the page —
 matches.
 
 Exit codes (`exit_codes.txt`): `soffice+pdftoppm+pixel_diff exit=1`,
-`jubarte diff-render exit=5`. Both are nonzero on a difference and 0
+`jubarte visual-diff exit=5`. Both are nonzero on a difference and 0
 when nothing changed, so both are scriptable; the values differ, so a
 caller must not reuse pdftoppm-era exit-code logic unchanged.
 
@@ -86,7 +86,7 @@ comparer you must supply yourself: ImageMagick, or the ~130-line
 per-page JSON report with ratios and bounding boxes, and overlay PNGs
 that show the changed region instead of only counting it. The exit
 code 5-on-difference behaves exactly as documented in `jubarte
-diff-render --help`. What the substitute still does better: nothing
+visual-diff --help` (0.12 called it `diff-render`). What the substitute still does better: nothing
 observed here; note only that jubarte's per-page files are
 zero-padded (`diff-page-01.png`) where pdftoppm's are not, and that a
 pixel-exact diff flags any renderer difference as a change, so this

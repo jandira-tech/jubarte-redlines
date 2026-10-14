@@ -28,7 +28,7 @@ pdftoppm -png -r 72 -singlefile -f 1 -l 1 input.pdf render_page_1_soffice
 ## jubarte
 
 ```sh
-jubarte convert input.docx --png --dpi 72 --report pages.json \
+jubarte convert input.docx -o input.png --dpi 72 --report pages.json \
     --font-report fonts_jubarte.json --fail-on-substitution
 # exits 4 when a requested font was substituted; outputs still written
 ```

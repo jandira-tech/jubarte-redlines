@@ -22,12 +22,12 @@ pip install 'jubarte-redlines[mcp]' && jubarte-mcp --root .
 | --- | --- | --- |
 | `docx_capabilities` | | the engine's capability manifest |
 | `docx_text` | `path` | Markdown with a `[body:p:N]` id before each paragraph |
-| `docx_inspect` | `path` | the engine snapshot (`summary`, `paragraphs`, `stories`) |
+| `docx_inspect` | `path` | the engine snapshot, as `jubarte read --json` prints it (`summary`, `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`) |
 | `docx_edit` | `path`, `plan`, `out_dir`, `pdf=false`, `png_dpi=null`, `overwrite=false` | paths of `clean.docx`, `redline.docx`, `patch.diff`, `report.json` (and `redline.pdf`, `redline-page-NN.png`), plus the report (the CLI writes the same report as `report.jsonl`) |
 | `docx_render` | `path`, `out_dir`, `dpi=96`, `pages=null`, `pdf=false`, `overwrite=false` | paths of `page-NN.png` (and `render.pdf`), page count, page text, fonts |
 | `docx_compare` | `original`, `modified`, `out`, `author`, `date=null`, `overwrite=false` | `out` and the change list |
-| `docx_changes` | `path` | every tracked change, with the id accept and reject select by |
-| `docx_accept`, `docx_reject` | `path`, `out`, `ids=null`, `authors=null`, `kinds=null`, `overwrite=false` | `out` and the number of changes left |
+| `docx_changes` | `path` | every tracked change, with the long id (`body:rev:12`) accept and reject select by |
+| `docx_accept`, `docx_reject` | `path`, `out`, `ids=null` (`body:rev:12`, or the short `r12` the CLI prints), `authors=null`, `kinds=null`, `overwrite=false` | `out` and the number of changes left |
 | `docx_validate` | `path`, `original=null`, `author=null` | findings |
 | `docx_comments` | `path` | comment records |
 | `docx_audit` | `path`, `rules=null` (rule sets `a11y`, `style`, `structure` or codes) | accessibility, style and structure findings, each with its paragraph id |

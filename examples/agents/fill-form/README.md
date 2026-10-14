@@ -11,8 +11,8 @@ tag, alias or id.
 
 ```bash
 python3 make_form.py                           # writes form.docx (deterministic)
-jubarte inspect form.docx --json | jq .controls     # what controls.json holds
-sha=$(jubarte inspect form.docx --json | jq -r .source_sha256)
+jubarte read form.docx --json | jq .controls        # what controls.json holds
+sha=$(jubarte read form.docx --json | jq -r .source_sha256)
 jq --arg sha "$sha" '.source_sha256 = $sha' plan.json > bound.json   # bind the plan
 jubarte edit form.docx --plan bound.json --out-dir review --png --dpi 100
 ```
@@ -22,7 +22,7 @@ to the exact bytes of your `form.docx`.
 
 Files:
 
-- `controls.json`: the `controls` list `inspect` reports for `form.docx`.
+- `controls.json`: the `controls` list `read --json` reports for `form.docx`.
   The drop-down's first choice is `""`: Word writes its "Choose an item."
   entry with an empty `w:value`.
 - `plan.json`: five `fill_control` operations, one per value form (`text`,

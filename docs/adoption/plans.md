@@ -146,7 +146,7 @@ A skill that needs LibreOffice's pixels keeps LibreOffice.
 | The pages named MCP tools `text`, `edit`, ...; the server's tools are `docx_text`, `docx_edit`, ... | 17 | **done**: pages corrected. |
 | `jubarte-mcp` answered `initialize` with an empty `serverInfo.version`. | 17 | **done**: the package version; asserted in `jubarte-python/tests/test_mcp_server.py`. |
 | The font report called a missing family placed by its name's class (`Fake Serif Pro` on Times, `Georgia Pro` on Georgia, `Helvetica` on Arial) an explicit match, so `--fail-on-substitution` passed. | 04 | **done**: reported `generic`, counted as substituted; layout unchanged. |
-| `convert -t md` drops headers and footers (as pandoc does); `jubarte text` keeps them. | 05 | plan: write each header and footer story after the body under a `<!-- header: default -->` comment, as `jubarte text` orders them. |
+| `convert -t md` drops headers and footers (as pandoc does); `jubarte read` keeps them. | 05 | plan: write each header and footer story after the body under a `<!-- header: default -->` comment, as `jubarte read` orders them. |
 | `validate --json` on a refused package prints a plain `error:` line. | 07 | plan: print `{"refused": {"code": ..., "message": ...}}` and keep exit 1. |
 | `jubarte changes` gives a revision without `w:id` the id `body:rev:`; id-less revisions share it, so `--id` cannot select one of them alone. | 07 | plan: a stable synthetic id (`body:rev:n3`, by document order) when `w:id` is missing. |
 | An edit with one replace and one paragraph delete lists six revisions, two of them run-property changes on empty runs. | 09 | plan: compare with Word's own revisions for the same edit (bench `word_redline.py` on before/after) before changing anything. |

@@ -45,7 +45,7 @@ jubarte validate broken_b_dangling_rid.docx --repair repaired_broken_b_dangling_
 |---|---|---|---|
 | python-docx `Document()` | opens, exit 0; the inserted run is invisible in `p.text` (third paragraph reads empty) | opens, exit 0 (the image is never resolved) | `ValueError: ... content type is 'application/xml'`, exit 1 |
 | soffice convert-to pdf | converts, exit 0; the inserted text **appears in the PDF as plain text** — silently repaired/accepted | converts, exit 0; the image silently disappears from the PDF | prints `Error: source file could not be loaded`, **exits 0 anyway**, writes no PDF |
-| `jubarte validate` | exit 0, no finding: Word opens it without a repair prompt (see verdict) | finding `DANGLING_RELATIONSHIP`, `word_fatal:true`, `repairable:true`, exit 2 | refuses: `UNSUPPORTED_PACKAGE: word/document.xml is application/xml`, exit 1 (unreadable) |
+| `jubarte validate` | exit 0, no finding: Word opens it without a repair prompt (see verdict) | finding `DANGLING_RELATIONSHIP` (`set:word`, `severity:error`, `word_fatal:true`, `repairable:true`), exit 2 | refuses: `UNSUPPORTED_PACKAGE: word/document.xml is application/xml`, exit 1 (unreadable) |
 | `jubarte validate --repair` | writes a copy, 0 findings repaired | repairs the dangling reference; re-validation: no findings | refuses, writes nothing, exit 1 |
 
 Full evidence: `open_python_docx_*.log`, `convert_soffice_*.log` (with the

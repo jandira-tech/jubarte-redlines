@@ -30,7 +30,7 @@ negative control: one silent, untracked edit.
 # The replacement:
 jubarte edit input.docx --plan plan.json --out-dir review
 jubarte accept review/redline.docx -o check.docx --force
-diff <(jubarte text check.docx) <(jubarte text review/clean.docx)   # must be empty
+jubarte diff check.docx review/clean.docx                           # must print nothing
 jubarte validate review/redline.docx --original input.docx --author "Dana Reyes"
 
 # The substitute (pandoc has no structural check; apply and compare):
@@ -51,12 +51,13 @@ diff pandoc_redline_accept.md pandoc_clean.md                       # also empty
 |---|---|
 | `input.md` / `input.docx`, `plan.json`, `review/` | the source, the bound plan, and clean.docx / redline.docx / report.jsonl / patch.diff |
 | `check.docx` | `jubarte accept` of the redline |
-| `tracked_check_jubarte.diff` | `jubarte text check.docx` vs `jubarte text review/clean.docx` - **empty** |
+| `text_check_jubarte.txt`, `text_clean_jubarte.txt` | `jubarte read` of `check.docx` and of `review/clean.docx` |
+| `tracked_check_jubarte.diff` | `jubarte diff check.docx review/clean.docx` - **empty** |
 | `tracked_validate_jubarte.log` / `.json` | `jubarte validate review/redline.docx --original input.docx --author "Dana Reyes"` - **no findings, exit 0** |
 | `pandoc_redline_accept.md`, `pandoc_clean.md`, `tracked_check_pandoc.diff` | the pandoc route - **also empty** on this input |
 | `hand_edited.docx`, `untracked_jubarte.log` / `.json` | the negative control - **UNTRACKED_EDIT at body:p:5, exit 2** |
 | `pandoc_hand_edited.diff` | the same silent edit seen by pandoc: a plain content difference, no tracking verdict |
-| `render_page_1_redline_jubarte.png`, `render_page_1_clean_jubarte.png` | page 1 of the redline (marks visible) and of the clean copy, `jubarte convert --png --dpi 72` |
+| `render_page_1_redline_jubarte.png`, `render_page_1_clean_jubarte.png` | page 1 of the redline (marks visible) and of the clean copy, `jubarte convert -o x.png --dpi 72` |
 
 ## Result
 
@@ -80,9 +81,9 @@ body text of this document (empty diff after accept), which is more than
 its --track-changes flag was designed to promise; it just gives a weaker
 answer: no location, no structured finding, no distinct exit code, and it
 only sees what pandoc reads - folder 05 shows pandoc silently drops
-headers, footers and, in `jubarte text`, table structure, so edits outside
-the body text would not appear in its diff at all. `jubarte accept` +
-`text` equality is the check the adoption page names, and it holds here;
+headers and footers, so edits outside the body text would not appear in
+its diff at all. `jubarte accept` + an empty `jubarte diff` is the check
+the adoption page names, and it holds here;
 `jubarte validate --original --author` is the sharper tool: same verdict,
 plus a located finding and an exit code (0 tracked / 2 untracked) a script
 can gate on, and the negative control shows it fires correctly.

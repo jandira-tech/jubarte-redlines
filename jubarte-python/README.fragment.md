@@ -34,23 +34,26 @@ installing anything:
 uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
 uvx jubarte-redlines changes redline.docx
 uvx jubarte-redlines accept redline.docx -o clean.docx --kind formatting
-uvx jubarte-redlines reject redline.docx -o original-again.docx --id body:rev:12
+uvx jubarte-redlines reject redline.docx -o original-again.docx --id r12
 uvx jubarte-redlines convert redline.docx --revisions word
-uvx jubarte-redlines inspect contract.docx --json
-uvx jubarte-redlines text contract.docx
+uvx jubarte-redlines read contract.docx
+uvx jubarte-redlines read contract.docx --json
+uvx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty"
 uvx jubarte-redlines edit contract.docx --plan plan.json --out-dir review --pdf
-uvx jubarte-redlines capabilities --json
+uvx jubarte-redlines capabilities
 uvx jubarte-redlines --help
 ```
 
 `redline` is an alias of `compare`; `python -m jubarte_redlines` runs the same
-commands. `revisions` and `changes` list what a document tracks (`--json` for
-one object per line); `accept` and `reject` take repeatable `--id`, `--author`
-and `--kind` to resolve a selection and keep the rest tracked, or everything
-when none is given; `text` prints the Markdown with the `[body:p:N]` ids edit
-plans use, `inspect` the paragraph/package snapshot; `edit` applies an edit plan
-to `--out-dir` (clean copy, redline, `patch.diff`, `report.jsonl`, optional
-PDF/PNG pages); `capabilities` reports what the build can do. Exit codes: 0
+commands. `changes` lists what a document tracks, one change per line with
+its short id (`r12`; `--json` for one object per line); `accept` and `reject`
+take repeatable `--id` (`r12`, `12`, `r1+2`, `header1.r1` or `body:rev:12`),
+`--author` and `--kind` to resolve a selection and keep the rest tracked, or
+everything when none is given; `read` prints the agent view with the
+`<!-- p12 -->` ids edits use (`--json` the snapshot); `edit` and `add` write
+`FILE_modified.docx`, or with `--out-dir` the bundle (clean copy, redline,
+`patch.diff`, `report.jsonl`, optional PDF/PNG pages); `capabilities`
+reports what the build can do (`--json` the manifest). Exit codes: 0
 success, 1 error, 2 usage, 3 edit plan refused. Inputs are `.docx`: save a Word
 97-2003 `.doc` as `.docx` first.
 
@@ -73,7 +76,7 @@ modified = Path("modified.docx").read_bytes()
 redline = compare_documents(original, modified, author="Reviewer")
 Path("redline.docx").write_bytes(redline)
 
-# List revisions (same shape as the CLI `jubarte revisions --json`)
+# List revisions (the library's own records; `jubarte changes --json` is the CLI's listing)
 for rev in get_revisions(redline):
     print(rev["type"], rev["author"], repr(rev.get("text")))
 
@@ -111,7 +114,7 @@ doc.markdown()    # body and every header/footer/notes story, [body:p:N] ids
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations) + tables
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change, with the id accept/reject and plans take
-doc.accept(ids=["body:rev:12"])   # or reject(...): resolve a selection,
+doc.accept(ids=["r12"])           # or reject(...): resolve a selection,
                                   # keep the rest tracked (no selection = all)
 result = doc.render(pdf=True, png_dpi=144)  # Rendered: pdf, pngs, page report
 ```

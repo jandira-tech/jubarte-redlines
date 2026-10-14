@@ -60,20 +60,22 @@ jubarte reject redline.docx -o rejected_jubarte.docx --force
 | `accepted_libreoffice.docx`, `basic_macro.log` | LibreOffice accept-all |
 | `accepted_jubarte.docx` | `jubarte accept` |
 | `rejected_jubarte.docx` | `jubarte reject` |
-| `accept_text_jubarte.txt`, `accept_text_libreoffice.txt`, `accept_text.diff` | `jubarte text` of both accepted files and their diff |
-| `reject_text_jubarte.txt`, `text_original.txt`, `reject_text.diff` | reject vs original |
+| `accept_text_jubarte.txt`, `accept_text_libreoffice.txt`, `accept_text.diff` | `jubarte read` of both accepted files, and `jubarte diff` between them |
+| `reject_text_jubarte.txt`, `text_original.txt`, `reject_text.diff` | the same for reject vs original |
 | `changes_accepted_*.log` | tracked changes left in each accepted file (0 and 0) |
-| `accept_page_1_jubarte.png`, `accept_page_1_libreoffice.png` | page 1 of each accepted file, rendered by `jubarte convert --png --dpi 72` |
+| `accept_page_1_jubarte.png`, `accept_page_1_libreoffice.png` | page 1 of each accepted file, rendered by `jubarte convert -o x.png --dpi 72` |
 | `uno_probe.log` | the interpreter probe quoted above |
 
 ## Result
 
 - `jubarte changes` lists **0 changes** in both accepted files.
-- `accept_text.diff` shows exactly four lines of difference, all the same
-  kind: LibreOffice writes an explicit `Normal` paragraph style on the body
-  paragraphs, so `jubarte text` tags them `[body:p:1 Normal]` where
-  jubarte's own output has no style tag. The text itself is identical, word
-  for word, in all four paragraphs.
+- `accept_text.diff` is empty: `jubarte diff` finds the two accepted
+  files' text identical, word for word. Reading both with `jubarte read`
+  shows where LibreOffice's serialization differs: its header and footer
+  distance is `0in` (jubarte keeps the source's `0.5in`) and it writes an
+  explicit `left` alignment on `p7`. Until 0.12, `jubarte text` also showed
+  the explicit `Normal` style LibreOffice writes on the body paragraphs;
+  `read` does not name the default style.
 - `reject_text.diff` is empty: `jubarte reject` returns the original text
   exactly.
 
@@ -83,7 +85,8 @@ On this redline, jubarte's accept matches LibreOffice's accept-all: same
 accepted text, no surviving revisions, and page 1 renders of the two
 outputs are visually the same. The one measurable difference is in
 serialization, not acceptance: LibreOffice rewrites the whole package in its
-own dialect (explicit `Normal` styles; a 6.5 kB file for a 4 kB source)
+own dialect (explicit `Normal` styles and alignment, header and footer
+distances reset to 0; a 6.5 kB file for a 4 kB source)
 while jubarte's output stays closer to the source package. jubarte's
 `reject` has no LibreOffice counterpart in this folder (the skill's macro
 only accepts); the checked expectation - reject == original, diff empty -

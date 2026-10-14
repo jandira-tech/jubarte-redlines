@@ -8,7 +8,7 @@ JUBARTE="${JUBARTE:-jubarte}"
 # Input and bound edit plan (Dana Reyes makes three edits: a fee change, an
 # inserted interest sentence, a deleted pilot-rate sentence).
 "$JUBARTE" convert input.md -o input.docx --force
-SHA="$("$JUBARTE" inspect input.docx --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_sha256"])')"
+SHA="$("$JUBARTE" read input.docx --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_sha256"])')"
 PLAN_SOURCE="${PLAN_SOURCE:-$SHA}" python3 - <<'EOF'
 import json, os
 plan = {
@@ -37,9 +37,9 @@ EOF
 
 # The replacement check: accept the redline, the text must equal clean.docx.
 "$JUBARTE" accept review/redline.docx -o check.docx --force
-"$JUBARTE" text check.docx > text_check_jubarte.txt
-"$JUBARTE" text review/clean.docx > text_clean_jubarte.txt
-diff text_check_jubarte.txt text_clean_jubarte.txt > tracked_check_jubarte.diff || true
+"$JUBARTE" read check.docx > text_check_jubarte.txt
+"$JUBARTE" read review/clean.docx > text_clean_jubarte.txt
+"$JUBARTE" diff check.docx review/clean.docx > tracked_check_jubarte.diff || true
 if [ -s tracked_check_jubarte.diff ]; then
   echo "FAIL: accepted redline differs from clean copy" >&2
   exit 1
@@ -83,8 +83,8 @@ if command -v pandoc >/dev/null; then
 fi
 
 # Page 1 of the redline and of the clean copy, rendered by jubarte (72 dpi).
-"$JUBARTE" convert review/redline.docx --png --dpi 72 --force >/dev/null
-"$JUBARTE" convert review/clean.docx --png --dpi 72 --force >/dev/null
+"$JUBARTE" convert review/redline.docx -o review/redline.png --dpi 72 --force >/dev/null
+"$JUBARTE" convert review/clean.docx -o review/clean.png --dpi 72 --force >/dev/null
 mv review/redline-page-01.png render_page_1_redline_jubarte.png 2>/dev/null \
   || mv review/redline-page-1.png render_page_1_redline_jubarte.png
 mv review/clean-page-01.png render_page_1_clean_jubarte.png 2>/dev/null \

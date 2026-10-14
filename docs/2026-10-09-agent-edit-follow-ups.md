@@ -120,7 +120,7 @@ fn nth_picks_one_occurrence_of_a_repeated_anchor() {
     let out = ok(&["edit", "fees.docx", "-p", "p0", "--anchor", "the fee", "--nth", "2", "--content", "the charge", "--out-dir", "b", "--existing-revisions", "keep"], dir.path());
     assert!(out.contains("Pay the fee; {~~the fee~>the charge~~}"), "{out}");
     let out = ok(&["add", "fees.docx", "-p", "p0", "--anchor", "the fee", "--nth", "1", "--content", "Which fee?", "--out-dir", "c"], dir.path());
-    assert!(out.contains("Pay {==the fee==}{>>#c0 @MU: Which fee?<<}; the fee is due."), "{out}");
+    assert!(out.contains("Pay {==the fee==}{>>c0 @R: Which fee?<<}; the fee is due."), "{out}");
     let bad = jubarte(&["edit", "fees.docx", "-p", "p0", "--nth", "2", "--content", "x"], dir.path());
     assert!(!bad.status.success(), "--nth needs --anchor");
 }
@@ -193,18 +193,18 @@ fn pids_print_on_request_and_locate_paragraphs_across_inserts() {
     let plain = ok(&["read", "received.docx", "-p", "p0,p5", "--no-page-markers"], dir.path());
     assert!(plain.contains("<!-- p0 center -->\n") && !plain.contains("pid "), "{plain}");
     let with = ok(&["read", "received.docx", "-p", "p0,p5", "--pids", "--no-page-markers"], dir.path());
-    assert!(with.contains("<!-- p0 center, pid 0DCBD3F9 -->\n") && with.contains("<!-- p5 pid 7C10AC12 -->\n"), "{with}");
+    assert!(with.contains("<!-- p0 center, pid:0DCBD3F9 -->\n") && with.contains("<!-- p5 pid:7C10AC12 -->\n"), "{with}");
 
-    let out = ok(&["add", "received.docx", "-p", "0DCBD3F9", "--content", "Recitals", "--existing-revisions", "keep", "--out-dir", "a"], dir.path());
+    let out = ok(&["add", "received.docx", "-p", "pid:0DCBD3F9", "--content", "Recitals", "--existing-revisions", "keep", "--out-dir", "a"], dir.path());
     captures(&out, r"<!-- p1[^>]*pid [0-9A-F]{8}[^>]*-->\n\{\+\+Recitals\+\+\}");
     let report = std::fs::read_to_string(dir.path().join("a/report.jsonl")).unwrap();
     assert!(report.contains(r#""at":"body:p:0","pid":"0DCBD3F9""#), "{report}");
     // The same pid still names the title after the insert shifted every pN.
-    let out = ok(&["edit", "a/redline.docx", "-p", "7C10AC12", "--anchor", "days of receipt", "--content", "days of the invoice", "--out-dir", "b"], dir.path());
+    let out = ok(&["edit", "a/redline.docx", "-p", "pid:7C10AC12", "--anchor", "days of receipt", "--content", "days of the invoice", "--out-dir", "b"], dir.path());
     assert!(out.contains("<!-- p6 ") && out.contains("{~~receipt~>the invoice~~}"), "{out}");
-    let bad = jubarte(&["edit", "received.docx", "-p", "DEADBEEF", "--delete"], dir.path());
+    let bad = jubarte(&["edit", "received.docx", "-p", "pid:DEADBEEF", "--delete"], dir.path());
     assert_eq!(bad.status.code(), Some(3));
-    assert!(String::from_utf8_lossy(&bad.stderr).contains("no paragraph has pid DEADBEEF"));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("no paragraph has pid:DEADBEEF"));
 }
 ```
 
@@ -233,8 +233,8 @@ Expected: FAIL.
 - [ ] **Step 3: Implement**
 
 - `src/inspect.rs`: `Paragraph` gains `pub pid: Option<String>` (the `w14:paraId` attribute, upper-cased; `W14::name("paraId")` from `src/namespaces.rs`), filled where `index`, `id` and `text` are.
-- `src/markdown/mod.rs`: `MarkdownOptions.pids: bool` (default false). `agent.rs`: `LineFacts.pid: Option<String>`; `id_line` appends the clause `pid {HEX}` last when `pids` is on and the paragraph has one. `ReadArgs`: `/// Print each paragraph's w14:paraId on its id line (a location that survives inserts). #[arg(long, help_heading = "Read options")] pub pids: bool`.
-- `src/edit.rs`: `long_id` recognises eight hex digits (case-insensitive) and returns the long id of the paragraph with that `w14:paraId` in any story (build a map once per transaction, lazily), or `Err("no paragraph has pid DEADBEEF")`. `EditOutcome.pid: Option<String>` (serialized as `"pid"` in the `op` event after `"at"`), filled from the resolved paragraph. Paragraph insertion (`insert_paragraph`, `insert_table` cells, `insert_footnote` body paragraphs, split paragraphs if any op splits) stamps a fresh id with `comments::allocate_hex8(&mut used, seed)` where `used` comes from `comments::package_para_ids` plus the body's own; both helpers become `pub(crate)`. Declare `w14` on the document root when missing (`declare_ignorable`, also in `comments.rs`).
+- `src/markdown/mod.rs`: `MarkdownOptions.pids: bool` (default false). `agent.rs`: `LineFacts.pid: Option<String>`; `id_line` appends the clause `pid:{HEX}` last when `pids` is on and the paragraph has one. `ReadArgs`: `/// Print each paragraph's w14:paraId on its id line (a location that survives inserts). #[arg(long, help_heading = "Read options")] pub pids: bool`.
+- `src/edit.rs`: `long_id` recognises `pid:` and eight hex digits (case-insensitive; a bare `-p 0DCBD3F9` would collide with the bare paragraph number whenever the hex is all digits) and returns the long id of the paragraph with that `w14:paraId` in any story (build a map once per transaction, lazily), or `Err("no paragraph has pid:DEADBEEF")`. `EditOutcome.pid: Option<String>` (serialized as `"pid"` in the `op` event after `"at"`), filled from the resolved paragraph. Paragraph insertion (`insert_paragraph`, `insert_table` cells, `insert_footnote` body paragraphs, split paragraphs if any op splits) stamps a fresh id with `comments::allocate_hex8(&mut used, seed)` where `used` comes from `comments::package_para_ids` plus the body's own; both helpers become `pub(crate)`. Declare `w14` on the document root when missing (`declare_ignorable`, also in `comments.rs`).
 - `src/bin/jubarte.rs`: when any `-p` of the invocation was a pid, the printed view sets `pids: true`.
 
 - [ ] **Step 4: Run and commit**
@@ -244,7 +244,7 @@ Expected: PASS.
 
 ```bash
 git add src/inspect.rs src/markdown src/cli.rs src/edit.rs src/comments.rs src/bin/jubarte.rs tests/agent_text_view.rs tests/edit_short_ids.rs
-git commit -m "feat: w14:paraId as a stable location (read --pids, -p HEX); new paragraphs are stamped"
+git commit -m "feat: w14:paraId as a stable location (read --pids, -p pid:HEX); new paragraphs are stamped"
 ```
 
 ---
@@ -282,10 +282,10 @@ fn removing_a_whole_comment_anchor_is_refused_unless_allowed() {
     let allowed = EditPlan { allow_detach: true, ..plan(r#"[{"kind":"delete","paragraph":"p0","find":"one percent"}]"#) };
     let out = apply_plan(&bytes, &allowed).unwrap();
     let view = docx_to_markdown(&out.redline, &MarkdownOptions { ids: true, comments: true, ..Default::default() }).unwrap().markdown;
-    assert!(view.contains("{--one percent--}{>>#"), "{view}");
-    assert!(view.contains("{>>#c5 @"), "the comment survives: {view}");
+    assert!(view.contains("{--one percent--}{>>r"), "{view}");
+    assert!(view.contains("{>>c5 @"), "the comment survives: {view}");
     let clean = docx_to_markdown(&out.clean, &MarkdownOptions { ids: true, comments: true, ..Default::default() }).unwrap().markdown;
-    assert!(clean.contains("{>>#c5 @") && !clean.contains("{=="), "a point comment in the clean copy: {clean}");
+    assert!(clean.contains("{>>c5 @") && !clean.contains("{=="), "a point comment in the clean copy: {clean}");
 }
 ```
 

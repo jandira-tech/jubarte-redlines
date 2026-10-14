@@ -68,6 +68,6 @@ for pair in "tables_pydocx.docx pydocx" "review/redline.docx jubarte"; do
   set -- $pair
   src="$1"; tag="$2"
   rm -f "${src%.docx}-page-01.png"
-  "$JUBARTE" convert "$src" --png --dpi 72 --pages 1 --force >/dev/null
+  "$JUBARTE" convert "$src" -o "${src%.docx}.png" --dpi 72 --pages 1 --force >/dev/null
   mv "${src%.docx}-page-01.png" "edit_page_1_${tag}_jubarte.png"
 done

@@ -22,7 +22,7 @@ pdftoppm -png -r 72 -singlefile -f 1 -l 1 input.pdf render_page_1_soffice
 One command; the page report carries the page count and each page's text:
 
 ```sh
-jubarte convert input.docx --png --dpi 72 --report pages.json
+jubarte convert input.docx -o input.png --dpi 72 --report pages.json
 # writes input-page-01.png, input-page-02.png and pages.json
 ```
 

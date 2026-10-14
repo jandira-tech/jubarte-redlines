@@ -79,6 +79,6 @@ fi
 for producer in pandoc docxjs jubarte; do
   [ -f "create_${producer}.docx" ] || continue
   rm -f "create_${producer}-page-01.png"
-  "$JUBARTE" convert "create_${producer}.docx" --png --dpi 72 --pages 1 --force
+  "$JUBARTE" convert "create_${producer}.docx" -o "create_${producer}.png" --dpi 72 --pages 1 --force
   mv "create_${producer}-page-01.png" "render_page_1_${producer}_jubarte.png"
 done

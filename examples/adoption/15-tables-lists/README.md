@@ -64,9 +64,8 @@ calls die (see "The style-name trap" below). jubarte edits either kind.
 | `edit_page_1_jubarte_soffice.png` | page 1 of `review/redline.docx` (tracked changes painted by LibreOffice) |
 | `edit_page_1_jubarte_jubarte.png` | the same redline, jubarte 72 dpi |
 
-Both results carry identical text — `jubarte text` shows the same 20
-body paragraphs in `tables_pydocx.docx` and `review/clean.docx`, table
-cells included. The renders differ in marks, not content: the python-docx
+Both results carry identical text — `jubarte diff tables_pydocx.docx
+review/clean.docx` prints nothing, table cells included. The renders differ in marks, not content: the python-docx
 pages show a finished letter; the jubarte pages show the same letter as
 a redline (inserted table underlined, list formatting flagged).
 
