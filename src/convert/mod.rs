@@ -33,6 +33,7 @@ mod diff_render;
 mod font;
 mod font_table;
 mod math_font;
+mod math_layout;
 mod metafile;
 mod pdf;
 mod preset_geom;
