@@ -102,3 +102,73 @@ fn a_bulleted_heading_keeps_one_bullet() {
     assert!(!got.contains("## - - "), "{got}");
     assert!(!part(&docx, "word/document.xml").contains(">- <"));
 }
+
+/// The definition of the table style `id` in the styles part.
+fn table_style(docx: &[u8], id: &str) -> String {
+    let styles = part(docx, "word/styles.xml");
+    let open = format!("w:styleId=\"{id}\"");
+    let at = styles
+        .find(&open)
+        .unwrap_or_else(|| panic!("no {id}: {styles}"));
+    styles[at..].split("</w:style>").next().unwrap().to_string()
+}
+
+/// A table under one of Word's built-in table styles (`Grid Table 4 Accent
+/// 1`) keeps its look: the view names it by id, and the writer writes
+/// Word's own definition, its colours from the document's theme (Word's
+/// default theme here), not a bare style with the id for a name.
+#[test]
+fn a_built_in_table_style_keeps_its_definition() {
+    let body = "<!-- t0 2x2, cells p0-p3 by row, style GridTable4-Accent1 -->\n|a|b|\n|-|-|\n|c|d|\n\n\
+                <!-- t1 2x2, cells p4-p7 by row, style GridTable6Colorful -->\n|a|b|\n|-|-|\n|c|d|\n";
+    let (got, docx) = round_trip(body);
+    assert!(got.contains("style GridTable4-Accent1 -->"), "{got}");
+    let style = table_style(&docx, "GridTable4-Accent1");
+    for want in [
+        "<w:name w:val=\"Grid Table 4 Accent 1\"/>",
+        "<w:tblStylePr w:type=\"firstRow\">",
+        // The header row: accent 1 itself; the bands its 20% tint.
+        "w:fill=\"156082\" w:themeFill=\"accent1\"/>",
+        "w:fill=\"C1E4F5\" w:themeFill=\"accent1\" w:themeFillTint=\"33\"/>",
+        "w:color=\"45B0E1\" w:themeColor=\"accent1\" w:themeTint=\"99\"/>",
+    ] {
+        assert!(style.contains(want), "{want}: {style}");
+    }
+    assert!(
+        !style.contains("\"@\"") && !style.contains("{C}"),
+        "{style}"
+    );
+    let plain = table_style(&docx, "GridTable6Colorful");
+    assert!(
+        plain.contains("<w:name w:val=\"Grid Table 6 Colorful\"/>"),
+        "{plain}"
+    );
+    assert!(
+        plain.contains("w:color=\"666666\" w:themeColor=\"text1\" w:themeTint=\"99\"/>"),
+        "{plain}"
+    );
+    // A name Word has no definition for stays the bare style it was.
+    let (_, docx) = round_trip("<!-- t0 1x1, cells p0-p0 by row, style Ledger -->\n|a|\n|-|\n");
+    assert!(table_style(&docx, "Ledger").contains("<w:name w:val=\"Ledger\"/>"));
+}
+
+/// A built-in table style's borders are Word's own: the writer no longer
+/// warns that it writes the style without them.
+#[test]
+fn a_built_in_table_style_writes_its_borders_unwarned() {
+    let dir = tempfile::tempdir().unwrap();
+    let header = "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt  # default\n  table: GridTable4-Accent5, borders vary\n---\n\n";
+    let body = "<!-- t0 1x1, cells p0-p0 by row -->\n|a|\n|-|\n";
+    for (style, warned) in [("GridTable4-Accent5", false), ("Ledger", true)] {
+        let md = format!("{header}{body}").replace("GridTable4-Accent5", style);
+        std::fs::write(dir.path().join("t.md"), md).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(["convert", "t.md", "-o", "t.docx", "--force"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(stderr.contains("borders vary"), warned, "{style}: {stderr}");
+    }
+}

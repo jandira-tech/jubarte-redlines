@@ -2841,7 +2841,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             );
         }
         self.document.table_style = view_styles::table_style(text);
+        // One of Word's own table styles is written as Word defines it,
+        // borders and all.
         if let Some((id, None)) = &self.document.table_style
+            && !super::package::is_built_in_table_style(id)
             && text.lines().any(|line| {
                 let line = view_styles::without_comment(line).trim();
                 line.starts_with("table: ") && line.ends_with(", borders vary")
