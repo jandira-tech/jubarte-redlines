@@ -30,6 +30,7 @@ Both page-1 renders come from the same renderer (`jubarte convert …
 --png --dpi 72`), so the pictures differ only in what each tool wrote.
 
 Tool versions used here: jubarte 0.11.2, python-docx 1.2.0, pandoc 3.11.
+The jubarte listings (`read_jubarte.md`) were regenerated on 2026-10-12 with jubarte 0.12.0 (main), which prints short ids (`r12`, `c3`, `p4`) and the `ref`/`paragraph` fields.
 No LibreOffice is involved in this folder.
 
 ## Outputs

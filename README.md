@@ -420,7 +420,7 @@ Common options:
 | `--force` | Replace an existing output |
 | `--reference-doc FILE`, `--critic`, `--resource-path DIR` | Markdown inputs |
 | `--revisions`, `--dpi`, `--pages`, `--changed-pages` | Rendering, for `-o FILE.pdf` or `.png` |
-| `-q, --quiet` | Print nothing on success |
+| `-q, --quiet` | No status lines on success; a reading task still prints what it read |
 
 The command line dates the revisions now; pin `-d 1970-01-01T00:00:00Z` for
 byte-identical output from identical inputs. The library calls keep the

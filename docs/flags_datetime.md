@@ -14,7 +14,7 @@ Read, edit, compare and render Word documents
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 | `<ORIGINAL_POS>` |  | <ORIGINAL> |  |  | hidden | The original / base document (.docx or Markdown) |
 | `<MODIFIED_POS>` |  | <MODIFIED> |  |  | hidden | The modified document (.docx or Markdown) |
 | `-b, --original` |  | <FILE> |  |  | hidden | Original/base document (overrides the positional ORIGINAL) |
@@ -86,7 +86,7 @@ Compare documents: print the redline as the agent view, or write it with -o
 | `--by` |  | <AUTHOR> |  |  | under "Read options"; conflicts --tables | With --changed: only the blocks with this author's marks (a handle such as AC, or the full name) |
 | `--json` |  |  | false |  | under "Read options"; conflicts --comments --dates --no-page-markers --tables --track-changes | Print the snapshot as JSON instead of the view: `schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`, `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body paragraphs they select, and every change and comment that starts in one of them, whoever made it; the rest of the snapshot stays whole |
 | `--tables` |  |  | false |  | under "Read options"; conflicts --by --changed --comments --dates --head --json --no-page-markers --paragraphs --tail --track-changes | Print each body table as a grid instead of the view: a `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of tab-separated `ids=text` cells |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte changes
 
@@ -96,7 +96,7 @@ List tracked changes with IDs for accept, reject and edit plans
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) |
 | `--json` |  |  | false |  |  | Emit one JSON object per line |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte accept
 
@@ -116,7 +116,7 @@ Accept all tracked changes, or select by ID, author or kind
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte reject
 
@@ -136,7 +136,7 @@ Reject all tracked changes, or select by ID, author or kind
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte convert
 
@@ -172,7 +172,7 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `--fail-on-substitution` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Exit 4 when a requested font was substituted (listed on stderr and in --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a requested font was substituted |
 | `--update-fields` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after --track-changes. Field codes stay, so Word can update them again; page numbers are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line per field; --report writes `{page_count, fields}` |
 | `--timeout` |  | <SECONDS> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more written. An output being written at that moment may be left partial |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte diff
 
@@ -193,7 +193,7 @@ Review differences as GitHub, word, normal, context or side-by-side text
 | `--force` |  |  | false |  | under "Review" | Overwrite the output file if it already exists |
 | `-a, --author` |  | <NAME> | Redline |  | under "Paragraph patch" | Who made the changes: the patch's owner |
 | `-d, --datetime` |  | <ISO8601> |  |  | under "Paragraph patch" | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte read (aliases: text (hidden), inspect (hidden))
 
@@ -215,7 +215,7 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 | `--by` |  | <AUTHOR> |  |  | under "Read options"; conflicts --tables | With --changed: only the blocks with this author's marks (a handle such as AC, or the full name) |
 | `--json` |  |  | false |  | under "Read options"; conflicts --comments --dates --no-page-markers --tables --track-changes | Print the snapshot as JSON instead of the view: `schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`, `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body paragraphs they select, and every change and comment that starts in one of them, whoever made it; the rest of the snapshot stays whole |
 | `--tables` |  |  | false |  | under "Read options"; conflicts --by --changed --comments --dates --head --json --no-page-markers --paragraphs --tail --track-changes | Print each body table as a grid instead of the view: a `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of tab-separated `ids=text` cells |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte edit
 
@@ -235,13 +235,13 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several) |
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
-| `--author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
+| `-a, --author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
 | `--existing-revisions` |  | <MODE> | auto | auto, keep, accept, reject, refuse |  | What to do when FILE already holds tracked changes: auto keeps them and tracks the new edits beside them; a clean file goes through the comparer |
-| `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`); --pdf and --png write beside it |
-| `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`) |
+| `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
+| `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
 | `--force` |  |  | false |  |  | Replace an existing output (the bundle directory's files) |
 | `--dry-run` |  |  | false |  |  | Resolve and report only; write nothing |
 | `--pdf` |  |  | false |  |  | Also write the PDF beside the document (the bundle: redline.pdf and clean.pdf) |
@@ -249,7 +249,7 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering" | PNG resolution in dots per inch (1-1200) |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Revision marks" | How tracked changes are painted in the redline PDF/PNG |
 | `--revision-palette` |  | <SPEC> |  |  | under "Revision marks" | Marks for --revisions custom (see `convert --help`) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte add
 
@@ -267,15 +267,15 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `--before` |  |  |  |  | append | A new paragraph before WHERE instead of after it |
 | `--comment` |  |  |  |  | append | A comment on the whole paragraph (with --anchor the comment sits on the anchor and this flag is implied) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the new paragraph's text (bold, italic, underline, highlight=yellow) or its paragraph style (Heading2) |
-| `--author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
+| `-a, --author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
 | `--existing-revisions` |  | <MODE> | auto | auto, keep, accept, reject, refuse |  | What to do when FILE already holds tracked changes: auto keeps them and tracks the new edits beside them; a clean file goes through the comparer |
-| `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`); --pdf and --png write beside it |
-| `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`) |
+| `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
+| `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
 | `--force` |  |  | false |  |  | Replace an existing output (the bundle directory's files) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte capabilities
 
@@ -284,7 +284,7 @@ What this binary can do, for agents choosing an operation
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `--json` |  |  | false |  |  | The manifest as JSON instead of the text summary |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte self-update
 
@@ -294,7 +294,7 @@ Check or install a release from GitHub
 |-|-|-|-|-|-|-|
 | `--check` |  |  | false |  |  | Print the installed and latest versions; install nothing |
 | `-y, --yes` |  |  | false |  |  | Install without asking (needed without a terminal) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte debug (hidden task)
 
@@ -309,7 +309,7 @@ Diagnose a Word package, or compare package structures
 | `-g, --grep` |  | <TEXT> |  |  |  | Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole) |
 | `-n, --limit` |  | <N> | 5 |  |  | Examples per finding kind |
 | `-C, --context` |  | <N> | 0 |  |  | text/xml/runs of two files: common lines shown around each change |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte debug diff
 
@@ -324,7 +324,7 @@ What differs between two or more packages, element by element: styles paired by 
 | `--raw` |  |  | false |  |  | Keep rsids, ids, authors, dates, on/off values and empty blocks |
 | `--full` |  |  | false |  |  | Print each shown element's common lines too |
 | `-n, --limit` |  | <N> | 60 |  |  | Hunks per part (0: all) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte visual-diff (aliases: diff-render (hidden))
 
@@ -339,7 +339,7 @@ Compare rendered pages pixel by pixel (different pages: exit 5)
 | `--json` |  |  | false |  |  | Print diff.json to stdout instead of one line per changed page |
 | `--no-overlay` |  |  | false |  |  | Skip the diff-page-NN.png overlays |
 | `--force` |  |  | false |  |  | Overwrite files already in --out-dir |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte comments
 
@@ -351,7 +351,7 @@ List comments, threads and the text they annotate
 | `--json` |  |  | false |  |  | Emit one JSON object per line |
 | `--author` |  | <NAME> |  |  |  | Only this author's comments (exact match) |
 | `--latest` |  |  | false |  |  | One comment per thread: the newest |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte append
 
@@ -371,7 +371,7 @@ Join documents in order, preserving images, styles, lists and notes
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte validate (aliases: audit (hidden))
 
@@ -387,7 +387,7 @@ Check Word validity, tracked edits, accessibility, style and structure; or repai
 | `--original` |  | <FILE> |  |  |  | Check tracked edits: every text change against ORIGINAL must be a revision by --author |
 | `--author` |  | <NAME> |  |  |  | The author every change must carry (with --original) |
 | `--force` |  |  | false |  |  | Replace an existing --repair output |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte scrub
 
@@ -408,7 +408,7 @@ Remove authors, editing IDs, metadata and comments before sharing
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## Flags by long name
 
@@ -419,7 +419,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--accept` | edit | `default= values=` |
 | `--accept-changes` | diff | `default=false values=` |
 | `--anchor` | edit, add | `<TEXT> default= values=` |
-| `--author` | (shorthand), compare, accept, reject, convert, diff, edit, add, comments, validate | **differs**: `-a <NAME> default= values=` on convert; `-a <NAME> default=Redline values=` on (shorthand), compare, diff; `<NAME> default= values=` on accept, reject, comments, validate; `<NAME> default=Redline values=` on edit, add |
+| `--author` | (shorthand), compare, accept, reject, convert, diff, edit, add, comments, validate | **differs**: `-a <NAME> default= values=` on convert; `-a <NAME> default=Redline values=` on (shorthand), compare, diff, edit, add; `<NAME> default= values=` on accept, reject, comments, validate |
 | `--author-alias` | scrub | `<NAME> default= values=` |
 | `--before` | add | `default= values=` |
 | `--by` | (shorthand), compare, read | `<AUTHOR> default= values=` |
@@ -515,7 +515,7 @@ A letter that stands for more than one long name is marked **several**.
 |-|-|
 | `-C` | `--context` on debug |
 | `-U` | `--context` on diff |
-| `-a` | `--author` on (shorthand), compare, convert, diff |
+| `-a` | `--author` on (shorthand), compare, convert, diff, edit, add |
 | `-b` | `--original` on (shorthand), compare |
 | `-c` | `--check` on debug |
 | `-d` | `--datetime` on (shorthand), compare, convert, diff, edit, add |

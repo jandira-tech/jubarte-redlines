@@ -284,6 +284,50 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **The npm CLI does what the binary does where it said it could not.**
+  `convert` turns Word into Word (`--track-changes accept|reject`,
+  `--update-fields`, `--report`) and into its paged Markdown (`--to md`,
+  `-o x.md`/`.txt`, `--no-page-markers`); `edit --pdf` writes the PDF beside
+  the document (and `redline.pdf`/`clean.pdf` with a `render` report line in
+  a bundle), taking `--revisions` and `--dpi`. An unreadable input prints
+  the binary's `CODE: FILE is …` line (`INVALID_PACKAGE`, `LEGACY_DOC`); a
+  plan that does not read prints only `error: INVALID_PLAN: …` (exit 3, no
+  report); a refusal's summary keeps `"operation": null`; and
+  `capabilities` answers no for what the CLI refuses (append, scrub,
+  validate, repair, audit, comments, visual diffs, page ranges, PNG) and
+  lists formats only for its own tasks.
+- **`-q` says what it hides**: status lines (`wrote`, an edit's summary and
+  view), not what a reading task prints.
+
+- `edit` under `existing_revisions: "keep"`, and a plan rewriting what a
+  comment covers (`c0.text`), dropped a `format_run`, `insert_footnote` or
+  `page_setup` from the redline while the clean copy had it and the report
+  said `ok`. A `format_run` is a tracked format change (`w:rPrChange`)
+  now; under `keep` the operations it cannot track are refused, naming
+  them, and a `c0.text` plan holding one goes through the comparer.
+- Replacing exactly the text a comment covers kept the deletion inside the
+  comment only in a plan of text edits: with paragraph formatting beside it,
+  or `whole: true`, Reject All left the comment on nothing. `update_fields`
+  beside such an edit is refused, as under `keep`, and both refusals name
+  `jubarte convert FILE --update-fields`, not the removed `fields update`.
+- A retired spelling's note was printed only when the run parsed: `compare
+  … --changed-only` with a usage error, or `audit FILE --rules edits`
+  without `--original`, printed the error alone. The note now leads the
+  error on every host (npm's `audit`, which has no `validate`, included).
+- `audit FILE --rules …` was told to use `validate --rules
+  a11y,style,structure`, which drops the rules it asked for. With
+  `--rules` given, the note says `validate` alone.
+- A `.docx` that is not a ZIP read seven ways across the tasks (`read`
+  said "Could not find EOCD", `diff` said "compare failed: cannot write
+  the document"). Every Word input now reads `INVALID_PACKAGE: FILE is
+  not a ZIP file: no end-of-central-directory record`, as `LEGACY_DOC`
+  already did.
+- A task the host lacks (npm's `visual-diff`, `validate`, `scrub`, …) said
+  "not a task", "not supported by this adapter" or a clap conflict by
+  argument count; it is now one usage error naming the task.
+- `jubarte revisions x.docx` said only "reading revisions: No such file":
+  the removed task's name reads as the first file to compare. A note now
+  names `changes` first, on every host.
 - A plan's `"comment_id": "c5"` was refused. (`#c5`, which an unquoted
   shell reads as a comment, is now refused too; write `c5`.)
 - `changes` listed a text box's change twice, once per

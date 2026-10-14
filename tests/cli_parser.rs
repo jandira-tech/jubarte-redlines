@@ -1915,6 +1915,124 @@ fn retired_spellings_are_scoped_and_listed_once() {
     );
 }
 
+/// The `revisions` task is gone (`changes` lists what a document tracks),
+/// and its name parses as the shorthand's first file again
+/// (`removed_commands_leave_help_and_restore_legacy_filename_parsing`). So
+/// `jubarte revisions x.docx` failed with only "reading revisions: No such
+/// file" (pi review of #422): a note now names `changes`, on every host.
+/// An explicit `compare`, or the name in second place, earns no note.
+#[test]
+fn the_removed_revisions_task_names_changes() {
+    let note = "note: revisions is no longer a task, so it reads as a file name; use changes";
+    for args in [
+        &["revisions", "x.docx"][..],
+        &["-q", "revisions", "x.docx"][..],
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(
+            result["args"]["original"], "revisions",
+            "{args:?}: {result}"
+        );
+        assert_eq!(
+            result["notes"],
+            serde_json::json!([note]),
+            "{args:?}: {result}"
+        );
+    }
+    // `revisions FILE --json` is no compare (the legacy-filename test pins
+    // exit 2); the note goes with the error, which hosts print first.
+    let result = parse(&["revisions", "x.docx", "--json"], &[]);
+    assert_eq!(result["exit_code"], 2, "{result}");
+    assert_eq!(result["notes"], serde_json::json!([note]), "{result}");
+    for args in [
+        &["compare", "revisions", "b.docx"][..],
+        &["a.docx", "revisions"][..],
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(result["notes"], serde_json::json!([]), "{args:?}: {result}");
+    }
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["revisions", "x.docx"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with(&format!("{note}\n")), "{stderr}");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["revisions", "x.docx", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with(&format!("{note}\n")), "{stderr}");
+}
+
+/// A retired task name is the task while it lasts, not a file of that
+/// name: `text other.docx` reads other.docx (`read text` reads a file
+/// called `text`). Ledger review of #446, INFO-4.
+#[test]
+fn a_retired_task_name_is_the_task_not_a_file() {
+    let result = parse(&["text", "other.docx"], &[]);
+    assert_eq!(result["command"], "read", "{result}");
+    assert_eq!(result["args"]["file"], "other.docx", "{result}");
+    let result = parse(&["read", "text"], &[]);
+    assert_eq!(result["args"]["file"], "text", "{result}");
+    assert_eq!(result["notes"], serde_json::json!([]), "{result}");
+}
+
+/// A retired spelling's note goes with a usage error too: the run that
+/// fails is the one that needs to hear the new name (ledger reviews of
+/// #444, C1 and H2, and #446, 4 and 5). Hosts print `notes` before `text`.
+#[test]
+fn a_retired_spelling_is_noted_when_the_parse_fails() {
+    let changed = "note: --changed-only is now --changed-pages; --changed-only is removed in 0.14";
+    let audit =
+        "note: audit is now validate --rules a11y,style,structure; audit is removed in 0.14";
+    // With --rules, audit's own sets are not what runs (ledger review of
+    // #446, 3).
+    let audit_rules = "note: audit is now validate; audit is removed in 0.14";
+    for (args, note) in [
+        (
+            &[
+                "compare",
+                "a.docx",
+                "b.docx",
+                "-o",
+                "out.docx",
+                "--changed-only",
+            ][..],
+            changed,
+        ),
+        (
+            &["convert", "a.docx", "-o", "out.docx", "--changed-only"][..],
+            changed,
+        ),
+        (&["audit", "a.docx", "--rules", "edits"][..], audit_rules),
+        (&["audit", "a.docx", "--rules=bogus"][..], audit_rules),
+        (&["audit", "a.docx", "--original"][..], audit),
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(
+            result["notes"],
+            serde_json::json!([note]),
+            "{args:?}: {result}"
+        );
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.starts_with(&format!("{note}\nerror: ")),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
 /// Arthur (2026-10-13): one spelling for the timestamp flag: `-d,
 /// --datetime` on edit, add, compare, diff and convert (md->docx). Arthur
 /// (2026-10-14): `--date` is gone, not an alias; the error names
@@ -2163,4 +2281,44 @@ fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
         assert_eq!(result["args"]["force"], true);
         assert_eq!(result["args"]["quiet"], true);
     }
+}
+
+/// A task the host lacks is one usage error, whatever follows it: before,
+/// `visual-diff` alone was "not a task", with a file "not supported by this
+/// adapter", and with two files a clap conflict (ledger review of #454,
+/// finding 8).
+#[test]
+fn a_task_the_host_lacks_is_one_usage_error_whatever_follows() {
+    let npm = [
+        "compare",
+        "diff",
+        "changes",
+        "accept",
+        "reject",
+        "read",
+        "convert",
+        "edit",
+        "add",
+        "capabilities",
+    ];
+    for (task, args) in [
+        ("visual-diff", &["visual-diff"][..]),
+        ("visual-diff", &["visual-diff", "a.docx"]),
+        ("visual-diff", &["visual-diff", "a.docx", "b.docx"]),
+        ("scrub", &["-q", "scrub", "a.docx", "-o", "b.docx"]),
+        ("validate", &["validate", "a.docx"]),
+        ("comments", &["comments", "a.docx", "--json"]),
+        ("append", &["append", "a.docx", "b.docx", "-o", "c.docx"]),
+    ] {
+        let result = parse(args, &npm);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(result["stream"], "stderr", "{args:?}");
+        let text = result["text"].as_str().unwrap();
+        let expected =
+            format!("error: this jubarte-python has no {task} task; the `jubarte` binary has it\n");
+        assert!(text.starts_with(&expected), "{args:?}: {text}");
+    }
+    // A host with the task parses it as before.
+    let result = parse(&["validate", "a.docx"], &[]);
+    assert_eq!(result["command"], "validate", "{result}");
 }

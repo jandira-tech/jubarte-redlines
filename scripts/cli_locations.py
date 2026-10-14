@@ -146,6 +146,9 @@ class Deprecated:
 DEPRECATED = Deprecated()
 
 
+TIMEOUT = 120
+
+
 def run(binary: Path, args: list[str], cwd: Path) -> tuple[int, str, str]:
     # UTF-8 whatever the locale: the view prints em dashes, and a C-locale
     # host would otherwise fail to decode them.
@@ -156,10 +159,13 @@ def run(binary: Path, args: list[str], cwd: Path) -> tuple[int, str, str]:
             capture_output=True,
             encoding="utf-8",
             errors="replace",
-            timeout=120,
+            timeout=TIMEOUT,
         )
-    except subprocess.TimeoutExpired:
-        return 124, "", "timed out after 120s"
+    except subprocess.TimeoutExpired as hung:
+        # A timeout says how loaded the machine was, not what the CLI does:
+        # stop rather than write it into the catalogue.
+        command = " ".join([Path(binary).name, *args])
+        raise RuntimeError(f"timed out after {TIMEOUT}s: {command}") from hung
     return done.returncode, done.stdout, done.stderr
 
 

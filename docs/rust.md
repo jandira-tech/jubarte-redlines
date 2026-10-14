@@ -169,8 +169,10 @@ Tasks:
   self-update   Check or install a release from GitHub
 
 Options:
-  -q, --quiet    Print nothing on success (files are still written; warnings and errors
-                 still print)
+  -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
+                 `edit`/`add` changed. Files are still written; a reading task (`read`,
+                 `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+                 what it read, and warnings and errors still print
   -h, --help     Print help
   -V, --version  Print version
 
@@ -241,8 +243,10 @@ Options:
           [default: word]
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -376,8 +380,10 @@ Arguments:
 
 Options:
       --json   Emit one JSON object per line
-  -q, --quiet  Print nothing on success (files are still written; warnings and errors
-               still print)
+  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
+               `edit`/`add` changed. Files are still written; a reading task (`read`,
+               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+               what it read, and warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -418,8 +424,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -501,8 +509,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -641,8 +651,10 @@ Options:
           pass that places them
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -754,8 +766,10 @@ Arguments:
 
 Options:
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -861,8 +875,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -982,7 +998,7 @@ Options:
           highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a
           paragraph style (Heading2)
 
-      --author <NAME>
+  -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
           [default: Redline]
@@ -1014,16 +1030,19 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
+          too; .md, .json, .pdf and .png name the task that writes them
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
-          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
+          `<FILE's directory>/<stem>.edit`)
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1129,7 +1148,7 @@ Options:
           Formatting for the new paragraph's text (bold, italic, underline,
           highlight=yellow) or its paragraph style (Heading2)
 
-      --author <NAME>
+  -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
           [default: Redline]
@@ -1161,19 +1180,22 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`); --pdf and --png write beside it
+          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
+          too; .md, .json, .pdf and .png name the task that writes them
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
-          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
+          `<FILE's directory>/<stem>.edit`)
 
       --force
           Replace an existing output (the bundle directory's files)
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1200,8 +1222,10 @@ Usage: jubarte capabilities [OPTIONS]
 
 Options:
       --json   The manifest as JSON instead of the text summary
-  -q, --quiet  Print nothing on success (files are still written; warnings and errors
-               still print)
+  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
+               `edit`/`add` changed. Files are still written; a reading task (`read`,
+               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+               what it read, and warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -1223,8 +1247,11 @@ Options:
       --json           Print diff.json to stdout instead of one line per changed page
       --no-overlay     Skip the diff-page-NN.png overlays
       --force          Overwrite files already in --out-dir
-  -q, --quiet          Print nothing on success (files are still written; warnings and
-                       errors still print)
+  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
+                       what `edit`/`add` changed. Files are still written; a reading
+                       task (`read`, `changes`, `compare` without -o, `diff`,
+                       `capabilities`) still prints what it read, and warnings and
+                       errors still print
   -h, --help           Print help
 
 Rendering:
@@ -1259,8 +1286,11 @@ Options:
       --json           Emit one JSON object per line
       --author <NAME>  Only this author's comments (exact match)
       --latest         One comment per thread: the newest
-  -q, --quiet          Print nothing on success (files are still written; warnings and
-                       errors still print)
+  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
+                       what `edit`/`add` changed. Files are still written; a reading
+                       task (`read`, `changes`, `compare` without -o, `diff`,
+                       `capabilities`) still prints what it read, and warnings and
+                       errors still print
   -h, --help           Print help
 ```
 
@@ -1305,8 +1335,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1398,8 +1430,10 @@ Options:
           Replace an existing --repair output
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1455,8 +1489,10 @@ Options:
           Remove every comment
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1519,8 +1555,11 @@ Options:
   -y, --yes                Install without asking (needed without a terminal)
       --version <VERSION>  Install this release instead of the latest, older ones
                            included
-  -q, --quiet              Print nothing on success (files are still written; warnings
-                           and errors still print)
+  -q, --quiet              No status on success: no `wrote` lines, and no summary or
+                           view of what `edit`/`add` changed. Files are still written; a
+                           reading task (`read`, `changes`, `compare` without -o,
+                           `diff`, `capabilities`) still prints what it read, and
+                           warnings and errors still print
   -h, --help               Print help
 
 Examples:

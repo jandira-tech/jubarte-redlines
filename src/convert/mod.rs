@@ -429,6 +429,24 @@ pub struct RenderReport {
 }
 
 impl RenderReport {
+    /// Each written page's first line, at most 60 characters: the
+    /// `page_starts` an edit bundle's `render` line lists.
+    #[must_use]
+    pub fn page_starts(&self) -> Vec<String> {
+        self.pages
+            .iter()
+            .map(|page| {
+                page.text
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect()
+            })
+            .collect()
+    }
+
     /// `{"page_count", "document_pages", "pages": [{"index", "number", "text"}],
     /// "fonts": [...]}`.
     #[must_use]

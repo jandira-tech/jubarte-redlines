@@ -142,11 +142,13 @@ export function auditTracked(original: Uint8Array, edited: Uint8Array, author: s
 export function capabilities(): string;
 
 /**
- * [`capabilities`] as the text summary `jubarte capabilities` prints.
+ * [`capabilities`] as the text summary `jubarte capabilities` prints; of
+ * `manifestJson` when given (a manifest a host narrowed to what it does),
+ * else of this build's.
  *
  * Mirrors `jubarte::capabilities::capabilities_text`.
  */
-export function capabilitiesText(): string;
+export function capabilitiesText(manifest_json?: string | null): string;
 
 /**
  * `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
@@ -344,6 +346,15 @@ export function markdownToDocx(text: string, options_json?: string | null, refer
 export function parseCli(arguments_json: string, program?: string | null, supported_json?: string | null): string;
 
 /**
+ * Why `planJson` is no edit plan, as the binary prints it (`INVALID_PLAN:
+ * …`); `undefined` for a plan. A plan that parses can still be refused when
+ * applied; that refusal carries the per-operation report.
+ *
+ * Mirrors `jubarte::edit::EditPlan::from_json`.
+ */
+export function planError(plan_json: string): string | undefined;
+
+/**
  * Resolve every operation of an edit plan without producing documents.
  *
  * Mirrors `jubarte::edit::preview_plan`.
@@ -393,6 +404,15 @@ export function recordPlan(verb: string, operations_json: string, docx: Uint8Arr
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
  */
 export function redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array;
+
+/**
+ * The error line for an input no task reads, as the binary prints it:
+ * `LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
+ * a.docx is not a ZIP file: …`; `undefined` when the bytes may be read.
+ *
+ * Mirrors `jubarte::cli::refused_input`.
+ */
+export function refusedInput(path: string, bytes: Uint8Array, word: boolean): string | undefined;
 
 /**
  * Reject the changes `filterJson` selects and keep the rest tracked

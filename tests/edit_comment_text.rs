@@ -135,6 +135,108 @@ fn rewriting_c0_text_replaces_what_the_comment_covers() {
     );
 }
 
+/// A plan that rewrites what a comment covers is emitted directly, and the
+/// emitter once replayed only text and paragraph operations: a `format_run`
+/// beside `c0.text` reached the clean copy but not the redline, reported
+/// `ok` (ledger review of #451). It is a tracked format change now.
+#[test]
+fn a_format_run_beside_c0_text_is_tracked_in_the_redline() {
+    let edited = bob(
+        r#"{"kind":"rewrite","paragraph":"c0.text","text":"twelve euros"},
+        {"kind":"format_run","paragraph":"p0","find":"per hour","format":{"italic":true}}"#,
+    )
+    .unwrap();
+    assert_word_valid_package(&edited.redline);
+    assert_eq!(
+        shape(&edited.redline),
+        ["start", "del:ten dollars", "ins:twelve euros", "end", "ref"]
+    );
+    assert_eq!(edited.report.revisions.format_changed, 1);
+    let italic = |docx: &[u8]| {
+        part_string(docx, "word/document.xml")
+            .unwrap()
+            .contains("<w:i />")
+    };
+    assert!(italic(&edited.clean));
+    let accepted = accept_revisions(&edited.redline).unwrap();
+    let rejected = reject_revisions(&edited.redline).unwrap();
+    assert!(italic(&accepted));
+    assert!(!italic(&rejected));
+    assert_eq!(covered(&rejected), "ten dollars");
+}
+
+/// An operation the emitter cannot track (a footnote) sends the plan
+/// through the comparer, which writes it, instead of dropping it.
+#[test]
+fn a_footnote_beside_c0_text_reaches_the_redline() {
+    let edited = bob(
+        r#"{"kind":"rewrite","paragraph":"c0.text","text":"twelve euros"},
+        {"kind":"insert_footnote","paragraph":"p0","after":"per hour","text":"Why."}"#,
+    )
+    .unwrap();
+    assert_word_valid_package(&edited.redline);
+    let red = part_string(&edited.redline, "word/document.xml").unwrap();
+    assert!(red.contains("<w:footnoteReference "), "{red}");
+    assert_eq!(
+        covered(&accept_revisions(&edited.redline).unwrap()),
+        "twelve euros"
+    );
+}
+
+/// The comment keeps both sides of a whole-range replacement whatever else
+/// the plan holds: paragraph formatting, or `whole` on the edit (ledger
+/// review of #451, finding 2). The comparer would put the deletion after
+/// the range, so Reject All left the comment on nothing.
+#[test]
+fn a_whole_range_replacement_keeps_the_comment_in_mixed_plans() {
+    for ops in [
+        r#"{"kind":"replace","paragraph":"p0","find":"ten dollars","replacement":"twelve euros"},
+        {"kind":"format_paragraph","paragraph":"p0","alignment":"center"}"#,
+        r#"{"kind":"replace","paragraph":"p0","find":"ten dollars","replacement":"twelve euros","whole":true}"#,
+    ] {
+        let edited = bob(ops).unwrap();
+        assert_word_valid_package(&edited.redline);
+        assert_eq!(
+            shape(&edited.redline),
+            ["start", "del:ten dollars", "ins:twelve euros", "end", "ref"],
+            "{ops}"
+        );
+        assert_eq!(
+            covered(&reject_revisions(&edited.redline).unwrap()),
+            "ten dollars",
+            "{ops}"
+        );
+    }
+}
+
+/// `update_fields` refreshes the clean copy only, so the emitted redline
+/// would not accept to it: refused, as under keep, and both refusals name
+/// the command that refreshes fields now (`jubarte fields update` is gone).
+#[test]
+fn update_fields_beside_a_whole_range_replacement_is_refused() {
+    let commented_plan = |extra: &str| {
+        plan(&format!(
+            r#"{{"schema_version":1,"author":"Bob",{extra}"operations":[
+            {{"kind":"replace","paragraph":"p0","find":"ten dollars","replacement":"twelve euros"}}]}}"#
+        ))
+    };
+    for extra in [
+        r#""update_fields":true,"#,
+        r#""update_fields":true,"existing_revisions":"keep","#,
+    ] {
+        let e = apply_plan(&commented(), &commented_plan(extra)).unwrap_err();
+        assert_eq!(e.code, "INVALID_PLAN", "{extra}: {e:?}");
+        assert!(
+            e.message.contains("convert") && e.message.contains("--update-fields"),
+            "{extra}: {}",
+            e.message
+        );
+        assert!(!e.message.contains("fields update"), "{}", e.message);
+        let e = jubarte::edit::preview_plan(&commented(), &commented_plan(extra)).unwrap_err();
+        assert_eq!(e.code, "INVALID_PLAN", "preview refuses too: {extra}");
+    }
+}
+
 #[test]
 fn an_anchor_in_c0_text_is_looked_up_in_the_covered_text_only() {
     let edited =
@@ -311,9 +413,22 @@ fn rewriting_c0_text_over_two_paragraphs_deletes_the_mark_between() {
     assert_word_valid_package(&edited.redline);
     assert_word_valid_package(&edited.clean);
     let xml = part_string(&edited.redline, "word/document.xml").unwrap();
+    // The mark between is the first paragraph's (the one holding "beta");
+    // the last paragraph keeps its mark.
+    let paragraphs: Vec<&str> = xml.split("</w:p>").collect();
+    let holding = |text: &str| {
+        paragraphs
+            .iter()
+            .find(|p| p.contains(text))
+            .unwrap_or_else(|| panic!("no paragraph holds {text}: {xml}"))
+    };
     assert!(
-        xml.contains("<w:pPr><w:rPr><w:del "),
+        holding(">beta<").contains("<w:pPr><w:rPr><w:del "),
         "the mark between is deleted: {xml}"
+    );
+    assert!(
+        !holding(" delta<").contains("<w:rPr><w:del "),
+        "the last mark stays: {xml}"
     );
     let order: Vec<String> = shape(&edited.redline)
         .into_iter()
@@ -406,10 +521,11 @@ fn note_definitions_carry_the_ids_edit_takes() {
     let read = jubarte(&["read", "notes.docx"], dir.path());
     assert!(read.status.success());
     let view = String::from_utf8(read.stdout).unwrap();
-    let tail: Vec<&str> = view.lines().rev().take(10).collect::<Vec<_>>();
-    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    // The id lines, whatever a definition's own line count.
     assert_eq!(
-        tail.iter().step_by(2).copied().collect::<Vec<_>>(),
+        view.lines()
+            .filter(|line| line.starts_with("<!-- footnotes.") || line.starts_with("<!-- endnotes."))
+            .collect::<Vec<_>>(),
         [
             "<!-- footnotes.p0 -->",
             "<!-- footnotes.p1 -->",

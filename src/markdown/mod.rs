@@ -752,6 +752,27 @@ pub fn page_texts(
     rendered.map(|rendered| rendered.report.pages.into_iter().map(|p| p.text).collect())
 }
 
+/// `markdown` (read from `docx`) with `<!-- page N of M -->` lines, as
+/// `convert --to md` writes it: `docx` is laid out as its PDF would be,
+/// with its changes kept, accepted or rejected as the Markdown has them,
+/// and each block found on its page. When layout fails, the Markdown alone
+/// and why.
+#[must_use]
+pub fn with_page_markers(
+    docx: &[u8],
+    markdown: &str,
+    track_changes: TrackChanges,
+    revisions: crate::convert::RevisionStyle,
+) -> (String, Option<String>) {
+    match page_texts(docx, track_changes, revisions) {
+        Ok(pages) => {
+            let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
+            (paginate(markdown, &pages), None)
+        }
+        Err(e) => (markdown.to_string(), Some(format!("no page markers: {e}"))),
+    }
+}
+
 /// A written document and what could not be written as asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WrittenDocx {

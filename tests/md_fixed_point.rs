@@ -31,7 +31,14 @@ static PAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r", \d+ pages?\s+#.*
 
 /// The Markdown fixtures written by hand, in the view's dialect; every other
 /// one is a view of a docx listed in `views.txt`.
-const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
+const HAND_WRITTEN: &[&str] = &[
+    "kitchen-sink.md",
+    // Pandoc manuscripts, as their authors wrote them (2026-10-14).
+    "dolphins.md",
+    "eLife.00047.md",
+    "git_manuscript.md",
+    "list_of_figures.md",
+];
 
 fn jubarte(dir: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))

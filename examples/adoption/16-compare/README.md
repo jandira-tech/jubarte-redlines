@@ -39,7 +39,7 @@ jubarte convert redline_jubarte.docx -o redline_jubarte.png --dpi 72 --pages 1
 | Tool | Version |
 |---|---|
 | pandoc | 3.11 |
-| jubarte | 0.11.2 |
+| jubarte | 0.11.2; `changes_jubarte.txt` regenerated on 2026-10-14 with jubarte 0.12.0 (main), which prints short ids (`r12`, `c3`, `p4`) and the `ref`/`paragraph` fields |
 | LibreOffice | 26.8.0.3 (UNO bridge unusable, see above) |
 | Poppler | 26.09.0 |
 

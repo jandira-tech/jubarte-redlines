@@ -36,6 +36,7 @@ jubarte changes review/redline.docx --json
 jubarte edit received.docx --plan plan-nokeep.json --out-dir refused         # refused: exit 3
 ```
 
+`changes_jubarte.jsonl` was regenerated on 2026-10-14 with jubarte 0.12.0 (main), which prints short ids (`r12`, `c3`, `p4`) and the `ref`/`paragraph` fields.
 Tool versions used here: jubarte 0.11.2, python-docx 1.2.0. No
 LibreOffice, no pandoc in this folder; both page-1 renders come from
 `jubarte convert -o x.png --dpi 72`.

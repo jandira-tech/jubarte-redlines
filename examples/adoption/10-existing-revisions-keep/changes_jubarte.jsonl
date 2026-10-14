@@ -1,7 +1,7 @@
-{"id":"body:rev:1","kind":"insertion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"thirty"}
-{"id":"body:rev:2","kind":"deletion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"forty-five"}
-{"id":"body:rev:3","kind":"insertion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"1.5"}
-{"id":"body:rev:4","kind":"deletion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"one"}
-{"id":"body:rev:5","kind":"insertion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":", compounded daily"}
-{"id":"body:rev:6","kind":"deletion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":"ninety days"}
-{"id":"body:rev:7","kind":"insertion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":"sixty days"}
+{"id":"body:rev:1","ref":"r1","kind":"insertion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"thirty","paragraph":"body:p:8"}
+{"id":"body:rev:2","ref":"r2","kind":"deletion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"forty-five","paragraph":"body:p:8"}
+{"id":"body:rev:3","ref":"r3","kind":"insertion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"1.5","paragraph":"body:p:8"}
+{"id":"body:rev:4","ref":"r4","kind":"deletion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"one","paragraph":"body:p:8"}
+{"id":"body:rev:5","ref":"r5","kind":"insertion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":", compounded daily","paragraph":"body:p:8"}
+{"id":"body:rev:6","ref":"r6","kind":"deletion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":"ninety days","paragraph":"body:p:12"}
+{"id":"body:rev:7","ref":"r7","kind":"insertion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":"sixty days","paragraph":"body:p:12"}

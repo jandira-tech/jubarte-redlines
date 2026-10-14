@@ -41,7 +41,7 @@ diff pandoc_redline_accept.md pandoc_clean.md                       # also empty
 
 ## Tool versions used here
 
-- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`)
+- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`) for the first run; the read and validate outputs were regenerated on 2026-10-12 with jubarte 0.12.0 (main), which prints short ids (`r12`, `c3`, `p4`) and the `ref`/`paragraph` fields
 - pandoc 3.11
 - python-docx 1.2.0 (negative control only)
 

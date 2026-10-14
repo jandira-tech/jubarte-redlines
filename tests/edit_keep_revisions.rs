@@ -625,3 +625,58 @@ fn the_report_skips_a_source_change_that_shares_the_plans_stamp() {
         "the source's two same-stamp changes are not the plan's"
     );
 }
+
+/// The keep redline is written by direct emission, which once replayed only
+/// text and paragraph operations: a `format_run` landed in the clean copy
+/// and vanished from the redline, reported `ok` (ledger review of #451).
+/// It is a tracked format change now: `w:rPrChange` holds the old run
+/// properties, accepting mine keeps the bold, rejecting mine drops it.
+#[test]
+fn format_run_under_keep_is_a_tracked_format_change() {
+    let source = source();
+    let out = apply_plan(
+        &source,
+        &keep(r#"[{"kind":"format_run","paragraph":"body:p:1","find":"Governing","format":{"bold":true}}]"#),
+    )
+    .unwrap();
+    invariants(&source, &out);
+    assert_eq!(
+        out.report.revisions.format_changed, 1,
+        "{:?}",
+        out.report.revisions
+    );
+    let red = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(red.contains("<w:rPrChange "), "{red}");
+    let bold = |docx: &[u8]| {
+        part_string(docx, "word/document.xml")
+            .unwrap()
+            .contains("<w:b />")
+    };
+    assert!(bold(&out.clean));
+    assert!(bold(&accept_changes(&out.redline, &mine()).unwrap()));
+    assert!(!bold(&reject_changes(&out.redline, &mine()).unwrap()));
+}
+
+/// What the keep emitter cannot write as a tracked change is refused, never
+/// left out of the redline while the clean copy has it.
+#[test]
+fn keep_refuses_what_it_cannot_track() {
+    for (kind, operations) in [
+        (
+            "insert_footnote",
+            r#"[{"kind":"insert_footnote","paragraph":"body:p:1","after":"Delaware","text":"Why."}]"#,
+        ),
+        (
+            "page_setup",
+            r#"[{"kind":"page_setup","section":"all","orientation":"landscape"}]"#,
+        ),
+    ] {
+        let e = apply_plan(&source(), &keep(operations)).unwrap_err();
+        assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{kind}: {e:?}");
+        assert!(
+            e.message.contains(kind) && e.message.contains("keep"),
+            "{kind}: {}",
+            e.message
+        );
+    }
+}

@@ -45,20 +45,26 @@ function copy(from, name) {
   return to;
 }
 
-test("field refresh is unsupported before reading or overwriting any file", () => {
+test("field refresh reads its input first and overwrites nothing without --force", () => {
   const out = path.join(tmp, "field-refresh.docx");
   const report = path.join(tmp, "field-refresh.json");
   fs.writeFileSync(out, "preserve document");
   fs.writeFileSync(report, "preserve report");
   for (const extra of [[], ["--to", "docx"], ["--track-changes", "accept"], ["--track-changes", "reject"], ["--report", report, "--force"]]) {
     const result = run("convert", "missing.docx", "-o", out, "--update-fields", ...extra);
-    assert.equal(result.code, 2, result.err);
-    assert.match(result.err, /--update-fields.*not supported/);
-    assert.doesNotMatch(result.err, /reading|ENOENT|already exists/);
+    assert.equal(result.code, 1, result.err);
+    assert.equal(result.err, "error: reading missing.docx: No such file or directory (os error 2)\n");
     assert.equal(result.out, "");
-    assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
-    assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
   }
+  const kept = run("convert", untracked, "-o", out, "--update-fields");
+  assert.equal(kept.code, 1, kept.err);
+  assert.match(kept.err, /already exists/);
+  assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
+  assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
+  const written = run("convert", untracked, "-o", out, "--update-fields", "--report", report, "--force");
+  assert.equal(written.code, 0, written.err);
+  assert.equal(typeof JSON.parse(fs.readFileSync(report, "utf8")).page_count, "number");
+  assert.equal(fs.readFileSync(out).subarray(0, 2).toString(), "PK");
 });
 
 test("removed command help and legacy listing flags are unavailable", () => {
@@ -73,6 +79,17 @@ test("removed command help and legacy listing flags are unavailable", () => {
     assert.equal(result.out, "");
     assert.ok(!fs.existsSync(path.join(tmp, "unused.docx")));
   }
+  // A retired name keeps its note when the run fails: npm has no validate.
+  const audit = run("audit", "missing.docx");
+  assert.equal(audit.code, 2, audit.err);
+  assert.ok(audit.err.startsWith("note: audit is now validate --rules a11y,style,structure; audit is removed in 0.14\nerror: "), audit.err);
+  // `revisions` reads as a file name again; a note names `changes` first.
+  const note = "note: revisions is no longer a task, so it reads as a file name; use changes\n";
+  assert.ok(run("revisions", "missing.docx", "--json").err.startsWith(note));
+  const legacy = run("revisions", "missing.docx");
+  assert.equal(legacy.code, 1, legacy.err);
+  assert.ok(legacy.err.startsWith(note), legacy.err);
+  assert.match(legacy.err, /reading revisions/);
 });
 
 test("redline writes a Word redline and refuses to overwrite it", () => {
@@ -258,6 +275,91 @@ test("read (alias text), inspect, capabilities and convert", () => {
   assert.equal(png.code, 2);
   assert.match(png.err, /PNG pages need the Python or Rust build/);
   assert.match(run("convert", tracked, "--revisions", "custom").err, /--revision-palette/);
+});
+
+test("an unreadable input reads as the binary says, on every task (#454)", () => {
+  fs.writeFileSync(path.join(tmp, "fake.docx"), "hello, not a zip");
+  fs.copyFileSync(untracked, path.join(tmp, "good.docx"));
+  const expected = "error: INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record\n";
+  for (const args of [
+    ["read", "fake.docx"], ["read", "fake.docx", "--json"], ["read", "fake.docx", "--tables"],
+    ["changes", "fake.docx"], ["accept", "fake.docx", "-o", "unread-a.docx"], ["reject", "fake.docx", "-o", "unread-r.docx"],
+    ["convert", "fake.docx", "-o", "unread.pdf"], ["compare", "fake.docx", "good.docx"],
+    ["compare", "good.docx", "fake.docx", "-o", "unread-c.docx"], ["diff", "fake.docx", "good.docx"],
+    ["edit", "fake.docx", "-p", "p0", "--delete"], ["add", "fake.docx", "-p", "p0", "--content", "x"],
+  ]) {
+    const r = run(...args);
+    assert.equal(r.code, 1, args.join(" "));
+    assert.equal(r.err, expected, args.join(" "));
+    assert.equal(r.out, "", args.join(" "));
+  }
+  // A Word 97-2003 file names its code first, as the binary does.
+  fs.writeFileSync(path.join(tmp, "old.docx"), Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(512)]));
+  assert.match(run("read", "old.docx").err, /^error: LEGACY_DOC: old\.docx is /);
+});
+
+test("an invalid plan prints the binary's one line and no report (#454)", () => {
+  const bad = path.join(tmp, "bad-plan.json");
+  fs.writeFileSync(bad, '{"edits": 3}');
+  const r = run("edit", untracked, "--plan", bad, "--out-dir", path.join(tmp, "never"));
+  assert.equal(r.code, 3, r.err);
+  assert.equal(r.out, "");
+  assert.match(r.err, /^error: INVALID_PLAN: unknown field `edits`/);
+  assert.ok(!fs.existsSync(path.join(tmp, "never")));
+});
+
+test("Word to Word convert resolves changes and refreshes fields, as the binary does (#454)", () => {
+  const accepted = path.join(tmp, "conv-accepted.docx");
+  const r = run("convert", tracked, "-o", accepted, "--track-changes", "accept");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^wrote .*conv-accepted\.docx \(docx, \d+ bytes\)\n$/);
+  assert.equal(run("changes", accepted).out, "0 change(s)\n");
+  const rejected = path.join(tmp, "conv-rejected.docx");
+  assert.equal(run("convert", tracked, "-o", rejected, "--track-changes", "reject").code, 0);
+  assert.equal(run("changes", rejected).out, "0 change(s)\n");
+  const updated = path.join(tmp, "conv-fields.docx");
+  const fields = run("convert", untracked, "-o", updated, "--update-fields");
+  assert.equal(fields.code, 0, fields.err);
+  assert.match(fields.err, /^\d+ field\(s\) written; \d+ page\(s\)\nwrote /);
+  const plain = run("convert", untracked, "-o", path.join(tmp, "conv-plain.docx"));
+  assert.equal(plain.code, 1);
+  assert.match(plain.err, /is already Word: give --track-changes accept or reject, --update-fields, or another --to\n$/);
+});
+
+test("convert --to md writes the paged Markdown, as the binary does (#454)", () => {
+  const out = path.join(tmp, "conv-view.md");
+  const r = run("convert", tracked, "-o", out, "--track-changes", "accept");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^wrote .*conv-view\.md \(md, \d+ bytes\)\n$/);
+  assert.match(fs.readFileSync(out, "utf8"), /^<!-- page 1 of \d+ -->\n/);
+  const bare = path.join(tmp, "conv-bare.txt");
+  assert.equal(run("convert", untracked, "-o", bare, "--no-page-markers").code, 0);
+  assert.doesNotMatch(fs.readFileSync(bare, "utf8"), /<!-- page /);
+});
+
+test("edit --pdf writes the PDF beside the document, as the binary does (#454)", () => {
+  const out = path.join(tmp, "edit-pdf.docx");
+  const r = run("edit", untracked, "-p", "p0", "--content", "Z", "-o", out, "--pdf", "--revisions", "word", "--dpi", "50");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /wrote .*edit-pdf\.pdf \(pdf, \d+ bytes, \d+ pages?\)\n/);
+  assert.ok(fs.readFileSync(path.join(tmp, "edit-pdf.pdf")).subarray(0, 4).equals(Buffer.from("%PDF")));
+  const dir = path.join(tmp, "edit-pdf-bundle");
+  assert.equal(run("edit", untracked, "-p", "p0", "--content", "Z", "--out-dir", dir, "--pdf").code, 0);
+  for (const name of ["redline.pdf", "clean.pdf"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
+});
+
+test("capabilities claims only what this CLI does (#454, #447, #453)", () => {
+  const manifest = JSON.parse(run("capabilities", "--json").out);
+  for (const op of ["append", "scrub", "validate", "repair", "audit", "comments", "diff_render", "page_ranges", "png"]) {
+    assert.equal(manifest.operations[op], false, op);
+  }
+  for (const op of ["compare", "accept_revisions", "edit", "markdown", "markdown_to_docx", "patch", "pdf", "fields"]) {
+    assert.equal(manifest.operations[op], true, op);
+  }
+  assert.deepEqual(Object.keys(manifest.formats).sort(), ["accept", "add", "compare", "convert", "diff", "edit", "read", "reject"]);
+  const summary = run("capabilities").out;
+  for (const op of ["append", "scrub", "validate", "audit"]) assert.match(summary, new RegExp(`\\n${op}: no\\n`), op);
+  assert.doesNotMatch(summary, /append \./);
 });
 
 test("convert --move-comments and --changed-only", () => {
@@ -523,7 +625,7 @@ test("format contradictions and unsupported flags fail before I/O (integration)"
     assert.doesNotMatch(result.err, /reading/);
     assert.ok(!fs.existsSync(output));
   }
-  for (const args of [["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
+  for (const args of [["convert", "missing.docx", "--timeout", "1"], ["compare", "a", "b", "--mode", "powertools"]]) {
     const result = run(...args);
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading/);
@@ -795,17 +897,16 @@ test("unsupported host options are rejected before input I/O (integration)", () 
     assert.match(result.err, /not supported/);
     assert.doesNotMatch(result.err, /reading/);
   }
-  for (const flags of [["--from", "docx"], ["--resource-path", "."], ["--fail-on-substitution"], ["--no-page-markers"], ["--dpi", "120"], ["--pages", "1"], ["--report", "report.json"], ["--font-report", "fonts.json"], ["--to", "md"], ["-o", "output.md"], ["--to", "docx"], ["-o", "output.docx"]]) {
+  for (const flags of [["--from", "docx"], ["--resource-path", "."], ["--fail-on-substitution"], ["--dpi", "120"], ["--pages", "1"], ["--report", "report.json"], ["--font-report", "fonts.json"]]) {
     const result = run("convert", "missing.docx", ...flags);
     assert.equal(result.code, 2, `${flags}: ${result.err}`);
     assert.doesNotMatch(result.err, /reading/);
-    // pi review av2 F16: the advice names a read that runs as written.
-    if (flags.includes("md") || flags.includes("output.md")) {
-      assert.match(result.err, /read FILE/);
-      assert.doesNotMatch(result.err, /--track-changes/);
-    }
   }
-  for (const flags of [["--pdf"], ["--png"], ["--dpi", "120"], ["--revisions", "word"]]) {
+  // Markdown to Markdown has no engine call here; it says where it runs.
+  const markdown = run("convert", "missing.md", "-o", "output.md");
+  assert.equal(markdown.code, 2, markdown.err);
+  assert.match(markdown.err, /uvx jubarte-redlines convert/);
+  for (const flags of [["--png"]]) {
     const result = run("edit", "missing.docx", "--plan", "missing.json", "--out-dir", "missing-dir", ...flags);
     assert.equal(result.code, 2, `${flags}: ${result.err}`);
     assert.match(result.err, /not supported/);
@@ -826,11 +927,12 @@ test("convert to Word sniffs inputs whose name does not say Markdown (integratio
     assert.equal(result.code, 0, `${name}: ${result.err}`);
     assert.equal(fs.readFileSync(out).subarray(0, 2).toString(), "PK");
   }
-  // A Word file under a name that says nothing is still refused, unwritten.
+  // A Word file under a name that says nothing is Word, and Word to Word
+  // needs something to do, as the binary says; nothing is written.
   const zip = copy(untracked, "SNIFF-WORD"), out = path.join(tmp, "sniff-word.docx");
   const refused = run("convert", zip, "-o", out);
-  assert.equal(refused.code, 2, refused.err);
-  assert.match(refused.err, /--to docx requires Markdown input/);
+  assert.equal(refused.code, 1, refused.err);
+  assert.match(refused.err, /SNIFF-WORD is already Word: give --track-changes accept or reject, --update-fields, or another --to\n$/);
   assert.ok(!fs.existsSync(out));
 });
 

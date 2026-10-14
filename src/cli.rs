@@ -30,8 +30,10 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Print nothing on success (files are still written; warnings and
-    /// errors still print).
+    /// No status on success: no `wrote` lines, and no summary or view of
+    /// what `edit`/`add` changed. Files are still written; a reading task
+    /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
+    /// still prints what it read, and warnings and errors still print.
     #[arg(
         short = 'q',
         long,
@@ -1669,6 +1671,27 @@ pub fn output_format(
     }
 }
 
+/// The error line for an input no task reads, `CODE: FILE is …`: an OLE
+/// (`.doc`, encrypted) or RTF file, or, when it must be `word`, a file that
+/// is no ZIP package. `None` when the bytes may be read. Every host prints
+/// this line, so a refusal reads the same on each.
+#[must_use]
+pub fn refused_input(path: &Path, bytes: &[u8], word: bool) -> Option<String> {
+    let checked = if word {
+        crate::admission::sniff_package(bytes)
+    } else {
+        crate::admission::sniff(bytes)
+    };
+    checked.err().map(|refused| {
+        format!(
+            "{}: {} is {}",
+            refused.code(),
+            path.display(),
+            refused.message
+        )
+    })
+}
+
 /// The line a writing task prints on stderr for the file it wrote:
 /// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`; `pages` is a PDF's.
 pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize>) -> String {
@@ -1770,6 +1793,29 @@ pub const RETIRED: &[Retired] = &[
         on: Some("convert"),
     },
 ];
+
+/// Every task name that is gone and parses as the shorthand's first file
+/// again (`jubarte revisions x.docx` compares a file called `revisions`):
+/// a [`removed_task_note`] names what to say instead.
+pub const REMOVED_TASKS: &[Retired] = &[Retired {
+    old: "revisions",
+    now: "changes",
+    on: None,
+}];
+
+/// Each [`REMOVED_TASKS`] name `argv` puts where the task goes, as
+/// [`retired_spellings`] finds them.
+pub fn removed_tasks<'a>(
+    argv: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, &'static str)> {
+    spellings_in(REMOVED_TASKS, argv)
+}
+
+/// The note a removed task name earns: the run goes on, reading it as a
+/// file.
+pub fn removed_task_note(old: &str, now: &str) -> String {
+    format!("note: {old} is no longer a task, so it reads as a file name; use {now}")
+}
 
 /// Every flag that is gone: it no longer parses, and the error names what
 /// to say instead, where clap's own tip may name a lookalike (`compare
@@ -1971,6 +2017,28 @@ pub fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
     {
         *rules = ["a11y", "style", "structure"].map(String::from).to_vec();
     }
+}
+
+/// The stderr lines `argv` earns before its run or its usage error: each
+/// retired spelling's note, then each removed task's.
+pub fn notes(argv: &[String]) -> Vec<String> {
+    let argv = || argv.iter().map(String::as_str);
+    // `audit --rules …` runs the rules given, not audit's own sets.
+    let rules_given = argv()
+        .take_while(|token| *token != "--")
+        .any(|token| token == "--rules" || token.starts_with("--rules="));
+    retired_spellings(argv())
+        .into_iter()
+        .map(|(old, now)| match old {
+            "audit" if rules_given => retired_note(old, "validate"),
+            _ => retired_note(old, now),
+        })
+        .chain(
+            removed_tasks(argv())
+                .into_iter()
+                .map(|(old, now)| removed_task_note(old, now)),
+        )
+        .collect()
 }
 
 /// The stderr line a retired spelling prints once.
@@ -2914,6 +2982,14 @@ fn error_json(error: &clap::Error) -> String {
     .to_string()
 }
 
+/// The usage error for a task the host (`program`) does not have.
+fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap::Error {
+    command.error(
+        clap::error::ErrorKind::InvalidSubcommand,
+        format!("this {program} has no {task} task; the `jubarte` binary has it"),
+    )
+}
+
 /// Parse arguments (excluding argv0) for native-compatible adapters.
 ///
 /// `supported` contains canonical command names; empty enables every command.
@@ -2980,6 +3056,17 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     let argv = std::iter::once(program.to_string()).chain(arguments.iter().cloned());
     let mut quiet = false;
     let result = (|| {
+        // A task this host lacks is one error, whatever follows its name.
+        if let Some(name) = arguments
+            .iter()
+            .take_while(|token| *token != "--")
+            .find(|token| !token.starts_with('-'))
+            .and_then(|name| model.find_subcommand(name))
+            .map(|task| task.get_name().to_string())
+            .filter(|name| !accepts(name))
+        {
+            return Err(missing_task(&mut command, program, &name));
+        }
         let tokens: Vec<String> = hoist_quiet(&command, &argv.collect::<Vec<_>>());
         let matches = command
             .try_get_matches_from_mut(tokens.clone())
@@ -3095,20 +3182,15 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         } else {
             let mut compare = CompareArgs::from_arg_matches(&matches)?;
             fill_date(&mut compare.datetime);
-            if compare
+            if let Some(name) = compare
                 .original_pos
                 .as_ref()
                 .and_then(|p| p.to_str())
-                .is_some_and(|name| {
-                    model
-                        .find_subcommand(name)
-                        .is_some_and(|task| !accepts(task.get_name()))
-                })
+                .and_then(|name| model.find_subcommand(name))
+                .map(|task| task.get_name().to_string())
+                .filter(|name| !accepts(name))
             {
-                return Err(command.error(
-                    clap::error::ErrorKind::InvalidSubcommand,
-                    "this task is not supported by this adapter",
-                ));
+                return Err(missing_task(&mut command, program, &name));
             }
             if compare.modified.is_none() && compare.modified_pos.is_none() {
                 if !accepts("read") {
@@ -3144,10 +3226,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     match result {
         Ok(mut value) => {
             value["args"]["quiet"] = quiet.into();
-            value["notes"] = retired_spellings(arguments.iter().map(String::as_str))
-                .into_iter()
-                .map(|(old, now)| retired_note(old, now))
-                .collect();
+            value["notes"] = notes(arguments).into();
             value.to_string()
         }
         Err(error) => match removed_spellings(arguments.iter().map(String::as_str)).first() {
@@ -3160,14 +3239,10 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             None => {
                 let mut value: serde_json::Value =
                     serde_json::from_str(&error_json(&error)).unwrap_or_default();
-                // Help and version are no error: a retired spelling's note
-                // goes with them, as with a parse that succeeds.
-                if !error.use_stderr() {
-                    value["notes"] = retired_spellings(arguments.iter().map(String::as_str))
-                        .into_iter()
-                        .map(|(old, now)| retired_note(old, now))
-                        .collect();
-                }
+                // Help, version and usage errors carry the notes too: the
+                // run that fails is the one that needs the new name. Hosts
+                // print them before `text`.
+                value["notes"] = notes(arguments).into();
                 value.to_string()
             }
         },

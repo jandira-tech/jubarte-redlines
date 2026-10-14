@@ -390,6 +390,16 @@ fn the_page_flags_are_refused_where_nothing_is_laid_out() {
             for format in ["docx", "md"] {
                 for explicit_format in [false, true] {
                     if explicit_format && command == "compare" {
+                        // compare has no -t: -o's extension picks the format,
+                        // so the explicit row is a usage error, not a skip.
+                        let result = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+                            .args([command, flag, "-t", format])
+                            .args([&old, &new])
+                            .output()
+                            .unwrap();
+                        assert_eq!(result.status.code(), Some(2), "{command} -t {format}");
+                        let stderr = String::from_utf8_lossy(&result.stderr);
+                        assert!(stderr.contains("unexpected argument '-t'"), "{stderr}");
                         continue;
                     }
                     let output = dir.path().join(format!("output.{format}"));

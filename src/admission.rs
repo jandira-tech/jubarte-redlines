@@ -229,6 +229,19 @@ pub fn sniff(bytes: &[u8]) -> Result<(), AdmissionError> {
     Ok(())
 }
 
+/// [`sniff`], and a Word input's ZIP signature: what a file must be before
+/// it is read as a `.docx`. The CLI runs it on every Word input, so a file
+/// that is not a package reads the same whichever task met it.
+///
+/// # Errors
+///
+/// An [`AdmissionError`] naming what the file is instead (`INVALID_PACKAGE`
+/// for no end-of-central-directory record).
+pub fn sniff_package(bytes: &[u8]) -> Result<(), AdmissionError> {
+    sniff(bytes)?;
+    declared_entry_count(bytes).map(|_| ())
+}
+
 /// A refused package: the kind and what exactly was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmissionError {

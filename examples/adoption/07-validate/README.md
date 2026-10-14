@@ -32,7 +32,7 @@ jubarte validate broken_b_dangling_rid.docx --repair repaired_broken_b_dangling_
 
 ## Tool versions used here
 
-- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`)
+- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`) for the first run; its findings were regenerated on 2026-10-12 with jubarte 0.12.0 (main), which prints short ids (`r12`, `c3`, `p4`) and the `ref`/`paragraph` fields
 - soffice: LibreOffice 26.8.0.3
 - python-docx 1.2.0 on Python 3.14.7
 - pdfinfo/pdftotext: poppler 26.09.0 (soffice output inspection only)

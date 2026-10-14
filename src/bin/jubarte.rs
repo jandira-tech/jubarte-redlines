@@ -109,7 +109,7 @@ fn run_scrub(
     options: &jubarte::scrub::ScrubOptions,
 ) -> Result<(), ConvertFailure> {
     check_output(out)?;
-    let bytes = read_document(file)?;
+    let bytes = read_word(file)?;
     let scrubbed =
         jubarte::scrub::scrub(&bytes, options).map_err(|e| format!("scrub failed: {e}"))?;
     write_output(out, Produced::Docx(&scrubbed))
@@ -376,7 +376,7 @@ fn run_resolution(
             .normalized()
             .map_err(|e| (ExitCode::from(2), e.to_string()))?;
         check_output(out).map_err(failed)?;
-        let bytes = read_document(file).map_err(failed)?;
+        let bytes = read_word(file).map_err(failed)?;
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
             ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
                 (ExitCode::from(2), e.to_string())
@@ -396,7 +396,7 @@ fn run_resolution(
 }
 
 fn run_changes(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = read_document(file)?;
+    let bytes = read_word(file)?;
     let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
     if !json {
         outln!(
@@ -412,7 +412,7 @@ fn run_changes(file: &Path, json: bool) -> Result<(), String> {
 }
 
 fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> Result<(), String> {
-    let bytes = read_document(file)?;
+    let bytes = read_word(file)?;
     let comments = jubarte::comments::list_comments(&bytes).map_err(|e| e.to_string())?;
     let comments = jubarte::comments::select_comments(comments, author, latest);
     if !json {
@@ -527,7 +527,7 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     let dir = output.parent().map(Path::to_path_buf).unwrap_or_default();
     let bytes = match job.bytes {
         Some(bytes) => bytes.to_vec(),
-        None => read_document(job.file)?,
+        None => read_word(job.file)?,
     };
     let rendered = jubarte::convert::render(
         &bytes,
@@ -677,8 +677,8 @@ struct DiffRenderJob<'a> {
 
 /// Compare two documents page by page; `Ok(true)` when any page differs.
 fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
-    let a = read_document(job.a)?;
-    let b = read_document(job.b)?;
+    let a = read_word(job.a)?;
+    let b = read_word(job.b)?;
     let options = jubarte::convert::DiffOptions {
         dpi: job.dpi,
         overlay: job.overlay && job.out_dir.is_some(),
@@ -773,7 +773,7 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
 
 /// `read --tables`: each body table as a grid.
 fn run_read_tables(file: &Path) -> Result<(), String> {
-    let bytes = read_document(file)?;
+    let bytes = read_word(file)?;
     let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
     write_stdout(jubarte::inspect::tables_text(&tables))
 }
@@ -807,10 +807,10 @@ fn run_text(
             render: &render,
         };
         check_output(&out)?;
-        let bytes = read_document(file)?;
+        let bytes = read_word(file)?;
         return write_output(&out, Produced::Docx(&bytes));
     }
-    let bytes = read_document(file)?;
+    let bytes = read_word(file)?;
     if args.json {
         let snapshot = jubarte::markdown::read_snapshot(
             &bytes,
@@ -1005,22 +1005,7 @@ fn run_edit(
         let mut starts = serde_json::Map::new();
         for (name, rendered) in &renders {
             pages.insert((*name).into(), rendered.report.page_count.into());
-            let firsts: Vec<serde_json::Value> = rendered
-                .report
-                .pages
-                .iter()
-                .map(|p| {
-                    p.text
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .chars()
-                        .take(60)
-                        .collect::<String>()
-                        .into()
-                })
-                .collect();
-            starts.insert((*name).into(), firsts.into());
+            starts.insert((*name).into(), rendered.report.page_starts().into());
         }
         let render_line = serde_json::json!({
             "ev": "render",
@@ -1288,7 +1273,7 @@ struct EditFlags<'a> {
 }
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
-    let source = read_document(flags.file).map_err(|m| (1u8, m))?;
+    let source = read_word(flags.file).map_err(|m| (1u8, m))?;
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
@@ -1696,7 +1681,10 @@ impl Input {
     fn new(path: &Path, format: Format, bytes: Vec<u8>) -> Result<Self, String> {
         let markdown = match format {
             Format::Md => Some(markdown_text(path, bytes.clone())?),
-            Format::Docx => None,
+            Format::Docx => {
+                admit_word(path, &bytes)?;
+                None
+            }
             Format::Pdf | Format::Png | Format::Json => {
                 return Err(format!(
                     "{}: PDF, PNG and JSON are not inputs",
@@ -1720,7 +1708,7 @@ impl Input {
 /// the bindings run too).
 fn read_document(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    jubarte::admission::sniff(&bytes).map_err(|refused| {
+    if let Some(refused) = jubarte::cli::refused_input(path, &bytes, false) {
         // Only a .doc that converts gets the hint; an encrypted document
         // or another OLE file would be sent to a command that fails.
         let hint = if jubarte::legacy_doc::read(&bytes).is_ok() {
@@ -1732,14 +1720,22 @@ fn read_document(path: &Path) -> Result<Vec<u8>, String> {
         } else {
             String::new()
         };
-        format!(
-            "{}: {} is {}{hint}",
-            refused.code(),
-            path.display(),
-            refused.message
-        )
-    })?;
+        return Err(format!("{refused}{hint}"));
+    }
     Ok(bytes)
+}
+
+/// [`read_document`] for an input that must be Word: a file that is not a
+/// ZIP package is refused by name (`admission::sniff_package`).
+fn read_word(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = read_document(path)?;
+    admit_word(path, &bytes)?;
+    Ok(bytes)
+}
+
+/// `CODE: FILE is …` when `bytes`, read from `path`, are no Word package.
+fn admit_word(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    jubarte::cli::refused_input(path, bytes, true).map_or(Ok(()), Err)
 }
 
 /// `{what} failed: CODE: …` for an admission refusal, whatever wrapped it
@@ -1938,16 +1934,12 @@ fn paginated(
     track_changes: TrackChanges,
     revisions: jubarte::convert::RevisionStyle,
 ) -> String {
-    match jubarte::markdown::page_texts(docx, track_changes.into(), revisions) {
-        Ok(pages) => {
-            let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
-            jubarte::markdown::paginate(markdown, &pages)
-        }
-        Err(e) => {
-            eprintln!("warning: no page markers: {e}");
-            markdown.to_string()
-        }
+    let (text, warning) =
+        jubarte::markdown::with_page_markers(docx, markdown, track_changes.into(), revisions);
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
     }
+    text
 }
 
 fn run_convert_any(
@@ -1972,6 +1964,9 @@ fn run_convert_any(
     } else {
         Format::of_input(markdown.from, job.file, &bytes)
     };
+    if from == Format::Docx && !legacy {
+        admit_word(job.file, &bytes)?;
+    }
     let to = job
         .to
         .or_else(|| job.output.and_then(Format::of_path))
@@ -2354,16 +2349,15 @@ fn cli_main() -> ExitCode {
             eprintln!("{}", jubarte::cli::removed_error(old, now));
             std::process::exit(2);
         }
-        // `diff-render --help` still says the name is retired.
-        if !error.use_stderr() {
-            for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
-                eprintln!("{}", jubarte::cli::retired_note(old, now));
-            }
+        // Help, version and usage errors say a name is retired too: the run
+        // that fails is the one that needs the new name.
+        for note in jubarte::cli::notes(&argv) {
+            eprintln!("{note}");
         }
         error.exit()
     });
-    for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
-        eprintln!("{}", jubarte::cli::retired_note(old, now));
+    for note in jubarte::cli::notes(&argv) {
+        eprintln!("{note}");
     }
     let quiet = cli.quiet;
     match cli.command {
@@ -2768,9 +2762,9 @@ fn run_append(
     check_output(out)?;
     let mut paths = files.iter();
     let first = paths.next().ok_or("append needs two documents")?;
-    let mut joined = read_document(first)?;
+    let mut joined = read_word(first)?;
     for path in paths {
-        let next = read_document(path)?;
+        let next = read_word(path)?;
         let appended = jubarte::append::append_documents(&joined, &next, options)
             .map_err(|e| format!("appending {}: {e}", path.display()))?;
         for warning in &appended.warnings {

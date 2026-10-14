@@ -281,6 +281,14 @@ fn wrote_line(
     Ok(jubarte::cli::wrote_line(&path, format, size, pages))
 }
 
+/// The error line for an input no task reads, as the binary prints it:
+/// `LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
+/// a.docx is not a ZIP file: …`; `None` when the bytes may be read.
+#[pyfunction]
+fn refused_input(path: std::path::PathBuf, data: &[u8], word: bool) -> Option<String> {
+    jubarte::cli::refused_input(&path, data, word)
+}
+
 /// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
 /// `pattern` naming them all.
 #[pyfunction]
@@ -1277,6 +1285,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_json, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_line, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_png_line, m)?)?;
+    m.add_function(wrap_pyfunction!(refused_input, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
