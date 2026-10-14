@@ -3,7 +3,7 @@ source: received.docx
 sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: reject-all                   # 9 revisions by AC shown as rejected; file unchanged
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
+revisions: 9                       # 9 marks shown as 9 changes: 5 insertions, 4 deletions
 comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
@@ -36,22 +36,22 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 <!-- p2 -->
 ## 1. Services
 
-<!-- p3 rev r0 @AC; r1+2 @AC -->
+<!-- p3 rev r0 @AC; r1 @AC; r2 @AC -->
 Consultant will deliver the services in each Statement of Work, including  route-cost reports and a weekly review call.
 
 <!-- p4 -->
 ## 2. Fees
 
-<!-- p5 rev r3+4 @AC -->
+<!-- p5 rev r3 @AC; r4 @AC -->
 Client shall pay each invoice within thirty days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c5 @AC: Is one percent the statutory cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}
 
 <!-- p6 -->
 ## 3. Term
 
-<!-- p7 rev r7+8 @AC -->
+<!-- p7 rev r7 @AC; r8 @AC -->
 This Agreement begins on March 1, 2026 and continues until either party ends it with ninety days written notice.
 
-<!-- t0 center 3x3, cells p8-p16 by row, header row repeats, rev r9+10 @AC in p12 -->
+<!-- t0 center 3x3, cells p8-p16 by row, header row repeats, rev r9 @AC in p12; r10 @AC in p12 -->
 |Deliverable|Due|Owner|
 |-|-|-|
 |Route-cost report|Day 10|Consultant|

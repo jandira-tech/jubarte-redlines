@@ -4,7 +4,7 @@ Back to back: {++one++}{>>Ana Lima (2026-10-01T00:05:00Z)<<}{~~three~>two~~}{>>C
 
 {++Start of paragraph ++}{>>Ana Lima (2026-10-01T00:25:00Z)<<}middle{-- end of paragraph--}{>>Bo Chen (2026-10-01T00:30:00Z)<<}
 
-Replaced by two people: {~~old~>new~~}{>>Ana Lima (2026-10-01T00:35:00Z)<<}{>>Bo Chen (2026-10-01T00:40:00Z)<<}.
+Replaced by two people: {--old--}{>>Ana Lima (2026-10-01T00:35:00Z)<<}{++new++}{>>Bo Chen (2026-10-01T00:40:00Z)<<}.
 
 Deletion across paragraphs: alpha{-- beta
 
