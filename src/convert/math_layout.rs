@@ -526,13 +526,17 @@ fn collect_text(dom: &Dom, node: NodeId, out: &mut String) {
 }
 
 fn text_run(font: &MathFont, text: &str, upright: bool, size: f32) -> MathBox {
+    let mapped: String = text.chars().map(super::math_italic).collect();
+    // The collector's rule: the whole run stays ASCII when the face
+    // lacks any letter it would map to.
+    let show_mapped = !upright && super::math_alphanumerics_cover(text, &mapped);
     let mut out = MathBox::default();
     let mut x = 0.0;
-    for ch in text.chars() {
-        let shown = if upright { ch } else { super::math_italic(ch) };
+    for (shown, orig) in mapped.chars().zip(text.chars()) {
+        let shown = if show_mapped { shown } else { orig };
         let gid = font
             .glyph_id(shown)
-            .or_else(|| font.glyph_id(ch))
+            .or_else(|| font.glyph_id(orig))
             .unwrap_or(0);
         let adv = font.scale(font.glyph(gid).advance, size);
         out.glyphs.push(MathGlyph {

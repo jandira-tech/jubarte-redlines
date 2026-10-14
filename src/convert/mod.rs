@@ -15661,14 +15661,7 @@ fn collect_runs_rec(
                     // The whole run maps only if the face draws every
                     // letter it maps to; else it stays ASCII italic.
                     let mapped: String = shown.chars().map(math_italic).collect();
-                    let drawn = MATH_ALPHANUMERICS.with(|face| {
-                        let face = face.borrow();
-                        mapped
-                            .chars()
-                            .zip(shown.chars())
-                            .all(|(to, from)| to == from || face.draws(to))
-                    });
-                    if drawn {
+                    if math_alphanumerics_cover(&shown, &mapped) {
                         shown = mapped;
                     } else {
                         style.italic = true;
@@ -15879,6 +15872,18 @@ fn math_text_style(style: &mut RunStyle) {
     style.family_ea = None;
     style.family_cs = None;
     style.italic = false;
+}
+
+/// Whether `mapped` is covered by this conversion's math face. A miss
+/// keeps the whole run in ASCII.
+pub(crate) fn math_alphanumerics_cover(from: &str, mapped: &str) -> bool {
+    MATH_ALPHANUMERICS.with(|face| {
+        let face = face.borrow();
+        mapped
+            .chars()
+            .zip(from.chars())
+            .all(|(to, from_ch)| to == from_ch || face.draws(to))
+    })
 }
 
 /// The mathematical italic form of a Latin or Greek lowercase letter
@@ -49514,12 +49519,14 @@ mod coverage_round_three_tests {
         let bar = runs(
             r#"<m:oMath><m:f><m:fPr><m:type m:val="bar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#,
         );
-        assert_eq!(text(&bar), "\u{1D45B}\u{1D451}end");
+        // only([]) : the face draws no mathematical italics, so n and d
+        // stay ASCII inside the box.
+        assert_eq!(text(&bar), "ndend");
         assert_eq!(bar.len(), 2, "a bar fraction is one box, then end");
         let frac = bar[0].math.as_ref().expect("bar fraction is a box");
         assert_eq!(frac.rules.len(), 1, "the bar is a rule");
         let glyph_text: String = frac.glyphs.iter().map(|g| g.text.as_str()).collect();
-        assert_eq!(glyph_text, "\u{1D45B}\u{1D451}");
+        assert_eq!(glyph_text, "nd");
         assert!(frac.glyphs[0].y > frac.rules[0].y_top);
         assert!(bar[0].style.vert == VertAlign::Baseline);
         assert_eq!(bar[1].text, "end");
@@ -50329,17 +50336,37 @@ mod coverage_round_three_tests {
                 let collected = runs(&format!(
                     "<w:{tag}><m:oMath><m:sSup><m:e><m:r><m:t>a</m:t></m:r></m:e><m:sup><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e><m:e><m:r><m:t>y</m:t></m:r></m:e></m:d></m:sup></m:sSup></m:oMath></w:{tag}><w:r><w:t>Z</w:t></w:r>"
                 ));
+                // The face draws no mathematical italics, so the letters
+                // stay ASCII. The delimiter is one box, raised with the
+                // superscript, and the run itself stays on the baseline.
                 assert_eq!(text(&collected), "a(x|y)Z");
-                assert_eq!(collected.len(), 7);
+                assert_eq!(collected.len(), 3);
+                assert_eq!(collected[0].text, "a");
                 assert!(collected[0].style.vert == VertAlign::Baseline);
+                assert!(collected[0].rev);
+                let sup = &collected[1];
+                assert_eq!(sup.text, "(x|y)");
+                assert!(sup.rev);
+                assert!(sup.style.vert == VertAlign::Baseline);
+                let math = sup.math.as_ref().expect("delimiter box");
+                let x = math
+                    .glyphs
+                    .iter()
+                    .find(|glyph| glyph.text == "x")
+                    .expect("x");
                 assert!(
-                    collected[1..6]
-                        .iter()
-                        .all(|r| r.style.vert == VertAlign::Super)
+                    (x.y - 11.0 * 0.35).abs() < 0.05,
+                    "x sits at +0.35 em, got {}",
+                    x.y
                 );
-                assert!(collected[..6].iter().all(|r| r.rev));
-                assert!(!collected[6].rev);
-                assert!(collected[6].style.vert == VertAlign::Baseline);
+                assert!(
+                    (x.size - 11.0 * 0.65).abs() < 0.05,
+                    "x is 0.65 em, got {}",
+                    x.size
+                );
+                assert_eq!(collected[2].text, "Z");
+                assert!(!collected[2].rev);
+                assert!(collected[2].style.vert == VertAlign::Baseline);
             }
             assert_eq!(
                 text(&runs(
