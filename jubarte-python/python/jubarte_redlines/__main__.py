@@ -53,11 +53,6 @@ class CliError(Exception):
     """A user-facing failure; the message is printed as ``error: ...``."""
 
 
-# The first bytes of an OLE compound file: a Word 97-2003 .doc, or a
-# password-encrypted document of any Word version.
-OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-
-
 def _os(exc: OSError) -> str:
     """An I/O error as Rust words it: ``No such file or directory (os error 2)``."""
     return f"{exc.strerror} (os error {exc.errno})" if exc.errno is not None and exc.strerror else str(exc)
@@ -68,10 +63,10 @@ def _read(path: Path) -> Document:
         doc = Document.read(path)
     except OSError as exc:
         raise CliError(f"reading {path}: {_os(exc)}") from exc
-    if doc.to_bytes().startswith(OLE_MAGIC):
-        raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
-    if not doc.to_bytes().startswith(b"PK\x03\x04"):
-        raise CliError(f"reading {path}: invalid DOCX (expected a ZIP package)")
+    from . import _native
+    refused = _native.refused_input(path, doc.to_bytes(), True)
+    if refused is not None:
+        raise CliError(refused)
     return doc
 
 
@@ -81,12 +76,12 @@ def _read_side(path: Path, force_kind: str | None) -> bytes | str:
         data = path.read_bytes()
     except OSError as exc:
         raise CliError(f"reading {path}: {_os(exc)}") from exc
-    if data.startswith(OLE_MAGIC):
-        raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
+    from . import _native
     kind = force_kind or ("docx" if data.startswith(b"PK\x03\x04") else "md")
+    refused = _native.refused_input(path, data, kind == "docx")
+    if refused is not None:
+        raise CliError(refused)
     if kind == "docx":
-        if not data.startswith(b"PK\x03\x04"):
-            raise CliError(f"reading {path}: invalid DOCX (expected a ZIP package)")
         return data
     try:
         return data.decode("utf-8-sig")

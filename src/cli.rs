@@ -1669,6 +1669,27 @@ pub fn output_format(
     }
 }
 
+/// The error line for an input no task reads, `CODE: FILE is …`: an OLE
+/// (`.doc`, encrypted) or RTF file, or, when it must be `word`, a file that
+/// is no ZIP package. `None` when the bytes may be read. Every host prints
+/// this line, so a refusal reads the same on each.
+#[must_use]
+pub fn refused_input(path: &Path, bytes: &[u8], word: bool) -> Option<String> {
+    let checked = if word {
+        crate::admission::sniff_package(bytes)
+    } else {
+        crate::admission::sniff(bytes)
+    };
+    checked.err().map(|refused| {
+        format!(
+            "{}: {} is {}",
+            refused.code(),
+            path.display(),
+            refused.message
+        )
+    })
+}
+
 /// The line a writing task prints on stderr for the file it wrote:
 /// `wrote r.pdf (pdf, 48213 bytes, 3 pages)`; `pages` is a PDF's.
 pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize>) -> String {

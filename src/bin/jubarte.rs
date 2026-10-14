@@ -1723,7 +1723,7 @@ impl Input {
 /// the bindings run too).
 fn read_document(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    jubarte::admission::sniff(&bytes).map_err(|refused| {
+    if let Some(refused) = jubarte::cli::refused_input(path, &bytes, false) {
         // Only a .doc that converts gets the hint; an encrypted document
         // or another OLE file would be sent to a command that fails.
         let hint = if jubarte::legacy_doc::read(&bytes).is_ok() {
@@ -1735,13 +1735,8 @@ fn read_document(path: &Path) -> Result<Vec<u8>, String> {
         } else {
             String::new()
         };
-        format!(
-            "{}: {} is {}{hint}",
-            refused.code(),
-            path.display(),
-            refused.message
-        )
-    })?;
+        return Err(format!("{refused}{hint}"));
+    }
     Ok(bytes)
 }
 
@@ -1755,14 +1750,7 @@ fn read_word(path: &Path) -> Result<Vec<u8>, String> {
 
 /// `CODE: FILE is …` when `bytes`, read from `path`, are no Word package.
 fn admit_word(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    jubarte::admission::sniff_package(bytes).map_err(|refused| {
-        format!(
-            "{}: {} is {}",
-            refused.code(),
-            path.display(),
-            refused.message
-        )
-    })
+    jubarte::cli::refused_input(path, bytes, true).map_or(Ok(()), Err)
 }
 
 /// `{what} failed: CODE: …` for an admission refusal, whatever wrapped it
