@@ -271,6 +271,91 @@ test("read (alias text), inspect, capabilities and convert", () => {
   assert.match(run("convert", tracked, "--revisions", "custom").err, /--revision-palette/);
 });
 
+test("an unreadable input reads as the binary says, on every task (#454)", () => {
+  fs.writeFileSync(path.join(tmp, "fake.docx"), "hello, not a zip");
+  fs.copyFileSync(untracked, path.join(tmp, "good.docx"));
+  const expected = "error: INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record\n";
+  for (const args of [
+    ["read", "fake.docx"], ["read", "fake.docx", "--json"], ["read", "fake.docx", "--tables"],
+    ["changes", "fake.docx"], ["accept", "fake.docx", "-o", "a.docx"], ["reject", "fake.docx", "-o", "a.docx"],
+    ["convert", "fake.docx", "-o", "a.pdf"], ["compare", "fake.docx", "good.docx"],
+    ["compare", "good.docx", "fake.docx", "-o", "c.docx"], ["diff", "fake.docx", "good.docx"],
+    ["edit", "fake.docx", "-p", "p0", "--delete"], ["add", "fake.docx", "-p", "p0", "--content", "x"],
+  ]) {
+    const r = run(...args);
+    assert.equal(r.code, 1, args.join(" "));
+    assert.equal(r.err, expected, args.join(" "));
+    assert.equal(r.out, "", args.join(" "));
+  }
+  // A Word 97-2003 file names its code first, as the binary does.
+  fs.writeFileSync(path.join(tmp, "old.docx"), Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(512)]));
+  assert.match(run("read", "old.docx").err, /^error: LEGACY_DOC: old\.docx is /);
+});
+
+test("an invalid plan prints the binary's one line and no report (#454)", () => {
+  const bad = path.join(tmp, "bad-plan.json");
+  fs.writeFileSync(bad, '{"edits": 3}');
+  const r = run("edit", untracked, "--plan", bad, "--out-dir", path.join(tmp, "never"));
+  assert.equal(r.code, 3, r.err);
+  assert.equal(r.out, "");
+  assert.match(r.err, /^error: INVALID_PLAN: unknown field `edits`/);
+  assert.ok(!fs.existsSync(path.join(tmp, "never")));
+});
+
+test("Word to Word convert resolves changes and refreshes fields, as the binary does (#454)", () => {
+  const accepted = path.join(tmp, "conv-accepted.docx");
+  const r = run("convert", tracked, "-o", accepted, "--track-changes", "accept");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^wrote .*conv-accepted\.docx \(docx, \d+ bytes\)\n$/);
+  assert.equal(run("changes", accepted).out, "0 change(s)\n");
+  const rejected = path.join(tmp, "conv-rejected.docx");
+  assert.equal(run("convert", tracked, "-o", rejected, "--track-changes", "reject").code, 0);
+  assert.equal(run("changes", rejected).out, "0 change(s)\n");
+  const updated = path.join(tmp, "conv-fields.docx");
+  const fields = run("convert", untracked, "-o", updated, "--update-fields");
+  assert.equal(fields.code, 0, fields.err);
+  assert.match(fields.err, /^\d+ field\(s\) written; \d+ page\(s\)\nwrote /);
+  const plain = run("convert", untracked, "-o", path.join(tmp, "conv-plain.docx"));
+  assert.equal(plain.code, 1);
+  assert.match(plain.err, /is already Word: give --track-changes accept or reject, --update-fields, or another --to\n$/);
+});
+
+test("convert --to md writes the paged Markdown, as the binary does (#454)", () => {
+  const out = path.join(tmp, "conv-view.md");
+  const r = run("convert", tracked, "-o", out, "--track-changes", "accept");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^wrote .*conv-view\.md \(md, \d+ bytes\)\n$/);
+  assert.match(fs.readFileSync(out, "utf8"), /^<!-- page 1 of \d+ -->\n/);
+  const bare = path.join(tmp, "conv-bare.txt");
+  assert.equal(run("convert", untracked, "-o", bare, "--no-page-markers").code, 0);
+  assert.doesNotMatch(fs.readFileSync(bare, "utf8"), /<!-- page /);
+});
+
+test("edit --pdf writes the PDF beside the document, as the binary does (#454)", () => {
+  const out = path.join(tmp, "edit-pdf.docx");
+  const r = run("edit", untracked, "-p", "p0", "--content", "Z", "-o", out, "--pdf", "--revisions", "word", "--dpi", "50");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /wrote .*edit-pdf\.pdf \(pdf, \d+ bytes, \d+ pages?\)\n/);
+  assert.ok(fs.readFileSync(path.join(tmp, "edit-pdf.pdf")).subarray(0, 4).equals(Buffer.from("%PDF")));
+  const dir = path.join(tmp, "edit-pdf-bundle");
+  assert.equal(run("edit", untracked, "-p", "p0", "--content", "Z", "--out-dir", dir, "--pdf").code, 0);
+  for (const name of ["redline.pdf", "clean.pdf"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
+});
+
+test("capabilities claims only what this CLI does (#454, #447, #453)", () => {
+  const manifest = JSON.parse(run("capabilities", "--json").out);
+  for (const op of ["append", "scrub", "validate", "repair", "audit", "comments", "diff_render", "page_ranges", "png"]) {
+    assert.equal(manifest.operations[op], false, op);
+  }
+  for (const op of ["compare", "accept_revisions", "edit", "markdown", "markdown_to_docx", "patch", "pdf", "fields"]) {
+    assert.equal(manifest.operations[op], true, op);
+  }
+  assert.deepEqual(Object.keys(manifest.formats).sort(), ["accept", "add", "compare", "convert", "diff", "edit", "read", "reject"]);
+  const summary = run("capabilities").out;
+  for (const op of ["append", "scrub", "validate", "audit"]) assert.match(summary, new RegExp(`\\n${op}: no\\n`), op);
+  assert.doesNotMatch(summary, /append \./);
+});
+
 test("convert --move-comments and --changed-only", () => {
   const pages = (r) => {
     assert.equal(r.code, 0, r.err);

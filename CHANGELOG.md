@@ -284,6 +284,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **The npm CLI does what the binary does where it said it could not.**
+  `convert` turns Word into Word (`--track-changes accept|reject`,
+  `--update-fields`, `--report`) and into its paged Markdown (`--to md`,
+  `-o x.md`/`.txt`, `--no-page-markers`); `edit --pdf` writes the PDF beside
+  the document (and `redline.pdf`/`clean.pdf` with a `render` report line in
+  a bundle), taking `--revisions` and `--dpi`. An unreadable input prints
+  the binary's `CODE: FILE is …` line (`INVALID_PACKAGE`, `LEGACY_DOC`); a
+  plan that does not read prints only `error: INVALID_PLAN: …` (exit 3, no
+  report); a refusal's summary keeps `"operation": null`; and
+  `capabilities` answers no for what the CLI refuses (append, scrub,
+  validate, repair, audit, comments, visual diffs, page ranges, PNG) and
+  lists formats only for its own tasks.
+- **`-q` says what it hides**: status lines (`wrote`, an edit's summary and
+  view), not what a reading task prints.
+
 - `edit` under `existing_revisions: "keep"`, and a plan rewriting what a
   comment covers (`c0.text`), dropped a `format_run`, `insert_footnote` or
   `page_setup` from the redline while the clean copy had it and the report

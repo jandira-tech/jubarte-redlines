@@ -29,9 +29,12 @@ do; `--json` the manifest) are also available. The
 command set, messages and exit codes match `uvx jubarte-redlines` (Python)
 and the `jubarte` binary (Rust): 0 success, 1 error, 2 usage, 3 edit plan
 refused. `-o` writes what its extension names (`.docx`, the `.md` view,
-the `.json` snapshot or a `.pdf`), as the binary does. PNG pages,
-`--pages`, `comments`, `validate`, `append`, `scrub` and `visual-diff`
-need the Python or Rust build.
+the `.json` snapshot or a `.pdf`), as the binary does. `convert` also
+turns Word into Word (`--track-changes accept|reject`, `--update-fields`)
+and into its paged Markdown (`--to md`), and `edit --pdf` draws the
+result beside it. PNG pages, `--pages`, Markdown-to-Markdown `convert`,
+`comments`, `validate`, `append`, `scrub` and `visual-diff` need the
+Python or Rust build.
 
 Inputs are `.docx`: save a Word 97-2003 `.doc` as `.docx` first.
 
