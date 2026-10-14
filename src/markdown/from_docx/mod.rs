@@ -2859,10 +2859,25 @@ fn math_inner(element: &Element, depth: usize, name: bool) -> String {
         }
         "eqArr" => {
             // Word aligns an array's lines at each `&` in their text and
-            // draws none: `aligned`'s `&` is that alignment point.
+            // draws none: `aligned`'s `&` is that alignment point. Only the
+            // line's own runs hold one; a matrix inside keeps its `\&`.
+            let own_runs = |e: &Element| {
+                e.is("r") || (e.is("ins") || e.is("del")) && e.elements().all(|r| r.is("r"))
+            };
             let rows: Vec<String> = element
                 .children_named("e")
-                .map(|row| inner(row).replace("\\&", "&"))
+                .map(|row| {
+                    row.elements()
+                        .map(|e| {
+                            let latex = inner(e);
+                            if own_runs(e) {
+                                latex.replace("\\&", "&")
+                            } else {
+                                latex
+                            }
+                        })
+                        .collect()
+                })
                 .collect();
             format!("\\begin{{aligned}}{}\\end{{aligned}}", rows.join(" \\\\ "))
         }
@@ -3481,6 +3496,20 @@ mod tests {
             (
                 format!("<m:eqArr>{}{}</m:eqArr>", e(&mr("a&amp;=1")), e(&mr("bc&amp;=2"))),
                 r"\begin{aligned}a&=1 \\ bc&=2\end{aligned}",
+            ),
+            // A matrix inside keeps its literal `\&`.
+            (
+                format!(
+                    "<m:eqArr>{}{}</m:eqArr>",
+                    e(&format!(
+                        "<m:m><m:mr>{}{}</m:mr></m:m>{}",
+                        e(&mr("R&amp;D")),
+                        e(&mr("x")),
+                        mr("&amp;=1")
+                    )),
+                    e(&mr("q&amp;=2"))
+                ),
+                r"\begin{aligned}\begin{matrix}R\&D & x\end{matrix}&=1 \\ q&=2\end{aligned}",
             ),
             (
                 format!(

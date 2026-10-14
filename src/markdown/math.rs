@@ -1330,8 +1330,10 @@ impl Parser {
     /// `\begin` read: a matrix or an equation array up to its `\end`.
     fn environment(&mut self) -> Node {
         let name = self.raw_argument();
-        // `array`'s column spec (`{cc}`) aligns nothing Word keeps.
-        if name == "array" {
+        // `array`'s column spec (`{cc}`) aligns nothing Word keeps. Without
+        // one, the first cell starts here.
+        self.skip_spaces();
+        if name == "array" && self.peek() == Some(&Token::Open) {
             let _ = self.raw_argument();
         }
         let matrix = name.ends_with("matrix") || name == "array";
@@ -2062,6 +2064,11 @@ mod tests {
     fn an_array_is_a_matrix_without_its_column_spec() {
         assert_eq!(
             shape(r"\begin{array}{cc} a & b \\ c & d \end{array}"),
+            shape(r"\begin{matrix} a & b \\ c & d \end{matrix}")
+        );
+        // Without a spec, the first cell is not taken for one.
+        assert_eq!(
+            shape(r"\begin{array} a & b \\ c & d\end{array}"),
             shape(r"\begin{matrix} a & b \\ c & d \end{matrix}")
         );
     }
