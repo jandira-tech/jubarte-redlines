@@ -1799,3 +1799,37 @@ fn scholar_keeps_what_the_front_matter_says() {
         scholar("---\nheaders:\n  default: {id: header1, text: \"{PAGE}\", right}\n---\n\nText.\n");
     assert!(!document_xml(&docx).contains("<w:footerReference"));
 }
+
+/// Only a header or footer story that holds `{PAGE}` is the page number
+/// (sourcery review of #472): the words elsewhere in the front matter are
+/// not, and an empty `headers:` block is no header for page 1. A reference
+/// document's own headers and footers win, as the front matter's do.
+#[test]
+fn scholar_numbers_the_pages_unless_a_story_holds_the_number() {
+    let numbered =
+        |docx: &[u8]| part_string(docx, "word/footer1.xml").is_some_and(|f| f.contains(" PAGE "));
+    let docx = scholar("---\ntitle: \"{PAGE} turners\"\n---\n\nText.\n");
+    assert!(numbered(&docx));
+    assert!(document_xml(&docx).contains("<w:titlePg/>"));
+    let docx = scholar("---\nheaders:\n---\n\nText.\n");
+    assert!(numbered(&docx));
+    assert!(
+        document_xml(&docx).contains("<w:titlePg/>"),
+        "an empty headers: block"
+    );
+    let reference =
+        write("---\nfooters:\n  default: {id: footer1, text: Template footer}\n---\n\nX\n");
+    let docx = write_with(
+        "Text.\n",
+        &DocxOptions {
+            scholar: true,
+            reference: Some(&reference),
+            ..DocxOptions::default()
+        },
+    );
+    let footers: String = (1..4)
+        .filter_map(|n| part_string(&docx, &format!("word/footer{n}.xml")))
+        .collect();
+    assert!(footers.contains("Template footer"), "{footers}");
+    assert!(!footers.contains(" PAGE "), "{footers}");
+}

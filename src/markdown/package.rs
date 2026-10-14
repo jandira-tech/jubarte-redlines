@@ -261,6 +261,18 @@ pub(crate) fn styles_part(package: &mut PartFs, main: &str) -> String {
 }
 
 /// The part next to `main` named `name` (`word/` + `name`).
+/// Whether a reference document's body names headers or footers of its
+/// own, which the written document keeps.
+pub(super) fn has_stories(reference: &[u8]) -> bool {
+    let Ok(package) = PartFs::open(reference) else {
+        return false;
+    };
+    package
+        .main_document_part()
+        .and_then(|main| package.part_string(&main))
+        .is_some_and(|xml| xml.contains("<w:headerReference") || xml.contains("<w:footerReference"))
+}
+
 pub(super) fn sibling(main: &str, name: &str) -> String {
     match main.rsplit_once('/') {
         Some((dir, _)) => format!("{dir}/{name}"),

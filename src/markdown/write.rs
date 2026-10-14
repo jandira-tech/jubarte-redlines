@@ -101,7 +101,8 @@ pub fn markdown_to_docx(
 pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     let scholarly;
     let markdown = if options.scholar {
-        scholarly = scholar(markdown);
+        let stories = options.reference.is_some_and(super::package::has_stories);
+        scholarly = scholar(markdown, stories);
         scholarly.as_str()
     } else {
         markdown
@@ -148,25 +149,26 @@ const SCHOLAR_STYLES: [(&str, &str); 4] = [
 /// `markdown` with the front matter [`DocxOptions::scholar`] fills in: each
 /// style of [`SCHOLAR_STYLES`] its `styles:` legend does not name (`Normal`
 /// only when the legend names no default style of its own), and a footer
-/// with the page number, centered, from page 2 when neither its headers
-/// nor its footers hold one. With headers of its own, page 1 keeps them,
-/// so the number starts on page 1.
-fn scholar(markdown: &str) -> String {
+/// with the page number, centered, from page 2 when it has no footers and
+/// no header holds `{PAGE}`, and the reference document (`stories`) has
+/// no headers or footers of its own. With headers of its own, page 1 keeps
+/// them, so the number starts on page 1.
+fn scholar(markdown: &str, stories: bool) -> String {
     let (yaml, body) = split_front_matter(markdown).unwrap_or(("", markdown));
     let mut lines: Vec<String> = yaml.lines().map(str::to_string).collect();
     let mut named: Vec<String> = Vec::new();
     let mut styles_at = None;
+    // A block holds a story only with an entry under it; only a story's
+    // `{PAGE}` is the page number.
     let mut headers = false;
     let mut footers = false;
+    let mut page = false;
     let mut block = "";
     for (n, line) in lines.iter().enumerate() {
         if !line.starts_with(' ') {
             block = line.trim_end();
-            match block {
-                "styles:" => styles_at = Some(n),
-                "headers:" => headers = true,
-                "footers:" => footers = true,
-                _ => {}
+            if block == "styles:" {
+                styles_at = Some(n);
             }
             continue;
         }
@@ -174,9 +176,13 @@ fn scholar(markdown: &str) -> String {
         let Some((key, _)) = entry.split_once(": ") else {
             continue;
         };
-        if block == "styles:" {
-            named.push(key.trim_matches('"').to_string());
+        match block {
+            "styles:" => named.push(key.trim_matches('"').to_string()),
+            "headers:" => headers = true,
+            "footers:" => footers = true,
+            _ => {}
         }
+        page |= matches!(block, "headers:" | "footers:") && line.contains("{PAGE");
     }
     let own_default = named.iter().any(|key| {
         !key.bytes().all(|b| b == b'#') && !matches!(key.as_str(), "table" | "tables" | "changes")
@@ -203,7 +209,7 @@ fn scholar(markdown: &str) -> String {
         }
         None => {}
     }
-    if !footers && !yaml.contains("{PAGE") {
+    if !footers && !page && !stories {
         lines.push("footers:".to_string());
         if !headers {
             lines.push("  first: none".to_string());
