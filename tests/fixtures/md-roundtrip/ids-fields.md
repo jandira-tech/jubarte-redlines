@@ -7,7 +7,7 @@ authors:
   document_owner: Frea Haandrikman  # dc:creator
   SW: S Wheeler                    # 361 revisions, 2026-09-25T20:04:00Z
 body: p0-p196, 1 table, 2 pages    # pages from Word's cached layout
-page: A4 landscape, margins 0.5in, header/footer 0.49in; fmt r360 @SW
+page: A4 landscape, margins 0.5in, header/footer 0.492in; fmt r360 @SW
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   "#": Heading1, Calibri Light 16pt, before 12pt, keep-next

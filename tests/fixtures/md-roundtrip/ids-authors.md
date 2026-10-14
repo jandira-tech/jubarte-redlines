@@ -10,7 +10,7 @@ authors:
   CD: Carla Duarte                 # 1 revision, 2026-10-01T00:15:00Z
   DP: Dev Patel                    # 1 revision, 2026-10-01T00:20:00Z
 body: p0-p16, 0 tables, 1 page     # pages from layout
-page: A4 portrait, margins 0.79in, header/footer 0in
+page: A4 portrait, margins 0.7875in, header/footer 0in
 styles:
   Normal: Liberation Serif 12pt, left  # default; unannotated paragraphs use it
   "#": Heading1, Liberation Sans bold 18pt, before 12pt, after 6pt, keep-next, named Heading 1
