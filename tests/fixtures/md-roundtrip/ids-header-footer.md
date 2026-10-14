@@ -9,14 +9,15 @@ body: p0-p109, 0 tables, 11 pages  # pages from Word's cached layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Aptos 12pt, left         # default; unannotated paragraphs use it
+  ListParagraph: Times 11.5pt, after 6pt, line 1.1, named List Paragraph
 headers:
-  first: {id: header3, text: "{PAGE}"}  # page 1 only (different first page)
-  default: {id: header2, text: "{PAGE}"}
-  even: {id: header1, text: "{PAGE}"}
+  first: {id: header3, text: ["{PAGE}1{/}", "This is my first page header, page numbers at the right"]}  # page 1 only (different first page)
+  default: {id: header2, text: ["{PAGE}1{/}", "Odd page header, page numbers at the right"]}
+  even: {id: header1, text: ["{PAGE}2{/}", "Even page header, page numbers at the right"]}
 footers:
-  first: {id: footer3, text: "{PAGE}"}  # page 1 only (different first page)
-  default: {id: footer2, text: "{PAGE}"}
-  even: {id: footer1, text: "{PAGE}"}
+  first: {id: footer3, text: ["{PAGE}1{/}", "This Is my first page footer, page numbers at the left"]}  # page 1 only (different first page)
+  default: {id: footer2, text: ["{PAGE}1{/}", "Odd page footer, page numbers at the left"]}
+  even: {id: footer1, text: ["{PAGE}2{/}", "Even page footer, page numbers at the right"]}
 ---
 
 <!-- p0 -->

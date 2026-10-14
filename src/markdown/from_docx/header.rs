@@ -39,6 +39,9 @@ pub(crate) struct StoryFact {
     /// `header2` (the part `header2.xml`, first paragraph), `footer1`, `header2.p2`.
     pub id: String,
     pub text: String,
+    /// The paragraphs after it, to the last with text: `text` then prints
+    /// as a list (`text: [Page 1, Draft]`).
+    pub more: Vec<String>,
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
     pub active: bool,
@@ -56,7 +59,6 @@ pub(crate) struct SectionFact {
     pub sect_pr: Option<Element>,
     pub stories: Vec<StoryFact>,
     pub title_page: bool,
-    pub columns: usize,
 }
 
 pub(crate) struct CommentFact {
@@ -86,6 +88,8 @@ pub(crate) struct Facts<'a> {
     /// Resolved comment ids (`w15:done`), from `agent::Threads`.
     pub done: &'a HashSet<String>,
     pub owner: Owner,
+    /// `dc:title`, when the core properties give one.
+    pub title: Option<String>,
     pub paragraphs: usize,
     pub tables: usize,
     pub pages: usize,
@@ -99,7 +103,12 @@ pub(crate) struct Facts<'a> {
     pub default_style: Option<&'a str>,
     /// (level, style id) for every heading level used, lowest first.
     pub heading_styles: Vec<(usize, String)>,
+    /// Every other paragraph style the body uses, in first-use order.
+    pub other_styles: Vec<String>,
     pub table_styles: Vec<String>,
+    /// The tables differ in style: their lines name theirs, and the
+    /// legend lists them all as `tables:`.
+    pub tables_differ: bool,
     /// The body's sections in order; the first one is described in full.
     pub sections: Vec<SectionFact>,
     /// Tracked view: the changes (`rev`, `fmt`) of the notes no definition
@@ -246,6 +255,9 @@ pub(crate) fn render(f: &Facts) -> String {
         None,
     );
     kv(&mut out, &format!("sha256: {}", f.sha256), None);
+    if let Some(title) = &f.title {
+        kv(&mut out, &format!("title: {}", scalar(title, false)), None);
+    }
     let handle_list: Vec<String> = f
         .handles
         .order
@@ -342,11 +354,12 @@ pub(crate) fn render(f: &Facts) -> String {
                 }
             })
             .collect();
-        list.extend(
-            unanchored
-                .iter()
-                .map(|c| format!("c{} (unanchored: in no story, Word shows no balloon)", c.id)),
-        );
+        list.extend(unanchored.iter().map(|c| {
+            format!(
+                "c{} (unanchored: not in the body or a note, Word shows no balloon)",
+                c.id
+            )
+        }));
         kv(
             &mut out,
             &key,
@@ -505,6 +518,18 @@ fn page_setup(sect: &Element) -> String {
         }
         if let Some(g) = twips(m, "gutter").filter(|&g| g > 0.0) {
             out.push_str(&format!(", gutter {}", inch(g)));
+        }
+    }
+    // Text columns, and their gap when it is not Word's 0.5in.
+    if let Some(cols) = sect.child("cols")
+        && let Some(num) = cols
+            .attr("num")
+            .and_then(|n| n.parse::<u32>().ok())
+            .filter(|&n| n > 1)
+    {
+        out.push_str(&format!(", columns {num}"));
+        if let Some(gap) = twips(cols, "space").filter(|&g| g != 720.0) {
+            out.push_str(&format!(", column gap {}", super::agent::inches(gap)));
         }
     }
     out
@@ -693,6 +718,18 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     parts.join(", ")
 }
 
+/// `, named Text Heading 2`: the name of style `id` when it is not the one
+/// the writer would give it (`expected`).
+fn named(styles: Option<&Element>, id: &str, expected: &str) -> String {
+    styles
+        .and_then(|s| style_by_id(s, id))
+        .and_then(|s| s.child("name"))
+        .and_then(|n| n.attr("val"))
+        .filter(|name| *name != expected)
+        .map(|name| format!(", named {name}"))
+        .unwrap_or_default()
+}
+
 fn table_style_line(styles: Option<&Element>, id: &str) -> String {
     let borders = styles
         .and_then(|s| style_by_id(s, id))
@@ -731,7 +768,16 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
 }
 
 fn entry(s: &StoryFact) -> String {
-    let mut inner = format!("id: {}, text: {}", s.id, scalar(&s.text, true));
+    let text = if s.more.is_empty() {
+        scalar(&s.text, true)
+    } else {
+        let all: Vec<String> = std::iter::once(&s.text)
+            .chain(&s.more)
+            .map(|t| scalar(t, true))
+            .collect();
+        format!("[{}]", all.join(", "))
+    };
+    let mut inner = format!("id: {}, text: {text}", scalar(&s.id, true));
     if let Some(align) = s.align {
         inner.push_str(&format!(", {align}"));
     }
@@ -800,7 +846,7 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
     }
 }
 
-/// `{p2-p3, headers: {default: {…}}, columns: 2}`: what a later section
+/// `{p2-p3, page: …, columns 2, headers: {default: {…}}}`: what a later section
 /// changes against the one before it (page setup against the first).
 fn section_entry(
     section: &SectionFact,
@@ -819,24 +865,32 @@ fn section_entry(
         parts.push(format!("fmt: {}", scalar(&tags, true)));
     }
     for kind in ["header", "footer"] {
-        let changed: Vec<String> = section
+        // w:titlePg is the section's own: a section that has it names its
+        // first-page story, or `first: none`, even when inherited.
+        let mut changed: Vec<String> = section
             .stories
             .iter()
             .filter(|s| s.kind == kind)
             .filter(|s| {
-                !previous
-                    .stories
-                    .iter()
-                    .any(|p| p.kind == s.kind && p.ty == s.ty && p.id == s.id)
+                (s.ty == "first" && section.title_page)
+                    || !previous
+                        .stories
+                        .iter()
+                        .any(|p| p.kind == s.kind && p.ty == s.ty && p.id == s.id)
             })
             .map(|s| format!("{}: {}", s.ty, entry(s)))
             .collect();
+        if section.title_page
+            && !section
+                .stories
+                .iter()
+                .any(|s| s.kind == kind && s.ty == "first")
+        {
+            changed.insert(0, "first: none".to_string());
+        }
         if !changed.is_empty() {
             parts.push(format!("{kind}s: {{{}}}", changed.join(", ")));
         }
-    }
-    if section.columns != previous.columns {
-        parts.push(format!("columns: {}", section.columns));
     }
     format!("{{{}}}", parts.join(", "))
 }
@@ -916,11 +970,23 @@ fn part_two(out: &mut String, f: &Facts) {
         &format!(
             "  {}: {}",
             scalar(default, false),
-            scalar(&describe(&base, None), false)
+            scalar(
+                &format!(
+                    "{}{}",
+                    describe(&base, None),
+                    named(f.styles, default, default)
+                ),
+                false
+            )
         ),
         Some("default; unannotated paragraphs use it"),
     );
     for (level, style) in &f.heading_styles {
+        // The writer names a `HeadingN` style `heading N`, as Word does.
+        let expected = style
+            .strip_prefix("Heading")
+            .filter(|n| n.parse::<u32>().is_ok())
+            .map_or_else(|| style.clone(), |n| format!("heading {n}"));
         kv(
             out,
             &format!(
@@ -928,8 +994,27 @@ fn part_two(out: &mut String, f: &Facts) {
                 "#".repeat(*level),
                 scalar(
                     &format!(
-                        "{style}, {}",
-                        describe(&resolve(f.styles, f.theme, style), Some(&base))
+                        "{style}, {}{}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, &expected)
+                    ),
+                    false
+                )
+            ),
+            None,
+        );
+    }
+    for style in &f.other_styles {
+        kv(
+            out,
+            &format!(
+                "  {}: {}",
+                scalar(style, false),
+                scalar(
+                    &format!(
+                        "{}{}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, style)
                     ),
                     false
                 )
@@ -939,7 +1024,7 @@ fn part_two(out: &mut String, f: &Facts) {
     }
     match f.table_styles.as_slice() {
         [] => {}
-        [one] => kv(
+        [one] if !f.tables_differ => kv(
             out,
             &format!(
                 "  table: {}",
@@ -964,7 +1049,7 @@ fn part_two(out: &mut String, f: &Facts) {
                 .collect();
             kv(
                 out,
-                &format!("  changes: {{{}}}", list.join(", ")),
+                &format!("style_changes: {{{}}}", list.join(", ")),
                 Some("tracked changes to the styles"),
             );
         }
@@ -1035,27 +1120,58 @@ pub(crate) enum StoryView<'a> {
     /// document text that reads like CriticMarkup is escaped.
     Tagged(&'a super::agent::Handles, &'a str),
     /// Every change accepted: inserted and moved-to runs count, deleted and
-    /// moved-from runs do not.
-    Accept,
+    /// moved-from runs do not. With the character styles that hide a run.
+    Accept(&'a std::collections::HashSet<String>),
     /// Every change rejected: deleted and moved-from runs count, inserted
     /// and moved-to runs do not.
-    Reject,
+    Reject(&'a std::collections::HashSet<String>),
 }
 
-/// A header/footer paragraph's text with fields as `{PAGE}`: field codes
-/// print, cached results do not, and a field nested in another prints as the
-/// outer one. Line breaks are newlines. Runs inside hyperlinks, content
-/// controls, smart tags and custom XML count; tracked changes read as
-/// `view` says.
+/// A header/footer paragraph's text with fields as the body prints them,
+/// `{CODE}result{/}` (`{PAGE}1{/}`, `{HYPERLINK "https://…"}site{/}`), and a
+/// code jubarte does not print whole as its name alone (`{XE}`), as is a
+/// code holding a nested field (`{IF}`). A field nested in another's result
+/// prints its result. Line breaks are newlines. Runs inside hyperlinks,
+/// content controls, smart tags and custom XML count; tracked changes read
+/// as `view` says.
 pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
     struct State<'a> {
         out: String,
-        /// Open complex fields, outermost first: the instruction so far and
-        /// whether the field has reached its result.
-        fields: Vec<(String, bool)>,
+        /// Open complex fields, outermost first.
+        fields: Vec<Open>,
         view: StoryView<'a>,
         /// Inside deleted text the view shows.
         deleting: bool,
+        /// The tagged view's last change, while nothing follows it yet.
+        last: Option<Shown>,
+    }
+    /// One side of a change the tagged view printed: its text, its marks'
+    /// tags, and their author.
+    struct Side {
+        text: String,
+        tags: Vec<String>,
+        author: Option<String>,
+    }
+    /// A change the tagged view printed from `start` to `end`: an
+    /// insertion, a deletion, or the insertion then the deletion Word's
+    /// Compare writes for a substitution.
+    struct Shown {
+        start: usize,
+        end: usize,
+        new: Option<Side>,
+        old: Option<Side>,
+    }
+    /// A complex field being read.
+    #[derive(Default)]
+    struct Open {
+        /// The instruction so far.
+        instr: String,
+        /// Past its `separate`: in its result.
+        result: bool,
+        /// Its code printed whole: `{CODE}`, its result, then `{/}`.
+        printed: bool,
+        /// A field nested in its instruction, which a code cannot print.
+        nested: bool,
     }
     /// `ins`/`moveTo` → `Some(true)`, `del`/`moveFrom` → `Some(false)`.
     fn inserting(local: &str) -> Option<bool> {
@@ -1076,7 +1192,18 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
     fn walk(parent: &Element, s: &mut State) {
         for run in parent.elements() {
             match run.local() {
-                "fldSimple" => s.out.push_str(&code(run.attr("instr").unwrap_or(""))),
+                "fldSimple" => {
+                    let instr = run.attr("instr").unwrap_or("");
+                    match super::printed_code(instr).filter(|_| s.fields.is_empty()) {
+                        Some(code) => {
+                            s.out.push_str(&code);
+                            walk(run, s);
+                            s.out.push_str(super::FIELD_END);
+                        }
+                        None if s.fields.is_empty() => s.out.push_str(&code(instr)),
+                        None => walk(run, s),
+                    }
+                }
                 local if inserting(local).is_some() => {
                     let inserted = inserting(local) == Some(true);
                     let tagged = match s.view {
@@ -1087,8 +1214,8 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     };
                     let shown = match s.view {
                         StoryView::Tagged(..) => tagged.is_some() || inserted,
-                        StoryView::Accept => inserted,
-                        StoryView::Reject => !inserted,
+                        StoryView::Accept(_) => inserted,
+                        StoryView::Reject(_) => !inserted,
                     };
                     if !shown {
                         continue;
@@ -1100,16 +1227,15 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     if let Some((handles, stem)) = tagged {
                         let text = s.out.split_off(start);
                         if !text.is_empty() {
-                            let (open, close) = if inserted {
-                                ("{++", "++}")
-                            } else {
-                                ("{--", "--}")
-                            };
                             let tag = format!("{stem}#{}", super::agent::tag_of(run, handles));
-                            s.out.push_str(&format!(
-                                "{open}{text}{close}{{>>{}<<}}",
-                                super::agent::format_tag(&tag)
-                            ));
+                            s.change(
+                                inserted,
+                                Side {
+                                    text,
+                                    tags: vec![tag],
+                                    author: run.attr("author").map(str::to_string),
+                                },
+                            );
                         }
                     }
                 }
@@ -1120,30 +1246,58 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     }
                 }
                 "r" => {
+                    // A hidden run prints nothing, as in the body.
+                    let hidden = match s.view {
+                        StoryView::Tagged(handles, _) => &handles.hidden_styles,
+                        StoryView::Accept(hidden) | StoryView::Reject(hidden) => hidden,
+                    };
+                    if super::agent::hidden_run(run.child("rPr"), hidden) {
+                        continue;
+                    }
                     for child in run.elements() {
                         match child.local() {
                             "fldChar" => match child.attr("fldCharType") {
-                                Some("begin") => s.fields.push((String::new(), false)),
+                                Some("begin") => {
+                                    if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                        field.nested = true;
+                                    }
+                                    s.fields.push(Open::default());
+                                }
                                 Some("separate") => {
+                                    let outermost = s.fields.len() == 1;
                                     if let Some(field) = s.fields.last_mut() {
-                                        field.1 = true;
+                                        field.result = true;
+                                        if outermost
+                                            && !field.nested
+                                            && let Some(code) = super::printed_code(&field.instr)
+                                        {
+                                            field.printed = true;
+                                            s.out.push_str(&code);
+                                        }
                                     }
                                 }
                                 Some("end") => {
-                                    if let Some((instr, _)) = s.fields.pop()
+                                    if let Some(field) = s.fields.pop()
                                         && s.fields.is_empty()
                                     {
-                                        s.out.push_str(&code(&instr));
+                                        s.out.push_str(&if field.printed {
+                                            super::FIELD_END.to_string()
+                                        } else {
+                                            code(&field.instr)
+                                        });
                                     }
                                 }
                                 _ => {}
                             },
-                            "instrText" => {
-                                if let Some((instr, false)) = s.fields.last_mut() {
-                                    instr.push_str(&child.text());
+                            "instrText" | "delInstrText" => {
+                                if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                    field.instr.push_str(&child.text());
                                 }
                             }
-                            _ if !s.fields.is_empty() => {}
+                            // Only a printed field's result shows, and not
+                            // the code of a field nested in it.
+                            _ if !s.fields.is_empty()
+                                && !(s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
                             "t" => s.push_text(&child.text()),
                             "delText" if s.deleting => s.push_text(&child.text()),
                             "tab" => s.out.push('\t'),
@@ -1157,11 +1311,84 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         }
     }
     impl State<'_> {
-        /// Document text; the tagged view escapes what reads like a mark.
+        /// A tagged change, as the body prints its neighbours: marks of one
+        /// kind by one author join, and an insertion directly followed by
+        /// a deletion is one substitution.
+        fn change(&mut self, inserted: bool, side: Side) {
+            let at = self.out.len();
+            let mut shown = match self.last.take().filter(|last| last.end == at) {
+                Some(mut last) => {
+                    let joins = |own: &Option<Side>| {
+                        own.as_ref().is_some_and(|own| own.author == side.author)
+                    };
+                    if inserted && last.old.is_none() && joins(&last.new) {
+                        let new = last.new.as_mut().expect("checked above");
+                        new.text.push_str(&side.text);
+                        new.tags.extend(side.tags);
+                        last
+                    } else if !inserted && joins(&last.old) {
+                        let old = last.old.as_mut().expect("checked above");
+                        old.text.push_str(&side.text);
+                        old.tags.extend(side.tags);
+                        last
+                    } else if !inserted && last.old.is_none() && last.new.is_some() {
+                        last.old = Some(side);
+                        last
+                    } else {
+                        Shown::alone(at, inserted, side)
+                    }
+                }
+                None => Shown::alone(at, inserted, side),
+            };
+            self.out.truncate(shown.start);
+            let tag = |side: &Side| super::agent::join_tags(&side.tags);
+            let printed = match (&shown.old, &shown.new) {
+                (Some(old), Some(new)) => format!(
+                    "{{~~{}~>{}~~}}{{>>{}<<}}",
+                    old.text,
+                    new.text,
+                    super::agent::format_tag(&super::agent::join_tags(&[tag(old), tag(new)]))
+                ),
+                (None, Some(new)) => format!(
+                    "{{++{}++}}{{>>{}<<}}",
+                    new.text,
+                    super::agent::format_tag(&tag(new))
+                ),
+                (Some(old), None) => format!(
+                    "{{--{}--}}{{>>{}<<}}",
+                    old.text,
+                    super::agent::format_tag(&tag(old))
+                ),
+                (None, None) => String::new(),
+            };
+            self.out.push_str(&printed);
+            shown.end = self.out.len();
+            self.last = Some(shown);
+        }
+
+        /// Document text; the tagged view escapes what reads like a mark,
+        /// and every view text that reads like a field code (`\{PAGE}`),
+        /// as the body does.
         fn push_text(&mut self, text: &str) {
+            let text = escape_field_codes(text);
             match self.view {
-                StoryView::Tagged(..) => self.out.push_str(&super::critic::escape(text)),
-                _ => self.out.push_str(text),
+                StoryView::Tagged(..) => self.out.push_str(&super::critic::escape(&text)),
+                _ => self.out.push_str(&text),
+            }
+        }
+    }
+    impl Shown {
+        fn alone(start: usize, inserted: bool, side: Side) -> Self {
+            let (new, old) = if inserted {
+                (Some(side), None)
+            } else {
+                (None, Some(side))
+            };
+            Shown {
+                start,
+                end: start,
+                new,
+                old,
             }
         }
     }
@@ -1170,9 +1397,31 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         fields: Vec::new(),
         view,
         deleting: false,
+        last: None,
     };
     walk(p, &mut s);
     s.out.trim().to_string()
+}
+
+/// `text` with a backslash before each `{` that opens what reads like a
+/// field code, so `{PAGE}` typed in a header stays text.
+fn escape_field_codes(text: &str) -> std::borrow::Cow<'_, str> {
+    use crate::markdown::critic::{field_code_close, is_field_code};
+    let opens = |at: usize| {
+        let after = &text[at + 1..];
+        field_code_close(after.char_indices()).is_some_and(|close| is_field_code(&after[..close]))
+    };
+    if !text.char_indices().any(|(at, c)| c == '{' && opens(at)) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 2);
+    for (at, c) in text.char_indices() {
+        if c == '{' && opens(at) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 #[cfg(test)]
@@ -1234,14 +1483,36 @@ mod tests {
     }
 
     #[test]
+    fn a_story_field_prints_its_whole_code_and_its_result() {
+        // As in the body: `{CODE}result{/}`, so a link's target and text
+        // and a field's switches survive the round trip.
+        let root = ftr(&format!(
+            r#"<w:p><w:r><w:t>Page </w:t></w:r>{PAGE_RUNS}<w:r><w:t> · </w:t></w:r><w:fldSimple w:instr=" HYPERLINK &quot;https://x.example&quot; "><w:r><w:t>site</w:t></w:r></w:fldSimple></w:p>"#
+        ));
+        assert_eq!(
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
+            r#"Page {PAGE}1{/} · {HYPERLINK "https://x.example"}site{/}"#
+        );
+    }
+
+    #[test]
     fn a_page_field_in_a_block_content_control_is_found() {
         let root = ftr(&format!(
             "<w:sdt><w:sdtPr/><w:sdtContent><w:p>{PAGE_RUNS}</w:p></w:sdtContent></w:sdt><w:p/>"
         ));
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "{PAGE}");
-        assert_eq!(story_text(paragraphs[1], StoryView::Accept), "");
+        assert_eq!(
+            story_text(paragraphs[0], StoryView::Accept(&Default::default())),
+            "{PAGE}1{/}"
+        );
+        assert_eq!(
+            story_text(paragraphs[1], StoryView::Accept(&Default::default())),
+            ""
+        );
     }
 
     #[test]
@@ -1250,8 +1521,11 @@ mod tests {
             r#"<w:p><w:hyperlink><w:r><w:t>Page </w:t></w:r></w:hyperlink><w:sdt><w:sdtContent>{PAGE_RUNS}</w:sdtContent></w:sdt><w:ins><w:r><w:t> of </w:t></w:r></w:ins><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:fldSimple w:instr=" numpages "><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], StoryView::Accept),
-            "Page {PAGE} of {NUMPAGES}"
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
+            "Page {PAGE}1{/} of {numpages}3{/}"
         );
     }
 
@@ -1264,8 +1538,14 @@ mod tests {
         );
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "");
-        assert_eq!(story_text(paragraphs[1], StoryView::Accept), "body");
+        assert_eq!(
+            story_text(paragraphs[0], StoryView::Accept(&Default::default())),
+            ""
+        );
+        assert_eq!(
+            story_text(paragraphs[1], StoryView::Accept(&Default::default())),
+            "body"
+        );
     }
 
     /// pi review r392 F1/F6: values a YAML 1.1 or 1.2 reader takes as a
@@ -1301,7 +1581,10 @@ mod tests {
             r#"<w:p><w:r><w:t>line one</w:t><w:br/><w:t>line two</w:t><w:cr/><w:t>three</w:t></w:r></w:p>"#,
         );
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], StoryView::Accept),
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
             "line one\nline two\nthree"
         );
     }
@@ -1314,7 +1597,10 @@ mod tests {
             r#"<w:p><w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF </w:instrText></w:r>{PAGE_RUNS}<w:r><w:instrText xml:space="preserve"> > 1 "more" "" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>more</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t> end</w:t></w:r></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], StoryView::Accept),
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
             "Page {IF} end"
         );
     }

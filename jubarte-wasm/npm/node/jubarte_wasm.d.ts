@@ -284,6 +284,14 @@ export function docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions
 export function editReportJsonl(report_json: string): string;
 
 /**
+ * Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
+ * it keeps and does not itself accept or reject; `undefined` when none.
+ *
+ * Mirrors `jubarte::edit::flags::editing_mode_conflict`.
+ */
+export function editingModeConflict(plan: string, docx: Uint8Array): string | undefined;
+
+/**
  * The plan the `edit`/`add` operation flags describe, as JSON `{plan,
  * notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
  * `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
@@ -334,20 +342,32 @@ export function listChanges(docx: Uint8Array): string;
 /**
  * List every comment as a JSON array string (the objects `jubarte comments
  * --json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
- * `done`, `paragraph`, `anchor_text`, `before`, `after`). `author` keeps
- * one author's comments; `latest` keeps the newest comment of each thread.
+ * `done`, `paragraph`, `last_paragraph` when the range ends in a later
+ * paragraph, `anchor_text`, `before`, `after`). `author` keeps one
+ * author's comments; `latest` keeps the newest comment of each thread.
  *
  * Mirrors `jubarte::comments::list_comments` and `select_comments`.
  */
 export function listComments(docx: Uint8Array, author?: string | null, latest?: boolean | null): string;
 
 /**
+ * The author and timestamp a Markdown document gives the changes and
+ * comments that name none, as JSON `[author, date]` (`null` for each it
+ * does not tell): its front matter, else the reference `.docx`'s creator
+ * and creation time. The CLI falls back to `Redline` and now.
+ */
+export function markdownStamp(text: string, reference?: Uint8Array | null): string;
+
+/**
  * Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
  *
  * `optionsJson` (every field optional): `page` (`"letter"` default, or
- * `"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
- * writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
- * changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+ * `"a4"`), `author` and `date` (for a change or comment that names none;
+ * given, they beat the front matter's `author:` and `last_modified:`,
+ * `modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
+ * epoch, so the same Markdown writes the same bytes; the CLI dates them now
+ * instead), `critic` (`true`: CriticMarkup becomes tracked changes and
+ * comments) and `track_changes` (or `trackChanges`: `"all"`,
  * `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
  * `.docx`, lends its styles and page setup, and then `page` is ignored.
  * Images are written as their alt text, and the engine's warnings are not

@@ -22,7 +22,9 @@ jubarte reads Markdown alongside Word documents:
 each tracked change and comment as CriticMarkup followed by its author and
 date (`-o FILE.md` writes it; `--track-changes accept` or `reject` writes
 the text after Word's Accept All or Reject All). Pictures become their alt
-text. `jubarte read FILE` prints the [agent view](#agent-view):
+text. Hidden text (`w:vanish` on the run, or on its character style
+directly or through `basedOn`) prints nothing, in the body, table cells,
+notes and headers. `jubarte read FILE` prints the [agent view](#agent-view):
 the same Markdown with a YAML header, an id line before every paragraph and
 an id on every change and comment, for edit plans.
 
@@ -32,22 +34,59 @@ an id on every change and comment, for edit plans.
 (`-o` names another file, `-o draft.pdf` or `-t png` renders it). The
 Markdown is CommonMark with GitHub's tables, strikethrough, task lists and
 footnotes, and a YAML front matter's `title:` and `author:` become the
-document's properties.
+document's properties. Its `track_changes: on` (or `off`) sets Word's Track
+Changes switch in the output; `--tracking on|off` overrides the key. With
+neither, the output keeps the `--reference-doc`'s switch, else tracking is
+off. Tracked changes the Markdown holds never turn the switch on by
+themselves.
+
+A change or comment that names no author or date (`{++new++}`, an
+untagged `{>>note<<}`) takes them, in this order, from:
+
+1. `-a/--author` and `-d/--datetime`;
+2. the front matter: `author:`, and `last_modified:`, else `modified:`,
+   `date:` or `created:` (a timestamp, or a bare day for its midnight; any
+   other value is named in a warning);
+3. the `--reference-doc`'s `dc:creator` and `dcterms:created`
+   (`docProps/core.xml`);
+4. `Redline` and now. Nothing is read from the file's owner or
+   modification time.
+
+An author the `authors:` table names, and a date a tag carries, come before
+all of these. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output from
+identical inputs. This represents the document, so its own metadata
+counts; `compare`, `edit`, `add` and `diff` change a file instead, and
+sign and date their changes with `--author` (default `Redline`) and
+`-d/--datetime` (default now) only, never the files' metadata.
+
+Library calls keep that epoch instead of now and read no reference
+document's metadata: `DocxOptions::default()` is `Redline` at
+1970-01-01T00:00:00Z, and the front matter's `author:` and date beat the
+options' `author` and `date` unless `author_fixed` or `date_fixed` is set.
+Python's `from_markdown` and WASM's `markdownToDocx` set them for an
+`author` or `date` they are given. `markdown::docx_stamp(docx)` returns a
+`.docx`'s first non-empty `dc:creator` and its `dcterms:created`, as the
+CLI reads them.
 
 | Markdown | Word |
 | --- | --- |
 | `#` to `######` | `Heading1` to `Heading6` |
 | paragraph | `Normal` |
 | `**bold**`, `*italic*`, `~~struck~~` | bold, italic, strikethrough |
+| `==marked==` | yellow highlight; `==` beside a space, inside a longer `=` run, escaped or unclosed in its paragraph is text. The agent view prints a highlight of any colour this way, and strike as `~~struck~~` |
+| `{REF _Ref1 \h}Section 2{/}` | a field (`fldChar begin`, `instrText`, `separate`, the result, `end`). The code must start with a field name ECMA-376 lists (any case) and close with `{/}` in the same paragraph, so a placeholder such as `{Client Name}` stays text; `\{` makes a brace literal. The agent view prints a body field this way when it opens and closes in one paragraph, has no field inside its code and is not a hyperlink; otherwise it prints the result only |
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
-| table | table in `TableGrid`, header row repeated, column alignment kept |
-| `[text](url)`, `[text](#anchor)` | hyperlink |
-| `[^note]` | footnote |
+| table | table in the document's normal table style (`TableGrid` only when the view's table line names it), header row repeated, column alignment kept |
+| `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. Reading Word back, reader and writer share github-slugger's names (a repeat `-1`, `-2`): only the exact name the writer gives a heading is its own bookmark and prints no anchor; any other (`title-01`, a lone `title-1`) stays an `<a id>` anchor, and a heading in a table cell claims no slug. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
+| `[^note]` | footnote; a label defined twice (a footnote and an endnote both `[^1]`) is two notes: its first reference names the first definition and its next the second, which takes the next free number, with a warning |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
 | `---` | a paragraph with a bottom border |
-| `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline |
+| `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline (in a cell or a note of the tracked view, `<br>` ends a paragraph and `<br/>` is a line break; see below) |
+| `<b>`/`<strong>`, `<i>`/`<em>`, `<s>`/`<del>`, `<code>`, `<mark>` | bold, italic, strike, `VerbatimChar`, yellow highlight; attributes and case do not matter, a tag left open closes with its block, and any other tag keeps its text and is named once in a warning |
+| `x ^2^`, `x ~2~` | superscript, subscript, at word edges only (pulldown-cmark opens neither inside a word: `H~2~O` is text) |
+| `$x^2$`, `$$\frac{a}{b}$$` | an equation (`m:oMath`; display math in an `m:oMathPara`), see below |
 
 Images are read relative to the Markdown file, or to `--resource-path`;
 URLs are not fetched.
@@ -80,6 +119,40 @@ const docx = markdownToDocx("Due in {~~30~>45~~} days.", JSON.stringify({ page: 
 same flags. Neither binding reads image files: pictures are written as
 their alt text.
 
+### Equations
+
+LaTeX between `$` (inline) or `$$` (display) becomes Word's own equation,
+and the reader prints Word's equations back in the same LaTeX, so an
+equation round-trips: Word's own files (`tests/fixtures/math`) come back
+with every structure Word wrote.
+
+| LaTeX | Word |
+| --- | --- |
+| `\frac{a}{b}`, `\binom{n}{k}`, `\sqrt[3]{x}` | fraction, bar-less fraction in brackets, radical |
+| `x^2`, `x_i`, `x_i^2`, `\prescript{a}{b}{X}` | scripts; a script's base is the character, group or structure before it |
+| `f'`, `f''`, `f'^2` | a prime superscript (′ ″ ‴), as Word builds `f'`; it reads back as the apostrophes |
+| `(…)`, `[…]`, `\{…\}`; `\left⟨ a \middle\| b \right.` | a delimiter: balanced brackets build one, as Word builds `f(x)`; `\left` names any other; `\bigl(` … `\Biggr)` are their bracket, as Word's delimiter grows to its content |
+| `\sin x`, `\lim_{n\to\infty} a_n`, `\operatorname{argmax}_x f` | a function, its limit under it |
+| `\sum_{i=1}^n x_i`, `\int_0^1`, `\iint`, `\bigcup` … | n-ary operator; it applies to the next character or group and its scripts |
+| `\hat`, `\tilde`, `\bar`, `\dot`, `\ddot`, `\vec`; `\overline`, `\underline` | accent; bar |
+| `\underbrace{x}_{n}`, `\overbrace{x}^{n}`, `\underset{a}{b}`, `\overset{a}{b}` | brace and limit, stacked limit |
+| `\begin{matrix}`, `pmatrix`, `bmatrix`, `array` …; `aligned`, `cases` | matrix (`array`'s column spec is dropped); equation array, aligned at each `&` as Word aligns it |
+| `\mathrm`, `\mathbf`, `\boldsymbol`, `\mathbb`, `\mathcal`, `\text` | the run's math style, script or ordinary text |
+| `\alpha` … `\Omega`, `\pm`, `\le`, `\to`, `\infty` … | the character itself |
+| `\not\in`, `\not=`, `\not\perp` | the negated character (∉, ≠), else the character with U+0338 over it |
+| `\bmod`, `\pmod{n}`, `\hspace{…}` | upright mod; (mod n); a space |
+| `\lparen`, `\lbrack`, `\lbrace`, `\backslash` | a bracket or backslash that is text |
+
+A top-level `\\` breaks the equation into lines of an equation array:
+Word draws the equations of one paragraph side by side. Spaces inside
+text stay, as Word keeps them; at an argument's edges they go, as LaTeX
+ignores them. An unknown command stays as its text, with the braces of
+an argument right after it (`\foo{x}`). Inside the math,
+`{++…++}` and `{--…--}` mark the runs they hold as inserted or deleted,
+the way Word marks a change inside an equation; an equation inserted or
+deleted whole reads as `{++$E=mc^2$++}`. Every run is set in Cambria
+Math, as Word sets it.
+
 ## CriticMarkup
 
 [CriticMarkup](https://criticmarkup.com) marks changes in plain text. jubarte
@@ -94,10 +167,11 @@ cross emphasis, links and paragraph breaks.
 | `{==text==}{>>note<<}` | a comment on `text` |
 | `{++new++}{>>note<<}` | a comment on the change |
 | `{>>note<<}` alone | a comment at that point |
+| `{>>note<<}` in a footnote, header or footer | Word allows comments only in the body: in a footnote the comment moves to the note's reference mark, in a header or footer it is dropped and its text kept; both warn |
 | `{==text==}` alone | highlighted text |
 
-Every change and comment gets `--author` and `--datetime` (fixed by default,
-so the same Markdown writes the same bytes).
+A change or comment with no author or date of its own takes them as
+[Markdown to Word](#markdown-to-word) lists.
 
 Paragraphs follow Word's model, where a paragraph's mark (the end of the
 paragraph) can be inserted or deleted too:
@@ -127,8 +201,8 @@ accept` renders the accepted document to PDF.
 `jubarte read FILE.docx` prints the agent view: a YAML header
 with the facts an editor needs, then the document as Markdown and
 CriticMarkup, with an id line before every paragraph and an id on every
-tracked change and comment. The ids are the ones `edit`, `accept --id`,
-`reject --id` and `comments` take.
+tracked change and comment. The ids are the ones `edit`, `add`,
+`accept --id` and `reject --id` take, and `changes` and `comments` print.
 
 ```text
 ---
@@ -170,7 +244,7 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 ## 1. Services
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r1+2 @AC<<} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r2+1 @AC<<} review call.
 ```
 
 `--track-changes accept|reject` prints the document with every change
@@ -186,8 +260,8 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
-examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r1+2 @AC -->
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
 - `N` counts every `w:p` under `w:body` in document order, table cells
@@ -196,16 +270,23 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   heading, not `Heading{level}`.
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
-  `w:ind`, in inches.
+  `w:ind`, in inches, with as many decimals (two to four) as it takes to
+  read back the same twips (`0.7875in` is 1134).
 - `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
   in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
   it is escaped with `\`). A level text naming a deeper level (`%3` on
   level 2) gets no label, and no list indent, from Word: the view shows
   a plain paragraph. `bullet` is a
   bulleted item. Labels are not document text, and a list body keeps its
-  Markdown marker (`1.`).
+  Markdown marker (`1.`). `level 1` (to `level 8`) follows the label of a
+  paragraph past its list's first level (Word's `w:ilvl`): every list
+  paragraph has its own id line, which ends the Markdown list, so the view
+  prints no list indentation (past one level it would read as code).
 - `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
-  its `w:pPr` holds `w:sectPr`.
+  its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
+  the YAML header names for its section (`page:` for the first,
+  `sections:` for the others). A page's text columns are its clauses
+  too: `columns 2`, and `column gap 0.25in` when not Word's 0.5in.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
 - `rev`: in the accept and reject views, every revision the paragraph
@@ -231,7 +312,22 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 
 A table gets one line: `<!-- t0 center 3x2, cells p8-p13 by row, header row
 repeats -->`, `cells t0.row0 p8-p10 t0.row1 p11-p14` when a cell holds other
-than one paragraph, then `merged cells`, `break-ins r12 @AC in p9`,
+than one paragraph, or when a row whose cells and gaps take more columns
+than the grid has holds an empty cell the view could not tell from padding
+(the writer adds such a row's missing cells back empty), then
+`p10 center` for each cell paragraph aligned against its column (the delimiter row's `:-`, `:-:` or `-:` is the
+alignment most of a column's cell paragraphs have; left and none count
+alike, a tie or justified text prints `-`; the `center` or `right` after
+`t0` places the table itself on the page), then `merged t0.row0.cell1 across 2; t0.row1.cell0
+down 3` for a cell spanning grid columns or a vertical merge and the rows
+it covers (the view prints a span's other columns as empty cells, and
+leaves out empty columns at the right; the reader counts both back, and a
+merge keeps its span even past the room a row's gap leaves),
+`gaps t0.row1 before 1 after 2` for the grid columns a row leaves out
+(Word's `w:gridBefore`/`w:gridAfter`, and a row shorter than the grid),
+written back exactly as it says: empty Markdown cells past the line's
+`RxC` columns are padding, and the grid has exactly those columns,
+`break-ins r12 @AC in p9`,
 `break-del …`, `rev … in pN` (resolved views; `rev r5 @AC in t0.row1.cell2`
 for a cell's own insertion, deletion or merge in the tracked view, and
 `rev r6 @AC in t0.row1` for an inserted or deleted row with no text),
@@ -240,9 +336,30 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 `comments c9 in p11`, and `in c5` for a comment range open across it.
 `tN` counts top-level body tables.
 
+`styles:` gives the default paragraph style's whole look (font, size,
+spacing, alignment), each heading level's style with what differs from
+it, then every other paragraph style the body uses, keyed by its id
+(`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
+ends `, named Text Heading 2` when the style's name is not its id (for a
+`HeadingN` heading, not `heading N`). Converting the view back defines
+each style as its line says.
+
 Each footnote and endnote definition follows the id line of its
 paragraphs: `<!-- footnotes.p0 -->`, or `<!-- endnotes.p0-p2 -->` for a note
-of three paragraphs. `edit -p footnotes.p0` edits that note's text.
+of three paragraphs, which the definition joins with `<br>` (a table in a
+note reads as its cells' paragraphs), and a line break inside one of them
+reads `<br/>`. A table cell does the same: `<br>` ends one of the cell's
+paragraphs, `<br/>` is a line break (`w:br`) within one. A view written
+before that distinction still converts: when the id or table line's
+paragraph count and the `<br>`s disagree, the writer reads every `<br>`
+there as a line break (for a note, with a warning). A `<br>` prints inside a change only when its paragraph's
+mark is tracked: `this<br>{++added++}` is an inserted paragraph after an
+untracked mark, `{++A<br>B++}` an insertion that takes the mark with it. `edit -p footnotes.p0` edits that
+note's text. A note Word inserted or deleted whole, its reference with it,
+reads `{++[^1]: text++}{>>r10 @AL<<}`, and the marks its own text holds
+close the definition: `<!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->`.
+A label defined once and referenced twice is one note; a label defined
+twice is two (see the table above).
 
 `sha256:` is the SHA-256 of the bytes the view read: the file, or for
 `jubarte A B` the redline it prints in memory. Compare it with the file on
@@ -251,8 +368,9 @@ disk before editing to know the view is current.
 Every change `jubarte changes` lists prints its tag somewhere in the
 tracked view, so an agent can name it. Changes with no body text show in
 the header: a section's own change on `page:` (`page: Letter portrait; fmt
-r9 @AC`) or as `fmt:` in its `sections:` entry; style changes under
-`styles:` as `changes: {Normal: styles.r3 @AS}`; a header's or footer's
+r9 @AC`) or as `fmt:` in its `sections:` entry; style changes as
+`style_changes: {Normal: styles.r3 @AS}`, a key of its own beside
+`styles:`, so no style id can collide with it; a header's or footer's
 changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
 notes no definition shows (Word's separators) as `notes: {fmt: …}`. A
 note's own changes its text cannot show close its definition line:
@@ -268,7 +386,9 @@ its container's tag.
 
 The header's `comments:` line counts open and resolved threads, and apart
 from them a comment no story anchors (no range or reference in the body or
-a note): `1 thread open, 1 unanchored`. Word draws no balloon for it.
+a note): `1 thread open, 1 unanchored`. Word draws no balloon for it. A
+comment anchored in a header or footer is unanchored too: Word shows a
+comment only from a reference in the main story.
 
 ### Tags
 
@@ -280,17 +400,37 @@ authors' tags on one id line are joined by `; ` (`rev r1 @AC; r2 @JD`).
 ```text
 {++quarterly++}{>>r0 @AC<<}
 {--ninety days--}{>>r7 @AC<<}
-{~~weekly~>monthly~~}{>>r1+2 @AC<<}          one author: one note
-{~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}        two authors: deleted side first
+{~~weekly~>monthly~~}{>>r2+1 @AC<<}          one author: one note, deleted ids first
+{~~old~>new~~}{>>r2 @JD; r1 @AC<<}            two authors: deleted side first
 {++bold words++}{>>r7+8 @AC<<}                 neighbouring marks by one author
 {++quarterly++}{>>r0 @AC 2026-10-03T14:05:00Z<<}   with --dates
 ```
 
-Neighbouring marks of one kind by one author join, then a deletion next to
-an insertion pairs as a substitution, left to right. Bookmarks, proofing
-marks and comment markers do not break adjacency, and changes inside links,
-content controls and simple fields count. The text inside the delimiters is
-the document's text exactly.
+Neighbouring marks of one kind by one author join, then an insertion
+directly followed by a deletion pairs as a substitution, left to right:
+Word's Compare writes the insertion first. A deletion followed by an
+insertion stays two changes. A bookmark the view prints (`<a id>`) and a
+comment range it prints (`{==…==}`) break adjacency; proofing marks, other
+bookmarks and comment markers, and runs that print nothing (empty,
+hidden, a lone soft hyphen or `w:sym`, a page break) do not. A comment
+range on one side only, ending inside the insertion as Word writes it,
+keeps the pair one substitution both ways:
+`{~~old~>{==new==}~~}{>>c0 …<<}`. Changes inside links, content controls and
+simple fields count, and headers and footers pair the same way
+(`{~~old~>new~~}{>>header1.r91+90 @AL<<}`). The text inside the delimiters
+is the document's text exactly.
+
+Converting back, a substitution writes its insertion, then its deletion.
+Its one tag lists the deleted side's ids, then the inserted side's: where
+the numbers drop (`r94+95+92+93`) the inserted side begins, else the
+deleted side takes one id per run it has. A side naming more ids than it
+has runs splits its text, after its last space or before its last
+character, so every id comes back on its own side.
+
+`@??` is the handle of a mark with no author's name (the attribute missing
+or empty); it is a tag, not a comment, and converts back to an empty
+`w:author`, which Word opens cleanly (checked 2026-10-14). Its `authors:`
+line, `??: ""`, keeps the date its note gives.
 
 A comment is `{==anchored text==}{>>c5 @AC: text<<}`; a reply names its
 thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
@@ -299,39 +439,65 @@ thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
 A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
 header's `authors:` line gives each handle's name, counts and its
-timestamp, or the day range when the author has several.
+timestamp, or the day range when the author has several
+(`2026-03-02..2026-03-04`). Converting back, the author's undated marks
+and comments take the first day at `00:00:00Z`, and one of them, when
+another keeps the first day, takes the last day at `23:59:59Z`: an undated
+formatting mark, else the last undated comment, else the last change's
+marks (each cell of an inserted row the view tags), else the author's
+header and footer marks. One mark keeps only the first day. A date the
+view writes out, as on a comment, is never rewritten. A bare day
+(`# 1 comment, 2026-10-09`) reads as its midnight; a range that runs
+backwards is read as no date, with a warning ("its days run backwards").
+
+`document_owner:` is the `dc:creator` that first names someone (its
+spaces kept, the XML's indentation not), else `cp:lastModifiedBy`; `none`
+names nobody. Converting back writes it to `docProps/core.xml`, unless
+that part is cut short, which is left as it is. An empty or null one
+(`document_owner:`, `~`, `null`) is ignored with a warning that it names
+no one. A comment after `authors:` (`authors: # legend`) keeps the
+block.
 
 ### Reading back
 
-An agent view is CriticMarkup plus id lines. The Markdown-to-Word applier
-does not read it back yet; this is the contract it will honour. A
-change followed by a tagged note (`{>>r12 @AC<<}`) is the document's revision
-`body:rev:12` (`footnotes:rev:12` under a footnote id line): kept as it is
-when unchanged, accepted or rejected when the agent removed its text. A
-change with no note is new, by the plan author. A tagged comment note is the
-document's comment; `re cN` names its thread root; `resolved` resolves the
-thread; a note with no tag is a new comment by the plan author, a reply when
-it follows a tagged note on the same anchor. `<!-- pN -->` lines are
-alignment keys and are never text.
+`convert` reads an agent view back into Word. A change followed by a
+tagged note (`{>>r12 @AC<<}`) keeps its id, `body:rev:12`
+(`footnotes:rev:12` under a footnote id line), the name the `authors:`
+line gives its handle, and its date: the note's own timestamp, else the
+handle's from `authors:`. A tagged comment note keeps its id, author and
+date; `re cN` names its thread root; `resolved` resolves the thread. A
+change or note with no tag is new and takes the author and date
+[Markdown to Word](#markdown-to-word) lists (`-a/--author` and
+`-d/--datetime`, the front matter's, the `--reference-doc`'s creator and
+creation time, else `Redline` and now). `<!-- pN -->` lines are alignment
+keys and are never text.
 
-Defaults when the Markdown is incomplete, in order: `source:` names a base
-document, and everything not stated comes from it by id; a note's own
-`@handle` and timestamp; the handle's single timestamp from `authors:`; if
-`authors:` lists exactly one non-owner author, that author; else the author
-`Redline`; a missing date is the conversion time in UTC, with a
-warning; `document_owner` missing is
-`Original User`; with no header at all, Letter portrait, one-inch margins,
-Normal Calibri 11pt and the writer's other defaults. A header without
-`source:` is honoured for `page:`, the `styles:` lines it names, and
-`headers:`/`footers:` text, alignment and `{PAGE}`/`{NUMPAGES}`/`{DATE}`
-fields.
+The header is honoured for `page:`, the `styles:` lines it names,
+`authors:` with its `document_owner:`, and `headers:`/`footers:` text,
+alignment and `{PAGE}`/`{NUMPAGES}`/`{DATE}` fields. Each story becomes the
+part its id names (`header2.p1` is paragraph 1 of `header2.xml`), `first:`
+turns on the title page unless it is `inactive`, an active `even:` turns on
+even and odd headers, and a `sections:` entry gives its section the page
+and stories it names. With no header at all: Letter portrait, one-inch
+margins, Normal Calibri 11pt and the writer's other defaults.
+
+Not read back yet: `source:` names no base document, an untagged note
+after a tagged one on the same anchor is a new comment, not a reply, and
+the applier (`jubarte compare contract.docx view.md`, `apply_markdown`)
+reads CriticMarkup as text. The contract it will honour: everything the
+view does not state comes from `source:` by id, and a tagged change is
+kept when unchanged, accepted or rejected when the agent removed its text.
 
 ### Literal marks and anchors
+
+Text that reads like a field code is escaped with `\{` (`\{PAGE}`), in the
+body and in headers and footers, and text that reads like a mark has its
+delimiter broken (`{\++`); converting back restores both.
 
 Document text that CommonMark would read as markup is escaped in the agent
 view: a paragraph that starts with `# `, `- `, `> ` or `1. ` (also after a
 line break), and `*`, `` ` ``, `\`, `~~`, `==`, `[^`, a tag-like `<` and a
-word-edge `_` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes
+word-edge `_`, `~` or `^` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes
 read back as the characters. `convert -t md` (ids off) does not escape.
 
 An `edit` anchor copied out of the view may carry marks that are not
@@ -551,7 +717,11 @@ them accepted.
 - `jubarte diff --format critic` needs two Markdown documents; with a
   Word side it exits 1, and `jubarte compare OLD NEW` prints the redline
   as the agent view, CriticMarkup included.
-- Markdown math, definition lists and raw HTML blocks are not written.
+- Definition lists are not written. A raw HTML block (`<div>` up to a
+  blank line) keeps only its text, a paragraph per block element, with a
+  warning.
+- The PDF renderer sets an equation's text on one line: fractions,
+  radicals, matrices and limits are not laid out yet.
 - Changes have one author and date; CriticMarkup has no syntax for more.
 
 Related: [CSHARP_MARKDOWN_PROJECTION_MAPPING.md](CSHARP_MARKDOWN_PROJECTION_MAPPING.md)

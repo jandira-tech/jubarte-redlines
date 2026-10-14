@@ -58,10 +58,10 @@ Every non-test function that calls an id parser directly: the places the source 
 | `ids::ChangeId::from_long` | `changes::short_of`, `ids::parse_change_ids` |
 | `ids::comment_id_de` | `edit::OperationKind` (attribute) |
 | `ids::comment_text_id` | `edit::comment_text_of` |
-| `ids::parse_change_ids` | `changes::ChangeFilter::normalized`, `ids::parse_location`, `markdown::from_docx::agent::printed_change_ids`, `markdown::from_docx::agent::printed_wids`, `markdown::view_notes::markdown::view_notes::revision_tags` |
+| `ids::parse_change_ids` | `changes::ChangeFilter::normalized`, `ids::parse_location`, `markdown::from_docx::agent::printed_change_ids`, `markdown::from_docx::agent::printed_wids`, `markdown::view_notes::markdown::view_notes::revision_tags`, `markdown::view_notes::markdown::view_notes::table_line` |
 | `ids::parse_comment_id` | `ids::comment_id_de`, `markdown::view_notes::markdown::view_notes::comment_head` |
 | `ids::parse_location` | `edit::flags::comment_number`, `edit::flags::expired`, `edit::flags::revision_group`, `edit::origin::Ids::long_id` |
-| `ids::short_number` | (nothing) |
+| `ids::short_number` | `markdown::view_notes::comment_numbers`, `markdown::view_notes::empty_paragraphs`, `markdown::view_notes::markdown::view_notes::id_line`, `markdown::view_notes::markdown::view_notes::table_line`, `markdown::view_notes::note_paragraphs`, `markdown::view_notes::unplaced` |
 
 ### From each id flag to its parsers
 
@@ -112,7 +112,6 @@ Fixtures: `tests/fixtures/agent-view/received.docx`, `tests/fixtures/from-docx/c
 | `pN,pN,pN` | `p3,p4,p5` |  | read --tables |
 | `pN-pN` | `p108-p109` |  | view id line |
 | `rN` | `r0`, `r1`, `r2` | change (deletion, paragraph_mark); change (deletion, text); change (insertion, text) | changes (id); read --json changes[].ref; view note |
-| `rN+N` | `r1+2`, `r3+4`, `r7+8` |  | view note |
 | `tN` | `t0` |  | view id line |
 
 ## Printed ids fed back
@@ -144,7 +143,6 @@ One id of each printed shape, given back to the tasks that take an id (`--paragr
 | `p3,p4,p5` | hard-tables.docx | 0 → t0 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): p3,p4,p5: expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or toc0 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): p3,p4,p5: expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or toc0 | 2 error: p3,p4,p5: expected a change id such as r12, r1+2 or header1.r1 |
 | `p108-p109` | hf_a.docx | 0 → p108-p109 | 2 error: -p p108-p109: a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet | 2 error: -p p108-p109: a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet | 2 error: p108-p109: expected a change id such as r12, r1+2 or header1.r1 |
 | `r0` | received.docx | 2 error: r0: expected pN, pN-pM or tN | 0 → p3 p5 p7 t0 p18; -r0 | 2 error: -p r0: add resolves no revision; use edit -p r12 --accept or --reject | 0 → -r0 |
-| `r1+2` | received.docx | 2 error: r1+2: expected pN, pN-pM or tN | 0 → p3 p5 p7 t0 p18; -r1 -r2 | 2 error: -p r1+2: add resolves no revision; use edit -p r12 --accept or --reject | 0 → -r1 -r2 |
 | `t0` | received.docx | 0 → t0 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): t0: a table id needs a row and a cell, as t0.row1.cell2 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): t0: a table id needs a row and a cell, as t0.row1.cell2 | 2 error: t0: expected a change id such as r12, r1+2 or header1.r1 |
 
 ## Other spellings

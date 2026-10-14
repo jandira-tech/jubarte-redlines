@@ -27,10 +27,9 @@ add `2(c), ` and `7(b), 7(c), ` to the survival list with a comment; rewrite
 the notices sentence with a placeholder and a comment; join the jury-waiver
 heading to its body (`merge_paragraphs`); make the signature line
 gender-neutral; and tighten the drafting note's line spacing as a tracked
-paragraph-formatting change (`format_paragraph`). `report.jsonl` is the run's
-actual output (12 ok, 4 comments, 20 revision records, 1 page);
-`redline-page-01.png` is the rendered redline.
-
-The renderer does not yet paint comment balloons for comments anchored
-inside inserted text; the comments are in `redline.docx` and Word shows
-them.
+paragraph-formatting change (`format_paragraph`). `report.jsonl` and
+`redline-page-01.png` are a 0.9.3 run's output (12 ok, 4 comments, 20
+revision records, 1 page). The current build reports 22 revisions (14
+inserted, 7 deleted, 1 formatting), adds `patch.diff` to the bundle, and
+paints all four comment balloons, including those anchored inside inserted
+text.

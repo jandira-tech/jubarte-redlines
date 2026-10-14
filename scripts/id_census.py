@@ -142,6 +142,9 @@ def kind_of(el, story):
     if name == "comment":
         return "comment", True
     if name in ("ins", "del"):
+        # A row's own w:trPr/w:ins|w:del inserts or deletes the row.
+        if names[0] == "trPr":
+            return "table-structure revision", True
         return ("paragraph-mark revision" if in_props else "text revision"), True
     if name in (
         "rPrChange",

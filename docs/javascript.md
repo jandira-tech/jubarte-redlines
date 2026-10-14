@@ -13,7 +13,7 @@ download, no server round-trip):
 | Package | What it is |
 |---|---|
 | [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm) | the library: compare, changes, revisions, PDF, inspection, edit plans |
-| [`jubarte-redlines`](https://www.npmjs.com/package/jubarte-redlines) | the CLI: `npx jubarte-redlines …`, same shared command set |
+| [`jubarte-redlines`](https://www.npmjs.com/package/jubarte-redlines) | the CLI: `npx jubarte-redlines …`, ten of the native tasks (see [CLI usage](#cli-usage)) |
 
 For the other surfaces see [docs/rust.md](rust.md) and
 [docs/python.md](python.md).
@@ -55,12 +55,12 @@ also pass the source yourself: `await init({ module_or_path: url })`.
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount` and `updateFields` |
 | `jubarte-wasm/web-slim` | slim, browser ESM | same export set as `node-slim` |
 
 The slim builds drop the PDF engine and its embedded Carlito/Liberation
-fonts, shrinking the wasm from ~13 MB to ~3.9 MB; redline output is
-identical.
+fonts; redline output is identical. The size saving is now small: in
+0.12.0 the full wasm is 17.47 MB and the slim one 17.45 MB.
 
 ## API reference
 
@@ -764,13 +764,19 @@ npx jubarte-redlines convert redline.docx --revisions word
 npx jubarte-redlines edit contract.docx --plan plan.json --out-dir review
 ```
 
-The shared command set, messages and exit codes match the Python wheel and
-the Rust binary (0 success, 1 error, 2 usage, 3 edit plan refused), but the
-flags differ per surface: PNG pages, `--date` and the other render-side or
-PDF-producing flags need the Python or Rust build, and defaults differ (the
-Rust binary's `--author` is `Redline`; the others ship `jubarte`). The
-generated references below are authoritative. OLE `.doc` and encrypted
-files are refused with a clear message before parsing.
+The npm CLI parses with the native CLI's own parser and has its tasks
+`compare`, `changes`, `accept`, `reject`, `convert`, `diff`, `read`, `edit`,
+`add` and `capabilities`; `visual-diff`, `comments`, `append`, `validate` and
+`scrub` need the Python or Rust build. Messages and exit codes match the
+Python wheel and the Rust binary (0 success, 1 error, 2 usage, 3 edit plan
+refused). A flag the npm CLI cannot honour exits 2 naming it: PNG output,
+`--pages`, `--dpi`, `--update-fields`, `--report`, `--font-report`,
+`--timeout`, `--fail-on-substitution`, `convert --from`, `--resource-path`
+and Markdown output (`-t md`; `read` prints the agent view), `edit
+--pdf`/`--png`/`--revisions`, and `compare --mode powertools`,
+`--detail-threshold`, `--no-paragraph-merge`, `--reference-doc` and
+`--critic`. The generated references below are authoritative. OLE `.doc`
+and encrypted files are refused with a clear message before parsing.
 
 ### CLI reference
 

@@ -6,7 +6,7 @@ comments: 0
 authors:
   document_owner: jharrop2         # dc:creator
 body: p0-p4, 0 tables, 3 pages     # pages from Word's cached layout
-page: A4 portrait, margins 1in, header/footer 0.49in
+page: A4 portrait, margins 1in, header/footer 0.492in
 styles:
   Normal: Calibri 11pt, after 10pt, line 1.15, left  # default; unannotated paragraphs use it
 headers:
@@ -16,7 +16,7 @@ footers:
   first: none                      # page 1 shows no page number
   default: none
 sections:
-  2: {p4-p4, headers: {first: {id: header3, text: Section 2 - My first page header}}}
+  2: {p4-p4, headers: {first: {id: header3, text: Section 2 - My first page header}}, footers: {first: none}}
 ---
 
 <!-- p0 -->

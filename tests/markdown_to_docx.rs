@@ -139,10 +139,11 @@ fn every_block_kind_is_written() {
         "ListParagraph",
         "Quote",
         "SourceCode",
-        "TableGrid",
     ] {
         assert!(styles.contains(&format!("w:styleId=\"{id}\"")), "{id}");
     }
+    // A plain Markdown table is Word's Normal Table: no style is forced.
+    assert!(!styles.contains("w:styleId=\"TableGrid\""), "{styles}");
 }
 
 #[test]
@@ -417,6 +418,309 @@ fn images_are_embedded_through_the_loader() {
 }
 
 #[test]
+fn math_in_an_image_description_stays_in_the_alt_text() {
+    // pulldown-cmark parses the description of `![…]` as inline events, so
+    // `$…$` there is InlineMath with the image open: it joins the alt text,
+    // never a body run before the picture.
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&[0u8; 200 * 100], 200, 100, image::ExtendedColorType::L8)
+        .unwrap();
+    let loader = |_: &str| Some(png.clone());
+    let written = markdown_to_docx(
+        "![area $x^2$](a.png)\n",
+        &DocxOptions {
+            images: Some(&loader),
+            ..DocxOptions::default()
+        },
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(xml.contains("descr=\"area $x^2$\""), "{xml}");
+    assert_eq!(texts(&written.docx), [""]);
+    // Without a loader, the alt text — math included — is the body text.
+    let written = markdown_to_docx("![area $x^2$](a.png)\n", &DocxOptions::default()).unwrap();
+    assert_eq!(texts(&written.docx), ["area $x^2$"]);
+}
+
+#[test]
+fn caret_and_single_tilde_mark_superscript_and_subscript() {
+    // `^x^` and `~x~` at word edges, as pulldown-cmark reads them; two
+    // tildes stay strikethrough and `{~~a~>b~~}` stays a change. Inside a
+    // word (`H~2~O`) they stay text: pulldown-cmark opens neither there.
+    let docx = write("water H ~2~ O, E = mc ^2^, H~2~O, ~~struck~~ and {~~a~>b~~}.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(
+        xml.matches("<w:vertAlign w:val=\"subscript\"/>").count(),
+        1,
+        "{xml}"
+    );
+    assert_eq!(
+        xml.matches("<w:vertAlign w:val=\"superscript\"/>").count(),
+        1,
+        "{xml}"
+    );
+    assert!(xml.contains("<w:strike/>"), "{xml}");
+    assert_eq!(
+        texts(&docx),
+        ["water H 2 O, E = mc 2, H~2~O, struck and b."]
+    );
+    assert_eq!(
+        rejected(&docx),
+        ["water H 2 O, E = mc 2, H~2~O, struck and a."]
+    );
+}
+
+#[test]
+fn a_link_to_a_heading_lands_on_its_bookmark() {
+    // `[x](#slug)` names a heading the way GitHub slugs it; the heading
+    // gets the bookmark Word's `w:anchor` jumps to. A second heading with
+    // the same text is `-1`; a heading no link names gets no bookmark.
+    let docx = write(
+        "# The Intro: part 1\n\nText.\n\n## Unlinked\n\n# The Intro: part 1\n\n\
+         See [the intro](#the-intro-part-1) and [again](#the-intro-part-1-1).\n",
+    );
+    let xml = document_xml(&docx);
+    let starts: Vec<&str> = xml
+        .match_indices("<w:bookmarkStart")
+        .map(|(at, _)| &xml[at..at + xml[at..].find("/>").unwrap() + 2])
+        .collect();
+    assert_eq!(
+        starts,
+        [
+            "<w:bookmarkStart w:id=\"0\" w:name=\"the-intro-part-1\"/>",
+            "<w:bookmarkStart w:id=\"1\" w:name=\"the-intro-part-1-1\"/>",
+        ],
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<w:t xml:space=\"preserve\">The Intro: part 1</w:t></w:r><w:bookmarkEnd w:id=\"0\"/></w:p>"),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("<w:bookmarkEnd").count(), 2, "{xml}");
+}
+
+#[test]
+fn heading_slugs_follow_github_slugger() {
+    // github-slugger: a repeat retries its suffixed name against every name
+    // given out; combining marks stay; a no-break space and an em dash go;
+    // only a plain space becomes `-`. An empty heading gets no bookmark.
+    let docx = write(
+        "# Intro\n\n# Intro\n\n# Intro 1\n\n# e\u{301}cole math\n\n\
+         # Foo\u{a0}Bar \u{2014} em\u{2014}dash\n\n#\n\n\
+         [a](#intro) [b](#intro-1) [c](#intro-1-1) [d](#e\u{301}cole-math) \
+         [e](#foobar--emdash) [f](#)\n",
+    );
+    let xml = document_xml(&docx);
+    let names: Vec<&str> = xml
+        .split("<w:bookmarkStart ")
+        .skip(1)
+        .filter_map(|tag| tag.split("w:name=\"").nth(1)?.split('"').next())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "intro",
+            "intro-1",
+            "intro-1-1",
+            "e\u{301}cole-math",
+            "foobar--emdash"
+        ],
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_bookmark_that_would_start_with_a_digit_starts_with_an_underscore() {
+    // Word drops a bookmark whose name starts with no letter; `_` keeps it,
+    // hidden like Word's own `_Toc` ones, and the link follows.
+    let docx = write("# 2026 plan: Q&A\n\n[plan](#2026-plan-qa)\n");
+    let xml = document_xml(&docx);
+    assert!(
+        xml.contains("<w:bookmarkStart w:id=\"0\" w:name=\"_2026-plan-qa\"/>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<w:hyperlink w:anchor=\"_2026-plan-qa\""),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_bookmark_name_keeps_to_forty_characters() {
+    // Word's schema caps a bookmark name at 40 characters: a longer slug
+    // is cut, a cut that repeats another gets `-1`, and the links follow.
+    let long = "a-rather-long-heading-that-runs-well-past-forty";
+    let docx = write(&format!(
+        "# A rather long heading that runs well past forty\n\n\
+         # A rather long heading that runs well past forty-two\n\n\
+         [one](#{long}) [two](#{long}-two)\n"
+    ));
+    let xml = document_xml(&docx);
+    let cut = &long[..40];
+    let cut_again = format!("{}-1", &long[..38]);
+    assert!(
+        xml.contains(&format!("<w:bookmarkStart w:id=\"0\" w:name=\"{cut}\"/>")),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!(
+            "<w:bookmarkStart w:id=\"1\" w:name=\"{cut_again}\"/>"
+        )),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!("<w:hyperlink w:anchor=\"{cut}\"")),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(&format!("<w:hyperlink w:anchor=\"{cut_again}\"")),
+        "{xml}"
+    );
+}
+
+#[test]
+fn inline_html_bold_italic_strike_code_and_mark() {
+    // The common inline tags format their text as their Markdown siblings
+    // do; a tag's attributes and case do not matter. `<mark>` is Word's
+    // yellow highlight, alone.
+    let docx = write(
+        "<b>b</b> <strong>s</strong> <i>i</i> <em>e</em> <s>x</s> <del>d</del> \
+         <code>c</code> <mark>m</mark> <B CLASS=\"k\">attr</B>.\n",
+    );
+    let xml = document_xml(&docx);
+    for (element, count) in [
+        ("<w:b/>", 3),
+        ("<w:i/>", 2),
+        ("<w:strike/>", 2),
+        ("<w:rStyle w:val=\"VerbatimChar\"/>", 1),
+        ("<w:highlight w:val=\"yellow\"/>", 1),
+    ] {
+        assert_eq!(xml.matches(element).count(), count, "{element}\n{xml}");
+    }
+    assert!(!xml.contains("w:em "), "{xml}");
+    assert_eq!(texts(&docx), ["b s i e x d c m attr."]);
+}
+
+#[test]
+fn a_braced_code_and_its_result_are_a_field() {
+    // Spec §3: `{CODE}result{/}` is a body field, the code then the result
+    // the reader sees. Braces that do not close with `{/}` in their
+    // paragraph, and escaped ones, are text.
+    let docx = write(
+        "Begins {DATE \\@ \"MMMM d, yyyy\"}March 1, 2026{/} as {REF _Ref1 \\h}Section **2**{/} says.\n\n\
+         Dear {Client Name}, and \\{PAGE}1{/}.\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(
+        xml.matches(r#"<w:fldChar w:fldCharType="begin"/>"#).count(),
+        2,
+        "{xml}"
+    );
+    assert_eq!(
+        xml.matches(r#"<w:fldChar w:fldCharType="separate"/>"#)
+            .count(),
+        2,
+        "{xml}"
+    );
+    assert_eq!(
+        xml.matches(r#"<w:fldChar w:fldCharType="end"/>"#).count(),
+        2,
+        "{xml}"
+    );
+    assert!(
+        xml.contains(
+            r#"<w:instrText xml:space="preserve"> DATE \@ &quot;MMMM d, yyyy&quot; </w:instrText>"#
+        ),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:instrText xml:space="preserve"> REF _Ref1 \h </w:instrText>"#),
+        "{xml}"
+    );
+    assert_eq!(
+        texts(&docx),
+        [
+            "Begins March 1, 2026 as Section 2 says.",
+            "Dear {Client Name}, and {PAGE}1{/}."
+        ]
+    );
+}
+
+#[test]
+fn code_inside_a_link_keeps_its_face() {
+    // A run has one character style: inside a link it is `Hyperlink`, so
+    // code there takes `VerbatimChar`'s face directly and reads back as code.
+    let xml = document_xml(&write("See [`open()`](https://a.example/b) now.\n"));
+    assert!(
+        xml.contains(r#"<w:rStyle w:val="Hyperlink"/><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>"#),
+        "{xml}"
+    );
+}
+
+#[test]
+fn double_equals_is_a_highlight() {
+    // `==x==` is a highlight (spec §3), the run property `<mark>` writes; it
+    // may hold emphasis. An `==` with spaces on both sides, one inside code
+    // or one escaped is text, and `{==x==}` stays CriticMarkup.
+    let docx = write("Pay ==**now**== and ==later==, a == b, `c==d`, e=\\=f.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(
+        xml.matches("<w:highlight w:val=\"yellow\"/>").count(),
+        2,
+        "{xml}"
+    );
+    assert!(xml.contains("<w:b/><w:bCs/><w:highlight"), "{xml}");
+    assert_eq!(texts(&docx), ["Pay now and later, a == b, c==d, e==f."]);
+    let comment = document_xml(&write("A {==range==}{>>note<<} here.\n"));
+    assert!(!comment.contains("w:highlight"), "{comment}");
+    assert!(comment.contains("commentRangeStart"), "{comment}");
+}
+
+#[test]
+fn an_unclosed_highlight_is_text() {
+    // An `==` without its partner in the paragraph is text, as an unclosed
+    // `~~` is.
+    let docx = write("Only ==one here.\n\nNext ==para== ok.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight").count(), 1, "{xml}");
+    assert_eq!(texts(&docx), ["Only ==one here.", "Next para ok."]);
+}
+
+#[test]
+fn an_unclosed_inline_tag_ends_with_its_block() {
+    // `<b>` without `</b>` formats the rest of its paragraph, cell or
+    // heading, never the blocks after it.
+    let docx = write("# <u>head\n\n<b>open and **strong\n\n|<i>a|b|\n|-|-|\n|c|d|\n\nplain\n");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:u ").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<w:i/>").count(), 1, "{xml}");
+    let plain = xml.split("plain").next().unwrap();
+    let last = &plain[plain.rfind("<w:r>").unwrap()..];
+    assert!(!last.contains("<w:b/>"), "{xml}");
+}
+
+#[test]
+fn inline_html_the_writer_drops_is_named_once_in_a_warning() {
+    // A tag the writer does not know keeps its text and loses its markup;
+    // the warning names each such tag once. Comments are no tags.
+    let written = markdown_to_docx(
+        "<span>kept</span> and <kbd>K</kbd> and <span class=\"x\">again</span> <!-- note -->.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(texts(&written.docx), ["kept and K and again ."]);
+    let html: Vec<&String> = written
+        .warnings
+        .iter()
+        .filter(|w| w.contains("HTML"))
+        .collect();
+    assert_eq!(html.len(), 2, "{:?}", written.warnings);
+    assert!(html[0].contains("<span>"), "{html:?}");
+    assert!(html[1].contains("<kbd>"), "{html:?}");
+}
+
+#[test]
 fn inline_html_quotes_code_in_lists_and_anchors() {
     let docx = write(
         "H<sub>2</sub>O and E=mc<sup>2</sup>, <u>underlined</u>, a<br>break, <span>kept</span>.\n\n\
@@ -604,8 +908,10 @@ fn attributions_name_the_author_and_date_of_the_change_before_them() {
         changes,
         [
             r#"w:author="Ana Lima" w:date="2026-01-02T03:04:00Z""#,
-            r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
+            // A substitution is written as Word writes one: the inserted
+            // side (Cy's) before the deleted side (Bo's).
             r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
+            r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
             r#"w:author="Redline" w:date="2026-04-05T06:07:08+01:00""#,
             r#"w:author="Redline" w:date="1970-01-01T00:00:00Z""#,
         ]
@@ -664,4 +970,652 @@ fn comments_as_read_from_word_keep_their_ranges_and_authors() {
         "{xml}"
     );
     assert!(!xml.contains("<w:highlight "), "{xml}");
+}
+
+fn tracks(docx: &[u8]) -> bool {
+    part_string(docx, "word/settings.xml")
+        .unwrap()
+        .contains("<w:trackRevisions")
+}
+
+#[test]
+fn track_changes_key_writes_track_revisions() {
+    let on = write("---\ntrack_changes: on\n---\n\nText.\n");
+    assert!(tracks(&on), "on");
+    assert_word_valid_package(&on);
+    assert!(
+        !tracks(&write("---\ntrack_changes: off\n---\n\nText.\n")),
+        "off"
+    );
+    // Revisions alone never turn tracking on.
+    assert!(!tracks(&write("Due in {~~30~>45~~} days.\n")), "no key");
+}
+
+#[test]
+fn track_changes_key_overrides_reference_settings() {
+    let tracked = write("---\ntrack_changes: on\n---\n\nText.\n");
+    let with = |markdown: &str| {
+        write_with(
+            markdown,
+            &DocxOptions {
+                reference: Some(&tracked),
+                ..DocxOptions::default()
+            },
+        )
+    };
+    assert!(tracks(&with("Text.\n")), "the reference's setting is kept");
+    assert!(
+        !tracks(&with("---\ntrack_changes: off\n---\n\nText.\n")),
+        "off"
+    );
+}
+
+#[test]
+fn the_tracking_option_overrides_the_key() {
+    let with = |markdown: &str, tracking: bool| {
+        write_with(
+            markdown,
+            &DocxOptions {
+                tracking: Some(tracking),
+                ..DocxOptions::default()
+            },
+        )
+    };
+    assert!(!tracks(&with(
+        "---\ntrack_changes: on\n---\n\nText.\n",
+        false
+    )));
+    assert!(tracks(&with(
+        "---\ntrack_changes: off\n---\n\nText.\n",
+        true
+    )));
+    assert!(tracks(&with("Text.\n", true)));
+}
+
+#[test]
+fn a_table_takes_the_style_the_view_names_and_otherwise_none() {
+    // No style named: Word's Normal Table, no forced Table Grid.
+    let plain = document_xml(&write("|a|b|\n|-|-|\n|c|d|\n"));
+    assert!(!plain.contains("w:tblStyle"), "{plain}");
+    // The legend's `table:` styles every table.
+    let legend = markdown_to_docx(
+        "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt  # default\n  table: TableGrid, all borders 0.5pt\n---\n\n\
+         <!-- t0 1x2, cells p0-p1 by row -->\n|a|b|\n|-|-|\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&legend.docx);
+    assert!(xml.contains(r#"<w:tblStyle w:val="TableGrid"/>"#), "{xml}");
+    let styles = part_string(&legend.docx, "word/styles.xml").unwrap();
+    assert!(styles.contains(r#"w:styleId="TableGrid""#), "{styles}");
+    // Tables of several styles name theirs on their lines; one naming
+    // none has none. A style Word does not know is defined by its name.
+    let mixed = markdown_to_docx(
+        "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt  # default\n  tables: TableGrid, Ledger\n---\n\n\
+         <!-- t0 1x1, cells p0-p0 by row -->\n|a|\n|-|\n\n\
+         <!-- t1 1x1, cells p1-p1 by row, style TableGrid -->\n|b|\n|-|\n\n\
+         <!-- t2 1x1, cells p2-p2 by row, style Ledger -->\n|c|\n|-|\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&mixed.docx);
+    let styles_of: Vec<&str> = xml
+        .split("<w:tbl>")
+        .skip(1)
+        .map(|t| {
+            t.split_once(r#"<w:tblStyle w:val=""#)
+                .filter(|(before, _)| !before.contains("</w:tblPr>"))
+                .map_or("", |(_, rest)| rest.split('"').next().unwrap())
+        })
+        .collect();
+    assert_eq!(styles_of, ["", "TableGrid", "Ledger"], "{xml}");
+    let styles = part_string(&mixed.docx, "word/styles.xml").unwrap();
+    assert!(
+        styles.contains(r#"<w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/>"#),
+        "{styles}"
+    );
+    assert_word_valid_package(&mixed.docx);
+}
+
+#[test]
+fn the_document_owner_is_written_where_the_view_read_it() {
+    // `document_owner:` names dc:creator, or cp:lastModifiedBy when its
+    // note says the file had no creator; `none` writes neither, and its
+    // `no docProps/core.xml` note writes no core properties at all.
+    let core = |owner: &str| {
+        let written = markdown_to_docx(
+            &format!("---\nview: tracked\nauthors:\n  document_owner: {owner}\n---\n\nText.\n"),
+            &DocxOptions::default(),
+        )
+        .unwrap();
+        part_string(&written.docx, "docProps/core.xml")
+    };
+    let creator = core("\"Jones, SA\"        # dc:creator").unwrap();
+    assert!(
+        creator.contains("<dc:creator>Jones, SA</dc:creator>"),
+        "{creator}"
+    );
+    assert!(!creator.contains("lastModifiedBy"), "{creator}");
+    let plain = core("Ann Lee").unwrap();
+    assert!(
+        plain.contains("<dc:creator>Ann Lee</dc:creator>"),
+        "{plain}"
+    );
+    let editor = core("Last Editor      # cp:lastModifiedBy; no dc:creator").unwrap();
+    assert!(
+        editor.contains("<cp:lastModifiedBy>Last Editor</cp:lastModifiedBy>"),
+        "{editor}"
+    );
+    assert!(!editor.contains("dc:creator"), "{editor}");
+    let nobody =
+        core("none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy")
+            .unwrap();
+    assert!(
+        !nobody.contains("dc:creator") && !nobody.contains("lastModifiedBy"),
+        "{nobody}"
+    );
+    let written = markdown_to_docx(
+        "---\nview: tracked\nauthors:\n  document_owner: none             # no docProps/core.xml\n---\n\nText.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert!(part_string(&written.docx, "docProps/core.xml").is_none());
+    let types = part_string(&written.docx, "[Content_Types].xml").unwrap();
+    assert!(!types.contains("core.xml"), "{types}");
+    let rels = part_string(&written.docx, "_rels/.rels").unwrap();
+    assert!(!rels.contains("core-properties"), "{rels}");
+    assert_word_valid_package(&written.docx);
+}
+
+/// The text of every `<{name}>` element in `core`, outside comments and
+/// CDATA, unescaped.
+fn core_values(core: &str, name: &str) -> Vec<String> {
+    let mut reader = quick_xml::Reader::from_str(core);
+    let mut values = Vec::new();
+    let mut inside: Option<String> = None;
+    loop {
+        match reader.read_event().unwrap() {
+            quick_xml::events::Event::Start(e) if e.name().as_ref() == name => {
+                inside = Some(String::new());
+            }
+            quick_xml::events::Event::Empty(e) if e.name().as_ref() == name => {
+                values.push(String::new());
+            }
+            quick_xml::events::Event::Text(t) => {
+                if let Some(text) = inside.as_mut() {
+                    text.push_str(&t.xml10_content());
+                }
+            }
+            quick_xml::events::Event::GeneralRef(r) => {
+                if let Some(text) = inside.as_mut() {
+                    let entity: &str = &r;
+                    text.push_str(match entity {
+                        "amp" => "&",
+                        "lt" => "<",
+                        "gt" => ">",
+                        "quot" => "\"",
+                        "apos" => "'",
+                        other => panic!("entity {other}"),
+                    });
+                }
+            }
+            quick_xml::events::Event::End(e) if e.name().as_ref() == name => {
+                values.extend(inside.take());
+            }
+            quick_xml::events::Event::Eof => return values,
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn the_document_owner_replaces_whatever_the_reference_names() {
+    // The owner is written into the reference's core properties however
+    // they spell the element, and only into the element itself: never into
+    // a comment or CDATA that mentions it. A reference with no core
+    // properties gets them.
+    const NAME: &str = r#"Ada & Bo <C> "Q""#;
+    let view = "---\nview: tracked\nauthors:\n  document_owner: \"Ada & Bo <C> \\\"Q\\\"\"  # dc:creator\n---\n\nText.\n";
+    let core = |inner: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">{inner}</cp:coreProperties>"#
+        )
+    };
+    let template = write("Text.\n");
+    for inner in [
+        "<dc:creator>Someone Else</dc:creator>",
+        r#"<dc:creator xml:space="preserve">Someone Else</dc:creator>"#,
+        r#"<dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Someone Else</dc:creator>"#,
+        "<!-- <dc:creator>decoy</dc:creator> --><dc:creator>Someone Else</dc:creator>",
+        "<dc:description><![CDATA[<dc:creator>decoy</dc:creator>]]></dc:description><dc:creator>Someone Else</dc:creator>",
+        "<dc:description><![CDATA[</dc:creator>]]></dc:description><dc:creator>Someone Else</dc:creator>",
+        "<dc:creator /><cp:lastModifiedBy>Someone Else</cp:lastModifiedBy>",
+        "<dc:creator />",
+    ] {
+        let reference =
+            common::docx::replace_entry(&template, "docProps/core.xml", core(inner).as_bytes());
+        let written = write_with(
+            view,
+            &DocxOptions {
+                reference: Some(&reference),
+                ..DocxOptions::default()
+            },
+        );
+        let out = part_string(&written, "docProps/core.xml").unwrap();
+        assert_eq!(core_values(&out, "dc:creator"), [NAME], "{inner}\n{out}");
+        assert!(!out.contains("Someone Else"), "{inner}\n{out}");
+        assert!(core_values(&out, "cp:lastModifiedBy").is_empty(), "{out}");
+        if inner.contains("decoy") {
+            assert!(out.contains("decoy"), "{out}");
+        }
+    }
+    // No core properties in the reference: the owner makes them.
+    let bare = common::docx::docx(&common::docx::para("Text."));
+    let written = write_with(
+        view,
+        &DocxOptions {
+            reference: Some(&bare),
+            ..DocxOptions::default()
+        },
+    );
+    let out = part_string(&written, "docProps/core.xml").expect("core properties written");
+    assert_eq!(core_values(&out, "dc:creator"), [NAME], "{out}");
+    let rels = part_string(&written, "_rels/.rels").unwrap();
+    assert!(rels.contains("core-properties"), "{rels}");
+    let types = part_string(&written, "[Content_Types].xml").unwrap();
+    assert!(types.contains("/docProps/core.xml"), "{types}");
+}
+
+#[test]
+fn an_owner_named_none_is_a_name_and_the_owner_line_outranks_author() {
+    let core = |front: &str| {
+        let written = write(&format!("---\nview: tracked\n{front}---\n\nText.\n"));
+        part_string(&written, "docProps/core.xml").unwrap_or_default()
+    };
+    // The note says a creator holds the name: `none` is that name.
+    let named = core("authors:\n  document_owner: none             # dc:creator\n");
+    assert_eq!(core_values(&named, "dc:creator"), ["none"], "{named}");
+    let quoted = core("authors:\n  document_owner: \"none\"\n");
+    assert_eq!(core_values(&quoted, "dc:creator"), ["none"], "{quoted}");
+    let editor = core("authors:\n  document_owner: none   # cp:lastModifiedBy; no dc:creator\n");
+    assert_eq!(
+        core_values(&editor, "cp:lastModifiedBy"),
+        ["none"],
+        "{editor}"
+    );
+    assert!(core_values(&editor, "dc:creator").is_empty(), "{editor}");
+    // `document_owner:` says who the file names; `author:` does not undo it.
+    let both = core(
+        "author: Override\nauthors:\n  document_owner: Last Editor  # cp:lastModifiedBy; no dc:creator\n",
+    );
+    assert!(core_values(&both, "dc:creator").is_empty(), "{both}");
+    assert_eq!(
+        core_values(&both, "cp:lastModifiedBy"),
+        ["Last Editor"],
+        "{both}"
+    );
+    // A quoted title keeps its quotes inside.
+    let title = core("title: \"Quarterly & <Report> \\\"Q\\\"\"\n");
+    assert_eq!(
+        core_values(&title, "dc:title"),
+        [r#"Quarterly & <Report> "Q""#],
+        "{title}"
+    );
+}
+
+#[test]
+fn no_core_properties_with_a_title_keeps_the_title_and_names_nobody() {
+    let template = write("Text.\n");
+    let reference = common::docx::replace_entry(
+        &template,
+        "docProps/core.xml",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Someone Else</dc:creator><cp:lastModifiedBy>Other Editor</cp:lastModifiedBy></cp:coreProperties>"#,
+    );
+    let written = write_with(
+        "---\ntitle: Quarterly\nauthors:\n  document_owner: none             # no docProps/core.xml\n---\n\nText.\n",
+        &DocxOptions {
+            reference: Some(&reference),
+            ..DocxOptions::default()
+        },
+    );
+    let out = part_string(&written, "docProps/core.xml").unwrap();
+    assert_eq!(core_values(&out, "dc:title"), ["Quarterly"], "{out}");
+    assert!(core_values(&out, "dc:creator").is_empty(), "{out}");
+    assert!(core_values(&out, "cp:lastModifiedBy").is_empty(), "{out}");
+}
+
+#[test]
+fn an_anchor_tag_is_the_bookmark_a_link_names() {
+    // `<a id="name"></a>` is a bookmark where it stands (the view prints
+    // the bookmarks links and reference fields name); a link to it is no
+    // missing heading, and no heading takes its name.
+    let written = markdown_to_docx(
+        "# Up\n\n<a id=\"exec_summary\"></a>Summary and <a name=\"_Ref9\"></a>more.\n\n\
+         Back [up](#exec_summary \"Go up\") and [there](#_Ref9).\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(
+        xml.contains(
+            r#"<w:bookmarkStart w:id="0" w:name="exec_summary"/><w:bookmarkEnd w:id="0"/>"#
+        ),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:bookmarkStart w:id="1" w:name="_Ref9"/><w:bookmarkEnd w:id="1"/>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:hyperlink w:anchor="exec_summary" w:tooltip="Go up""#),
+        "{xml}"
+    );
+    assert!(xml.contains(r#"w:anchor="_Ref9""#), "{xml}");
+    assert!(
+        !written.warnings.iter().any(|w| w.contains("link")),
+        "{:?}",
+        written.warnings
+    );
+    let view = jubarte::markdown::docx_to_markdown(
+        &written.docx,
+        &jubarte::markdown::MarkdownOptions::default(),
+    )
+    .unwrap()
+    .markdown;
+    assert!(
+        view.contains("<a id=\"exec_summary\"></a>Summary and <a id=\"_Ref9\"></a>more."),
+        "{view}"
+    );
+    assert!(
+        view.contains("Back [up](#exec_summary \"Go up\") and [there](#_Ref9)."),
+        "{view}"
+    );
+}
+
+#[test]
+fn a_link_to_no_heading_is_written_and_warned_once() {
+    let written = markdown_to_docx(
+        "# Intro\n\n[a](#intro) [b](#nowhere) [c](#nowhere) [d](#gone)\n\n{--\n# Gone\n--}\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(xml.contains("w:anchor=\"nowhere\""), "the link is kept");
+    let links: Vec<&String> = written
+        .warnings
+        .iter()
+        .filter(|w| w.contains("link"))
+        .collect();
+    assert_eq!(links.len(), 2, "{:?}", written.warnings);
+    assert!(links[0].contains("#gone"), "{links:?}");
+    assert!(links[1].contains("#nowhere"), "{links:?}");
+}
+
+#[test]
+fn a_self_closing_tag_formats_nothing() {
+    let xml = document_xml(&write("plain <b/> after <mark/> more <u/> end\n"));
+    assert!(!xml.contains("<w:b/>"), "{xml}");
+    assert!(!xml.contains("<w:highlight"), "{xml}");
+    assert!(!xml.contains("<w:u "), "{xml}");
+}
+
+#[test]
+fn a_hyphenated_tag_is_its_own_name() {
+    let written = markdown_to_docx(
+        "A <i-am-not>x</i-am-not> and <code-of-conduct>y</code-of-conduct>.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(!xml.contains("<w:i/>"), "{xml}");
+    assert!(!xml.contains("VerbatimChar"), "{xml}");
+    let html: Vec<&String> = written
+        .warnings
+        .iter()
+        .filter(|w| w.contains("HTML"))
+        .collect();
+    assert_eq!(html.len(), 2, "{:?}", written.warnings);
+    assert!(html[0].contains("<i-am-not>"), "{html:?}");
+    assert!(html[1].contains("<code-of-conduct>"), "{html:?}");
+}
+
+#[test]
+fn a_tag_inside_a_comment_never_formats_the_body() {
+    let docx = write("before {>>a comment with <b>bold words<<} after\n");
+    let xml = document_xml(&docx);
+    assert!(!xml.contains("<w:b/>"), "{xml}");
+}
+
+#[test]
+fn only_a_top_level_track_changes_key_counts() {
+    let docx = write("---\ntitle: N\noptions:\n  track_changes: on\n---\n\nText.\n");
+    assert!(!tracks(&docx));
+    let written = markdown_to_docx(
+        "---\ntrack_changes:\n---\n\nText.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        written.warnings.iter().any(|w| w.contains("track_changes")),
+        "{:?}",
+        written.warnings
+    );
+}
+
+#[test]
+fn a_comment_in_a_footnote_moves_to_its_reference() {
+    // Word shows a comment only from the body: the note's comment anchors
+    // on the note's reference mark, and the writer says so.
+    let written = markdown_to_docx(
+        "Text[^1] and again[^1].\n\n[^1]: note {>>a comment<<} here\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let notes = part_string(&written.docx, "word/footnotes.xml").unwrap();
+    assert!(!notes.contains("comment"), "{notes}");
+    let body = document_xml(&written.docx);
+    assert_eq!(body.matches("<w:commentReference").count(), 1, "{body}");
+    let start = body.find("<w:commentRangeStart").unwrap();
+    let reference = body.find("<w:footnoteReference").unwrap();
+    let end = body.find("<w:commentRangeEnd").unwrap();
+    assert!(start < reference && reference < end, "{body}");
+    assert!(
+        written.warnings.iter().any(|w| w.contains("footnote")),
+        "{:?}",
+        written.warnings
+    );
+    assert_word_valid_package(&written.docx);
+}
+
+#[test]
+fn a_comment_in_a_header_is_dropped_with_its_text_kept() {
+    let written = markdown_to_docx(
+        "---\nsections:\n  1: {p0-p0, headers: {default: {id: header1, text: \"Head {>>hc<<}\"}}}\n---\n\nBody.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let header = part_string(&written.docx, "word/header1.xml").unwrap();
+    assert!(header.contains(">Head <"), "{header}");
+    assert!(!header.contains("hc"), "{header}");
+    assert!(
+        written.warnings.iter().any(|w| w.contains("header")),
+        "{:?}",
+        written.warnings
+    );
+}
+
+#[test]
+fn code_and_link_destinations_open_no_highlight_field_or_change() {
+    // Markdown reads a code span and a link destination literally, so
+    // `==`, `{CODE}…{/}` and CriticMarkup open nothing inside them. A fenced
+    // block keeps tracked changes (the reader prints them there) but not
+    // highlights or fields, which it never prints there.
+    let docx = write(
+        "See `==x==`, `{PAGE}1{/}` and `{++y++}` here.\n\n\
+         Run `==a` and `b==` now.\n\n\
+         Get [t](http://e.example/?q=ab==) then ==hl== end.\n\n\
+         ```\nkey ==x== {PAGE}1{/} {++z++}\n```\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight ").count(), 1, "{xml}");
+    assert!(!xml.contains("<w:fldChar"), "{xml}");
+    assert_eq!(xml.matches("<w:ins ").count(), 1, "{xml}");
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("http://e.example/?q=ab=="), "{rels}");
+    assert_eq!(
+        accepted(&docx),
+        [
+            "See ==x==, {PAGE}1{/} and {++y++} here.",
+            "Run ==a and b== now.",
+            "Get t then hl end.",
+            "key ==x== {PAGE}1{/} z",
+        ]
+    );
+}
+
+#[test]
+fn an_unclosed_backtick_autolinks_and_parenthesised_urls_keep_highlights_right() {
+    let docx = write(
+        "An `unclosed tick ==hl== and <https://a.example/==x==> ==two==.\n\n\
+         [p](https://a.example/(x==)) ==y==\n\n\
+         ~~~ text\n==z==\n~~~\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight ").count(), 3, "{xml}");
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("https://a.example/(x==)"), "{rels}");
+    assert_eq!(
+        accepted(&docx),
+        [
+            "An `unclosed tick hl and https://a.example/==x== two.",
+            "p y",
+            "==z==",
+        ]
+    );
+}
+
+#[test]
+fn an_html_block_keeps_its_text() {
+    // A raw HTML block (`<div>` up to a blank line) is not Markdown, but its
+    // text is the author's: it stays, a paragraph per block element, with
+    // a warning that the markup is gone. Script and style bodies are not text.
+    let out = markdown_to_docx(
+        "<div>\nDiv &amp; text\nhere.<!-- note -->\n<p>Second</p>\n<script>x()</script>\n</div>\n\nAfter.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(texts(&out.docx), ["Div & text here.", "Second", "After."]);
+    assert!(
+        out.warnings.iter().any(|w| w.contains("HTML block <div>")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+#[test]
+fn an_html_anchor_with_href_is_a_link() {
+    // `<a href>` is a link like `[t](u)`; one without `href` is text, and
+    // one left open closes with its block.
+    let docx = write(
+        "See <a href=\"https://a.example/x?a=1&amp;b=2\">anchor <b>tag</b></a> and \
+         <a name=\"x\">no href</a> now.\n\nOpen <a href='https://b.example/'>unclosed\n\nPlain.\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:hyperlink ").count(), 2, "{xml}");
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("https://a.example/x?a=1&amp;b=2"), "{rels}");
+    assert!(rels.contains("https://b.example/"), "{rels}");
+    assert_eq!(
+        texts(&docx),
+        ["See anchor tag and no href now.", "Open unclosed", "Plain."]
+    );
+}
+
+#[test]
+fn a_link_title_is_its_tooltip() {
+    let docx = write(
+        "# Intro\n\n[titled](https://a.example/t \"The & Title\") and [back](#intro 'Go up').\n",
+    );
+    let xml = document_xml(&docx);
+    assert!(xml.contains(r#"w:tooltip="The &amp; Title""#), "{xml}");
+    assert!(xml.contains(r#"w:tooltip="Go up""#), "{xml}");
+}
+
+#[test]
+fn a_brace_inside_a_quoted_field_argument_is_part_of_the_code() {
+    let docx = write("A {QUOTE \"a}b\"}X{/} and {QUOTE \"c{d\"}Y{/} B.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches(r#"w:fldCharType="begin""#).count(), 2, "{xml}");
+    assert!(
+        xml.contains(r#"<w:instrText xml:space="preserve"> QUOTE &quot;a}b&quot; </w:instrText>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:instrText xml:space="preserve"> QUOTE &quot;c{d&quot; </w:instrText>"#),
+        "{xml}"
+    );
+    assert_eq!(texts(&docx), ["A X and Y B."]);
+}
+
+#[test]
+fn a_reference_definitions_destination_is_read_literally() {
+    // Like an inline destination, a definition's destination and title
+    // open no highlight or field; a footnote definition still does.
+    let docx = write(
+        "See [x] and [y] then ==hl== end.\n\n\
+         [x]: http://e.example/u==v==\n\
+         [y]: <http://e.example/{PAGE}1{/}> \"t ==z==\"\n\n\
+         A [^1].\n\n\
+         [^1]: Note ==n== here.\n\n\
+         A paragraph line\n[z]: is no ==definition==.\n",
+    );
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("http://e.example/u==v=="), "{rels}");
+    assert!(rels.contains("http://e.example/{PAGE}1{/}"), "{rels}");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight ").count(), 2, "{xml}");
+    assert!(!xml.contains("<w:fldChar"), "{xml}");
+    let notes = part_string(&docx, "word/footnotes.xml").unwrap();
+    assert_eq!(notes.matches("<w:highlight ").count(), 1, "{notes}");
+}
+
+#[test]
+fn a_front_matter_story_that_does_not_read_warns() {
+    // YAML reads no `{` in a plain scalar: the footer is dropped, and says
+    // so. A single-quoted scalar keeps the field's backslash.
+    let written = markdown_to_docx(
+        "---\nfooters:\n  default: {id: footer1, text: Page {PAGE} of {NUMPAGES}}\n\
+         headers:\n  default: {id: header1, text: '{REF _R \\h}hi{/}'}\n  \
+         first: {id: header2, text: \"{REF _R}hi{/}\"}\n---\n\nBody.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert!(part_string(&written.docx, "word/footer1.xml").is_none());
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("footers: default")),
+        "{:?}",
+        written.warnings
+    );
+    assert!(
+        !written.warnings.iter().any(|w| w.contains("headers")),
+        "{:?}",
+        written.warnings
+    );
+    // The front matter is no Markdown: a field in it is not encoded, so
+    // its code keeps its characters and is written as the field it names.
+    let header = part_string(&written.docx, "word/header1.xml").unwrap();
+    assert!(
+        header.contains(r#"<w:fldSimple w:instr=" REF _R \h "><w:r><w:t xml:space="preserve">hi</w:t></w:r></w:fldSimple>"#),
+        "{header}"
+    );
+    let first = part_string(&written.docx, "word/header2.xml").unwrap();
+    assert!(
+        first.contains(r#"<w:fldSimple w:instr=" REF _R ">"#),
+        "{first}"
+    );
 }

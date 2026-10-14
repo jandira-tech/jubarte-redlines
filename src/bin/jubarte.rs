@@ -558,6 +558,17 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         .collect();
     for path in &png_paths {
         ensure_writable(path, job.force)?;
+        // `-o r.png --report r-page-01.png` would write the page, then
+        // the report over it.
+        for (side, flag) in [(job.font_report, "--font-report"), (job.report, "--report")] {
+            if let Some(side) = side.filter(|side| same_path(side, path)) {
+                return Err(format!(
+                    "{flag} '{}' is the same file as the PNG output",
+                    side.display()
+                )
+                .into());
+            }
+        }
     }
     if let Some(pdf) = &rendered.pdf {
         std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
@@ -1310,7 +1321,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         &source,
     )?;
     if flags.options.editing_mode
-        && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan)
+        && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan, &source)
     {
         return Err((EXIT_USAGE, message.to_string()));
     }
@@ -1510,6 +1521,8 @@ fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
         reference: compare.reference_doc,
         critic: compare.critic,
         resource_path: compare.resource_path,
+        // A change is made now, by Redline unless a flag names someone:
+        // never the files' own metadata (Arthur, 2026-10-14).
         author: compare.author,
         date: compare
             .datetime
@@ -2126,14 +2139,34 @@ fn run_convert_any(
                 .map(read_document)
                 .transpose()?;
             let loader = image_loader(resource_dir(job.file, markdown.resource_path.as_deref()));
+            // The changes and comments that name no author or date take
+            // the flag's, else the front matter's, else the reference
+            // document's creator and creation time, else Redline and now.
+            let (creator, created) = reference
+                .as_deref()
+                .map(jubarte::markdown::docx_stamp)
+                .unwrap_or_default();
             let options = jubarte::markdown::DocxOptions {
                 reference: reference.as_deref(),
                 critic: !markdown.no_critic,
                 track_changes: markdown.track_changes.into(),
-                author: markdown.author.clone(),
-                date: markdown.datetime.clone(),
+                author: markdown
+                    .author
+                    .clone()
+                    .or(creator)
+                    .unwrap_or_else(|| "Redline".to_string()),
+                date: markdown
+                    .datetime
+                    .clone()
+                    .or(created)
+                    .unwrap_or_else(jubarte::convert::utc_now_iso8601),
+                author_fixed: markdown.author.is_some(),
+                date_fixed: markdown.datetime.is_some(),
                 images: Some(&loader),
                 page: markdown.page.into(),
+                tracking: markdown
+                    .tracking
+                    .map(|tracking| tracking == jubarte::cli::Tracking::On),
             };
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;
@@ -2308,11 +2341,27 @@ fn main() -> ExitCode {
 }
 
 fn cli_main() -> ExitCode {
-    let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit());
     let argv: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| {
+        // A removed flag names what replaced it; clap's tip may name a
+        // lookalike.
+        if let Some((old, now)) =
+            jubarte::cli::removed_spellings(argv.iter().map(String::as_str)).first()
+        {
+            eprintln!("{}", jubarte::cli::removed_error(old, now));
+            std::process::exit(2);
+        }
+        // `diff-render --help` still says the name is retired.
+        if !error.use_stderr() {
+            for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
+                eprintln!("{}", jubarte::cli::retired_note(old, now));
+            }
+        }
+        error.exit()
+    });
     for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
         eprintln!("{}", jubarte::cli::retired_note(old, now));
     }

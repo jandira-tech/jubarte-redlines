@@ -5,7 +5,7 @@ _The_ warranty period is **twelve** months from delivery.
 Either party may end this agreement with ninety days written notice.
 
 |Clause|Change|Status|
-|-|-|-|
+|:-|:-|:-|
 |Late payments carry interest.|Each party keeps the.|The warranty period is.|
 |The supplier keeps title.|The supplier shall deliver.|The warranty period is.|
 |Payment is due on.|The supplier shall deliver.|Late payments carry interest.|

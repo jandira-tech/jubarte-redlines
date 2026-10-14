@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `convert --page letter|a4` for Markdown written to Word, and
+//! `convert --page letter|a4` and `--tracking on|off` for Markdown written
+//! to Word, and
 //! `text --track-changes all|accept|reject`, through the compiled binary.
 
 mod common;
@@ -153,4 +154,38 @@ fn help_describes_the_new_flags() {
     let text = ok(&jubarte(&["read", "--help"], dir.path()));
     assert!(text.contains("--track-changes"), "{text}");
     assert!(text.contains("<!-- pN -->"), "{text}");
+}
+
+fn tracks(dir: &Path, docx: &str) -> bool {
+    part_string(&std::fs::read(dir.join(docx)).unwrap(), "word/settings.xml")
+        .unwrap()
+        .contains("<w:trackRevisions")
+}
+
+#[test]
+fn convert_tracking_overrides_the_track_changes_key() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("on.md"),
+        format!("---\ntrack_changes: on\n---\n\n{DRAFT}"),
+    )
+    .unwrap();
+    ok(&jubarte(
+        &["convert", "on.md", "-o", "key.docx"],
+        dir.path(),
+    ));
+    ok(&jubarte(
+        &["convert", "on.md", "--tracking", "off", "-o", "off.docx"],
+        dir.path(),
+    ));
+    ok(&jubarte(
+        &["convert", "on.md", "--tracking", "on", "-o", "on.docx"],
+        dir.path(),
+    ));
+    assert!(tracks(dir.path(), "key.docx"));
+    assert!(!tracks(dir.path(), "off.docx"));
+    assert!(tracks(dir.path(), "on.docx"));
+
+    let out = jubarte(&["convert", "on.md", "--tracking", "maybe"], dir.path());
+    assert!(!out.status.success());
 }

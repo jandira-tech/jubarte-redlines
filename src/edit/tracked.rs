@@ -118,12 +118,12 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
 /// The result under `keep`: the clean copy as `finish` made it, the redline
 /// by emission, and revision counts of the plan's own changes.
 pub(super) fn result(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult, EditError> {
-    let redline = redline(tx)?;
+    let (redline, floor) = redline(tx)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
-    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date);
+    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
     Ok(EditResult {
         clean,
         redline,
@@ -133,7 +133,9 @@ pub(super) fn result(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult,
 
 /// Replay `tx`'s resolved operations on a fresh copy of its base as tracked
 /// changes. `tx` has been applied, so its outcomes hold the comment ids.
-fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
+/// Returns the redline and the first id its own revisions took: every
+/// source revision's id is below it.
+fn redline(tx: &Transaction<'_>) -> Result<(Vec<u8>, u64), EditError> {
     let plan = EditPlan {
         source_sha256: None,
         date: Some(tx.date.clone()),
@@ -168,6 +170,7 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
         date: &tx.date,
         next_id: first_free_id(&t.opened, &comments),
     };
+    let floor = stamp.next_id;
     let tables = emit(&mut t, &comment_ids, &mut stamp);
     thread_markers(&mut t, &comment_ids);
     // 7. A paragraph after each new table, and between it and a table
@@ -178,18 +181,23 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
     t.comments = comments;
     t.reply_parents = tx.reply_parents.clone();
     let (redline, _) = t.finish()?;
-    Ok(redline)
+    Ok((redline, floor))
 }
 
-/// Counts of the redline's changes stamped with `author` and `date`: the
-/// edit's own. A source change carrying the very same stamp counts too.
-fn revision_counts(redline: &[u8], author: &str, date: &str) -> RevisionCounts {
+/// Counts of the redline's changes stamped with `author` and `date` whose
+/// `w:id` is at least `floor`: the edit's own. A source change carrying the
+/// very same stamp has an id below `floor`, so it does not count.
+fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> RevisionCounts {
     let changes = list_changes(redline).unwrap_or_default();
-    RevisionCounts::from_changes(
-        changes
-            .iter()
-            .filter(|c| c.author.as_deref() == Some(author) && c.date.as_deref() == Some(date)),
-    )
+    RevisionCounts::from_changes(changes.iter().filter(|c| {
+        c.author.as_deref() == Some(author)
+            && c.date.as_deref() == Some(date)
+            && c.id
+                .rsplit(':')
+                .next()
+                .and_then(|id| id.parse::<u64>().ok())
+                .is_some_and(|id| id >= floor)
+    }))
 }
 
 /// One past the highest `w:id` in every revision-bearing part and among the

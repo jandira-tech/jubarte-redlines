@@ -15,7 +15,7 @@ jubarte diff a.docx b.docx --format side-by-side
 | Format | View | Input tracked changes |
 | --- | --- | --- |
 | `github` (`unified`, `text`) | Git headers, `@@` ranges, `-`/`+` lines | Preserved inside each line |
-| `word` | Changed text with fresh `{--old--}{++new++}` marks | **All changes accepted in both documents first** |
+| `word` | Changed text with fresh `{~~old~>new~~}`, `{++new++}` and `{--old--}` marks | **All changes accepted in both documents first** |
 | `normal` | Line addresses (`a`/`d`/`c`), `<`/`>` lines, no context | Preserved |
 | `context` | Old/new range blocks, `!`/`+`/`-` prefixes | Preserved |
 | `side-by-side` | Old/new columns, `\|`/`<`/`>` separator | Preserved |

@@ -153,11 +153,11 @@ pub enum CommentsArg {
 pub struct EditOptions {
     /// Author of the changes and comments (operation flags; a plan names
     /// its own).
-    #[arg(long, value_name = "NAME", default_value = "Redline")]
+    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
     pub author: String,
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
-    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
+    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", value_parser = parse_datetime)]
     pub datetime: Option<String>,
     /// The edits are tracked changes (the default): the file written is
     /// the redline and the view shows the marks.
@@ -173,7 +173,8 @@ pub struct EditOptions {
     #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
     pub existing_revisions: ExistingArg,
     /// The edited document, a .docx (default: `<FILE's
-    /// directory>/<stem>_modified.docx`); --pdf and --png write beside it.
+    /// directory>/<stem>_modified.docx`). Any other extension is written as
+    /// a .docx too; .md, .json, .pdf and .png name the task that writes them.
     #[arg(
         short = 'o',
         long,
@@ -182,9 +183,8 @@ pub struct EditOptions {
     )]
     pub output: Option<PathBuf>,
     /// Write the bundle instead: clean.docx, redline.docx, patch.diff and
-    /// report.jsonl (clean.docx and report.jsonl in editing mode), plus
-    /// what --pdf and --png ask for, in DIR (default: `<FILE's
-    /// directory>/<stem>.edit`).
+    /// report.jsonl (clean.docx and report.jsonl in editing mode) in DIR
+    /// (default: `<FILE's directory>/<stem>.edit`).
     #[arg(long, value_name = "DIR", num_args = 0..=1)]
     pub out_dir: Option<Option<PathBuf>>,
     /// Replace an existing output (the bundle directory's files).
@@ -314,10 +314,21 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
 }
 
 /// `--plan`'s parser: a path that may be empty, the value `--plan` takes
-/// when given bare (clap's `PathBuf` parser refuses an empty one).
+/// when given bare (clap's `PathBuf` parser refuses an empty one). A path
+/// ending in a separator names a folder, never the plan file, so it is
+/// refused here, alike in the binary, Python and npm (Codex on #433: they
+/// once wrote `new.json`, failed the rename, or refused).
 fn plan_path() -> impl clap::builder::TypedValueParser<Value = PathBuf> {
     use clap::builder::TypedValueParser as _;
-    clap::builder::OsStringValueParser::new().map(PathBuf::from)
+    clap::builder::OsStringValueParser::new().try_map(|value| {
+        let text = value.to_string_lossy();
+        if text.ends_with('/') || cfg!(windows) && text.ends_with('\\') {
+            return Err(format!(
+                "{text} ends in a separator, so it names a folder; give the plan's file, such as PLAN.json"
+            ));
+        }
+        Ok(PathBuf::from(value))
+    })
 }
 
 /// `-q`/`--quiet` before the task moves after it, so `jubarte -q validate F`
@@ -527,7 +538,7 @@ pub struct CompareArgs {
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
     // The parser fills now when absent (D17), so every host shares it.
-    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
+    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", value_parser = parse_datetime)]
     pub datetime: Option<String>,
 
     /// Overwrite the output file if it already exists.
@@ -824,7 +835,6 @@ pub enum Command {
             short = 'd',
             long = "datetime",
             value_name = "ISO8601",
-            alias = "date",
             value_parser = parse_datetime,
             help_heading = "Paragraph patch"
         )]
@@ -1759,6 +1769,12 @@ pub const RETIRED: &[Retired] = &[
         now: "--to png",
         on: Some("convert"),
     },
+];
+
+/// Every flag that is gone: it no longer parses, and the error names what
+/// to say instead, where clap's own tip may name a lookalike (`compare
+/// --date` would be told `--dates`). Arthur (2026-10-14): `--date` is gone.
+pub const REMOVED: &[Retired] = &[
     Retired {
         old: "--date",
         now: "--datetime",
@@ -1884,14 +1900,35 @@ fn spelled_options(cmd: &clap::Command, tokens: &[&str]) -> (Vec<Spelled>, usize
 pub fn retired_spellings<'a>(
     argv: impl IntoIterator<Item = &'a str>,
 ) -> Vec<(&'static str, &'static str)> {
+    spellings_in(RETIRED, argv)
+}
+
+/// Each [`REMOVED`] spelling `argv` uses, as [`retired_spellings`] finds
+/// them.
+pub fn removed_spellings<'a>(
+    argv: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, &'static str)> {
+    spellings_in(REMOVED, argv)
+}
+
+/// The error a removed spelling ends the run with, naming what to say
+/// instead.
+pub fn removed_error(old: &str, now: &str) -> String {
+    format!("error: {old} is removed; use {now}")
+}
+
+fn spellings_in<'a>(
+    table: &[Retired],
+    argv: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, &'static str)> {
     let argv: Vec<&str> = argv.into_iter().take_while(|t| *t != "--").collect();
     let model = Cli::command();
     let mut found = Vec::new();
-    let (_, at) = spelled_options(&model, &argv);
+    let (before_task, at) = spelled_options(&model, &argv);
     let Some(&task) = argv.get(at) else {
         return found;
     };
-    if let Some(retired) = RETIRED.iter().find(|r| r.on.is_none() && r.old == task) {
+    if let Some(retired) = table.iter().find(|r| r.on.is_none() && r.old == task) {
         found.push((retired.old, retired.now));
     }
     // The shorthand `jubarte A B` is compare, with the top level's options
@@ -1900,17 +1937,23 @@ pub fn retired_spellings<'a>(
         Some(sub) => (sub, sub.get_name(), at + 1),
         None => (&model, "compare", at),
     };
-    // Options and positionals interleave after the task.
-    let mut rest = &argv[from..];
-    while !rest.is_empty() {
-        let (options, next) = spelled_options(sub, rest);
+    let mut spot = |options: Vec<Spelled>| {
         for option in options {
-            for retired in RETIRED.iter().filter(|r| r.on == Some(task)) {
+            for retired in table.iter().filter(|r| r.on == Some(task)) {
                 if option.name == retired.old {
                     found.push((retired.old, retired.now));
                 }
             }
         }
+    };
+    // An unknown option before the task (`--date X compare …`) takes no
+    // value, so its value reads as the shorthand's first file.
+    spot(before_task);
+    // Options and positionals interleave after the task.
+    let mut rest = &argv[from..];
+    while !rest.is_empty() {
+        let (options, next) = spelled_options(sub, rest);
+        spot(options);
         rest = rest.get(next + 1..).unwrap_or_default();
     }
     let mut seen = std::collections::HashSet::new();
@@ -2064,28 +2107,46 @@ pub struct MarkdownArgs {
     /// file's directory].
     #[arg(long, value_name = "DIR")]
     pub resource_path: Option<PathBuf>,
-    /// Markdown to Word: author of the tracked changes and comments.
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
-    pub author: String,
-    /// Markdown to Word: revision timestamp (ISO 8601); pin it for
-    /// reproducible output.
+    /// Markdown to Word: author of the tracked changes and comments that
+    /// name none [default: the front matter's `author:`, else the
+    /// --reference-doc's creator, else Redline].
+    #[arg(short = 'a', long, value_name = "NAME")]
+    pub author: Option<String>,
+    /// Markdown to Word: timestamp (ISO 8601) of the tracked changes and
+    /// comments that carry none [default: the front matter's
+    /// `last_modified:`/`modified:`/`date:`/`created:`, else the
+    /// --reference-doc's creation time, else now]; pin it
+    /// (`-d 1970-01-01T00:00:00Z`) for reproducible output.
     #[arg(
         short = 'd',
         long = "datetime",
         value_name = "ISO8601",
-        alias = "date",
-        value_parser = parse_datetime,
-        default_value = crate::document_comparer::DEFAULT_DATE
+        value_parser = parse_datetime
     )]
-    pub datetime: String,
+    pub datetime: Option<String>,
     /// Markdown to Word: the page size when there is no --reference-doc
     /// (one-inch margins either way); a reference's page setup wins.
     #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
     pub page: Page,
+    /// Markdown to Word: turn Word's Track Changes on or off in the .docx
+    /// written, whatever the Markdown's `track_changes:` key says [default:
+    /// the key; without one, the --reference-doc's setting, else off].
+    #[arg(long, value_enum, value_name = "SWITCH")]
+    pub tracking: Option<Tracking>,
     /// Word to Markdown: leave out the `<!-- page N of M -->` lines, and the
     /// layout pass that places them.
     #[arg(long)]
     pub no_page_markers: bool,
+}
+
+/// `--tracking`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Tracking {
+    /// New edits in Word are tracked.
+    On,
+    /// New edits in Word are not tracked.
+    Off,
 }
 
 /// `--page`.
@@ -2380,6 +2441,17 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
     Ok(kind)
 }
 
+/// `--revision-palette` without `--revisions custom`, in any task that
+/// draws revisions (convert, edit, compare, accept, reject, append, scrub):
+/// a usage error before any document is read (Codex on #440 and #441).
+fn palette_without_custom(args: &clap::ArgMatches) -> bool {
+    args.try_get_one::<String>("revision_palette")
+        .ok()
+        .flatten()
+        .is_some()
+        && args.try_get_one::<Revisions>("revisions").ok().flatten() != Some(&Revisions::Custom)
+}
+
 fn validate_matches(
     matches: &clap::ArgMatches,
     command: &mut clap::Command,
@@ -2395,6 +2467,12 @@ fn validate_matches(
         if two {
             compare_output(output, &given)
                 .map_err(|message| command.error(ErrorKind::ArgumentConflict, message))?;
+            if palette_without_custom(matches) {
+                return Err(command.error(
+                    ErrorKind::ArgumentConflict,
+                    "--revision-palette needs --revisions custom",
+                ));
+            }
         } else {
             // One document: `read`, whose -o writes the view or the snapshot.
             if let Some(output) = output {
@@ -2591,10 +2669,7 @@ fn validate_matches(
             &format!("{name} writes a .docx; {how} writes .{ext} from it"),
         ));
     }
-    if matches!(name, "convert" | "edit")
-        && args.get_one::<String>("revision_palette").is_some()
-        && args.get_one::<Revisions>("revisions") != Some(&Revisions::Custom)
-    {
+    if palette_without_custom(args) {
         return Err(error(
             &mut task,
             "--revision-palette needs --revisions custom",
@@ -3075,6 +3150,26 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 .collect();
             value.to_string()
         }
-        Err(error) => error_json(&error),
+        Err(error) => match removed_spellings(arguments.iter().map(String::as_str)).first() {
+            Some((old, now)) => serde_json::json!({
+                "exit_code": 2,
+                "stream": "stderr",
+                "text": format!("{}\n", removed_error(old, now)),
+            })
+            .to_string(),
+            None => {
+                let mut value: serde_json::Value =
+                    serde_json::from_str(&error_json(&error)).unwrap_or_default();
+                // Help and version are no error: a retired spelling's note
+                // goes with them, as with a parse that succeeds.
+                if !error.use_stderr() {
+                    value["notes"] = retired_spellings(arguments.iter().map(String::as_str))
+                        .into_iter()
+                        .map(|(old, now)| retired_note(old, now))
+                        .collect();
+                }
+                value.to_string()
+            }
+        },
     }
 }

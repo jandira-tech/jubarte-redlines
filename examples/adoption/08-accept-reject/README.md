@@ -20,7 +20,7 @@ two-document compare:
 ```bash
 jubarte convert original.md -o original.docx --force
 jubarte convert revised.md -o revised.docx --force
-jubarte original.docx revised.docx -o redline.docx --author Ann --force
+jubarte original.docx revised.docx -d 1970-01-01T00:00:00Z -o redline.docx --author Ann --force
 jubarte changes redline.docx --json     # 9 revisions, all by Ann (changes_jubarte.json)
 ```
 

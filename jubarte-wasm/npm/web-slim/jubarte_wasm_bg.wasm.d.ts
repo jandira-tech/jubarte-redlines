@@ -26,6 +26,7 @@ export const diffDocumentsView: (a: number, b: number, c: number, d: number, e: 
 export const documentMarkdown: (a: number, b: number, c: number) => void;
 export const documentMarkdownWithChanges: (a: number, b: number, c: number, d: number, e: number) => void;
 export const editReportJsonl: (a: number, b: number, c: number) => void;
+export const editingModeConflict: (a: number, b: number, c: number, d: number, e: number) => void;
 export const editoutput_clean: (a: number, b: number) => void;
 export const editoutput_json: (a: number, b: number) => void;
 export const editoutput_ok: (a: number) => number;
@@ -37,6 +38,7 @@ export const initPanicHook: () => void;
 export const inspectDocument: (a: number, b: number, c: number) => void;
 export const listChanges: (a: number, b: number, c: number) => void;
 export const listComments: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+export const markdownStamp: (a: number, b: number, c: number, d: number, e: number) => void;
 export const markdownToDocx: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const parseCli: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;

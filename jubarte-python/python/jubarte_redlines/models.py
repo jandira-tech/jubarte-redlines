@@ -266,7 +266,8 @@ class Comment:
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
     ``parent`` is the id of the comment it replies to (Word threads are one
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
-    is the paragraph id where the range starts (``body:p:12``);
+    is the paragraph id where the range starts (``body:p:12``), and
+    ``last_paragraph`` the one where it ends when that is a later one;
     ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
     up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
     the CLI prints and ``-p`` takes (``c5``).
@@ -284,6 +285,7 @@ class Comment:
     before: str
     after: str
     ref: str | None = None
+    last_paragraph: str | None = None
 
 
 class _CommentRow(TypedDict):
@@ -301,6 +303,7 @@ class _CommentRow(TypedDict):
     before: str
     after: str
     ref: NotRequired[str]
+    last_paragraph: NotRequired[str]
 
 
 def _decode_comments(payload: str) -> tuple[Comment, ...]:
@@ -322,6 +325,7 @@ def _comments_of(rows: list[_CommentRow]) -> tuple[Comment, ...]:
             before=row["before"],
             after=row["after"],
             ref=row.get("ref"),
+            last_paragraph=row.get("last_paragraph"),
         )
         for row in rows
     )

@@ -11,9 +11,8 @@ release by [`scripts/api_snapshot.py`](../../scripts/api_snapshot.py) as
 part of the release process (see [VERSIONING.md](../VERSIONING.md)) and
 pinned to the tag named in each filename.
 
-HEAD is expected to drift ahead of the newest snapshot. As of 2026-10-01,
-`jubarte::markdown` and `diffDocuments` exist on main but are not in the
-v0.10.1 snapshots; the next release's snapshot will carry them.
+HEAD is expected to drift ahead of the newest snapshot (v0.12.0); the next
+release's snapshot carries what was added since.
 
 ## Reading the drift between two releases
 

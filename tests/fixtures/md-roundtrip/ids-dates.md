@@ -1,19 +1,20 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 714                     # 714 marks shown as 704 changes: 169 insertions, 177 deletions, 10 substitutions, 348 paragraph marks
+revisions: 714                     # 714 marks shown as 714 changes: 179 insertions, 187 deletions, 348 paragraph marks
 comments: 0
 authors:
   document_owner: Arthur Souza Rodrigues  # dc:creator
   TA: Test Author                  # 714 revisions, 2020-01-01T00:00:00Z
-body: p0-p378, 0 tables, 1 page    # page count estimated from breaks
+body: p0-p378, 0 tables, 15 pages  # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Aptos 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it
+  ListParagraph: Aptos 12pt, named List Paragraph
 ---
 
 <!-- p0 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r1+2 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r1 @TA<<}{++mamaum++}{>>r2 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p1 empty -->
 
@@ -116,7 +117,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r1+2 @TA<<} com laranja todas as manhãs para po
 <!-- p34 ListParagraph empty, num "1." -->
 
 <!-- p35 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r67+68 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r67 @TA<<}{++mamaum++}{>>r68 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p36 empty -->
 
@@ -219,7 +220,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r67+68 @TA<<} com laranja todas as manhãs para 
 <!-- p69 ListParagraph empty, num "1." -->
 
 <!-- p70 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r133+134 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r133 @TA<<}{++mamaum++}{>>r134 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p71 empty -->
 
@@ -322,7 +323,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r133+134 @TA<<} com laranja todas as manhãs par
 <!-- p104 ListParagraph empty, num "1." -->
 
 <!-- p105 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r199+200 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r199 @TA<<}{++mamaum++}{>>r200 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p106 empty -->
 
@@ -425,7 +426,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r199+200 @TA<<} com laranja todas as manhãs par
 <!-- p139 ListParagraph empty, num "1." -->
 
 <!-- p140 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r265+266 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r265 @TA<<}{++mamaum++}{>>r266 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p141 empty -->
 
@@ -528,7 +529,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r265+266 @TA<<} com laranja todas as manhãs par
 <!-- p174 ListParagraph empty, num "1." -->
 
 <!-- p175 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r331+332 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r331 @TA<<}{++mamaum++}{>>r332 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p176 empty -->
 
@@ -658,7 +659,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r331+332 @TA<<} com laranja todas as manhãs par
 <!-- p218 ListParagraph empty, num "1." -->
 
 <!-- p219 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r415+416 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r415 @TA<<}{++mamaum++}{>>r416 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p220 empty -->
 
@@ -761,7 +762,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r415+416 @TA<<} com laranja todas as manhãs par
 <!-- p253 ListParagraph empty, num "1." -->
 
 <!-- p254 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r481+482 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r481 @TA<<}{++mamaum++}{>>r482 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p255 empty -->
 
@@ -864,7 +865,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r481+482 @TA<<} com laranja todas as manhãs par
 <!-- p288 ListParagraph empty, num "1." -->
 
 <!-- p289 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r547+548 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r547 @TA<<}{++mamaum++}{>>r548 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p290 empty -->
 
@@ -967,7 +968,7 @@ Eu adoro {~~mamão~>mamaum~~}{>>r547+548 @TA<<} com laranja todas as manhãs par
 <!-- p323 ListParagraph empty, num "1." -->
 
 <!-- p324 -->
-Eu adoro {~~mamão~>mamaum~~}{>>r613+614 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r613 @TA<<}{++mamaum++}{>>r614 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p325 empty -->
 

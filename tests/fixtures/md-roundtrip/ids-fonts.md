@@ -5,12 +5,15 @@ revisions: 0
 comments: 0
 authors:
   document_owner: Un-named         # dc:creator
-body: p0-p68, 1 table, 1 page      # page count estimated from breaks
-page: A4 portrait, margins 1in, header/footer 0.49in
+body: p0-p68, 1 table, 2 pages     # pages from layout
+page: A4 portrait, margins 1in, header/footer 0.492in
 styles:
-  "1": Arial 12pt, left            # default; unannotated paragraphs use it
-  "#": 2, Calibri bold 16pt, before 12pt, after 6pt
-  "##": 3, Calibri bold 14pt, before 9pt, after 4.5pt
+  "1": Arial 12pt, left, named Normal  # default; unannotated paragraphs use it
+  "#": 2, Calibri bold 16pt, before 12pt, after 6pt, named heading 1
+  "##": 3, Calibri bold 14pt, before 9pt, after 4.5pt, named heading 2
+  "13": Arial 28pt, named Title
+  "17": Arial bold 12pt, before 6pt, after 6pt, named Highlighted Style
+  "14": Arial 12pt, named List Paragraph
   table: "9"
 ---
 
@@ -33,7 +36,7 @@ Normal text, **bold text**, _italic text_, **_bold and italic_**.
 <u>Single underline</u>, <u>double underline</u>, <u>wavy underline</u>.
 
 <!-- p6 -->
-Strikethrough text, highlighted text, SMALL CAPS TEXT.
+~~Strikethrough text~~, ==highlighted text==, SMALL CAPS TEXT.
 
 <!-- p7 -->
 Mathematical notation: x<sup>2</sup> + y = H<sub>2</sub>O
@@ -60,7 +63,7 @@ Georgia font (elegant serif)
 Verdana font (screen-optimized)
 
 <!-- p15 -->
-Courier New font (monospace)
+`Courier New font (monospace)`
 
 <!-- p16 3 -->
 ## 2.2 Different Font Sizes
@@ -93,7 +96,7 @@ Courier New font (monospace)
 **Purple text** | **Teal text** | **Brown text** | **Gray text**
 
 <!-- p26 -->
-Yellow highlight | Green highlight | Cyan highlight
+==Yellow highlight== | ==Green highlight== | ==Cyan highlight==
 
 <!-- p27 2 -->
 # 4. Styles from styles.xml
@@ -140,7 +143,7 @@ This sentence has **red bold character style** and _blue italic character style_
 <!-- p41 -->
 Below is a table demonstrating borders, shading, and cell formatting:
 
-<!-- t0 4x3, cells p42-p53 by row, header row repeats -->
+<!-- t0 4x3, cells p42-p53 by row, p42 center, p43 center, p44 center, header row repeats -->
 |**Feature**|**Description**|**Example**|
 |-|-|-|
 |Bold|Makes text bold|**Bold text**|

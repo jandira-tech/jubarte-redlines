@@ -29,8 +29,11 @@ uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --autho
 same commands. The wheel speaks the shared command set — `compare`/`redline`,
 `changes`, `accept`, `reject`, `convert`, `diff`, `read`, `edit`, `add`,
 `capabilities`, `visual-diff`, `comments`, `validate` — but not the whole
-Rust binary surface: it has no `append`, `scrub`, `debug` or `self-update`. Exit codes: 0 success, 1 error, 2 usage,
-3 edit plan refused. Inputs are `.docx`; save a Word 97-2003 `.doc` as
+Rust binary surface: it has no `append`, `scrub`, `debug` or `self-update`, and
+its `convert` refuses `--from`, `--resource-path`, `--timeout`,
+`--fail-on-substitution` and `--no-page-markers`. Exit codes: 0 success, 1
+error, 2 usage (and `validate` findings), 3 edit plan refused, 5
+`visual-diff` found a page that differs. Inputs are `.docx`; save a Word 97-2003 `.doc` as
 `.docx` first.
 
 ## CLI reference
@@ -527,6 +530,15 @@ Options:
           - a4:     ISO A4, 210 by 297 mm
 
           [default: letter]
+
+      --tracking <SWITCH>
+          Markdown to Word: turn Word's Track Changes on or off in the .docx written,
+          whatever the Markdown's `track_changes:` key says [default: the key; without
+          one, the --reference-doc's setting, else off]
+
+          Possible values:
+          - on:  New edits in Word are tracked
+          - off: New edits in Word are not tracked
 
       --no-page-markers
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
@@ -1241,7 +1253,7 @@ for rev in get_revisions(redline):
 Path("redline.pdf").write_bytes(docx_to_pdf(redline))
 ```
 
-`compare_documents(original, modified, author="jubarte", date=None)` stamps a
+`compare_documents(original, modified, author="Redline", date=None)` stamps a
 fixed epoch date by default so output is deterministic; pass ISO-8601 `date`
 to override. Errors raise `jubarte_redlines.JubarteError`.
 
@@ -1251,7 +1263,7 @@ to override. Errors raise `jubarte_redlines.JubarteError`.
 from jubarte_redlines import read
 
 doc = read("contract.docx")
-doc.markdown()    # every story as Markdown with [body:p:N] ids
+doc.markdown()    # the body as Markdown with [body:p:N] ids
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations)
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change with its stable id
@@ -2663,14 +2675,17 @@ UpdatedFields(
 ### `from_markdown`
 
 ```python
-from_markdown(text: 'str', *, reference: 'Document | bytes | None' = None, page: "Literal['letter', 'a4']" = 'letter', author: 'str' = 'Redline', date: 'str | None' = None, critic: 'bool' = True, track_changes: "Literal['all', 'accept', 'reject']" = 'all') -> 'Document'
+from_markdown(text: 'str', *, reference: 'Document | bytes | None' = None, page: "Literal['letter', 'a4']" = 'letter', author: 'str | None' = None, date: 'str | None' = None, critic: 'bool' = True, track_changes: "Literal['all', 'accept', 'reject']" = 'all') -> 'Document'
 ```
 
 Write Markdown as a Word document, as ``jubarte convert draft.md``.
 
 CriticMarkup (``{++ ++}``, ``{-- --}``, ``{~~ ~> ~~}``, ``{>> <<}``)
-becomes tracked changes and comments by ``author`` at ``date`` (the
-engine's fixed epoch by default), unless ``critic`` is false.
+becomes tracked changes and comments, unless ``critic`` is false. One
+that names no author or date takes ``author`` and ``date`` when given,
+else the front matter's (``author:``; ``last_modified:``,
+``modified:``, ``date:``, ``created:``), else ``Redline`` and the
+engine's fixed epoch (the CLI dates them now instead).
 ``track_changes`` keeps them (``all``) or writes the document with each
 accepted or rejected. ``reference`` lends its styles and page setup;
 without it ``page`` picks US Letter or A4, both with one-inch margins.
@@ -2711,6 +2726,8 @@ uv run --with pytest pytest -q
 
 `scripts/gen_docs.sh` regenerates both generated blocks; the CI docs job
 (`docs.yml`) fails when the committed page drifts from the wheel. Curated
-sections mirror [`jubarte-python/README.md`](../jubarte-python/README.md)
-(the README ships inside the package — update both when you change an
-example; nothing automates that sync yet).
+sections mirror
+[`jubarte-python/README.fragment.md`](../jubarte-python/README.fragment.md),
+from which `scripts/library_readmes.py` writes the README that ships inside
+the package — update both when you change an example; nothing syncs this
+page with the fragment.

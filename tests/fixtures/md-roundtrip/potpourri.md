@@ -12,6 +12,11 @@ styles:
   Normal: Aptos 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it
   "#": Heading1, Aptos Display 20pt, before 18pt, after 4pt, keep-next
   "##": Heading2, Aptos Display 16pt, before 8pt, after 4pt, keep-next
+  Title: Aptos Display 28pt, after 4pt
+  Subtitle: Aptos 14pt
+  ListBullet: Aptos 12pt, named List Bullet
+  ListNumber: Aptos 12pt, named List Number
+  Quote: Aptos italic 12pt, before 8pt, center
   table: GridTable4-Accent1, all borders 0.5pt
 headers:
   first: {id: header3, text: "", inactive}  # defined, but different first page is off
@@ -39,7 +44,7 @@ This document is intentionally varied. It mixes headings, body copy, inline form
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
 
 <!-- p5 -->
-**Bold blue,** **_italic red,_** **_<u>underlined green, yellow-highlighted, strikethrough, monospace.</u>_**
+**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough,~~==</u>_** **_<u>==~~`monospace.`~~==</u>_**
 
 <!-- p6 -->
 # 2. Lists
@@ -65,11 +70,11 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p13 ListNumber num "2." -->
 2. Whisk dry ingredients.
 
-<!-- p14 ListNumber bullet -->
-   - Sift the flour twice.
+<!-- p14 ListNumber bullet, level 1 -->
+- Sift the flour twice.
 
-<!-- p15 ListNumber bullet -->
-   - Add a pinch of salt.
+<!-- p15 ListNumber bullet, level 1 -->
+- Add a pinch of salt.
 
 <!-- p16 ListNumber num "3." -->
 3. Bake for 22 minutes.
@@ -97,7 +102,7 @@ A small table with a header row:
 _“Not all those who wander are lost.” — a line often quoted to test block-quote handling._
 
 <!-- p42 -->
-More information available at our [<u>reference page</u>](https://example.com/reference).
+More information available at our [reference page](https://example.com/reference).
 
 <!-- p43 -->
 This sentence carries a second footnote for testing multi-note extraction. †[^2]
@@ -130,7 +135,7 @@ _— end of sample —_
 {++Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.++}{>>r14 @ASR<<}
 
 <!-- p53 break-ins r15 @ASR -->
-{++**Bold blue,** **_italic red,_** **_<u>underlined green, yellow-highlighted, strikethrough, monospace.</u>_**++}{>>r16 @ASR<<}
+{++**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough,~~==</u>_** **_<u>==~~`monospace.`~~==</u>_**++}{>>r16 @ASR<<}
 
 <!-- p54 break-ins r17 @ASR -->
 # {++2. Lists++}{>>r18 @ASR<<}
@@ -156,11 +161,11 @@ _— end of sample —_
 <!-- p61 ListNumber num "5.", break-ins r31 @ASR -->
 5. {++Whisk dry ingredients.++}{>>r32 @ASR<<}
 
-<!-- p62 ListNumber bullet, break-ins r33 @ASR -->
-   - {++Sift the flour twice.++}{>>r34 @ASR<<}
+<!-- p62 ListNumber bullet, level 1, break-ins r33 @ASR -->
+- {++Sift the flour twice.++}{>>r34 @ASR<<}
 
-<!-- p63 ListNumber bullet, break-ins r35 @ASR -->
-   - {++Add a pinch of salt.++}{>>r36 @ASR<<}
+<!-- p63 ListNumber bullet, level 1, break-ins r35 @ASR -->
+- {++Add a pinch of salt.++}{>>r36 @ASR<<}
 
 <!-- p64 ListNumber num "6.", break-ins r37 @ASR -->
 6. {++Bake for 22 minutes.++}{>>r38 @ASR<<}
@@ -171,13 +176,13 @@ _— end of sample —_
 <!-- p66 break-ins r41 @ASR -->
 {++A small table with a header row:++}{>>r42 @ASR<<}
 
-<!-- t1 5x4, cells p67-p86 by row, break-ins r44 @ASR in p67; r46 @ASR in p68; r48 @ASR in p69; r50 @ASR in p70; r53 @ASR in p71; r55 @ASR in p72; r57 @ASR in p73; r59 @ASR in p74; r62 @ASR in p75; r64 @ASR in p76; r66 @ASR in p77; r68 @ASR in p78; r71 @ASR in p79; r73 @ASR in p80; r75 @ASR in p81; r77 @ASR in p82; r80 @ASR in p83; r82 @ASR in p84; r84 @ASR in p85; r86 @ASR in p86 -->
-|{++Region++}{>>r43 @ASR<<}|{++Q1++}{>>r43 @ASR<<}|{++Q2++}{>>r43 @ASR<<}|{++Q3++}{>>r43 @ASR<<}|
+<!-- t1 5x4, cells p67-p86 by row, break-ins r44 @ASR in p67; r46 @ASR in p68; r48 @ASR in p69; r50 @ASR in p70; r53 @ASR in p71; r55 @ASR in p72; r57 @ASR in p73; r59 @ASR in p74; r62 @ASR in p75; r64 @ASR in p76; r66 @ASR in p77; r68 @ASR in p78; r71 @ASR in p79; r73 @ASR in p80; r75 @ASR in p81; r77 @ASR in p82; r80 @ASR in p83; r82 @ASR in p84; r84 @ASR in p85; r86 @ASR in p86, rev r43 @ASR in t1.row0; r52 @ASR in t1.row1; r61 @ASR in t1.row2; r70 @ASR in t1.row3; r79 @ASR in t1.row4 -->
+|{++Region++}{>>r45 @ASR<<}|{++Q1++}{>>r47 @ASR<<}|{++Q2++}{>>r49 @ASR<<}|{++Q3++}{>>r51 @ASR<<}|
 |-|-|-|-|
-|{++North++}{>>r52 @ASR<<}|{++$120k++}{>>r52 @ASR<<}|{++$135k++}{>>r52 @ASR<<}|{++$150k++}{>>r52 @ASR<<}|
-|{++South++}{>>r61 @ASR<<}|{++$98k++}{>>r61 @ASR<<}|{++$110k++}{>>r61 @ASR<<}|{++$128k++}{>>r61 @ASR<<}|
-|{++East++}{>>r70 @ASR<<}|{++$143k++}{>>r70 @ASR<<}|{++$151k++}{>>r70 @ASR<<}|{++$162k++}{>>r70 @ASR<<}|
-|{++West++}{>>r79 @ASR<<}|{++$87k++}{>>r79 @ASR<<}|{++$92k++}{>>r79 @ASR<<}|{++$104k++}{>>r79 @ASR<<}|
+|{++North++}{>>r54 @ASR<<}|{++$120k++}{>>r56 @ASR<<}|{++$135k++}{>>r58 @ASR<<}|{++$150k++}{>>r60 @ASR<<}|
+|{++South++}{>>r63 @ASR<<}|{++$98k++}{>>r65 @ASR<<}|{++$110k++}{>>r67 @ASR<<}|{++$128k++}{>>r69 @ASR<<}|
+|{++East++}{>>r72 @ASR<<}|{++$143k++}{>>r74 @ASR<<}|{++$151k++}{>>r76 @ASR<<}|{++$162k++}{>>r78 @ASR<<}|
+|{++West++}{>>r81 @ASR<<}|{++$87k++}{>>r83 @ASR<<}|{++$92k++}{>>r85 @ASR<<}|{++$104k++}{>>r87 @ASR<<}|
 
 <!-- p87 empty, break-ins r88 @ASR -->
 
@@ -188,7 +193,7 @@ _— end of sample —_
 {++_“Not all those who wander are lost.” — a line often quoted to test block-quote handling._++}{>>r92 @ASR<<}
 
 <!-- p90 break-ins r93 @ASR -->
-{++More information available at our [<u>reference page</u>](https://example.com/reference).++}{>>r94 @ASR<<}
+{++More information available at our [reference page](https://example.com/reference).++}{>>r94 @ASR<<}
 
 <!-- p91 break-ins r95 @ASR -->
 {++This sentence carries a second footnote for testing multi-note extraction. †[^4]++}{>>r96 @ASR<<}
@@ -223,7 +228,7 @@ This document is intentionally {--varied. It mixes headings, body copy, inline f
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
 
 <!-- p102 -->
-**Bold blue,** **_italic red,_** **_<u>underlined green, yellow-highlighted, strikethrough, monospace.</u>_**
+**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough,~~==</u>_** **_<u>==~~`monospace.`~~==</u>_**
 
 <!-- p103 -->
 # 2. Lists
@@ -249,11 +254,11 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p110 ListNumber num "8." -->
 8. Whisk dry ingredients.
 
-<!-- p111 ListNumber bullet -->
-   - Sift the flour twice.
+<!-- p111 ListNumber bullet, level 1 -->
+- Sift the flour twice.
 
-<!-- p112 ListNumber bullet -->
-   - Add a pinch of salt.
+<!-- p112 ListNumber bullet, level 1 -->
+- Add a pinch of salt.
 
 <!-- p113 ListNumber num "9.", break-del r109 @ASR -->
 9. {--Bake for 22 minutes.--}{>>r110 @ASR<<}
@@ -264,13 +269,13 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p115 break-del r113 @ASR -->
 {--A small table with a header row:--}{>>r114 @ASR<<}
 
-<!-- t2 5x4, cells p116-p135 by row, break-del r116 @ASR in p116; r118 @ASR in p117; r120 @ASR in p118; r122 @ASR in p119; r125 @ASR in p120; r127 @ASR in p121; r129 @ASR in p122; r131 @ASR in p123; r134 @ASR in p124; r136 @ASR in p125; r138 @ASR in p126; r140 @ASR in p127; r143 @ASR in p128; r145 @ASR in p129; r147 @ASR in p130; r149 @ASR in p131; r152 @ASR in p132; r154 @ASR in p133; r156 @ASR in p134; r158 @ASR in p135 -->
-|{--Region--}{>>r115 @ASR<<}|{--Q1--}{>>r115 @ASR<<}|{--Q2--}{>>r115 @ASR<<}|{--Q3--}{>>r115 @ASR<<}|
+<!-- t2 5x4, cells p116-p135 by row, break-del r116 @ASR in p116; r118 @ASR in p117; r120 @ASR in p118; r122 @ASR in p119; r125 @ASR in p120; r127 @ASR in p121; r129 @ASR in p122; r131 @ASR in p123; r134 @ASR in p124; r136 @ASR in p125; r138 @ASR in p126; r140 @ASR in p127; r143 @ASR in p128; r145 @ASR in p129; r147 @ASR in p130; r149 @ASR in p131; r152 @ASR in p132; r154 @ASR in p133; r156 @ASR in p134; r158 @ASR in p135, rev-del r115 @ASR in t2.row0; r124 @ASR in t2.row1; r133 @ASR in t2.row2; r142 @ASR in t2.row3; r151 @ASR in t2.row4 -->
+|{--Region--}{>>r117 @ASR<<}|{--Q1--}{>>r119 @ASR<<}|{--Q2--}{>>r121 @ASR<<}|{--Q3--}{>>r123 @ASR<<}|
 |-|-|-|-|
-|{--North--}{>>r124 @ASR<<}|{--$120k--}{>>r124 @ASR<<}|{--$135k--}{>>r124 @ASR<<}|{--$150k--}{>>r124 @ASR<<}|
-|{--South--}{>>r133 @ASR<<}|{--$98k--}{>>r133 @ASR<<}|{--$110k--}{>>r133 @ASR<<}|{--$128k--}{>>r133 @ASR<<}|
-|{--East--}{>>r142 @ASR<<}|{--$143k--}{>>r142 @ASR<<}|{--$151k--}{>>r142 @ASR<<}|{--$162k--}{>>r142 @ASR<<}|
-|{--West--}{>>r151 @ASR<<}|{--$87k--}{>>r151 @ASR<<}|{--$92k--}{>>r151 @ASR<<}|{--$104k--}{>>r151 @ASR<<}|
+|{--North--}{>>r126 @ASR<<}|{--$120k--}{>>r128 @ASR<<}|{--$135k--}{>>r130 @ASR<<}|{--$150k--}{>>r132 @ASR<<}|
+|{--South--}{>>r135 @ASR<<}|{--$98k--}{>>r137 @ASR<<}|{--$110k--}{>>r139 @ASR<<}|{--$128k--}{>>r141 @ASR<<}|
+|{--East--}{>>r144 @ASR<<}|{--$143k--}{>>r146 @ASR<<}|{--$151k--}{>>r148 @ASR<<}|{--$162k--}{>>r150 @ASR<<}|
+|{--West--}{>>r153 @ASR<<}|{--$87k--}{>>r155 @ASR<<}|{--$92k--}{>>r157 @ASR<<}|{--$104k--}{>>r159 @ASR<<}|
 
 <!-- p136 empty, break-del r160 @ASR -->
 
@@ -281,7 +286,7 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 {--_“Not all those who wander are lost.” — a line often quoted to test block-quote handling._--}{>>r164 @ASR<<}
 
 <!-- p139 break-del r165 @ASR -->
-{--More information available at our [<u>reference page</u>](https://example.com/reference).--}{>>r166 @ASR<<}
+{--More information available at our [reference page](https://example.com/reference).--}{>>r166 @ASR<<}
 
 <!-- p140 break-del r167 @ASR -->
 {--This sentence carries a second footnote for testing multi-note extraction. †[^6]--}{>>r168 @ASR<<}
@@ -305,10 +310,10 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- footnotes.p1 -->
 [^2]: Footnote two: cross-reference target for extraction tools that map markers to notes.
 <!-- footnotes.p2 -->
-{++[^3]:  Footnote one: this footnote is attached to the introductory paragraph.++}{>>r8 @ASR<<} <!-- rev footnotes.r9 @ASR; footnotes.r10 @ASR -->
+{++[^3]: Footnote one: this footnote is attached to the introductory paragraph.++}{>>r8 @ASR<<} <!-- rev footnotes.r9 @ASR; footnotes.r10 @ASR -->
 <!-- footnotes.p3 -->
-{++[^4]:  Footnote two: cross-reference target for extraction tools that map markers to notes.++}{>>r96 @ASR<<} <!-- rev footnotes.r97 @ASR; footnotes.r98 @ASR -->
+{++[^4]: Footnote two: cross-reference target for extraction tools that map markers to notes.++}{>>r96 @ASR<<} <!-- rev footnotes.r97 @ASR; footnotes.r98 @ASR -->
 <!-- footnotes.p4 -->
 [^5]: Footnote one: this footnote is attached to the introductory paragraph.
 <!-- footnotes.p5 -->
-{--[^6]:  Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r168 @ASR<<} <!-- rev footnotes.r169 @ASR; footnotes.r170 @ASR -->
+{--[^6]: Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r168 @ASR<<} <!-- rev footnotes.r169 @ASR; footnotes.r170 @ASR -->

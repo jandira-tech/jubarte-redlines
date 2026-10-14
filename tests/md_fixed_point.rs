@@ -26,6 +26,9 @@ use regex::Regex;
 
 const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 
+/// The page count and its source at the end of the `body:` line.
+static PAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r", \d+ pages?\s+#.*$").unwrap());
+
 /// The Markdown fixtures written by hand, in the view's dialect; every other
 /// one is a view of a docx listed in `views.txt`.
 const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
@@ -65,6 +68,15 @@ fn comparable(markdown: &str) -> String {
         if front_matter && (line.starts_with("source: ") || line.starts_with("sha256: ")) {
             continue;
         }
+        // The page count is measured, not written: Word's cached layout
+        // counts the source, jubarte's layout counts what it wrote. Arthur,
+        // 2026-10-13: "we don't force page count into the docx".
+        if front_matter && let Some(pages) = PAGES.find(line).filter(|_| line.starts_with("body: "))
+        {
+            out.push_str(&line[..pages.start()]);
+            out.push('\n');
+            continue;
+        }
         out.push_str(line);
         out.push('\n');
     }
@@ -75,7 +87,19 @@ fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
     let md = format!("{name}.md");
     let docx = format!("{name}.docx");
     std::fs::write(dir.join(&md), markdown).map_err(|e| e.to_string())?;
-    jubarte(dir, &["convert", &md, "-o", &docx, "--force"])?;
+    // The epoch pinned: unpinned, an undated change is dated now.
+    jubarte(
+        dir,
+        &[
+            "convert",
+            &md,
+            "-o",
+            &docx,
+            "--force",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    )?;
     Ok(docx)
 }
 
@@ -122,21 +146,160 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
     };
     let mut part = String::new();
     let mut lines = Vec::new();
+    // A lost line and a new line that say the same once what the view
+    // cannot say is left out (a highlight's colour) cancel each other.
+    let mut lost: Vec<(String, String)> = Vec::new();
+    let mut new: Vec<(String, String)> = Vec::new();
     for line in out.lines() {
         if let Some(rest) = line.strip_prefix("-A ") {
-            lines.push(format!("  ✗ docx {part}lost: {}", rest.trim()));
+            if let Some(rest) = in_dialect(&part, rest.trim()) {
+                lost.push((part.clone(), rest));
+            }
         } else if let Some(rest) = line.strip_prefix("+B ") {
-            lines.push(format!("  ✗ docx {part}new: {}", rest.trim()));
+            if let Some(rest) = in_dialect(&part, rest.trim()) {
+                new.push((part.clone(), rest));
+            }
         } else if let Some(name) = line.strip_suffix(": only in A") {
             lines.push(format!("  ✗ docx {name} lost: the whole part"));
         } else if let Some(name) = line.strip_suffix(": only in B") {
             lines.push(format!("  ✗ docx {name} new: the whole part"));
-        } else if let Some((name, _)) = line.split_once(": ").filter(|(_, r)| r.ends_with("differ"))
+        } else if let Some((name, _)) = line
+            .split_once(": ")
+            .filter(|(_, r)| r.ends_with("differ") || r.ends_with("differs"))
         {
             part = format!("{name} ");
         }
     }
+    let (lost, new) = unmatched(lost, new);
+    lines.extend(
+        lost.iter()
+            .map(|(part, rest)| format!("  ✗ docx {part}lost: {rest}")),
+    );
+    lines.extend(
+        new.iter()
+            .map(|(part, rest)| format!("  ✗ docx {part}new: {rest}")),
+    );
     lines
+}
+
+/// The lost and the new lines left once the longest run of equal lines,
+/// in order, cancels: a line that only moved (an insertion now after the
+/// deletion it came before) is reported, not cancelled.
+fn unmatched<T: PartialEq>(lost: Vec<T>, new: Vec<T>) -> (Vec<T>, Vec<T>) {
+    let (n, m) = (lost.len(), new.len());
+    let mut longest = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            longest[i][j] = if lost[i] == new[j] {
+                longest[i + 1][j + 1] + 1
+            } else {
+                longest[i + 1][j].max(longest[i][j + 1])
+            };
+        }
+    }
+    let (mut kept_lost, mut kept_new) = (vec![false; n], vec![false; m]);
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if lost[i] == new[j] {
+            (i, j) = (i + 1, j + 1);
+        } else if longest[i + 1][j] >= longest[i][j + 1] {
+            kept_lost[i] = true;
+            i += 1;
+        } else {
+            kept_new[j] = true;
+            j += 1;
+        }
+    }
+    kept_lost[i..].iter_mut().for_each(|k| *k = true);
+    kept_new[j..].iter_mut().for_each(|k| *k = true);
+    let keep = |items: Vec<T>, kept: Vec<bool>| {
+        items
+            .into_iter()
+            .zip(kept)
+            .filter_map(|(item, kept)| kept.then_some(item))
+            .collect()
+    };
+    (keep(lost, kept_lost), keep(new, kept_new))
+}
+
+#[test]
+fn a_moved_render_line_is_reported_and_an_equal_one_cancels() {
+    assert_eq!(
+        unmatched(vec!["X", "A"], vec!["A", "X"]),
+        (vec!["X"], vec!["X"])
+    );
+    assert_eq!(unmatched(vec!["A", "B"], vec!["A", "B"]), (vec![], vec![]));
+    assert_eq!(
+        unmatched(vec!["A", "B", "C"], vec!["B", "C", "A"]),
+        (vec!["A"], vec!["A"])
+    );
+    assert_eq!(unmatched(vec!["A"], vec!["B"]), (vec!["A"], vec!["B"]));
+}
+
+/// What the Markdown view cannot say, so a docx it writes cannot hold it,
+/// or says in another form Word shows alike: each pattern with why. Everything else `debug --check render` lists is
+/// compared: the styles legend (each style's font, size, bold, spacing,
+/// alignment), the page, highlights (all print as `==`), tables, sections,
+/// fields, notes and parts.
+static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
+    [
+        // A font set on a run, not through a style: the view has no run font.
+        (r#"^rfonts "[^"]*" ×"#, "direct run font"),
+        // The style a font comes through (`via "Normal"`, or the document
+        // defaults): the legend gives each style's effective font, which
+        // the Markdown comparison checks; where it is set, it does not say.
+        (
+            r#"^rfonts "[^"]*" via "[^"]*" ×"#,
+            "where a style's font is set",
+        ),
+        (r"^color ", "text colour, set on a run or by a style"),
+        (r"^(para|run)-shd ", "shading"),
+        // The package's font list and theme, the defaults under every
+        // style, and the faces a renderer loads for them: the legend gives
+        // each style's effective font instead.
+        // Word draws a `HYPERLINK "url"` field and a `w:hyperlink` alike,
+        // and the view prints both as `[text](url)`, whose text and target
+        // the Markdown comparison checks. Arthur, 2026-10-13: treat them as
+        // equal. A header's or footer's field is not a link the writer
+        // writes, so it stays compared.
+        (
+            r"^word/(document|footnotes|endnotes|comments)\.xml field HYPERLINK ",
+            "a HYPERLINK field and a link are the same link",
+        ),
+        (
+            r"^\(layout\) (fontTable|theme|font|docDefaults) ",
+            "fonts outside the legend",
+        ),
+        // A note is one Markdown definition: a table in it prints as its
+        // cells, one `<br>` line each (their text is compared), and the
+        // dialect has no table inside a note to write back.
+        (
+            r"^word/(footnotes|endnotes)\.xml table ",
+            "a table inside a note",
+        ),
+    ]
+    .into_iter()
+    .map(|(pattern, why)| (Regex::new(pattern).unwrap(), why))
+    .collect()
+});
+
+/// A `debug --check render` line as far as the view can say it, `None` when
+/// it says nothing the view can: a highlight's colour and a table's cell
+/// shading are left out, so only whether text is highlighted and the table
+/// itself are compared.
+fn in_dialect(part: &str, rest: &str) -> Option<String> {
+    static HIGHLIGHT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^highlight \S+").unwrap());
+    static CELLS_SHD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r" cells-shd\[[^\]]*\]").unwrap());
+    let line = format!("{part}{rest}");
+    if OUT_OF_DIALECT
+        .iter()
+        .any(|(pattern, _)| pattern.is_match(rest) || pattern.is_match(&line))
+    {
+        return None;
+    }
+    let rest = HIGHLIGHT.replace(rest, "highlight");
+    Some(CELLS_SHD.replace_all(&rest, "").into_owned())
 }
 
 /// The docx a committed view was read from (`views.txt`), by file name.

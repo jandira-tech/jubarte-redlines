@@ -122,7 +122,11 @@ def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
     # names the script: `uv run --with` (uv 0.13) runs an overlay interpreter
     # whose directory is not the one the script went to.
     record = importlib.metadata.distribution("jubarte-redlines").files or []
-    found = [f.locate() for f in record if f.name == "jubarte-redlines" and f.parent.name == "bin"]
+    found = [
+        f.locate()
+        for f in record
+        if f.name in ("jubarte-redlines", "jubarte-redlines.exe") and f.parent.name in ("bin", "Scripts")
+    ]
     script = shutil.which(str(found[0])) if found else None
     assert script is not None, "the wheel installs no jubarte-redlines script"
     a, b, out = tmp_path / "a.docx", tmp_path / "b.docx", tmp_path / "redline.docx"
@@ -329,7 +333,8 @@ def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert main(["capabilities", "--json"]) == 0
     caps = json.loads(capsys.readouterr().out)
     assert caps["runtime"] == "python" and caps["operations"]["png"] is True
-    assert caps["ids"]["comment"] == ["c27", "27"] and caps["formats"]["read"] == [".md", ".json"]
+    # A bare `27` is refused, naming `c27`: only the prefixed id is listed.
+    assert caps["ids"]["comment"] == ["c27"] and caps["formats"]["read"] == [".md", ".json"]
     assert main(["capabilities"]) == 0
     text = capsys.readouterr().out
     assert text.startswith(f"engine: jubarte {caps['engine_version']} (python)\ncompare: yes\n"), text
@@ -365,6 +370,15 @@ def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path
     assert f"error: {flag} '{side}' is the same file as the {name}" in capsys.readouterr().err.splitlines()
     assert letter.read_bytes() == original
     assert list(tmp_path.glob("result*")) == []
+
+
+@pytest.mark.parametrize("flag", ["--report", "--font-report"])
+def test_convert_refuses_a_side_file_named_like_a_png_page(letter, tmp_path, capsys, flag):
+    # CodeRabbit on #438: it would replace the page it is named like.
+    page = tmp_path / "result-page-01.png"
+    assert main(["convert", str(letter), "-o", str(tmp_path / "result.png"), flag, str(page)]) == 1
+    assert f"error: {flag} '{page}' is the same file as the PNG output" in capsys.readouterr().err.splitlines()
+    assert not page.exists()
 
 
 @pytest.mark.parametrize("flag", ["--report", "--font-report"])
@@ -610,8 +624,14 @@ def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(letter: Path, tmp_pat
     monkeypatch.chdir(tmp_path)
     assert main(["edit", "./letter.docx", "--plan", "./plan.json", "-p", "p1", "--content", "X."]) == 0
     assert capsys.readouterr().out.strip().endswith("apply with: jubarte edit ./letter.docx --plan ./plan.json")
-    assert main(["edit", "letter.docx", "--plan", "plan.json/", "-p", "p2", "--content", "Y."]) == 1
-    assert capsys.readouterr().err.startswith("error: reading plan.json/:")
+    # A plan path ending in a separator names a folder: the shared parser
+    # refuses it, whether the plan exists or not (Codex on #433).
+    for spelled in ("plan.json/", "new.json/"):
+        with pytest.raises(SystemExit) as error:
+            main(["edit", "letter.docx", "--plan", spelled, "-p", "p2", "--content", "Y."])
+        assert error.value.code == 2
+        assert "ends in a separator" in capsys.readouterr().err
+    assert not (tmp_path / "new.json").exists()
     (tmp_path / "bad.json").write_bytes(b"\xff\xfe{}")
     assert main(["edit", "letter.docx", "--plan", "bad.json", "-p", "p1", "--content", "X."]) == 1
     assert "error: reading bad.json: stream did not contain valid UTF-8" in capsys.readouterr().err
@@ -749,13 +769,22 @@ def test_shorthand_view_preserves_existing_output(
     assert "two Markdown documents write CriticMarkup" in capsys.readouterr().err
 
 
+@pytest.fixture
+def tracked(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
+    """The letter with a tracked substitution in it."""
+    path = tmp_path / "tracked.docx"
+    assert main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "their", "-o", str(path)]) == 0
+    capsys.readouterr()
+    return path
+
+
 @pytest.mark.parametrize("task,dry_run", [("edit", False), ("edit", True), ("add", False)])
 def test_editing_mode_keep_is_usage_error_before_output(
-    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], task: str, dry_run: bool,
+    tracked: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], task: str, dry_run: bool,
 ) -> None:
     output = tmp_path / "never-created"
     args = [
-        task, str(letter), "-p", "p0", "--content", "Replacement",
+        task, str(tracked), "-p", "p0", "--content", "Replacement",
         "--existing-revisions", "keep", "--editing-mode", "--out-dir", str(output),
     ]
     if dry_run:
@@ -769,6 +798,22 @@ def test_editing_mode_keep_is_usage_error_before_output(
     assert not output.exists()
 
 
+def test_editing_mode_takes_a_plan_that_settles_every_change(
+    tracked: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Codex on #425: what -p rN --accept settles is not kept.
+    assert main(["changes", str(tracked), "--json"]) == 0
+    refs = [json.loads(line)["ref"] for line in capsys.readouterr().out.splitlines()]
+    assert len(refs) > 1
+    settle = [arg for ref in refs for arg in ("-p", ref, "--accept")]
+    clean = tmp_path / "clean.docx"
+    assert main(["edit", str(tracked), *settle, "--editing-mode", "-o", str(clean)]) == 0
+    assert "<w:ins " not in zipfile.ZipFile(clean).read("word/document.xml").decode()
+    with pytest.raises(SystemExit) as error:
+        main(["edit", str(tracked), *settle[:3], "--editing-mode", "-o", str(tmp_path / "partial.docx")])
+    assert error.value.code == 2
+
+
 def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     commented = tmp_path / "commented.docx"
     assert main(["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]) == 0
@@ -777,6 +822,9 @@ def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, caps
     assert main(["edit", str(commented), "-p", "c0.text", "--content", "their", "-o", str(out)]) == 0
     capsys.readouterr()
     assert main(["read", str(out)]) == 0
-    assert "{=={~~his or her~>their~~}" in capsys.readouterr().out
+    # edit writes the deletion before the insertion, as typing over a
+    # selection does; the view pairs only an insertion before a deletion,
+    # so these are two changes under the comment.
+    assert "{=={--his or her--}{>>r1 @R<<}{++their++}{>>r2 @R<<}==}" in capsys.readouterr().out
     assert main(["edit", str(commented), "-p", "c0.text", "--anchor", "signs", "--content", "x", "-o", str(tmp_path / "no.docx")]) == 3
     assert "not in the text c0 covers" in capsys.readouterr().err

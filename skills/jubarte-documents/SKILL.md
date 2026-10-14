@@ -1,13 +1,13 @@
 ---
 name: jubarte-documents
-description: "Use this skill whenever the user wants to read, edit, redline, comment on, compare, accept/reject, or render Word documents (.docx). Triggers: 'Word doc', '.docx', 'tracked changes', 'redline', 'compare these documents', 'accept all changes', 'render to PDF', 'what does this contract say', 'comment on clause', or a request to change specific clauses of a .docx as tracked changes. One engine (jubarte) does the reading, the editing, the clean copy, the PDF and the page images; no pandoc, LibreOffice or Poppler. Creating a brand-new .docx from scratch still uses the docx npm library (section 5). Do NOT use for PDFs, spreadsheets, Google Docs, or legacy .doc files."
+description: "Use this skill whenever the user wants to read, edit, redline, comment on, compare, accept/reject, or render Word documents (.docx). Triggers: 'Word doc', '.docx', 'tracked changes', 'redline', 'compare these documents', 'accept all changes', 'render to PDF', 'what does this contract say', 'comment on clause', or a request to change specific clauses of a .docx as tracked changes. One engine (jubarte) does the reading, the editing, the clean copy, the PDF and the page images; no pandoc, LibreOffice or Poppler. Creating a brand-new .docx from scratch still uses the docx npm library (section 5). Do NOT use for PDFs, spreadsheets or Google Docs; a legacy .doc is converted to .docx first (see Dependencies)."
 license: AGPL-3.0-only
 ---
 
 # DOCX with jubarte: read, edit as tracked changes, verify
 
 `jubarte` is one binary (or `python -m jubarte_redlines`, the same commands
-and files; only compare differs, see below) that reads a `.docx` into addressable paragraphs, applies a
+and files except `append` and `scrub`) that reads a `.docx` into addressable paragraphs, applies a
 plan of exact edits as Word tracked changes with comments, produces the clean
 copy, and renders pages to PDF and PNG from its own layout engine. You never
 touch `word/document.xml`.
@@ -149,13 +149,14 @@ jubarte edit contract.docx --plan plan.json --out-dir review --pdf --png --dpi 1
 
 Writes `review/clean.docx` (edits applied, no tracked changes),
 `review/redline.docx` (Word tracked changes by `author`, comments attached),
+`review/patch.diff` (the edits as `jubarte diff` prints them),
 `review/report.jsonl`, and with the flags `redline.pdf`, `clean.pdf`,
 `redline-page-NN.png`, `clean-page-NN.png`. Exit 0 means every operation
 matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
-`EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
-`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `UNSUPPORTED`,
+`EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `AMBIGUOUS_CHANGE`,
+`PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `UNSUPPORTED`,
 `INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
@@ -383,7 +384,7 @@ Gotchas:
   and lists what it cannot.
 - `jubarte validate file.docx --rules a11y,style,structure --json` lists
   heading skips, images without alt text, tables without a header row,
-  literal bullets, spacer paragraphs, stale TOC and page-count caches, and
+  a missing document language, literal bullets, spacer paragraphs, stale TOC and page-count caches, and
   substituted fonts, one finding per line; an `error` exits 2 and
   `--strict` makes warnings fail too. Each finding's `location` is the
   paragraph id to edit.
@@ -406,11 +407,12 @@ edited.md -o redline.docx` applies the Markdown's edits to the Word document
 and redlines only those, keeping empty paragraphs, fields and formatting.
 `jubarte diff old new` prints the changes as a patch in the style of git
 diff: only the changed paragraphs, each at its `[line:N]` (Markdown) or
-`[pN]` (Word) locator, with `[-old-]{+new+}` and CriticMarkup comments;
+`[body:p:N]` (Word) locator, with `[-old-]{+new+}` and CriticMarkup comments;
 `--columns 0` stops the wrapping and `--format critic` prints two Markdown
-documents as CriticMarkup (`{~~old~>new~~}`). `-o changes.docx` writes the
-changes as tracked changes. `jubarte edit` writes the edit's patch as
-`patch.diff` and prints it (`-q` prints nothing). See docs/MARKDOWN.md.
+documents as CriticMarkup (`{~~old~>new~~}`); `-o changes.patch` writes the
+patch to a file. `jubarte compare old.md new.md -o changes.docx` writes the
+changes as tracked changes. `jubarte edit --out-dir` writes the edit's patch
+as `patch.diff`. See docs/MARKDOWN.md.
 
 `jubarte append a.docx b.docx -o ab.docx` puts B after A on a new page;
 images, links, styles, lists and notes come along. Comments are dropped
@@ -441,7 +443,12 @@ Then verify with `jubarte convert output.docx -o pages.png --dpi 100` and `Read`
 For prose, Markdown is shorter: `jubarte convert draft.md --reference-doc
 house.docx -o draft.docx` takes the house styles, and CriticMarkup in the
 Markdown (`{++added++}`, `{--removed--}`, `{==text==}{>>comment<<}`) becomes
-tracked changes and comments.
+tracked changes and comments. A change or comment that names no author or
+date takes `-a`/`-d` (`--datetime`), else the front matter's `author:` and
+`last_modified:` (or `modified:`, `date:`, `created:`), else the reference doc's creator and creation date, else
+`Redline` and now; pass `-d 1970-01-01T00:00:00Z` for byte-identical
+output. `compare`, `edit` and `add` sign with `--author` and date with
+`-d` (default now), never with the files' own metadata.
 
 ## 6. Before sending a document out
 
@@ -458,8 +465,10 @@ have. Text to hide inside the document is a plan's `redact` (§2).
 ## Dependencies
 
 `jubarte` (single binary) or `pip install jubarte-redlines` (`python -m
-jubarte_redlines`, same commands; compare is `compare A B` there) · `docx` (npm) for new documents. As MCP tools (Claude Code, Codex, Gemini CLI):
+jubarte_redlines`, same commands but `append` and `scrub`) · `docx` (npm) for new documents. As MCP tools (Claude Code, Codex, Gemini CLI):
 `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` (see `docs/adoption/mcp.md`). Legacy
-`.doc` is refused with `LEGACY_DOC` (so is an encrypted document, which is
-the same OLE container); convert it with Word, or ask for a `.docx`. RTF is
-refused with `UNSUPPORTED_PACKAGE`.
+`.doc` is refused with `LEGACY_DOC` by every task but `convert`: `jubarte
+convert old.doc -o old.docx` reads its text, headings, lists and tables into
+a `.docx` (for full fidelity, save it as `.docx` in Word). An encrypted
+document (the same OLE container) is refused with `LEGACY_DOC`; ask for a
+`.docx` without a password. RTF is refused with `UNSUPPORTED_PACKAGE`.

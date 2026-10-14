@@ -222,8 +222,13 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         Ok(Location::Changes(ids)) => Some(ids),
         _ => None,
     };
-    // A `--reply` group is an operation: off a comment it says so.
+    // A `--reply` group is an operation: off a comment it says so. It
+    // resolves no revision, so `--accept` or `--reject` beside it is refused,
+    // not ignored.
     if op.reply.is_some() {
+        if op.accept || op.reject {
+            return bad("--reply takes no other flag");
+        }
         return Ok(None);
     }
     if verb == Verb::Add && ids.is_some() {
@@ -528,12 +533,23 @@ fn inline_edit(
     })
 }
 
-/// Why `--editing-mode` cannot apply `plan`: under `keep` the document's
-/// tracked changes stay, so its "clean" copy would still carry revisions.
-pub fn editing_mode_conflict(plan: &EditPlan) -> Option<&'static str> {
-    (plan.existing_revisions == ExistingRevisions::Keep).then_some(
-        "--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject",
-    )
+/// Why `--editing-mode` cannot apply `plan` to `source`: under `keep` the
+/// tracked changes `plan` does not itself accept or reject (`-p r12
+/// --accept`) stay, so the "clean" copy would still carry revisions.
+pub fn editing_mode_conflict(plan: &EditPlan, source: &[u8]) -> Option<&'static str> {
+    (plan.existing_revisions == ExistingRevisions::Keep && crate::edit::revisions_left(source, plan))
+        .then_some(
+            "--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject",
+        )
+}
+
+/// [`editing_mode_conflict`] for a plan as JSON, as the Python and npm CLIs
+/// hold it. A plan that does not parse conflicts with nothing here: running
+/// it reports why.
+pub fn editing_mode_conflict_json(plan: &str, source: &[u8]) -> Option<&'static str> {
+    EditPlan::from_json(plan)
+        .ok()
+        .and_then(|plan| editing_mode_conflict(&plan, source))
 }
 
 /// `plan` with `more` recorded after it: what `--plan PLAN.json` with
@@ -1437,6 +1453,20 @@ mod tests {
                 with("c5", |o| {
                     o.reply = Some("x".into());
                     o.comment = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.accept = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.reject = true;
                 }),
                 "-p c5: --reply takes no other flag",
             ),

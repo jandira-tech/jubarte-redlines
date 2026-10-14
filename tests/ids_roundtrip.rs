@@ -169,9 +169,10 @@ fn long_body() -> &'static [u8] {
                 inner.push_str(&ins(w, A, &format!("added{i}")));
             }
             if i == 7 {
-                // Two marks one after the other: one substitution, `r3+4`.
-                inner.push_str(&del("3", A, "old"));
+                // Word Compare's order, the insertion then the deletion:
+                // one substitution, `r3+4`.
                 inner.push_str(&ins("4", A, "new"));
+                inner.push_str(&del("3", A, "old"));
             }
             if let Some(ids) = commented_at.get(&i) {
                 inner.push_str(&commented(ids, &format!("noted{i}")));
@@ -472,7 +473,8 @@ fn patterns() -> &'static Patterns {
         table_line: Regex::new(r"^<!-- t(\d+)(?: center| right)? (\d+)x(\d+), (.*) -->$").unwrap(),
         cells_by_row: Regex::new(r"^cells p(\d+)-p(\d+) by row").unwrap(),
         cells_rows: Regex::new(r"t\d+\.row\d+ p(\d+)(?:-p(\d+))?").unwrap(),
-        story: Regex::new(r"\{id: ([^,}\s]+)").unwrap(),
+        // A long story id holds colons, so the header quotes it.
+        story: Regex::new(r#"\{id: "?([^,}\s"]+)"?"#).unwrap(),
         definition: Regex::new(r"^(?:\{(?:--|\+\+))?\[\^\d+\]: ").unwrap(),
     })
 }
@@ -645,11 +647,15 @@ fn view_text(block: &str) -> String {
     let refs = Regex::new(r"\[\^\d+\]").unwrap();
     let images = Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
-    let text = plain_anchor(block);
+    // `<mailto:a@b>` shows the address the document holds.
+    let text = plain_anchor(block).replace("<mailto:", "<");
     let text = refs.replace_all(&text, "");
     let text = images.replace_all(&text, "");
-    let tags = Regex::new(r"</?[a-z]+>").unwrap();
+    let tags = Regex::new(r#"</?[a-z]+(?:\s[^>]*)?>"#).unwrap();
     let text = tags.replace_all(&text, "");
+    // A field prints `{CODE}result{/}`: only its result is text.
+    let fields = Regex::new(r#"\{[A-Z]+(?:\s(?:[^{}"]|"[^"]*")*)?\}|\{/\}"#).unwrap();
+    let text = fields.replace_all(&text, "");
     letters(&links.replace_all(&text, "]"))
 }
 
@@ -1140,4 +1146,62 @@ fn word_redlines_round_trip() {
         }
     }
     report(&fails);
+}
+
+/// codex 4244120691: a long id reads back only when its story is the
+/// document's and its index a number, as `edit -p` reads it.
+#[test]
+fn a_long_id_reads_back_only_when_its_story_and_index_do() {
+    let back = jubarte::edit::long_paragraph_ids(
+        stories(),
+        &["missing:p:0", "body:p:x", "Header_1:p:0", "body:p:0"],
+    )
+    .unwrap();
+    assert!(
+        back[0].as_ref().is_err_and(|e| e.contains("unknown story")),
+        "{back:?}"
+    );
+    assert!(
+        back[1]
+            .as_ref()
+            .is_err_and(|e| e.contains("unknown paragraph id")),
+        "{back:?}"
+    );
+    assert_eq!(back[2], Ok("Header_1:p:0".to_string()));
+    assert_eq!(back[3], Ok("body:p:0".to_string()));
+}
+
+/// codex 4242942149: a header part whose stem a shell would expand
+/// (`hdr!old.xml`) gets a story id that is safe unquoted, and that id
+/// names its change and paragraph back.
+#[test]
+fn a_shell_unsafe_part_stem_prints_a_safe_story_id() {
+    let header = story_xml("hdr", &p(&ins("1", A, "Head")));
+    let docx = docx_with_sect(
+        &para("Body"),
+        &[part("word/hdr!old.xml", HEADER_CT, HEADER_REL, &header)],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let changes = jubarte::changes::list_changes(&docx).unwrap();
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].id, "hdr%21old:rev:1");
+    assert_eq!(changes[0].r#ref, "hdr%21old:rev:1");
+    let stories = jubarte::inspect::stories(&docx).unwrap();
+    assert_eq!(stories[0].id, "hdr%21old");
+    let back = jubarte::edit::long_paragraph_ids(&docx, &["hdr%21old:p:0"]).unwrap();
+    assert_eq!(back[0], Ok("hdr%21old:p:0".to_string()));
+    let accepted = jubarte::changes::accept_changes(
+        &docx,
+        &jubarte::changes::ChangeFilter {
+            ids: Some(vec![changes[0].r#ref.clone()]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        jubarte::changes::list_changes(&accepted)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(view(&docx).contains("hdr%21old"), "{}", view(&docx));
 }

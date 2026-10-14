@@ -388,8 +388,7 @@ fn story_id(main: &str, part: &str) -> String {
     if part.trim_start_matches('/') == main.trim_start_matches('/') {
         return "body".to_string();
     }
-    let file = part.rsplit('/').next().unwrap_or(part);
-    file.strip_suffix(".xml").unwrap_or(file).to_string()
+    crate::ids::part_story(part)
 }
 
 /// The revisions that resolve together: a move's sides and range markers,

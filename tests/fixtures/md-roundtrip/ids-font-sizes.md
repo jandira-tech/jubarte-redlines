@@ -7,21 +7,22 @@ authors:
   document_owner: Belen Civera     # dc:creator
   ATGH: Achensee Tourismus - Gunther Hochhold  # 1 revision, 2026-09-22T12:22:00Z
 body: p0-p172, 5 tables, 2 pages   # pages from Word's cached layout
-page: 8.26x11.68in portrait, margins top 1.2in, right 0.76in, bottom 0.62in, left 0.9in, header 0.19in, footer 0.5in
+page: 8.264x11.6806in portrait, margins top 1.2035in, right 0.764in, bottom 0.616in, left 0.903in, header 0.193in, footer 0.5in
 styles:
   Normal: Calibri 12pt, left       # default; unannotated paragraphs use it
   "##": Heading2, Arial 9pt
-  table: TableGrid, all borders 0.5pt
+  BodyText: Arial 8.5pt, named Body Text
+  tables: TableGrid
 headers:
   default: {id: header1, text: ""}
 ---
 
 <!-- p0 empty -->
 
-<!-- p1 center, left 2.08in, right 1.98in -->
+<!-- p1 center, left 2.076in, right 1.981in -->
 # ANEXO V
 
-<!-- p2 center, left 2.08in, right 1.98in -->
+<!-- p2 center, left 2.077in, right 1.981in -->
 **Memoria Programa “Desarrollo Capacidades” Curso 2019 / 2020**
 
 <!-- p3-p5 empty -->
@@ -31,7 +32,7 @@ headers:
 
 <!-- p7 empty -->
 
-<!-- t0 10x4, cells p8-p38 by row, merged cells -->
+<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
 |Centro:||Código de Centro:||
 |-|-|-|-|
 |Dirección:||Provincia:||
@@ -51,8 +52,8 @@ headers:
 
 <!-- p41 empty -->
 
-<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70 -->
-|Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
+<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center -->
+|<br>Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|<br>Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
 |-|-|-|-|-|-|
 |Ed Primaria||||||
 |E.S.O||||||
@@ -60,7 +61,7 @@ headers:
 
 <!-- p71 empty -->
 
-<!-- p72 left 0.37in, right 0.25in -->
+<!-- p72 left 0.37in, right 0.251in -->
 (\*) Grupo específico: agrupamiento diferente al grupo-clase en el que se desarrollan las actuaciones del programa con estabilidad de sus participantes y planificación durante un periodo de tiempo determinado.
 
 <!-- p73 empty -->
@@ -82,7 +83,7 @@ headers:
 
 <!-- p91 empty -->
 
-<!-- p92 left 0.37in, right 0.25in -->
+<!-- p92 left 0.37in, right 0.251in -->
 3.- Descripción de las actividades o trabajos por proyectos realizados tanto en los grupos específicos como en los grupos-clase, con indicación de las metodologías utilizadas.
 
 <!-- p93 empty -->
@@ -95,32 +96,32 @@ headers:
 <!-- p96 left 0.37in -->
 TENER EN CUENTA LAS CIRCUNSTANCIAS RELATIVAS AL CESE DE LA ACTIVIDAD PRESENCIAL CON EL ALUMNADO POR EL COVID19.
 
-<!-- p97 hanging 0.66in, left 2.26in, right 1.51in -->
+<!-- p97 hanging 0.662in, left 2.264in, right 1.509in -->
 En a        de             de 2020
 
-<!-- p98 hanging 0.66in, left 2.26in, right 1.51in -->
+<!-- p98 hanging 0.662in, left 2.264in, right 1.509in -->
 EL DIRECTOR/A  DEL CENTRO
 
-<!-- p99 center, left 2.07in, right 1.98in -->
+<!-- p99 center, left 2.073in, right 1.981in -->
 (Sello)
 
 <!-- p100 empty -->
 
-<!-- p101 center, left 2.07in, right 1.98in -->
+<!-- p101 center, left 2.073in, right 1.981in -->
 Fdo.
 
 <!-- p102-p105 empty -->
 
-<!-- p106 BodyText center, left 1.38in, right 1.28in -->
+<!-- p106 BodyText center, left 1.3785in, right 1.281in -->
 **Anexo VI**
 
-<!-- p107 BodyText center, left 1.38in, right 1.28in -->
+<!-- p107 BodyText center, left 1.3785in, right 1.281in -->
 **Solicitud de reconocimiento**
 
-<!-- p108 BodyText center, left 1.38in, right 1.28in -->
+<!-- p108 BodyText center, left 1.3785in, right 1.281in -->
 **Programa “Desarrollo de capacidades”**
 
-<!-- p109 BodyText center, first-line 0.34in, left 1.38in, right 1.28in -->
+<!-- p109 BodyText center, first-line 0.34in, left 1.3785in, right 1.281in -->
 **CURSO 2019/ 2020**
 
 <!-- p110 empty -->
@@ -133,36 +134,41 @@ Director/a del …….…………………………………………………�
 
 <!-- p113 empty -->
 
-<!-- p114 BodyText justify, right 0.3in -->
+<!-- p114 BodyText justify, right 0.297in -->
 **COMUNICA** que el profesorado que a continuación se relaciona ha participado activamente durante el curso 2019/2020 en el desarrollo del _Proyecto de Desarrollo de Capacidades:_
 
 <!-- p115 empty -->
 
-<!-- t4 6x4, cells p116-p139 by row -->
+<!-- t4 6x4, cells p116-p139 by row, style TableGrid -->
 |NOMBRE|APELLIDOS|NIF|COORDINADOR/ PARTICIPANTE|
 |-|-|-|-|
+|||||
+|||||
+|||||
+|||||
+|||||
 
 <!-- p140-p141 empty -->
 
-<!-- p142 BodyText justify, right 0.3in -->
+<!-- p142 BodyText justify, right 0.297in -->
 **SOLICITA** su reconocimiento de acuerdo con la ORDEN ECD/1400/2018, 28 de agosto, por la que se autoriza la continuación del Programa de “Desarrollo de Capacidades” y se convoca a los centros docentes no universitarios sostenidos con fondos públicos de la Comunidad de Aragón para participar en dicho programa durante el curso 2018/2019 y la Resolución de la Directora General de Planificación y Equidad de 6 de septiembre de 2019 sobre la prórroga de estos centros educativos en dicho programa.
 
 <!-- p143-p144 empty -->
 
-<!-- p145 BodyText left 2.42in -->
+<!-- p145 BodyText left 2.419in -->
 Sello del centro ………a …de ………….de 2020
 
 <!-- p146 empty -->
 
-<!-- p147 BodyText first-line 0.35in, left 0.14in -->
+<!-- p147 BodyText first-line 0.3535in, left 0.138in -->
 El coordinador/a  del proyecto
 
 <!-- p148-p149 empty -->
 
-<!-- p150 BodyText first-line 0.35in, left 2.6in -->
+<!-- p150 BodyText first-line 0.3535in, left 2.5965in -->
 V.ºB.º
 
-<!-- p151 BodyText first-line 0.35in, left 2.6in -->
+<!-- p151 BodyText first-line 0.3535in, left 2.5965in -->
 Director/a del centro
 
 <!-- p152 BodyText first-line 0.37in -->

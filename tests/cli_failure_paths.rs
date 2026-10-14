@@ -799,3 +799,72 @@ fn read_refuses_an_expired_selection_as_a_usage_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("the settled spelling is p12"), "{stderr}");
 }
+
+/// CodeRabbit on #438: a side file named like one of the PNG pages would
+/// replace that page; it is refused before anything is written.
+#[test]
+fn a_report_named_like_a_png_page_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("One page."))).unwrap();
+    for flag in ["--report", "--font-report"] {
+        let args = [
+            "convert",
+            "input.docx",
+            "-o",
+            "result.png",
+            flag,
+            "result-page-01.png",
+        ];
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(&format!(
+                "{flag} 'result-page-01.png' is the same file as the PNG output"
+            )),
+            "{err}"
+        );
+        assert!(!dir.path().join("result-page-01.png").exists());
+    }
+}
+
+/// Codex on #442, decided in its thread: an -o extension jubarte does not
+/// know is written as a .docx, as compare's writer does; only the known
+/// non-Word ones exit 2.
+#[test]
+fn edit_writes_a_docx_under_an_unknown_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("One."))).unwrap();
+    let out = run(
+        dir.path(),
+        &[
+            "add",
+            "input.docx",
+            "-p",
+            "p0",
+            "--comment",
+            "--content",
+            "Note.",
+            "-o",
+            "result.zip",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let written = std::fs::read(dir.path().join("result.zip")).unwrap();
+    assert!(part_string(&written, "word/document.xml").is_some());
+    let refused = run(
+        dir.path(),
+        &[
+            "add",
+            "input.docx",
+            "-p",
+            "p0",
+            "--comment",
+            "--content",
+            "Note.",
+            "-o",
+            "result.pdf",
+        ],
+    );
+    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+}

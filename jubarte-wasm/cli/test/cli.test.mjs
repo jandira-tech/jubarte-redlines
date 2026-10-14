@@ -409,7 +409,8 @@ test("edit takes the text a comment covers (c0.text), and read names note paragr
   assert.equal(edit.code, 0, edit.err);
   const view = run("read", out);
   assert.equal(view.code, 0, view.err);
-  assert.match(view.out, /\{==\{~~Last~>Final~~\}/);
+  // edit writes the deletion before the insertion; read pairs only insertion-first, so two changes.
+  assert.match(view.out, /\{==\{--Last--\}\{>>r\d+ @R<<\}\{\+\+Final\+\+\}\{>>r\d+ @R<<\}==\}/);
   assert.match(view.out, /<!-- footnotes\.p0 -->\n\[\^1\]: The note text\./);
   const outside = run("edit", commented, "-p", "c0.text", "--anchor", "paragraph", "--content", "x", "-o", path.join(tmp, "covered-no.docx"));
   assert.equal(outside.code, 3, outside.err);
@@ -1008,46 +1009,77 @@ test("agent editing mode rejects keep before creating output even in dry run", (
   }
 });
 
+test("convert signs what names no one by the flags, the front matter, the reference, else Redline and now", () => {
+  const reference = path.join(repo, "tests/fixtures/md-roundtrip/review/ref-stamp.docx");
+  const stamped = (markdown, ...extra) => {
+    const md = path.join(tmp, "stamp.md");
+    const out = path.join(tmp, "stamp.docx");
+    fs.writeFileSync(md, markdown);
+    const r = run("convert", md, "-o", out, "--force", ...extra);
+    assert.equal(r.code, 0, r.err);
+    const changes = run("changes", out, "--json");
+    assert.equal(changes.code, 0, changes.err);
+    return JSON.parse(changes.out.trim().split("\n")[0]);
+  };
+  const front = "---\nauthor: Fran Front\nlast_modified: 2025-01-02T03:04:05Z\n---\n\nSome {++x++} here.\n";
+  let change = stamped(front, "--reference-doc", reference);
+  assert.deepEqual([change.author, change.date], ["Fran Front", "2025-01-02T03:04:05Z"]);
+  change = stamped("Some {++x++} here.\n", "--reference-doc", reference);
+  assert.deepEqual([change.author, change.date], ["Cleo Core", "2025-03-04T05:06:07Z"]);
+  change = stamped(front, "-a", "Cli Name", "-d", "2024-02-03T04:05:06Z");
+  assert.deepEqual([change.author, change.date], ["Cli Name", "2024-02-03T04:05:06Z"]);
+  const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const before = now();
+  change = stamped("Some {++x++} here.\n");
+  const after = now();
+  assert.equal(change.author, "Redline");
+  assert.ok(before <= change.date && change.date <= after, `${before} <= ${change.date} <= ${after}`);
+});
 
+// bebbbfff pinned these as refusals; the npm CLI now writes Markdown, PDF
+// and JSON, so only PNG is refused. Either way a failed run leaves the
+// existing output alone, --force or not.
 for (const command of ["accept", "reject"]) {
-  test(`writer refuses unsupported ${command} formats before file access`, () => {
+  test(`writer refuses only PNG on ${command}, and a failed run keeps the output`, () => {
     for (const extension of ["md", "markdown", "PDF", "png", "JSON"]) {
       const output = path.join(tmp, `unsupported-${command}.${extension}`);
       fs.writeFileSync(output, "preserve output");
       const result = run(command, "missing.docx", "-o", output, "--force", "-q");
-      assert.equal(result.code, 2, `${extension}: ${result.err}`);
       assert.equal(result.out, "");
-      const kind = extension === "markdown" ? "md" : extension.toLowerCase();
-      assert.ok(result.err.includes(`-o FILE.${kind} is not supported by the npm CLI yet`), result.err);
-      assert.equal(fs.readFileSync(output, "utf8"), "preserve output");
-      if (kind === "png") {
+      if (extension === "png") {
+        assert.equal(result.code, 2, `${extension}: ${result.err}`);
+        assert.ok(result.err.includes("-o FILE.png is not supported by the npm CLI"), result.err);
         assert.ok(!fs.existsSync(output.replace(/\.png$/, "-page-01.png")));
+      } else {
+        assert.equal(result.code, 1, `${extension}: ${result.err}`);
+        assert.match(result.err, /reading missing\.docx/);
       }
+      assert.equal(fs.readFileSync(output, "utf8"), "preserve output");
     }
   });
 }
 
-test("writer refuses read aliases and shorthand without creating output", () => {
+test("read, its alias and the shorthand create no output when the source fails", () => {
   for (const prefix of [["read", "missing.docx"], ["text", "missing.docx"], ["missing.docx"]]) {
     for (const extension of ["md", "JSON", "unknown"]) {
       const output = path.join(tmp, `unsupported-read.${extension}`);
       const result = run(...prefix, "-o", output, "--force", "-q");
-      assert.equal(result.code, 2, result.err);
+      assert.equal(result.code, 1, result.err);
       assert.equal(result.out, "");
-      assert.match(result.err, /read -o is not supported by the npm CLI yet/);
+      assert.match(result.err, /reading missing\.docx/);
       assert.ok(!fs.existsSync(output));
     }
   }
 });
 
-test("writer refuses convert JSON selected by format or extension", () => {
+test("convert JSON, by format or extension, keeps the output when the source fails", () => {
   const output = path.join(tmp, "unsupported-convert.unknown");
   fs.writeFileSync(output, "preserve output");
   for (const flags of [["--to", "json"], ["-o", "unsupported-convert.JSON"], ["--to", "json", "-o", output]]) {
     const result = run("convert", "missing.docx", ...flags, "--force", "-q");
-    assert.equal(result.code, 2, result.err);
+    assert.equal(result.code, 1, result.err);
     assert.equal(result.out, "");
-    assert.match(result.err, /-o FILE.json is not supported by the npm CLI yet/);
+    assert.match(result.err, /reading missing\.docx/);
     assert.equal(fs.readFileSync(output, "utf8"), "preserve output");
     assert.ok(!fs.existsSync(path.join(tmp, "missing.json")));
     assert.ok(!fs.existsSync(path.join(tmp, "unsupported-convert.JSON")));
