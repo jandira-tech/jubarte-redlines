@@ -97,10 +97,25 @@ fn flow_map(text: &str, depth: usize) -> Option<(Vec<(String, Value)>, &str)> {
     }
 }
 
-/// A flow scalar: a JSON string (`"{PAGE}"`), or plain text up to the next
-/// `,`, `:` followed by a space, or `}` (a plain flow scalar holds none of
-/// `,[]{}` and no `: `).
+/// A flow scalar: a JSON string (`"{PAGE}"`), a single-quoted one, which
+/// keeps backslashes and reads `''` as `'` (`'{REF _R \h}'`), or plain text
+/// up to the next `,`, `:` followed by a space, or `}` (a plain flow scalar
+/// holds none of `,[]{}` and no `: `).
 fn scalar(text: &str) -> Option<(String, &str)> {
+    if let Some(quoted) = text.strip_prefix('\'') {
+        let mut value = String::new();
+        let mut chars = quoted.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if c != '\'' {
+                value.push(c);
+            } else if chars.next_if(|&(_, c)| c == '\'').is_some() {
+                value.push('\'');
+            } else {
+                return Some((value, &quoted[i + 1..]));
+            }
+        }
+        return None;
+    }
     if text.starts_with('"') {
         let mut escaped = false;
         let end = text
@@ -187,6 +202,8 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
 pub(super) struct Stories {
     pub stories: Vec<Story>,
     pub title_page: Option<bool>,
+    /// The entries that did not read (`footers: default`), for a warning.
+    pub dropped: Vec<String>,
 }
 
 impl Stories {
@@ -196,17 +213,16 @@ impl Stories {
             self.title_page = Some(true);
             return;
         }
-        let Some((map, _)) = flow_map(value, 0) else {
+        let Some(story) = flow_map(value, 0).and_then(|(map, _)| story(kind, ty, &map)) else {
+            self.dropped.push(format!("{kind}s: {ty}"));
             return;
         };
-        if let Some(story) = story(kind, ty, &map) {
-            if story.ty == "first" {
-                self.title_page = Some(story.active);
-            }
-            self.stories
-                .retain(|s| !(s.kind == kind && s.ty == story.ty));
-            self.stories.push(story);
+        if story.ty == "first" {
+            self.title_page = Some(story.active);
         }
+        self.stories
+            .retain(|s| !(s.kind == kind && s.ty == story.ty));
+        self.stories.push(story);
     }
 }
 
@@ -239,6 +255,11 @@ pub(super) fn first_section(yaml: &str) -> Stories {
 pub(super) fn section(entry: &str) -> Stories {
     let mut stories = Stories::default();
     let Some((map, _)) = flow_map(entry, 0) else {
+        if entry.contains("headers") || entry.contains("footers") {
+            stories
+                .dropped
+                .push("the section's headers and footers".to_string());
+        }
         return stories;
     };
     for (key, value) in map {
@@ -250,18 +271,19 @@ pub(super) fn section(entry: &str) -> Stories {
         let Value::Map(types) = value else { continue };
         for (ty, value) in types {
             match value {
-                Value::Map(entries) => {
-                    if let Some(story) = story(kind, &ty, &entries) {
+                Value::Map(entries) => match story(kind, &ty, &entries) {
+                    Some(story) => {
                         if story.ty == "first" {
                             stories.title_page = Some(story.active);
                         }
                         stories.stories.push(story);
                     }
-                }
+                    None => stories.dropped.push(format!("{kind}s: {ty}")),
+                },
                 Value::Text(none) if ty == "first" && none == "none" => {
                     stories.title_page = Some(true);
                 }
-                _ => {}
+                _ => stories.dropped.push(format!("{kind}s: {ty}")),
             }
         }
     }
@@ -585,6 +607,24 @@ const SETTINGS_AFTER_EVEN_ODD: [&str; 53] = [
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_entry_that_does_not_read_is_named_and_single_quotes_keep_backslashes() {
+        // YAML reads no `{` in a plain scalar and no `\h` in a double-quoted
+        // one; a single-quoted scalar keeps backslashes, and `''` is a quote.
+        let yaml = "footers:\n  default: {id: footer1, text: Page {PAGE} of {NUMPAGES}}\n  \
+                    first: {id: footer2, text: '{REF _R \\h}it''s{/}'}\nheaders:\n  \
+                    even: {id: header1, text: \"\\h\"}\n";
+        let stories = first_section(yaml);
+        assert_eq!(stories.stories.len(), 1);
+        assert_eq!(stories.stories[0].text, r"{REF _R \h}it's{/}");
+        assert_eq!(stories.dropped, ["footers: default", "headers: even"]);
+        let later = section("{p11-p147, footers: {default: {id: footer1, text: a{b}, even: none}}");
+        assert!(later.stories.is_empty());
+        assert_eq!(later.dropped, ["the section's headers and footers"]);
+        let later = section("{p11-p147, headers: {default: {id: nope, text: a}}}");
+        assert_eq!(later.dropped, ["headers: default"]);
+    }
 
     #[test]
     fn the_first_sections_blocks_read() {

@@ -246,9 +246,10 @@ impl<'a> Closers<'a> {
 
 /// The parts of a Markdown source that Markdown reads literally: code spans,
 /// link destinations and autolinks (`verbatim`), where nothing opens, and
-/// fenced code blocks (`fences`), where CriticMarkup still marks tracked
-/// changes (the reader prints them there) but `==` and `{CODE}` open
-/// nothing. Sorted, not overlapping.
+/// fenced code blocks and the YAML front matter (`fences`), where
+/// CriticMarkup still marks tracked changes (the reader prints them there)
+/// but `==` and `{CODE}` open nothing: a header's `{PAGE}` is read by the
+/// front matter's own reader. Sorted, not overlapping.
 struct Literal {
     verbatim: Vec<std::ops::Range<usize>>,
     fences: Vec<std::ops::Range<usize>>,
@@ -267,7 +268,20 @@ impl Literal {
         let mut can_define = true;
         let destinations = destination_ends(source);
         let mut line_start = 0;
-        let mut at = 0;
+        if source.starts_with("---\n") || source.starts_with("---\r\n") {
+            let mut end = source.find('\n').map_or(source.len(), |n| n + 1);
+            while end < source.len() {
+                let line_end = source[end..].find('\n').map_or(source.len(), |n| end + n);
+                let closes = matches!(source[end..line_end].trim_end(), "---" | "...");
+                end = (line_end + 1).min(source.len());
+                if closes {
+                    literal.fences.push(0..line_end);
+                    line_start = end;
+                    break;
+                }
+            }
+        }
+        let mut at = line_start;
         while at < bytes.len() {
             if at == line_start {
                 let line_end = source[at..].find('\n').map_or(bytes.len(), |n| at + n);

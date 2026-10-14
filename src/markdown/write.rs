@@ -1969,13 +1969,22 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// A section's headers and footers from the front matter, with a
+    /// warning for each entry that did not read.
+    fn stories(&mut self, number: usize, stories: view_stories::Stories) {
+        for name in &stories.dropped {
+            self.document.warnings.push(format!(
+                "section {number}: front matter {name} does not read and is dropped; quote its text ('…' keeps backslashes)"
+            ));
+        }
+        self.document.stories.insert(number, stories);
+    }
+
     /// `title:`, `author:` and `track_changes:` from a YAML front matter
     /// block.
     fn metadata(&mut self, text: &str) {
         self.authors = view_notes::authors(text);
-        self.document
-            .stories
-            .insert(1, view_stories::first_section(text));
+        self.stories(1, view_stories::first_section(text));
         self.document.style_specs = view_styles::legend(text);
         let mut key_above = "";
         for line in text.lines() {
@@ -1990,9 +1999,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.document.pages.insert(number, page);
                 }
                 if let Some((_, entry)) = line.trim().split_once(": ") {
-                    self.document
-                        .stories
-                        .insert(number, view_stories::section(entry));
+                    self.stories(number, view_stories::section(entry));
                 }
             }
             // A key under another (`options:` then `  track_changes: on`)

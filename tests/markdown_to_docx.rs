@@ -1275,3 +1275,36 @@ fn a_reference_definitions_destination_is_read_literally() {
     let notes = part_string(&docx, "word/footnotes.xml").unwrap();
     assert_eq!(notes.matches("<w:highlight ").count(), 1, "{notes}");
 }
+
+#[test]
+fn a_front_matter_story_that_does_not_read_warns() {
+    // YAML reads no `{` in a plain scalar: the footer is dropped, and says
+    // so. A single-quoted scalar keeps the field's backslash.
+    let written = markdown_to_docx(
+        "---\nfooters:\n  default: {id: footer1, text: Page {PAGE} of {NUMPAGES}}\n\
+         headers:\n  default: {id: header1, text: '{REF _R \\h}hi{/}'}\n  \
+         first: {id: header2, text: \"{REF _R}hi{/}\"}\n---\n\nBody.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert!(part_string(&written.docx, "word/footer1.xml").is_none());
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("footers: default")),
+        "{:?}",
+        written.warnings
+    );
+    assert!(
+        !written.warnings.iter().any(|w| w.contains("headers")),
+        "{:?}",
+        written.warnings
+    );
+    // The front matter is no Markdown: a field in it is not encoded, so
+    // its code keeps its characters as written.
+    let header = part_string(&written.docx, "word/header1.xml").unwrap();
+    assert!(header.contains(r"{REF _R \h}hi{/}"), "{header}");
+    let first = part_string(&written.docx, "word/header2.xml").unwrap();
+    assert!(first.contains("{REF _R}hi{/}"), "{first}");
+}
