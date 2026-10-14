@@ -313,6 +313,22 @@ test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   assert.ok(forced.out.includes(`\nsource: ${written}\n`), forced.out);
 });
 
+test("a bare --plan is FILE_plan.json, as the binary has it (D16)", () => {
+  const para = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const file = copy(untracked, "bare.docx");
+  const plan = path.join(tmp, "bare_plan.json");
+  const recorded = run("edit", file, "--plan", "-p", `p${para.index}`, "--content", "Changed.");
+  assert.equal(recorded.code, 0, recorded.err);
+  assert.ok(fs.existsSync(plan), recorded.out);
+  assert.ok(recorded.out.trim().endsWith(`apply with: jubarte edit ${file} --plan`), recorded.out);
+  const applied = run("edit", file, "--plan", "--consume", "-q");
+  assert.equal(applied.code, 0, applied.err);
+  assert.ok(!fs.existsSync(plan) && fs.existsSync(path.join(tmp, "bare_modified.docx")));
+  const swallowed = run("edit", "--plan", file, "-p", "p1", "--content", "x");
+  assert.equal(swallowed.code, 2);
+  assert.match(swallowed.err, /names a Word document; put FILE before --plan/);
+});
+
 test("edit and add --plan record into one plan that --consume deletes once applied", () => {
   const paras = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.filter((p) => p.text.length > 3);
   const [para, other, third] = paras;

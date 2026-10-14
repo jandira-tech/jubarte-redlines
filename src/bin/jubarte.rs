@@ -1384,6 +1384,8 @@ struct EditFlags<'a> {
     verb: jubarte::edit::flags::Verb,
     file: &'a Path,
     plan: Option<&'a Path>,
+    /// `--plan` without a value: FILE_plan.json (D16).
+    plan_default: bool,
     consume: bool,
     operations: &'a [FlagOp],
     options: &'a EditOptions,
@@ -1514,6 +1516,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
             recorded.summary(
                 &flags.file.display().to_string(),
                 &path.display().to_string(),
+                flags.plan_default,
                 flags.dry_run
             )
         );
@@ -2753,6 +2756,7 @@ fn cli_main() -> ExitCode {
         Some(Command::Edit {
             file,
             plan,
+            plan_default,
             consume,
             options,
             dry_run,
@@ -2772,6 +2776,7 @@ fn cli_main() -> ExitCode {
                 verb: jubarte::edit::flags::Verb::Edit,
                 file: &file,
                 plan: plan.as_deref(),
+                plan_default,
                 consume,
                 operations: &operations,
                 options: &options,
@@ -2787,6 +2792,7 @@ fn cli_main() -> ExitCode {
         Some(Command::Add {
             file,
             plan,
+            plan_default,
             consume,
             options,
             operations,
@@ -2796,6 +2802,7 @@ fn cli_main() -> ExitCode {
                 verb: jubarte::edit::flags::Verb::Add,
                 file: &file,
                 plan: plan.as_deref(),
+                plan_default,
                 consume,
                 operations: &operations,
                 options: &options,

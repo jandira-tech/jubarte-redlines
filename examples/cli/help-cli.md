@@ -916,10 +916,11 @@ Arguments:
           The source document (.docx). Never modified
 
 Options:
-      --plan <PLAN.json>
+      --plan [<PLAN.json>]
           Edit plan JSON: batches and the other operation kinds (see `jubarte
           capabilities --json`). Alone, it is applied to FILE; with operation flags,
-          they are recorded into it (created on first use) and FILE is left as it is
+          they are recorded into it (created on first use) and FILE is left as it is.
+          Without a value: FILE_plan.json beside FILE
 
       --consume
           Delete PLAN.json once it has been applied and the outputs are written (with
@@ -1068,10 +1069,10 @@ Arguments:
           The source document (.docx). Never modified
 
 Options:
-      --plan <PLAN.json>
+      --plan [<PLAN.json>]
           Edit plan JSON. With operation flags, they are recorded into it (created on
           first use) and FILE is left as it is; alone, it is applied to FILE, as `edit
-          --plan` does
+          --plan` does. Without a value: FILE_plan.json beside FILE
 
       --consume
           Delete PLAN.json once it has been applied and the outputs are written (with

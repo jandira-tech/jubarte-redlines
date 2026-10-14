@@ -330,7 +330,7 @@ function recordPlan(verb, file, docx, o) {
   const held = readPlanText(o.plan, true);
   const options = {
     author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
-    file, plan: o.plan, dryRun: Boolean(o.dry_run),
+    file, plan: o.plan, defaultPlan: Boolean(o.plan_default), dryRun: Boolean(o.dry_run),
   };
   const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
   if (!answer.ok) {

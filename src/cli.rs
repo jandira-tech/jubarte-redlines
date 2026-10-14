@@ -304,6 +304,115 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
     Ok(ops)
 }
 
+/// `--plan`'s parser: a path that may be empty, the value `--plan` takes
+/// when given bare (clap's `PathBuf` parser refuses an empty one).
+fn plan_path() -> impl clap::builder::TypedValueParser<Value = PathBuf> {
+    use clap::builder::TypedValueParser as _;
+    clap::builder::OsStringValueParser::new().map(PathBuf::from)
+}
+
+/// `--plan` without a value (D16) is `<FILE's dir>/<stem>_plan.json`.
+fn resolve_plan(task: &mut Command) {
+    let (Command::Edit {
+        file,
+        plan: Some(plan),
+        plan_default,
+        ..
+    }
+    | Command::Add {
+        file,
+        plan: Some(plan),
+        plan_default,
+        ..
+    }) = task
+    else {
+        return;
+    };
+    if !plan.as_os_str().is_empty() {
+        return;
+    }
+    let stem = file.file_stem().map_or_else(
+        || "document".to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    let name = format!("{stem}_plan.json");
+    *plan = match file.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(dir) => dir.join(name),
+        None => PathBuf::from(name),
+    };
+    *plan_default = true;
+}
+
+/// A Word document's name, by extension: what an optional value swallowed
+/// when it should have been FILE.
+fn names_word_document(path: &Path) -> bool {
+    // By name, so a bare `.docx` (no stem, no extension to Path) counts.
+    path.file_name().is_some_and(|name| {
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        [".docx", ".docm", ".dotx", ".dotm", ".doc"]
+            .iter()
+            .any(|ext| name.ends_with(ext))
+    })
+}
+
+/// The message for an optional value (`--plan`, `--out-dir`) that names a
+/// Word document: FILE was read as the value.
+fn swallowed_file(flag: &str, value: &Path) -> String {
+    let instead = if flag == "--plan" { "PLAN.json" } else { "DIR" };
+    format!(
+        "{flag} {} names a Word document; put FILE before {flag}, or write {flag}={instead}",
+        value.display()
+    )
+}
+
+/// `edit --plan a.docx -p p1 …`: clap reads the document as the plan and
+/// then misses FILE. The raw tokens show it, so that error says so instead;
+/// any other error (help, an unknown flag, …) is clap's own.
+fn swallowed_file_error(
+    command: &clap::Command,
+    tokens: &[String],
+    error: clap::Error,
+) -> clap::Error {
+    if error.kind() != clap::error::ErrorKind::MissingRequiredArgument {
+        return error;
+    }
+    let Some(at) = tokens.iter().skip(1).position(|t| !t.starts_with('-')) else {
+        return error;
+    };
+    let name = tokens[at + 1].as_str();
+    let Some(sub) = command
+        .find_subcommand(name)
+        .filter(|_| matches!(name, "edit" | "add"))
+    else {
+        return error;
+    };
+    // `--plan VALUE` or `--plan=VALUE`, before `--` ends the options.
+    let options = tokens[at + 2..].iter().take_while(|t| *t != "--");
+    let mut previous: Option<&str> = None;
+    let mut found = None;
+    for token in options {
+        let pair = match token.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => Some((flag, value)),
+            _ => previous.map(|flag| (flag, token.as_str())),
+        };
+        if let Some((flag, value)) = pair
+            && matches!(flag, "--plan" | "--out-dir")
+            && !value.starts_with('-')
+            && names_word_document(Path::new(value))
+        {
+            found = Some(swallowed_file(flag, Path::new(value)));
+            break;
+        }
+        previous = Some(token.as_str()).filter(|t| matches!(*t, "--plan" | "--out-dir"));
+    }
+    let Some(message) = found else {
+        return error;
+    };
+    let mut task = sub.clone();
+    task.set_bin_name(format!("{} {name}", command.get_name()));
+    task.error(clap::error::ErrorKind::ArgumentConflict, message)
+}
+
 /// Groups the flag operations of `edit` and `add` into their `operations`
 /// field; a grouping error is a usage error.
 fn fill_flag_operations(
@@ -744,9 +853,13 @@ pub enum Command {
         /// Edit plan JSON: batches and the other operation kinds (see
         /// `jubarte capabilities --json`). Alone, it is applied to FILE; with
         /// operation flags, they are recorded into it (created on first use)
-        /// and FILE is left as it is.
-        #[arg(long, value_name = "PLAN.json", required_unless_present = "location")]
+        /// and FILE is left as it is. Without a value: FILE_plan.json beside
+        /// FILE.
+        #[arg(long, value_name = "PLAN.json", num_args = 0..=1, default_missing_value = "", value_parser = plan_path(), required_unless_present = "location")]
         plan: Option<PathBuf>,
+        /// `--plan` was given without a value (D16): the summary says so.
+        #[arg(skip)]
+        plan_default: bool,
         /// Delete PLAN.json once it has been applied and the outputs are
         /// written (with --plan and no operation flags).
         #[arg(long, requires = "plan")]
@@ -829,9 +942,13 @@ pub enum Command {
         file: PathBuf,
         /// Edit plan JSON. With operation flags, they are recorded into it
         /// (created on first use) and FILE is left as it is; alone, it is
-        /// applied to FILE, as `edit --plan` does.
-        #[arg(long, value_name = "PLAN.json")]
+        /// applied to FILE, as `edit --plan` does. Without a value:
+        /// FILE_plan.json beside FILE.
+        #[arg(long, value_name = "PLAN.json", num_args = 0..=1, default_missing_value = "", value_parser = plan_path())]
         plan: Option<PathBuf>,
+        /// `--plan` was given without a value (D16): the summary says so.
+        #[arg(skip)]
+        plan_default: bool,
         /// Delete PLAN.json once it has been applied and the outputs are
         /// written (with --plan and no operation flags).
         #[arg(long, requires = "plan")]
@@ -2394,15 +2511,16 @@ fn validate_matches(
     // would read the document as the directory.
     if matches!(name, "edit" | "add")
         && let Some(dir) = args.try_get_one::<PathBuf>("out_dir").ok().flatten()
-        && Format::of_path(dir) == Some(Format::Docx)
+        && names_word_document(dir)
     {
-        return Err(error(
-            &mut task,
-            &format!(
-                "--out-dir {} names a Word document; put FILE before --out-dir, or write --out-dir=DIR",
-                dir.display()
-            ),
-        ));
+        return Err(error(&mut task, &swallowed_file("--out-dir", dir)));
+    }
+    // So is --plan's (D16): a plan is JSON, never a Word document.
+    if matches!(name, "edit" | "add")
+        && let Some(plan) = args.get_one::<PathBuf>("plan")
+        && names_word_document(plan)
+    {
+        return Err(error(&mut task, &swallowed_file("--plan", plan)));
     }
     // edit and add write one Word document: a known extension that is not
     // .docx names the task that writes it.
@@ -2604,11 +2722,21 @@ impl Cli {
         T: Into<std::ffi::OsString> + Clone,
     {
         let mut command = top_level_command();
-        let matches = command.try_get_matches_from_mut(arguments)?;
+        let arguments: Vec<std::ffi::OsString> = arguments.into_iter().map(Into::into).collect();
+        let matches = command
+            .try_get_matches_from_mut(arguments.clone())
+            .map_err(|e| {
+                let tokens: Vec<String> = arguments
+                    .iter()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect();
+                swallowed_file_error(&command, &tokens, e)
+            })?;
         validate_matches(&matches, &mut command)?;
         let mut cli = Self::from_arg_matches(&matches)?;
         if let Some(task) = cli.command.as_mut() {
             fill_flag_operations(task, &matches, &mut command)?;
+            resolve_plan(task);
         }
         match (cli.command.as_mut(), matches.subcommand()) {
             (Some(Command::Compare(compare)), Some((_, args))) => {
@@ -2760,12 +2888,16 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     let argv = std::iter::once(program.to_string()).chain(arguments.iter().cloned());
     let mut quiet = false;
     let result = (|| {
-        let matches = command.try_get_matches_from_mut(argv)?;
+        let tokens: Vec<String> = argv.collect();
+        let matches = command
+            .try_get_matches_from_mut(tokens.clone())
+            .map_err(|e| swallowed_file_error(&command, &tokens, e))?;
         validate_matches(&matches, &mut command)?;
         quiet = matches.get_flag("quiet");
         if matches.subcommand().is_some() {
             let mut task = Command::from_arg_matches(&matches)?;
             fill_flag_operations(&mut task, &matches, &mut command)?;
+            resolve_plan(&mut task);
             let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
             if let Command::Compare(compare) = &mut task {
                 if let Some((_, args)) = matches.subcommand() {

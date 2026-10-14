@@ -39,8 +39,14 @@ const RECORD_ONLY: &[&str] = &["--author", "--datetime", "--existing-revisions"]
 pub fn plan_flag_conflict(recording: bool, given: &[&str], plan: &str) -> Option<String> {
     if recording {
         let flag = APPLY_ONLY.iter().find(|f| given.contains(f))?;
+        // A bare --plan (D16) is still unresolved here: spell it bare.
+        let apply = if plan.is_empty() {
+            "--plan".to_string()
+        } else {
+            format!("--plan {plan}")
+        };
         Some(format!(
-            "{flag} takes effect when the plan is applied (jubarte edit FILE --plan {plan}), and is not recorded"
+            "{flag} takes effect when the plan is applied (jubarte edit FILE {apply}), and is not recorded"
         ))
     } else {
         let flag = RECORD_ONLY.iter().find(|f| given.contains(f))?;
@@ -81,7 +87,9 @@ impl Recorded {
 
     /// The line printed after recording: what was added, what the plan now
     /// holds, and the command that applies it.
-    pub fn summary(&self, file: &str, plan: &str, dry_run: bool) -> String {
+    /// The line a recording prints. `default_plan`: `--plan` was given
+    /// without a value, so the apply line spells it bare (D16).
+    pub fn summary(&self, file: &str, plan: &str, default_plan: bool, dry_run: bool) -> String {
         let ids = |side: fn(&super::ResolveRevisions) -> &Option<crate::changes::ChangeFilter>| {
             self.plan
                 .resolve_revisions
@@ -105,8 +113,13 @@ impl Recorded {
             (0, _) => revisions,
             _ => format!("{operations} and {revisions}"),
         };
+        let apply = if default_plan {
+            "--plan".to_string()
+        } else {
+            format!("--plan {plan}")
+        };
         format!(
-            "{} {added} in {plan}: {total} operation{}, {accept} revision{} to accept, {reject} to reject; apply with: jubarte edit {file} --plan {plan}",
+            "{} {added} in {plan}: {total} operation{}, {accept} revision{} to accept, {reject} to reject; apply with: jubarte edit {file} {apply}",
             if dry_run { "would record" } else { "recorded" },
             s(total),
             s(accept),
@@ -207,6 +220,8 @@ pub struct RecordOptions {
     pub file: String,
     /// PLAN.json as the command line names it, for the summary.
     pub plan: String,
+    /// `--plan` was given without a value: the summary prints it bare.
+    pub default_plan: bool,
     /// `--dry-run`: the summary says "would record".
     pub dry_run: bool,
 }
@@ -258,7 +273,12 @@ pub fn record_json(
         "plan": serde_json::to_string(&recorded.plan).expect("a plan serializes"),
         "json": recorded.json(),
         "notes": recorded.notes,
-        "summary": recorded.summary(&options.file, &options.plan, options.dry_run),
+        "summary": recorded.summary(
+            &options.file,
+            &options.plan,
+            options.default_plan,
+            options.dry_run,
+        ),
     })
     .to_string())
 }
@@ -296,7 +316,7 @@ mod tests {
             Some(crate::inspect::source_sha256(b"doc").as_str())
         );
         assert_eq!(
-            first.summary("a.docx", "plan.json", false),
+            first.summary("a.docx", "plan.json", false, false),
             "recorded 1 operation in plan.json: 1 operation, 0 revisions to accept, 0 to reject; \
              apply with: jubarte edit a.docx --plan plan.json"
         );
@@ -308,7 +328,7 @@ mod tests {
         assert_eq!((second.added, second.plan.operations.len()), (2, 3));
         assert!(
             second
-                .summary("a.docx", "plan.json", true)
+                .summary("a.docx", "plan.json", false, true)
                 .starts_with("would record 2 operations in plan.json: 3 operations,")
         );
         assert!(first.json().ends_with("}\n") && !first.json().contains("null"));
@@ -323,11 +343,11 @@ mod tests {
         };
         let both = once(&[rewrite("p1", "One."), accept.clone()], None).unwrap();
         assert!(
-            both.summary("a.docx", "p.json", false).starts_with(
+            both.summary("a.docx", "p.json", false, false).starts_with(
                 "recorded 1 operation and 1 revision in p.json: 1 operation, 1 revision to accept,"
             ),
             "{}",
-            both.summary("a.docx", "p.json", false)
+            both.summary("a.docx", "p.json", false, false)
         );
         let reject = FlagOp {
             at: "r3".into(),
@@ -336,11 +356,11 @@ mod tests {
         };
         let only = once(&[reject], Some(&both.json())).unwrap();
         assert!(
-            only.summary("a.docx", "p.json", false).starts_with(
+            only.summary("a.docx", "p.json", false, false).starts_with(
                 "recorded 1 revision in p.json: 1 operation, 1 revision to accept, 1 to reject"
             ),
             "{}",
-            only.summary("a.docx", "p.json", false)
+            only.summary("a.docx", "p.json", false, false)
         );
     }
 

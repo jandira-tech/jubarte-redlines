@@ -771,7 +771,7 @@ fn flag_plan(
 /// `edit`/`add --plan PLAN.json` with operation flags: the operations
 /// recorded into `held` (PLAN.json's text, `None` before the first
 /// recording). `options` is JSON: `author`, `date`, `existingRevisions`,
-/// `file`, `plan`, `dryRun`. Returns `{plan, json, notes, summary}` as
+/// `file`, `plan`, `defaultPlan` (a bare `--plan`), `dryRun`. Returns `{plan, json, notes, summary}` as
 /// JSON. A `ValueError` is a usage error; a `JubarteError` means `held` is
 /// not a plan.
 #[pyfunction]

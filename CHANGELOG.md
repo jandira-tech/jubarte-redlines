@@ -64,6 +64,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   prints its report. `parse_cli_json`/`parseCli` hand the hosts the
   resolved `output` or `out_dir` (both null while recording into a plan),
   and the Python and npm CLIs write there.
+- `edit` and `add` take `--plan` without a value: `<FILE's dir>/<stem>_plan.json`,
+  for recording, appending and applying (`--consume` too); the summary's
+  apply line spells it bare (`jubarte edit a.docx --plan`). A Word
+  document's name as `--plan`'s or `--out-dir`'s value exits 2, saying
+  FILE was read as the value.
 - **`compare A B` prints the redline's agent view**, as `jubarte A B`
   does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
   moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
@@ -118,6 +123,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `CompareArgs` gains `reference_doc`, `critic`, `resource_path`,
   `render` and `read`. `cli::top_level_command()` is the model whose
   `--help` lists the tasks only.
+- `cli::Command::Edit` and `Add` gain `plan_default`; `Recorded::summary`
+  takes `default_plan`, and `RecordOptions` `defaultPlan`.
 - `cli::EditOptions` gains `output`; `out_dir` is
   `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
   `EditOptions::target(file)` gives the `EditTarget` (`Single` or

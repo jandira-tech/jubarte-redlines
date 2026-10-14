@@ -485,6 +485,20 @@ def test_edit_and_add_write_one_document_as_the_binary(letter: Path, tmp_path: P
     assert sorted(p.name for p in tmp_path.glob("letter_modified*")) == ["letter_modified.docx", "letter_modified.pdf"]
 
 
+def test_a_bare_plan_is_file_plan_json_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan = tmp_path / f"{letter.stem}_plan.json"
+    assert main(["edit", str(letter), "--plan", "-p", "p1", "--anchor", "his or her", "--content", "their"]) == 0
+    out = capsys.readouterr().out
+    assert plan.is_file(), out
+    assert out.strip().endswith(f"apply with: jubarte edit {letter} --plan"), out
+    assert main(["edit", str(letter), "--plan", "--consume", "-q"]) == 0
+    assert not plan.exists() and (tmp_path / f"{letter.stem}_modified.docx").is_file()
+    with pytest.raises(SystemExit) as exit_info:
+        main(["edit", "--plan", str(letter), "-p", "p1", "--content", "x"])
+    assert exit_info.value.code == 2
+    assert "names a Word document; put FILE before --plan" in capsys.readouterr().err
+
+
 def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     plan = tmp_path / "plan.json"
     before = letter.read_bytes()
