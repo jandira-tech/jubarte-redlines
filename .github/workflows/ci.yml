@@ -90,6 +90,11 @@ jobs:
       # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
       # keeps reporting every other test.
       - run: cargo test --all-features --no-fail-fast -- --skip markdown_and_docx_round_trip_exactly
+      # The wasm binding is its own workspace: its unit tests call the
+      # exports as Rust, natively. Left out, a stale one went unseen.
+      - name: test jubarte-wasm
+        working-directory: jubarte-wasm
+        run: cargo test --lib
 
   coverage:
     name: coverage
