@@ -1007,3 +1007,30 @@ test("agent editing mode rejects keep before creating output even in dry run", (
     }
   }
 });
+
+test("convert signs what names no one by the flags, the front matter, the reference, else Redline and now", () => {
+  const reference = path.join(repo, "tests/fixtures/md-roundtrip/review/ref-stamp.docx");
+  const stamped = (markdown, ...extra) => {
+    const md = path.join(tmp, "stamp.md");
+    const out = path.join(tmp, "stamp.docx");
+    fs.writeFileSync(md, markdown);
+    const r = run("convert", md, "-o", out, "--force", ...extra);
+    assert.equal(r.code, 0, r.err);
+    const changes = run("changes", out, "--json");
+    assert.equal(changes.code, 0, changes.err);
+    return JSON.parse(changes.out.trim().split("\n")[0]);
+  };
+  const front = "---\nauthor: Fran Front\nlast_modified: 2025-01-02T03:04:05Z\n---\n\nSome {++x++} here.\n";
+  let change = stamped(front, "--reference-doc", reference);
+  assert.deepEqual([change.author, change.date], ["Fran Front", "2025-01-02T03:04:05Z"]);
+  change = stamped("Some {++x++} here.\n", "--reference-doc", reference);
+  assert.deepEqual([change.author, change.date], ["Cleo Core", "2025-03-04T05:06:07Z"]);
+  change = stamped(front, "-a", "Cli Name", "-d", "2024-02-03T04:05:06Z");
+  assert.deepEqual([change.author, change.date], ["Cli Name", "2024-02-03T04:05:06Z"]);
+  const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const before = now();
+  change = stamped("Some {++x++} here.\n");
+  const after = now();
+  assert.equal(change.author, "Redline");
+  assert.ok(before <= change.date && change.date <= after, `${before} <= ${change.date} <= ${after}`);
+});
