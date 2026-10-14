@@ -840,9 +840,26 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 }
             }
         }
+        // The notes parts the view shows no note of (Word's separators
+        // only): the header's `notes:` names them, so the writer makes them.
+        let empty_notes = note_roots
+            .iter()
+            .filter(|(name, _)| {
+                let endnote = *name == "endnote";
+                !defined.iter().any(|(shown, _)| *shown == endnote)
+            })
+            .map(|(name, _)| {
+                if *name == "endnote" {
+                    "endnotes"
+                } else {
+                    "footnotes"
+                }
+            })
+            .collect();
         let mut facts = header::Facts {
             unplaced: Vec::new(),
             note_changes,
+            empty_notes,
             source: options.source.as_deref().unwrap_or("(bytes)"),
             sha256: crate::inspect::source_sha256(bytes),
             resolved: accept,
