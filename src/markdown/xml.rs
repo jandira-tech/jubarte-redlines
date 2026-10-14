@@ -127,6 +127,12 @@ pub(super) struct FormatMark {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct TableFormats {
     pub table: Option<FormatMark>,
+    /// The grid's change (`w:tblGridChange`): an id, no author.
+    pub grid: Option<u32>,
+    /// A row's own insertion or deletion and a cell's own change, which no
+    /// text shows.
+    pub row_marks: HashMap<usize, (Kind, FormatMark)>,
+    pub cell_marks: HashMap<(usize, usize), (super::view_notes::CellMark, FormatMark)>,
     pub rows: HashMap<usize, FormatMark>,
     pub cells: HashMap<(usize, usize), FormatMark>,
 }
@@ -247,6 +253,9 @@ pub(super) struct Document {
     pub comments: Vec<Comment>,
     /// Comment slots: the comment each got, if any.
     pub slots: Vec<Option<u32>>,
+    /// More comments on a slot's range, by slot: those that follow the
+    /// first on the same text (`{==text==}{>>c1<<}{>>c2<<}`).
+    pub shared: HashMap<usize, Vec<u32>>,
     /// Highlight groups that became a comment's range.
     pub commented: HashSet<usize>,
     pub pictures: Vec<Picture>,
@@ -378,7 +387,9 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
-    /// Every revision `w:id` written so far: none is written twice.
+    /// Every revision `w:id` written so far: none is written twice, not
+    /// even one the view names twice (`r43+43`), which Word's own files
+    /// never repeat (see `validate::ring1`).
     pub used_revisions: HashSet<u32>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
@@ -500,24 +511,36 @@ pub(super) fn story(
     let mut bookmark: Option<u32> = None;
     // The marks the open paragraph's text shows nothing of.
     let mut unshown: Vec<FormatMark> = Vec::new();
+    // Its formatting changes past the mark's and its own: its runs'.
+    let mut run_formats: Vec<FormatMark> = Vec::new();
     // The open tables' formatting changes, and the row and cell each is in.
     let mut tables: Vec<(TableFormats, usize, usize)> = Vec::new();
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
     // (`{--plain _italic_--}{>>r43+44 @AL<<}` is two marks).
     let mut natural = natural_marks(items);
-    let close = |out: &mut String, open: &mut Option<Change>| {
-        if let Some((kind, _)) = open.take() {
-            out.push_str(match kind {
-                Kind::Insert => "</w:ins>",
-                Kind::Delete => "</w:del>",
-            });
-        }
-    };
-    for item in items {
-        // A bookmark may sit inside a `w:ins`/`w:del`: it splits no change.
-        if !matches!(item, Item::Run(_) | Item::Bookmark(_)) {
-            close(&mut out, &mut open);
+    // The open row's own change: its mark carries the text the view tags
+    // with the row's id alone.
+    let mut row_change: Option<Change> = None;
+    // The open cell's own insertion or deletion, and its id; likewise the
+    // open row's, when the table line names it.
+    let mut cell_change: Option<(Kind, u32)> = None;
+    let mut row_own: Option<(Kind, u32)> = None;
+    for (at, item) in items.iter().enumerate() {
+        // A bookmark, a comment's range marks and its reference sit inside
+        // a `w:ins`/`w:del` when the change goes on after them
+        // (`{--cut {==by a==}{>>c0<<} comment--}`); between two changes
+        // they are in neither.
+        let inside = match item {
+            Item::Run(_) => true,
+            Item::Bookmark(_)
+            | Item::RangeStart(_)
+            | Item::RangeEnd(_)
+            | Item::CommentReference(_) => continues(&items[at + 1..], open),
+            _ => false,
+        };
+        if !inside {
+            close_mark(context, &natural, &mut out, &mut open);
         }
         match item {
             Item::Bookmark(name) => {
@@ -533,6 +556,7 @@ pub(super) fn story(
                 out.push_str("<w:p>");
                 paragraph_properties(context, paragraph, &mut out);
                 unshown.clone_from(&paragraph.unshown);
+                run_formats = paragraph.formats.get(2..).unwrap_or_default().to_vec();
                 if let Some(name) = &paragraph.bookmark {
                     let id = context.next_bookmark;
                     context.next_bookmark += 1;
@@ -585,6 +609,16 @@ pub(super) fn story(
                 if let Some(id) = bookmark.take() {
                     let _ = write!(out, "<w:bookmarkEnd w:id=\"{id}\"/>");
                 }
+                // The view says who changed a run's formatting, not which
+                // run: each change past the paragraph's own is a run of its
+                // own, in order, and reads back in that order.
+                for format in std::mem::take(&mut run_formats) {
+                    let change = context.format_mark("w:rPrChange", &format);
+                    let _ = write!(
+                        out,
+                        "<w:r><w:rPr><{change}><w:rPr/></w:rPrChange></w:rPr></w:r>"
+                    );
+                }
                 // An empty insertion: Word keeps the mark, and shows no text.
                 for mark in std::mem::take(&mut unshown) {
                     let mark = context.format_mark("w:ins", &mark);
@@ -598,7 +632,7 @@ pub(super) fn story(
                 ..
             }) => {
                 // Word marks a change inside the math, run by run.
-                close(&mut out, &mut open);
+                close_mark(context, &natural, &mut out, &mut open);
                 // A change inside the math has no serial: the document's
                 // author and date.
                 let change = *change;
@@ -610,8 +644,43 @@ pub(super) fn story(
                 out.push_str(&super::math::omml(latex, *display, kind, &mut mark));
             }
             Item::Run(run) => {
-                if open != run.change {
-                    close(&mut out, &mut open);
+                // Text whose ids the view spent on the row's mark: the
+                // row's mark is the change, and the text has none of its
+                // own. A change the view names no ids for is Word's shape,
+                // the row's mark and the text's.
+                // Each cell's text is its own change (`{++x1++}{>>r108<<}`
+                // twice): one that names only the row's ids is carried too.
+                let carried = match (row_change, run.change) {
+                    (Some((row_kind, row_by)), Some((kind, by))) if row_kind == kind => {
+                        let named = |serial: u32| {
+                            context
+                                .document
+                                .revision_ids
+                                .get(&serial)
+                                .filter(|ids| !ids.is_empty())
+                        };
+                        match (named(row_by), named(by)) {
+                            (Some(_), Some(_)) if by == row_by => context.ids_left(by) == 0,
+                            (Some(row_ids), Some(ids)) => ids.iter().all(|id| row_ids.contains(id)),
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                } || [cell_change, row_own].into_iter().any(|own| {
+                    // Likewise a cell's or a row's own insertion or deletion.
+                    match (own, run.change) {
+                        (Some((own_kind, id)), Some((kind, by))) if own_kind == kind => context
+                            .document
+                            .revision_ids
+                            .get(&by)
+                            .is_some_and(|ids| ids.as_slice() == [id]),
+                        _ => false,
+                    }
+                });
+                if carried {
+                    close_mark(context, &natural, &mut out, &mut open);
+                } else if open != run.change {
+                    close_mark(context, &natural, &mut out, &mut open);
                     if let Some((kind, by)) = run.change {
                         spend(&mut natural, by);
                         let wrap = context.revision(kind, Some(by));
@@ -621,15 +690,31 @@ pub(super) fn story(
                 } else if let Some((kind, by)) = run.change
                     && context.ids_left(by) > natural.get(&by).copied().unwrap_or(0)
                 {
-                    close(&mut out, &mut open);
+                    // The change goes on in a new mark: no empty marks yet.
+                    out.push_str(match kind {
+                        Kind::Insert => "</w:ins>",
+                        Kind::Delete => "</w:del>",
+                    });
                     let wrap = context.revision(kind, Some(by));
                     let _ = write!(out, "<{wrap}>");
                     open = run.change;
                 }
-                write_run(context, run, relate, &mut out);
+                if carried {
+                    // Plain text: the row's own mark says it is changed.
+                    let plain = Run {
+                        change: None,
+                        ..run.clone()
+                    };
+                    write_run(context, &plain, relate, &mut out);
+                } else {
+                    write_run(context, run, relate, &mut out);
+                }
             }
             Item::RangeStart(slot) => {
                 if let Some(Some(id)) = context.document.slots.get(*slot) {
+                    let _ = write!(out, "<w:commentRangeStart w:id=\"{id}\"/>");
+                }
+                for id in context.document.shared.get(slot).into_iter().flatten() {
                     let _ = write!(out, "<w:commentRangeStart w:id=\"{id}\"/>");
                 }
             }
@@ -693,8 +778,21 @@ pub(super) fn story(
                 }
                 out.push_str("</w:tblPr><w:tblGrid>");
                 tables.push((formats.clone(), 0, 0));
+                let mut grid = String::new();
                 for _ in 0..count {
-                    let _ = write!(out, "<w:gridCol w:w=\"{}\"/>", context.text_width / count);
+                    let _ = write!(grid, "<w:gridCol w:w=\"{}\"/>", context.text_width / count);
+                }
+                out.push_str(&grid);
+                // The grid's change keeps the grid as it is, and names no
+                // author: Word's `w:tblGridChange` has none.
+                if let Some(id) = formats.grid {
+                    let id = Some(id)
+                        .filter(|&id| context.used_revisions.insert(id))
+                        .unwrap_or_else(|| context.revision_id(None));
+                    let _ = write!(
+                        out,
+                        "<w:tblGridChange w:id=\"{id}\"><w:tblGrid>{grid}</w:tblGrid></w:tblGridChange>"
+                    );
                 }
                 out.push_str("</w:tblGrid>");
             }
@@ -704,14 +802,27 @@ pub(super) fn story(
                 gaps: (before, after),
             } => {
                 out.push_str("<w:tr>");
-                let format = tables.last_mut().and_then(|(formats, row, cell)| {
-                    let format = formats.rows.get(row).cloned();
-                    *row += 1;
-                    *cell = 0;
-                    format
-                });
+                row_change = *change;
+                let (format, own) = tables
+                    .last_mut()
+                    .map(|(formats, row, cell)| {
+                        let found = (
+                            formats.rows.get(row).cloned(),
+                            formats.row_marks.get(row).cloned(),
+                        );
+                        *row += 1;
+                        *cell = 0;
+                        found
+                    })
+                    .unwrap_or_default();
+                // A row's own mark the text does not show: its change, when
+                // the text shows one, is that.
+                let own = own.filter(|_| change.is_none());
+                row_own = own
+                    .as_ref()
+                    .and_then(|(kind, mark)| mark.id.map(|id| (*kind, id)));
                 let gapped = *before > 0 || *after > 0;
-                if *header || change.is_some() || format.is_some() || gapped {
+                if *header || change.is_some() || own.is_some() || format.is_some() || gapped {
                     // What the row has, which its formatting change keeps.
                     let mut base = String::new();
                     let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
@@ -743,6 +854,14 @@ pub(super) fn story(
                         let mark = context.revision(*kind, Some(*by));
                         let _ = write!(out, "<{mark}/>");
                     }
+                    if let Some((kind, mark)) = &own {
+                        let name = match kind {
+                            Kind::Insert => "w:ins",
+                            Kind::Delete => "w:del",
+                        };
+                        let written = context.format_mark(name, mark);
+                        let _ = write!(out, "<{written}/>");
+                    }
                     if let Some(format) = &format {
                         let change = context.format_mark("w:trPrChange", format);
                         let _ = write!(out, "<{change}><w:trPr>{base}</w:trPr></w:trPrChange>");
@@ -766,32 +885,102 @@ pub(super) fn story(
                     Some(false) => out.push_str("<w:vMerge/>"),
                     None => {}
                 }
-                let format = tables.last_mut().and_then(|(formats, row, cell)| {
-                    let format = formats.cells.get(&(row.saturating_sub(1), *cell)).cloned();
-                    *cell += 1;
-                    format
-                });
+                let (format, own) = tables
+                    .last_mut()
+                    .map(|(formats, row, cell)| {
+                        let at = (row.saturating_sub(1), *cell);
+                        *cell += 1;
+                        (
+                            formats.cells.get(&at).cloned(),
+                            formats.cell_marks.get(&at).cloned(),
+                        )
+                    })
+                    .unwrap_or_default();
+                // The cell's properties as they are, without its changes.
+                let open = out
+                    .rfind("<w:tcPr>")
+                    .map_or(out.len(), |at| at + "<w:tcPr>".len());
+                let old = out[open..].to_string();
+                cell_change = None;
+                if let Some((kind, mark)) = &own {
+                    use super::view_notes::CellMark;
+                    let name = match kind {
+                        CellMark::Insert => "w:cellIns",
+                        CellMark::Delete => "w:cellDel",
+                        CellMark::Merge => "w:cellMerge",
+                    };
+                    let written = context.format_mark(name, mark);
+                    let _ = write!(out, "<{written}/>");
+                    cell_change = match kind {
+                        CellMark::Insert => mark.id.map(|id| (Kind::Insert, id)),
+                        CellMark::Delete => mark.id.map(|id| (Kind::Delete, id)),
+                        CellMark::Merge => None,
+                    };
+                }
                 if let Some(format) = &format {
-                    // The cell's properties as they are, without the change.
-                    let open = out
-                        .rfind("<w:tcPr>")
-                        .map_or(out.len(), |at| at + "<w:tcPr>".len());
-                    let old = out[open..].to_string();
                     let change = context.format_mark("w:tcPrChange", format);
                     let _ = write!(out, "<{change}><w:tcPr>{old}</w:tcPr></w:tcPrChange>");
                 }
                 out.push_str("</w:tcPr>");
             }
-            Item::CellEnd => out.push_str("</w:tc>"),
-            Item::RowEnd => out.push_str("</w:tr>"),
+            Item::CellEnd => {
+                cell_change = None;
+                out.push_str("</w:tc>");
+            }
+            Item::RowEnd => {
+                row_change = None;
+                row_own = None;
+                out.push_str("</w:tr>");
+            }
             Item::TableEnd => {
                 tables.pop();
                 out.push_str("</w:tbl>");
             }
         }
     }
-    close(&mut out, &mut open);
+    close_mark(context, &natural, &mut out, &mut open);
     out
+}
+
+/// Whether the next run after a comment's marks continues the open change.
+fn continues(rest: &[Item], open: Option<Change>) -> bool {
+    open.is_some()
+        && rest
+            .iter()
+            .find(|item| {
+                !matches!(
+                    item,
+                    Item::Bookmark(_)
+                        | Item::RangeStart(_)
+                        | Item::RangeEnd(_)
+                        | Item::CommentReference(_)
+                )
+            })
+            .is_some_and(|item| matches!(item, Item::Run(run) if run.change == open))
+}
+
+/// Ends the open mark. A change the view gives more ids than it has pieces
+/// left writes the rest as empty marks after it: `{++a++}{>>r4+5+6 @AL<<}`
+/// is `a` in mark 4, then empty marks 5 and 6.
+fn close_mark(
+    context: &mut Context<'_>,
+    natural: &HashMap<u32, usize>,
+    out: &mut String,
+    open: &mut Option<Change>,
+) {
+    let Some((kind, by)) = open.take() else {
+        return;
+    };
+    out.push_str(match kind {
+        Kind::Insert => "</w:ins>",
+        Kind::Delete => "</w:del>",
+    });
+    if natural.get(&by).copied().unwrap_or(0) == 0 {
+        for _ in 0..context.ids_left(by) {
+            let mark = context.revision(kind, Some(by));
+            let _ = write!(out, "<{mark}/>");
+        }
+    }
 }
 
 /// The marks each numbered change opens in `items` when no change splits:
@@ -799,9 +988,11 @@ pub(super) fn story(
 fn natural_marks(items: &[Item]) -> HashMap<u32, usize> {
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
-    for item in items {
+    for (at, item) in items.iter().enumerate() {
         match item {
             Item::Bookmark(_) => {}
+            Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
+                if continues(&items[at + 1..], open) => {}
             Item::Run(Run {
                 content: Content::Math { .. },
                 ..

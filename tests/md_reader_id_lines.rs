@@ -603,3 +603,77 @@ fn a_cell_aligned_against_its_column_is_named_on_the_table_line() {
     assert!(tie.contains("|-|"), "{tie}");
     assert!(tie.contains("by row, p1 center"), "{tie}");
 }
+
+/// The `w:ins` / `w:del` marks of `document.xml`, in order: `ins1 del2`.
+fn marks(docx: &[u8]) -> Vec<String> {
+    let document = common::docx::part_string(docx, "word/document.xml").expect("document.xml");
+    let mut out = Vec::new();
+    for (at, _) in document.match_indices("<w:") {
+        let rest = &document[at + 3..];
+        for kind in ["ins", "del"] {
+            if let Some(attrs) = rest.strip_prefix(kind).filter(|r| r.starts_with(' ')) {
+                let id = attrs
+                    .split_once("w:id=\"")
+                    .and_then(|(_, r)| r.split_once('"'))
+                    .map_or("", |(id, _)| id);
+                out.push(format!("{kind}{id}"));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn a_substitution_keeps_each_id_on_its_side_and_the_insertion_first() {
+    // Word numbers marks in document order and writes the insertion first,
+    // so the tag's deleted ids (`3+4`) run until the numbers drop back to
+    // the inserted ones (`1+2`); a side whose text is one run splits to
+    // take them all. Links on either side move with their text.
+    for (body, want) in [
+        (
+            "{~~CC DD~>AA BB ~~}{>>r3+4+1+2 @AC<<}",
+            &["ins1", "ins2", "del3", "del4"][..],
+        ),
+        ("{~~BBCC~>AA~~}{>>r2+3+1 @AC<<}", &["ins1", "del2", "del3"]),
+        (
+            "{~~[old](https://example.com/)~>[new](https://example.com/)~~}{>>r2+1 @AC<<}",
+            &["ins1", "del2"],
+        ),
+    ] {
+        let view = format!("{AUTHORS}<!-- p0 -->\nA {body} z.\n");
+        let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
+            .expect("the view reads")
+            .docx;
+        assert_word_valid_package(&docx);
+        assert_eq!(marks(&docx), want, "{body}");
+        let again = format!("<!-- p0 -->\nA {body} z.");
+        assert_eq!(round_trip(&view), again, "{body}");
+    }
+}
+
+#[test]
+fn a_bookmark_between_two_changes_stays_between_them() {
+    // `<a id>` between an insertion and a deletion: two changes, and the
+    // bookmark is in neither mark.
+    let body = "<!-- p0 -->\nK {++new++}{>>r1 @AC<<}<a id=\"mark\"></a>{--old--}{>>r2 @AC<<} \
+                [go](#mark)";
+    assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
+}
+
+#[test]
+fn a_dated_range_puts_its_last_day_on_the_mark_written_last() {
+    // `first..last` comes back as the first mark's first day and the last
+    // mark's last day; a substitution writes its insertion first.
+    let view = "---\nauthors:\n  AL: Ann Lee                      # 2 revisions, 2026-03-02..2026-03-04\n---\n\n\
+                <!-- p0 -->\nA {~~old~>new~~}{>>r2+1 @AL<<} z.\n";
+    let docx = markdown_to_docx(&as_view(view), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    for mark in [
+        "<w:ins w:id=\"1\" w:author=\"Ann Lee\" w:date=\"2026-03-02T00:00:00Z\"",
+        "<w:del w:id=\"2\" w:author=\"Ann Lee\" w:date=\"2026-03-04T23:59:59Z\"",
+    ] {
+        assert!(document.contains(mark), "{mark} in {document}");
+    }
+}

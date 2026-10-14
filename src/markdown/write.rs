@@ -101,8 +101,14 @@ struct TablePlan {
     in_comment: bool,
     /// The formatting changes the line names.
     fmt: Option<view_notes::Tag>,
+    grid_fmt: Option<u32>,
     row_fmt: HashMap<usize, view_notes::Tag>,
     cell_fmt: HashMap<(usize, usize), view_notes::Tag>,
+    /// The cell paragraphs' formatting changes, by paragraph number.
+    para_fmt: HashMap<usize, Vec<view_notes::Tag>>,
+    /// Rows' and cells' own changes the text does not show.
+    row_marks: HashMap<usize, (bool, view_notes::Tag)>,
+    cell_marks: HashMap<(usize, usize), (view_notes::CellMark, view_notes::Tag)>,
 }
 
 /// One row of a [`TablePlan`].
@@ -115,8 +121,9 @@ struct RowPlan {
     first: Option<usize>,
     /// Each Markdown cell's shape, in order.
     cells: Vec<CellShape>,
-    /// The empty cells the view left out at the row's end.
-    pad: usize,
+    /// The empty cells the view left out at the row's end, each one's
+    /// vertical merge (as [`Item::Cell`]).
+    pad: Vec<Option<bool>>,
     /// The grid columns the row leaves out before and after its cells.
     gaps: (usize, usize),
 }
@@ -189,7 +196,7 @@ fn table_plans(source: &str) -> Vec<Option<TablePlan>> {
 fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> TablePlan {
     // The last row each grid column's vertical merge reaches.
     let mut merged_until: HashMap<usize, usize> = HashMap::new();
-    let mut shaped: Vec<(Vec<CellShape>, usize, usize)> = Vec::new();
+    let mut shaped: Vec<(Vec<CellShape>, usize, Vec<Option<bool>>)> = Vec::new();
     let mut gaps: Vec<(usize, usize)> = Vec::new();
     for (r, (cells, _)) in rows.iter().enumerate() {
         let mut shapes = Vec::with_capacity(cells.len());
@@ -234,11 +241,31 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
             cell += 1;
         }
         // `column` already counts a span the view cut at the right edge.
-        let pad = line
+        // The view leaves out empty cells at a row's end: they come back,
+        // but for the grid columns its `after` gap names past them.
+        let missing = line
             .columns
             .map_or(0, |columns| columns.saturating_sub(column + tail));
+        let beyond = after.saturating_sub(tail).min(missing);
+        // Each one's vertical merge, as the table line names it.
+        let pad: Vec<Option<bool>> = (cell..cell + missing - beyond)
+            .map(|at| {
+                let (_, down) = line.merges.get(&(r, at)).copied().unwrap_or((1, 1));
+                let merge = if down > 1 {
+                    merged_until.insert(column, r + down - 1);
+                    Some(true)
+                } else {
+                    merged_until
+                        .get(&column)
+                        .is_some_and(|&until| until >= r)
+                        .then_some(false)
+                };
+                column += 1;
+                merge
+            })
+            .collect();
         shaped.push((shapes, cell, pad));
-        gaps.push((lead, tail));
+        gaps.push((lead, tail + beyond));
     }
     let rows: Vec<RowPlan> = match (&line.row_paragraphs, line.one_per_cell) {
         // One paragraph a cell: a `<br>` is a line break.
@@ -247,15 +274,14 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
             shaped
                 .into_iter()
                 .map(|(cells, count, pad)| {
-                    let row = RowPlan {
+                    at = at.saturating_add(count + pad.len());
+                    RowPlan {
                         breaks: false,
-                        first: Some(at),
+                        first: Some(at - count - pad.len()),
                         cells,
                         pad,
                         gaps: (0, 0),
-                    };
-                    at = at.saturating_add(count + pad);
-                    row
+                    }
                 })
                 .collect()
         }
@@ -265,8 +291,12 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
             .zip(shaped)
             .map(|((&(first, n), &(_, breaks)), (cells, count, pad))| {
                 // The view leaves out empty cells only at a row's end.
-                let pad = if count + pad + breaks == n { pad } else { 0 };
-                let exact = count + pad + breaks == n;
+                let pad = if count + pad.len() + breaks == n {
+                    pad
+                } else {
+                    Vec::new()
+                };
+                let exact = count + pad.len() + breaks == n;
                 RowPlan {
                     breaks: exact && breaks > 0,
                     first: exact.then_some(first),
@@ -299,8 +329,12 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         style: line.style,
         in_comment: line.in_comment,
         fmt: line.fmt,
+        grid_fmt: line.grid_fmt,
         row_fmt: line.row_fmt,
         cell_fmt: line.cell_fmt,
+        para_fmt: line.para_fmt,
+        row_marks: line.row_marks,
+        cell_marks: line.cell_marks,
     }
 }
 
@@ -579,6 +613,9 @@ struct Writer<'o, 'a> {
     body: Vec<Item>,
     /// Footnote definitions by label.
     definitions: HashMap<String, Vec<Item>>,
+    /// Substitutions one tag names (`r5+6+7`): the deleted side's serial and
+    /// the inserted side's, whose ids the runs each has split.
+    shared_tags: Vec<(u32, u32)>,
     /// The labels whose definition the view names an endnote
     /// (`<!-- endnotes.p0 -->` before `[^2]:`).
     endnotes: HashSet<String>,
@@ -600,6 +637,9 @@ struct Writer<'o, 'a> {
     /// its id lines describe paragraphs. In other Markdown an HTML comment
     /// is the author's own and writes nothing.
     view: bool,
+    /// The view shows a document with its changes accepted or rejected:
+    /// the marks its lines name are history, not changes to write.
+    resolved: bool,
     /// The lines of the HTML block open here, read whole when it ends.
     html_block: Option<String>,
     /// What the view's table lines say, one per table in order
@@ -616,7 +656,7 @@ struct Writer<'o, 'a> {
     cell_paragraph: Option<usize>,
     /// The open row's planned cells, and its left-out empty cells.
     row_shapes: Vec<CellShape>,
-    row_pad: usize,
+    row_pad: Vec<Option<bool>>,
     /// Whether the open Markdown cell is a grid column the cell before
     /// spans ([`CellShape::Spanned`]).
     spanned: bool,
@@ -670,6 +710,12 @@ struct Writer<'o, 'a> {
     /// Highlights with no comment yet and no text since them outside a
     /// highlight: pieces of one range whose comment follows the last piece.
     pending_highlights: Vec<(usize, usize)>,
+    /// The slot of the range a comment just took, while another comment
+    /// may follow on the same text.
+    shared_range: Option<usize>,
+    /// The header's `unplaced:` marks, by the paragraph they are in: a cell
+    /// paragraph has no id line to name them.
+    unplaced: HashMap<usize, Vec<view_notes::Tag>>,
     run_after_close: bool,
     highlight: Option<(usize, usize)>,
     groups: usize,
@@ -698,6 +744,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             definitions: HashMap::new(),
             endnotes: HashSet::new(),
             endnote_next: false,
+            shared_tags: Vec::new(),
             references: Vec::new(),
             target: None,
             paragraph: None,
@@ -706,6 +753,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             heading: None,
             label_prefix: None,
             view: false,
+            resolved: false,
             html_block: None,
             tables: Vec::new(),
             table_plan: None,
@@ -714,7 +762,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_breaks: false,
             cell_paragraph: None,
             row_shapes: Vec::new(),
-            row_pad: 0,
+            row_pad: Vec::new(),
             spanned: false,
             quote: 0,
             lists: Vec::new(),
@@ -749,6 +797,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             substitution: None,
             comment_anchor: None,
             pending_highlights: Vec::new(),
+            shared_range: None,
+            unplaced: HashMap::new(),
             id_line: None,
             page_break_due: false,
             run_after_close: false,
@@ -1025,22 +1075,23 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.story().push(Item::TableEnd);
                 if !self.table_in_range() {
                     self.pending_highlights.clear();
+                    self.shared_range = None;
                 }
                 self.table = None;
                 self.table_plan = None;
                 self.row_breaks = false;
                 self.cell_paragraph = None;
                 self.row_shapes.clear();
-                self.row_pad = 0;
+                self.row_pad.clear();
             }
             TagEnd::TableHead | TagEnd::TableRow => {
                 // The empty cells the view left out at the row's end.
-                for _ in 0..self.row_pad {
+                for merge in std::mem::take(&mut self.row_pad) {
                     self.cell = Some(None);
                     self.story().push(Item::Cell {
                         align: None,
                         across: 1,
-                        merge: None,
+                        merge,
                     });
                     self.begin_paragraph();
                     self.end_paragraph();
@@ -1057,9 +1108,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.cell = None;
                 self.story().push(Item::CellEnd);
-                if !self.table_in_range() {
-                    self.pending_highlights.clear();
-                }
             }
             TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
             TagEnd::Strong => self.bold = self.bold.saturating_sub(1),
@@ -1149,7 +1197,14 @@ impl<'o, 'a> Writer<'o, 'a> {
             (_, RowCells::Whole(kind, serial)) => Some((kind, serial)),
             _ => None,
         };
-        if let Some(row_change) = row_change
+        // A row the table line names a mark of its own for has that mark,
+        // and its text keeps its own (`rev r80 @AL in t1.row1`).
+        let own = !self.resolved
+            && self.table_plan.as_ref().is_some_and(|plan| {
+                plan.row_marks
+                    .contains_key(&self.row_number.saturating_sub(1))
+            });
+        if let Some(row_change) = row_change.filter(|_| !own)
             && let Some(Item::Row { change, .. }) = self.story().get_mut(index)
         {
             *change = Some(row_change);
@@ -1323,7 +1378,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
             }
             paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
-            paragraph.unshown = line.rev.iter().map(|tag| self.format_mark(tag)).collect();
+            if !self.resolved {
+                paragraph.unshown = line.rev.iter().map(|tag| self.format_mark(tag)).collect();
+            }
             let mark = line
                 .break_ins
                 .map(|tag| (Kind::Insert, tag))
@@ -1341,6 +1398,17 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .and_then(|plan| plan.aligns.get(&at).copied())
             {
                 paragraph.align = Some(align);
+            }
+            let formats = self
+                .table_plan
+                .as_ref()
+                .and_then(|plan| plan.para_fmt.get(&at).cloned())
+                .unwrap_or_default();
+            paragraph.formats = formats.iter().map(|tag| self.format_mark(tag)).collect();
+            if !self.resolved
+                && let Some(tags) = self.unplaced.remove(&at)
+            {
+                paragraph.unshown = tags.iter().map(|tag| self.format_mark(tag)).collect();
             }
             let mark = self.table_plan.as_ref().and_then(|plan| {
                 let (inserted, tag) = plan.marks.get(&at)?;
@@ -1380,8 +1448,29 @@ impl<'o, 'a> Writer<'o, 'a> {
             plan.row_fmt.clone(),
             plan.cell_fmt.clone(),
         );
+        let grid = plan.grid_fmt;
+        let (row_marks, cell_marks) = if self.resolved {
+            (HashMap::new(), HashMap::new())
+        } else {
+            (plan.row_marks.clone(), plan.cell_marks.clone())
+        };
+        if let Some(id) = grid {
+            self.document.reserved_ids.insert(id);
+        }
         TableFormats {
             table: table.map(|tag| self.format_mark(&tag)),
+            grid,
+            row_marks: row_marks
+                .into_iter()
+                .map(|(row, (inserted, tag))| {
+                    let kind = if inserted { Kind::Insert } else { Kind::Delete };
+                    (row, (kind, self.format_mark(&tag)))
+                })
+                .collect(),
+            cell_marks: cell_marks
+                .into_iter()
+                .map(|(cell, (kind, tag))| (cell, (kind, self.format_mark(&tag))))
+                .collect(),
             rows: rows
                 .into_iter()
                 .map(|(row, tag)| (row, self.format_mark(&tag)))
@@ -1543,6 +1632,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             || matches!(content, Content::Tab | Content::Break);
         if self.highlight.is_none() && !blank {
             self.pending_highlights.clear();
+            self.shared_range = None;
         }
         if self.code > 0 {
             self.document.styles.insert("VerbatimChar");
@@ -1716,9 +1806,23 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// `{~~old~>new~~}` is Word's substitution: the inserted text, then
     /// the deleted text, as Word's Compare writes them. The view reads a
     /// deletion before an insertion as two changes, so they keep that
-    /// order. A side holding more than runs (a comment, a paragraph's end)
-    /// stays where it is.
+    /// order. Each side moves whole with its links and bookmarks; a side
+    /// holding more (a comment, a paragraph's end, half a link) stays where
+    /// it is.
     fn inserted_side_first(&mut self) {
+        /// Runs, bookmarks and links that open and close within.
+        fn whole(items: &[Item]) -> bool {
+            let mut links = 0usize;
+            for item in items {
+                match item {
+                    Item::Run(_) | Item::Bookmark(_) => {}
+                    Item::LinkStart(..) => links += 1,
+                    Item::LinkEnd if links > 0 => links -= 1,
+                    _ => return false,
+                }
+            }
+            links == 0
+        }
         let Some((start, Some(split))) = self.substitution.take() else {
             return;
         };
@@ -1726,9 +1830,8 @@ impl<'o, 'a> Writer<'o, 'a> {
         let end = story.len();
         if start <= split
             && split <= end
-            && story[start..end]
-                .iter()
-                .all(|item| matches!(item, Item::Run(_)))
+            && whole(&story[start..split])
+            && whole(&story[split..end])
         {
             story[start..end].rotate_left(split - start);
         }
@@ -1767,6 +1870,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.ensure_paragraph();
                 let slot = self.new_slot();
                 self.story().push(Item::RangeStart(slot));
+                self.shared_range = None;
                 self.highlight = Some((slot, self.groups));
                 self.groups += 1;
                 self.anchor = None;
@@ -1819,6 +1923,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             Some(group) => {
                 let slot = pieces.first().map_or(anchor.slot, |(slot, _)| *slot);
                 self.document.slots[slot] = Some(id);
+                self.shared_range = Some(slot);
                 self.document.commented.insert(group);
                 for (_, group) in pieces {
                     self.document.commented.insert(group);
@@ -1831,6 +1936,13 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// Anchors comment `id` on the highlights just before it, when there
     /// are some (`{++{==text==}++}{>>who<<}{>>note<<}`), else on this point.
     fn anchor_here(&mut self, id: u32) {
+        // The next comment on the text the last one took shares its range.
+        if self.pending_highlights.is_empty()
+            && let Some(slot) = self.shared_range
+        {
+            self.document.shared.entry(slot).or_default().push(id);
+            return;
+        }
         if let Some(&(slot, group)) = self.pending_highlights.last() {
             let anchor = Anchor {
                 slot,
@@ -1862,6 +1974,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                     anchor.serials[1..].iter().flatten().copied().collect()
                 };
                 let ids = mark_ids(&tags, serials.len());
+                if let ([_], [deleted, inserted]) = (tags.as_slice(), serials.as_slice()) {
+                    self.shared_tags.push((*deleted, *inserted));
+                }
+                // A substitution is written insertion first: a dated range's
+                // last day goes on the mark that comes last, its deletion.
+                let mut ranged = Vec::new();
                 for (i, serial) in serials.iter().enumerate() {
                     let tag = if tags.len() == 1 {
                         &tags[0]
@@ -1876,14 +1994,17 @@ impl<'o, 'a> Writer<'o, 'a> {
                             .get(&tag.handle)
                             .is_some_and(|known| known.date.is_none() && known.range.is_some())
                     {
-                        self.ranged
-                            .entry(tag.handle.clone())
-                            .or_default()
-                            .push(*serial);
+                        ranged.push((tag.handle.clone(), *serial));
                     }
                     if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
                         self.document.revision_ids.insert(*serial, ids.clone());
                     }
+                }
+                if serials.len() == 2 {
+                    ranged.reverse();
+                }
+                for (handle, serial) in ranged {
+                    self.ranged.entry(handle).or_default().push(serial);
                 }
                 // One number after a substitution names its deleted side:
                 // the inserted side's tag may follow (`{>>r0 @AC<<}{>>r1
@@ -2220,7 +2341,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             let Some((key, value)) = line.split_once(':') else {
                 continue;
             };
-            let value = value.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+            let text = value.trim();
+            let value = text.trim_matches(|c| c == '"' || c == '\'').trim();
             if value.is_empty() {
                 if key.trim() == "track_changes" {
                     self.document
@@ -2230,8 +2352,15 @@ impl<'o, 'a> Writer<'o, 'a> {
                 continue;
             }
             match key.trim() {
-                "title" => self.document.title = Some(critic::decode(value)),
-                "author" => self.document.author = Some(critic::decode(value)),
+                // A quoted scalar keeps the quotes inside it.
+                "title" | "author" => {
+                    let value = Some(critic::decode(&view_notes::scalar_and_comment(text).0));
+                    if key.trim() == "title" {
+                        self.document.title = value;
+                    } else {
+                        self.document.author = value;
+                    }
+                }
                 "track_changes" => match value {
                     "on" => self.document.tracking = Some(true),
                     "off" => self.document.tracking = Some(false),
@@ -2240,7 +2369,16 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .warnings
                         .push(format!("track_changes: {value} ignored: it is on or off")),
                 },
-                "view" => self.view = true,
+                "unplaced" => {
+                    for (at, tag) in view_notes::unplaced(text) {
+                        self.unplaced.entry(at).or_default().push(tag);
+                    }
+                }
+                "view" => {
+                    self.view = true;
+                    self.resolved =
+                        value.starts_with("accept-all") || value.starts_with("reject-all");
+                }
                 "page" => {
                     if let Some(page) = view_notes::page_setup(value) {
                         self.document.pages.insert(1, page);
@@ -2462,6 +2600,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 endnote,
             });
         }
+        self.share_substitution_ids();
         self.range_ends();
         self.comments_out_of_notes();
         renumber_comments(&mut self.document);
@@ -2635,6 +2774,42 @@ fn mark_ids(tags: &[view_notes::Tag], serials: usize) -> Vec<Vec<u32>> {
     }
 }
 
+impl Writer<'_, '_> {
+    /// A substitution's one tag (`r5+6+7`) lists the deleted side's ids,
+    /// then the inserted side's. Word numbers marks in document order and
+    /// writes the insertion first, so where the numbers drop (`r3+4+1+2`)
+    /// the inserted side's begin; with no drop the deleted side takes one
+    /// id per run it has (`plain _italic_` is two). Either side keeps one
+    /// at least.
+    fn share_substitution_ids(&mut self) {
+        let mut runs: HashMap<u32, usize> = HashMap::new();
+        let notes = self.document.notes.iter().flat_map(|note| &note.items);
+        for item in self.document.body.iter().chain(notes) {
+            if let Item::Run(Run {
+                change: Some((_, by)),
+                ..
+            }) = item
+            {
+                *runs.entry(*by).or_default() += 1;
+            }
+        }
+        for (deleted, inserted) in std::mem::take(&mut self.shared_tags) {
+            let ids = &mut self.document.revision_ids;
+            let mut all = ids.get(&deleted).cloned().unwrap_or_default();
+            all.extend(ids.get(&inserted).cloned().unwrap_or_default());
+            if all.len() < 3 {
+                continue;
+            }
+            let drop = all.windows(2).position(|pair| pair[1] < pair[0]);
+            let pieces = drop.map_or_else(|| runs.get(&deleted).copied().unwrap_or(1), |at| at + 1);
+            let cut = pieces.clamp(1, all.len() - 1);
+            let rest = all.split_off(cut);
+            ids.insert(deleted, all);
+            ids.insert(inserted, rest);
+        }
+    }
+}
+
 /// Comments keep the number the view gives them (`c5` is `w:id="5"`), so
 /// a reply's `re c5` and every later `c5` still name the same comment; one
 /// with no number, or with a number an earlier comment took, gets the
@@ -2665,7 +2840,12 @@ fn renumber_comments(document: &mut Document) {
             .parent
             .filter(|p| numbered.contains(p) && *p != comment.id);
     }
-    for id in document.slots.iter_mut().flatten() {
+    for id in document
+        .slots
+        .iter_mut()
+        .flatten()
+        .chain(document.shared.values_mut().flatten())
+    {
         *id = ids[id];
     }
     let notes = document
