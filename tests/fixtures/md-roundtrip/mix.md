@@ -16,7 +16,7 @@ notes: {fmt: footnotes.r0 @ASR; footnotes.r1 @ASR; endnotes.r2 @ASR; endnotes.r3
 headers:
   default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r223 @ASR<<}", fmt: header1.r222 @ASR}
 footers:
-  default: {id: footer1, text: "{--Page       {FIELD}of       {FIELD}·       {FIELD}--}{>>footer1.r225 @ASR<<}", fmt: footer1.r224 @ASR}
+  default: {id: footer1, text: "{--Page       {PAGE \\* MERGEFORMAT}1       {/}of       {NUMPAGES \\* MERGEFORMAT}1       {/}·       {HYPERLINK \\h}eigenpal.com         {/}--}{>>footer1.r225 @ASR<<}", fmt: footer1.r224 @ASR}
 ---
 
 <!-- p0 fmt r4 @ASR; r5 @ASR; r6 @ASR; r9 @ASR -->
