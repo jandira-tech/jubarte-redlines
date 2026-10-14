@@ -224,7 +224,10 @@ fn unmatched<T: PartialEq>(lost: Vec<T>, new: Vec<T>) -> (Vec<T>, Vec<T>) {
 
 #[test]
 fn a_moved_render_line_is_reported_and_an_equal_one_cancels() {
-    assert_eq!(unmatched(vec!["X", "A"], vec!["A", "X"]), (vec!["X"], vec!["X"]));
+    assert_eq!(
+        unmatched(vec!["X", "A"], vec!["A", "X"]),
+        (vec!["X"], vec!["X"])
+    );
     assert_eq!(unmatched(vec!["A", "B"], vec!["A", "B"]), (vec![], vec![]));
     assert_eq!(
         unmatched(vec!["A", "B", "C"], vec!["B", "C", "A"]),

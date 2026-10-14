@@ -562,9 +562,11 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         // the report over it.
         for (side, flag) in [(job.font_report, "--font-report"), (job.report, "--report")] {
             if let Some(side) = side.filter(|side| same_path(side, path)) {
-                return Err(
-                    format!("{flag} '{}' is the same file as the PNG output", side.display()).into(),
-                );
+                return Err(format!(
+                    "{flag} '{}' is the same file as the PNG output",
+                    side.display()
+                )
+                .into());
             }
         }
     }

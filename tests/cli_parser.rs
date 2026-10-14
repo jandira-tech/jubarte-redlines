@@ -498,7 +498,12 @@ fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
     }
     // Codex on #440 and #441: every task that draws revisions refuses a
     // palette without `custom` before reading a document, as convert does.
-    let palette = ["--revisions", "word", "--revision-palette", "deleted=#112233"];
+    let palette = [
+        "--revisions",
+        "word",
+        "--revision-palette",
+        "deleted=#112233",
+    ];
     for task in [
         &["compare", "a.docx", "b.docx", "-o", "c.pdf"][..],
         &["a.docx", "b.docx", "-o", "c.pdf"],
@@ -585,7 +590,12 @@ fn diff_has_no_rendering_flags() {
 /// does. Both say what another -o extension writes.
 #[test]
 fn add_help_names_only_what_add_writes() {
-    let help = |task: &str| parse(&[task, "--help"], &[])["text"].as_str().unwrap().to_string();
+    let help = |task: &str| {
+        parse(&[task, "--help"], &[])["text"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
     let (add, edit) = (help("add"), help("edit"));
     assert!(!add.contains("--pdf") && !add.contains("--png"), "{add}");
     assert!(edit.contains("--pdf") && edit.contains("--png"), "{edit}");

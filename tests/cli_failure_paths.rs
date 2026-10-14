@@ -837,14 +837,34 @@ fn edit_writes_a_docx_under_an_unknown_extension() {
     std::fs::write(dir.path().join("input.docx"), docx(&para("One."))).unwrap();
     let out = run(
         dir.path(),
-        &["add", "input.docx", "-p", "p0", "--comment", "--content", "Note.", "-o", "result.zip"],
+        &[
+            "add",
+            "input.docx",
+            "-p",
+            "p0",
+            "--comment",
+            "--content",
+            "Note.",
+            "-o",
+            "result.zip",
+        ],
     );
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let written = std::fs::read(dir.path().join("result.zip")).unwrap();
     assert!(part_string(&written, "word/document.xml").is_some());
     let refused = run(
         dir.path(),
-        &["add", "input.docx", "-p", "p0", "--comment", "--content", "Note.", "-o", "result.pdf"],
+        &[
+            "add",
+            "input.docx",
+            "-p",
+            "p0",
+            "--comment",
+            "--content",
+            "Note.",
+            "-o",
+            "result.pdf",
+        ],
     );
     assert_eq!(refused.status.code(), Some(2), "{refused:?}");
 }
