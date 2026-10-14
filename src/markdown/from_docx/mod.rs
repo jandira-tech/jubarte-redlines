@@ -2065,13 +2065,17 @@ impl Writer<'_> {
             .and_then(|r| r.toggle("i"))
             .or(style_italic)
             .unwrap_or(base.1);
-        // Agent view only: the plain conversion has no underline.
+        // Agent view only: the plain conversion has no underline. In a link
+        // the character style's underline is the link's look (Word's
+        // Hyperlink style), not formatting: only a direct `w:u` counts.
+        let in_link = link.is_some() || fields.iter().any(|f| f.link.is_some());
         let underline = self.agent
             && rpr
                 .and_then(|r| r.child("u"))
                 .map(is_underlined)
                 .or_else(|| {
-                    rpr.and_then(|r| r.child("rStyle"))
+                    rpr.filter(|_| !in_link)
+                        .and_then(|r| r.child("rStyle"))
                         .and_then(|s| s.attr("val"))
                         .and_then(|s| self.styles.underline(s))
                 })
