@@ -250,6 +250,17 @@ impl Critic {
             .insert(at, Token::Leaf(Leaf::Raw(markdown.to_string())));
     }
 
+    /// Drops the last token when it is the raw `markdown`: a tag the next
+    /// run reopens (`</sup><sup>`) stays open across both instead.
+    pub(crate) fn reopen(&mut self, markdown: &str) -> bool {
+        let last =
+            matches!(self.tokens.last(), Some(Token::Leaf(Leaf::Raw(raw))) if raw == markdown);
+        if last {
+            self.tokens.pop();
+        }
+        last
+    }
+
     /// The number of tokens so far, a position for [`Critic::insert_raw`].
     pub(crate) fn len(&self) -> usize {
         self.tokens.len()
@@ -628,12 +639,34 @@ fn wrap_markers(pieces: &mut [Piece]) {
         }
         start = end;
     }
-    let refused: std::collections::HashSet<usize> = pieces
+    let mut refused: std::collections::HashSet<usize> = pieces
         .iter()
         .zip(&joined)
         .filter(|(piece, around)| around.is_none() && piece.marker.is_some())
         .filter_map(|(piece, _)| piece.marker)
         .collect();
+    // Markers next to each other join all or none: one that stays outside
+    // (`==}` of a highlight begun before the bold) closes the emphasis, and
+    // a note after it would reopen it on text that reads back plain.
+    loop {
+        let mut more = false;
+        let mut start = 0;
+        while start < pieces.len() {
+            let end = (start..pieces.len())
+                .find(|&at| pieces[at].marker.is_none())
+                .unwrap_or(pieces.len());
+            let run = || pieces[start..end].iter().filter_map(|piece| piece.marker);
+            if run().any(|id| refused.contains(&id)) {
+                for id in run() {
+                    more |= refused.insert(id);
+                }
+            }
+            start = end + 1;
+        }
+        if !more {
+            break;
+        }
+    }
     for (piece, around) in pieces.iter_mut().zip(joined) {
         if let Some((marks, link)) =
             around.filter(|_| piece.marker.is_some_and(|id| !refused.contains(&id)))
@@ -1532,6 +1565,29 @@ mod tests {
         critic.push(" plain", false, false, None);
         critic.close(Del);
         assert_eq!(md(critic), "**bold**{-- plain--}");
+    }
+
+    #[test]
+    fn markers_side_by_side_join_the_emphasis_together_or_not_at_all() {
+        // file_170: a highlight begun before the bold ends with the bold's
+        // last run; the notes after its end stay outside the bold too.
+        let mut critic = Critic::default();
+        critic.open(Hl, None);
+        critic.push("varied ", false, false, None);
+        critic.push("Emphasis lives here. ", true, true, None);
+        critic.close(Hl);
+        critic.comment("c2 @AS: Testing.");
+        critic.push("See note.", true, true, None);
+        assert_eq!(
+            md(critic),
+            "{==varied **_Emphasis lives here._** ==}{>>c2 @AS: Testing.<<}**_See note._**"
+        );
+        // A note alone between two bold runs still joins them.
+        let mut critic = Critic::default();
+        critic.push("bold ", true, false, None);
+        critic.comment("c0 @AS: Here.");
+        critic.push("text", true, false, None);
+        assert_eq!(md(critic), "**bold {>>c0 @AS: Here.<<}text**");
     }
 
     #[test]
