@@ -183,6 +183,12 @@ pub struct DocxOptions<'a> {
     /// `None` follows the key, and without one keeps the reference's
     /// setting (off without a reference).
     pub tracking: Option<bool>,
+    /// Set the document as LaTeX's article class sets a manuscript: Latin
+    /// Modern Roman at 10pt on 12pt lines, justified, bold headings, and
+    /// the page number centered in the footer from page 2. Only what the
+    /// front matter leaves out: its own `styles:` entries, headers and
+    /// footers win.
+    pub scholar: bool,
 }
 
 impl Default for DocxOptions<'_> {
@@ -198,8 +204,61 @@ impl Default for DocxOptions<'_> {
             images: None,
             page: PageSize::Letter,
             tracking: None,
+            scholar: false,
         }
     }
+}
+
+/// [`DocxOptions`] as the Python and WebAssembly bindings pass them (JSON,
+/// every field optional).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocxOptionsJson {
+    #[serde(default)]
+    page: PageSize,
+    author: Option<String>,
+    date: Option<String>,
+    critic: Option<bool>,
+    #[serde(alias = "trackChanges")]
+    track_changes: Option<String>,
+    tracking: Option<bool>,
+    #[serde(default)]
+    scholar: bool,
+}
+
+/// [`DocxOptions`] from the JSON the Python and WebAssembly bindings pass:
+/// `page`, `author`, `date`, `critic`, `track_changes` (`trackChanges`),
+/// `tracking` and `scholar`, each optional. An `author` or `date` given
+/// wins over the front matter's, as the CLI's flags do. Images are written
+/// as their alt text.
+///
+/// # Errors
+///
+/// A field the options do not have, or a value they do not take.
+pub fn docx_options_from_json<'a>(
+    json: &str,
+    reference: Option<&'a [u8]>,
+) -> Result<DocxOptions<'a>, String> {
+    let parsed: DocxOptionsJson = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let track_changes = match parsed.track_changes.as_deref() {
+        None => TrackChanges::All,
+        Some(value) => TrackChanges::parse(value)
+            .ok_or_else(|| format!("track_changes must be all, accept or reject, not {value:?}"))?,
+    };
+    let defaults = DocxOptions::default();
+    Ok(DocxOptions {
+        reference,
+        critic: parsed.critic.unwrap_or(defaults.critic),
+        track_changes,
+        author_fixed: parsed.author.is_some(),
+        author: parsed.author.unwrap_or(defaults.author),
+        date_fixed: parsed.date.is_some(),
+        date: parsed.date.unwrap_or(defaults.date),
+        page: parsed.page,
+        tracking: parsed.tracking,
+        scholar: parsed.scholar,
+        ..defaults
+    })
 }
 
 impl std::fmt::Debug for DocxOptions<'_> {
@@ -213,6 +272,7 @@ impl std::fmt::Debug for DocxOptions<'_> {
             .field("images", &self.images.is_some())
             .field("page", &self.page)
             .field("tracking", &self.tracking)
+            .field("scholar", &self.scholar)
             .finish()
     }
 }
@@ -817,6 +877,47 @@ mod tests {
         assert_eq!(TrackChanges::parse("reject"), Some(TrackChanges::Reject));
         assert_eq!(TrackChanges::parse("markup"), None);
         assert_eq!(TrackChanges::default(), TrackChanges::All);
+    }
+
+    #[test]
+    fn the_bindings_options_read_from_json() {
+        let reference = [1u8, 2];
+        let options = docx_options_from_json(
+            r#"{"page": "a4", "author": "Legal", "date": "2026-10-02T00:00:00Z",
+               "critic": false, "track_changes": "accept", "tracking": true,
+               "scholar": true}"#,
+            Some(&reference),
+        )
+        .unwrap();
+        assert_eq!(options.page, PageSize::A4);
+        assert_eq!(
+            (options.author.as_str(), options.author_fixed),
+            ("Legal", true)
+        );
+        assert_eq!(
+            (options.date.as_str(), options.date_fixed),
+            ("2026-10-02T00:00:00Z", true)
+        );
+        assert!(!options.critic);
+        assert_eq!(options.track_changes, TrackChanges::Accept);
+        assert_eq!(options.tracking, Some(true));
+        assert!(options.scholar);
+        assert_eq!(options.reference, Some(&reference[..]));
+        // `trackChanges` is the JavaScript spelling.
+        let options = docx_options_from_json(r#"{"trackChanges": "reject"}"#, None).unwrap();
+        assert_eq!(options.track_changes, TrackChanges::Reject);
+        // Nothing given: the defaults.
+        let options = docx_options_from_json("{}", None).unwrap();
+        assert!(options.critic && !options.scholar && !options.author_fixed);
+        assert_eq!(options.tracking, None);
+        for (json, word) in [
+            (r#"{"track_changes": "keep"}"#, "keep"),
+            (r#"{"page": "legal"}"#, "legal"),
+            (r#"{"scholarly": true}"#, "scholarly"),
+        ] {
+            let error = docx_options_from_json(json, None).unwrap_err();
+            assert!(error.contains(word), "{error}");
+        }
     }
 
     #[test]

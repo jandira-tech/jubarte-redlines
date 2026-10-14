@@ -89,11 +89,23 @@ pub fn markdown_to_docx(
         .map_err(MarkdownError::Package)?,
         None => docx,
     };
+    let docx = if options.scholar {
+        crate::settings::no_stretched_line_breaks(&docx).map_err(MarkdownError::Package)?
+    } else {
+        docx
+    };
     Ok(WrittenDocx { docx, warnings })
 }
 
 /// The Markdown read into Word items.
 pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
+    let scholarly;
+    let markdown = if options.scholar {
+        scholarly = scholar(markdown);
+        scholarly.as_str()
+    } else {
+        markdown
+    };
     let source = if options.critic {
         critic::encode(markdown)
     } else {
@@ -108,6 +120,112 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         writer.event(event);
     }
     writer.finish()
+}
+
+/// The styles [`DocxOptions::scholar`] sets, as the front matter's
+/// `styles:` legend writes them: LaTeX's article class at 10pt (`\section`
+/// `\Large`, `\subsection` `\large`, `\subsubsection` `\normalsize`,
+/// with their spacing before and after).
+const SCHOLAR_STYLES: [(&str, &str); 4] = [
+    (
+        "Normal",
+        "Latin Modern Roman 10pt, after 6pt, line 12pt exact, justify",
+    ),
+    (
+        "\"#\"",
+        "Heading1, Latin Modern Roman bold 14.4pt, before 15pt, after 10pt, line 1, left, keep-next",
+    ),
+    (
+        "\"##\"",
+        "Heading2, Latin Modern Roman bold 12pt, before 14pt, after 6.5pt, line 1, left, keep-next",
+    ),
+    (
+        "\"###\"",
+        "Heading3, Latin Modern Roman bold 10pt, before 14pt, after 6.5pt, line 1, left, keep-next",
+    ),
+];
+
+/// `markdown` with the front matter [`DocxOptions::scholar`] fills in: each
+/// style of [`SCHOLAR_STYLES`] its `styles:` legend does not name (`Normal`
+/// only when the legend names no default style of its own), and a footer
+/// with the page number, centered, from page 2 when neither its headers
+/// nor its footers hold one. With headers of its own, page 1 keeps them,
+/// so the number starts on page 1.
+fn scholar(markdown: &str) -> String {
+    let (yaml, body) = split_front_matter(markdown).unwrap_or(("", markdown));
+    let mut lines: Vec<String> = yaml.lines().map(str::to_string).collect();
+    let mut named: Vec<String> = Vec::new();
+    let mut styles_at = None;
+    let mut headers = false;
+    let mut footers = false;
+    let mut block = "";
+    for (n, line) in lines.iter().enumerate() {
+        if !line.starts_with(' ') {
+            block = line.trim_end();
+            match block {
+                "styles:" => styles_at = Some(n),
+                "headers:" => headers = true,
+                "footers:" => footers = true,
+                _ => {}
+            }
+            continue;
+        }
+        let entry = view_styles::without_comment(line).trim();
+        let Some((key, _)) = entry.split_once(": ") else {
+            continue;
+        };
+        if block == "styles:" {
+            named.push(key.trim_matches('"').to_string());
+        }
+    }
+    let own_default = named.iter().any(|key| {
+        !key.bytes().all(|b| b == b'#') && !matches!(key.as_str(), "table" | "tables" | "changes")
+    });
+    let missing: Vec<String> = SCHOLAR_STYLES
+        .iter()
+        .filter(|(key, _)| {
+            let key = key.trim_matches('"');
+            if key == "Normal" {
+                !own_default
+            } else {
+                !named.iter().any(|n| n == key)
+            }
+        })
+        .map(|(key, value)| format!("  {key}: {value}"))
+        .collect();
+    match styles_at {
+        Some(at) => {
+            lines.splice(at + 1..at + 1, missing);
+        }
+        None if !missing.is_empty() => {
+            lines.push("styles:".to_string());
+            lines.extend(missing);
+        }
+        None => {}
+    }
+    if !footers && !yaml.contains("{PAGE") {
+        lines.push("footers:".to_string());
+        if !headers {
+            lines.push("  first: none".to_string());
+        }
+        lines.push("  default: {id: footer1, text: \"{PAGE}\", center}".to_string());
+    }
+    format!("---\n{}\n---\n\n{body}", lines.join("\n"))
+}
+
+/// A YAML front matter block's text and the Markdown after it.
+fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
+    let rest = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let mut at = 0;
+    for line in rest.split_inclusive('\n') {
+        if matches!(line.trim_end(), "---" | "...") {
+            return Some((&rest[..at], &rest[at + line.len()..]));
+        }
+        at += line.len();
+    }
+    None
 }
 
 /// The line the writers print for a page break where no id line can carry

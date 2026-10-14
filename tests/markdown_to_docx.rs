@@ -1697,3 +1697,105 @@ fn a_page_break_round_trips_through_plain_markdown() {
     let again = write(&markdown);
     assert_eq!(breaks(&again), breaks(&docx));
 }
+
+fn scholar(markdown: &str) -> Vec<u8> {
+    write_with(
+        markdown,
+        &DocxOptions {
+            scholar: true,
+            ..DocxOptions::default()
+        },
+    )
+}
+
+/// The style definition of `id` in the styles part.
+fn style(docx: &[u8], id: &str) -> String {
+    let styles = part_string(docx, "word/styles.xml").unwrap();
+    let open = format!("w:styleId=\"{id}\"");
+    let at = styles.find(&open).unwrap_or_else(|| panic!("no {id}"));
+    styles[at..].split("</w:style>").next().unwrap().to_string()
+}
+
+/// `scholar` sets a manuscript as LaTeX's article class does: Latin Modern
+/// Roman at 10pt on 12pt lines, justified, 6pt between paragraphs, bold
+/// headings at 14.4, 12 and 10pt, and the page number centered in the
+/// footer from page 2 (the title page has none).
+#[test]
+fn scholar_sets_a_manuscript_as_latex_does() {
+    let docx = scholar("# Introduction\n\nText.\n\\newpage\n\n## Methods\n\nMore.\n");
+    let normal = style(&docx, "Normal");
+    for expected in [
+        r#"w:ascii="Latin Modern Roman""#,
+        r#"<w:sz w:val="20"/>"#,
+        r#"w:line="240" w:lineRule="exact""#,
+        r#"w:after="120""#,
+        r#"<w:jc w:val="both"/>"#,
+    ] {
+        assert!(normal.contains(expected), "{expected}: {normal}");
+    }
+    for (id, size) in [("Heading1", "29"), ("Heading2", "24"), ("Heading3", "20")] {
+        let heading = style(&docx, id);
+        for expected in [
+            r#"w:ascii="Latin Modern Roman""#.to_string(),
+            "<w:b/>".to_string(),
+            format!(r#"<w:sz w:val="{size}"/>"#),
+            r#"w:lineRule="auto""#.to_string(),
+            r#"<w:jc w:val="left"/>"#.to_string(),
+            "<w:keepNext/>".to_string(),
+        ] {
+            assert!(heading.contains(&expected), "{id} {expected}: {heading}");
+        }
+    }
+    let body = document_xml(&docx);
+    assert!(body.contains("<w:titlePg/>"), "{body}");
+    assert!(
+        body.contains(r#"<w:footerReference w:type="default""#),
+        "{body}"
+    );
+    let footer = part_string(&docx, "word/footer1.xml").unwrap();
+    assert!(footer.contains(" PAGE "), "{footer}");
+    assert!(footer.contains(r#"<w:jc w:val="center"/>"#), "{footer}");
+    // A line that ends in a line break (an author block, an address) is
+    // not stretched to the margin, as LaTeX's `\\` is not.
+    let settings = part_string(&docx, "word/settings.xml").unwrap();
+    assert!(
+        settings.contains("<w:compat><w:doNotExpandShiftReturn /><w:compatSetting"),
+        "{settings}"
+    );
+    // Without it, none of this.
+    let plain = write("# Introduction\n\nText.\n");
+    assert!(
+        !part_string(&plain, "word/styles.xml")
+            .unwrap()
+            .contains("Latin Modern")
+    );
+    assert!(!document_xml(&plain).contains("<w:footerReference"));
+    assert!(
+        !part_string(&plain, "word/settings.xml")
+            .unwrap()
+            .contains("doNotExpandShiftReturn")
+    );
+}
+
+/// What the front matter says wins: its own styles and footers stay, and
+/// `scholar` fills in only the styles it does not name.
+#[test]
+fn scholar_keeps_what_the_front_matter_says() {
+    let docx = scholar(
+        "---\nstyles:\n  Normal: Arial 11pt\nfooters:\n  default: {id: footer1, text: Draft}\n---\n\n# Title\n\nText.\n",
+    );
+    let normal = style(&docx, "Normal");
+    assert!(normal.contains(r#"w:ascii="Arial""#), "{normal}");
+    assert!(!normal.contains("Latin Modern"), "{normal}");
+    assert!(style(&docx, "Heading1").contains("Latin Modern Roman"));
+    let footer = part_string(&docx, "word/footer1.xml").unwrap();
+    assert!(
+        footer.contains("Draft") && !footer.contains("PAGE"),
+        "{footer}"
+    );
+    assert!(!document_xml(&docx).contains("<w:titlePg/>"));
+    // A page number in a header is the page number: no footer is added.
+    let docx =
+        scholar("---\nheaders:\n  default: {id: header1, text: \"{PAGE}\", right}\n---\n\nText.\n");
+    assert!(!document_xml(&docx).contains("<w:footerReference"));
+}
