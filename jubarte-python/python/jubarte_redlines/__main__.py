@@ -39,7 +39,7 @@ from pathlib import Path
 
 from . import __version__, capabilities
 from .document import Document, EditPlanError, EditResult, diff_render
-from .models import Finding, PdfOptions, RevisionStyle
+from .models import PdfOptions, RevisionStyle
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -819,35 +819,26 @@ def cmd_reject(args: argparse.Namespace) -> int:
     return _resolution(args, accept=False)
 
 
-def _print_findings(findings: Sequence[Finding], as_json: bool) -> None:
-    for finding in findings:
-        row = asdict(finding)
-        if as_json:
-            print(json.dumps(row, ensure_ascii=False))
-            continue
-        star = "*" if row["word_fatal"] else " "
-        print(f"{star} {row['code']}\t{row['part']}#{row['path']}\t{row['message']}")
-
-
 def cmd_validate(args: argparse.Namespace) -> int:
+    from . import _native
+
     doc = _read(args.file)
-    findings: list[Finding] = []
+    docx = doc.to_bytes()
     if args.repair is not None:
         _ensure_writable(args.repair, args.force)
         repaired = doc.repair()
-        _write(args.repair, repaired.document.to_bytes())
-        findings.extend(repaired.remaining)
+        docx = repaired.document.to_bytes()
+        size = _write(args.repair, docx)
         if not args.json:
-            print(f"repaired {len(repaired.repaired)} finding(s) into {args.repair}")
-    else:
-        findings.extend(doc.validate())
-    if args.original is not None:
-        findings.extend(doc.audit_tracked(_read(args.original), author=args.author))
-    _print_findings(findings, args.json)
-    if not args.json:
-        fatal = sum(1 for f in findings if asdict(f)["word_fatal"])
-        print(f"{len(findings)} finding(s), {fatal} Word-fatal" if findings else "no findings")
-    return EXIT_FINDINGS if findings else EXIT_OK
+            print(f"repaired {len(repaired.repaired)} finding(s)")
+        if not args.quiet:
+            print(f"wrote {_spelled(args, 'repair')} (docx, {size} bytes)", file=sys.stderr)
+    original = _read(args.original).to_bytes() if args.original is not None else None
+    jsonl, text, failed = _native.validate_run(
+        docx, rules=list(args.rules) or None, original=original, author=args.author, strict=args.strict
+    )
+    sys.stdout.write(jsonl if args.json else text)
+    return EXIT_FINDINGS if failed else EXIT_OK
 
 
 def cmd_capabilities(_args: argparse.Namespace) -> int:
@@ -893,7 +884,7 @@ class SharedParser:
         self._validate_host(command, values)
         # FILE and --plan as typed: messages quote them, and Path() would
         # drop a "./" or a trailing "/" the other CLIs keep.
-        values["spelled"] = {key: values[key] for key in ("file", "plan", "old", "new", "output") if values.get(key) is not None}
+        values["spelled"] = {key: values[key] for key in ("file", "plan", "old", "new", "output", "repair") if values.get(key) is not None}
         for key in _PATH_ARGUMENTS:
             if values.get(key) is not None:
                 values[key] = Path(values[key])

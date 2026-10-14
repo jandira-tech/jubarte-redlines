@@ -866,8 +866,9 @@ fn append_json(
     Ok((PyBytes::new(py, &out.docx).unbind(), warnings))
 }
 
-/// Word-validity findings beyond the schema as a JSON array (`code`,
-/// `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+/// Word-validity findings beyond the schema as a JSON array (`code`, `set`,
+/// `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+/// `[]` is a pass.
 /// Mirrors `jubarte::validate::validate`; a package that cannot be read at
 /// all raises.
 #[pyfunction]
@@ -875,6 +876,48 @@ fn validate_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     py.detach(|| {
         let findings = jubarte::validate::validate(docx).map_err(|e| e.to_string())?;
         serde_json::to_string(&findings).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| err(e))
+}
+
+/// `validate_run`'s result: the findings as JSON Lines, as the CLI's text,
+/// and whether they fail the run.
+type ValidateRun = (String, String, bool);
+
+/// `jubarte validate` on bytes: `rules` are rule sets or audit codes
+/// (`None`: `word`, plus `edits` with `original`), `original` and `author`
+/// check tracked edits, `strict` fails on warnings too. Mirrors
+/// `jubarte::validate::validate_with`, `findings_text` and `fails`.
+#[pyfunction]
+#[pyo3(signature = (docx, *, rules=None, original=None, author=None, strict=false))]
+fn validate_run(
+    py: Python<'_>,
+    docx: &[u8],
+    rules: Option<Vec<String>>,
+    original: Option<&[u8]>,
+    author: Option<&str>,
+    strict: bool,
+) -> PyResult<ValidateRun> {
+    let rules = rules.unwrap_or_default();
+    py.detach(|| {
+        let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
+        let findings = jubarte::validate::validate_with(
+            docx,
+            &rules,
+            original.zip(author),
+            Some(&mut jubarte::audit::word_layout),
+        )
+        .map_err(|e| e.to_string())?;
+        let mut jsonl = String::new();
+        for finding in &findings {
+            jsonl.push_str(&serde_json::to_string(finding).map_err(|e| e.to_string())?);
+            jsonl.push('\n');
+        }
+        Ok((
+            jsonl,
+            jubarte::validate::findings_text(&findings),
+            jubarte::validate::fails(&findings, strict),
+        ))
     })
     .map_err(|e: String| err(e))
 }
@@ -1066,6 +1109,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_run, m)?)?;
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;

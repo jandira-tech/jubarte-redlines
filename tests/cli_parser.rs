@@ -579,7 +579,7 @@ fn help_explains_tasks_and_critic_markup() {
 
 #[test]
 fn supported_compare_never_accepts_a_disabled_task_as_filenames() {
-    for command in ["convert", "self-update", "debug", "audit"] {
+    for command in ["convert", "self-update", "debug", "validate"] {
         let result = parse(&[command, "a.docx"], &["compare", "inspect"]);
         assert_eq!(result["exit_code"], 2, "{result}");
         assert_eq!(result["stream"], "stderr");

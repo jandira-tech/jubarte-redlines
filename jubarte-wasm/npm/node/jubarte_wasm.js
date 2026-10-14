@@ -1635,8 +1635,9 @@ function updateFields(docx) {
 exports.updateFields = updateFields;
 
 /**
- * Word-validity findings beyond the schema as a JSON array (`code`,
- * `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+ * Word-validity findings beyond the schema as a JSON array (`code`, `set`,
+ * `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+ * `[]` is a pass.
  *
  * Mirrors `jubarte::validate::validate`.
  * @param {Uint8Array} docx

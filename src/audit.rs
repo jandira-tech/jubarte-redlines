@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `jubarte audit`: accessibility, style and structure findings with the
-//! paragraph id an agent can act on.
+//! `jubarte validate --rules a11y,style,structure`: accessibility, style and
+//! structure findings with the paragraph id an agent can act on.
 //!
 //! Every rule reads the admitted package through [`crate::inspect`]'s read
 //! model, so a finding's `location` is the same `body:p:N` (or story
@@ -46,8 +46,9 @@ pub const RULES: &[(&str, &str, &str)] = &[
     ("FONT_SUBSTITUTED", "structure", "info"),
 ];
 
-/// The rule sets [`RULES`] groups codes into.
-const RULE_SETS: &[&str] = &["a11y", "style", "structure"];
+/// The rule sets [`RULES`] groups codes into: the last three of
+/// [`crate::validate::RULE_SETS`].
+const RULE_SETS: &[&str] = crate::validate::RULE_SETS.split_at(2).1;
 
 /// Characters typed as list markers instead of using Word numbering.
 const LITERAL_MARKERS: &[char] = &['•', '◦', '▪', '-', '*', '·'];
@@ -123,14 +124,27 @@ pub fn audit(docx: &[u8], rules: &[&str]) -> Result<Vec<AuditFinding>, AuditErro
 
 /// [`audit`] plus the codes that ran and whether a layout pass ran.
 pub fn audit_report(docx: &[u8], rules: &[&str]) -> Result<AuditReport, AuditError> {
-    let mut word_layout = |docx: &[u8]| {
-        let options = PdfOptions {
-            revisions: RevisionStyle::Word,
-            ..PdfOptions::default()
-        };
-        docx_render_report(docx, options).map_err(|error| AuditError::Layout(error.to_string()))
-    };
     audit_report_with(docx, rules, Some(&mut word_layout))
+}
+
+/// The native layout pass: the document laid out in
+/// [`RevisionStyle::Word`], whose page count the `NUMPAGES` cache is
+/// checked against.
+///
+/// # Errors
+///
+/// [`AuditError::Layout`] when the renderer fails.
+pub fn word_layout(docx: &[u8]) -> Result<RenderReport, AuditError> {
+    let options = PdfOptions {
+        revisions: RevisionStyle::Word,
+        ..PdfOptions::default()
+    };
+    docx_render_report(docx, options).map_err(|error| AuditError::Layout(error.to_string()))
+}
+
+/// True when `rule` is one of the audit's rule sets or codes.
+pub fn is_rule(rule: &str) -> bool {
+    RULE_SETS.contains(&rule) || RULES.iter().any(|known| known.0 == rule)
 }
 
 /// A layout pass [`audit_report_with`] calls at most once.

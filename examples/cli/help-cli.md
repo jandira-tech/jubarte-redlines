@@ -29,7 +29,6 @@ Do not edit by hand: rerun `JUBARTE=path/to/jubarte bash examples/cli/gen-help.s
 - [`jubarte append --help`](#jubarte-append---help)
 - [`jubarte validate --help`](#jubarte-validate---help)
 - [`jubarte scrub --help`](#jubarte-scrub---help)
-- [`jubarte audit --help`](#jubarte-audit---help)
 
 ## `jubarte --help`
 
@@ -63,9 +62,9 @@ Tasks:
   visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
   append        Join documents in order, preserving images, styles, lists and notes
-  validate      Check or repair Word validity (findings: exit 2; unreadable: exit 1)
+  validate      Check Word validity, tracked edits, accessibility, style and structure;
+                or repair Word validity
   scrub         Remove authors, editing IDs, metadata and comments before sharing
-  audit         Audit accessibility, style and structure (findings: exit 2)
   help          Print this message or the help of the given subcommand(s)
 
 Options:
@@ -926,12 +925,12 @@ Options:
       --force
           Replace an existing output (the bundle directory's files)
 
-      --dry-run
-          Resolve and report only; write nothing
-
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
+
+      --dry-run
+          Resolve and report only; write nothing
 
       --pdf
           Also write the PDF beside the document (the bundle: redline.pdf and clean.pdf)
@@ -1426,30 +1425,64 @@ Examples:
 ## `jubarte validate --help`
 
 ```text
-Check or repair Word validity (findings: exit 2; unreadable: exit 1)
+Check Word validity, tracked edits, accessibility, style and structure; or repair Word
+validity.
+
+A word or edits finding fails the run (exit 2), and so does any error; --strict fails on
+warnings too. An unreadable file exits 1.
 
 Usage: jubarte validate [OPTIONS] <FILE>
 
 Arguments:
-  <FILE>  The document (.docx)
+  <FILE>
+          The document (.docx)
 
 Options:
-      --json             JSON Lines: one object per finding, nothing when there is none
-      --repair <FILE>    Write the repaired package here; remaining findings still exit
-                         2
-      --original <FILE>  Audit tracked edits: every text change against ORIGINAL must be
-                         a revision by --author
-      --author <NAME>    The author every change must carry (with --original)
-      --force            Replace an existing --repair output
-  -q, --quiet            Print nothing on success (files are still written; warnings and
-                         errors still print)
-  -h, --help             Print help
+      --json
+          JSON Lines: one object per finding, nothing when there is none
+
+      --rules <RULES>
+          Rule sets or audit codes, comma-separated [default: word; with --original,
+          word and edits]
+
+      --strict
+          Fail (exit 2) on warnings too, not only on errors
+
+      --repair <FILE>
+          Write the repaired package here; remaining findings still fail
+
+      --original <FILE>
+          Check tracked edits: every text change against ORIGINAL must be a revision by
+          --author
+
+      --author <NAME>
+          The author every change must carry (with --original)
+
+      --force
+          Replace an existing --repair output
+
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 Examples:
   jubarte validate contract.docx
   jubarte validate contract.docx --json
   jubarte validate contract.docx --repair fixed.docx
   jubarte validate review/redline.docx --original contract.docx --author Claude
+  jubarte validate contract.docx --rules word,a11y,style,structure --strict
+
+Rule sets: word (default: Word validity), edits (with --original and --author), a11y,
+style, structure.
+Audit codes (code, set, severity):
+  HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,
+  TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,
+  LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,
+  DIRECT_FORMATTING_OVERRIDES_STYLE style info,
+  STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info
 ```
 
 ## `jubarte scrub --help`
@@ -1534,31 +1567,4 @@ Examples:
   jubarte scrub redline.docx -o out.docx                     everything, alias Author
   jubarte scrub redline.docx -o out.docx --author-alias Counsel --rsids
   jubarte scrub redline.docx -o out.docx --comments          comments only
-```
-
-## `jubarte audit --help`
-
-```text
-Audit accessibility, style and structure (findings: exit 2)
-
-Usage: jubarte audit [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  The document (.docx) to audit
-
-Options:
-      --json           Emit `{findings, rules, layout}` as JSON
-      --rules <RULES>  Rule sets (a11y, style, structure) or rule codes, comma-separated
-                       [default: every rule]
-      --strict         Fail (exit 2) on warnings too, not only on errors
-  -q, --quiet          Print nothing on success (files are still written; warnings and
-                       errors still print)
-  -h, --help           Print help
-
-Rules (code, set, severity):
-  HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,
-  TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,
-  LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,
-  DIRECT_FORMATTING_OVERRIDES_STYLE style info,
-  STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info
 ```

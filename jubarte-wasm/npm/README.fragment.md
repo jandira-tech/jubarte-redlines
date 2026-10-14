@@ -122,7 +122,7 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `markdownToDocx` | `(text, optionsJson?, reference?) → Uint8Array` | Markdown with CriticMarkup → DOCX (`page`, `author`, `date`, `critic`, `track_changes`); `reference`, a `.docx`, lends its styles and page setup. |
 | `appendDocuments` | `(a, b, optionsJson?) → AppendOutput` | B after A, carrying B's images, links, headers, styles, lists and notes (`section_break`, `keep_sections`, `comments` `"drop"` or `"carry"`). `docx` and `warnings`. |
 | `listComments` | `(docx, author?, latest?) → string` | Every comment with its thread (`parent`, `done`) and anchor text, as a JSON array string. |
-| `validateDocument` | `(docx) → string` | Word-validity findings beyond the schema as a JSON array (`code`, `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass. |
+| `validateDocument` | `(docx) → string` | Word-validity findings beyond the schema as a JSON array (`code`, `set`, `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`); `[]` is a pass. |
 | `repairDocument` | `(docx) → RepairOutput` | The package with every repairable finding fixed: `docx`, and `json` with what was fixed and what remains. |
 | `auditTracked` | `(original, edited, author) → string` | Every text change must be a revision by `author`: `UNTRACKED_EDIT` and `FOREIGN_AUTHOR` findings as JSON. |
 | `auditDocument` | `(docx, rules?) → string` | Accessibility, style and structure findings, JSON `{findings, rules, layout}`; `rules` is a comma-separated list of sets or codes. |

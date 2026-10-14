@@ -1128,12 +1128,25 @@ pub enum Command {
         #[serde(flatten)]
         render: RenderArgs,
     },
-    /// Check or repair Word validity (findings: exit 2; unreadable: exit 1).
+    /// Check Word validity, tracked edits, accessibility, style and
+    /// structure; or repair Word validity.
+    ///
+    /// A word or edits finding fails the run (exit 2), and so does any
+    /// error; --strict fails on warnings too. An unreadable file exits 1.
     #[command(after_help = "Examples:\n  \
         jubarte validate contract.docx\n  \
         jubarte validate contract.docx --json\n  \
         jubarte validate contract.docx --repair fixed.docx\n  \
-        jubarte validate review/redline.docx --original contract.docx --author Claude")]
+        jubarte validate review/redline.docx --original contract.docx --author Claude\n  \
+        jubarte validate contract.docx --rules word,a11y,style,structure --strict\n\n\
+        Rule sets: word (default: Word validity), edits (with --original and \
+        --author), a11y, style, structure.\n\
+        Audit codes (code, set, severity):\n  \
+        HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,\n  \
+        TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,\n  \
+        LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,\n  \
+        DIRECT_FORMATTING_OVERRIDES_STYLE style info,\n  \
+        STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info")]
     Validate {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -1141,10 +1154,17 @@ pub enum Command {
         /// JSON Lines: one object per finding, nothing when there is none.
         #[arg(long)]
         json: bool,
-        /// Write the repaired package here; remaining findings still exit 2.
+        /// Rule sets or audit codes, comma-separated [default: word; with
+        /// --original, word and edits].
+        #[arg(long, value_name = "RULES", value_delimiter = ',', value_parser = parse_rule)]
+        rules: Vec<String>,
+        /// Fail (exit 2) on warnings too, not only on errors.
+        #[arg(long)]
+        strict: bool,
+        /// Write the repaired package here; remaining findings still fail.
         #[arg(long, value_name = "FILE")]
         repair: Option<PathBuf>,
-        /// Audit tracked edits: every text change against ORIGINAL must be a
+        /// Check tracked edits: every text change against ORIGINAL must be a
         /// revision by --author.
         #[arg(long, value_name = "FILE", requires = "author")]
         original: Option<PathBuf>,
@@ -1180,28 +1200,6 @@ pub enum Command {
         #[command(flatten)]
         #[serde(flatten)]
         render: RenderArgs,
-    },
-    /// Audit accessibility, style and structure (findings: exit 2).
-    #[command(after_help = "Rules (code, set, severity):\n  \
-        HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,\n  \
-        TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,\n  \
-        LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,\n  \
-        DIRECT_FORMATTING_OVERRIDES_STYLE style info,\n  \
-        STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info")]
-    Audit {
-        /// The document (.docx) to audit.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Emit `{findings, rules, layout}` as JSON.
-        #[arg(long)]
-        json: bool,
-        /// Rule sets (a11y, style, structure) or rule codes, comma-separated
-        /// [default: every rule].
-        #[arg(long, value_name = "RULES", value_delimiter = ',')]
-        rules: Vec<String>,
-        /// Fail (exit 2) on warnings too, not only on errors.
-        #[arg(long)]
-        strict: bool,
     },
 }
 
@@ -2237,6 +2235,20 @@ fn parse_palette(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+/// A `--rules` item: a [`crate::validate::RULE_SETS`] name or an audit code.
+fn parse_rule(value: &str) -> Result<String, String> {
+    if crate::validate::RULE_SETS.contains(&value) || crate::audit::is_rule(value) {
+        Ok(value.to_string())
+    } else {
+        let codes: Vec<&str> = crate::audit::RULES.iter().map(|rule| rule.0).collect();
+        Err(format!(
+            "expected one of {} or an audit code ({})",
+            crate::validate::RULE_SETS.join(", "),
+            codes.join(", ")
+        ))
+    }
+}
+
 // Validate without expanding ranges: parsing help or arguments never allocates
 // a potentially enormous list of page indices.
 fn validate_pages(value: &str) -> Result<String, String> {
@@ -2456,6 +2468,19 @@ fn validate_matches(
         let mut task = command.find_subcommand(name).expect("parsed task").clone();
         task.set_bin_name(format!("{} {name}", command.get_name()));
         return Err(task.error(ErrorKind::ValueValidation, message));
+    }
+    if name == "validate"
+        && args
+            .get_many::<String>("rules")
+            .is_some_and(|mut rules| rules.any(|rule| rule == "edits"))
+        && !args.contains_id("original")
+    {
+        let mut task = command.find_subcommand(name).expect("parsed task").clone();
+        task.set_bin_name(format!("{} {name}", command.get_name()));
+        return Err(task.error(
+            ErrorKind::MissingRequiredArgument,
+            "--rules edits needs --original and --author",
+        ));
     }
     if name == "compare"
         && !["modified", "modified_pos"]

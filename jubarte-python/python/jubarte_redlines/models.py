@@ -1549,16 +1549,20 @@ class Finding:
     """One thing wrong with a package, from ``Document.validate``.
 
     ``code`` is stable (``TEXT_INSIDE_DELETION``, ``MC_UNBOUND_PREFIX``,
-    ``UNTRACKED_EDIT``, ...); ``part`` is the package part and ``path`` the
-    element chain inside it (``w:body[0]/w:p[3]/w:r[2]``, empty for a
-    package-level finding). ``word_fatal`` is true when Word refuses or
-    repairs the file for it, ``repairable`` when ``Document.repair`` fixes
-    it.
+    ``UNTRACKED_EDIT``, ...); ``set`` is its rule set (``word``, ``edits``,
+    ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
+    ``warning`` or ``info``. ``part`` is the package part and ``location``
+    the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
+    id (``body:p:3``), or empty for a package-level finding.
+    ``word_fatal`` is true when Word refuses or repairs the file for it,
+    ``repairable`` when ``Document.repair`` fixes it.
     """
 
     code: str
+    set: str
+    severity: str
     part: str
-    path: str
+    location: str
     message: str
     word_fatal: bool
     repairable: bool
@@ -1578,8 +1582,10 @@ class _FindingRow(TypedDict):
     """One row of the native validate/repair/audit-tracked JSON."""
 
     code: str
+    set: str
+    severity: str
     part: str
-    path: str
+    location: str
     message: str
     word_fatal: bool
     repairable: bool
@@ -1589,8 +1595,10 @@ def _decode_findings(rows: list[_FindingRow]) -> tuple[Finding, ...]:
     return tuple(
         Finding(
             code=row["code"],
+            set=row["set"],
+            severity=row["severity"],
             part=row["part"],
-            path=row["path"],
+            location=row["location"],
             message=row["message"],
             word_fatal=bool(row["word_fatal"]),
             repairable=bool(row["repairable"]),

@@ -46,7 +46,7 @@ pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
             ValidityReport {
                 errors: findings
                     .iter()
-                    .map(|f| format!("{} [{}#{}]", f.message, f.part, f.path))
+                    .map(|f| format!("{} [{}#{}]", f.message, f.part, f.location))
                     .collect(),
                 findings,
             }

@@ -821,50 +821,6 @@ fn run_inspect_tables(file: &Path) -> Result<(), String> {
     write_stdout(jubarte::inspect::tables_text(&tables))
 }
 
-/// `jubarte audit`: print the findings; `Ok(true)` when one fails the run
-/// (an `error`, or a `warning` under `strict`).
-fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<bool, String> {
-    let bytes = read_document(file)?;
-    let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
-    let report = jubarte::audit::audit_report(&bytes, &rules).map_err(|e| e.to_string())?;
-    if json {
-        outln!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
-        );
-    } else {
-        for finding in &report.findings {
-            outln!(
-                "{}\t{}\t{}\t{}",
-                finding.severity,
-                finding.code,
-                finding.location,
-                finding.message
-            );
-        }
-        let count = |severity: &str| {
-            report
-                .findings
-                .iter()
-                .filter(|finding| finding.severity == severity)
-                .count()
-        };
-        outln!(
-            "{} findings: {} error, {} warning, {} info ({} rules{})",
-            report.findings.len(),
-            count("error"),
-            count("warning"),
-            count("info"),
-            report.rules.len(),
-            if report.layout { ", with layout" } else { "" }
-        );
-    }
-    Ok(report
-        .findings
-        .iter()
-        .any(|finding| finding.severity == "error" || (strict && finding.severity == "warning")))
-}
-
 /// `read`: the agent view, with page markers from the layout pass unless
 /// `--no-page-markers` skips it; or the snapshot (`--json`), or the grids
 /// (`--tables`). `-o FILE.md` writes the view, `-o FILE.json` the snapshot.
@@ -2283,61 +2239,58 @@ fn run_debug(
 struct ValidateJob<'a> {
     file: &'a Path,
     json: bool,
+    rules: &'a [String],
+    strict: bool,
     repair: Option<&'a Path>,
     original: Option<&'a Path>,
     author: Option<&'a str>,
     force: bool,
+    quiet: bool,
 }
 
-/// `jubarte validate`: `Ok(true)` when nothing was found, `Ok(false)` when
-/// findings were printed, `Err` when a file could not be read or written.
+/// `jubarte validate`: `Ok(true)` when the findings fail the run
+/// ([`jubarte::validate::fails`]), `Err` when a file could not be read or
+/// written or the rules cannot run. With `--repair` the findings are the
+/// repaired package's.
 fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
-    use jubarte::validate::{Finding, audit_tracked, repair, validate};
+    use jubarte::validate::{fails, findings_text, repair, validate_with};
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
-    let docx = read(job.file)?;
-    let mut findings: Vec<Finding> = Vec::new();
-    match job.repair {
-        Some(out) => {
-            if out.exists() && !job.force {
-                return Err(format!(
-                    "output '{}' already exists (use --force to overwrite)",
-                    out.display()
-                ));
-            }
-            let fixed = repair(&docx).map_err(|e| e.to_string())?;
-            std::fs::write(out, &fixed.docx).map_err(|e| format!("{}: {e}", out.display()))?;
-            if !job.json {
-                outln!(
-                    "repaired {} finding(s) into {}",
-                    fixed.repaired.len(),
-                    out.display()
-                );
-            }
-            findings.extend(fixed.remaining);
+    let mut docx = read(job.file)?;
+    if let Some(out) = job.repair {
+        if out.exists() && !job.force {
+            return Err(format!(
+                "output '{}' already exists (use --force to overwrite)",
+                out.display()
+            ));
         }
-        None => findings.extend(validate(&docx).map_err(|e| e.to_string())?),
+        let fixed = repair(&docx).map_err(|e| e.to_string())?;
+        std::fs::write(out, &fixed.docx).map_err(|e| format!("{}: {e}", out.display()))?;
+        if !job.json {
+            outln!("repaired {} finding(s)", fixed.repaired.len());
+        }
+        if !job.quiet {
+            eprintln!("{}", wrote_line(out, Format::Docx, fixed.docx.len(), None));
+        }
+        docx = fixed.docx;
     }
-    if let (Some(original), Some(author)) = (job.original, job.author) {
-        let before = read(original)?;
-        findings.extend(audit_tracked(&before, &docx, author).map_err(|e| e.to_string())?);
-    }
-    for f in &findings {
-        if job.json {
+    let before = job.original.map(read).transpose()?;
+    let original = before.as_deref().zip(job.author);
+    let rules: Vec<&str> = job.rules.iter().map(String::as_str).collect();
+    let findings = validate_with(
+        &docx,
+        &rules,
+        original,
+        Some(&mut jubarte::audit::word_layout),
+    )
+    .map_err(|e| e.to_string())?;
+    if job.json {
+        for f in &findings {
             outln!("{}", serde_json::to_string(f).map_err(|e| e.to_string())?);
-        } else {
-            let star = if f.word_fatal { '*' } else { ' ' };
-            outln!("{star} {}\t{}#{}\t{}", f.code, f.part, f.path, f.message);
         }
+    } else {
+        write_stdout(findings_text(&findings))?;
     }
-    if !job.json {
-        if findings.is_empty() {
-            outln!("no findings");
-        } else {
-            let fatal = findings.iter().filter(|f| f.word_fatal).count();
-            outln!("{} finding(s), {fatal} Word-fatal", findings.len());
-        }
-    }
-    Ok(findings.is_empty())
+    Ok(fails(&findings, job.strict))
 }
 
 /// `jubarte debug diff`: each file labelled by its stem (by its folder too
@@ -2746,6 +2699,8 @@ fn cli_main() -> ExitCode {
         Some(Command::Validate {
             file,
             json,
+            rules,
+            strict,
             repair,
             original,
             author,
@@ -2754,18 +2709,17 @@ fn cli_main() -> ExitCode {
             let job = ValidateJob {
                 file: &file,
                 json,
+                rules: &rules,
+                strict,
                 repair: repair.as_deref(),
                 original: original.as_deref(),
                 author: author.as_deref(),
                 force,
+                quiet,
             };
             return match run_validate(&job) {
-                Ok(true) => ExitCode::SUCCESS,
-                Ok(false) => ExitCode::from(2),
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    ExitCode::FAILURE
-                }
+                Ok(true) => ExitCode::from(2),
+                result => exit_code(result.map(|_| ())),
             };
         }
         Some(Command::Scrub {
@@ -2780,17 +2734,6 @@ fn cli_main() -> ExitCode {
                 Err(e) => return exit_code(Err(e)),
             };
             return convert_exit_code(run_scrub(&file, &out, &scrub.options()));
-        }
-        Some(Command::Audit {
-            file,
-            json,
-            rules,
-            strict,
-        }) => {
-            return match run_audit(&file, json, &rules, strict) {
-                Ok(true) => ExitCode::from(2),
-                result => exit_code(result.map(|_| ())),
-            };
         }
         None => {}
     }

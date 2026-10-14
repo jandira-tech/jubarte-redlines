@@ -25,6 +25,8 @@ def test_validate_reports_and_repair_fixes_text_inside_a_deletion() -> None:
     assert [f.code for f in findings] == ["TEXT_INSIDE_DELETION"]
     assert findings[0].word_fatal and findings[0].repairable
     assert findings[0].part == "word/document.xml"
+    assert (findings[0].set, findings[0].severity) == ("word", "error")
+    assert findings[0].location.startswith("w:body[0]/w:p[0]")
     assert isinstance(findings[0], jubarte.Finding)
     repaired = doc.repair()
     assert isinstance(repaired, jubarte.Repaired)
@@ -65,13 +67,17 @@ def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.C
     assert capsys.readouterr().out.strip() == "no findings"
     assert main(["validate", str(broken)]) == 2
     out = capsys.readouterr().out
-    assert out.startswith("* TEXT_INSIDE_DELETION\tword/document.xml#") and "1 finding(s), 1 Word-fatal" in out
+    assert out.startswith("* TEXT_INSIDE_DELETION\terror\tword/document.xml#w:body[0]/w:p[0]")
+    assert out.endswith("1 finding(s): 1 error, 0 warning, 0 info\n")
     assert main(["validate", str(broken), "--json"]) == 2
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[0]["code"] == "TEXT_INSIDE_DELETION" and rows[0]["repairable"] is True
+    assert (rows[0]["set"], rows[0]["severity"]) == ("word", "error") and "path" not in rows[0]
     fixed = tmp_path / "fixed.docx"
     assert main(["validate", str(broken), "--repair", str(fixed)]) == 0
-    assert "repaired 1 finding(s)" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == "repaired 1 finding(s)\nno findings\n"
+    assert captured.err.startswith(f"wrote {fixed} (docx, ")
     assert main(["validate", str(fixed)]) == 0
     assert main(["validate", str(broken), "--repair", str(fixed)]) == 1
     assert "already exists" in capsys.readouterr().err
@@ -90,3 +96,19 @@ def test_validate_command_audits_against_an_original(tmp_path: Path, capsys: pyt
     assert main(["validate", str(edited), "--original", str(original), "--author", "Legal", "--json"]) == 2
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [r["code"] for r in rows] == ["UNTRACKED_EDIT"]
+
+
+def test_validate_command_rules_and_strict(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    bullets = tmp_path / "bullets.docx"
+    bullets.write_bytes(docx(para("\u2022 item")))
+    assert main(["validate", str(bullets), "--rules", "style"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("  LITERAL_BULLET\twarning\tbody:p:0\t"), out
+    assert out.endswith("1 finding(s): 0 error, 1 warning, 0 info\n"), out
+    assert main(["validate", str(bullets), "--rules", "style", "--strict"]) == 2
+    capsys.readouterr()
+    for rules in ("edits", "BOGUS"):
+        with pytest.raises(SystemExit) as exit:
+            main(["validate", str(bullets), "--rules", rules])
+        assert exit.value.code == 2
+        assert ("--original" if rules == "edits" else "BOGUS") in capsys.readouterr().err
