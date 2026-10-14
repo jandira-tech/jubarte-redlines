@@ -51577,6 +51577,66 @@ mod coverage_round_three_tests {
             assert_eq!(texts, ["\u{1D44E}", "\u{1D44F}"]);
         }
 
+        /// A justified line splits runs on spaces. A fraction is one box,
+        /// including when its text contains a space, and stays at its
+        /// glyph size above the baseline. inline-symbol-runs is Normal
+        /// `jc both`, so the superscript fraction was painted as body
+        /// "p+14" once the line stretched.
+        #[test]
+        fn justified_line_paints_a_math_box_whole() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let prose = TextRun::new("roots ", Defaults::word().run);
+            let mut frac = TextRun::new("p + 1", Defaults::word().run);
+            frac.style.size = 10.0;
+            frac.math = Some(super::math_layout::MathBox {
+                width: 14.0,
+                ascent: 8.0,
+                descent: 4.0,
+                glyphs: vec![
+                    super::math_layout::MathGlyph {
+                        text: "p".to_string(),
+                        gid: 1,
+                        x: 0.0,
+                        y: 4.0,
+                        size: 6.5,
+                    },
+                    super::math_layout::MathGlyph {
+                        text: "1".to_string(),
+                        gid: 2,
+                        x: 6.0,
+                        y: -3.0,
+                        size: 6.5,
+                    },
+                ],
+                rules: vec![super::math_layout::MathRule {
+                    x: 0.0,
+                    y_top: 1.0,
+                    w: 10.0,
+                    thickness: 0.4,
+                }],
+            });
+            lay.paint_stretched(&[prose, frac], 72.0, 700.0, 2.0);
+            let glyphs: Vec<(&str, f32, f32)> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, size, y, .. } if *text == "p" || *text == "1" => {
+                        Some((text.as_str(), *size, *y))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(glyphs, vec![("p", 6.5, 704.0), ("1", 6.5, 697.0)]);
+            let rule = lay.pages[0].ops.iter().any(|op| match op {
+                Op::FillRect { w, h, y, .. } => {
+                    (*w - 10.0).abs() < 0.01 && (*h - 0.4).abs() < 0.01 && (*y - 700.6).abs() < 0.01
+                }
+                _ => false,
+            });
+            assert!(rule, "the fraction bar is painted with the box");
+        }
+
         /// Two stretches of missing glyphs around painted text: one hidden
         /// op each, in reading order between the painted ones.
         #[test]
