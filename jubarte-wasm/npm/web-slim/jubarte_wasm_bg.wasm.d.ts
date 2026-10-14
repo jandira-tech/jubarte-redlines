@@ -13,7 +13,7 @@ export const applyEditPlan: (a: number, b: number, c: number, d: number, e: numb
 export const auditDocument: (a: number, b: number, c: number, d: number, e: number) => void;
 export const auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const capabilities: (a: number) => void;
-export const capabilitiesText: (a: number) => void;
+export const capabilitiesText: (a: number, b: number, c: number) => void;
 export const changeFilter: (a: number, b: number, c: number) => void;
 export const changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const changesText: (a: number, b: number, c: number) => void;
@@ -41,11 +41,13 @@ export const listComments: (a: number, b: number, c: number, d: number, e: numbe
 export const markdownStamp: (a: number, b: number, c: number, d: number, e: number) => void;
 export const markdownToDocx: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const parseCli: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const planError: (a: number, b: number, c: number) => void;
 export const previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
 export const readJson: (a: number, b: number, c: number, d: number, e: number) => void;
 export const readView: (a: number, b: number, c: number, d: number, e: number) => void;
 export const recordPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
 export const redlineDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+export const refusedInput: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const rejectChanges: (a: number, b: number, c: number, d: number, e: number) => void;
 export const rejectRevisions: (a: number, b: number, c: number) => void;
 export const repairDocument: (a: number, b: number, c: number) => void;
