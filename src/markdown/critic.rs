@@ -189,6 +189,12 @@ struct Closers<'a> {
     patterns: [&'a str; 6],
     positions: [Vec<usize>; 6],
     literal: Literal,
+    /// Every `==` that can close a highlight.
+    marks: Vec<usize>,
+    /// Every blank line (`\n\n`), where a paragraph ends.
+    blanks: Vec<usize>,
+    /// The `{/}` that closes each body field, by the field's `{`.
+    fields: std::collections::HashMap<usize, usize>,
 }
 
 impl<'a> Closers<'a> {
@@ -202,10 +208,21 @@ impl<'a> Closers<'a> {
                 .filter(|&at| !escaped(source, at) && literal.verbatim_end(at).is_none())
                 .collect()
         });
+        let bytes = source.as_bytes();
+        let marks = (0..bytes.len())
+            .filter(|&at| bytes[at..].starts_with(b"==") && mark_closes(source, &literal, at))
+            .collect();
+        let blanks = (0..bytes.len())
+            .filter(|&at| bytes[at..].starts_with(b"\n\n"))
+            .collect();
+        let fields = field_ends(source, &literal);
         Self {
             patterns,
             positions,
             literal,
+            marks,
+            blanks,
+            fields,
         }
     }
 
@@ -215,6 +232,15 @@ impl<'a> Closers<'a> {
         let positions = &self.positions[slot];
         let at = *positions.get(positions.partition_point(|&at| at < from))?;
         (at + pattern.len() <= until).then_some(at)
+    }
+
+    /// Where the paragraph `from` lies in ends: at its blank line, or at
+    /// `until` if that comes first.
+    fn paragraph_end(&self, from: usize, until: usize) -> usize {
+        self.blanks
+            .get(self.blanks.partition_point(|&at| at < from))
+            .filter(|&&at| at + 2 <= until)
+            .map_or(until, |&at| at)
     }
 }
 
@@ -239,6 +265,7 @@ impl Literal {
         // Whether a link reference definition may start here: it cannot
         // interrupt a paragraph.
         let mut can_define = true;
+        let destinations = destination_ends(source);
         let mut line_start = 0;
         let mut at = 0;
         while at < bytes.len() {
@@ -287,7 +314,7 @@ impl Literal {
             let end = match bytes[at] {
                 b'`' if !escaped(source, at) => code_span_end(source, at),
                 b'(' if at > 0 && bytes[at - 1] == b']' && !escaped(source, at - 1) => {
-                    destination_end(source, at + 1)
+                    destinations.get(&(at + 1)).copied()
                 }
                 b'<' if !escaped(source, at) => autolink_end(source, at),
                 _ => None,
@@ -376,24 +403,55 @@ fn definition_destination(line: &str) -> Option<usize> {
     None
 }
 
-/// The end of a link destination (and title) that starts at `at`, after
-/// `](`: its closing `)`, parentheses balanced, on one line.
-fn destination_end(source: &str, at: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (i, c) in source[at..].char_indices() {
-        match c {
-            '\n' => return None,
-            '(' if !escaped(source, at + i) => depth += 1,
-            ')' if !escaped(source, at + i) => {
-                if depth == 0 {
-                    return Some(at + i);
-                }
-                depth -= 1;
+/// Where each link destination (and title) closes, by where it starts,
+/// after `](`: its closing `)`, parentheses balanced, on one line. One pass
+/// over each line and one back, so a line of unclosed `](` is not scanned
+/// again from each.
+fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
+    let mut ends = std::collections::HashMap::new();
+    let mut line_start = 0;
+    for line in source.split('\n') {
+        // Each character's position, with the parenthesis level before and
+        // after it; a destination starting at `s` closes at the first `)`
+        // that brings the level below the one before `s`.
+        let mut levels = Vec::new();
+        let mut starts = Vec::new();
+        let (mut level, mut backslashes) = (0i64, 0usize);
+        // The last two characters: whether an unescaped `]` came just
+        // before, and whether `](` did.
+        let (mut bracket, mut opened) = (false, false);
+        for (i, c) in line.char_indices() {
+            let at = line_start + i;
+            if opened {
+                starts.push(at);
             }
-            _ => {}
+            let free = backslashes % 2 == 0;
+            let before = level;
+            if free {
+                match c {
+                    '(' => level += 1,
+                    ')' => level -= 1,
+                    _ => {}
+                }
+            }
+            opened = bracket && c == '(';
+            bracket = free && c == ']';
+            backslashes = if c == '\\' { backslashes + 1 } else { 0 };
+            levels.push((at, before, level));
         }
+        let mut nearest = std::collections::HashMap::new();
+        let mut starts = starts.iter().rev().peekable();
+        for &(at, before, after) in levels.iter().rev() {
+            nearest.insert(after, at);
+            if starts.next_if(|&&s| s == at).is_some()
+                && let Some(&end) = nearest.get(&(before - 1))
+            {
+                ends.insert(at, end);
+            }
+        }
+        line_start += line.len() + 1;
     }
-    None
+    ends
 }
 
 /// The end of an autolink (`<https://a.example>`) at `at`: a scheme, `:`,
@@ -492,7 +550,7 @@ fn encode_range(
             }
             None => {
                 if here & FIELD != 0
-                    && let Some((code, end)) = field_at(source, &closers.literal, at, range.end)
+                    && let Some((code, end)) = field_at(source, closers, at, range.end)
                 {
                     out.push(stand_in(Token::FieldStart));
                     // The code is text to the end: no Markdown reads it.
@@ -509,7 +567,7 @@ fn encode_range(
                     continue;
                 }
                 if here & MARK != 0
-                    && let Some(close) = mark_close(source, &closers.literal, at, range.end)
+                    && let Some(close) = mark_close(source, closers, at, range.end)
                 {
                     out.push(stand_in(Token::MarkStart));
                     encode_range(source, closers, at + 2..close, allowed, false, out);
@@ -660,42 +718,50 @@ fn field_code(source: &str, at: usize, until: usize) -> Option<std::ops::Range<u
 /// (before `until` and any blank line). Without that `{/}` it is text.
 fn field_at(
     source: &str,
-    literal: &Literal,
+    closers: &Closers<'_>,
     at: usize,
     until: usize,
 ) -> Option<(std::ops::Range<usize>, usize)> {
     let code = field_code(source, at, until)?;
-    let end = source[at..until]
-        .find("\n\n")
-        .map_or(until, |blank_line| at + blank_line);
-    let mut depth = 0usize;
-    let mut i = code.end + 1;
-    while i < end {
+    let end = *closers.fields.get(&at)?;
+    (end + FIELD_END.len() <= until).then_some((code, end))
+}
+
+/// The `{/}` that closes each body field, by the field's `{`, found in one
+/// pass with a stack of open fields: a nested field's `{/}` closes it
+/// first, a blank line or a fenced block leaves every open field unclosed,
+/// and code spans, link destinations and autolinks are passed over. A `{`
+/// inside a field's code (`{QUOTE "{PAGE}"}`) opens nothing.
+fn field_ends(source: &str, literal: &Literal) -> std::collections::HashMap<usize, usize> {
+    let mut ends = std::collections::HashMap::new();
+    let mut open = Vec::new();
+    let mut i = 0;
+    while i < source.len() {
         if let Some(skip) = literal.verbatim_end(i) {
             i = skip;
-        } else if literal.in_fence(i) {
-            return None;
-        } else if source[i..end].starts_with(FIELD_END) && !escaped(source, i) {
-            if depth == 0 {
-                return Some((code, i));
+        } else if literal.in_fence(i) || source[i..].starts_with("\n\n") {
+            open.clear();
+            i += source[i..].chars().next().map_or(1, char::len_utf8);
+        } else if source[i..].starts_with(FIELD_END) && !escaped(source, i) {
+            if let Some(start) = open.pop() {
+                ends.insert(start, i);
             }
-            depth -= 1;
             i += FIELD_END.len();
-        } else if let Some(nested) = field_code(source, i, end) {
-            depth += 1;
-            i = nested.end + 1;
+        } else if let Some(code) = field_code(source, i, source.len()) {
+            open.push(i);
+            i = code.end + 1;
         } else {
             i += source[i..].chars().next().map_or(1, char::len_utf8);
         }
     }
-    None
+    ends
 }
 
 /// Where the `==` that closes a highlight opened at `at` sits, if `at`
 /// opens one: `==` touching text on its inner side and not part of `{==`,
 /// `==}` or a longer run of `=`, closed by such an `==` in the same
 /// paragraph (before `until` and any blank line).
-fn mark_close(source: &str, literal: &Literal, at: usize, until: usize) -> Option<usize> {
+fn mark_close(source: &str, closers: &Closers<'_>, at: usize, until: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     let is = |i: usize, b: u8| i < bytes.len() && bytes[i] == b;
     let blank = |i: usize| i >= bytes.len() || bytes[i].is_ascii_whitespace();
@@ -708,25 +774,28 @@ fn mark_close(source: &str, literal: &Literal, at: usize, until: usize) -> Optio
     if !opens {
         return None;
     }
-    let end = source[at + 2..until]
-        .find("\n\n")
-        .map_or(until, |blank_line| at + 2 + blank_line);
-    let mut from = at + 2 + source[at + 2..].chars().next().map_or(1, char::len_utf8);
-    while let Some(found) = source.get(from..end)?.find("==") {
-        let close = from + found;
-        let fits = !blank(close - 1)
-            && !is(close - 1, b'=')
-            && !is(close + 2, b'=')
-            && !is(close + 2, b'}')
-            && !escaped(source, close)
-            && literal.verbatim_end(close).is_none()
-            && !literal.in_fence(close);
-        if fits {
-            return Some(close);
-        }
-        from = close + 1;
-    }
-    None
+    let end = closers.paragraph_end(at + 2, until);
+    let from = at + 2 + source[at + 2..].chars().next().map_or(1, char::len_utf8);
+    let marks = &closers.marks;
+    let close = *marks.get(marks.partition_point(|&close| close < from))?;
+    (close + 2 <= end).then_some(close)
+}
+
+/// Whether the `==` at `close` can close a highlight: touching text on its
+/// inner side, not part of `==}` or a longer run of `=`, and read as
+/// Markdown.
+fn mark_closes(source: &str, literal: &Literal, close: usize) -> bool {
+    let bytes = source.as_bytes();
+    let is = |i: usize, b: u8| i < bytes.len() && bytes[i] == b;
+    let blank = |i: usize| i >= bytes.len() || bytes[i].is_ascii_whitespace();
+    close > 0
+        && !blank(close - 1)
+        && !is(close - 1, b'=')
+        && !is(close + 2, b'=')
+        && !is(close + 2, b'}')
+        && !escaped(source, close)
+        && literal.verbatim_end(close).is_none()
+        && !literal.in_fence(close)
 }
 
 /// The footnote label that starts `text` with the spaces after it
@@ -1069,6 +1138,23 @@ mod tests {
         assert_eq!(encode(&source), source);
         let elapsed = started.elapsed();
         assert!(elapsed.as_secs() < 2, "took {elapsed:?}");
+    }
+
+    #[test]
+    fn unclosed_links_fields_and_highlights_encode_in_linear_time() {
+        // Each `](`, `{CODE}` and `==` once scanned the rest of its line or
+        // paragraph for its close.
+        for source in [
+            "[a](b".repeat(6_000),
+            "{PAGE}a ".repeat(6_000),
+            format!("{}{{/}}", "{PAGE}a ".repeat(6_000)),
+            "==a ".repeat(6_000),
+        ] {
+            let started = std::time::Instant::now();
+            encode(&source);
+            let elapsed = started.elapsed();
+            assert!(elapsed.as_secs() < 2, "{source:.12}: took {elapsed:?}");
+        }
     }
 
     #[test]
