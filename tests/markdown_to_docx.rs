@@ -1619,3 +1619,81 @@ fn a_front_matter_story_that_does_not_read_warns() {
         "{first}"
     );
 }
+
+/// The paragraphs of `docx`, each with whether it ends in a page break.
+fn breaks(docx: &[u8]) -> Vec<(String, bool)> {
+    let xml = document_xml(docx);
+    xml.split("<w:p>")
+        .chain(xml.split("<w:p ").skip(1))
+        .skip(1)
+        .filter_map(|p| p.split("</w:p>").next())
+        .map(|p| {
+            let text: String = p
+                .split("<w:t")
+                .skip(1)
+                .filter_map(|t| {
+                    t.split_once('>')
+                        .and_then(|(_, rest)| rest.split("</w:t>").next())
+                })
+                .collect();
+            (text, p.contains(r#"<w:br w:type="page"/>"#))
+        })
+        .collect()
+}
+
+/// LaTeX's page commands, as Pandoc manuscripts write them on a line of
+/// their own, are page breaks: the paragraph before them holds the break,
+/// as Word puts one (2026-10-14, the git_manuscript fixture).
+#[test]
+fn latex_page_commands_are_page_breaks() {
+    for command in [
+        r"\newpage",
+        r"\pagebreak",
+        r"\clearpage",
+        r"\cleardoublepage",
+    ] {
+        // Right under a line of text, and alone between blank lines.
+        for gap in ["\n", "\n\n"] {
+            let markdown = format!("Keywords line.{gap}{command}\n\n# Findings\n\nText.\n");
+            let docx = write(&markdown);
+            let paragraphs = breaks(&docx);
+            assert!(
+                paragraphs.contains(&("Keywords line.".to_string(), true)),
+                "{command:?} {gap:?}: {paragraphs:?}"
+            );
+            assert!(
+                !paragraphs.iter().any(|(text, _)| text.contains(command)),
+                "{command:?} {gap:?}: {paragraphs:?}"
+            );
+            assert_eq!(texts(&docx), ["Keywords line.", "Findings", "Text."]);
+        }
+    }
+    // A document that opens with one: an empty paragraph holds the break.
+    let docx = write("\\newpage\n\nAfter.\n");
+    assert_eq!(
+        breaks(&docx),
+        [(String::new(), true), ("After.".to_string(), false)]
+    );
+    // Code keeps the command as text.
+    let docx = write("```\n\\newpage\n```\n");
+    assert!(document_xml(&docx).contains(r"\newpage"));
+    assert!(!document_xml(&docx).contains(r#"w:type="page""#));
+}
+
+/// The plain Markdown writer says a page break in the view's own words, a
+/// `<!-- page-break -->` line after the paragraph that holds it, and reads
+/// it back as the break.
+#[test]
+fn a_page_break_round_trips_through_plain_markdown() {
+    let docx = write("Keywords line.\n\\newpage\n\n# Findings\n");
+    let markdown =
+        jubarte::markdown::docx_to_markdown(&docx, &jubarte::markdown::MarkdownOptions::default())
+            .unwrap()
+            .markdown;
+    assert!(
+        markdown.contains("Keywords line.\n\n<!-- page-break -->\n\n# Findings"),
+        "{markdown}"
+    );
+    let again = write(&markdown);
+    assert_eq!(breaks(&again), breaks(&docx));
+}

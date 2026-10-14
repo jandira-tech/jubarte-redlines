@@ -322,6 +322,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   the document"). Every Word input now reads `INVALID_PACKAGE: FILE is
   not a ZIP file: no end-of-central-directory record`, as `LEGACY_DOC`
   already did.
+- `\newpage` (and `\pagebreak`, `\clearpage`, `\cleardoublepage`) on a
+  line of its own printed as text in the Word output; it is now a page
+  break, which the view writes in its own words (`page-break` on the id
+  line) and plain `convert --to md` as a `<!-- page-break -->` line, which
+  reads back as the break. Plain Markdown dropped page breaks before.
 - A task the host lacks (npm's `visual-diff`, `validate`, `scrub`, …) said
   "not a task", "not supported by this adapter" or a clap conflict by
   argument count; it is now one usage error naming the task.

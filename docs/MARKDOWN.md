@@ -52,6 +52,14 @@ untagged `{>>note<<}`) takes them, in this order, from:
 4. `Redline` and now. Nothing is read from the file's owner or
    modification time.
 
+A page break is a line of its own: `\newpage`, `\pagebreak`,
+`\clearpage` or `\cleardoublepage` (LaTeX's, as Pandoc manuscripts write
+them), or `<!-- page-break -->`, the line the plain Markdown of `convert
+--to md` prints for one. The paragraph above it holds the break, as Word
+puts one; at the top of the document an empty paragraph does. In code the
+commands stay text. The agent view says the same with its id line's
+`page-break` clause.
+
 An author the `authors:` table names, and a date a tag carries, come before
 all of these. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output from
 identical inputs. This represents the document, so its own metadata

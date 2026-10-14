@@ -99,6 +99,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     } else {
         markdown.to_string()
     };
+    let source = page_commands(&source);
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
@@ -107,6 +108,60 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         writer.event(event);
     }
     writer.finish()
+}
+
+/// The line the writers print for a page break where no id line can carry
+/// it (the plain Markdown of `convert --to md`); the reader takes it back.
+pub(super) const PAGE_BREAK_LINE: &str = "<!-- page-break -->";
+
+/// LaTeX's page commands, which Pandoc manuscripts write on a line of their
+/// own: each is a page break, so `source` gets [`PAGE_BREAK_LINE`] in its
+/// place (an HTML comment ends the paragraph above it). Front matter and
+/// fenced or indented code keep them as text.
+fn page_commands(source: &str) -> String {
+    const COMMANDS: [&str; 4] = [
+        r"\newpage",
+        r"\pagebreak",
+        r"\clearpage",
+        r"\cleardoublepage",
+    ];
+    let mut out = String::with_capacity(source.len());
+    let mut fence: Option<&str> = None;
+    let mut front_matter = source.starts_with("---\n") || source.starts_with("---\r\n");
+    for (n, line) in source.split_inclusive('\n').enumerate() {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        let trimmed = bare.trim();
+        if front_matter {
+            if n > 0 && (trimmed == "---" || trimmed == "...") {
+                front_matter = false;
+            }
+            out.push_str(line);
+            continue;
+        }
+        let indent = bare.len() - bare.trim_start().len();
+        if let Some(open) = fence {
+            if indent < 4
+                && trimmed.starts_with(open)
+                && trimmed.trim_start_matches(open).trim().is_empty()
+            {
+                fence = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if indent < 4 && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
+            fence = Some(&trimmed[..3]);
+        } else if indent < 4 && COMMANDS.contains(&trimmed) {
+            out.push_str(PAGE_BREAK_LINE);
+            out.push_str(&line[bare.len()..]);
+            if line.len() == bare.len() {
+                out.push('\n');
+            }
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 /// What the view's table line says about one table, read before the table:
@@ -1399,6 +1454,14 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// with no text before the next line (`<!-- p7 page-break -->`), a
     /// paragraph of its own.
     fn id_lines(&mut self, html: &str) {
+        if html.trim() == PAGE_BREAK_LINE
+            && self.cell.is_none()
+            && self.comment.is_none()
+            && self.target.is_none()
+        {
+            self.break_page();
+            return;
+        }
         if !self.view || self.cell.is_some() || self.comment.is_some() || self.target.is_some() {
             return;
         }
@@ -1690,6 +1753,27 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// highlights are pieces of that range, which goes on past them.
     fn table_in_range(&self) -> bool {
         self.table_plan.as_ref().is_some_and(|plan| plan.in_comment)
+    }
+
+    /// A page break between blocks: the paragraph before it holds it, as
+    /// Word puts one; with no paragraph before it, an empty one does.
+    fn break_page(&mut self) {
+        self.end_paragraph();
+        let page_break = Item::Run(Run {
+            content: Content::PageBreak,
+            format: RunFormat::default(),
+            change: None,
+            highlight: None,
+        });
+        let story = self.story();
+        if matches!(story.last(), Some(Item::ParagraphEnd)) {
+            let end = story.len() - 1;
+            story.insert(end, page_break);
+        } else {
+            story.push(Item::Paragraph(Paragraph::default()));
+            story.push(page_break);
+            story.push(Item::ParagraphEnd);
+        }
     }
 
     fn ensure_paragraph(&mut self) {
