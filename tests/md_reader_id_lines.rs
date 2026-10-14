@@ -1272,3 +1272,52 @@ fn a_label_defined_once_and_referenced_twice_is_one_note() {
     assert!(again.contains("One[^1] and again[^1]."), "{again}");
     assert!(!again.contains("[^2]"), "{again}");
 }
+
+/// The plain Markdown `markdown` written and read back (no view), with
+/// the writer's warnings.
+fn plain_round_trip(markdown: &str) -> (String, Vec<String>) {
+    let written = markdown_to_docx(markdown, &DocxOptions::default()).expect("writes");
+    assert_word_valid_package(&written.docx);
+    let view = read(
+        &written.docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    (view, written.warnings)
+}
+
+/// A footnote label names its definition whatever its case, as the
+/// Markdown parser matches them (round-7 notes review, F1).
+#[test]
+fn a_note_label_names_its_definition_whatever_its_case() {
+    let (view, _) = plain_round_trip("Text[^Note] here.\n\n[^note]: the real definition\n");
+    assert!(view.contains("the real definition"), "{view}");
+    let (view, warnings) =
+        plain_round_trip("A[^One] B[^ONE] C[^one].\n\n[^one]: first\n\n[^One]: second\n");
+    let notes: Vec<&str> = view.lines().filter(|l| l.starts_with("[^")).collect();
+    assert_eq!(notes, ["[^1]: first", "[^2]: second"], "{view}");
+    assert!(view.contains("A[^1] B[^2] C[^1]."), "{view}");
+    assert!(
+        warnings.iter().any(|w| w.contains("is defined 2 times")),
+        "{warnings:?}"
+    );
+}
+
+/// A reference inside a note's text is text: Word holds no note inside a
+/// note, and it takes none of the label's definitions (F2).
+#[test]
+fn a_reference_inside_a_note_is_text_and_takes_no_definition() {
+    let (view, warnings) =
+        plain_round_trip("[^1]: first, see [^1]\n\n[^1]: second\n\nA[^1] and B[^1].\n");
+    assert!(view.contains("A[^1] and B[^2]."), "{view}");
+    assert!(view.contains("[^1]: first, see"), "{view}");
+    assert!(view.contains("[^2]: second"), "{view}");
+    assert!(
+        warnings.iter().any(|w| w.contains("a note holds no note")),
+        "{warnings:?}"
+    );
+}

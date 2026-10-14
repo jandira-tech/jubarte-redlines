@@ -343,3 +343,199 @@ fn the_date_flag_is_gone_for_datetime() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// What front matter cannot sign or date: a date out of the calendar, a
+/// null or comment-only `author:`, keys after a thematic break that opens
+/// no front matter (round-7 defaults review, findings 1, 4 and 5).
+#[test]
+fn front_matter_that_names_no_one_or_no_real_date_leaves_redline_and_now() {
+    for front in [
+        "---\ndate: 2026-02-30\n---\n\n",
+        "---\nlast_modified: 2026-99-99T99:99:99Z\n---\n\n",
+        "---\nauthor: null\n---\n\n",
+        "---\nauthor: ~\n---\n\n",
+        "---\nauthor:  # the legend names them\n---\n\n",
+        "---\n\nIntro.\n\n```\nauthor: Mallory\ndate: 2025-01-01T00:00:00Z\n```\n\n",
+    ] {
+        let before = jubarte::convert::utc_now_iso8601();
+        let ins = stamped(front, &[]);
+        let after = jubarte::convert::utc_now_iso8601();
+        assert!(ins.contains("w:author=\"Redline\""), "{front:?}: {ins}");
+        let date = date_of(&ins);
+        assert!(before <= date && date <= after, "{front:?}: {ins}");
+    }
+    // A quoted "null" is a name.
+    let ins = stamped("---\nauthor: \"null\"\n---\n\n", &[]);
+    assert!(ins.contains("w:author=\"null\""), "{ins}");
+}
+
+/// An author with a line break keeps it in `w:author` (a character
+/// reference: a literal one reads back as a space).
+#[test]
+fn an_author_with_a_line_break_keeps_it() {
+    let ins = stamped("---\nauthor: \"A\\nB\\tC\"\n---\n\n", &[]);
+    assert!(ins.contains("w:author=\"A&#xA;B&#x9;C\""), "{ins}");
+}
+
+/// A library caller's date must be one Word takes as `w:date`.
+#[test]
+fn a_library_date_out_of_the_calendar_is_refused() {
+    let options = jubarte::markdown::DocxOptions {
+        date: "2026-02-30T00:00:00Z".into(),
+        date_fixed: true,
+        ..jubarte::markdown::DocxOptions::default()
+    };
+    let error =
+        jubarte::markdown::markdown_to_docx("Some {++x++}.\n", &options).expect_err("refused");
+    assert!(error.to_string().contains("2026-02-30"), "{error}");
+}
+
+/// A date key that does not read warns only when no other key dated the
+/// file (finding 6).
+#[test]
+fn an_unread_date_key_warns_only_when_nothing_else_dates_the_file() {
+    let write = |front: &str| {
+        let options = jubarte::markdown::DocxOptions::default();
+        jubarte::markdown::markdown_to_docx(&format!("{front}Some {{++x++}}.\n"), &options)
+            .unwrap()
+            .warnings
+    };
+    let warned = |warnings: &[String]| warnings.iter().any(|w| w.contains("is no timestamp"));
+    assert!(warned(&write("---\nlast_modified: garbage\n---\n\n")));
+    assert!(!warned(&write(
+        "---\nlast_modified: garbage\nmodified: 2025-05-05T05:05:05Z\n---\n\n"
+    )));
+}
+
+/// A range only headers or footers carry (round-7 dates review, finding
+/// 1): the first story mark keeps the first day, the later ones take the
+/// last.
+#[test]
+fn a_range_only_headers_or_footers_carry_comes_back() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["H-hdr-only.docx", "I-ftr-only.docx"] {
+        let (first, second) = round_trip(dir.path(), &fixture(name));
+        let range = "# 2 revisions, 2026-03-02..2026-03-04";
+        assert!(first.contains(range), "{name}: {first}");
+        assert!(second.contains(range), "{name} written back:\n{second}");
+    }
+}
+
+/// A range written with timestamps reads as their days (finding 5), and
+/// a tag dated outside the days warns (finding 3).
+#[test]
+fn a_timestamp_range_reads_as_days_and_a_tag_outside_it_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("j.docx");
+    let fixture_j = fixture("J-tz-range.md");
+    jubarte(
+        dir.path(),
+        &[
+            "convert",
+            fixture_j.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--force",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    );
+    let view = read(dir.path(), &out);
+    assert!(
+        view.contains("# 2 revisions, 2026-03-02..2026-03-04"),
+        "{view}"
+    );
+    let out = dir.path().join("k.docx");
+    let fixture_k = fixture("K-dated-out.md");
+    let (_, stderr) = jubarte(
+        dir.path(),
+        &[
+            "convert",
+            fixture_k.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--force",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    );
+    assert!(
+        stderr.contains("AL: a tag dated 2026-03-09 falls outside 2026-03-02..2026-03-04"),
+        "{stderr}"
+    );
+}
+
+/// A heading whose slug is longer than Word's 40-character bookmark name
+/// keeps its bookmark through a round trip, and the link reaching it by
+/// that name still lands (round-7 headings review, F1).
+#[test]
+fn a_long_headings_word_bookmark_survives_the_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let word_name = "aaaa-bbbb-cccc-dddd-eeee-ffff-gggg-hhhh-";
+    let (first, second) = round_trip(dir.path(), &fixture("N-longslug.docx"));
+    assert!(first.contains(&format!("(#{word_name})")), "{first}");
+    assert_eq!(first.matches("<a id").count(), 0, "{first}");
+    assert_eq!(second.matches("<a id").count(), 0, "{second}");
+    let written = part(&dir.path().join("view.docx"), "word/document.xml");
+    assert!(
+        written.contains(&format!("w:name=\"{word_name}\"")),
+        "{written}"
+    );
+}
+
+/// An anchor that takes a long heading's Word name pushes the heading's
+/// bookmark to `-1`: the reader still knows it as the heading's own, and
+/// the link still lands (F2).
+#[test]
+fn a_long_headings_suffixed_bookmark_is_still_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("p.docx");
+    let source = fixture("P-longslug.md");
+    let (_, stderr) = jubarte(
+        dir.path(),
+        &[
+            "convert",
+            source.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--force",
+        ],
+    );
+    assert!(!stderr.contains("names no heading"), "{stderr}");
+    let view = read(dir.path(), &out);
+    let heading = view.lines().find(|l| l.starts_with("# ")).unwrap();
+    assert!(!heading.contains("<a id"), "{view}");
+    // Written again, the link the view prints still lands.
+    let md = dir.path().join("again.md");
+    std::fs::write(&md, &view).unwrap();
+    let (_, stderr) = jubarte(
+        dir.path(),
+        &[
+            "convert",
+            md.to_str().unwrap(),
+            "-o",
+            dir.path().join("again.docx").to_str().unwrap(),
+            "--force",
+        ],
+    );
+    assert!(!stderr.contains("names no heading"), "{stderr}");
+}
+
+/// A run its character style hides prints in no header, whatever the
+/// view resolves (F3).
+#[test]
+fn a_style_hidden_header_run_stays_hidden_when_changes_resolve() {
+    let dir = tempfile::tempdir().unwrap();
+    let docx = fixture("O-hidden-header.docx");
+    for resolve in [
+        &[][..],
+        &["--track-changes", "accept"],
+        &["--track-changes", "reject"],
+    ] {
+        let mut args = vec!["read", docx.to_str().unwrap(), "--no-page-markers"];
+        args.extend(resolve);
+        let (view, _) = jubarte(dir.path(), &args);
+        assert!(!view.contains("[style]"), "{resolve:?}: {view}");
+        assert!(view.contains("Head [unhidden]"), "{resolve:?}: {view}");
+    }
+}
