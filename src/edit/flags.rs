@@ -222,8 +222,13 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         Ok(Location::Changes(ids)) => Some(ids),
         _ => None,
     };
-    // A `--reply` group is an operation: off a comment it says so.
+    // A `--reply` group is an operation: off a comment it says so. It
+    // resolves no revision, so `--accept` or `--reject` beside it is refused,
+    // not ignored.
     if op.reply.is_some() {
+        if op.accept || op.reject {
+            return bad("--reply takes no other flag");
+        }
         return Ok(None);
     }
     if verb == Verb::Add && ids.is_some() {
@@ -1437,6 +1442,20 @@ mod tests {
                 with("c5", |o| {
                     o.reply = Some("x".into());
                     o.comment = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.accept = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.reject = true;
                 }),
                 "-p c5: --reply takes no other flag",
             ),

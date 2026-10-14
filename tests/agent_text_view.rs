@@ -5471,3 +5471,23 @@ fn a_field_code_with_quoted_braces_reads_back() {
         .docx;
     assert_eq!(body(&agent(&back)), view);
 }
+
+#[test]
+fn an_empty_table_row_keeps_its_place_in_the_agent_view() {
+    // The table's id line counts its rows (row1, row2...): an empty row
+    // dropped from the Markdown table would shift every row after it.
+    let cell = |t: &str| format!("<w:tc><w:p>{}</w:p></w:tc>", if t.is_empty() { String::new() } else { run(t) });
+    let row = |a: &str, b: &str| format!("<w:tr>{}{}</w:tr>", cell(a), cell(b));
+    let tbl = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>{}{}{}</w:tbl>"#,
+        row("Item", "Due"),
+        row("", ""),
+        row("Call", "Monthly")
+    );
+    let full = agent(&docx(&tbl));
+    let view = body(&full);
+    let lines: Vec<&str> = view.lines().filter(|l| l.starts_with('|')).collect();
+    assert_eq!(lines.len(), 4, "{view}");
+    let back = markdown_to_docx(&full, &DocxOptions::default()).unwrap().docx;
+    assert_eq!(body(&agent(&back)), view);
+}
