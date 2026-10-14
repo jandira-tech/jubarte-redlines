@@ -1941,11 +1941,10 @@ fn the_removed_revisions_task_names_changes() {
         );
     }
     // `revisions FILE --json` is no compare (the legacy-filename test pins
-    // exit 2); the note leads the error.
+    // exit 2); the note goes with the error, which hosts print first.
     let result = parse(&["revisions", "x.docx", "--json"], &[]);
     assert_eq!(result["exit_code"], 2, "{result}");
-    let text = result["text"].as_str().unwrap_or_default();
-    assert!(text.starts_with(&format!("{note}\n")), "{result}");
+    assert_eq!(result["notes"], serde_json::json!([note]), "{result}");
     for args in [
         &["compare", "revisions", "b.docx"][..],
         &["a.docx", "revisions"][..],
@@ -1968,6 +1967,53 @@ fn the_removed_revisions_task_names_changes() {
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.starts_with(&format!("{note}\n")), "{stderr}");
+}
+
+/// A retired spelling's note goes with a usage error too: the run that
+/// fails is the one that needs to hear the new name (ledger reviews of
+/// #444, C1 and H2, and #446, 4 and 5). Hosts print `notes` before `text`.
+#[test]
+fn a_retired_spelling_is_noted_when_the_parse_fails() {
+    let changed = "note: --changed-only is now --changed-pages; --changed-only is removed in 0.14";
+    let audit =
+        "note: audit is now validate --rules a11y,style,structure; audit is removed in 0.14";
+    for (args, note) in [
+        (
+            &[
+                "compare",
+                "a.docx",
+                "b.docx",
+                "-o",
+                "out.docx",
+                "--changed-only",
+            ][..],
+            changed,
+        ),
+        (
+            &["convert", "a.docx", "-o", "out.docx", "--changed-only"][..],
+            changed,
+        ),
+        (&["audit", "a.docx", "--rules", "edits"][..], audit),
+        (&["audit", "a.docx", "--rules", "bogus"][..], audit),
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert_eq!(
+            result["notes"],
+            serde_json::json!([note]),
+            "{args:?}: {result}"
+        );
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.starts_with(&format!("{note}\nerror: ")),
+            "{args:?}: {stderr}"
+        );
+    }
 }
 
 /// Arthur (2026-10-13): one spelling for the timestamp flag: `-d,

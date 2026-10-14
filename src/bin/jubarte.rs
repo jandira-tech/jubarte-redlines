@@ -2354,24 +2354,15 @@ fn cli_main() -> ExitCode {
             eprintln!("{}", jubarte::cli::removed_error(old, now));
             std::process::exit(2);
         }
-        // `diff-render --help` still says the name is retired.
-        if !error.use_stderr() {
-            for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
-                eprintln!("{}", jubarte::cli::retired_note(old, now));
-            }
-        } else {
-            // `revisions FILE --json` fails as a compare: say why first.
-            for (old, now) in jubarte::cli::removed_tasks(argv.iter().map(String::as_str)) {
-                eprintln!("{}", jubarte::cli::removed_task_note(old, now));
-            }
+        // Help, version and usage errors say a name is retired too: the run
+        // that fails is the one that needs the new name.
+        for note in jubarte::cli::notes(&argv) {
+            eprintln!("{note}");
         }
         error.exit()
     });
-    for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
-        eprintln!("{}", jubarte::cli::retired_note(old, now));
-    }
-    for (old, now) in jubarte::cli::removed_tasks(argv.iter().map(String::as_str)) {
-        eprintln!("{}", jubarte::cli::removed_task_note(old, now));
+    for note in jubarte::cli::notes(&argv) {
+        eprintln!("{note}");
     }
     let quiet = cli.quiet;
     match cli.command {

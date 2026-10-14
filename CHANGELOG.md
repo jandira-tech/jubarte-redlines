@@ -295,6 +295,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   or `whole: true`, Reject All left the comment on nothing. `update_fields`
   beside such an edit is refused, as under `keep`, and both refusals name
   `jubarte convert FILE --update-fields`, not the removed `fields update`.
+- A retired spelling's note was printed only when the run parsed: `compare
+  … --changed-only` with a usage error, or `audit FILE --rules edits`
+  without `--original`, printed the error alone. The note now leads the
+  error on every host (npm's `audit`, which has no `validate`, included).
 - `jubarte revisions x.docx` said only "reading revisions: No such file":
   the removed task's name reads as the first file to compare. A note now
   names `changes` first, on every host.

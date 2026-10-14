@@ -1996,6 +1996,21 @@ pub fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
     }
 }
 
+/// The stderr lines `argv` earns before its run or its usage error: each
+/// retired spelling's note, then each removed task's.
+pub fn notes(argv: &[String]) -> Vec<String> {
+    let argv = || argv.iter().map(String::as_str);
+    retired_spellings(argv())
+        .into_iter()
+        .map(|(old, now)| retired_note(old, now))
+        .chain(
+            removed_tasks(argv())
+                .into_iter()
+                .map(|(old, now)| removed_task_note(old, now)),
+        )
+        .collect()
+}
+
 /// The stderr line a retired spelling prints once.
 pub fn retired_note(old: &str, now: &str) -> String {
     format!("note: {old} is now {now}; {old} is removed in 0.14")
@@ -3167,16 +3182,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     match result {
         Ok(mut value) => {
             value["args"]["quiet"] = quiet.into();
-            let argv = || arguments.iter().map(String::as_str);
-            value["notes"] = retired_spellings(argv())
-                .into_iter()
-                .map(|(old, now)| retired_note(old, now))
-                .chain(
-                    removed_tasks(argv())
-                        .into_iter()
-                        .map(|(old, now)| removed_task_note(old, now)),
-                )
-                .collect();
+            value["notes"] = notes(arguments).into();
             value.to_string()
         }
         Err(error) => match removed_spellings(arguments.iter().map(String::as_str)).first() {
@@ -3189,22 +3195,10 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             None => {
                 let mut value: serde_json::Value =
                     serde_json::from_str(&error_json(&error)).unwrap_or_default();
-                // Help and version are no error: a retired spelling's note
-                // goes with them, as with a parse that succeeds.
-                if !error.use_stderr() {
-                    value["notes"] = retired_spellings(arguments.iter().map(String::as_str))
-                        .into_iter()
-                        .map(|(old, now)| retired_note(old, now))
-                        .collect();
-                } else if let Some(text) = value["text"].as_str() {
-                    // `revisions FILE --json` fails as a compare: say why
-                    // first.
-                    let notes: String = removed_tasks(arguments.iter().map(String::as_str))
-                        .into_iter()
-                        .map(|(old, now)| removed_task_note(old, now) + "\n")
-                        .collect();
-                    value["text"] = (notes + text).into();
-                }
+                // Help, version and usage errors carry the notes too: the
+                // run that fails is the one that needs the new name. Hosts
+                // print them before `text`.
+                value["notes"] = notes(arguments).into();
                 value.to_string()
             }
         },
