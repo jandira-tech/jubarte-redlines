@@ -935,6 +935,10 @@ pub(crate) fn escape_markdown(text: &str) -> String {
             }
             '<' => next.is_some_and(|n| n.is_ascii_alphabetic() || n == '/' || n == '!'),
             '[' => next == Some('^'),
+            // A `]` before `(`, `[` or `:` would close a link, an image, a
+            // reference or a reference definition.
+            ']' => matches!(next, Some('(' | '[' | ':')),
+            '&' => entity_follows(&chars[i + 1..]),
             _ => false,
         };
         if escape {
@@ -943,6 +947,29 @@ pub(crate) fn escape_markdown(text: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// Whether `rest` (the text after a `&`) reads as an entity or character
+/// reference (`copy;`, `#35;`, `#x23;`), which would decode on the way back.
+fn entity_follows(rest: &[char]) -> bool {
+    let body = rest.strip_prefix(&['#']).unwrap_or(rest);
+    let name = body
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .count();
+    name > 0 && body.get(name) == Some(&';')
+}
+
+/// A heading's text with a trailing run of `#` escaped: CommonMark reads a
+/// run of `#` at the end of an ATX heading, after a space or alone, as a
+/// closing sequence and drops it.
+pub(crate) fn escape_closing_hashes(text: &str) -> String {
+    let trimmed = text.trim_end();
+    let body = trimmed.trim_end_matches('#');
+    if body.len() == trimmed.len() || !(body.is_empty() || body.ends_with([' ', '\t'])) {
+        return text.to_string();
+    }
+    format!("{body}\\{}", &text[body.len()..])
 }
 
 /// Escapes a block-opening mark at the start of one line of a paragraph:
@@ -2022,8 +2049,34 @@ mod tests {
             ("a ^b^ c ~d~ e", "a \\^b\\^ c \\~d\\~ e"),
             ("H~2~O 2^10 x^2^ a ~ b ^", "H~2~O 2^10 x^2\\^ a ~ b ^"),
             ("[^1] [x]", "\\[^1] [x]"),
+            // An entity reference would decode on the way back.
+            (
+                "&copy; &#35; &#x23; AT&T & co &;",
+                "\\&copy; \\&#35; \\&#x23; AT&T & co &;",
+            ),
+            // A `]` right before `(`, `[` or `:` would close a link, an
+            // image, a reference or a reference definition.
+            (
+                "[a](b) ![i](p.png) [r]: /u [c][d]",
+                "[a\\](b) ![i\\](p.png) [r\\]: /u [c\\][d]",
+            ),
+            ("[sic] (a) x]", "[sic] (a) x]"),
         ] {
             assert_eq!(escape_markdown(text), escaped, "{text}");
+        }
+    }
+
+    #[test]
+    fn escape_closing_hashes_escapes_a_closing_sequence_only() {
+        for (text, escaped) in [
+            ("C #", "C \\#"),
+            ("#", "\\#"),
+            ("C ##", "C \\##"),
+            ("C#", "C#"),
+            ("C# x", "C# x"),
+            ("plain", "plain"),
+        ] {
+            assert_eq!(escape_closing_hashes(text), escaped, "{text}");
         }
     }
 

@@ -1537,6 +1537,31 @@ fn highlight_and_strike_render_in_the_agent_view() {
     assert_eq!(body(&agent(&back)), view);
 }
 
+#[test]
+fn link_entity_and_heading_syntax_in_text_reads_back_as_text() {
+    // Text that looks like Markdown stays text through a round trip: an
+    // entity reference, a link, an image, a reference definition, and a
+    // heading whose text ends in `#` (a closing sequence otherwise).
+    let p = [
+        r#"<w:p><w:r><w:t>&amp;copy; and &amp;#35; at AT&amp;T</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>see [a](http://b) and ![i](p.png)</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>[r]: /u</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">C #</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>#</w:t></w:r></w:p>"#,
+    ]
+    .concat();
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n\\&copy; and \\&#35; at AT&T\n\n<!-- p1 -->\nsee [a\\](http://b) and ![i\\](p.png)\n\n<!-- p2 -->\n[r\\]: /u\n\n<!-- p3 -->\n# C \\#\n\n<!-- p4 -->\n# \\#\n"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
 const CORE_CT: &str = "application/vnd.openxmlformats-package.core-properties+xml";
 
 fn core(xml: &str) -> Part<'_> {

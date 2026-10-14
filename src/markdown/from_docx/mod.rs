@@ -1596,6 +1596,9 @@ impl Writer<'_> {
                 if let Some((label, _)) = &heading_marker {
                     text = format!("{label} {text}");
                 }
+                if self.agent {
+                    text = agent::escape_closing_hashes(&text);
+                }
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
             } else if let Some(marker) = list_marker {
                 let (marker, _, ilvl) = marker;
