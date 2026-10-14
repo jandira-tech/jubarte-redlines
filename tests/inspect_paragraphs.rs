@@ -110,6 +110,20 @@ fn unsupported_constructs_are_limitations_not_errors() {
     assert!(lim.iter().any(|l| l == "column_break"), "{lim:?}");
 }
 
+/// Word puts a text box in a run as `mc:AlternateContent`; inspect names it
+/// as it does at paragraph level, never `unknown:AlternateContent`.
+#[test]
+fn a_text_box_in_a_run_is_alternate_content() {
+    let body = r#"<w:p><w:r><w:t>host</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r></w:p>"#;
+    let paras = paragraphs(&docx(body)).unwrap();
+    assert_eq!(paras[0].text, "host");
+    let lim = &paras[0].limitations;
+    for want in ["alternate_content", "drawing", "text_box_omitted"] {
+        assert!(lim.iter().any(|l| l == want), "{want} not in {lim:?}");
+    }
+    assert!(!lim.iter().any(|l| l.starts_with("unknown:")), "{lim:?}");
+}
+
 #[test]
 fn text_box_paragraphs_are_omitted_from_the_body_story() {
     let body = r#"<w:p><w:r><w:t>anchor</w:t></w:r><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p><w:r><w:t>inside box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#;

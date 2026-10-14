@@ -42,6 +42,10 @@ pub(crate) struct StoryFact {
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
     pub active: bool,
+    /// Tracked view: the part's insertions, deletions and moves `text` prints
+    /// no tag for (`header1.r3 @AC`), then its formatting changes.
+    pub rev: Vec<String>,
+    pub fmt: Vec<String>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -95,6 +99,12 @@ pub(crate) struct Facts<'a> {
     pub table_styles: Vec<String>,
     /// The body's sections in order; the first one is described in full.
     pub sections: Vec<SectionFact>,
+    /// Tracked view: the changes (`rev`, `fmt`) of the notes no definition
+    /// line shows, such as Word's footnote separators.
+    pub note_changes: (Vec<String>, Vec<String>),
+    /// Tracked view of the whole document: the listed changes no other line
+    /// prints (`r3 @AC in p0`), such as a text box's deleted picture.
+    pub unplaced: Vec<String>,
 }
 
 /// `key: value` padded to 35 columns then `# comment`; a key/value longer
@@ -114,7 +124,8 @@ fn kv(out: &mut String, key_value: &str, comment: Option<&str>) {
 
 /// `value` as a YAML scalar: plain when every YAML reader, 1.1 or 1.2, takes
 /// it back as the same string, else double-quoted (a JSON string is a valid YAML one).
-/// `flow` values sit inside `{…}`, where `,`, `[`, `]`, `{` and `}` end them.
+/// `flow` values sit inside `{…}` or `[…]`, where `,`, `[`, `]`, `{` and `}`
+/// end them, and where libyaml refuses any `:` and a `?` (`@??`).
 pub(crate) fn scalar(value: &str, flow: bool) -> String {
     const RESERVED: [&str; 12] = [
         "true", "false", "yes", "no", "on", "off", "y", "n", "null", "~", ".nan", ".inf",
@@ -129,7 +140,7 @@ pub(crate) fn scalar(value: &str, flow: bool) -> String {
         && !value.contains(": ")
         && !value.contains(" #")
         && !value.ends_with(':')
-        && !(flow && value.contains([',', '[', ']', '{', '}']))
+        && !(flow && value.contains([',', '[', ']', '{', '}', ':', '?']))
         && !RESERVED.contains(&value.to_ascii_lowercase().as_str())
         // One word that opens with a digit, `+` or `.` may be a number, a
         // time (`12:30`, base 60 in YAML 1.1) or a date to some reader.
@@ -723,6 +734,11 @@ fn entry(s: &StoryFact) -> String {
     if !s.active {
         inner.push_str(", inactive");
     }
+    for (key, tags) in [("rev", &s.rev), ("fmt", &s.fmt)] {
+        if !tags.is_empty() {
+            inner.push_str(&format!(", {key}: {}", scalar(&tags.join("; "), true)));
+        }
+    }
     format!("{{{inner}}}")
 }
 
@@ -753,6 +769,15 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
                 ),
             }
         }
+        if !section.title_page
+            && let Some(s) = find("first")
+        {
+            kv(
+                out,
+                &format!("  first: {}", entry(s)),
+                Some("defined, but different first page is off"),
+            );
+        }
         match find("default") {
             Some(s) => kv(out, &format!("  default: {}", entry(s)), None),
             None => kv(out, "  default: none", None),
@@ -773,13 +798,21 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
 
 /// `{p2-p3, headers: {default: {…}}, columns: 2}`: what a later section
 /// changes against the one before it (page setup against the first).
-fn section_entry(section: &SectionFact, previous: &SectionFact, first: &SectionFact) -> String {
+fn section_entry(
+    section: &SectionFact,
+    previous: &SectionFact,
+    first: &SectionFact,
+    handles: Option<&Handles>,
+) -> String {
     let mut parts = vec![format!("p{}-p{}", section.first, section.last)];
     let setup = |s: &SectionFact| s.sect_pr.as_ref().map(page_setup);
     if setup(section) != setup(first)
         && let Some(page) = setup(section)
     {
         parts.push(format!("page: {page}"));
+    }
+    if let Some(tags) = handles.and_then(|h| section_changes(section, h)) {
+        parts.push(format!("fmt: {}", scalar(&tags, true)));
     }
     for kind in ["header", "footer"] {
         let changed: Vec<String> = section
@@ -804,9 +837,72 @@ fn section_entry(section: &SectionFact, previous: &SectionFact, first: &SectionF
     format!("{{{}}}", parts.join(", "))
 }
 
+/// The tracked view's tags for a section's own changes (`w:sectPrChange`):
+/// `r9 @AC`.
+fn section_changes(section: &SectionFact, handles: &Handles) -> Option<String> {
+    let sect = section.sect_pr.as_ref()?;
+    let tags: Vec<String> = sect
+        .children_named("sectPrChange")
+        .map(|change| super::agent::tag_of(change, handles))
+        .collect();
+    (!tags.is_empty()).then(|| super::agent::format_tags(&tags))
+}
+
+/// `Normal: styles.r0 @AS, Heading1: styles.r3 @AS`: the styles part's
+/// tracked changes by the style that holds them (`docDefaults` for the
+/// document defaults), in the tracked view.
+fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for holder in styles.elements() {
+        let name = match holder.local() {
+            "docDefaults" => "docDefaults".to_string(),
+            "style" => match holder.attr("styleId") {
+                Some(id) => id.to_string(),
+                None => continue,
+            },
+            _ => continue,
+        };
+        let mut carriers = Vec::new();
+        collect(holder, &mut carriers);
+        let mut tags: Vec<String> = Vec::new();
+        for carrier in carriers {
+            let tag = format!("styles#{}", super::agent::tag_of(carrier, handles));
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+        if !tags.is_empty() {
+            found.push((name, super::agent::format_tags(&tags)));
+        }
+    }
+    found
+}
+
+/// The elements under `e` that record a tracked change.
+fn collect<'e>(e: &'e Element, out: &mut Vec<&'e Element>) {
+    for child in e.elements() {
+        let local = child.local();
+        if (local.ends_with("Change") || matches!(local, "ins" | "del"))
+            && child.attr("id").is_some()
+        {
+            out.push(child);
+            continue;
+        }
+        collect(child, out);
+    }
+}
+
 fn part_two(out: &mut String, f: &Facts) {
-    if let Some(sect) = f.sections.first().and_then(|s| s.sect_pr.as_ref()) {
-        kv(out, &format!("page: {}", page_setup(sect)), None);
+    if let Some(first) = f.sections.first()
+        && let Some(sect) = first.sect_pr.as_ref()
+    {
+        let mut page = page_setup(sect);
+        if f.resolved.is_none()
+            && let Some(tags) = section_changes(first, f.handles)
+        {
+            page.push_str(&format!("; fmt {tags}"));
+        }
+        kv(out, &format!("page: {page}"), None);
     }
     out.push_str("styles:\n");
     let default = f.default_style.unwrap_or("Normal");
@@ -853,6 +949,49 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         ),
     }
+    if f.resolved.is_none()
+        && let Some(styles) = f.styles
+    {
+        let changes = style_changes(styles, f.handles);
+        if !changes.is_empty() {
+            let list: Vec<String> = changes
+                .iter()
+                .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
+                .collect();
+            kv(
+                out,
+                &format!("  changes: {{{}}}", list.join(", ")),
+                Some("tracked changes to the styles"),
+            );
+        }
+    }
+    let (rev, fmt) = &f.note_changes;
+    let clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]
+        .into_iter()
+        .filter(|(_, tags)| !tags.is_empty())
+        .map(|(key, tags)| format!("{key}: {}", scalar(&tags.join("; "), true)))
+        .collect();
+    if !clauses.is_empty() {
+        kv(
+            out,
+            &format!("notes: {{{}}}", clauses.join(", ")),
+            Some("changes in notes the body does not show (separators)"),
+        );
+    }
+    if !f.unplaced.is_empty() {
+        kv(
+            out,
+            &format!(
+                "unplaced: [{}]",
+                f.unplaced
+                    .iter()
+                    .map(|e| scalar(e, true))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Some("changes no other line shows (text boxes, Word's Fallback copies)"),
+        );
+    }
     if let Some(first) = f.sections.first() {
         first_section_stories(out, first);
         if f.sections.len() > 1 {
@@ -863,7 +1002,12 @@ fn part_two(out: &mut String, f: &Facts) {
                     &format!(
                         "  {}: {}",
                         i + 1,
-                        section_entry(section, &f.sections[i - 1], first)
+                        section_entry(
+                            section,
+                            &f.sections[i - 1],
+                            first,
+                            f.resolved.is_none().then_some(f.handles)
+                        )
                     ),
                     None,
                 );
@@ -879,22 +1023,43 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
     super::agent::paragraphs(root)
 }
 
+/// How [`story_text`] reads a header or footer's tracked changes.
+#[derive(Clone, Copy)]
+pub(crate) enum StoryView<'a> {
+    /// The agent's tracked view, with the handles and the part's stem:
+    /// `{++DRAFT++}{>>header1.r1 @AC<<}`, `{--old--}{>>header1.r2 @AC<<}`;
+    /// document text that reads like CriticMarkup is escaped.
+    Tagged(&'a super::agent::Handles, &'a str),
+    /// Every change accepted: inserted and moved-to runs count, deleted and
+    /// moved-from runs do not.
+    Accept,
+    /// Every change rejected: deleted and moved-from runs count, inserted
+    /// and moved-to runs do not.
+    Reject,
+}
+
 /// A header/footer paragraph's text with fields as `{PAGE}`: field codes
 /// print, cached results do not, and a field nested in another prints as the
 /// outer one. Line breaks are newlines. Runs inside hyperlinks, content
-/// controls, smart tags, custom XML and insertions count; deleted runs do
-/// not. With `agent` (the handles and the part's stem) tracked changes show
-/// as the tracked view shows them: `{++DRAFT++}{>>header1.r1 @AC<<}`, a
-/// deletion `{--old--}{>>header1.r2 @AC<<}`.
-pub(crate) fn story_text(p: &Element, agent: Option<(&super::agent::Handles, &str)>) -> String {
+/// controls, smart tags and custom XML count; tracked changes read as
+/// `view` says.
+pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
     struct State<'a> {
         out: String,
         /// Open complex fields, outermost first: the instruction so far and
         /// whether the field has reached its result.
         fields: Vec<(String, bool)>,
-        agent: Option<(&'a super::agent::Handles, &'a str)>,
-        /// Inside a tracked deletion the agent view shows.
+        view: StoryView<'a>,
+        /// Inside deleted text the view shows.
         deleting: bool,
+    }
+    /// `ins`/`moveTo` → `Some(true)`, `del`/`moveFrom` → `Some(false)`.
+    fn inserting(local: &str) -> Option<bool> {
+        match local {
+            "ins" | "moveTo" => Some(true),
+            "del" | "moveFrom" => Some(false),
+            _ => None,
+        }
     }
     fn code(instr: &str) -> String {
         let name = instr
@@ -908,29 +1073,43 @@ pub(crate) fn story_text(p: &Element, agent: Option<(&super::agent::Handles, &st
         for run in parent.elements() {
             match run.local() {
                 "fldSimple" => s.out.push_str(&code(run.attr("instr").unwrap_or(""))),
-                "ins" | "del" if s.agent.is_some() && s.fields.is_empty() => {
-                    let Some((handles, stem)) = s.agent else {
-                        continue;
+                local if inserting(local).is_some() => {
+                    let inserted = inserting(local) == Some(true);
+                    let tagged = match s.view {
+                        StoryView::Tagged(handles, stem) if s.fields.is_empty() => {
+                            Some((handles, stem))
+                        }
+                        _ => None,
                     };
+                    let shown = match s.view {
+                        StoryView::Tagged(..) => tagged.is_some() || inserted,
+                        StoryView::Accept => inserted,
+                        StoryView::Reject => !inserted,
+                    };
+                    if !shown {
+                        continue;
+                    }
                     let start = s.out.len();
-                    let deleting = std::mem::replace(&mut s.deleting, run.local() == "del");
+                    let deleting = std::mem::replace(&mut s.deleting, !inserted);
                     walk(run, s);
                     s.deleting = deleting;
-                    let text = s.out.split_off(start);
-                    if !text.is_empty() {
-                        let (open, close) = if run.local() == "ins" {
-                            ("{++", "++}")
-                        } else {
-                            ("{--", "--}")
-                        };
-                        let tag = format!("{stem}#{}", super::agent::tag_of(run, handles));
-                        s.out.push_str(&format!(
-                            "{open}{text}{close}{{>>{}<<}}",
-                            super::agent::format_tag(&tag)
-                        ));
+                    if let Some((handles, stem)) = tagged {
+                        let text = s.out.split_off(start);
+                        if !text.is_empty() {
+                            let (open, close) = if inserted {
+                                ("{++", "++}")
+                            } else {
+                                ("{--", "--}")
+                            };
+                            let tag = format!("{stem}#{}", super::agent::tag_of(run, handles));
+                            s.out.push_str(&format!(
+                                "{open}{text}{close}{{>>{}<<}}",
+                                super::agent::format_tag(&tag)
+                            ));
+                        }
                     }
                 }
-                "hyperlink" | "smartTag" | "customXml" | "ins" => walk(run, s),
+                "hyperlink" | "smartTag" | "customXml" => walk(run, s),
                 "sdt" => {
                     if let Some(content) = run.child("sdtContent") {
                         walk(content, s);
@@ -961,8 +1140,8 @@ pub(crate) fn story_text(p: &Element, agent: Option<(&super::agent::Handles, &st
                                 }
                             }
                             _ if !s.fields.is_empty() => {}
-                            "t" => s.out.push_str(&child.text()),
-                            "delText" if s.deleting => s.out.push_str(&child.text()),
+                            "t" => s.push_text(&child.text()),
+                            "delText" if s.deleting => s.push_text(&child.text()),
                             "tab" => s.out.push('\t'),
                             "br" | "cr" => s.out.push('\n'),
                             _ => {}
@@ -973,10 +1152,19 @@ pub(crate) fn story_text(p: &Element, agent: Option<(&super::agent::Handles, &st
             }
         }
     }
+    impl State<'_> {
+        /// Document text; the tagged view escapes what reads like a mark.
+        fn push_text(&mut self, text: &str) {
+            match self.view {
+                StoryView::Tagged(..) => self.out.push_str(&super::critic::escape(text)),
+                _ => self.out.push_str(text),
+            }
+        }
+    }
     let mut s = State {
         out: String::new(),
         fields: Vec::new(),
-        agent,
+        view,
         deleting: false,
     };
     walk(p, &mut s);
@@ -1048,8 +1236,8 @@ mod tests {
         ));
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0], None), "{PAGE}");
-        assert_eq!(story_text(paragraphs[1], None), "");
+        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "{PAGE}");
+        assert_eq!(story_text(paragraphs[1], StoryView::Accept), "");
     }
 
     #[test]
@@ -1058,7 +1246,7 @@ mod tests {
             r#"<w:p><w:hyperlink><w:r><w:t>Page </w:t></w:r></w:hyperlink><w:sdt><w:sdtContent>{PAGE_RUNS}</w:sdtContent></w:sdt><w:ins><w:r><w:t> of </w:t></w:r></w:ins><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:fldSimple w:instr=" numpages "><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], None),
+            story_text(story_paragraphs(&root)[0], StoryView::Accept),
             "Page {PAGE} of {NUMPAGES}"
         );
     }
@@ -1072,8 +1260,8 @@ mod tests {
         );
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0], None), "");
-        assert_eq!(story_text(paragraphs[1], None), "body");
+        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "");
+        assert_eq!(story_text(paragraphs[1], StoryView::Accept), "body");
     }
 
     /// pi review r392 F1/F6: values a YAML 1.1 or 1.2 reader takes as a
@@ -1109,7 +1297,7 @@ mod tests {
             r#"<w:p><w:r><w:t>line one</w:t><w:br/><w:t>line two</w:t><w:cr/><w:t>three</w:t></w:r></w:p>"#,
         );
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], None),
+            story_text(story_paragraphs(&root)[0], StoryView::Accept),
             "line one\nline two\nthree"
         );
     }
@@ -1122,7 +1310,7 @@ mod tests {
             r#"<w:p><w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF </w:instrText></w:r>{PAGE_RUNS}<w:r><w:instrText xml:space="preserve"> > 1 "more" "" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>more</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t> end</w:t></w:r></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], None),
+            story_text(story_paragraphs(&root)[0], StoryView::Accept),
             "Page {IF} end"
         );
     }

@@ -1275,6 +1275,40 @@ fn load_stories(opened: &mut Opened) -> Result<Loaded, EditError> {
     })
 }
 
+/// The long paragraph id each of `ids` names in `docx`, as `edit -p` reads
+/// it on a document without tracked changes to settle: `p3` → `body:p:3`,
+/// `header1.p1` → `header1:p:1`, `t0.row1.cell2[.p1]` (or 0.12's
+/// `t0.r1.c2`) → that cell's paragraph. A long id comes back as given. An
+/// id that names no table cell or story of `docx`, or is no paragraph id,
+/// gives its `Err` message; a body or story index is not checked against
+/// the paragraph count.
+pub fn long_paragraph_ids(
+    docx: &[u8],
+    ids: &[&str],
+) -> Result<Vec<Result<String, String>>, EditError> {
+    let mut opened = Opened::open(docx).map_err(open_error)?;
+    let Loaded {
+        stories,
+        paragraph_nodes,
+        paragraph_story,
+    } = load_stories(&mut opened)?;
+    let resolver = origin::Ids {
+        dom: &opened.dom,
+        body: opened.body,
+        story_ids: stories.iter().map(|s| s.id.as_str()).collect(),
+        paragraph_nodes: &paragraph_nodes,
+        paragraph_story: &paragraph_story,
+    };
+    Ok(ids
+        .iter()
+        .map(|id| match resolver.long_id(id) {
+            Some(found) => found,
+            None if id.contains(":p:") => Ok(id.to_string()),
+            None => Err(format!("{id} is not a paragraph id")),
+        })
+        .collect())
+}
+
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {
     EditError {
         code: code.to_string(),

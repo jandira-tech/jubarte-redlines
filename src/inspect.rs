@@ -932,6 +932,21 @@ fn walk_run(
         let Some(name) = dom.name(child) else {
             continue;
         };
+        // Word's text boxes and shapes sit in a run as `mc:AlternateContent`:
+        // the same construct `walk_container` names.
+        if name.namespace_name() == MC::URI {
+            out.limitations.insert("alternate_content".into());
+            if ["drawing", "pict", "object"]
+                .iter()
+                .any(|local| !dom.descendants(child, Some(&W::name(local))).is_empty())
+            {
+                out.limitations.insert("drawing".into());
+            }
+            if !dom.descendants(child, Some(&W::txbx_content())).is_empty() {
+                out.limitations.insert("text_box_omitted".into());
+            }
+            continue;
+        }
         if name.namespace_name() != W::URI {
             out.limitations
                 .insert(format!("unknown:{}", name.local_name()));

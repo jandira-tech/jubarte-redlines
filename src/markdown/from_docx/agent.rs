@@ -27,7 +27,8 @@ pub(crate) struct Handles {
     /// Author name as stored → handle (`Ann Counsel` → `AC`).
     pub by_author: HashMap<String, String>,
     /// Authors in first-appearance order: revision authors in document
-    /// order, then comment-only authors in part order.
+    /// order, then comment-only authors in part order, then authors only the
+    /// styles' changes name.
     pub order: Vec<String>,
     /// Author → every `w:date` on their marks and comments.
     pub dates: HashMap<String, BTreeSet<String>>,
@@ -149,14 +150,14 @@ pub(crate) fn join_tags(parts: &[String]) -> String {
 /// `header1.r2 @JD`; `1@AC|2@JD` → `r1 @AC; r2 @JD`. An id the short form
 /// cannot spell prints its long id, one per id: every printed id is one
 /// `accept --id` takes. A mark without a `w:id` (only a malformed file has
-/// one) prints `r?`: it names no change, so no id reads it back.
+/// one) prints `noid`: it names no change, and no id parser reads it.
 pub(crate) fn format_tag(tag: &str) -> String {
     tag.split('|')
         .map(|one| {
             let (story, ids, handle) = split_tag(one);
             if ids.split('+').any(|w| w == "?") {
                 let story = story.map_or(String::new(), |s| format!("{s}."));
-                return format!("{story}r{ids} @{handle}");
+                return format!("{story}noid @{handle}");
             }
             let changes: Vec<crate::ids::ChangeId> = ids
                 .split('+')
@@ -314,12 +315,13 @@ pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<Str
     (ins, del)
 }
 
-/// Tags of the formatting changes recorded in a paragraph, a text box Word
-/// stores twice read once.
+/// Tags of the formatting changes recorded in a paragraph (its runs' and
+/// its own properties, its list number), a text box Word stores twice read
+/// once.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
     fn walk(e: &Element, handles: &Handles, out: &mut Vec<String>) {
         for child in shown_children(e) {
-            if child.is("rPrChange") || child.is("pPrChange") {
+            if child.is("rPrChange") || child.is("pPrChange") || child.is("numberingChange") {
                 out.push(tag_of(child, handles));
             } else {
                 walk(child, handles, out);
@@ -460,12 +462,22 @@ fn shown_children(e: &Element) -> Vec<&Element> {
     }
 }
 
+/// Whether `e` holds text the view shows: Word's Fallback copy of a text
+/// box is not shown.
+fn shows_text(e: &Element) -> bool {
+    shown_children(e).into_iter().any(|c| {
+        matches!(c.local(), "t" | "delText" | "instrText" | "delInstrText") || shows_text(c)
+    })
+}
+
 fn walk_revision_authors(
     e: &Element,
     out: &mut Vec<String>,
     dates: &mut HashMap<String, BTreeSet<String>>,
 ) {
-    if (is_revision(e.local()) || e.local().ends_with("PrChange"))
+    // Every kind `jubarte changes` lists: marks, cell merges, and
+    // formatting (`*PrChange`, `numberingChange`, `tblGridChange`).
+    if (is_revision(e.local()) || e.local() == "cellMerge" || e.local().ends_with("Change"))
         && let Some(author) = e.attr("author")
     {
         if !out.iter().any(|a| a == author) {
@@ -484,13 +496,14 @@ fn walk_revision_authors(
 }
 
 /// Authors of revisions (document order, then the other stories: footnotes,
-/// endnotes, headers and footers) then of comments (comment order),
-/// each with a handle: the comment `w:initials` that author wrote, else the
+/// endnotes, headers and footers) then of comments (comment order), then of
+/// the styles' changes, each with a handle: the comment `w:initials` that author wrote, else the
 /// uppercase initials of the name's words; a collision appends 2, 3, ….
 pub(crate) fn handles(
     document: &Element,
     stories: &[&Element],
     comments: Option<&Element>,
+    styles: Option<&Element>,
 ) -> Handles {
     let mut order = Vec::new();
     let mut dates: HashMap<String, BTreeSet<String>> = HashMap::new();
@@ -519,6 +532,9 @@ pub(crate) fn handles(
                     .or_insert_with(|| i.to_string());
             }
         }
+    }
+    if let Some(styles) = styles {
+        walk_revision_authors(styles, &mut order, &mut dates);
     }
     let mut by_author = HashMap::new();
     let mut taken: HashSet<String> = HashSet::new();
@@ -590,6 +606,222 @@ pub(crate) struct LineFacts<'a> {
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 empty, break-ins r3 @AC -->`.
     pub empty: bool,
+    /// Tracked view: the paragraph's changes its text prints no tag for
+    /// (see [`unshown_tags`]).
+    pub unshown: &'a [String],
+}
+
+/// The tags of the insertions, deletions and moves in paragraph `p` whose
+/// id no note in `shown` (the paragraph's rendered text) prints: a deleted
+/// object, break, field character or empty mark has no text to wrap. The
+/// tracked view's id line names them (`rev r12 @AC`), so every change
+/// reads from the view. The paragraph mark's own changes (`break-ins`,
+/// `break-del`) and formatting (`fmt`) have their own clauses; a text box
+/// renders its own blocks, and Word's Fallback copy is the Choice's twin.
+pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<String> {
+    fn walk(e: &Element, handles: &Handles, out: &mut Vec<(String, String)>) {
+        for child in shown_children(e) {
+            match child.local() {
+                "pPr" | "txbxContent" => {}
+                // A formatting change's own history (`w:rPrChange/w:rPr/w:del`)
+                // is no change `jubarte changes` lists.
+                local if local.ends_with("PrChange") => {}
+                "ins" | "del" | "moveFrom" | "moveTo" => {
+                    if let Some(id) = child.attr("id") {
+                        out.push((id.to_string(), tag_of(child, handles)));
+                    }
+                    walk(child, handles, out);
+                }
+                _ => walk(child, handles, out),
+            }
+        }
+    }
+    let mut carriers = Vec::new();
+    walk(p, handles, &mut carriers);
+    if carriers.is_empty() {
+        return Vec::new();
+    }
+    let printed = printed_wids(shown, "body");
+    let mut unshown: Vec<String> = Vec::new();
+    for (id, tag) in carriers {
+        if !printed.contains(&id) && !unshown.contains(&tag) {
+            unshown.push(tag);
+        }
+    }
+    unshown
+}
+
+/// The `w:id`s of `story`'s changes the tag notes in `shown` print
+/// (`{>>r12 @AC<<}`, `{>>header1.r1+2 @AC<<}`); a comment's note holds the
+/// author's words and no tag.
+fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
+    let mut printed = HashSet::new();
+    for (at, _) in shown.match_indices("{>>") {
+        let note = &shown[at + 3..];
+        let note = &note[..note.find("<<}").unwrap_or(note.len())];
+        if comment_word(note.split(' ').next().unwrap_or("")).is_some() {
+            continue;
+        }
+        for tag in note.split("; ") {
+            let token = tag.split(' ').next().unwrap_or("");
+            if let Ok(ids) = crate::ids::parse_change_ids(token) {
+                printed.extend(
+                    ids.into_iter()
+                        .filter(|id| id.story == story)
+                        .map(|id| id.wid),
+                );
+            }
+        }
+    }
+    printed
+}
+
+/// The long ids (`body:rev:12`) of every change the view prints a tag for:
+/// an id, or ids joined by `+`, followed by an `@` handle. Only where the
+/// writer prints tags: the body's `{>>…<<}` notes (not a comment's, which
+/// holds the author's words) and `<!-- … -->` lines, and the header without
+/// its headers' and footers' `text:` values. Document text that reads like
+/// a tag (`ping r5 @ops`) prints no change.
+pub(crate) fn printed_change_ids(head: &str, body: &str) -> HashSet<String> {
+    let mut spans: Vec<String> = Vec::new();
+    tag_spans(body, true, &mut spans);
+    for line in head.lines() {
+        let (rest, texts) = split_story_text(line);
+        spans.push(rest);
+        for text in texts {
+            tag_spans(&text, false, &mut spans);
+        }
+    }
+    let mut printed = HashSet::new();
+    for span in &spans {
+        let words: Vec<&str> = span
+            .split(|c: char| c.is_whitespace() || ",;{}<>()[]\"".contains(c))
+            .filter(|w| !w.is_empty())
+            .collect();
+        printed.extend(
+            words
+                .windows(2)
+                .filter(|pair| pair[1].len() > 1 && pair[1].starts_with('@'))
+                .filter_map(|pair| crate::ids::parse_change_ids(pair[0]).ok())
+                .flatten()
+                .map(|id| id.long()),
+        );
+    }
+    printed
+}
+
+/// The tag notes (`{>>r5 @AC<<}`, a comment's skipped) in `text`, and with
+/// `lines` its `<!-- … -->` lines' contents.
+fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
+    let pairs: &[(&str, &str)] = if lines {
+        &[("{>>", "<<}"), ("<!-- ", " -->")]
+    } else {
+        &[("{>>", "<<}")]
+    };
+    for &(open, close) in pairs {
+        let mut rest = text;
+        while let Some(at) = rest.find(open) {
+            let after = &rest[at + open.len()..];
+            let end = after.find(close).unwrap_or(after.len());
+            let span = &after[..end];
+            let comment =
+                open == "{>>" && comment_word(span.split(' ').next().unwrap_or("")).is_some();
+            if !comment {
+                out.push(span.to_string());
+            }
+            rest = &after[end..];
+        }
+    }
+}
+
+/// A header line without its `text: …` values (a header's or footer's own
+/// words, which keep their tag notes), and those values: a plain value runs
+/// to the next `,` or `}`, a quoted one to its closing quote.
+fn split_story_text(line: &str) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(line.len());
+    let mut texts = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.find("text: ") {
+        out.push_str(&rest[..at]);
+        let value = &rest[at + "text: ".len()..];
+        let end = if let Some(quoted) = value.strip_prefix('"') {
+            let mut escaped = false;
+            let close = quoted
+                .char_indices()
+                .find(|&(_, c)| {
+                    let done = c == '"' && !escaped;
+                    escaped = c == '\\' && !escaped;
+                    done
+                })
+                .map_or(quoted.len(), |(i, _)| i + 1);
+            1 + close
+        } else {
+            value.find([',', '}']).unwrap_or(value.len())
+        };
+        texts.push(value[..end].to_string());
+        rest = &value[end..];
+    }
+    out.push_str(rest);
+    (out, texts)
+}
+
+/// A change on the header's `unplaced:` line: `r3 @AC in p0`.
+pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles) -> String {
+    let handle = handles.of(change.author.as_deref()).unwrap_or("??");
+    match change.paragraph.as_deref() {
+        Some(p) => format!(
+            "{} @{handle} in {}",
+            change.r#ref,
+            crate::ids::short_paragraph(p)
+        ),
+        None => format!("{} @{handle}", change.r#ref),
+    }
+}
+
+/// A whole story part's changes (a header, a footer, one note) whose id
+/// `shown` prints no tag for, as printed tags: insertions, deletions and
+/// moves (`rev`), then formatting (`fmt`). The view shows a header by one
+/// paragraph and a note by its text, so these name the rest.
+pub(crate) fn story_unshown(
+    root: &Element,
+    story: &str,
+    shown: &str,
+    handles: &Handles,
+) -> (Vec<String>, Vec<String>) {
+    fn walk<'e>(e: &'e Element, out: &mut Vec<(bool, &'e Element)>) {
+        for child in shown_children(e) {
+            let local = child.local();
+            if matches!(local, "ins" | "del" | "moveFrom" | "moveTo") {
+                out.push((false, child));
+            } else if local.ends_with("PrChange")
+                || matches!(local, "tblGridChange" | "numberingChange")
+            {
+                out.push((true, child));
+                continue;
+            } else if matches!(local, "cellIns" | "cellDel" | "cellMerge") {
+                out.push((false, child));
+            }
+            walk(child, out);
+        }
+    }
+    let mut carriers = Vec::new();
+    walk(root, &mut carriers);
+    let printed = printed_wids(shown, story);
+    let (mut rev, mut fmt): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for (formatting, carrier) in carriers {
+        let Some(id) = carrier.attr("id") else {
+            continue;
+        };
+        if printed.contains(id) {
+            continue;
+        }
+        let tag = format_tag(&format!("{story}#{}", tag_of(carrier, handles)));
+        let list = if formatting { &mut fmt } else { &mut rev };
+        if !list.contains(&tag) {
+            list.push(tag);
+        }
+    }
+    (rev, fmt)
 }
 
 /// An empty paragraph that still says something the `pN empty` run would
@@ -900,6 +1132,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
+    if !f.resolved && !f.unshown.is_empty() {
+        clauses.push(format!("rev {}", format_tags(f.unshown)));
+    }
     if f.resolved {
         let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();
         if !tags.is_empty() {
@@ -985,8 +1220,26 @@ pub(crate) fn table_line(
     let mut break_ins: Vec<String> = Vec::new();
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
+    let mut fmt: Vec<String> = Vec::new();
     let mut held: Vec<String> = Vec::new();
     let mut held_ids: Vec<String> = Vec::new();
+    // The tracked view names the table's own property changes (Word's
+    // `tblPrChange`, `tblGridChange`, `trPrChange`, `tblPrExChange`,
+    // `tcPrChange`) and its cell insertions, deletions and merges, where
+    // they sit: the cells' text shows none of them.
+    let changes_in = |props: Option<&Element>, at: &str, out: &mut Vec<String>| {
+        for change in props
+            .into_iter()
+            .flat_map(|e| e.elements())
+            .filter(|c| c.local().ends_with("Change"))
+        {
+            out.push(format!("{}{at}", format_tag(&tag_of(change, handles))));
+        }
+    };
+    if !resolved {
+        changes_in(tbl.child("tblPr"), "", &mut fmt);
+        changes_in(tbl.child("tblGrid"), "", &mut fmt);
+    }
     for (r, tr) in rows.iter().enumerate() {
         let mut range: Option<(usize, usize)> = None;
         if resolved {
@@ -995,6 +1248,22 @@ pub(crate) fn table_line(
                     .into_iter()
                     .map(|(_, tag)| format!("{} in t{t}.row{r}", format_tag(&tag))),
             );
+        } else {
+            let at = format!(" in t{t}.row{r}");
+            changes_in(tr.child("trPr"), &at, &mut fmt);
+            changes_in(tr.child("tblPrEx"), &at, &mut fmt);
+            // A row's insertion or deletion tags its cells' text; a row
+            // with no text names it here.
+            if !shows_text(tr) {
+                for mark in tr
+                    .child("trPr")
+                    .into_iter()
+                    .flat_map(|e| e.elements())
+                    .filter(|e| matches!(e.local(), "ins" | "del"))
+                {
+                    revs.push(format!("{}{at}", format_tag(&tag_of(mark, handles))));
+                }
+            }
         }
         for (c, tc) in super::row_cells(tr).enumerate() {
             if resolved {
@@ -1003,6 +1272,17 @@ pub(crate) fn table_line(
                         .into_iter()
                         .map(|(_, tag)| format!("{} in t{t}.row{r}.cell{c}", format_tag(&tag))),
                 );
+            } else {
+                let at = format!(" in t{t}.row{r}.cell{c}");
+                let props = tc.child("tcPr");
+                changes_in(props, &at, &mut fmt);
+                for cell_change in props
+                    .into_iter()
+                    .flat_map(|e| e.elements())
+                    .filter(|e| matches!(e.local(), "cellIns" | "cellDel" | "cellMerge"))
+                {
+                    revs.push(format!("{}{at}", format_tag(&tag_of(cell_change, handles))));
+                }
             }
             if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
                 merged = true;
@@ -1026,6 +1306,14 @@ pub(crate) fn table_line(
                         stamped_revs(p)
                             .into_iter()
                             .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
+                    );
+                } else {
+                    // A cell's paragraph has no id line to carry its own
+                    // formatting changes.
+                    fmt.extend(
+                        format_change_tags(p, handles)
+                            .iter()
+                            .map(|t| format!("{} in p{i}", format_tag(t))),
                     );
                 }
                 let ids: Vec<String> = comments.map_or_else(Vec::new, |known| {
@@ -1086,6 +1374,9 @@ pub(crate) fn table_line(
     }
     if !revs.is_empty() {
         clauses.push(format!("rev {}", revs.join("; ")));
+    }
+    if !fmt.is_empty() {
+        clauses.push(format!("fmt {}", fmt.join("; ")));
     }
     if !held.is_empty() {
         clauses.push(format!("comments {}", held.join("; ")));
@@ -1381,18 +1672,22 @@ fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, Strin
 /// mark clause on its id or table line (`in c5` for a block inside a
 /// comment range whose note is elsewhere).
 fn is_marked(block: &str) -> bool {
-    let first = id_line_of(block);
-    block.contains("{>>")
-        || [
-            " rev ",
-            " comments ",
-            " in c",
-            " break-ins ",
-            " break-del ",
-            " fmt ",
-        ]
-        .iter()
-        .any(|key| first.contains(key))
+    block.contains("{>>") || has_mark_clause(id_line_of(block))
+}
+
+/// Whether an id or table line holds a mark clause: `rev`, `fmt`,
+/// `break-ins` or `break-del` followed by a tag (`r3 @AC`), or `comments`
+/// or `in` followed by a comment id (`c5`). A style or a list label that
+/// reads `rev` is not one.
+fn has_mark_clause(line: &str) -> bool {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    words
+        .windows(3)
+        .any(|w| matches!(w[0], "rev" | "fmt" | "break-ins" | "break-del") && w[2].starts_with('@'))
+        || words.windows(2).any(|w| {
+            matches!(w[0], "comments" | "in")
+                && comment_word(w[1].trim_end_matches([',', ';'])).is_some()
+        })
 }
 
 /// The selected blocks of `body` joined back, and the `range:` text. A
@@ -1596,6 +1891,35 @@ mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
 
+    /// pi review of Task 5 F4: a clause key is a mark only with its tag or
+    /// comment id after it, so a style or list label reading `rev` keeps no
+    /// block under `--changed`.
+    #[test]
+    fn mark_clauses_need_a_tag_or_a_comment_id() {
+        for marked in [
+            "<!-- p0 rev r1 @AC -->",
+            "<!-- p3 Quote, fmt r5 @AC; r6 @AC -->",
+            "<!-- p5 comments c5 c6 -->",
+            "<!-- p1 comments #c5 -->",
+            "<!-- p2 in c9 -->",
+            "<!-- p4 empty, break-ins r3 @AC -->",
+            "<!-- t0 2x2, cells p0-p3 by row, fmt r12 @AS in t0.row1 -->",
+            "<!-- t0 1x2, cells p0-p1 by row, comments c9 in p1 -->",
+        ] {
+            assert!(has_mark_clause(marked), "{marked}");
+        }
+        for plain in [
+            "<!-- p0 rev -->",
+            "<!-- p0 fmt, justify -->",
+            "<!-- p0 comments -->",
+            "<!-- p0 num \"See rev 3\" -->",
+            "<!-- p0 in -->",
+            "<!-- t0 1x1, cells p0-p0 by row -->",
+        ] {
+            assert!(!has_mark_clause(plain), "{plain}");
+        }
+    }
+
     /// CodeRabbit #392: a note inserted or deleted with its reference
     /// carries its label inside the mark.
     #[test]
@@ -1714,7 +2038,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:bookmarkStart w:id="9" w:name="_b"/><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t> u </w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -1728,7 +2052,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>a</w:t></w:r></w:ins><w:r><w:t> </w:t></w:r><w:del w:id="1" w:author="John Doe"><w:r><w:delText>b</w:delText></w:r></w:del></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         assert_eq!(handles.by_author["Ann Counsel"], "AC");
         assert_eq!(handles.by_author["John Doe"], "JD");
         let p = d.child("body").unwrap().child("p").unwrap();
@@ -1751,8 +2075,9 @@ mod tests {
             format_tag("Header_1#4+5@AC"),
             "Header_1:rev:4 @AC; Header_1:rev:5 @AC"
         );
-        assert_eq!(format_tag("?@??"), "r? @??");
-        assert_eq!(format_tag("footnotes#?@AC"), "footnotes.r? @AC");
+        assert_eq!(format_tag("?@??"), "noid @??");
+        assert_eq!(format_tag("footnotes#?@AC"), "footnotes.noid @AC");
+        assert!(crate::ids::parse_change_ids("noid").is_err());
         assert_eq!(handle_of("1+2@AC"), Some("AC"));
         assert_eq!(handle_of("header1#1@AC"), Some("AC"));
         assert_eq!(
@@ -1771,7 +2096,7 @@ mod tests {
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/><w:ins w:id="1" w:author="Al Cooper" w:date="2026-10-02T08:00:00Z"/><w:ins w:id="2" w:author="Al Cooper" w:date="2026-10-03T08:30:00Z"/></w:p>"#,
         );
         let comments = parse_xml(format!(r#"<w:comments {W}><w:comment w:id="5" w:author="Arthur Souza Rodrigues" w:initials="AS" w:date="2026-10-09T16:13:00Z"/><w:comment w:id="6" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:comments>"#).as_bytes()).unwrap();
-        let handles = handles(&d, &[], Some(&comments));
+        let handles = handles(&d, &[], Some(&comments), None);
         assert_eq!(
             handles.order,
             ["Ann Counsel", "Al Cooper", "Arthur Souza Rodrigues"]
@@ -1796,7 +2121,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permStart w:id="30"/><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permEnd w:id="30"/></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
@@ -1815,7 +2140,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:pPr><w:pPrChange w:id="1" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="2" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         assert_eq!(format_change_tags(p, &handles), ["1@AC", "2@AC"]);
     }

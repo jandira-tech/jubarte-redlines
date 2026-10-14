@@ -407,6 +407,36 @@ fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_m
     assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged cells, break-ins r12 @AC in p1 -->\n"), "{out}");
 }
 
+/// The ids round trip (Task 5b): a table's own property changes and a
+/// cell's insertion show nowhere in the cells' text, so the tracked view's
+/// table line names each where it sits; the resolved views have applied
+/// them.
+#[test]
+fn table_line_names_the_tables_own_changes() {
+    // A cell's paragraph has no id line: the table line names its
+    // formatting changes too (`r6 @AC in p2`).
+    let a = r#"w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z""#;
+    let tbl = format!(
+        r#"<w:tbl><w:tblPr><w:jc w:val="center"/><w:tblPrChange w:id="1" {a}><w:tblPr/></w:tblPrChange></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/><w:tblGridChange w:id="2"><w:tblGrid><w:gridCol w:w="8000"/></w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:trPr><w:trPrChange w:id="3" {a}><w:trPr/></w:trPrChange></w:trPr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcPrChange w:id="4" {a}><w:tcPr/></w:tcPrChange></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:jc w:val="right"/><w:pPrChange w:id="6" {a}><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="7" {a}><w:rPr/></w:rPrChange></w:rPr><w:t>c</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellIns w:id="5" {a}/></w:tcPr><w:p><w:r><w:t>d</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+    );
+    let bytes = docx(&tbl);
+    let out = body(&agent(&bytes)).to_string();
+    assert!(
+        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
+        "{out}"
+    );
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.r#ref)
+        .collect();
+    assert_eq!(listed, ["r1", "r2", "r3", "r4", "r6", "r7", "r5"]);
+    for track_changes in [TrackChanges::Accept, TrackChanges::Reject] {
+        let resolved = body(&agent_with(&bytes, track_changes, true)).to_string();
+        assert!(!resolved.contains(" fmt "), "{resolved}");
+    }
+}
+
 fn ins(id: u32, author: &str, text: &str) -> String {
     ins_at(id, author, "2026-10-01T09:00:00Z", text)
 }
@@ -637,6 +667,423 @@ fn a_header_change_is_visible_on_the_headers_line() {
     assert!(
         accepted.contains("  default: {id: header1, text: DRAFT}"),
         "{accepted}"
+    );
+}
+
+/// Task 5b: a change whose text the view cannot show still prints its id
+/// once: a section's `w:sectPrChange` on `page:`, a style's change under
+/// `styles: changes:`, a header's formatting on its `headers:` entry, and a
+/// footnote's formatting on its definition line. The resolved views print
+/// none of them.
+#[test]
+fn changes_without_text_name_their_ids() {
+    let rpr_change = |id: u32| {
+        format!(
+            r#"<w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr>"#
+        )
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r>{}<w:t>Title</w:t></w:r></w:p></w:hdr>"#,
+        rpr_change(4)
+    );
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1"><w:p><w:r>{}<w:t>Source</w:t></w:r></w:p></w:footnote></w:footnotes>"#,
+        rpr_change(7)
+    );
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>{}</w:style></w:styles>"#,
+        rpr_change(9)
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &footnotes,
+            },
+            Part {
+                name: "word/styles.xml",
+                content_type: STYLES_CT,
+                rel_type: STYLES_REL,
+                xml: &styles,
+            },
+        ],
+        r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/><w:sectPrChange w:id="2" w:author="Ann Counsel"><w:sectPr/></w:sectPrChange></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("page: ") && l.ends_with("; fmt r2 @AC")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("  changes: {Normal: styles.r9 @AC}")),
+        "{out}"
+    );
+    assert!(
+        lines.contains(&"  default: {id: header1, text: Title, fmt: header1.r4 @AC}"),
+        "{out}"
+    );
+    assert!(
+        out.contains("[^1]: **Source** <!-- fmt footnotes.r7 @AC -->"),
+        "{out}"
+    );
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    for id in [
+        "body:rev:2",
+        "styles:rev:9",
+        "header1:rev:4",
+        "footnotes:rev:7",
+    ] {
+        assert!(listed.iter().any(|l| l == id), "{id} not in {listed:?}");
+    }
+    for view in [TrackChanges::Accept, TrackChanges::Reject] {
+        let resolved = agent_with(&bytes, view, true);
+        for tag in ["r2 @AC", "styles.r9", "header1.r4", "footnotes.r7"] {
+            assert!(!resolved.contains(tag), "{tag} in {resolved}");
+        }
+    }
+}
+
+/// Task 5b, from Word redlines: an empty row's deletion has no text to tag,
+/// a first-page header still exists when different-first-page is off, and
+/// Word's footnote separators carry formatting changes no note shows.
+#[test]
+fn rows_inactive_headers_and_separators_name_their_changes() {
+    let cell = |text: &str| {
+        format!(
+            r#"<w:tc><w:p>{}</w:p></w:tc>"#,
+            if text.is_empty() {
+                String::new()
+            } else {
+                format!("<w:r><w:t>{text}</w:t></w:r>")
+            }
+        )
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr>{}</w:tr><w:tr><w:trPr><w:del w:id="6" w:author="Ann Counsel"/></w:trPr>{}</w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+        cell("Kept"),
+        cell("")
+    );
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="4" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>Cover</w:t></w:r></w:p></w:hdr>"#
+    );
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0"/><w:pPrChange w:id="9" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote></w:footnotes>"#
+    );
+    let bytes = common::docx::docx_with_sect(
+        &body,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &footnotes,
+            },
+        ],
+        r#"<w:headerReference w:type="first" r:id="rIdX0"/>"#,
+    );
+    let out = agent(&bytes);
+    assert!(
+        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev r6 @AC in t0.row1 -->"),
+        "{out}"
+    );
+    let lines = header_lines(&out);
+    assert!(
+        lines.iter().any(|l| l
+            .starts_with("  first: {id: header1, text: Cover, inactive, fmt: header1.r4 @AC}")
+            && l.ends_with("# defined, but different first page is off")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("notes: {fmt: footnotes.r9 @AC}")),
+        "{out}"
+    );
+    let accepted = agent_with(&bytes, TrackChanges::Accept, true);
+    for tag in ["r6 @AC", "header1.r4", "footnotes.r9"] {
+        assert!(!accepted.contains(tag), "{tag} in {accepted}");
+    }
+}
+
+/// A run's `w:pict` text box, Word's VML copy of a DrawingML one.
+fn pict_box(inner: &str) -> String {
+    format!(
+        r#"<w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{inner}</w:p></w:txbxContent></v:textbox></v:shape></w:pict>"#
+    )
+}
+
+/// A run's DrawingML text box.
+fn drawing_box(inner: &str) -> String {
+    format!(
+        r#"<w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p>{inner}</w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing>"#
+    )
+}
+
+/// pi review of Task 5b F3–F5: a change kept in a formatting change's
+/// history is no change the view names (`jubarte changes` lists none); a
+/// list number's change is formatting; a row whose only text sits in Word's
+/// Fallback copy shows no text, so its table line names its deletion.
+#[test]
+fn history_numbering_and_fallback_rows_follow_the_listing() {
+    let body = format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="5" w:author="Ann Counsel" w:original="%1."/></w:numPr></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="10" w:author="Ann Counsel"><w:rPr><w:del w:id="11" w:author="Ann Counsel"/></w:rPr></w:rPrChange></w:rPr><w:t>Item</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:trPr><w:del w:id="6" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing/></mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+        pict_box("<w:r><w:t>Old</w:t></w:r>")
+    );
+    let bytes = docx(&body);
+    let out = agent(&bytes);
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert!(!listed.iter().any(|l| l == "body:rev:11"), "{listed:?}");
+    assert!(listed.iter().any(|l| l == "body:rev:5"), "{listed:?}");
+    let r11 = regex::Regex::new(r"\b(r|\+)11\b").unwrap();
+    assert!(!r11.is_match(&out), "{out}");
+    let p0 = out
+        .lines()
+        .find(|l| l.starts_with("<!-- p0"))
+        .unwrap_or_default();
+    assert!(
+        regex::Regex::new(r"\b(r|\+)5\b").unwrap().is_match(p0),
+        "{out}"
+    );
+    assert!(out.contains("rev r6 @AC in t0.row0"), "{out}");
+}
+
+/// pi review of Task 5b F6: an author whose only changes sit in the styles
+/// part gets a handle of their own.
+#[test]
+fn a_styles_only_author_gets_a_handle() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:b/><w:rPrChange w:id="9" w:author="Zed Styles"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let bytes = common::docx::docx_with(
+        &para("Text"),
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    );
+    let out = agent(&bytes);
+    assert!(out.contains("styles.r9 @ZS"), "{out}");
+    assert!(!out.contains("@??"), "{out}");
+}
+
+/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in a
+/// text box with no text to tag, or in Word's Fallback copy with no Choice
+/// twin) is named on the header's `unplaced:` line, by paragraph.
+#[test]
+fn changes_printed_nowhere_else_are_unplaced() {
+    let body = format!(
+        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p><w:p><w:r><w:t>ping r3 @ops; 21 @AC</w:t></w:r></w:p>"#,
+        drawing_box(&format!(
+            r#"<w:r><w:t>Box</w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del><w:del w:id="22"><w:r><w:drawing/></w:r></w:del>{}"#,
+            ins(20, "Ann Counsel", "Choice")
+        )),
+        pict_box(&format!(
+            r#"<w:r><w:t>Box</w:t></w:r>{}"#,
+            ins(21, "Ann Counsel", "Other")
+        ))
+    );
+    // Document text that reads like a tag (the body's, a header's) prints
+    // no change.
+    let header =
+        format!(r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>see r21 @AC</w:t></w:r></w:p></w:hdr>"#);
+    let bytes = common::docx::docx_with_sect(
+        &body,
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let out = agent(&bytes);
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    for id in ["body:rev:3", "body:rev:21", "body:rev:22"] {
+        assert!(listed.iter().any(|l| l == id), "{id} not in {listed:?}");
+    }
+    let lines = header_lines(&out);
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r3 @AC in p0"), "{out}");
+    assert!(unplaced.contains("r21 @AC in p0"), "{out}");
+    assert!(!unplaced.contains("r20"), "{out}");
+    // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
+    assert!(unplaced.contains(r#""r22 @?? in p0""#), "{out}");
+    let yaml = header_yaml(&out);
+    assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(3), "{out}");
+    for view in [TrackChanges::Accept, TrackChanges::Reject] {
+        assert!(
+            !agent_with(&bytes, view, true).contains("unplaced:"),
+            "{view:?}"
+        );
+    }
+    // A document whose every change prints has no such line.
+    assert!(
+        !agent(&docx(&format!("<w:p>{}</w:p>", ins(1, "Ann Counsel", "x")))).contains("unplaced:")
+    );
+}
+
+/// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
+/// list number's gets a handle; a header's list number change is
+/// formatting; an author only the styles name is numbered after the
+/// comment authors, so theirs keep their handles.
+#[test]
+fn numbering_and_styles_authors_get_handles_after_comment_authors() {
+    let numbered = |id: u32, author: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="{id}" w:author="{author}" w:original="%1."/></w:numPr></w:pPr><w:r><w:t>Item</w:t></w:r></w:p>"#
+        )
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}">{}</w:hdr>"#,
+        numbered(5, "Ann Counsel")
+    );
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:b/><w:rPrChange w:id="9" w:author="Zed Styles"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            1,
+            "Zoe Stone",
+            "ZS",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            "Note."
+        )
+    );
+    let body = format!(
+        r#"{}<w:p><w:commentRangeStart w:id="1"/>{}<w:commentRangeEnd w:id="1"/>{}</w:p>"#,
+        numbered(4, "Nora Num"),
+        run("x"),
+        reference(1)
+    );
+    let bytes = common::docx::docx_with_sect(
+        &body,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER_CT,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/styles.xml",
+                content_type: STYLES_CT,
+                rel_type: STYLES_REL,
+                xml: &styles,
+            },
+            Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let out = agent(&bytes);
+    assert!(out.contains("r4 @NN"), "{out}");
+    assert!(!out.contains("@??"), "{out}");
+    let lines = header_lines(&out);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("id: header1") && l.contains("fmt: header1.r5 @AC")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.trim_start().starts_with("ZS: Zoe Stone")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.trim_start().starts_with("ZS2: Zed Styles")),
+        "{out}"
+    );
+    assert!(out.contains("styles.r9 @ZS2"), "{out}");
+    assert!(!out.contains("unplaced:"), "{out}");
+}
+
+/// pi review of Task 5 F1/F2: each view reads a header's changes its own
+/// way, moves included, and the tracked view escapes document text that
+/// reads like a mark.
+#[test]
+fn header_text_follows_each_view() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}{}{}{}<w:moveTo w:id="9" w:author="Ann Counsel"><w:r><w:t>2</w:t></w:r></w:moveTo><w:moveFrom w:id="8" w:author="Ann Counsel"><w:r><w:delText>7</w:delText></w:r></w:moveFrom>{}</w:p></w:hdr>"#,
+        run("Status: "),
+        ins(1, "Ann Counsel", "DRAFT"),
+        del(2, "Ann Counsel", "FINAL"),
+        run(" {>>x&lt;&lt;} Page "),
+        run(" of 3")
+    );
+    let bytes = common::docx::docx_with_sect(
+        &para("Body"),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let text = |view: &str| {
+        header_lines(view)
+            .into_iter()
+            .find(|l| l.starts_with("  default: {id: header1"))
+            .map_or_else(|| view.to_string(), str::to_string)
+    };
+    assert_eq!(
+        text(&agent(&bytes)),
+        r#"  default: {id: header1, text: "Status: {++DRAFT++}{>>header1.r1 @AC<<}{--FINAL--}{>>header1.r2 @AC<<} {\\>>x<<\\} Page {++2++}{>>header1.r9 @AC<<}{--7--}{>>header1.r8 @AC<<} of 3"}"#
+    );
+    assert_eq!(
+        text(&agent_with(&bytes, TrackChanges::Accept, true)),
+        r#"  default: {id: header1, text: "Status: DRAFT {>>x<<} Page 2 of 3"}"#
+    );
+    assert_eq!(
+        text(&agent_with(&bytes, TrackChanges::Reject, true)),
+        r#"  default: {id: header1, text: "Status: FINAL {>>x<<} Page 7 of 3"}"#
     );
 }
 
@@ -3450,7 +3897,7 @@ fn id_lines_inside_a_multi_paragraph_comment_name_it() {
 
 /// pi review r392b F3: `read --changed` keeps every paragraph a comment
 /// range crosses, not only the one that carries the note, as the hidden
-/// mode already does through its `comments #cN` clause.
+/// mode already does through its `comments cN` clause.
 #[test]
 fn changed_keeps_every_paragraph_inside_a_comment_range() {
     let body_xml = format!(
@@ -4092,7 +4539,7 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
     let bytes = docx("<w:p><w:ins><w:r><w:t>new</w:t></w:r></w:ins></w:p>");
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>r? @??<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>noid @??<<}\n"
     );
 }
 

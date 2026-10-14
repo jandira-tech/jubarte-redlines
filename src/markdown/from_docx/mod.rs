@@ -139,15 +139,26 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             story_roots.push(root);
         }
     }
+    // Auxiliary parts are best-effort: a broken styles part should not lose the text.
+    let styles_root = package
+        .xml(&part("/styles", "word/styles.xml"))
+        .ok()
+        .flatten();
     let handles = if options.ids {
-        // An author whose only changes sit in a header gets a handle too, so
-        // `--by` takes it.
+        // An author whose only changes sit in a header or the styles gets a
+        // handle too, so `--by` takes it; the styles' come after the comment
+        // authors', whose handles stay as they were.
         let stories: Vec<&Element> = note_roots
             .iter()
             .map(|(_, root)| root)
             .chain(&story_roots)
             .collect();
-        agent::handles(&document, &stories, comments_root.as_ref())
+        agent::handles(
+            &document,
+            &stories,
+            comments_root.as_ref(),
+            styles_root.as_ref(),
+        )
     } else {
         agent::Handles::default()
     };
@@ -189,11 +200,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         None => document,
     };
 
-    // Auxiliary parts are best-effort: a broken styles part should not lose the text.
-    let styles_root = package
-        .xml(&part("/styles", "word/styles.xml"))
-        .ok()
-        .flatten();
     let default_style = styles_root.as_ref().and_then(|root| {
         root.children_named("style")
             .find(|s| {
@@ -306,6 +312,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     writer.hidden_ranges.clear();
     let mut index = 0;
     let mut defs = Vec::new();
+    // The notes a definition line shows.
+    let mut defined: HashSet<(bool, String)> = HashSet::new();
     while index < writer.note_refs.len() {
         let key = writer.note_refs[index].clone();
         // A note whose reference was inserted or deleted was inserted or
@@ -330,10 +338,30 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             })
             .collect();
         writer.revisions = around;
-        writer.story = None;
+        let story = writer.story.take();
         // Still set: no paragraph had text, so there is no note.
         if writer.lead.take().is_none() {
-            defs.push(critic::join_marked(parts, " "));
+            let mut def = critic::join_marked(parts, " ");
+            // The tracked view names the note's changes its text cannot
+            // show: formatting, a deleted reference mark, an empty run.
+            if writer.agent
+                && !writer.resolved
+                && let Some(story) = story
+            {
+                let (rev, fmt) = agent::story_unshown(note, &story, &def, &writer.handles);
+                let mut clauses = Vec::new();
+                if !rev.is_empty() {
+                    clauses.push(format!("rev {}", rev.join("; ")));
+                }
+                if !fmt.is_empty() {
+                    clauses.push(format!("fmt {}", fmt.join("; ")));
+                }
+                if !clauses.is_empty() {
+                    def.push_str(&format!(" <!-- {} -->", clauses.join(", ")));
+                }
+            }
+            defs.push(def);
+            defined.insert(key);
         }
     }
     let mut markdown = blocks.finish();
@@ -529,22 +557,29 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                     "right" | "end" => Some("right"),
                                     _ => None,
                                 });
-                            let agent = (options.ids && accept.is_none())
-                                .then_some((&handles, stem.as_str()));
-                            (i, header::story_text(p, agent), align)
+                            let view = match accept {
+                                None if options.ids => {
+                                    header::StoryView::Tagged(&handles, stem.as_str())
+                                }
+                                Some(false) => header::StoryView::Reject,
+                                _ => header::StoryView::Accept,
+                            };
+                            (i, header::story_text(p, view), align)
                         })
                         .find(|(_, text, _)| !text.is_empty())
                         .unwrap_or((0, String::new(), None));
+                    let (rev, fmt) = if accept.is_none() && options.ids {
+                        agent::story_unshown(&root, &stem, &text, &handles)
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
                     // The id is the part stem (`header2` for `header2.xml`), Word's
                     // own numbering; a paragraph other than the first adds `.pN`.
+                    // A stem with no short spelling prints long (`Header_1:p:0`).
                     stories.push(header::StoryFact {
                         kind,
                         ty,
-                        id: if index == 0 {
-                            stem.to_string()
-                        } else {
-                            format!("{stem}.p{index}")
-                        },
+                        id: crate::ids::short_paragraph(&format!("{stem}:p:{index}")),
                         text,
                         align,
                         active: match ty {
@@ -552,6 +587,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             "even" => even_odd,
                             _ => true,
                         },
+                        rev,
+                        fmt,
                     });
                 }
                 // A type a section does not name is inherited from the one before.
@@ -583,7 +620,29 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             }
             sections
         };
-        let facts = header::Facts {
+        // The changes of notes no definition line shows (Word's separators,
+        // a note nothing references): the header's `notes:` names them.
+        let mut note_changes = (Vec::new(), Vec::new());
+        if accept.is_none() {
+            for (name, root) in &note_roots {
+                let endnote = *name == "endnote";
+                let Some(story) = note_stories.get(&endnote) else {
+                    continue;
+                };
+                for note in root.children_named(name) {
+                    let id = note.attr("id").unwrap_or_default().to_string();
+                    if defined.contains(&(endnote, id)) {
+                        continue;
+                    }
+                    let (rev, fmt) = agent::story_unshown(note, story, "", &handles);
+                    note_changes.0.extend(rev);
+                    note_changes.1.extend(fmt);
+                }
+            }
+        }
+        let mut facts = header::Facts {
+            unplaced: Vec::new(),
+            note_changes,
             source: options.source.as_deref().unwrap_or("(bytes)"),
             resolved: accept,
             comments_inline: options.comments,
@@ -609,7 +668,40 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             table_styles,
             sections,
         };
-        markdown = format!("{}\n{markdown}", header::render(&facts));
+        let mut head = header::render(&facts);
+        // The safety net: a listed change the view prints nowhere else (in
+        // Word's Fallback copy with no Choice twin, in a text box with no
+        // text to tag) is named on the header's `unplaced:` line.
+        if accept.is_none() && facts.range.is_none() {
+            let printed =
+                agent::printed_change_ids(&head, &format!("{markdown}\n{}", defs.join("\n")));
+            // A change inside another (a cell's text in an inserted row)
+            // reads from its container's tag: resolving one takes both.
+            let by_id: HashMap<&str, &crate::changes::Change> =
+                facts.changes.iter().map(|c| (c.id.as_str(), c)).collect();
+            let shown = |change: &crate::changes::Change| {
+                let mut at = Some(change);
+                for _ in 0..=facts.changes.len() {
+                    let Some(c) = at else { break };
+                    if printed.contains(&c.id) {
+                        return true;
+                    }
+                    at = c.inside.as_deref().and_then(|i| by_id.get(i).copied());
+                }
+                false
+            };
+            let unplaced: Vec<String> = facts
+                .changes
+                .iter()
+                .filter(|c| !shown(c))
+                .map(|c| agent::unplaced_entry(c, &handles))
+                .collect();
+            facts.unplaced = unplaced;
+            if !facts.unplaced.is_empty() {
+                head = header::render(&facts);
+            }
+        }
+        markdown = format!("{head}\n{markdown}");
     }
     if !defs.is_empty() {
         markdown.push_str("\n\n");
@@ -1253,6 +1345,7 @@ impl Writer<'_> {
         let open_before = self.open_ranges().to_vec();
         let (inline, extra) = self.paragraph_inline(p);
         let written = !inline.is_blank();
+        let inline = inline.into_inline();
         // Comment threads whose range runs past this paragraph, for its id
         // line: their highlight repeats here with the note elsewhere.
         let mut spans = self.threads_of(&open_before);
@@ -1303,9 +1396,19 @@ impl Writer<'_> {
             spans.retain(|id| !comments.contains(id));
             let empty = !written && extra.is_empty() && !page_break && !agent::has_section_break(p);
             let numbered = heading_marker.is_some() || list_marker.is_some();
+            // A paragraph whose text is only blanks writes none of it, so
+            // the tags its notes would carry print nowhere either.
+            let unshown = if self.resolved {
+                Vec::new()
+            } else if written {
+                agent::unshown_tags(p, &inline.render(true), &self.handles)
+            } else {
+                agent::unshown_tags(p, "", &self.handles)
+            };
             if empty
                 && !numbered
                 && comments.is_empty()
+                && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
             {
                 if self.page_sections.is_none() && agent::has_rendered_page_break(p) {
@@ -1346,11 +1449,11 @@ impl Writer<'_> {
                 comments: &comments,
                 spans: &spans,
                 empty,
+                unshown: &unshown,
             };
             blocks.push_line(&agent::id_line(p, &facts, &self.handles));
         }
         if written {
-            let inline = inline.into_inline();
             let edges = inline.edges();
             if let Some(level) = heading {
                 list.reset();

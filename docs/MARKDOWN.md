@@ -169,7 +169,7 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 ## 1. Services
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>#0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>#1+2 @AC<<} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r1+2 @AC<<} review call.
 ```
 
 `--track-changes accept|reject` prints the document with every change
@@ -185,8 +185,8 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments #c{ids} · in #c{ids}
-examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev #0 @AC; #1+2 @AC -->
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r1+2 @AC -->
 ```
 
 - `N` counts every `w:p` under `w:body` in document order, table cells
@@ -207,19 +207,21 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
   its `w:pPr` holds `w:sectPr`.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
-- `rev`: in the accept and reject views only, every revision the paragraph
+- `rev`: in the accept and reject views, every revision the paragraph
   held before resolution, formatting changes and paragraph marks included.
-  A paragraph joined into the one before it hands its revisions over.
+  A paragraph joined into the one before it hands its revisions over. In
+  the tracked view, the insertions, deletions and moves its text has no
+  tag for: a deleted picture, break, field character or empty run.
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
-- `in #c5`: with comments inline, the comment threads whose range runs on
+- `in c5`: with comments inline, the comment threads whose range runs on
   past the paragraph. CriticMarkup cannot span paragraphs, so such a range
   repeats `{==…==}` in each and shows its note only where it ends; the
   clause says which thread a highlight belongs to.
 - Empty paragraphs: `<!-- p19 empty -->`, consecutive ones
   `<!-- p19-p23 empty -->`. An empty paragraph that holds a tracked mark, a
   formatting change, a resolved revision or a hidden comment keeps its own
-  line: `<!-- p4 empty, break-ins #3 @AC -->`.
+  line: `<!-- p4 empty, break-ins r3 @AC -->`.
 - Page markers: `<!-- page N of M -->` before the first block that starts on
   page N, `<!-- page 1 of M -->` first. They come from the layout pass.
   With `--no-page-markers` none print; through the library without layout
@@ -227,11 +229,33 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!
   else from hard page breaks and from section breaks that start a page.
 
 A table gets one line: `<!-- t0 center 3x2, cells p8-p13 by row, header row
-repeats -->`, `cells r0 p8-p10 r1 p11-p14` when a cell holds other than one
-paragraph, then `merged cells`, `break-ins #12 @AC in p9`, `break-del …`,
-`rev … in pN` (resolved views), with `--comments none`
-`comments #c9 in p11`, and `in #c5` for a comment range open across it.
+repeats -->`, `cells t0.row0 p8-p10 t0.row1 p11-p14` when a cell holds other
+than one paragraph, then `merged cells`, `break-ins r12 @AC in p9`,
+`break-del …`, `rev … in pN` (resolved views; `rev r5 @AC in t0.row1.cell2`
+for a cell's own insertion, deletion or merge in the tracked view, and
+`rev r6 @AC in t0.row1` for an inserted or deleted row with no text),
+`fmt r12 @AS` for the table's own property changes (`in t0.row1`,
+`in t0.row1.cell2` for a row's or cell's), with `--comments none`
+`comments c9 in p11`, and `in c5` for a comment range open across it.
 `tN` counts top-level body tables.
+
+Every change `jubarte changes` lists prints its tag somewhere in the
+tracked view, so an agent can name it. Changes with no body text show in
+the header: a section's own change on `page:` (`page: Letter portrait; fmt
+r9 @AC`) or as `fmt:` in its `sections:` entry; style changes under
+`styles:` as `changes: {Normal: styles.r3 @AS}`; a header's or footer's
+changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
+notes no definition shows (Word's separators) as `notes: {fmt: …}`. A
+note's own changes its text cannot show close its definition line:
+`[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
+prints as `first: {…, inactive}` when different-first-page is off.
+A table cell's paragraph has no id line, so the table line names its
+formatting changes: `fmt r6 @AC in p2`. Whatever change no other line
+shows (a change in a text box with no text to tag, or in Word's Fallback
+copy of one with no twin in the copy the view shows) is listed by
+paragraph on the header's `unplaced:` line: `unplaced: [r3 @AC in p0]`.
+A change inside another (a cell's text in an inserted row) reads from
+its container's tag.
 
 The header's `comments:` line counts open and resolved threads, and apart
 from them a comment no story anchors (no range or reference in the body or
@@ -239,17 +263,18 @@ a note): `1 thread open, 1 unanchored`. Word draws no balloon for it.
 
 ### Tags
 
-A tag is `#<ids> @<handle>`: `#0 @AC`, or `#1+2 @AC` for two Word marks of one
-logical change. The ids are `w:id` values: `#12` is `body:rev:12`. Several
-authors' tags on one id line are joined by `; ` (`rev #1 @AC; #2 @JD`).
+A tag is `r<ids> @<handle>`: `r0 @AC`, or `r1+2 @AC` for two Word marks of one
+logical change. The ids are `w:id` values: `r12` is `body:rev:12`; a change in
+another story names it, `footnotes.r3 @AC` or `header1.r1 @AC`. Several
+authors' tags on one id line are joined by `; ` (`rev r1 @AC; r2 @JD`).
 
 ```text
-{++quarterly++}{>>#0 @AC<<}
-{--ninety days--}{>>#7 @AC<<}
-{~~weekly~>monthly~~}{>>#1+2 @AC<<}          one author: one note
-{~~old~>new~~}{>>#1 @AC<<}{>>#2 @JD<<}        two authors: deleted side first
-{++bold words++}{>>#7+8 @AC<<}                 neighbouring marks by one author
-{++quarterly++}{>>#0 @AC 2026-10-03T14:05:00Z<<}   with --dates
+{++quarterly++}{>>r0 @AC<<}
+{--ninety days--}{>>r7 @AC<<}
+{~~weekly~>monthly~~}{>>r1+2 @AC<<}          one author: one note
+{~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}        two authors: deleted side first
+{++bold words++}{>>r7+8 @AC<<}                 neighbouring marks by one author
+{++quarterly++}{>>r0 @AC 2026-10-03T14:05:00Z<<}   with --dates
 ```
 
 Neighbouring marks of one kind by one author join, then a deletion next to
@@ -258,9 +283,9 @@ marks and comment markers do not break adjacency, and changes inside links,
 content controls and simple fields count. The text inside the delimiters is
 the document's text exactly.
 
-A comment is `{==anchored text==}{>>#c5 @AC: text<<}`; a reply names its
-thread root, `{>>#c6 @AS re #c5: Disagree.<<}`; a resolved root reads
-`{>>#c5 @AC resolved: text<<}`.
+A comment is `{==anchored text==}{>>c5 @AC: text<<}`; a reply names its
+thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
+`{>>c5 @AC resolved: text<<}`.
 
 A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
@@ -271,11 +296,11 @@ timestamp, or the day range when the author has several.
 
 An agent view is CriticMarkup plus id lines. The Markdown-to-Word applier
 does not read it back yet; this is the contract it will honour. A
-change followed by a tagged note (`{>>#12 @AC<<}`) is the document's revision
+change followed by a tagged note (`{>>r12 @AC<<}`) is the document's revision
 `body:rev:12` (`footnotes:rev:12` under a footnote id line): kept as it is
 when unchanged, accepted or rejected when the agent removed its text. A
 change with no note is new, by the plan author. A tagged comment note is the
-document's comment; `re #cN` names its thread root; `resolved` resolves the
+document's comment; `re cN` names its thread root; `resolved` resolves the
 thread; a note with no tag is a new comment by the plan author, a reply when
 it follows a tagged note on the same anchor. `<!-- pN -->` lines are
 alignment keys and are never text.
@@ -338,7 +363,7 @@ the task: `jubarte --head 2 read a.docx` is refused, since the parser would
 take `read` for a document.
 
 `WHERE` is an id the view prints (`p12`, `header1`, `footer2.p1`,
-`t0.r1.c2`, `c5`); `edit` plans take the same ids. One command carries
+`t0.row1.cell2`, `c5`); `edit` plans take the same ids. One command carries
 several operations: every `-p` starts one, and the flags after it belong to
 it. `--plan PLAN.json` stays for batches and the other operation kinds, and
 excludes the operation flags.
@@ -374,8 +399,8 @@ without their Markdown marks, with a note.
   add the blank page an odd- or even-page section start can need.
 - A table is one block for `-p`, `--head` and `--tail`.
 - With comments inline, a comment range between two changes by one author
-  splits their note (`{>>#7 @AC<<}` … `{>>#8 @AC<<}`): CriticMarkup cannot
-  nest a highlight inside a change. The resolved views say `rev #7+8 @AC`;
+  splits their note (`{>>r7 @AC<<}` … `{>>r8 @AC<<}`): CriticMarkup cannot
+  nest a highlight inside a change. The resolved views say `rev r7+8 @AC`;
   both ids name the same revisions.
 
 ## Diffs
