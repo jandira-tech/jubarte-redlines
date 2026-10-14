@@ -1146,3 +1146,25 @@ fn a_mark_with_no_author_keeps_its_id_and_takes_no_comment() {
         "{document}"
     );
 }
+
+#[test]
+fn a_table_style_whose_borders_vary_warns_that_they_are_not_written() {
+    let view = "---\nview: tracked\nstyles:\n  table: Ledger, borders vary\n---\n\n\
+                <!-- t0 1x2, cells p0-p1 by row -->\n|a|b|\n|-|-|\n";
+    let out = markdown_to_docx(view, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.starts_with("table: Ledger, borders vary: the view does not say")),
+        "{:?}",
+        out.warnings
+    );
+    let plain = "---\nview: tracked\nstyles:\n  table: Ledger\n---\n\n\
+                 <!-- t0 1x2, cells p0-p1 by row -->\n|a|b|\n|-|-|\n";
+    let out = markdown_to_docx(plain, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        !out.warnings.iter().any(|w| w.contains("borders vary")),
+        "{:?}",
+        out.warnings
+    );
+}

@@ -2443,6 +2443,17 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.authors = view_notes::authors(text);
         self.document.owner = view_notes::document_owner(text);
         self.document.table_style = view_styles::table_style(text);
+        if let Some((id, None)) = &self.document.table_style
+            && text.lines().any(|line| {
+                let line = view_styles::without_comment(line).trim();
+                line.starts_with("table: ") && line.ends_with(", borders vary")
+            })
+        {
+            self.document.warnings.push(format!(
+                "table: {id}, borders vary: the view does not say the borders, \
+                 so the table style is written without them"
+            ));
+        }
         self.stories(1, view_stories::first_section(text));
         self.document.style_specs = view_styles::legend(text);
         let mut key_above = "";
