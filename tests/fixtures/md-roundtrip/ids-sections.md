@@ -10,6 +10,8 @@ body: p0-p142, 1 table, 2 pages    # page count estimated from breaks
 page: 8.26x11.69in portrait, margins top 1.18in, right 0.79in, bottom 1.18in, left 0.79in, header/footer 0.49in
 styles:
   Normal: Cambria 12pt, left       # default; unannotated paragraphs use it
+  ListParagraph: Cambria 12pt, named List Paragraph
+  Cuerpo: Calibri 11pt, after 8pt, line 1.08
   table: TableGrid, all borders 0.5pt
 headers:
   default: {id: header1, text: ""}

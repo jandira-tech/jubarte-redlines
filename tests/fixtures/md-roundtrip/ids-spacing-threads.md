@@ -9,7 +9,7 @@ authors:
 body: p0-p131, 2 tables, 1 page    # page count estimated from breaks
 page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in
 styles:
-  Normal: Times New Roman 11pt, after 6pt, line 12pt atLeast, left  # default; unannotated paragraphs use it
+  Normal: Times New Roman 11pt, after 6pt, line 12pt atLeast, left, named normal  # default; unannotated paragraphs use it
   "#": Heading1, Times New Roman bold 24pt, before 24pt, keep-next
   "##": Heading2, Times New Roman bold 18pt, before 18pt, after 4pt, keep-next
 ---

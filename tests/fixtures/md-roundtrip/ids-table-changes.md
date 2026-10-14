@@ -11,6 +11,7 @@ body: p0-p218, 12 tables, 3 pages  # page count estimated from breaks
 page: Letter portrait, margins 1in, header/footer 0.5in; fmt r440 @AS
 styles:
   Normal: Inter 11pt, left         # default; unannotated paragraphs use it
+  ListParagraph: Inter 11pt, named List Paragraph
 notes: {fmt: footnotes.r0 @AS; footnotes.r1 @AS; endnotes.r2 @AS; endnotes.r3 @AS}  # changes in notes the body does not show (separators)
 headers:
   default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r437 @AS<<}", fmt: header1.r436 @AS}
