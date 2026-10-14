@@ -243,6 +243,69 @@ if (Symbol.dispose) FieldsOutput.prototype[Symbol.dispose] = FieldsOutput.protot
 exports.FieldsOutput = FieldsOutput;
 
 /**
+ * What [`renderPdf`](render_pdf) returns.
+ */
+class RenderOutput {
+    static __wrap(ptr) {
+        const obj = Object.create(RenderOutput.prototype);
+        obj.__wbg_ptr = ptr;
+        RenderOutputFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        RenderOutputFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_renderoutput_free(ptr, 0);
+    }
+    /**
+     * `{"page_count", "page_starts"}`: the pages written and each one's
+     * first line (60 characters at most), as an edit bundle's `render`
+     * line lists them.
+     * @returns {string}
+     */
+    get json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.renderoutput_json(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * The PDF.
+     * @returns {Uint8Array}
+     */
+    get pdf() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.renderoutput_pdf(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 1, 1);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) RenderOutput.prototype[Symbol.dispose] = RenderOutput.prototype.free;
+exports.RenderOutput = RenderOutput;
+
+/**
  * Output of [`repairDocument`](repair_document).
  */
 class RepairOutput {
@@ -556,25 +619,38 @@ function capabilities() {
 exports.capabilities = capabilities;
 
 /**
- * [`capabilities`] as the text summary `jubarte capabilities` prints.
+ * [`capabilities`] as the text summary `jubarte capabilities` prints; of
+ * `manifestJson` when given (a manifest a host narrowed to what it does),
+ * else of this build's.
  *
  * Mirrors `jubarte::capabilities::capabilities_text`.
+ * @param {string | null} [manifest_json]
  * @returns {string}
  */
-function capabilitiesText() {
-    let deferred1_0;
-    let deferred1_1;
+function capabilitiesText(manifest_json) {
+    let deferred3_0;
+    let deferred3_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.capabilitiesText(retptr);
+        var ptr0 = isLikeNone(manifest_json) ? 0 : passStringToWasm0(manifest_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len0 = WASM_VECTOR_LEN;
+        wasm.capabilitiesText(retptr, ptr0, len0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        deferred1_0 = r0;
-        deferred1_1 = r1;
-        return getStringFromWasm0(r0, r1);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export(deferred1_0, deferred1_1, 1);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
     }
 }
 exports.capabilitiesText = capabilitiesText;
@@ -782,6 +858,56 @@ function compareDocuments(original, modified, author, input_limits_json) {
     }
 }
 exports.compareDocuments = compareDocuments;
+
+/**
+ * A Word document as `convert --to md` writes it: Markdown with its
+ * changes kept, accepted or rejected (`trackChanges`: `all`, `accept`,
+ * `reject`), and unless `pageMarkers` is false `<!-- page N of M -->` lines
+ * from the layout, its changes painted as `revisions`. JSON
+ * `{"markdown", "warning"}`: the warning says why the markers are missing.
+ * Full build only.
+ *
+ * Mirrors `jubarte::markdown::with_page_markers`.
+ * @param {Uint8Array} docx
+ * @param {string} track_changes
+ * @param {boolean} page_markers
+ * @param {string | null} [revisions]
+ * @param {string | null} [revision_palette]
+ * @returns {string}
+ */
+function convertMarkdown(docx, track_changes, page_markers, revisions, revision_palette) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(track_changes, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.convertMarkdown(retptr, ptr0, len0, ptr1, len1, page_markers, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred6_0, deferred6_1, 1);
+    }
+}
+exports.convertMarkdown = convertMarkdown;
 
 /**
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
@@ -1509,6 +1635,35 @@ function pdfPageCount(pdf) {
 exports.pdfPageCount = pdfPageCount;
 
 /**
+ * Why `planJson` is no edit plan, as the binary prints it (`INVALID_PLAN:
+ * …`); `undefined` for a plan. A plan that parses can still be refused when
+ * applied; that refusal carries the per-operation report.
+ *
+ * Mirrors `jubarte::edit::EditPlan::from_json`.
+ * @param {string} plan_json
+ * @returns {string | undefined}
+ */
+function planError(plan_json) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(plan_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.planError(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        let v2;
+        if (r0 !== 0) {
+            v2 = getStringFromWasm0(r0, r1);
+            wasm.__wbindgen_export(r0, r1 * 1, 1);
+        }
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+exports.planError = planError;
+
+/**
  * Resolve every operation of an edit plan without producing documents.
  *
  * Mirrors `jubarte::edit::preview_plan`.
@@ -1707,6 +1862,39 @@ function redlineDocuments(old, next, author, date) {
 exports.redlineDocuments = redlineDocuments;
 
 /**
+ * The error line for an input no task reads, as the binary prints it:
+ * `LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
+ * a.docx is not a ZIP file: …`; `undefined` when the bytes may be read.
+ *
+ * Mirrors `jubarte::cli::refused_input`.
+ * @param {string} path
+ * @param {Uint8Array} bytes
+ * @param {boolean} word
+ * @returns {string | undefined}
+ */
+function refusedInput(path, bytes, word) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.refusedInput(retptr, ptr0, len0, ptr1, len1, word);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        let v3;
+        if (r0 !== 0) {
+            v3 = getStringFromWasm0(r0, r1);
+            wasm.__wbindgen_export(r0, r1 * 1, 1);
+        }
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+exports.refusedInput = refusedInput;
+
+/**
  * Reject the changes `filterJson` selects and keep the rest tracked
  * (filter as in `acceptChanges`).
  *
@@ -1767,6 +1955,41 @@ function rejectRevisions(docx) {
     }
 }
 exports.rejectRevisions = rejectRevisions;
+
+/**
+ * An edited document's PDF, compressed, its changes painted as
+ * `revisions` (`conventional`, `word` or `custom` with
+ * `revisionPalette`), with the page facts `edit --pdf` reports. Full build
+ * only.
+ *
+ * Mirrors `jubarte::convert::render`.
+ * @param {Uint8Array} docx
+ * @param {string | null} [revisions]
+ * @param {string | null} [revision_palette]
+ * @returns {RenderOutput}
+ */
+function renderPdf(docx, revisions, revision_palette) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.renderPdf(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return RenderOutput.__wrap(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+exports.renderPdf = renderPdf;
 
 /**
  * The package with every repairable finding fixed, with the findings it
@@ -2093,6 +2316,9 @@ const EditOutputFinalization = (typeof FinalizationRegistry === 'undefined')
 const FieldsOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_fieldsoutput_free(ptr, 1));
+const RenderOutputFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_renderoutput_free(ptr, 1));
 const RepairOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_repairoutput_free(ptr, 1));

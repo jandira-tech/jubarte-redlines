@@ -77,6 +77,25 @@ export class FieldsOutput {
 }
 
 /**
+ * What [`renderPdf`](render_pdf) returns.
+ */
+export class RenderOutput {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * `{"page_count", "page_starts"}`: the pages written and each one's
+     * first line (60 characters at most), as an edit bundle's `render`
+     * line lists them.
+     */
+    readonly json: string;
+    /**
+     * The PDF.
+     */
+    readonly pdf: Uint8Array;
+}
+
+/**
  * Output of [`repairDocument`](repair_document).
  */
 export class RepairOutput {
@@ -159,11 +178,13 @@ export function auditTracked(original: Uint8Array, edited: Uint8Array, author: s
 export function capabilities(): string;
 
 /**
- * [`capabilities`] as the text summary `jubarte capabilities` prints.
+ * [`capabilities`] as the text summary `jubarte capabilities` prints; of
+ * `manifestJson` when given (a manifest a host narrowed to what it does),
+ * else of this build's.
  *
  * Mirrors `jubarte::capabilities::capabilities_text`.
  */
-export function capabilitiesText(): string;
+export function capabilitiesText(manifest_json?: string | null): string;
 
 /**
  * `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
@@ -214,6 +235,18 @@ export function commentsText(docx: Uint8Array, author?: string | null, latest?: 
  * holds, so browser hosts should lower it.
  */
 export function compareDocuments(original: Uint8Array, modified: Uint8Array, author: string, input_limits_json?: string | null): Uint8Array;
+
+/**
+ * A Word document as `convert --to md` writes it: Markdown with its
+ * changes kept, accepted or rejected (`trackChanges`: `all`, `accept`,
+ * `reject`), and unless `pageMarkers` is false `<!-- page N of M -->` lines
+ * from the layout, its changes painted as `revisions`. JSON
+ * `{"markdown", "warning"}`: the warning says why the markers are missing.
+ * Full build only.
+ *
+ * Mirrors `jubarte::markdown::with_page_markers`.
+ */
+export function convertMarkdown(docx: Uint8Array, track_changes: string, page_markers: boolean, revisions?: string | null, revision_palette?: string | null): string;
 
 /**
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
@@ -389,6 +422,15 @@ export function parseCli(arguments_json: string, program?: string | null, suppor
 export function pdfPageCount(pdf: Uint8Array): number;
 
 /**
+ * Why `planJson` is no edit plan, as the binary prints it (`INVALID_PLAN:
+ * …`); `undefined` for a plan. A plan that parses can still be refused when
+ * applied; that refusal carries the per-operation report.
+ *
+ * Mirrors `jubarte::edit::EditPlan::from_json`.
+ */
+export function planError(plan_json: string): string | undefined;
+
+/**
  * Resolve every operation of an edit plan without producing documents.
  *
  * Mirrors `jubarte::edit::preview_plan`.
@@ -440,6 +482,15 @@ export function recordPlan(verb: string, operations_json: string, docx: Uint8Arr
 export function redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array;
 
 /**
+ * The error line for an input no task reads, as the binary prints it:
+ * `LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
+ * a.docx is not a ZIP file: …`; `undefined` when the bytes may be read.
+ *
+ * Mirrors `jubarte::cli::refused_input`.
+ */
+export function refusedInput(path: string, bytes: Uint8Array, word: boolean): string | undefined;
+
+/**
  * Reject the changes `filterJson` selects and keep the rest tracked
  * (filter as in `acceptChanges`).
  *
@@ -453,6 +504,16 @@ export function rejectChanges(docx: Uint8Array, filter_json: string): Uint8Array
  * Mirrors `jubarte::document_comparer::reject_revisions`.
  */
 export function rejectRevisions(docx: Uint8Array): Uint8Array;
+
+/**
+ * An edited document's PDF, compressed, its changes painted as
+ * `revisions` (`conventional`, `word` or `custom` with
+ * `revisionPalette`), with the page facts `edit --pdf` reports. Full build
+ * only.
+ *
+ * Mirrors `jubarte::convert::render`.
+ */
+export function renderPdf(docx: Uint8Array, revisions?: string | null, revision_palette?: string | null): RenderOutput;
 
 /**
  * The package with every repairable finding fixed, with the findings it
