@@ -32,6 +32,7 @@ pub(crate) mod altchunk;
 mod diff_render;
 mod font;
 mod font_table;
+mod math_font;
 mod metafile;
 mod pdf;
 mod preset_geom;
