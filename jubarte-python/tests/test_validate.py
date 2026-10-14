@@ -47,7 +47,7 @@ def test_audit_tracked_names_an_untracked_edit_and_passes_a_tracked_one() -> Non
     hand_edited = jubarte.Document.from_bytes(docx(para("Fee is 10.") + para("Term is 3 years.")))
     findings = hand_edited.audit_tracked(original, author="Reviewer")
     assert [f.code for f in findings] == ["UNTRACKED_EDIT"]
-    assert "body:p:1" in findings[0].message
+    assert findings[0].message.startswith("p1 differs") and ":p:" not in findings[0].message
     assert findings[0].location == "body:p:1"
     assert findings[0].ref == "p1"
     tracked = original.compare(hand_edited, author="Reviewer")
