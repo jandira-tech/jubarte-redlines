@@ -6,7 +6,7 @@ comments: 0
 authors:
   document_owner: Un-named         # dc:creator
 body: p0-p68, 1 table, 2 pages     # pages from layout
-page: A4 portrait, margins 1in, header/footer 0.49in
+page: A4 portrait, margins 1in, header/footer 0.492in
 styles:
   "1": Arial 12pt, left, named Normal  # default; unannotated paragraphs use it
   "#": 2, Calibri bold 16pt, before 12pt, after 6pt, named heading 1

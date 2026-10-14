@@ -7,7 +7,7 @@ authors:
   document_owner: Jones, SA        # dc:creator
   AB: Aliyu Bamidele               # 1667 revisions, 2026-09-25T21:07:00Z
 body: p0-p737, 18 tables, 2 pages  # pages from Word's cached layout
-page: Letter portrait, margins top 0.95in, right 1.67in, bottom 2.42in, left 1.58in, header 0.5in, footer 1.88in; fmt r1667 @AB
+page: Letter portrait, margins top 0.945in, right 1.671in, bottom 2.416in, left 1.583in, header 0.5in, footer 1.878in; fmt r1667 @AB
 styles:
   Normal: Times New Roman 11.5pt, after 2.6pt, line 0.98, justify  # default; unannotated paragraphs use it
   ListParagraph: Times New Roman 11.5pt, named List Paragraph
@@ -21,54 +21,54 @@ footers:
   even: {id: footer1, text: ["{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer1.r1656 @AB<<}", "{++ ++}{>>footer1.r1658 @AB<<}"], center, inactive, rev: break-ins footer1.r1655 @AB in footer1, fmt: footer1.r1657 @AB}  # defined, but even/odd headers are off
 ---
 
-<!-- p0 center, left 0.01in, right -0.01in, break-ins r1 @AB -->
+<!-- p0 center, left 0.007in, right -0.0104in, break-ins r1 @AB -->
 {++CODE-SWITCHING IN NIGERIAN CHRISTIAN SONGS  ++}{>>r2 @AB<<}
 
-<!-- p1 center, left 0.01in, right -0.01in, break-ins r3 @AB -->
+<!-- p1 center, left 0.007in, right -0.0104in, break-ins r3 @AB -->
 {++ADAMU, PAUL ++}{>>r4 @AB<<}
 
-<!-- p2 center, left 1.59in, right -0.01in, break-ins r5 @AB -->
+<!-- p2 center, left 1.594in, right -0.0104in, break-ins r5 @AB -->
 {++Department of English, ++}{>>r6 @AB<<}
 
-<!-- p3 center, left 1.59in, right 1.32in, break-ins r7 @AB -->
+<!-- p3 center, left 1.594in, right 1.324in, break-ins r7 @AB -->
 {++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{>>r8 @AB<<}
 
-<!-- p4 center, left 1.59in, right 1.56in, break-ins r9 @AB -->
+<!-- p4 center, left 1.594in, right 1.557in, break-ins r9 @AB -->
 {++Email: pauladams830@gmail. com Tel: 07036968338 ++}{>>r10 @AB<<}
 
 <!-- p5 center, first-line 0in, left 0in, break-ins r11 @AB -->
 {++& ++}{>>r12 @AB<<}
 
-<!-- p6 center, left 0.01in, right -0.01in, break-ins r13 @AB -->
+<!-- p6 center, left 0.007in, right -0.0104in, break-ins r13 @AB -->
 {++HAYAB, FORTUNE JOSIAH ++}{>>r14 @AB<<}
 
-<!-- p7 center, left 1.59in, right -0.01in, break-ins r15 @AB -->
+<!-- p7 center, left 1.594in, right -0.0104in, break-ins r15 @AB -->
 {++Department of English, ++}{>>r16 @AB<<}
 
-<!-- p8 center, left 1.59in, right 1.32in, break-ins r17 @AB -->
+<!-- p8 center, left 1.594in, right 1.324in, break-ins r17 @AB -->
 {++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{>>r18 @AB<<}
 
-<!-- p9 center, left 1.59in, right -0.01in, break-ins r19 @AB -->
+<!-- p9 center, left 1.594in, right -0.0104in, break-ins r19 @AB -->
 {++Email: forhayab@yahoo.com ++}{>>r20 @AB<<}
 
-<!-- p10 center, left 1.59in, right -0.01in, break-ins r21 @AB -->
+<!-- p10 center, left 1.594in, right -0.0104in, break-ins r21 @AB -->
 {++Telephone: 07036968338 ++}{>>r22 @AB<<}
 
-<!-- p11 left, right -0.01in, break-ins r23 @AB -->
+<!-- p11 left, right -0.0104in, break-ins r23 @AB -->
 {++Abstract ++}{>>r24 @AB<<}
 
-<!-- p12 first-line 0in, left -0.01in, break-ins r25 @AB -->
+<!-- p12 first-line 0in, left -0.0104in, break-ins r25 @AB -->
 {++This paper investigates the phenomenon of code-switching and also the types of code-switching that occur in gospel songs. Therefore, using purposive random sampling and Poplack’s (1980) model, the excerpts of from ten gospel songs are collected and analysed. Findings reveal that the most dominant type of codeswitching that occurs in Christian music is inter-sentential code switching while others like intra-switching and tag switching occur rather sparingly. Also, the English language and Pidgin, according to the findings, remain the most dominant language being code switched with indigenous languages. To this end, it can be asserted that code-switching is not only a recurring decimal in Christian songs but also a manifestation of a brand of music that can be labelled Nigerian gospel music.             ++}{>>r26 @AB<<}
 
 <!-- p13 empty, left, first-line 0in, left 0in, break-ins r27 @AB, rev r28 @AB -->
 
-<!-- p14 left, right -0.01in, break-ins r29 @AB -->
+<!-- p14 left, right -0.0104in, break-ins r29 @AB -->
 {++Introduction  ++}{>>r30 @AB<<}
 
 <!-- p15 break-ins r31 @AB -->
 {++The Nigerian music industry today is swarming with different kinds of artistes, each with different kind of songs and lyrics. One peculiar features of the Nigerian music industry however is the tendency to use English alongside several other languages- a recurrent decimal that has become all too obvious to many lovers of Nigerian music today. While this may be considered as mere entertainment in some quarters; to linguists, this trend can be investigated linguistically, but then since music itself is meant to communicate something, an idea, a culture, a belief, a doctrine etc. through language. ++}{>>r32 @AB<<}
 
-<!-- p16 first-line 0.47in, left -0.01in, break-ins r33 @AB -->
+<!-- p16 first-line 0.47in, left -0.0104in, break-ins r33 @AB -->
 {++In the Nigerian context, many languages exist and are used for different communication purposes, and are often designated foreign language (e.g. English, French, and German etc.) or indigenous languages (e.g. Hausa, Igbo and Yoruba among several others). Some scholars even classify them into indigenous, exogenous and indi-exogenous language like Pidgin. ++}{>>r34 @AB<<}
 
 <!-- p17 break-ins r35 @AB -->
@@ -76,7 +76,7 @@ footers:
 
 <!-- p18 empty, left, first-line 0in, left 0in, break-ins r37 @AB, rev r38 @AB -->
 
-<!-- p19 left, right -0.01in, break-ins r39 @AB -->
+<!-- p19 left, right -0.0104in, break-ins r39 @AB -->
 {++Statement of the Problem ++}{>>r40 @AB<<}
 
 <!-- p20 break-ins r41 @AB -->
@@ -84,51 +84,51 @@ footers:
 
 <!-- p21 empty, left, first-line 0in, left 0in, break-ins r43 @AB, rev r44 @AB -->
 
-<!-- p22 left, right -0.01in, break-ins r45 @AB -->
+<!-- p22 left, right -0.0104in, break-ins r45 @AB -->
 {++Basic Assumptions of this Paper ++}{>>r46 @AB<<}
 
 <!-- p23 break-ins r47 @AB -->
 {++This paper rests on the following assumptions:  ++}{>>r48 @AB<<}
 
-<!-- p24 hanging 0.23in, left 0.55in, bullet, break-ins r49 @AB -->
+<!-- p24 hanging 0.235in, left 0.548in, bullet, break-ins r49 @AB -->
 - {++That code-switching occurs in Christian music or non-secular music  ++}{>>r50 @AB<<}
 
-<!-- p25 hanging 0.23in, left 0.55in, bullet, break-ins r51 @AB -->
+<!-- p25 hanging 0.235in, left 0.548in, bullet, break-ins r51 @AB -->
 - {++That there is a preponderance of inter-sentential code-switching in gospel songs than any other type of code switching    ++}{>>r52 @AB<<}
 
-<!-- p26 hanging 0.23in, left 0.55in, bullet, break-ins r53 @AB -->
+<!-- p26 hanging 0.235in, left 0.548in, bullet, break-ins r53 @AB -->
 - {++That  intra-sentential code-switching only occurs minimally in the ++}{>>r54 @AB<<}
 
-<!-- p27 left 0.56in, break-ins r55 @AB -->
+<!-- p27 left 0.5556in, break-ins r55 @AB -->
 {++Christian songs compared to inter-sentential code switching ++}{>>r56 @AB<<}
 
-<!-- p28 hanging 0.23in, left 0.55in, bullet, break-ins r57 @AB -->
+<!-- p28 hanging 0.235in, left 0.548in, bullet, break-ins r57 @AB -->
 - {++That tag switching hardly occurs or occurs minimally in Christian songs  ++}{>>r58 @AB<<}
 
-<!-- p29 hanging 0.23in, left 0.55in, bullet, break-ins r59 @AB -->
+<!-- p29 hanging 0.235in, left 0.548in, bullet, break-ins r59 @AB -->
 - {++That code-switching does  not occur between a lexical stem and a bound morpheme but on “utterance construction level” and ++}{>>r60 @AB<<}
 
-<!-- p30 hanging 0.23in, left 0.55in, bullet, break-ins r61 @AB -->
+<!-- p30 hanging 0.235in, left 0.548in, bullet, break-ins r61 @AB -->
 - {++That this “utterance construction level” is used as a reference to the lyrics in the lines of Christian songs dismissed as “excerpts” in this paper            ++}{>>r62 @AB<<}
 
 <!-- p31 empty, left, first-line 0in, left 0in, break-ins r63 @AB, rev r64 @AB -->
 
-<!-- p32 left, right -0.01in, break-ins r65 @AB -->
+<!-- p32 left, right -0.0104in, break-ins r65 @AB -->
 {++Methodology  ++}{>>r66 @AB<<}
 
 <!-- p33 break-ins r67 @AB -->
 {++Using ten (10) songs form Christian artistes or gospel musicians, this paper seeks to unveil the advent of code switching in Christian songs. Using two (2) excerpts only from these songs, this paper attempts to justify the existence of the following type of code switching: ++}{>>r68 @AB<<}
 
-<!-- p34 hanging 0.23in, left 0.47in, num "(a)", break-ins r69 @AB -->
+<!-- p34 hanging 0.235in, left 0.4694in, num "(a)", break-ins r69 @AB -->
 1. {++Inter-sentential code switching ++}{>>r70 @AB<<}
 
-<!-- p35 hanging 0.23in, left 0.47in, num "(b)", break-ins r71 @AB -->
+<!-- p35 hanging 0.235in, left 0.4694in, num "(b)", break-ins r71 @AB -->
 2. {++Intra-sentential code switching ++}{>>r72 @AB<<}
 
-<!-- p36 hanging 0.23in, left 0.47in, num "(c)", break-ins r73 @AB -->
+<!-- p36 hanging 0.235in, left 0.4694in, num "(c)", break-ins r73 @AB -->
 3. {++Tag switching ++}{>>r74 @AB<<}
 
-<!-- p37 hanging 0.23in, left 0.47in, num "(d)", break-ins r75 @AB -->
+<!-- p37 hanging 0.235in, left 0.4694in, num "(d)", break-ins r75 @AB -->
 4. {++Word switching       ++}{>>r76 @AB<<}
 
 <!-- p38 break-ins r77 @AB -->
@@ -136,30 +136,30 @@ footers:
 
 <!-- p39 empty, left, first-line 0in, left 0in, break-ins r79 @AB, rev r80 @AB -->
 
-<!-- p40 left, right -0.01in, break-ins r81 @AB -->
+<!-- p40 left, right -0.0104in, break-ins r81 @AB -->
 {++Theoretical Framework:  ++}{>>r82 @AB<<}
 
-<!-- p41 left, right -0.01in, break-ins r83 @AB -->
+<!-- p41 left, right -0.0104in, break-ins r83 @AB -->
 {++Constraint-Bases Model: Poplack’s (1980) ++}{>>r84 @AB<<}
 
 <!-- p42 break-ins r85 @AB -->
 {++The major backdrop of this model or theory is that it provides for the classification of code switching that exists and which is deployed in the analysis of data as is the case here. They include inter-sentential, intra-sentential and tag switching and word switching. This theory is predicted on two major constraints: the freemorpheme constraints and the free equivalence constraints. The former rests on the assumption that code-switching cannot occur between lexical stem and bound morphemes. Essentially, this constraint distinguishes code-switching from borrowing. Generally borrowing occurs in the lexicon, while code-switching occurs at either the syntax level or the utterance construction level.  ++}{>>r86 @AB<<}
 
-<!-- p43 first-line 0.47in, left -0.01in, break-ins r87 @AB -->
+<!-- p43 first-line 0.47in, left -0.0104in, break-ins r87 @AB -->
 {++The equivalence constraint predicts that the switches occur only at points where the surface structures of the languages coincide, or between sentence elements that are normally ordered in the same way by each individual grammar. To a large extent therefore, this paper seeks to use this model specifically the “free morpheme constraint” as a yardstick to test the validity or otherwise of the major propositions of this theory. Therefore, code-switching, in this context, will not occur between a lexical stem and a bound morpheme but on “utterance construction level” investigated using excerpts from Christian songs.          ++}{>>r88 @AB<<}
 
 <!-- p44 empty, left, first-line 0in, left 0in, break-ins r89 @AB, rev r90 @AB -->
 
-<!-- p45 left, right -0.01in, break-ins r91 @AB -->
+<!-- p45 left, right -0.0104in, break-ins r91 @AB -->
 {++Code-switching ++}{>>r92 @AB<<}
 
 <!-- p46 break-ins r93 @AB -->
 {++In linguistics, code-switching is the concurrent use of more than one language variety in a conversation. Code-switching can occur between sentences (intersentential). Wardhaugh (2006) is however of the view that code switching is the same thing as code mixing: “code switching (also called mixing) can occur in conversation between speakers’ turns or within a single speaker’s turn” (p.101).  To him, “code-switching is a conversational strategy used to establish, cross or destroy group boundaries; to create, evoke or change interpersonal relations with their rights or obligations”. The term “code switching” is preferred to “language shift” in order to accommodate other kinds of varieties, dialects and registers (Hudson 2005, pp.51-52). ++}{>>r94 @AB<<}
 
-<!-- p47 first-line 0.47in, left -0.01in, break-ins r95 @AB -->
+<!-- p47 first-line 0.47in, left -0.0104in, break-ins r95 @AB -->
 {++Code-switching also function to announce specific identities, create certain meanings and facilitate particular and interpersonal relationships (Johnson 2000, p.184). Similarly, according to Wardhaugh (2006, p.101), it is unusual for a speaker to have command of, use only one such code system. He said that most speakers command several varieties of language they speak, and bilingualism, even multilingualism, is a norm among many people throughout the world than “monolingualism”. He emphasizes that there are two kinds of code switching: situational and metaphorical. Gumpez and Hymes (19986) make a distinction between the two thus: ++}{>>r96 @AB<<}
 
-<!-- p48 left 0.48in, break-ins r97 @AB -->
+<!-- p48 left 0.477in, break-ins r97 @AB -->
 {++An important distinction is made from situational and metaphorical codeswitching. Situational code-switching is where alternation between varieties redefines a situation, being a change in governing norms. Metaphorical switching is when alternation enriches a situation, allowing for allusion to more than one social relationship within the situation. In metaphorical code-switching, the context of the conversation is undisturbed but rather the changes adhere to the social context including the roles of those involved in the conversation          ++}{>>r98 @AB<<}
 
 <!-- p49 break-ins r99 @AB -->
@@ -171,16 +171,16 @@ footers:
 <!-- p51 break-ins r103 @AB -->
 {++Code switching occurs frequently in almost all conversations, in professional setting and even in music because of the existence of the multiple languages in the country. There is also the mixing of English and tribal languages. Code mixing between indigenous languages is rare. However, Wardhaugh (2006, p.102) summarizes the issue of code switching succinctly below: ++}{>>r104 @AB<<}
 
-<!-- p52 first-line 0.47in, left -0.01in, break-ins r105 @AB -->
+<!-- p52 first-line 0.47in, left -0.0104in, break-ins r105 @AB -->
 {++Most speakers command several varieties of any language they speak, and bilingualism even multilingualism is the norm rather than unilingualism. People, then, are usually required to select a particular code whenever they choose to speak, and they may also decide to switch from one code to another or to mix codes even within s ometimes very short utterances and thereby create a new code in a process known as code switching  Having explained the linguistic concept of code-switching, the next step, in this paper, is to explain how this term occurs in the Gospel songs of Nigerian musicians. to this effect, the data is given and analysed below.  ++}{>>r106 @AB<<}
 
-<!-- p53 left, right -0.01in, break-ins r107 @AB -->
+<!-- p53 left, right -0.0104in, break-ins r107 @AB -->
 {++Data Presentation and Analysis  ++}{>>r108 @AB<<}
 
 <!-- p54 break-ins r109 @AB -->
 {++This section examines the issue of code switching in Nigerian gospel or Christian songs, and the songs have been numbered accordingly: ++}{>>r110 @AB<<}
 
-<!-- p55 left, right -0.01in, break-ins r111 @AB -->
+<!-- p55 left, right -0.0104in, break-ins r111 @AB -->
 {++Excerpt One: “OniseIyanu” (Song) by NATHANIEL BASSEY  ++}{>>r112 @AB<<}
 
 <!-- p56 break-ins r113 @AB -->
@@ -270,7 +270,7 @@ footers:
 
 <!-- p212 empty, left, first-line 0in, left 0in, break-ins r502 @AB, rev r503 @AB -->
 
-<!-- p213 left, right -0.01in, break-ins r504 @AB -->
+<!-- p213 left, right -0.0104in, break-ins r504 @AB -->
 {++Excerpt Two: “Mai Girma” (Song) by SOLOMON LANGE ++}{>>r505 @AB<<}
 
 <!-- p214 break-ins r506 @AB -->
@@ -358,7 +358,7 @@ footers:
 
 <!-- p288 empty, left, first-line 0in, left 0in, break-ins r677 @AB, rev r678 @AB -->
 
-<!-- p289 left, right -0.01in, break-ins r679 @AB -->
+<!-- p289 left, right -0.0104in, break-ins r679 @AB -->
 {++Excerpt Three: “My Trust is in You” (song) by DAVID, G.   ++}{>>r680 @AB<<}
 
 <!-- p290 break-ins r681 @AB -->
@@ -381,7 +381,7 @@ footers:
 
 <!-- p296 empty, left, first-line 0in, left 0in, break-ins r693 @AB, rev r694 @AB -->
 
-<!-- p297 right 3.84in, break-ins r695 @AB -->
+<!-- p297 right 3.837in, break-ins r695 @AB -->
 {++I put them on you  My trust is in you  ++}{>>r696 @AB<<}
 
 <!-- p298 break-ins r697 @AB -->
@@ -419,7 +419,7 @@ footers:
 
 <!-- p370 empty, left, first-line 0in, left 0in, break-ins r858 @AB, rev r859 @AB -->
 
-<!-- p371 left, right -0.01in, break-ins r860 @AB -->
+<!-- p371 left, right -0.0104in, break-ins r860 @AB -->
 {++Excerpt Four: “ArugboOjo” (song) by MINISTER KENN  ++}{>>r861 @AB<<}
 
 <!-- p372 break-ins r862 @AB -->
@@ -517,10 +517,10 @@ footers:
 
 <!-- p459 empty, left, first-line 0in, left 0in, break-ins r1055 @AB, rev r1056 @AB -->
 
-<!-- p460 left, right -0.01in, break-ins r1057 @AB -->
+<!-- p460 left, right -0.0104in, break-ins r1057 @AB -->
 {++Excerpt five: “Who am I” (song) by NOELLA ++}{>>r1058 @AB<<}
 
-<!-- p461 left, right 0.67in, break-ins r1059 @AB -->
+<!-- p461 left, right 0.668in, break-ins r1059 @AB -->
 {++The fifth songcontains the three languages: English, Idoma and Hausa:   You will not suffer my foot to be moved I carry your presence everywhere! ++}{>>r1060 @AB<<}
 
 <!-- p462 break-ins r1061 @AB -->
@@ -540,7 +540,7 @@ footers:
 <!-- p467 break-ins r1071 @AB -->
 {++Omachalla ++}{>>r1072 @AB<<}
 
-<!-- p468 right 4.29in, break-ins r1073 @AB -->
+<!-- p468 right 4.2924in, break-ins r1073 @AB -->
 {++Onye le b’awa Omanchala Nmor eh no! ++}{>>r1074 @AB<<}
 
 <!-- p469 break-ins r1075 @AB -->
@@ -654,7 +654,7 @@ footers:
 
 <!-- p613 empty, left, first-line 0in, left 0in, break-ins r1399 @AB, rev r1400 @AB -->
 
-<!-- p614 left, right -0.01in, break-ins r1401 @AB -->
+<!-- p614 left, right -0.0104in, break-ins r1401 @AB -->
 {++Excerpt Six: “Wekobiro” (song) by SAMSONG  ++}{>>r1402 @AB<<}
 
 <!-- p615 break-ins r1403 @AB -->
@@ -681,7 +681,7 @@ footers:
 <!-- p622 break-ins r1417 @AB -->
 {++Wekobiro ++}{>>r1418 @AB<<}
 
-<!-- p623 left, right -0.01in, break-ins r1419 @AB -->
+<!-- p623 left, right -0.0104in, break-ins r1419 @AB -->
 {++English Words  	Indigenous language  ++}{>>r1420 @AB<<}
 
 <!-- p624 break-ins r1421 @AB -->
@@ -701,7 +701,7 @@ footers:
 <!-- p629 left, break-ins r1431 @AB -->
 {++Thus from the above, Samasong complete switches from English language to an indigenous language in what can better be described as a case of inter-sentential switching of codes. The extract like the others already sampled above shows the existence of code switching in Christian music. This is also the case in the song below: ++}{>>r1432 @AB<<}
 
-<!-- p630 left, right -0.01in, break-ins r1433 @AB -->
+<!-- p630 left, right -0.0104in, break-ins r1433 @AB -->
 {++Excerpt Seven: “Obezina” (song) by PREYE ODEDE  ++}{>>r1434 @AB<<}
 
 <!-- p631 break-ins r1435 @AB -->
@@ -728,7 +728,7 @@ footers:
 <!-- p638 break-ins r1449 @AB -->
 {++Nwannemo, jidesi eh ike…   ++}{>>r1450 @AB<<}
 
-<!-- p639 left, right -0.01in, break-ins r1451 @AB -->
+<!-- p639 left, right -0.0104in, break-ins r1451 @AB -->
 {++Excerpt Eight: “All the Way” (song) by EBEN ++}{>>r1452 @AB<<}
 
 <!-- p640 break-ins r1453 @AB -->
@@ -774,7 +774,7 @@ footers:
 <!-- p664 break-ins r1502 @AB -->
 {++ Thus, it is common practice by some Nigerian gospel music to employ intrasentential code switching in their songs, and many reasons could be responsible for this. One of this is the desire to show one’s loyalty or affinity to one’s first language or indigenous language. And in this case, it seems most likely. This linguistic situation is similar to the one in the eight song below by Nosa.   ++}{>>r1503 @AB<<}
 
-<!-- p665 left, right -0.01in, break-ins r1504 @AB -->
+<!-- p665 left, right -0.0104in, break-ins r1504 @AB -->
 {++Excerpt Nine: “Pray for you” (song) by NOSA  ++}{>>r1505 @AB<<}
 
 <!-- p666 break-ins r1506 @AB -->
@@ -828,7 +828,7 @@ footers:
 
 <!-- p696 empty, left, first-line 0in, left 0in, break-ins r1571 @AB, rev r1572 @AB -->
 
-<!-- p697 left, right -0.01in, break-ins r1573 @AB -->
+<!-- p697 left, right -0.0104in, break-ins r1573 @AB -->
 {++Excerpt Ten: “Na you be God” (Song) by TIM GODFREY ++}{>>r1574 @AB<<}
 
 <!-- p698 break-ins r1575 @AB -->
@@ -846,7 +846,7 @@ footers:
 <!-- p702 break-ins r1583 @AB -->
 {++You no be man oh,  ++}{>>r1584 @AB<<}
 
-<!-- p703 right 4.2in, break-ins r1585 @AB -->
+<!-- p703 right 4.2014in, break-ins r1585 @AB -->
 {++Nara Ekele Nara Otuto ++}{>>r1586 @AB<<}
 
 <!-- p704 break-ins r1587 @AB -->
@@ -866,7 +866,7 @@ footers:
 
 <!-- p709 empty, left, first-line 0in, left 0in, break-ins r1597 @AB, rev r1598 @AB -->
 
-<!-- p710 left, right -0.01in, break-ins r1599 @AB -->
+<!-- p710 left, right -0.0104in, break-ins r1599 @AB -->
 {++Pidgin Expressions  	English Expressions  ++}{>>r1600 @AB<<}
 
 <!-- p711 break-ins r1601 @AB -->
@@ -885,7 +885,7 @@ footers:
 
 <!-- p716 empty, left, first-line 0in, left 0in, break-ins r1611 @AB, rev r1612 @AB -->
 
-<!-- p717 left, right -0.01in, break-ins r1613 @AB -->
+<!-- p717 left, right -0.0104in, break-ins r1613 @AB -->
 {++Conclusion ++}{>>r1614 @AB<<}
 
 <!-- p718 break-ins r1615 @AB -->
@@ -893,7 +893,7 @@ footers:
 
 <!-- p719 empty, left, first-line 0in, left 0in, break-ins r1617 @AB, rev r1618 @AB -->
 
-<!-- p720 left, right -0.01in, break-ins r1619 @AB -->
+<!-- p720 left, right -0.0104in, break-ins r1619 @AB -->
 {++References ++}{>>r1620 @AB<<}
 
 <!-- p721 hanging 0.47in, left 0.46in, break-ins r1621 @AB -->
@@ -902,7 +902,7 @@ footers:
 <!-- p722 break-ins r1623 @AB -->
 {++Goddard, C. (1997). Semantic Analysis.  USA: Oxford UP.  ++}{>>r1624 @AB<<}
 
-<!-- p723 left 0.48in, break-ins r1625 @AB -->
+<!-- p723 left 0.477in, break-ins r1625 @AB -->
 {++Gumpez, John, Joseph., &Hymes, Dell, H. (1986). Directions in Sociolinguistics: The Ethnography of Communication. Oxford: Basil Blackwell.  ++}{>>r1626 @AB<<}
 
 <!-- p724 break-ins r1627 @AB -->
@@ -926,7 +926,7 @@ footers:
 <!-- p730 hanging 0.47in, left 0.46in, break-ins r1639 @AB -->
 {++Olateju, M, &Oyeleye, L. (2005). Perspective on Language and Literature. Nigeria: Awolowo. UP.  ++}{>>r1640 @AB<<}
 
-<!-- p731 hanging 0.48in, left 0.47in, break-ins r1641 @AB -->
+<!-- p731 hanging 0.477in, left 0.467in, break-ins r1641 @AB -->
 {++Olorunfemi, Royimi. (2009). Code-Switching in Contemporary Nigerian Hip-Hop music. Ile Ife: Obafemi Awolowo University.  ++}{>>r1642 @AB<<}
 
 <!-- p732 hanging 0.47in, left 0.46in, break-ins r1643 @AB -->

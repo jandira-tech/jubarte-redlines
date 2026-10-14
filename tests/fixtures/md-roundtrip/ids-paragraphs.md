@@ -3063,34 +3063,34 @@ eiusmod adipiscing _sit-eiusmod consectetur_ magna eiusmod consectetur consectet
 <!-- p1017 num "(v)", level 3 -->
 ### (v) dolore elit incididunt incididunt sit amet
 
-<!-- p1018 TextHeading3 first-line 0.58in -->
+<!-- p1018 TextHeading3 first-line 0.583in -->
 **(eiusmod) “elit.”**
 
-<!-- p1019 justify, left 1.08in, right 0.49in -->
+<!-- p1019 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“sed,”** amet et consectetur ipsum ipsum, aliqua ut incididunt aliqua magna do dolor eiusmod adipiscing, labore, ipsum, lorem magna. et et consectetur lorem do adipiscing sed, “sed” ipsum eiusmod consectetur adipiscing.
 
-<!-- p1020 justify, left 1.08in, right 0.49in -->
+<!-- p1020 justify, left 1.083in, right 0.4875in -->
 **(sed) “dolor.”**
 
-<!-- p1021 justify, left 1.08in, right 0.49in -->
+<!-- p1021 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“amet,”** amet et consectetur ipsum ipsum, aliqua ut incididunt aliqua magna do dolor eiusmod adipiscing, labore, ipsum, lorem magna. et et consectetur lorem do adipiscing sed, “amet” ipsum eiusmod consectetur adipiscing.
 
-<!-- p1022 justify, left 1.08in, right 0.49in -->
+<!-- p1022 justify, left 1.083in, right 0.4875in -->
 **(elit) “aliqua.”**
 
-<!-- p1023 justify, left 1.08in, right 0.49in -->
+<!-- p1023 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“adipiscing,”** amet et consectetur ipsum ipsum, lorem sit et lorem adipiscing sit elit. et et consectetur lorem do adipiscing sed, “adipiscing” lorem ipsum sed do adipiscing consectetur ipsum sed’et adipiscing amet, consectetur consectetur ut ipsum, consectetur ut tempor ipsum ut elit ipsum ipsum, incididunt labore tempor adipiscing dolor, et ipsum et dolor consectetur ipsum ipsum.
 
-<!-- p1024 justify, left 1.08in -->
+<!-- p1024 justify, left 1.083in -->
 **(sed) “consectetur.”**
 
-<!-- p1025 justify, left 1.08in, right 0.49in -->
+<!-- p1025 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“incididunt,”** amet et consectetur ipsum ipsum, aliqua et do sed eiusmod eiusmod elit lorem eiusmod incididunt et lorem do amet et ipsum sed eiusmod lorem ipsum.
 
-<!-- p1026 justify, left 1.08in, right 0.49in -->
+<!-- p1026 justify, left 1.083in, right 0.4875in -->
 **(labore) “aliqua amet.”**
 
-<!-- p1027 justify, left 1.08in, right 0.49in -->
+<!-- p1027 justify, left 1.083in, right 0.4875in -->
 et ipsum labore **“adipiscing lorem”** sit et consectetur lorem do adipiscing sed, do do ipsum sed aliqua lorem adipiscing do dolore ipsum magna elit.
 
 <!-- p1028 num "(w)", level 3 -->
@@ -3169,7 +3169,7 @@ dolor aliqua elit, dolor incididunt sed
 <!-- p1053 left 2.75in -->
 tempor lorem elit, aliqua., dolor incididunt sed
 
-<!-- p1054 TextHeading2 left 0.12in, right 0.12in -->
+<!-- p1054 TextHeading2 left 0.125in, right 0.125in -->
 adipiscing labore do lorem ipsum ut dolor ipsum eiusmod labore amet ipsum sit elit ipsum lorem elit elit ipsum eiusmod do lorem ipsum eiusmod aliqua tempor, incididunt lorem ipsum sit, et, lorem ut elit consectetur eiusmod.
 
 <!-- p1055 TextHeading2 -->
@@ -3220,7 +3220,7 @@ tempor adipiscing incididunt incididunt tempor magna.
 
 <!-- p1102 section-break -->
 
-<!-- p1103 TextHeading2 left 0.12in, right 0.12in -->
+<!-- p1103 TextHeading2 left 0.125in, right 0.125in -->
 adipiscing labore do lorem ipsum ut dolor ipsum eiusmod labore amet ipsum sit elit ipsum lorem elit elit ipsum eiusmod do lorem ipsum eiusmod aliqua tempor, incididunt lorem ipsum sit, et, lorem ut elit consectetur eiusmod.
 
 <!-- p1104 TextHeading2 -->
