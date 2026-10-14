@@ -308,6 +308,19 @@ export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput
 export function readView(docx: Uint8Array, options_json?: string | null): string;
 
 /**
+ * `edit`/`add --plan PLAN.json` with operation flags: the operations
+ * recorded into `held` (PLAN.json's text, absent before the first
+ * recording), as JSON `{ok: true, recorded: {plan, json, notes,
+ * summary}}`: preview `plan`, write `json`, print `notes` and `summary`.
+ * On failure `{ok: false, usage, message}`: a usage error (exit 2), or
+ * `held` is not a plan (exit 3). Options (JSON): `author`, `date`,
+ * `existingRevisions`, `file`, `plan`, `dryRun`.
+ *
+ * Mirrors `jubarte::edit::record::record`.
+ */
+export function recordPlan(verb: string, operations_json: string, docx: Uint8Array, options_json: string, held?: string | null): string;
+
+/**
  * DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
  */
 export function redlineDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string): Uint8Array;

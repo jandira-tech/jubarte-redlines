@@ -1359,6 +1359,16 @@ fn reconstruct_element(
                     dom.remove(c);
                 }
             };
+            // By value, without either side's own change record: each side's
+            // copy carries its own scratch Unids, so serialized XML would
+            // differ on every merged table.
+            let changed = |dom: &Dom, old: NodeId, new: NodeId, change: &str| {
+                children_signature(dom, old, change) != children_signature(dom, new, change)
+            };
+            // Word's compare records the old grid whenever the properties
+            // changed, even an equal grid; never a property change that
+            // changes nothing (its redlines in tests/corpus).
+            let mut pr_changed = false;
             // tblPr → tblPrChange
             if let (Some(new_pr), Some(old_pr)) = (
                 dom.element(ne, &W::tbl_pr()),
@@ -1366,7 +1376,9 @@ fn reconstruct_element(
             ) {
                 let old_clone = dom.clone_subtree(old_pr);
                 strip_change(dom, old_clone, "tblPrChange");
-                if dom.serialize_element(old_clone) != dom.serialize_element(new_pr) {
+                pr_changed = changed(dom, old_clone, new_pr, "tblPrChange");
+                if pr_changed {
+                    strip_change(dom, new_pr, "tblPrChange");
                     let change = dom.new_element(W::name("tblPrChange"));
                     dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
@@ -1393,7 +1405,8 @@ fn reconstruct_element(
             ) {
                 let old_clone = dom.clone_subtree(old_grid);
                 strip_change(dom, old_clone, "tblGridChange");
-                if dom.serialize_element(old_clone) != dom.serialize_element(new_grid) {
+                if pr_changed || changed(dom, old_clone, new_grid, "tblGridChange") {
+                    strip_change(dom, new_grid, "tblGridChange");
                     let change = dom.new_element(W::name("tblGridChange"));
                     // w:id ONLY. CT_TblGridChange is the one revision-history
                     // element that does not extend CT_TrackChange, so it
@@ -1542,6 +1555,8 @@ fn record_revised_row_cell_props(
 /// A property element's name, sorted attributes and children, recursively:
 /// the comparer's scratch `pt14:*` ids and rsids are no properties, so two
 /// clones of the same `w:tcW` compare equal whatever Unid each carries.
+/// Names keep their namespace and each attribute is delimited, so no two
+/// different property sets share a signature.
 fn props_signature(dom: &Dom, n: NodeId) -> String {
     let Some(name) = dom.name(n) else {
         return String::new();
@@ -1550,7 +1565,13 @@ fn props_signature(dom: &Dom, n: NodeId) -> String {
         .attributes(n)
         .into_iter()
         .filter(|(k, _)| k.namespace_name() != PT::URI && !k.local_name().starts_with("rsid"))
-        .map(|(k, v)| format!("{}={v}", k.local_name()))
+        .map(|(k, v)| {
+            format!(
+                "\u{1}{{{}}}{}=\u{2}{v}\u{2}",
+                k.namespace_name(),
+                k.local_name()
+            )
+        })
         .collect();
     attrs.sort();
     let kids: String = dom
@@ -1558,7 +1579,21 @@ fn props_signature(dom: &Dom, n: NodeId) -> String {
         .into_iter()
         .map(|c| props_signature(dom, c))
         .collect();
-    format!("<{}{}>{kids}</>", name.local_name(), attrs.join(" "))
+    format!(
+        "<{{{}}}{}{}>{kids}</>",
+        name.namespace_name(),
+        name.local_name(),
+        attrs.concat()
+    )
+}
+
+/// The signatures of `n`'s children but its own `w:{change}` record.
+fn children_signature(dom: &Dom, n: NodeId, change: &str) -> String {
+    dom.elements(n, None)
+        .into_iter()
+        .filter(|&c| dom.name(c).is_none_or(|nm| nm.local_name() != change))
+        .map(|c| props_signature(dom, c))
+        .collect()
 }
 /// Put a row's `trPr` after its `tblPrEx`, a cell's `tcPr` first.
 fn place_row_cell_props(dom: &mut Dom, container: NodeId, pr: NodeId) {

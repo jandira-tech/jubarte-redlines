@@ -62,6 +62,9 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 | D12 | Default author "Redline" wherever jubarte invents one: edit/add (cli.rs:125), WASM `flagPlan`, the Rust `diff` (D4), the Python CLI's `cmd_diff` (`__main__.py:584`) and the npm CLI's `defaultAuthor()` (mjs 397-403; both drop their git lookup). The Python library's `Document.diff()` follows (Q7). |
 | D13 | Retired names and flags (`text`, `inspect`, `audit`, `diff-render`, `--changed-only`, `--pdf`, `--png`) keep working as hidden aliases and print `note: X is now Y; X is removed in 0.14` on stderr once. `debug` hidden. `self-update` listed last. |
 | D14 | The Python and npm CLIs follow every change to the commands they already have, in the same PR; listing text lives in the engine. Neither gains commands here (Q6): npm still lacks `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG output and `--pages`; Python lacks `append` and `scrub`. The CHANGELOG says so. |
+| D15 | **`edit` and `add` write one file** (Arthur, 2026-10-12). Without `--out-dir` they write `<FILE's dir>/<stem>_modified.docx`: the redline in suggesting mode (the default), the result in editing mode. `-o FILE.docx` names it; any other `-o` extension exits 2 naming `convert`/`read`. `--out-dir [DIR]` writes today's bundle (clean, redline, patch.diff, report.jsonl, and what `--pdf`/`--png` ask for), DIR defaulting to `<stem>.edit`; it excludes `-o`. Without the bundle, `--pdf`/`--png` write `<stem>_modified.pdf` / `<stem>_modified-page-NN.png` beside the docx. An existing output exits 2 without `--force`. The view's `source:` names the file and `wrote PATH (docx, N bytes)` goes to stderr (D6). A refused plan still prints its whole report on stdout; a successful plan's per-operation lines live only in the bundle's report.jsonl. MCP `docx_edit` keeps `out_dir` and the bundle. A FILE whose stem already ends in `_modified` keeps its name (Q14): editing `X_modified.docx` again writes `X_modified.docx`, so it needs `--force`, and `X.docx` is never touched. |
+| D16 | **`--plan` without a value is `<FILE's dir>/<stem>_plan.json`** (Arthur, 2026-10-12), for `edit` and `add`, recording and applying, `--consume` included. The shared parser resolves it, so `parse_cli_json`/`parseCli` hand the bindings the path. The summary's "apply with:" line prints `--plan` bare when the plan is the default. An optional value takes the next word that does not start with `-`, so `jubarte edit --plan letter.docx -p p1` reads `letter.docx` as the plan: a `--plan` value ending `.docx`, `.docm`, `.dotx`, `.dotm` or `.doc` exits 2 "--plan letter.docx names a Word document; put FILE before --plan, or write --plan=PLAN.json". |
+| D17 | **`compare` and `diff` date their revisions now** (Arthur, 2026-10-12, Q16). `-d/--date` becomes optional; without it the shared parser fills the current UTC time, to the second (`2026-10-12T07:00:00Z`), so the binary, `parse_cli_json` and `parseCli` hand the same value to every host. `-d 1970-01-01T00:00:00Z` pins it for reproducible output. The library default (`document_comparer::DEFAULT_DATE`, Python `redline()`, WASM `redlineDocuments` callers) stays the epoch: a library call stays deterministic, a person at a prompt sees today. MCP `docx_compare` follows the CLI. |
 
 ## Rules for the implementer
 
@@ -279,6 +282,9 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
 - WASM: `flagPlan` passes the new keys through untouched (it calls `plan_from_flags_json`); one `jubarte-wasm/cli/test/cli.test.mjs` row for `edit -p r0 --accept` lands with Task 20.
 
 - [ ] Run `cargo test --lib edit::flags`, `cargo test --test edit_short_ids --test cli_parser`, then the **gate**. Commit: `feat(edit): -p r12 --accept/--reject resolve one revision; --reply answers a comment`.
+
+### Task 3c: `--plan` records, `--consume` applies and deletes (done: PRs #432, #433)
+`edit`/`add FILE --plan p.json -p …` records the flags' operations into the plan (created on first use) instead of applying them; `edit FILE --plan p.json --consume` applies it and deletes the plan file. The binary, Python and npm share `src/edit/record.rs` and the parser's flag conflicts.
 
 ### Task 4: One revision count
 **Files:**
@@ -746,6 +752,34 @@ pub fn top_level_command() -> clap::Command {
 - npm `jubarte-wasm/cli/test/api.test.mjs:172` (`/drop -o/`) flips with the Task 20 rebuild.
 - [ ] Run the named tests, then the **gate**. Commit: `feat(compare)!: prints the view without -o; -o decides docx, md (view), pdf, png or json; the shorthand's options leave jubarte --help`.
 
+### Task 13b: `edit` and `add` write one file (D15)
+**Files:**
+- `src/cli.rs`: `Edit`/`Add` gain `-o/--output` (`.docx` only, D1's refusal for the rest); `out_dir` becomes `Option<Option<PathBuf>>` (`num_args = 0..=1`), conflicting with `output`. The `--plan` conflict lists in `src/edit/record.rs` (`APPLY_ONLY`) gain `output`.
+- `src/bin/jubarte.rs`: `run_edit`'s job carries `Single(path) | Bundle(dir)`. `Single` writes one docx (redline, or clean in editing mode) through `write_output`, the PDFs/PNGs beside it, and prints the view of that file. `Bundle` is today's path. `--consume`'s re-read check stays.
+- Python `_run_edit` and npm `runEdit`/`applyEdit` follow (D14).
+
+**Tests:**
+- `tests/cli_plan_record.rs` and a new `tests/edit_single_output.rs`:
+  - `edit a.docx -p p1 --content X` → only `a_modified.docx` beside it, with `w:ins`; stdout's view has `source: a_modified.docx`; stderr `wrote … (docx, `. Again → exit 2 naming `--force`; with `--force` → 0.
+  - `--editing-mode` → `a_modified.docx` has no `w:ins` and holds the edit.
+  - `--out-dir` → `a.edit/` with the four files; `--out-dir r` → `r/`; `-o b.docx --out-dir r` → 2; `-o b.pdf` → 2; `-o b.docx` → `b.docx` only.
+  - `--pdf` → `a_modified.docx` and `a_modified.pdf`.
+  - A refused plan writes nothing and prints its report.
+- The eight test files that read `<stem>.edit/` today pass `--out-dir` or read `_modified.docx`; `examples/` and the skill (about 50 lines) move in Task 21.
+- Python `test_edit_*` and npm `cli.test.mjs` rows for the same cases.
+- [ ] Run the named tests, then the **gate**. Commit: `feat(edit)!: edit and add write FILE_modified.docx; --out-dir writes the bundle`.
+
+### Task 13c: `--plan` without a value (D16)
+**Files:**
+- `src/cli.rs`: `plan` on `Edit`/`Add` takes `num_args = 0..=1` with `default_missing_value = ""`; a post-parse step shared by `Cli::try_parse_from` and `parse_json` turns `""` into `<FILE's dir>/<stem>_plan.json` and refuses a Word-document value (D16's message).
+- `src/edit/record.rs`: `Recorded::summary` takes whether the plan is the default and prints `--plan` bare then.
+
+**Tests:**
+- `tests/cli_plan_record.rs`: `edit a.docx --plan -p p1 --content X` writes `a_plan.json` beside `a.docx`, and the summary says `apply with: jubarte edit a.docx --plan`. `add a.docx --plan -p p2 --content Y` appends to the same plan. `edit a.docx --plan --consume` applies and deletes it. `edit --plan a.docx -p p1 --content X` → 2 with D16's message. `--plan=x.json` and `--plan x.json` still work. `edit dir/a.docx --plan` → `dir/a_plan.json`.
+- `tests/cli_parser.rs`: `parse_json` returns the resolved path.
+- Python and npm: the first and third rows.
+- [ ] Run the named tests, then the **gate**. Commit: `feat(edit): --plan without a value is FILE_plan.json`.
+
 ### Task 14: `diff` writes text only
 **Files:**
 - `src/cli.rs`:
@@ -908,6 +942,20 @@ pub fn top_level_command() -> clap::Command {
 ## Phase 4: bindings parity (same PR)
 
 Python is rebuilt from source here; npm tests run against the checked-in `jubarte-wasm/npm/` build. Each task ends with its suite green.
+
+### Task 18b: `compare` and `diff` date their revisions now (D17)
+**Files:**
+- `src/cli.rs`: `CompareArgs.date` (299) and `Diff.date` (1315) become `Option<String>` without `default_value`; the help says "default: now (UTC); pin it for reproducible output". The post-parse step of Task 13c fills `now` when absent, in `Cli::try_parse_from` and `parse_json` alike.
+- `src/bin/jubarte.rs`: the `Job.date` test at 2787 asserts a `…Z` timestamp within a minute of now.
+- Python `__main__.py` and npm `jubarte-redlines.mjs:165` take the parser's value (npm's own `new Date()` goes).
+- `jubarte-mcp`: `docx_compare`'s missing date → now.
+
+**Tests:**
+- `tests/cli_parser.rs`: `compare a b` → `date` parses as RFC 3339 and lies within a minute of now; `compare a b -d 1970-01-01T00:00:00Z` keeps it.
+- `tests/m7_cli.rs`: a redline written without `-d` carries today's `w:date`; with `-d` the epoch. Every CLI test that compares bytes across two runs passes `-d`.
+- Python and npm: one row each.
+- **Bench consumers** (Task 21): `tryout_jubarte.py` and the release flow pass `-d 1970-01-01T00:00:00Z`, so reruns stay byte-identical.
+- [ ] Run the named tests, then the **gate**. Commit: `feat(compare)!: compare and diff date their revisions now unless -d pins it`.
 
 ### Task 19: Engine exports and the Python CLI
 **Files:**
@@ -1093,6 +1141,25 @@ The `jubarte` on PATH is 0.11.2, so always pass `JUBARTE`. Verify with `scripts/
 
 ---
 
+## Phase 6: comparer parity found along the way (Arthur, 2026-10-12)
+
+### Task 22: Word's table alignment on `3d4318d7e9` (aeb0ace263 vs 1000537d17)
+Found while checking 06d's table records against Word. Word's redline is `tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/aeb0ace263__vs__1000537d17_redline_3d4318d7e9.docx`. The sources come from the bench's HF dataset `arthrod/neurotic_docx_bench-fixtures` (`word/clean/docx/aeb0ace263_793bb9c35c342cd532221e60f7f70c0411de141b896a63b2.docx`, `word/clean/docx/1000537d17_8d9cfd6b8768cf88164c1b8c735e97b737193f3e92fd18ee.docx`; `hf_hub_download(..., repo_type="dataset")`), and Word's PDF is in the bench's `results/redlines_0929_full/oracle_pdf/`.
+
+**What differs** (on the real sources, 2026-10-12, engine 3aceb219). The original has two tables, 3 rows × 4 columns and 19 × 6; the modified has 21 × 8 and 11 × 8 (and a third, 47 × 9, inserted whole by both Word and us):
+- **First table:** Word pairs the 3 old rows with new rows: 21 rows, 18 inserted, 0 deleted, on a 10-column grid (the union of both column boundaries), with one `tblPrChange`/`tblGridChange`. Ours deletes the 3 old rows and inserts all 21: 24 rows on the new 8-column grid.
+- **Second table:** Word splits it into six adjacent tables, each on its own grid (16, 6, 21, 6, 9 and 6 columns). Old rows with no partner become whole deleted tables (6, 1 and 3 rows); matched rows stay in fragments that carry their own `tblPrChange`/`tblGridChange`. Ours keeps one 30-row table (11 inserted, 19 deleted) on the new 8-column grid.
+- **Totals:** Word has 8 tables with 4 `tblPrChange` and 4 `tblGridChange`; ours has 3 tables with 2 of each.
+
+**Steps:**
+1. Run `jubarte debug diff ours.docx word.docx` and `jubarte debug ours.docx word.docx --check render`. Write down Word's row-matching rule (which old rows pair with which new rows) and when it splits a table (at a change of grid? at an unmatched run of old rows?).
+2. Copy the pair into `tests/corpus` (REUSE entry), and add a red test pinning Word's table count, each table's grid width and its inserted/deleted rows.
+3. Fix the row alignment and the table split in `src/comparer` (`lcs_table.rs`, and `produce.rs`'s table block from 06d).
+4. Check that the other two 06d pairs (`485599b4e9`, `cbd854cb68`) still match Word's 6/6, run the holdout gate (`hold.sh`) and a bench sample for redline fidelity. Run the gate.
+- [ ] Commit: `fix(comparer): Word's row alignment and table split on mismatched grids`.
+
+---
+
 ## Verification (end to end)
 
 1. **Engine:**
@@ -1159,6 +1226,16 @@ Arthur accepted every default below; Q10 was replaced by his own decision.
 | Q11 | `read -p` keeps today's grammar (pN, N, ranges, tN)? | Yes; stories/cells/comments are a follow-up |
 | Q12 | The follow-ups plan spells paraIds `pid:0DCBD3F9`? | Yes (Precedence) |
 | Q13 | Refuse compare-only flags with one file? | Follow-up, not this PR |
+
+## Decisions taken with Arthur (2026-10-12)
+
+He asked for D15 and D16, and asked again for compare to print instead of writing (already D3, Task 13; unchanged).
+
+| Q | Question | Decision |
+|---|---|---|
+| Q14 | Editing `X_modified.docx` again: `X_modified_modified.docx`, or keep `X_modified.docx` (so `--force` edits it in place)? | Keep the name (D15) |
+| Q15 | The flag that writes "the rest": reuse `--out-dir [DIR]`, or a new flag? | Reuse `--out-dir` (recommended; Arthur did not object) |
+| Q16 | compare's printed authors line reads `R: Redline … 1970-01-01T00:00:00Z` (the pinned default date). | Arthur: date them now; `-d` pins (D17, Task 18b) |
 
 ## How this plan ships (Arthur, 2026-10-11)
 

@@ -43,6 +43,11 @@ fn word_mode() -> WmlComparerSettings {
 /// A one-row two-column table whose grid column widths differ between the two
 /// sides — the input that makes `produce.rs` emit a `w:tblGridChange`.
 fn docx_table(widths: (u32, u32), text: &str) -> Vec<u8> {
+    docx_table_with(widths, text, "")
+}
+
+/// `docx_table` with `extra` appended to the table's `w:tblPr`.
+fn docx_table_with(widths: (u32, u32), text: &str, extra: &str) -> Vec<u8> {
     let (w1, w2) = widths;
     let total = w1 + w2;
     let doc = format!(
@@ -50,7 +55,7 @@ fn docx_table(widths: (u32, u32), text: &str) -> Vec<u8> {
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     <w:tbl>
-      <w:tblPr><w:tblW w:w="{total}" w:type="dxa"/></w:tblPr>
+      <w:tblPr><w:tblW w:w="{total}" w:type="dxa"/>{extra}</w:tblPr>
       <w:tblGrid><w:gridCol w:w="{w1}"/><w:gridCol w:w="{w2}"/></w:tblGrid>
       <w:tr>
         <w:tc><w:tcPr><w:tcW w:w="{w1}" w:type="dxa"/></w:tcPr>
@@ -148,4 +153,37 @@ fn sibling_tblprchange_keeps_author_and_date() {
             "CT_TblPrChange declares w:author and w:date; they must survive: {tag}"
         );
     }
+}
+
+/// A table whose properties and grid did not change records no history:
+/// the comparer's scratch Unids differ between the two sides' copies of the
+/// same `w:tblPr`, and comparing those made every merged table carry a
+/// `w:tblPrChange` (by the redline's author) and an identical
+/// `w:tblGridChange` — a formatting change nobody made.
+#[test]
+fn an_unchanged_table_records_no_property_or_grid_change() {
+    let a = docx_table((4675, 4675), "cell one");
+    let b = docx_table((4675, 4675), "cell one changed");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let xml = document_xml(&out);
+    assert!(xml.contains("changed"), "{xml}");
+    assert!(!xml.contains("tblPrChange"), "{xml}");
+    assert!(!xml.contains("tblGridChange"), "{xml}");
+    // Only the grid changed: the grid records it, the properties do not.
+    let b = docx_table((3000, 6350), "cell one changed");
+    let xml = document_xml(&compare_documents_with_settings(&a, &b, &word_mode()).unwrap());
+    assert!(xml.contains("tblGridChange"), "{xml}");
+    assert!(!xml.contains("tblPrChange"), "{xml}");
+    // Only the properties changed: Word records both, the grid's copy equal
+    // to the live grid (its own compare redlines in tests/corpus, e.g.
+    // 66dcec3e49_file_175__vs__8f47b1dc90_file_176_redline_485599b4e9.docx,
+    // never hold a tblPrChange without a tblGridChange).
+    let b = docx_table_with(
+        (4675, 4675),
+        "cell one changed",
+        r#"<w:jc w:val="center"/>"#,
+    );
+    let xml = document_xml(&compare_documents_with_settings(&a, &b, &word_mode()).unwrap());
+    assert_eq!(xml.matches("<w:tblPrChange").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<w:tblGridChange").count(), 1, "{xml}");
 }
