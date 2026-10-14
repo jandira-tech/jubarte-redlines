@@ -110,6 +110,16 @@ fn compare_documents(
 }
 
 /// Accept every tracked revision (package-wide) → clean DOCX bytes.
+/// The author and timestamp a Markdown document gives the changes and
+/// comments that name none: its front matter, else the reference `.docx`'s
+/// creator and creation time; `None` for each neither tells (the CLI then
+/// takes `Redline` and now).
+#[pyfunction]
+#[pyo3(signature = (text, reference = None))]
+fn markdown_stamp(text: &str, reference: Option<&[u8]>) -> (Option<String>, Option<String>) {
+    jubarte::markdown::markdown_stamp(text, reference)
+}
+
 #[pyfunction]
 fn accept_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
     let out = py
@@ -880,6 +890,13 @@ fn read_view(
     Ok((view.markdown, view.warnings))
 }
 
+/// Why `--editing-mode` cannot apply `plan_json` to `docx`: the tracked
+/// changes it keeps and does not itself accept or reject, or `None`.
+#[pyfunction]
+fn editing_mode_conflict(py: Python<'_>, plan_json: &str, docx: &[u8]) -> Option<&'static str> {
+    py.detach(|| jubarte::edit::flags::editing_mode_conflict_json(plan_json, docx))
+}
+
 /// The plan the `edit`/`add` operation flags describe → `(plan_json,
 /// notes)`; `operations` is the parsed command's `operations` array as JSON.
 /// A `ValueError` is a usage error.
@@ -1226,6 +1243,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
     m.add_function(wrap_pyfunction!(flag_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(editing_mode_conflict, m)?)?;
     m.add_function(wrap_pyfunction!(record_plan, m)?)?;
     m.add_function(wrap_pyfunction!(changed_view, m)?)?;
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
@@ -1265,6 +1283,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
+    m.add_function(wrap_pyfunction!(markdown_stamp, m)?)?;
     m.add_function(wrap_pyfunction!(update_fields, m)?)?;
     m.add_function(wrap_pyfunction!(scrub_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_json, m)?)?;
