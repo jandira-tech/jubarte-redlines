@@ -88,6 +88,7 @@ pub fn redline(
                         images: options.images,
                         page: PageSize::Letter,
                         tracking: None,
+                        scholar: false,
                     },
                 )?;
                 Ok(written.docx)

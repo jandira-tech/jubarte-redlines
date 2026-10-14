@@ -628,8 +628,12 @@ given, they beat the front matter's `author:` and `last_modified:`,
 `modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
 epoch, so the same Markdown writes the same bytes; the CLI dates them now
 instead), `critic` (`true`: CriticMarkup becomes tracked changes and
-comments) and `track_changes` (or `trackChanges`: `"all"`,
-`"accept"`, `"reject"`). An unknown field is an error. `reference`, a
+comments), `track_changes` (or `trackChanges`: `"all"`,
+`"accept"`, `"reject"`), `tracking` (`true`/`false`: Word's Track
+Changes switch in the output, whatever the front matter's
+`track_changes:` says) and `scholar` (`true`: set as LaTeX's article
+class, page numbers from page 2, as `--scholar`). An unknown field is
+an error. `reference`, a
 `.docx`, lends its styles and page setup, and then `page` is ignored.
 Images are written as their alt text, and the engine's warnings are not
 returned.
@@ -1398,15 +1402,21 @@ Options:
           - on:  New edits in Word are tracked
           - off: New edits in Word are not tracked
 
-      --no-page-markers
-          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
-          pass that places them
-
   -q, --quiet
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
           read, and warnings and errors still print
+
+      --scholar
+          Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern
+          Roman 10pt on 12pt lines, justified, bold headings) and number its pages from
+          page 2, centered in the footer. The front matter's own `styles:` entries,
+          headers and footers win
+
+      --no-page-markers
+          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
+          pass that places them
 
   -h, --help
           Print help (see a summary with '-h')

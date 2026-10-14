@@ -162,6 +162,7 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments that carry none [default: the front matter's `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible output |
 | `--page` |  | <SIZE> | letter | letter, a4 |  | Markdown to Word: the page size when there is no --reference-doc (one-inch margins either way); a reference's page setup wins |
 | `--tracking` |  | <SWITCH> |  | on, off |  | Markdown to Word: turn Word's Track Changes on or off in the .docx written, whatever the Markdown's `track_changes:` key says [default: the key; without one, the --reference-doc's setting, else off] |
+| `--scholar` |  |  | false |  |  | Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern Roman 10pt on 12pt lines, justified, bold headings) and number its pages from page 2, centered in the footer. The front matter's own `styles:` entries, headers and footers win |
 | `--no-page-markers` |  |  | false |  |  | Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
@@ -494,6 +495,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--revisions` | (shorthand), compare, accept, reject, convert, edit, append, scrub | `<REVISIONS> default=conventional values=conventional, word, custom` |
 | `--rsids` | scrub | `default=false values=` |
 | `--rules` | validate | `<RULES> default= values=` |
+| `--scholar` | convert | `default=false values=` |
 | `--section-break` | append | `<SECTION_BREAK> default=next-page values=next-page, continuous, none` |
 | `--strict` | validate | `default=false values=` |
 | `--style` | edit, add, debug diff | **differs**: `<NAME> default= values=` on debug diff; `<SPEC> default= values=` on edit, add |

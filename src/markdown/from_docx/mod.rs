@@ -2201,11 +2201,19 @@ impl Writer<'_> {
             list.reset();
             blocks.push(&block, false);
         }
-        blocks.set_separator(if self.agent {
+        let mark = if self.agent {
             None
         } else {
             self.paragraph_mark(p).filter(|_| written && !boxed)
-        });
+        };
+        // Without id lines, a page break is its own line after the
+        // paragraph that holds it, in the view's words; not when the
+        // paragraph's mark is tracked, whose change splices into the next
+        // block's separator and would be broken by a line between.
+        if !self.agent && mark.is_none() && agent::has_page_break(p) {
+            blocks.push(crate::markdown::write::PAGE_BREAK_LINE, false);
+        }
+        blocks.set_separator(mark);
     }
 
     /// A paragraph's rendered text as its block holds it: in the agent view

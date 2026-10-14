@@ -76,8 +76,10 @@ Tasks:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
-  -q, --quiet    Print nothing on success (files are still written; warnings and errors
-                 still print)
+  -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
+                 `edit`/`add` changed. Files are still written; a reading task (`read`,
+                 `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+                 what it read, and warnings and errors still print
   -h, --help     Print help
   -V, --version  Print version
 
@@ -146,8 +148,10 @@ Options:
           [default: word]
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -281,8 +285,10 @@ Arguments:
 
 Options:
       --json   Emit one JSON object per line
-  -q, --quiet  Print nothing on success (files are still written; warnings and errors
-               still print)
+  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
+               `edit`/`add` changed. Files are still written; a reading task (`read`,
+               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+               what it read, and warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -323,8 +329,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -406,8 +414,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -541,19 +551,15 @@ Options:
           - on:  New edits in Word are tracked
           - off: New edits in Word are not tracked
 
-  -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
-
-      --scholar
-          Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern
-          Roman 10pt on 12pt lines, justified, bold headings) and number its pages from
-          page 2, centered in the footer. The front matter's own `styles:` entries,
-          headers and footers win
-
       --no-page-markers
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
           pass that places them
+
+  -q, --quiet
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -665,8 +671,10 @@ Arguments:
 
 Options:
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -772,8 +780,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -934,8 +944,10 @@ Options:
           `<FILE's directory>/<stem>.edit`)
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1085,8 +1097,10 @@ Options:
           Replace an existing output (the bundle directory's files)
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1113,8 +1127,10 @@ Usage: jubarte-redlines capabilities [OPTIONS]
 
 Options:
       --json   The manifest as JSON instead of the text summary
-  -q, --quiet  Print nothing on success (files are still written; warnings and errors
-               still print)
+  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
+               `edit`/`add` changed. Files are still written; a reading task (`read`,
+               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
+               what it read, and warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -1136,8 +1152,11 @@ Options:
       --json           Print diff.json to stdout instead of one line per changed page
       --no-overlay     Skip the diff-page-NN.png overlays
       --force          Overwrite files already in --out-dir
-  -q, --quiet          Print nothing on success (files are still written; warnings and
-                       errors still print)
+  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
+                       what `edit`/`add` changed. Files are still written; a reading
+                       task (`read`, `changes`, `compare` without -o, `diff`,
+                       `capabilities`) still prints what it read, and warnings and
+                       errors still print
   -h, --help           Print help
 
 Rendering:
@@ -1172,8 +1191,11 @@ Options:
       --json           Emit one JSON object per line
       --author <NAME>  Only this author's comments (exact match)
       --latest         One comment per thread: the newest
-  -q, --quiet          Print nothing on success (files are still written; warnings and
-                       errors still print)
+  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
+                       what `edit`/`add` changed. Files are still written; a reading
+                       task (`read`, `changes`, `compare` without -o, `diff`,
+                       `capabilities`) still prints what it read, and warnings and
+                       errors still print
   -h, --help           Print help
 ```
 
@@ -1218,8 +1240,10 @@ Options:
           Replace an existing --repair output
 
   -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+          No status on success: no `wrote` lines, and no summary or view of what
+          `edit`/`add` changed. Files are still written; a reading task (`read`,
+          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
+          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2684,7 +2708,7 @@ UpdatedFields(
 ### `from_markdown`
 
 ```python
-from_markdown(text: 'str', *, reference: 'Document | bytes | None' = None, page: "Literal['letter', 'a4']" = 'letter', author: 'str | None' = None, date: 'str | None' = None, critic: 'bool' = True, track_changes: "Literal['all', 'accept', 'reject']" = 'all') -> 'Document'
+from_markdown(text: 'str', *, reference: 'Document | bytes | None' = None, page: "Literal['letter', 'a4']" = 'letter', author: 'str | None' = None, date: 'str | None' = None, critic: 'bool' = True, track_changes: "Literal['all', 'accept', 'reject']" = 'all', tracking: 'bool | None' = None, scholar: 'bool' = False) -> 'Document'
 ```
 
 Write Markdown as a Word document, as ``jubarte convert draft.md``.
@@ -2698,6 +2722,11 @@ engine's fixed epoch (the CLI dates them now instead).
 ``track_changes`` keeps them (``all``) or writes the document with each
 accepted or rejected. ``reference`` lends its styles and page setup;
 without it ``page`` picks US Letter or A4, both with one-inch margins.
+``tracking`` turns Word's Track Changes on or off in the document,
+whatever the front matter's ``track_changes:`` says (``None`` follows
+it). ``scholar`` sets the document as LaTeX's article class does (Latin
+Modern Roman 10pt, justified, bold headings) and numbers its pages from
+page 2, as ``--scholar``; the front matter's own styles and footers win.
 Engine warnings, such as a ``page`` the reference overrides, are raised
 as ``UserWarning``. Images are written as their alt text.
 

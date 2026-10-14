@@ -332,6 +332,64 @@ pub fn apply_settings(
     Ok(())
 }
 
+/// The children of `w:compat` that come before `w:doNotExpandShiftReturn`
+/// in `CT_Compat`.
+const BEFORE_SHIFT_RETURN: [&str; 10] = [
+    "useSingleBorderforContiguousCells",
+    "wpJustification",
+    "noTabHangInd",
+    "noLeading",
+    "spaceForUL",
+    "noColumnBalance",
+    "balanceSingleByteDoubleByteWidth",
+    "noExtraLineSpacing",
+    "doNotLeaveBackslashAlone",
+    "ulTrailSpace",
+];
+
+/// Word's "Don't justify lines ending in soft line break"
+/// (`w:compat/w:doNotExpandShiftReturn`, ECMA-376 17.15.3.10) turned on
+/// under the settings `root`, in schema order.
+fn do_not_expand_shift_return(dom: &mut Dom, root: NodeId) {
+    let compat = match dom.elements(root, Some(&W::name("compat"))).first() {
+        Some(&compat) => compat,
+        None => set_child(dom, root, "compat", &[]),
+    };
+    for old in dom.elements(compat, Some(&W::name("doNotExpandShiftReturn"))) {
+        dom.remove(old);
+    }
+    let node = dom.new_element(W::name("doNotExpandShiftReturn"));
+    let next = dom.elements(compat, None).into_iter().find(|&child| {
+        !dom.name(child).is_some_and(|name| {
+            name.namespace_name() == W::URI && BEFORE_SHIFT_RETURN.contains(&name.local_name())
+        })
+    });
+    match next {
+        Some(next) => dom.add_before_self(next, node),
+        None => dom.add(compat, node),
+    }
+}
+
+/// [`do_not_expand_shift_return`] on a whole package: a justified line
+/// that ends in a line break is not stretched to the margin.
+pub(crate) fn no_stretched_line_breaks(docx: &[u8]) -> Result<Vec<u8>, String> {
+    let mut pkg = PartFs::open(docx).map_err(|e| e.to_string())?;
+    let main = pkg
+        .main_document_part()
+        .ok_or("the package has no main document part")?;
+    let part = settings_part(&mut pkg, &main);
+    let xml = pkg.part_string(&part).unwrap_or_default();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom
+        .root(doc)
+        .filter(|&r| dom.name_is(r, &W::name("settings")))
+        .ok_or_else(|| format!("{part} is not a w:settings part"))?;
+    do_not_expand_shift_return(&mut dom, root);
+    pkg.set_part(&part, dom.serialize_document(doc).into_bytes());
+    pkg.to_zip().map_err(|e| e.to_string())
+}
+
 /// [`apply_settings`] on a whole package.
 pub fn apply_settings_to_docx(docx: &[u8], request: &SettingsRequest) -> Result<Vec<u8>, String> {
     let mut pkg = PartFs::open(docx).map_err(|e| e.to_string())?;
@@ -369,6 +427,29 @@ mod tests {
             let wire = serde_json::to_string(&edit).unwrap();
             assert_eq!(wire, format!("\"{}\"", edit.value()), "{edit:?}");
             assert_eq!(serde_json::from_str::<ProtectionEdit>(&wire).unwrap(), edit);
+        }
+    }
+
+    #[test]
+    fn a_shift_return_flag_lands_in_compat_in_schema_order() {
+        for (compat, expected) in [
+            (
+                r#"<w:compat><w:ulTrailSpace/><w:spacingInWholePoints/><w:compatSetting w:name="x" w:uri="u" w:val="1"/></w:compat>"#,
+                r#"<w:compat><w:ulTrailSpace /><w:doNotExpandShiftReturn /><w:spacingInWholePoints /><w:compatSetting"#,
+            ),
+            (
+                r#"<w:compat><w:doNotExpandShiftReturn w:val="0"/></w:compat>"#,
+                "<w:compat><w:doNotExpandShiftReturn /></w:compat>",
+            ),
+            (
+                r#"<w:zoom w:percent="90"/><w:rsids/>"#,
+                r#"<w:zoom w:percent="90" /><w:compat><w:doNotExpandShiftReturn /></w:compat><w:rsids />"#,
+            ),
+        ] {
+            let (mut dom, doc, root) = settings(compat);
+            do_not_expand_shift_return(&mut dom, root);
+            let xml = dom.serialize_document(doc);
+            assert!(xml.contains(expected), "{xml}");
         }
     }
 

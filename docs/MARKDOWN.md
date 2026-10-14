@@ -52,6 +52,27 @@ untagged `{>>note<<}`) takes them, in this order, from:
 4. `Redline` and now. Nothing is read from the file's owner or
    modification time.
 
+A page break is a line of its own: `\newpage`, `\pagebreak`,
+`\clearpage` or `\cleardoublepage` (LaTeX's, as Pandoc manuscripts write
+them), or `<!-- page-break -->`, the line the plain Markdown of `convert
+--to md` prints for one. The paragraph above it holds the break, as Word
+puts one; at the top of the document an empty paragraph does. In code the
+commands stay text. The agent view says the same with its id line's
+`page-break` clause.
+
+`--scholar` (Python `from_markdown(scholar=True)`, wasm `scholar: true`)
+sets a manuscript as LaTeX's article class does: Latin Modern Roman 10pt
+on 12pt lines, justified, 6pt between paragraphs, bold headings at 14.4,
+12 and 10pt with LaTeX's spacing, and lines ending in a line break (an
+author block) left unstretched (`w:doNotExpandShiftReturn`). The page
+number goes in the footer, centered, from page 2. It only fills in what the
+front matter leaves out: the `styles:` entries it names (a default style of
+its own keeps `Normal`), and its `headers:`/`footers:` (no page number is
+added when they hold `{PAGE}`; with headers of their own the number starts
+on page 1, since a title page would hide them there). Latin Modern Roman is
+TeX's font and is seldom installed: Word and jubarte draw it in a
+substitute (Cambria on macOS) until it is.
+
 An author the `authors:` table names, and a date a tag carries, come before
 all of these. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output from
 identical inputs. This represents the document, so its own metadata

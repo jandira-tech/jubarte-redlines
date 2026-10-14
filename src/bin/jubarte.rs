@@ -2162,6 +2162,7 @@ fn run_convert_any(
                 tracking: markdown
                     .tracking
                     .map(|tracking| tracking == jubarte::cli::Tracking::On),
+                scholar: markdown.scholar,
             };
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;

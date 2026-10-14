@@ -17,6 +17,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **`convert --scholar`** sets Markdown as LaTeX's article class sets a
+  manuscript (Latin Modern Roman 10pt, justified, bold headings, unstretched
+  line-break lines) and numbers the pages from page 2, filling in only what
+  the front matter leaves out. Python `from_markdown(scholar=…)`, wasm
+  `markdownToDocx` `scholar`, and the npm CLI take it too.
+
 - **The Python CLI prints what the binary prints.** `changes`, `comments`,
   `read --tables` and a selected `read --json` come from the engine
   (`_native.changes_text`, `comments_text`, `tables_text`, `read_json`), and
@@ -298,6 +304,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   lists formats only for its own tasks.
 - **`-q` says what it hides**: status lines (`wrote`, an edit's summary and
   view), not what a reading task prints.
+- **The Python and npm CLIs honour `convert --tracking`.** Both accepted the
+  flag and dropped it; Python `from_markdown(tracking=…)` and wasm
+  `markdownToDocx` `tracking` now set Word's Track Changes switch, and one
+  JSON options reader (`jubarte::markdown::docx_options_from_json`) serves
+  both bindings. `_native.markdown_to_docx` takes `options_json`.
 
 - `edit` under `existing_revisions: "keep"`, and a plan rewriting what a
   comment covers (`c0.text`), dropped a `format_run`, `insert_footnote` or
@@ -322,6 +333,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   the document"). Every Word input now reads `INVALID_PACKAGE: FILE is
   not a ZIP file: no end-of-central-directory record`, as `LEGACY_DOC`
   already did.
+- `\newpage` (and `\pagebreak`, `\clearpage`, `\cleardoublepage`) on a
+  line of its own printed as text in the Word output; it is now a page
+  break, which the view writes in its own words (`page-break` on the id
+  line) and plain `convert --to md` as a `<!-- page-break -->` line, which
+  reads back as the break. Plain Markdown dropped page breaks before.
 - A task the host lacks (npm's `visual-diff`, `validate`, `scrub`, …) said
   "not a task", "not supported by this adapter" or a clap conflict by
   argument count; it is now one usage error naming the task.

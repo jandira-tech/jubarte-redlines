@@ -89,16 +89,30 @@ pub fn markdown_to_docx(
         .map_err(MarkdownError::Package)?,
         None => docx,
     };
+    let docx = if options.scholar {
+        crate::settings::no_stretched_line_breaks(&docx).map_err(MarkdownError::Package)?
+    } else {
+        docx
+    };
     Ok(WrittenDocx { docx, warnings })
 }
 
 /// The Markdown read into Word items.
 pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
+    let scholarly;
+    let markdown = if options.scholar {
+        let stories = options.reference.is_some_and(super::package::has_stories);
+        scholarly = scholar(markdown, stories);
+        scholarly.as_str()
+    } else {
+        markdown
+    };
     let source = if options.critic {
         critic::encode(markdown)
     } else {
         markdown.to_string()
     };
+    let source = page_commands(&source);
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
@@ -107,6 +121,171 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         writer.event(event);
     }
     writer.finish()
+}
+
+/// The styles [`DocxOptions::scholar`] sets, as the front matter's
+/// `styles:` legend writes them: LaTeX's article class at 10pt (`\section`
+/// `\Large`, `\subsection` `\large`, `\subsubsection` `\normalsize`,
+/// with their spacing before and after).
+const SCHOLAR_STYLES: [(&str, &str); 4] = [
+    (
+        "Normal",
+        "Latin Modern Roman 10pt, after 6pt, line 12pt exact, justify",
+    ),
+    (
+        "\"#\"",
+        "Heading1, Latin Modern Roman bold 14.4pt, before 15pt, after 10pt, line 1, left, keep-next",
+    ),
+    (
+        "\"##\"",
+        "Heading2, Latin Modern Roman bold 12pt, before 14pt, after 6.5pt, line 1, left, keep-next",
+    ),
+    (
+        "\"###\"",
+        "Heading3, Latin Modern Roman bold 10pt, before 14pt, after 6.5pt, line 1, left, keep-next",
+    ),
+];
+
+/// `markdown` with the front matter [`DocxOptions::scholar`] fills in: each
+/// style of [`SCHOLAR_STYLES`] its `styles:` legend does not name (`Normal`
+/// only when the legend names no default style of its own), and a footer
+/// with the page number, centered, from page 2 when it has no footers and
+/// no header holds `{PAGE}`, and the reference document (`stories`) has
+/// no headers or footers of its own. With headers of its own, page 1 keeps
+/// them, so the number starts on page 1.
+fn scholar(markdown: &str, stories: bool) -> String {
+    let (yaml, body) = split_front_matter(markdown).unwrap_or(("", markdown));
+    let mut lines: Vec<String> = yaml.lines().map(str::to_string).collect();
+    let mut named: Vec<String> = Vec::new();
+    let mut styles_at = None;
+    // A block holds a story only with an entry under it; only a story's
+    // `{PAGE}` is the page number.
+    let mut headers = false;
+    let mut footers = false;
+    let mut page = false;
+    let mut block = "";
+    for (n, line) in lines.iter().enumerate() {
+        if !line.starts_with(' ') {
+            block = line.trim_end();
+            if block == "styles:" {
+                styles_at = Some(n);
+            }
+            continue;
+        }
+        let entry = view_styles::without_comment(line).trim();
+        let Some((key, _)) = entry.split_once(": ") else {
+            continue;
+        };
+        match block {
+            "styles:" => named.push(key.trim_matches('"').to_string()),
+            "headers:" => headers = true,
+            "footers:" => footers = true,
+            _ => {}
+        }
+        page |= matches!(block, "headers:" | "footers:") && line.contains("{PAGE");
+    }
+    let own_default = named.iter().any(|key| {
+        !key.bytes().all(|b| b == b'#') && !matches!(key.as_str(), "table" | "tables" | "changes")
+    });
+    let missing: Vec<String> = SCHOLAR_STYLES
+        .iter()
+        .filter(|(key, _)| {
+            let key = key.trim_matches('"');
+            if key == "Normal" {
+                !own_default
+            } else {
+                !named.iter().any(|n| n == key)
+            }
+        })
+        .map(|(key, value)| format!("  {key}: {value}"))
+        .collect();
+    match styles_at {
+        Some(at) => {
+            lines.splice(at + 1..at + 1, missing);
+        }
+        None if !missing.is_empty() => {
+            lines.push("styles:".to_string());
+            lines.extend(missing);
+        }
+        None => {}
+    }
+    if !footers && !page && !stories {
+        lines.push("footers:".to_string());
+        if !headers {
+            lines.push("  first: none".to_string());
+        }
+        lines.push("  default: {id: footer1, text: \"{PAGE}\", center}".to_string());
+    }
+    format!("---\n{}\n---\n\n{body}", lines.join("\n"))
+}
+
+/// A YAML front matter block's text and the Markdown after it.
+fn split_front_matter(markdown: &str) -> Option<(&str, &str)> {
+    let rest = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let mut at = 0;
+    for line in rest.split_inclusive('\n') {
+        if matches!(line.trim_end(), "---" | "...") {
+            return Some((&rest[..at], &rest[at + line.len()..]));
+        }
+        at += line.len();
+    }
+    None
+}
+
+/// The line the writers print for a page break where no id line can carry
+/// it (the plain Markdown of `convert --to md`); the reader takes it back.
+pub(super) const PAGE_BREAK_LINE: &str = "<!-- page-break -->";
+
+/// LaTeX's page commands, which Pandoc manuscripts write on a line of their
+/// own: each is a page break, so `source` gets [`PAGE_BREAK_LINE`] in its
+/// place (an HTML comment ends the paragraph above it). Front matter and
+/// fenced or indented code keep them as text.
+fn page_commands(source: &str) -> String {
+    const COMMANDS: [&str; 4] = [
+        r"\newpage",
+        r"\pagebreak",
+        r"\clearpage",
+        r"\cleardoublepage",
+    ];
+    let mut out = String::with_capacity(source.len());
+    let mut fence: Option<&str> = None;
+    let mut front_matter = source.starts_with("---\n") || source.starts_with("---\r\n");
+    for (n, line) in source.split_inclusive('\n').enumerate() {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        let trimmed = bare.trim();
+        if front_matter {
+            if n > 0 && (trimmed == "---" || trimmed == "...") {
+                front_matter = false;
+            }
+            out.push_str(line);
+            continue;
+        }
+        let indent = bare.len() - bare.trim_start().len();
+        if let Some(open) = fence {
+            if indent < 4
+                && trimmed.starts_with(open)
+                && trimmed.trim_start_matches(open).trim().is_empty()
+            {
+                fence = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if indent < 4 && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
+            fence = Some(&trimmed[..3]);
+        } else if indent < 4 && COMMANDS.contains(&trimmed) {
+            out.push_str(PAGE_BREAK_LINE);
+            out.push_str(&line[bare.len()..]);
+            if line.len() == bare.len() {
+                out.push('\n');
+            }
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 /// What the view's table line says about one table, read before the table:
@@ -1399,6 +1578,14 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// with no text before the next line (`<!-- p7 page-break -->`), a
     /// paragraph of its own.
     fn id_lines(&mut self, html: &str) {
+        if html.trim() == PAGE_BREAK_LINE
+            && self.cell.is_none()
+            && self.comment.is_none()
+            && self.target.is_none()
+        {
+            self.break_page();
+            return;
+        }
         if !self.view || self.cell.is_some() || self.comment.is_some() || self.target.is_some() {
             return;
         }
@@ -1690,6 +1877,27 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// highlights are pieces of that range, which goes on past them.
     fn table_in_range(&self) -> bool {
         self.table_plan.as_ref().is_some_and(|plan| plan.in_comment)
+    }
+
+    /// A page break between blocks: the paragraph before it holds it, as
+    /// Word puts one; with no paragraph before it, an empty one does.
+    fn break_page(&mut self) {
+        self.end_paragraph();
+        let page_break = Item::Run(Run {
+            content: Content::PageBreak,
+            format: RunFormat::default(),
+            change: None,
+            highlight: None,
+        });
+        let story = self.story();
+        if matches!(story.last(), Some(Item::ParagraphEnd)) {
+            let end = story.len() - 1;
+            story.insert(end, page_break);
+        } else {
+            story.push(Item::Paragraph(Paragraph::default()));
+            story.push(page_break);
+            story.push(Item::ParagraphEnd);
+        }
     }
 
     fn ensure_paragraph(&mut self) {

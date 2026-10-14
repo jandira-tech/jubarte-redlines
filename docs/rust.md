@@ -646,15 +646,21 @@ Options:
           - on:  New edits in Word are tracked
           - off: New edits in Word are not tracked
 
-      --no-page-markers
-          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
-          pass that places them
-
   -q, --quiet
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
           read, and warnings and errors still print
+
+      --scholar
+          Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern
+          Roman 10pt on 12pt lines, justified, bold headings) and number its pages from
+          page 2, centered in the footer. The front matter's own `styles:` entries,
+          headers and footers win
+
+      --no-page-markers
+          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
+          pass that places them
 
   -h, --help
           Print help (see a summary with '-h')

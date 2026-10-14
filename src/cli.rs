@@ -2201,6 +2201,12 @@ pub struct MarkdownArgs {
     /// the key; without one, the --reference-doc's setting, else off].
     #[arg(long, value_enum, value_name = "SWITCH")]
     pub tracking: Option<Tracking>,
+    /// Markdown to Word: set a manuscript as LaTeX's article class does
+    /// (Latin Modern Roman 10pt on 12pt lines, justified, bold headings)
+    /// and number its pages from page 2, centered in the footer. The front
+    /// matter's own `styles:` entries, headers and footers win.
+    #[arg(long)]
+    pub scholar: bool,
     /// Word to Markdown: leave out the `<!-- page N of M -->` lines, and the
     /// layout pass that places them.
     #[arg(long)]

@@ -1619,3 +1619,217 @@ fn a_front_matter_story_that_does_not_read_warns() {
         "{first}"
     );
 }
+
+/// The paragraphs of `docx`, each with whether it ends in a page break.
+fn breaks(docx: &[u8]) -> Vec<(String, bool)> {
+    let xml = document_xml(docx);
+    xml.split("<w:p>")
+        .chain(xml.split("<w:p ").skip(1))
+        .skip(1)
+        .filter_map(|p| p.split("</w:p>").next())
+        .map(|p| {
+            let text: String = p
+                .split("<w:t")
+                .skip(1)
+                .filter_map(|t| {
+                    t.split_once('>')
+                        .and_then(|(_, rest)| rest.split("</w:t>").next())
+                })
+                .collect();
+            (text, p.contains(r#"<w:br w:type="page"/>"#))
+        })
+        .collect()
+}
+
+/// LaTeX's page commands, as Pandoc manuscripts write them on a line of
+/// their own, are page breaks: the paragraph before them holds the break,
+/// as Word puts one (2026-10-14, the git_manuscript fixture).
+#[test]
+fn latex_page_commands_are_page_breaks() {
+    for command in [
+        r"\newpage",
+        r"\pagebreak",
+        r"\clearpage",
+        r"\cleardoublepage",
+    ] {
+        // Right under a line of text, and alone between blank lines.
+        for gap in ["\n", "\n\n"] {
+            let markdown = format!("Keywords line.{gap}{command}\n\n# Findings\n\nText.\n");
+            let docx = write(&markdown);
+            let paragraphs = breaks(&docx);
+            assert!(
+                paragraphs.contains(&("Keywords line.".to_string(), true)),
+                "{command:?} {gap:?}: {paragraphs:?}"
+            );
+            assert!(
+                !paragraphs.iter().any(|(text, _)| text.contains(command)),
+                "{command:?} {gap:?}: {paragraphs:?}"
+            );
+            assert_eq!(texts(&docx), ["Keywords line.", "Findings", "Text."]);
+        }
+    }
+    // A document that opens with one: an empty paragraph holds the break.
+    let docx = write("\\newpage\n\nAfter.\n");
+    assert_eq!(
+        breaks(&docx),
+        [(String::new(), true), ("After.".to_string(), false)]
+    );
+    // Code keeps the command as text.
+    let docx = write("```\n\\newpage\n```\n");
+    assert!(document_xml(&docx).contains(r"\newpage"));
+    assert!(!document_xml(&docx).contains(r#"w:type="page""#));
+}
+
+/// The plain Markdown writer says a page break in the view's own words, a
+/// `<!-- page-break -->` line after the paragraph that holds it, and reads
+/// it back as the break.
+#[test]
+fn a_page_break_round_trips_through_plain_markdown() {
+    let docx = write("Keywords line.\n\\newpage\n\n# Findings\n");
+    let markdown =
+        jubarte::markdown::docx_to_markdown(&docx, &jubarte::markdown::MarkdownOptions::default())
+            .unwrap()
+            .markdown;
+    assert!(
+        markdown.contains("Keywords line.\n\n<!-- page-break -->\n\n# Findings"),
+        "{markdown}"
+    );
+    let again = write(&markdown);
+    assert_eq!(breaks(&again), breaks(&docx));
+}
+
+fn scholar(markdown: &str) -> Vec<u8> {
+    write_with(
+        markdown,
+        &DocxOptions {
+            scholar: true,
+            ..DocxOptions::default()
+        },
+    )
+}
+
+/// The style definition of `id` in the styles part.
+fn style(docx: &[u8], id: &str) -> String {
+    let styles = part_string(docx, "word/styles.xml").unwrap();
+    let open = format!("w:styleId=\"{id}\"");
+    let at = styles.find(&open).unwrap_or_else(|| panic!("no {id}"));
+    styles[at..].split("</w:style>").next().unwrap().to_string()
+}
+
+/// `scholar` sets a manuscript as LaTeX's article class does: Latin Modern
+/// Roman at 10pt on 12pt lines, justified, 6pt between paragraphs, bold
+/// headings at 14.4, 12 and 10pt, and the page number centered in the
+/// footer from page 2 (the title page has none).
+#[test]
+fn scholar_sets_a_manuscript_as_latex_does() {
+    let docx = scholar("# Introduction\n\nText.\n\\newpage\n\n## Methods\n\nMore.\n");
+    let normal = style(&docx, "Normal");
+    for expected in [
+        r#"w:ascii="Latin Modern Roman""#,
+        r#"<w:sz w:val="20"/>"#,
+        r#"w:line="240" w:lineRule="exact""#,
+        r#"w:after="120""#,
+        r#"<w:jc w:val="both"/>"#,
+    ] {
+        assert!(normal.contains(expected), "{expected}: {normal}");
+    }
+    for (id, size) in [("Heading1", "29"), ("Heading2", "24"), ("Heading3", "20")] {
+        let heading = style(&docx, id);
+        for expected in [
+            r#"w:ascii="Latin Modern Roman""#.to_string(),
+            "<w:b/>".to_string(),
+            format!(r#"<w:sz w:val="{size}"/>"#),
+            r#"w:lineRule="auto""#.to_string(),
+            r#"<w:jc w:val="left"/>"#.to_string(),
+            "<w:keepNext/>".to_string(),
+        ] {
+            assert!(heading.contains(&expected), "{id} {expected}: {heading}");
+        }
+    }
+    let body = document_xml(&docx);
+    assert!(body.contains("<w:titlePg/>"), "{body}");
+    assert!(
+        body.contains(r#"<w:footerReference w:type="default""#),
+        "{body}"
+    );
+    let footer = part_string(&docx, "word/footer1.xml").unwrap();
+    assert!(footer.contains(" PAGE "), "{footer}");
+    assert!(footer.contains(r#"<w:jc w:val="center"/>"#), "{footer}");
+    // A line that ends in a line break (an author block, an address) is
+    // not stretched to the margin, as LaTeX's `\\` is not.
+    let settings = part_string(&docx, "word/settings.xml").unwrap();
+    assert!(
+        settings.contains("<w:compat><w:doNotExpandShiftReturn /><w:compatSetting"),
+        "{settings}"
+    );
+    // Without it, none of this.
+    let plain = write("# Introduction\n\nText.\n");
+    assert!(
+        !part_string(&plain, "word/styles.xml")
+            .unwrap()
+            .contains("Latin Modern")
+    );
+    assert!(!document_xml(&plain).contains("<w:footerReference"));
+    assert!(
+        !part_string(&plain, "word/settings.xml")
+            .unwrap()
+            .contains("doNotExpandShiftReturn")
+    );
+}
+
+/// What the front matter says wins: its own styles and footers stay, and
+/// `scholar` fills in only the styles it does not name.
+#[test]
+fn scholar_keeps_what_the_front_matter_says() {
+    let docx = scholar(
+        "---\nstyles:\n  Normal: Arial 11pt\nfooters:\n  default: {id: footer1, text: Draft}\n---\n\n# Title\n\nText.\n",
+    );
+    let normal = style(&docx, "Normal");
+    assert!(normal.contains(r#"w:ascii="Arial""#), "{normal}");
+    assert!(!normal.contains("Latin Modern"), "{normal}");
+    assert!(style(&docx, "Heading1").contains("Latin Modern Roman"));
+    let footer = part_string(&docx, "word/footer1.xml").unwrap();
+    assert!(
+        footer.contains("Draft") && !footer.contains("PAGE"),
+        "{footer}"
+    );
+    assert!(!document_xml(&docx).contains("<w:titlePg/>"));
+    // A page number in a header is the page number: no footer is added.
+    let docx =
+        scholar("---\nheaders:\n  default: {id: header1, text: \"{PAGE}\", right}\n---\n\nText.\n");
+    assert!(!document_xml(&docx).contains("<w:footerReference"));
+}
+
+/// Only a header or footer story that holds `{PAGE}` is the page number
+/// (sourcery review of #472): the words elsewhere in the front matter are
+/// not, and an empty `headers:` block is no header for page 1. A reference
+/// document's own headers and footers win, as the front matter's do.
+#[test]
+fn scholar_numbers_the_pages_unless_a_story_holds_the_number() {
+    let numbered =
+        |docx: &[u8]| part_string(docx, "word/footer1.xml").is_some_and(|f| f.contains(" PAGE "));
+    let docx = scholar("---\ntitle: \"{PAGE} turners\"\n---\n\nText.\n");
+    assert!(numbered(&docx));
+    assert!(document_xml(&docx).contains("<w:titlePg/>"));
+    let docx = scholar("---\nheaders:\n---\n\nText.\n");
+    assert!(numbered(&docx));
+    assert!(
+        document_xml(&docx).contains("<w:titlePg/>"),
+        "an empty headers: block"
+    );
+    let reference =
+        write("---\nfooters:\n  default: {id: footer1, text: Template footer}\n---\n\nX\n");
+    let docx = write_with(
+        "Text.\n",
+        &DocxOptions {
+            scholar: true,
+            reference: Some(&reference),
+            ..DocxOptions::default()
+        },
+    );
+    let footers: String = (1..4)
+        .filter_map(|n| part_string(&docx, &format!("word/footer{n}.xml")))
+        .collect();
+    assert!(footers.contains("Template footer"), "{footers}");
+    assert!(!footers.contains(" PAGE "), "{footers}");
+}
