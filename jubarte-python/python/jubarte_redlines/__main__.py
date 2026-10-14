@@ -550,7 +550,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
     # The page count is known only now; check every PNG path before the first
     # write so a refused page leaves no partial bundle.
     indices = range(len(rendered.pngs)) if selected is None else [p - 1 for p in selected]
-    png_paths = [output.parent / _png_name(output.stem, i, pages) for i in indices]
+    # Padded to the highest document page written, as the native CLI does.
+    widest = max([p.number for p in rendered.report.pages] + [pages])
+    png_paths = [output.parent / _png_name(output.stem, i, widest) for i in indices]
     for path in png_paths:
         _ensure_writable(path, args.force)
     if rendered.pdf is not None:

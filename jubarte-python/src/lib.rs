@@ -216,8 +216,9 @@ fn get_revisions_json(
 /// markup) or `"custom"` with
 /// `revision_palette="deleted=#AA0000:strike,..."`. `move_comments=True`
 /// lists the comments after the last page instead of in balloons beside the
-/// text; `changed_only=True` keeps only the pages a tracked change touches
-/// (a document without changes keeps its first page).
+/// text; `changed_only=True` keeps only the pages a tracked change touches,
+/// the pages a comment is anchored on and each section's first page on which
+/// a revised header or footer paints (else the first page).
 #[pyfunction]
 #[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None, move_comments = false, changed_only = false))]
 fn docx_to_pdf(
@@ -277,11 +278,12 @@ type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
 
 /// One layout pass → `(pdf_bytes | None, [png_bytes, ...], report_json)`.
 ///
-/// `report_json` is `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
-/// `pages` (zero-based) rasterizes only those pages, ascending and without
-/// repeats; the report still covers every page. `move_comments` and
-/// `changed_only` as in `docx_to_pdf`; with `changed_only` the report and
-/// `pages` count the kept pages.
+/// `report_json` is `{"page_count", "pages": [{"index", "number", "text"}],
+/// "fonts": [...]}`. `pages` (zero-based document pages) writes only those
+/// pages, ascending and without repeats: the PDF, the PNGs and the report.
+/// They count the document's pages whatever `changed_only` keeps; a dropped
+/// page or one past the last raises. `move_comments` and `changed_only` as
+/// in `docx_to_pdf`.
 #[pyfunction]
 #[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None, pages = None, move_comments = false, changed_only = false))]
 #[expect(

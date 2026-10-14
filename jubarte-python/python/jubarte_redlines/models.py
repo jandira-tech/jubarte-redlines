@@ -96,7 +96,8 @@ class PdfOptions:
 
     ``move_comments`` lists the comments after the last page instead of in
     balloons beside the text; ``changed_only`` keeps only the pages a tracked
-    change touches. Both mirror the binary's flags and apply to PDF and PNG
+    change touches, the pages a comment is anchored on, and the first page of
+    each section on which a revised header or footer paints. Both mirror the binary's flags and apply to PDF and PNG
     output; ``diff_render`` ignores them.
     """
 
@@ -1397,9 +1398,14 @@ class FontResolution:
 
 @dataclass(frozen=True, slots=True)
 class PageText:
-    """Text painted on one page, one line per baseline."""
+    """Text painted on one page, one line per baseline.
+
+    ``index`` counts the report's pages from zero; ``number`` is the page's
+    number in the document, which differs once ``changed_only`` drops pages.
+    """
 
     index: int
+    number: int
     text: str
 
 

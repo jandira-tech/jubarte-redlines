@@ -493,12 +493,7 @@ Formats:
           Input format [default: from the file: .md and .markdown are Markdown, a zip is
           Word]
 
-          Possible values:
-          - docx: Word (.docx)
-          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
-            CriticMarkup
-          - pdf:  PDF, laid out as Word does
-          - png:  PNG pages
+          [possible values: docx, md, markdown]
 
   -t, --to <FORMAT>
           Output format [default: from --output, else pdf for Word and docx for
@@ -1235,8 +1230,9 @@ moves double-struck and double-underlined), `"word"` (Microsoft Word's
 markup) or `"custom"` with
 `revision_palette="deleted=#AA0000:strike,..."`. `move_comments=True`
 lists the comments after the last page instead of in balloons beside the
-text; `changed_only=True` keeps only the pages a tracked change touches
-(a document without changes keeps its first page).
+text; `changed_only=True` keeps only the pages a tracked change touches,
+the pages a comment is anchored on and each section's first page on which
+a revised header or footer paints (else the first page).
 
 ### `get_revisions`
 
@@ -2379,11 +2375,15 @@ Page count, page text and font resolutions from one layout pass.
 ```python
 PageText(
     index: int,
+    number: int,
     text: str,
 )
 ```
 
 Text painted on one page, one line per baseline.
+
+``index`` counts the report's pages from zero; ``number`` is the page's
+number in the document, which differs once ``changed_only`` drops pages.
 
 ### `FontResolution`
 

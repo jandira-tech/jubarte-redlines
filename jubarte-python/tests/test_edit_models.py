@@ -200,11 +200,11 @@ def test_error_decoding_handles_failure_before_operation_resolution():
 
 def test_render_report_keeps_page_order_and_font_resolution_metadata():
     report = _decode_render_report(json.dumps({
-        "page_count": 2, "pages": [{"index": 0, "text": "é😀\n"}, {"index": 1, "text": ""}],
+        "page_count": 2, "pages": [{"index": 0, "number": 1, "text": "é😀\n"}, {"index": 1, "number": 3, "text": ""}],
         "fonts": [{"requested": "Missing Font", "step": "fallback", "physical": "Carlito", "bold": True, "italic": False, "synthetic": True}],
     }))
     assert report.page_count == 2
-    assert [(p.index, p.text) for p in report.pages] == [(0, "é😀\n"), (1, "")]
+    assert [(p.index, p.number, p.text) for p in report.pages] == [(0, 1, "é😀\n"), (1, 3, "")]
     font = report.fonts[0]
     assert (font.requested, font.physical, font.step) == ("Missing Font", "Carlito", "fallback")
     assert font.bold and font.synthetic and not font.italic

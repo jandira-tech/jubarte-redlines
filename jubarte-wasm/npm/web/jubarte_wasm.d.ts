@@ -235,7 +235,8 @@ export function documentMarkdownWithChanges(docx: Uint8Array, track_changes: str
  * `moveComments` (optional, default `false`) lists the comments after the
  * last page instead of in balloons beside the text; `changedOnly`
  * (optional, default `false`) keeps only the pages a tracked change
- * touches (a document without changes keeps its first page).
+ * touches, the pages a comment is anchored on and each section's first
+ * page on which a revised header or footer paints (else the first page).
  */
 export function docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array;
 

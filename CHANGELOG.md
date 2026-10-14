@@ -15,6 +15,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Changed
+
+- `convert --changed-only` (and the library's `PdfOptions::changed_only`)
+  also keeps the pages a comment is anchored on and the first page of each
+  section on which a revised header or footer paints. The comment listing's
+  pages number on after the document's last page.
+
+### Breaking (library)
+
+- `RenderRequest::pages` counts document pages and narrows the PDF and the
+  report as well as the PNGs (an empty list writes no PDF).
+  `ConvertError::PageNotKept` names a page `changed_only` dropped;
+  `PageOutOfRange` reads "the document has N pages". `PageText` gains
+  `number`, and the report JSON's pages carry it.
+
 ## [0.12.0] - 2026-10-11
 
 > **Summary.** jubarte FILE and jubarte read print an agent view (a YAML header, then the document as Markdown with paragraph ids, CriticMarkup changes and comments), and jubarte A B prints its redline's view instead of writing a file (-o writes it; compare A B is unchanged). jubarte edit and the new jubarte add take their operations from flags. Text diffs come as github, word, normal, context and side-by-side views. convert --move-comments lists comments after the last page with [JR1] markers, --changed-only keeps only the pages a change touches, and fields update writes Roman and letter NUMPAGES, PAGEREF and SEQ results as Word does. Redlines no longer hang Word 16.115 on a deleted empty PAGE field or a header table only one version has, and drop headers and footers no section uses. PDF text no font has glyphs for stays searchable, and math letters painted from their ASCII italic read back as math letters. rdocx-opc 0.2 fixes RUSTSEC-2026-0194. On two 600-item samples scored against Word's own output: redlines mean 71.89 (Docxodus 64.95), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document.
