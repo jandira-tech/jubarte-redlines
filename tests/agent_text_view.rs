@@ -873,7 +873,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev r6 @AC in t0.row1 -->"),
+        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev-del r6 @AC in t0.row1 -->"),
         "{out}"
     );
     let lines = header_lines(&out);
@@ -938,7 +938,7 @@ fn history_numbering_and_fallback_rows_follow_the_listing() {
         regex::Regex::new(r"\b(r|\+)5\b").unwrap().is_match(p0),
         "{out}"
     );
-    assert!(out.contains("rev r6 @AC in t0.row0"), "{out}");
+    assert!(out.contains("rev-del r6 @AC in t0.row0"), "{out}");
 }
 
 /// pi review of Task 5b F6: an author whose only changes sit in the styles

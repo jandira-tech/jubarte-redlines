@@ -147,7 +147,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .xml(&part("/styles", "word/styles.xml"))
         .ok()
         .flatten();
-    let handles = if options.ids {
+    let mut handles = if options.ids {
         // An author whose only changes sit in a header or the styles gets a
         // handle too, so `--by` takes it; the styles' come after the comment
         // authors', whose handles stay as they were.
@@ -165,6 +165,23 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     } else {
         agent::Handles::default()
     };
+    if options.ids {
+        // What separates two marks in the text: a printed comment range, a
+        // printed bookmark.
+        if options.comments
+            && let Some(root) = &comments_root
+        {
+            handles.shown_ranges = root
+                .children_named("comment")
+                .filter_map(|c| c.attr("id").map(str::to_string))
+                .collect();
+        }
+        handles.shown_bookmarks = bookmark_targets(
+            std::iter::once(&document)
+                .chain(note_roots.iter().map(|(_, root)| root))
+                .chain(comments_root.as_ref()),
+        );
+    }
     // Agent view: paragraphs and tables numbered before accept/reject
     // resolution, so indices match `inspect` and `edit`.
     // (paragraphs, tables) numbered, for the header.
@@ -755,6 +772,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             handles: &handles,
             done: &threads.done,
             owner,
+            title: core
+                .as_ref()
+                .and_then(|core| core.child("title"))
+                .map(|title| title.text().trim().to_string())
+                .filter(|title| !title.is_empty()),
             paragraphs: stamped.0,
             tables: stamped.1,
             pages,
@@ -1000,8 +1022,9 @@ fn majority(aligns: impl Iterator<Item = Option<&'static str>>) -> Option<&'stat
 /// Rows as a Markdown pipe table; the first row is the header, and the
 /// delimiter row aligns each column as `aligns` says.
 fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) -> String {
-    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
-    if width == 0 {
+    // A table of empty cells keeps one column, so it stays a table.
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
+    if rows.is_empty() {
         return String::new();
     }
     let mut out = String::new();
@@ -2550,7 +2573,16 @@ impl Writer<'_> {
                 .unwrap_or(0);
             row.extend(std::iter::repeat_n(String::new(), before.min(64)));
             for tc in row_cells(tr) {
-                row.push(self.cell_text(&row_marks, tc));
+                // In the agent view, text marked on its own keeps its tags,
+                // and the row's mark is the table line's
+                // (`agent::row_text_marked`); a cell's unmarked text shows
+                // the row's.
+                let marks = if self.agent && agent::text_marked(tc) {
+                    &[][..]
+                } else {
+                    &row_marks[..]
+                };
+                row.push(self.cell_text(marks, tc));
                 let span = tc
                     .path(&["tcPr", "gridSpan"])
                     .and_then(|g| g.attr("val"))
@@ -2657,7 +2689,12 @@ impl Writer<'_> {
     fn cell_text(&mut self, row_marks: &[Change], cell: &Element) -> String {
         let depth = self.revisions.len();
         self.revisions.extend_from_slice(row_marks);
-        if let Some(properties) = cell.child("tcPr") {
+        // In the agent view, text marked on its own keeps its tags
+        // (`agent::text_marked`).
+        if let Some(properties) = cell
+            .child("tcPr")
+            .filter(|_| !(self.agent && agent::text_marked(cell)))
+        {
             let marks = self.revision_marks(properties);
             self.revisions.extend(marks);
         }

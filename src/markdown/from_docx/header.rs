@@ -88,6 +88,8 @@ pub(crate) struct Facts<'a> {
     /// Resolved comment ids (`w15:done`), from `agent::Threads`.
     pub done: &'a HashSet<String>,
     pub owner: Owner,
+    /// `dc:title`, when the core properties give one.
+    pub title: Option<String>,
     pub paragraphs: usize,
     pub tables: usize,
     pub pages: usize,
@@ -253,6 +255,9 @@ pub(crate) fn render(f: &Facts) -> String {
         None,
     );
     kv(&mut out, &format!("sha256: {}", f.sha256), None);
+    if let Some(title) = &f.title {
+        kv(&mut out, &format!("title: {}", scalar(title, false)), None);
+    }
     let handle_list: Vec<String> = f
         .handles
         .order
