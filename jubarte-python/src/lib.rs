@@ -1136,8 +1136,11 @@ fn capabilities_text() -> String {
 ///
 /// `page` is `letter` or `a4` and applies when there is no `reference`
 /// (a `.docx` whose styles and page setup are taken). `track_changes` is
-/// `all`, `accept` or `reject`. `date` defaults to the engine's fixed epoch
-/// so the same Markdown writes the same bytes. Images are written as their
+/// `all`, `accept` or `reject`. A change or comment that names no author or
+/// date takes `author` and `date` when given, else the front matter's
+/// (`author:`; `last_modified:`, `modified:`, `date:`, `created:`), else
+/// `Redline` and the engine's fixed epoch, so the same Markdown writes the
+/// same bytes (the CLI dates them now instead). Images are written as their
 /// alt text: this entry point reads no files. Each engine warning (such as
 /// a `page` overridden by the reference) is raised as a `UserWarning`.
 #[pyfunction]
@@ -1146,7 +1149,7 @@ fn capabilities_text() -> String {
     *,
     reference = None,
     page = "letter",
-    author = "Redline",
+    author = None,
     date = None,
     critic = true,
     track_changes = "all",
@@ -1155,7 +1158,7 @@ fn markdown_to_docx(
     text: &str,
     reference: Option<&[u8]>,
     page: &str,
-    author: &str,
+    author: Option<&str>,
     date: Option<&str>,
     critic: bool,
     track_changes: &str,
@@ -1178,12 +1181,16 @@ fn markdown_to_docx(
                     reference,
                     critic,
                     track_changes,
-                    author: author.to_string(),
                     page,
                     ..jubarte::markdown::DocxOptions::default()
                 };
+                if let Some(author) = author {
+                    options.author = author.to_string();
+                    options.author_fixed = true;
+                }
                 if let Some(date) = date {
                     options.date = date.to_string();
+                    options.date_fixed = true;
                 }
                 jubarte::markdown::markdown_to_docx(text, &options)
             })

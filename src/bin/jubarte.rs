@@ -1510,6 +1510,8 @@ fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
         reference: compare.reference_doc,
         critic: compare.critic,
         resource_path: compare.resource_path,
+        // A change is made now, by Redline unless a flag names someone:
+        // never the files' own metadata (Arthur, 2026-10-14).
         author: compare.author,
         date: compare
             .datetime
@@ -2126,12 +2128,29 @@ fn run_convert_any(
                 .map(read_document)
                 .transpose()?;
             let loader = image_loader(resource_dir(job.file, markdown.resource_path.as_deref()));
+            // The changes and comments that name no author or date take
+            // the flag's, else the front matter's, else the reference
+            // document's creator and creation time, else Redline and now.
+            let (creator, created) = reference
+                .as_deref()
+                .map(jubarte::markdown::docx_stamp)
+                .unwrap_or_default();
             let options = jubarte::markdown::DocxOptions {
                 reference: reference.as_deref(),
                 critic: !markdown.no_critic,
                 track_changes: markdown.track_changes.into(),
-                author: markdown.author.clone(),
-                date: markdown.datetime.clone(),
+                author: markdown
+                    .author
+                    .clone()
+                    .or(creator)
+                    .unwrap_or_else(|| "Redline".to_string()),
+                date: markdown
+                    .datetime
+                    .clone()
+                    .or(created)
+                    .unwrap_or_else(jubarte::convert::utc_now_iso8601),
+                author_fixed: markdown.author.is_some(),
+                date_fixed: markdown.datetime.is_some(),
                 images: Some(&loader),
                 page: markdown.page.into(),
                 tracking: markdown
@@ -2311,11 +2330,21 @@ fn main() -> ExitCode {
 }
 
 fn cli_main() -> ExitCode {
-    let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit());
     let argv: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| {
+        // A removed flag names what replaced it; clap's tip may name a
+        // lookalike.
+        if let Some((old, now)) =
+            jubarte::cli::removed_spellings(argv.iter().map(String::as_str)).first()
+        {
+            eprintln!("{}", jubarte::cli::removed_error(old, now));
+            std::process::exit(2);
+        }
+        error.exit()
+    });
     for (old, now) in jubarte::cli::retired_spellings(argv.iter().map(String::as_str)) {
         eprintln!("{}", jubarte::cli::retired_note(old, now));
     }

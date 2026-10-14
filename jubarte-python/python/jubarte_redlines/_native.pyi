@@ -148,7 +148,7 @@ def markdown_to_docx(
     *,
     reference: bytes | None = None,
     page: str = "letter",
-    author: str = "Redline",
+    author: str | None = None,
     date: str | None = None,
     critic: bool = True,
     track_changes: str = "all",

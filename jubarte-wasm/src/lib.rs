@@ -1277,9 +1277,11 @@ fn markdown_docx(
     };
     if let Some(author) = options.author {
         docx_options.author = author;
+        docx_options.author_fixed = true;
     }
     if let Some(date) = options.date {
         docx_options.date = date;
+        docx_options.date_fixed = true;
     }
     if let Some(critic) = options.critic {
         docx_options.critic = critic;
@@ -1292,9 +1294,12 @@ fn markdown_docx(
 /// Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
 ///
 /// `optionsJson` (every field optional): `page` (`"letter"` default, or
-/// `"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
-/// writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
-/// changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+/// `"a4"`), `author` and `date` (for a change or comment that names none;
+/// given, they beat the front matter's `author:` and `last_modified:`,
+/// `modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
+/// epoch, so the same Markdown writes the same bytes; the CLI dates them now
+/// instead), `critic` (`true`: CriticMarkup becomes tracked changes and
+/// comments) and `track_changes` (or `trackChanges`: `"all"`,
 /// `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
 /// `.docx`, lends its styles and page setup, and then `page` is ignored.
 /// Images are written as their alt text, and the engine's warnings are not

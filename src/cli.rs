@@ -157,7 +157,7 @@ pub struct EditOptions {
     pub author: String,
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
-    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
+    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", value_parser = parse_datetime)]
     pub datetime: Option<String>,
     /// The edits are tracked changes (the default): the file written is
     /// the redline and the view shows the marks.
@@ -527,7 +527,7 @@ pub struct CompareArgs {
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
     // The parser fills now when absent (D17), so every host shares it.
-    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", alias = "date", value_parser = parse_datetime)]
+    #[arg(short = 'd', long = "datetime", value_name = "ISO8601", value_parser = parse_datetime)]
     pub datetime: Option<String>,
 
     /// Overwrite the output file if it already exists.
@@ -824,7 +824,6 @@ pub enum Command {
             short = 'd',
             long = "datetime",
             value_name = "ISO8601",
-            alias = "date",
             value_parser = parse_datetime,
             help_heading = "Paragraph patch"
         )]
@@ -1759,6 +1758,12 @@ pub const RETIRED: &[Retired] = &[
         now: "--to png",
         on: Some("convert"),
     },
+];
+
+/// Every flag that is gone: it no longer parses, and the error names what
+/// to say instead, where clap's own tip may name a lookalike (`compare
+/// --date` would be told `--dates`). Arthur (2026-10-14): `--date` is gone.
+pub const REMOVED: &[Retired] = &[
     Retired {
         old: "--date",
         now: "--datetime",
@@ -1884,6 +1889,27 @@ fn spelled_options(cmd: &clap::Command, tokens: &[&str]) -> (Vec<Spelled>, usize
 pub fn retired_spellings<'a>(
     argv: impl IntoIterator<Item = &'a str>,
 ) -> Vec<(&'static str, &'static str)> {
+    spellings_in(RETIRED, argv)
+}
+
+/// Each [`REMOVED`] spelling `argv` uses, as [`retired_spellings`] finds
+/// them.
+pub fn removed_spellings<'a>(
+    argv: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, &'static str)> {
+    spellings_in(REMOVED, argv)
+}
+
+/// The error a removed spelling ends the run with, naming what to say
+/// instead.
+pub fn removed_error(old: &str, now: &str) -> String {
+    format!("error: {old} is removed; use {now}")
+}
+
+fn spellings_in<'a>(
+    table: &[Retired],
+    argv: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, &'static str)> {
     let argv: Vec<&str> = argv.into_iter().take_while(|t| *t != "--").collect();
     let model = Cli::command();
     let mut found = Vec::new();
@@ -1891,7 +1917,7 @@ pub fn retired_spellings<'a>(
     let Some(&task) = argv.get(at) else {
         return found;
     };
-    if let Some(retired) = RETIRED.iter().find(|r| r.on.is_none() && r.old == task) {
+    if let Some(retired) = table.iter().find(|r| r.on.is_none() && r.old == task) {
         found.push((retired.old, retired.now));
     }
     // The shorthand `jubarte A B` is compare, with the top level's options
@@ -1905,7 +1931,7 @@ pub fn retired_spellings<'a>(
     while !rest.is_empty() {
         let (options, next) = spelled_options(sub, rest);
         for option in options {
-            for retired in RETIRED.iter().filter(|r| r.on == Some(task)) {
+            for retired in table.iter().filter(|r| r.on == Some(task)) {
                 if option.name == retired.old {
                     found.push((retired.old, retired.now));
                 }
@@ -2064,20 +2090,23 @@ pub struct MarkdownArgs {
     /// file's directory].
     #[arg(long, value_name = "DIR")]
     pub resource_path: Option<PathBuf>,
-    /// Markdown to Word: author of the tracked changes and comments.
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
-    pub author: String,
-    /// Markdown to Word: revision timestamp (ISO 8601); pin it for
-    /// reproducible output.
+    /// Markdown to Word: author of the tracked changes and comments that
+    /// name none [default: the front matter's `author:`, else the
+    /// --reference-doc's creator, else Redline].
+    #[arg(short = 'a', long, value_name = "NAME")]
+    pub author: Option<String>,
+    /// Markdown to Word: timestamp (ISO 8601) of the tracked changes and
+    /// comments that carry none [default: the front matter's
+    /// `last_modified:`/`modified:`/`date:`/`created:`, else the
+    /// --reference-doc's creation time, else now]; pin it
+    /// (`-d 1970-01-01T00:00:00Z`) for reproducible output.
     #[arg(
         short = 'd',
         long = "datetime",
         value_name = "ISO8601",
-        alias = "date",
-        value_parser = parse_datetime,
-        default_value = crate::document_comparer::DEFAULT_DATE
+        value_parser = parse_datetime
     )]
-    pub datetime: String,
+    pub datetime: Option<String>,
     /// Markdown to Word: the page size when there is no --reference-doc
     /// (one-inch margins either way); a reference's page setup wins.
     #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
@@ -3090,6 +3119,14 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 .collect();
             value.to_string()
         }
-        Err(error) => error_json(&error),
+        Err(error) => match removed_spellings(arguments.iter().map(String::as_str)).first() {
+            Some((old, now)) => serde_json::json!({
+                "exit_code": 2,
+                "stream": "stderr",
+                "text": format!("{}\n", removed_error(old, now)),
+            })
+            .to_string(),
+            None => error_json(&error),
+        },
     }
 }
