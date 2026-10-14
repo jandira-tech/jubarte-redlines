@@ -81,9 +81,11 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// paragraph id (`body:p:3`); empty for a package-level finding. For the
 /// audit sets it is the paragraph id (`body:p:N`, `header1:p:0`) or, when
 /// no paragraph applies, the part name. `ref` is the short id the text
-/// listing prints for `location` (`body:p:5` → `p5`), via
+/// listing prints for `location` (`body:p:5` → `p5`, `header1:p:0` →
+/// `header1`, `header1:p:1` → `header1.p1`), via
 /// [`crate::ids::short_paragraph`]; any other location (an element chain,
-/// a part name, empty) keeps its text there too.
+/// a part name, empty) keeps its text there too. Messages name paragraphs
+/// by the same short ids.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     /// Stable code (`TEXT_INSIDE_DELETION`, `MC_UNBOUND_PREFIX`, ...).

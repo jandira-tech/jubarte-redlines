@@ -110,7 +110,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **Breaking: jubarte prints short ids.** The agent view tags revisions
   `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
   (a reply names its root, `re c5`); table lines name rows and cells
-  `row1` and `row1.cell2`. `changes` and `comments` list the same ids.
+  `row1` and `row1.cell2`. `changes` and `comments` list the same ids,
+  and `validate`'s messages name paragraphs by them (`p108`, `header1.p1`).
   JSON keeps the long `id` and adds `ref`; machine hints and refusals keep
   the long id.
 - **Breaking: one revision count.** `summary.revisions`, the view's
@@ -453,6 +454,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **Breaking: the `revisions` command is gone.** `changes` is the one
+  listing: every tracked change in every story, with the ids `accept`,
+  `reject` and `edit` take. `revisions` printed Docxodus's grouping, with
+  no ids, no headers or footers, and a count that disagreed with
+  `changes`. The word is a file name again (`jubarte revisions new.docx`
+  compares two files); the library's `get_revisions` and the wasm
+  `getRevisions` export stay.
 - `jubarte A B` no longer writes a file unless `-o` is given: it prints the
   redline's agent view. `jubarte compare A B` is unchanged.
 - `edit` prints the redline's changed blocks as the agent view instead of
