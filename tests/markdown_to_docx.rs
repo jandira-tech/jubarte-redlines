@@ -1211,3 +1211,19 @@ fn a_link_title_is_its_tooltip() {
     assert!(xml.contains(r#"w:tooltip="The &amp; Title""#), "{xml}");
     assert!(xml.contains(r#"w:tooltip="Go up""#), "{xml}");
 }
+
+#[test]
+fn a_brace_inside_a_quoted_field_argument_is_part_of_the_code() {
+    let docx = write("A {QUOTE \"a}b\"}X{/} and {QUOTE \"c{d\"}Y{/} B.\n");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches(r#"w:fldCharType="begin""#).count(), 2, "{xml}");
+    assert!(
+        xml.contains(r#"<w:instrText xml:space="preserve"> QUOTE &quot;a}b&quot; </w:instrText>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:instrText xml:space="preserve"> QUOTE &quot;c{d&quot; </w:instrText>"#),
+        "{xml}"
+    );
+    assert_eq!(texts(&docx), ["A X and Y B."]);
+}

@@ -955,12 +955,11 @@ pub(crate) fn escape_markdown(text: &str) -> String {
 /// Whether `rest` (the text after a `{`) is `/}` or a field code then `}`,
 /// which the writer reads as a body field.
 fn field_follows(rest: &[char]) -> bool {
-    let code: String = rest
-        .iter()
-        .take_while(|c| !matches!(c, '}' | '{' | '\n'))
-        .collect();
-    rest.get(code.chars().count()) == Some(&'}')
-        && (code == "/" || crate::markdown::critic::is_field_code(&code))
+    use crate::markdown::critic::{field_code_close, is_field_code};
+    field_code_close(rest.iter().copied().enumerate()).is_some_and(|close| {
+        let code: String = rest[..close].iter().collect();
+        code == "/" || is_field_code(&code)
+    })
 }
 
 /// Whether `rest` (the text after a `&`) reads as an entity or character

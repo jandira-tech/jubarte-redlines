@@ -571,13 +571,39 @@ const FIELD_NAMES: [&str; 76] = [
     "TOC",
 ];
 
-/// Whether `code` is a field code jubarte prints as `{CODE}`: one line, no
-/// braces, and a field name from [`FIELD_NAMES`] (in any case) first.
+/// Whether `code` is a field code jubarte prints as `{CODE}`: one line,
+/// braces only inside a quoted argument (`QUOTE "a}b"`), quotes closed, and
+/// a field name from [`FIELD_NAMES`] (in any case) first.
 pub(crate) fn is_field_code(code: &str) -> bool {
     let code = code.trim();
     let name = code.split([' ', '\\']).next().unwrap_or_default();
-    !code.contains(['{', '}', '\n', '\r'])
+    let closed = format!("{code}}}");
+    field_code_close(closed.char_indices()) == Some(code.len())
         && FIELD_NAMES.iter().any(|f| f.eq_ignore_ascii_case(name))
+}
+
+/// The longest field code read, in characters: no field code comes near it,
+/// and it keeps a paragraph of `{` from being scanned once per brace.
+const LONGEST_FIELD_CODE: usize = 1024;
+
+/// Where the `}` that closes a field code sits, given the characters after
+/// its `{` with their positions: a brace inside a quoted argument (`"a}b"`,
+/// `\"` quoting a quote) belongs to the code. None at an unquoted `{`, a
+/// line end, or no `}` within [`LONGEST_FIELD_CODE`].
+pub(crate) fn field_code_close(chars: impl Iterator<Item = (usize, char)>) -> Option<usize> {
+    let mut quoted = false;
+    let mut backslash = false;
+    for (at, c) in chars.take(LONGEST_FIELD_CODE) {
+        match c {
+            '\n' | '\r' => return None,
+            '"' if !backslash => quoted = !quoted,
+            '{' if !quoted => return None,
+            '}' if !quoted => return Some(at),
+            _ => {}
+        }
+        backslash = c == '\\' && !backslash;
+    }
+    None
 }
 
 /// The code of a body field opened at `at` (`{` then a field code, up to the
@@ -587,8 +613,8 @@ fn field_code(source: &str, at: usize, until: usize) -> Option<std::ops::Range<u
     if !rest.starts_with('{') || escaped(source, at) {
         return None;
     }
-    let close = 1 + rest[1..].find(['}', '{', '\n'])?;
-    (rest.as_bytes()[close] == b'}' && is_field_code(&rest[1..close])).then_some(at + 1..at + close)
+    let close = 1 + field_code_close(rest[1..].char_indices())?;
+    is_field_code(&rest[1..close]).then_some(at + 1..at + close)
 }
 
 /// A body field opened at `at`: its code, and where the `{/}` that closes

@@ -5445,3 +5445,29 @@ fn a_field_across_a_change_boundary_shows_its_result_only() {
     );
     assert_eq!(body(&twice), body(&once));
 }
+
+#[test]
+fn a_field_code_with_quoted_braces_reads_back() {
+    let field = |code: &str, result: &str| {
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {code} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            run(result)
+        )
+    };
+    let p = format!(
+        "<w:p>{}{}{}</w:p>",
+        field("QUOTE &quot;a}b&quot;", "X"),
+        run(" and {QUOTE \"c}d\"}literal{/}."),
+        ""
+    );
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert!(
+        view.contains("{QUOTE \"a}b\"}X{/} and \\{QUOTE \"c}d\"}literal\\{/}."),
+        "{view}"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
