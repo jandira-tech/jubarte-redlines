@@ -16,7 +16,7 @@ footers:
   first: none                      # page 1 shows no page number
   default: none
 sections:
-  2: {p4-p4, headers: {first: {id: header3, text: Section 2 - My first page header}}}
+  2: {p4-p4, headers: {first: {id: header3, text: Section 2 - My first page header}}, footers: {first: none}}
 ---
 
 <!-- p0 -->

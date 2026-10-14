@@ -845,9 +845,11 @@ fn section_entry(
             })
             .map(|s| format!("{}: {}", s.ty, entry(s)))
             .collect();
-        if kind == "header"
-            && section.title_page
-            && !section.stories.iter().any(|s| s.ty == "first")
+        if section.title_page
+            && !section
+                .stories
+                .iter()
+                .any(|s| s.kind == kind && s.ty == "first")
         {
             changed.insert(0, "first: none".to_string());
         }
