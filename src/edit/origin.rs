@@ -17,7 +17,9 @@ use crate::inspect::Opened;
 use crate::namespaces::{W, W14};
 use crate::xmllinq::{Dom, NodeId};
 
-use super::{EditError, EditPlan, Loaded, Selector, err, load_stories, settle, short_number};
+use crate::ids::short_number;
+
+use super::{EditError, EditPlan, Loaded, Selector, err, load_stories, settle};
 
 /// What positional ids resolve against: a document's body and its
 /// addressable paragraphs, in the order `load_stories` lists them.

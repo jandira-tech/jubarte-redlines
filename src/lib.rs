@@ -117,6 +117,8 @@ pub mod debug;
 pub mod document_comparer;
 pub mod edit;
 pub mod fields;
+/// The one grammar of change, comment and paragraph ids (`r12`, `c5`, `p12`).
+pub mod ids;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 pub mod legacy_doc;
