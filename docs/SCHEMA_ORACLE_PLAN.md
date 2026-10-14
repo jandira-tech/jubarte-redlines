@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-> **Status: LIVING — maintained as of 2026-10-01 (bd262981).** Facts below were verified against this commit; the next editor re-verifies before trusting.
+> **Status: LIVING — maintained as of 2026-10-14 (b3176820).** Facts below were verified against this commit; the next editor re-verifies before trusting.
 
 # Plan: use the Open XML SDK schema data as an oracle (minimal hand-rolling)
 
@@ -19,9 +19,9 @@ Status: **W1 and W2 shipped** (written 2026-07-13; updated 2026-09-26).
   divergences allowlisted.
 - **W2 — DONE.** `tools/validate-docx/` (minimal console project on
   `DocumentFormat.OpenXml`) is committed, and `tools/validity_baseline.tsv`
-  is the ratchet baseline (first blessed 2026-09-05; see KNOWN_ISSUES §4
-  for the key-format re-bless). Ring 2 in the README validity table.
-  Promoted into the release gate: VERSIONING.md's checklist requires Ring 2
+  is the ratchet baseline (first blessed 2026-09-05, re-blessed 2026-09-28;
+  the file's header says how). Promoted into the release gate:
+  docs/VERSIONING.md's checklist requires Ring 2
   (`scripts/redline-sweep.sh … --validate` → no NEW keys vs
   `tools/validity_baseline.tsv`).
 - **W3 — deferred**, per plan: only if W2 shows CI missing regressions.
@@ -79,10 +79,10 @@ end, insideH, insideV`).
 
 | Where | What | Plan |
 |---|---|---|
-| `src/comparer/finalize.rs:3067` (`TBLPR_ORDER`) and `:3100-3260` (`rank()`: pPr 36, rPr ~43 + 5 w14 quirks, tcPr 14, tcBorders 10, tblBorders 8, pBdr 6) | child-order ranks, PowerTools-verbatim | cross-check (W1), never regenerate |
-| `src/comparer/produce.rs:960` (`TBLPR_CHILD_ORDER`) | tblPr order again (subset) | cross-check (W1) + assert consistent with `TBLPR_ORDER` |
-| `src/namespaces.rs` (140 lines) | ns constants | cross-check against `namespaces.json` (W1, cheap); not worth generating |
-| `src/strict_translation.rs` (734 lines) | strict→transitional mapping | NOT covered by the JSON in usable form; stays hand-rolled, covered by W2 validator sweep instead |
+| `src/comparer/finalize.rs` `TBLPR_ORDER` and `rank()` (pPr 36, rPr ~43 + 5 w14 quirks, tcPr 14, tcBorders 10, tblBorders 8, pBdr 6) | child-order ranks, PowerTools-verbatim | cross-check (W1), never regenerate |
+| `src/comparer/produce.rs` `TBLPR_CHILD_ORDER` | tblPr order again (subset) | cross-check (W1) + assert consistent with `TBLPR_ORDER` |
+| `src/namespaces.rs` (175 lines) | ns constants | cross-check against `namespaces.json` (W1, cheap); not worth generating |
+| `src/strict_translation.rs` (827 lines) | strict→transitional mapping | NOT covered by the JSON in usable form; stays hand-rolled, covered by W2 validator sweep instead |
 
 ## Workstreams
 
@@ -206,8 +206,10 @@ No work now; this is a standing rule.
 
 ## What to test against (oracle ranking)
 
-1. **Real Word open probe** — `../parity/scripts/word-open-probe.sh`
-   (opens the FULL file in actual Word). Ultimate authority. Stage files in
+1. **Real Word open probe** — `scripts/word-open-probe.sh`
+   (opens the FULL file in actual Word; AGENTS.md routes conversions and
+   compares through neurotic_docx_bench's `word_pdf.py` and
+   `word_redline.py`). Ultimate authority. Stage files in
    `../parity/_scratch`, **never `/tmp`** (Word sandboxing).
    Necessary AND not implied by #2: strict01_strikethrough validated with
    0 errors yet still trips Word's repair dialog — validator-clean is not

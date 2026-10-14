@@ -21,7 +21,7 @@ Read, edit, compare and render Word documents
 | `-m, --modified` |  | <FILE> |  |  | hidden | Modified document (overrides the positional MODIFIED) |
 | `-o, --output` |  | <FILE> |  |  | hidden | Write the redline to FILE instead of printing its agent view; the extension picks the format: .docx (also any other), .md (the agent view; CriticMarkup when both documents are Markdown), .pdf, .png (one file per page) or .json (the snapshot) |
 | `-a, --author` |  | <NAME> | Redline |  | hidden | Author name recorded on the revisions |
-| `-d, --datetime` | --date (hidden) | <ISO8601> |  |  | hidden | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| `-d, --datetime` |  | <ISO8601> |  |  | hidden | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--force` |  |  | false |  | hidden | Overwrite the output file if it already exists |
 | `--detail-threshold` |  | <RATIO> |  |  | hidden | Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15] |
 | `--mode` |  | <MODE> | word | word, powertools | hidden | Compare like Microsoft Word or Open-Xml-PowerTools |
@@ -60,7 +60,7 @@ Compare documents: print the redline as the agent view, or write it with -o
 | `-m, --modified` |  | <FILE> |  |  |  | Modified document (overrides the positional MODIFIED) |
 | `-o, --output` |  | <FILE> |  |  |  | Write the redline to FILE instead of printing its agent view; the extension picks the format: .docx (also any other), .md (the agent view; CriticMarkup when both documents are Markdown), .pdf, .png (one file per page) or .json (the snapshot) |
 | `-a, --author` |  | <NAME> | Redline |  |  | Author name recorded on the revisions |
-| `-d, --datetime` | --date (hidden) | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
 | `--detail-threshold` |  | <RATIO> |  |  |  | Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15] |
 | `--mode` |  | <MODE> | word | word, powertools |  | Compare like Microsoft Word or Open-Xml-PowerTools |
@@ -158,8 +158,8 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `--no-critic` |  |  | false |  |  | Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text |
 | `--reference-doc` |  | <FILE> |  |  |  | Markdown to Word: take styles, numbering, page setup, headers and footers from this .docx (pandoc's --reference-doc) |
 | `--resource-path` |  | <DIR> |  |  |  | Markdown to Word: where images are found [default: the Markdown file's directory] |
-| `-a, --author` |  | <NAME> | Redline |  |  | Markdown to Word: author of the tracked changes and comments |
-| `-d, --datetime` | --date (hidden) | <ISO8601> | 1970-01-01T00:00:00Z |  |  | Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible output |
+| `-a, --author` |  | <NAME> |  |  |  | Markdown to Word: author of the tracked changes and comments that name none [default: the front matter's `author:`, else the --reference-doc's creator, else Redline] |
+| `-d, --datetime` |  | <ISO8601> |  |  |  | Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments that carry none [default: the front matter's `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible output |
 | `--page` |  | <SIZE> | letter | letter, a4 |  | Markdown to Word: the page size when there is no --reference-doc (one-inch margins either way); a reference's page setup wins |
 | `--tracking` |  | <SWITCH> |  | on, off |  | Markdown to Word: turn Word's Track Changes on or off in the .docx written, whatever the Markdown's `track_changes:` key says [default: the key; without one, the --reference-doc's setting, else off] |
 | `--no-page-markers` |  |  | false |  |  | Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them |
@@ -192,7 +192,7 @@ Review differences as GitHub, word, normal, context or side-by-side text
 | `-f, --from` |  | <FORMAT> |  | docx, md, markdown | under "Formats" | Input format of both documents [default: from each file] |
 | `--force` |  |  | false |  | under "Review" | Overwrite the output file if it already exists |
 | `-a, --author` |  | <NAME> | Redline |  | under "Paragraph patch" | Who made the changes: the patch's owner |
-| `-d, --datetime` | --date (hidden) | <ISO8601> |  |  | under "Paragraph patch" | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| `-d, --datetime` |  | <ISO8601> |  |  | under "Paragraph patch" | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `-q, --quiet` |  |  | false |  | global | Print nothing on success (files are still written; warnings and errors still print) |
 
 ## jubarte read (aliases: text (hidden), inspect (hidden))
@@ -236,7 +236,7 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
 | `--author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
-| `-d, --datetime` | --date (hidden) | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
 | `--existing-revisions` |  | <MODE> | auto | auto, keep, accept, reject, refuse |  | What to do when FILE already holds tracked changes: auto keeps them and tracks the new edits beside them; a clean file goes through the comparer |
@@ -268,7 +268,7 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `--comment` |  |  |  |  | append | A comment on the whole paragraph (with --anchor the comment sits on the anchor and this flag is implied) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the new paragraph's text (bold, italic, underline, highlight=yellow) or its paragraph style (Heading2) |
 | `--author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
-| `-d, --datetime` | --date (hidden) | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
 | `--existing-revisions` |  | <MODE> | auto | auto, keep, accept, reject, refuse |  | What to do when FILE already holds tracked changes: auto keeps them and tracks the new edits beside them; a clean file goes through the comparer |
@@ -419,7 +419,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--accept` | edit | `default= values=` |
 | `--accept-changes` | diff | `default=false values=` |
 | `--anchor` | edit, add | `<TEXT> default= values=` |
-| `--author` | (shorthand), compare, accept, reject, convert, diff, edit, add, comments, validate | **differs**: `-a <NAME> default=Redline values=` on (shorthand), compare, convert, diff; `<NAME> default= values=` on accept, reject, comments, validate; `<NAME> default=Redline values=` on edit, add |
+| `--author` | (shorthand), compare, accept, reject, convert, diff, edit, add, comments, validate | **differs**: `-a <NAME> default= values=` on convert; `-a <NAME> default=Redline values=` on (shorthand), compare, diff; `<NAME> default= values=` on accept, reject, comments, validate; `<NAME> default=Redline values=` on edit, add |
 | `--author-alias` | scrub | `<NAME> default= values=` |
 | `--before` | add | `default= values=` |
 | `--by` | (shorthand), compare, read | `<AUTHOR> default= values=` |
@@ -436,9 +436,8 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--content` | edit, add | `<TEXT> default= values=` |
 | `--context` | diff, debug | **differs**: `-C <N> default=0 values=` on debug; `-U <LINES> default=3 values=` on diff |
 | `--critic` | (shorthand), compare | `default=false values=` |
-| `--date` | (shorthand), compare, convert, diff, edit, add | **differs**: `-d <ISO8601> default= values= alias of --datetime` on (shorthand), compare, diff, edit, add; `-d <ISO8601> default=1970-01-01T00:00:00Z values= alias of --datetime` on convert |
 | `--dates` | (shorthand), compare, read | `default=false values=` |
-| `--datetime` | (shorthand), compare, convert, diff, edit, add | **differs**: `-d <ISO8601> default= values=` on (shorthand), compare, diff, edit, add; `-d <ISO8601> default=1970-01-01T00:00:00Z values=` on convert |
+| `--datetime` | (shorthand), compare, convert, diff, edit, add | `-d <ISO8601> default= values=` |
 | `--delete` | edit | `default= values=` |
 | `--detail-threshold` | (shorthand), compare | `<RATIO> default= values=` |
 | `--docprops` | scrub | `default=false values=` |
@@ -537,16 +536,16 @@ Every flag whose name, alias or help has a word starting with date, time, clock 
 
 | Task | Flag | Aliases | Help |
 |-|-|-|-|
-| (shorthand) | `-d, --datetime` | --date (hidden) | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| (shorthand) | `-d, --datetime` |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | (shorthand) | `--dates` |  | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
-| compare | `-d, --datetime` | --date (hidden) | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| compare | `-d, --datetime` |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | compare | `--dates` |  | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
-| convert | `-d, --datetime` | --date (hidden) | Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible output |
+| convert | `-d, --datetime` |  | Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments that carry none [default: the front matter's `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible output |
 | convert | `--timeout` |  | Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more written. An output being written at that moment may be left partial |
-| diff | `-d, --datetime` | --date (hidden) | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| diff | `-d, --datetime` |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | read | `--dates` |  | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
-| edit | `-d, --datetime` | --date (hidden) | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
-| add | `-d, --datetime` | --date (hidden) | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| edit | `-d, --datetime` |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
+| add | `-d, --datetime` |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | debug diff | `--raw` |  | Keep rsids, ids, authors, dates, on/off values and empty blocks |
 | scrub | `--docprops` |  | Remove creator, last editor, revision number, dates, manager, company and custom properties |
 
@@ -568,8 +567,3 @@ Still accepted, with a note naming the new spelling; removed in 0.14 (`jubarte::
 | `--changed-only` | `--changed-pages` | scrub |
 | `--pdf` | `--to pdf` | convert |
 | `--png` | `--to png` | convert |
-| `--date` | `--datetime` | compare |
-| `--date` | `--datetime` | diff |
-| `--date` | `--datetime` | convert |
-| `--date` | `--datetime` | edit |
-| `--date` | `--datetime` | add |
