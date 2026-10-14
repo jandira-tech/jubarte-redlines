@@ -14,7 +14,7 @@
 //! `p51199`), tables (a 120×12 grid, merged and nested cells, twelve
 //! tables), every story (three headers, three footers, footnotes,
 //! endnotes, a style pair, a text box and its twin), ids that collide on
-//! purpose, and 125 of Word's own redlines from the bench corpus. The
+//! purpose, and 213 of Word's own redlines from the bench corpus. The
 //! extractor below is one regex per printed form, written here and not
 //! shared with the engine.
 
@@ -1091,8 +1091,8 @@ fn every_story_and_every_collision_round_trips() {
     report(&fails);
 }
 
-/// Word's own redlines: the bench's 100 rejected-tracking pairs and its 25
-/// commented, tracked documents.
+/// Word's own redlines: the bench's 100 rejected-tracking pairs, its 25
+/// commented, tracked documents and its 88 tracked ones without comments.
 #[test]
 fn word_redlines_round_trip() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench");
@@ -1100,6 +1100,7 @@ fn word_redlines_round_trip() {
     for dir in [
         "grok_run/wr0928/rejected_tracking/docx",
         "corpus/word/with_comments_tracking/docx",
+        "corpus/word/tracking_without_comments/docx",
     ] {
         let mut here: Vec<_> = std::fs::read_dir(root.join(dir))
             .unwrap()
@@ -1109,7 +1110,7 @@ fn word_redlines_round_trip() {
         here.sort();
         files.extend(here);
     }
-    assert_eq!(files.len(), 125, "the corpus is all here");
+    assert_eq!(files.len(), 213, "the corpus is all here");
     let mut fails = Vec::new();
     for file in &files {
         let name = file.file_name().unwrap().to_string_lossy().to_string();

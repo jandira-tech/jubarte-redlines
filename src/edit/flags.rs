@@ -172,7 +172,9 @@ fn styles(tokens: &[String]) -> Result<(Option<RunFormat>, Option<String>), Stri
 /// block mark), since they are written as text.
 fn content_text(content: &str) -> (String, Option<&'static str>) {
     let text = crate::markdown::unescape_markdown(content);
-    let marks = crate::markdown::plain_anchor(content) != text;
+    // The anchor drops a line's leading spaces (the view's indent); they are
+    // not a mark.
+    let marks = crate::markdown::plain_anchor(content) != text.trim_start();
     (
         text,
         marks.then_some("content keeps its Markdown marks as text; use --style for formatting"),

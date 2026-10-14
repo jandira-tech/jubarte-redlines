@@ -386,3 +386,107 @@ fn plain_anchor_distinguishes_hard_breaks_from_literal_backslashes() {
         );
     }
 }
+
+/// A line copied from the tracked view finds its paragraph: a list number
+/// typed inside an insertion, ahead of one, or escaped as plain text stays
+/// part of the anchor, and a synthesized heading mark does not.
+#[test]
+fn a_line_copied_from_the_tracked_view_finds_its_paragraph() {
+    let ins = |text: &str| {
+        format!(
+            r#"<w:ins w:id="9" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:ins>"#
+        )
+    };
+    let source = docx(&format!(
+        r#"<w:p>{}</w:p><w:p><w:r><w:t xml:space="preserve">1. </w:t></w:r>{}</w:p>{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{}</w:p>"#,
+        ins("1. one"),
+        ins("two"),
+        para("1. three"),
+        ins("Four"),
+    ));
+    let view = jubarte::markdown::docx_to_markdown(
+        &source,
+        &jubarte::markdown::MarkdownOptions {
+            ids: true,
+            comments: true,
+            ..jubarte::markdown::MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    let lines: Vec<&str> = view.lines().collect();
+    for (paragraph, text) in [
+        ("p0", "1. one"),
+        ("p1", "1. two"),
+        ("p2", "1. three"),
+        ("p3", "Four"),
+    ] {
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with(&format!("<!-- {paragraph} ")))
+            .unwrap_or_else(|| panic!("{paragraph}: {view}"));
+        let find = lines[at + 1];
+        assert_eq!(
+            jubarte::markdown::plain_anchor(find),
+            text,
+            "{paragraph}: {find}"
+        );
+        let keep = EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"Ann Counsel","date":"2026-10-01T09:00:00Z","existing_revisions":"keep","operations":[{{"kind":"comment","paragraph":"{paragraph}","find":{},"text":"x"}}]}}"#,
+            serde_json::to_string(find).unwrap()
+        ))
+        .unwrap();
+        apply_plan(&source, &keep).unwrap_or_else(|e| panic!("{paragraph}: {find}: {e}"));
+    }
+}
+
+/// zcode review 05c F1, F2: a numbered paragraph with a hard break is
+/// written `1. c\` then `   d`, the continuation indented under the text;
+/// both lines, or the second alone, find the paragraph.
+#[test]
+fn a_list_item_with_a_hard_break_is_found_by_its_copied_lines() {
+    let numbering = r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+    let source = common::docx::docx_with(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>first line</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>second line</w:t></w:r></w:p>"#,
+        &[common::docx::Part {
+            name: "word/numbering.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+            xml: numbering,
+        }],
+    );
+    let view = jubarte::markdown::docx_to_markdown(
+        &source,
+        &jubarte::markdown::MarkdownOptions {
+            ids: true,
+            ..jubarte::markdown::MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    let lines: Vec<&str> = view.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("<!-- p0"))
+        .unwrap_or_else(|| panic!("{view}"));
+    let (first, second) = (lines[at + 1], lines[at + 2]);
+    assert!(first.starts_with("1. first line\\"), "{view}");
+    assert!(
+        second.starts_with(' '),
+        "the continuation is indented: {view}"
+    );
+    let both = format!("{first}\n{second}");
+    assert_eq!(
+        jubarte::markdown::plain_anchor(&both),
+        "first line\nsecond line"
+    );
+    assert_eq!(jubarte::markdown::plain_anchor(second), "second line");
+    for find in [both.as_str(), second] {
+        let plan = EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"Ann Counsel","operations":[{{"kind":"comment","paragraph":"p0","find":{},"text":"x"}}]}}"#,
+            serde_json::to_string(find).unwrap()
+        ))
+        .unwrap();
+        apply_plan(&source, &plan).unwrap_or_else(|e| panic!("{find:?}: {e}"));
+    }
+}
