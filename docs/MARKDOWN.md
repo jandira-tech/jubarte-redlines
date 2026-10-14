@@ -53,7 +53,7 @@ themselves.
 | `[^note]` | footnote |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
 | `---` | a paragraph with a bottom border |
-| `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline |
+| `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline (in a cell or a note of the tracked view, `<br>` ends a paragraph and `<br/>` is a line break; see below) |
 | `<b>`/`<strong>`, `<i>`/`<em>`, `<s>`/`<del>`, `<code>`, `<mark>` | bold, italic, strike, `VerbatimChar`, yellow highlight; attributes and case do not matter, a tag left open closes with its block, and any other tag keeps its text and is named once in a warning |
 | `x ^2^`, `x ~2~` | superscript, subscript, at word edges only (pulldown-cmark opens neither inside a word: `H~2~O` is text) |
 | `$x^2$`, `$$\frac{a}{b}$$` | an equation (`m:oMath`; display math in an `m:oMathPara`), see below |
@@ -314,7 +314,14 @@ each style as its line says.
 Each footnote and endnote definition follows the id line of its
 paragraphs: `<!-- footnotes.p0 -->`, or `<!-- endnotes.p0-p2 -->` for a note
 of three paragraphs, which the definition joins with `<br>` (a table in a
-note reads as its cells' paragraphs). `edit -p footnotes.p0` edits that
+note reads as its cells' paragraphs), and a line break inside one of them
+reads `<br/>`. A table cell does the same: `<br>` ends one of the cell's
+paragraphs, `<br/>` is a line break (`w:br`) within one. A view written
+before that distinction still converts: when the id or table line's
+paragraph count and the `<br>`s disagree, the writer reads every `<br>`
+there as a line break (for a note, with a warning). A `<br>` prints inside a change only when its paragraph's
+mark is tracked: `this<br>{++added++}` is an inserted paragraph after an
+untracked mark, `{++A<br>B++}` an insertion that takes the mark with it. `edit -p footnotes.p0` edits that
 note's text. A note Word inserted or deleted whole, its reference with it,
 reads `{++[^1]: text++}{>>r10 @AL<<}`, and the marks its own text holds
 close the definition: `<!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->`.

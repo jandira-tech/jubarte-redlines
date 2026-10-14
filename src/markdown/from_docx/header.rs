@@ -354,11 +354,12 @@ pub(crate) fn render(f: &Facts) -> String {
                 }
             })
             .collect();
-        list.extend(
-            unanchored
-                .iter()
-                .map(|c| format!("c{} (unanchored: not in the body or a note, Word shows no balloon)", c.id)),
-        );
+        list.extend(unanchored.iter().map(|c| {
+            format!(
+                "c{} (unanchored: not in the body or a note, Word shows no balloon)",
+                c.id
+            )
+        }));
         kv(
             &mut out,
             &key,

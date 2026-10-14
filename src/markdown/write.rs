@@ -139,10 +139,11 @@ enum CellShape {
     Spanned,
 }
 
-/// Whether each footnote definition of `source`, in order, ends paragraphs
-/// at its `<br>`s: when they and its id line (`<!-- footnotes.p2-p3 -->`)
-/// count the same paragraphs, as a table row's do.
-fn note_breaks(source: &str) -> Vec<bool> {
+/// For each footnote definition of `source`, in order, the paragraphs its
+/// id line counts (`<!-- footnotes.p2-p3 -->` is two) and the `<br>`s it
+/// holds: when they add up, every `<br>` ends a paragraph, as a table
+/// row's do.
+fn note_breaks(source: &str) -> Vec<(usize, usize)> {
     let mut breaks = Vec::new();
     let mut html = String::new();
     // The open definition's paragraphs, as its id line counts them, and
@@ -162,11 +163,11 @@ fn note_breaks(source: &str) -> Vec<bool> {
                 html.clear();
             }
             Event::End(TagEnd::FootnoteDefinition) => {
-                if let Some((counted, lines)) = open.take() {
-                    breaks.push(counted > 1 && lines + 1 == counted);
+                if let Some(counts) = open.take() {
+                    breaks.push(counts);
                 }
             }
-            Event::InlineHtml(text) if is_line_break(&text) => {
+            Event::InlineHtml(text) if is_paragraph_break(&text) => {
                 if let Some((_, lines)) = &mut open {
                     *lines += 1;
                 }
@@ -215,7 +216,7 @@ fn table_plans(source: &str) -> Vec<Option<TablePlan>> {
             event if in_cell => {
                 if let Some(row) = rows.last_mut() {
                     if let Event::InlineHtml(text) = &event
-                        && is_line_break(text)
+                        && is_paragraph_break(text)
                     {
                         row.1 += 1;
                     }
@@ -412,8 +413,10 @@ fn has_comment(text: &str) -> bool {
 
 /// `<br>`, `<br/>` or `<br class="x">`, as the view and authors write a
 /// line break.
-fn is_line_break(html: &str) -> bool {
-    html_tag(html).is_some_and(|tag| !tag.closing && tag.name == "br")
+/// `<br>`, which may end a cell's or a note's paragraph; `<br/>` is always
+/// a line break (Word's `w:br`).
+fn is_paragraph_break(html: &str) -> bool {
+    html_tag(html).is_some_and(|tag| !tag.closing && !tag.empty && tag.name == "br")
 }
 
 /// The value of attribute `name` in the tag `html` (`<a href="u">`),
@@ -713,7 +716,7 @@ struct Writer<'o, 'a> {
     row_breaks: bool,
     /// Whether each footnote definition's `<br>`s end paragraphs
     /// ([`note_breaks`]), how many definitions are read, and the open one's.
-    note_breaks: Vec<bool>,
+    note_breaks: Vec<(usize, usize)>,
     note_count: usize,
     note_paragraph_breaks: bool,
     /// The number of the next cell paragraph, when the table line counts
@@ -993,13 +996,23 @@ impl<'o, 'a> Writer<'o, 'a> {
                 // An id line with no text before it is a body paragraph.
                 self.textless_paragraph();
                 self.end_paragraph();
-                self.note_paragraph_breaks = self
+                // The id line's paragraphs and the definition's `<br>`s:
+                // every `<br>` ends a paragraph when they add up.
+                let (counted, breaks) = self
                     .note_breaks
                     .get(self.note_count)
                     .copied()
-                    .unwrap_or(false);
+                    .unwrap_or_default();
+                self.note_paragraph_breaks = counted > 1 && breaks + 1 == counted;
                 self.note_count += 1;
                 let label = critic::decode(&label);
+                if counted > 1 && !self.note_paragraph_breaks {
+                    self.document.warnings.push(format!(
+                        "[^{label}]: its id line counts {counted} paragraphs and its text \
+                         {} by its <br>s: the <br>s are written as line breaks",
+                        breaks + 1
+                    ));
+                }
                 // A second definition of a label is not the note's text.
                 let label = if self.definitions.contains_key(&label) {
                     self.document.warnings.push(format!(
@@ -1617,11 +1630,15 @@ impl<'o, 'a> Writer<'o, 'a> {
         {
             span.at_break = Some(index);
         }
+        // A view's cell or note says its paragraph marks by its `<br>`s,
+        // in a change or not: a paragraph changed whole keeps its mark.
+        let says_marks = self.view && (self.cell.is_some() || self.target.is_some());
         let (mark, whole) = match self.change {
             Some((kind, serial)) => (Some((kind, serial)), false),
             None => match self.span_start {
                 Some(span)
-                    if span.at_start
+                    if !says_marks
+                        && span.at_start
                         && span.paragraph == self.paragraph_serial
                         && self.closed == Some(span.serial)
                         && !self.run_after_close
@@ -2212,7 +2229,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         };
         if name == "br" {
             if !closing {
-                self.line_break();
+                self.line_break(empty);
             }
             return;
         }
@@ -2344,12 +2361,14 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// `<br>`: a new paragraph of a comment, of a cell whose `<br>`s end
-    /// paragraphs, or else a line break.
-    fn line_break(&mut self) {
+    /// paragraphs, or else a line break. `<br/>` (`empty`) is a line break
+    /// in a cell or a note.
+    fn line_break(&mut self, empty: bool) {
         if let Some(comment) = &mut self.comment {
             comment.paragraphs.push(String::new());
-        } else if (self.cell.is_some() && self.row_breaks)
-            || (self.target.is_some() && self.note_paragraph_breaks)
+        } else if !empty
+            && ((self.cell.is_some() && self.row_breaks)
+                || (self.target.is_some() && self.note_paragraph_breaks))
         {
             // A cell's or a note's paragraphs, as the view joins them.
             self.ensure_paragraph();
@@ -2757,10 +2776,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             let clauses = self.note_clauses.remove(&label).unwrap_or_default();
             // A note without changes of its own is in its reference's
-            // change, attribution and all.
+            // change, attribution and all. The agent view wraps a note in
+            // its reference's change when Word's text is in it, so there a
+            // bare definition is live text.
             let wrapped = has_changes(&items);
             if let Some((kind, serial)) = change
                 && !wrapped
+                && !self.view
             {
                 mark_whole(&mut items, kind, serial);
             }
@@ -3764,12 +3786,12 @@ mod html_tag_tests {
     use super::*;
 
     #[test]
-    fn a_line_break_is_br_by_name_with_or_without_attributes() {
-        for br in ["<br>", "<br/>", "<BR />", "<br class=\"x\">", "< br >"] {
-            assert!(is_line_break(br), "{br}");
+    fn a_paragraph_break_is_br_by_name_and_not_self_closing() {
+        for br in ["<br>", "<BR>", "<br class=\"x\">", "< br >"] {
+            assert!(is_paragraph_break(br), "{br}");
         }
-        for not in ["</br>", "<bra>", "<br-x>", "<b>"] {
-            assert!(!is_line_break(not), "{not}");
+        for not in ["<br/>", "<BR />", "</br>", "<bra>", "<br-x>", "<b>"] {
+            assert!(!is_paragraph_break(not), "{not}");
         }
     }
 }
