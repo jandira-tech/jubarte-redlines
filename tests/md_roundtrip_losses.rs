@@ -309,6 +309,27 @@ fn a_range_ending_before_its_notes_paragraph_stays_out_of_it() {
         let second = document.match_indices("<w:p>").nth(1).unwrap().0;
         assert_eq!(end > second, inside, "{document}");
     }
+    // Two notes, neither of whose ranges runs into the paragraph their
+    // notes open; and a note opening a paragraph another range runs into.
+    for body in [
+        "<!-- p0 in c0 c1 -->\n{==Some text==}\n\n\
+         <!-- p1 -->\n{>>c0 @SW: One.<<}{>>c1 @SW: Two.<<}After.\n",
+        "<!-- p0 in c0 c1 -->\n{==Some text==}\n\n\
+         <!-- p1 in c1 -->\n{==After.==}{>>c0 @SW: One.<<}{>>c1 @SW: Two.<<}\n",
+    ] {
+        let (got, docx) = round_trip(body);
+        assert!(got.contains(body), "{got}");
+        let document = part(&docx, "word/document.xml");
+        let second = document.match_indices("<w:p>").nth(1).unwrap().0;
+        let end = document.find("<w:commentRangeEnd w:id=\"0\"/>").unwrap();
+        assert!(end < second, "{document}");
+    }
+    // The paragraph keeps its own mark when the range end goes before it.
+    let body = "<!-- p0 in c0 -->\n{==Some text==}\n\n\
+                <!-- p1 break-ins r6 @SW -->\n{>>c0 @SW: Hi.<<}{++After.++}{>>r5 @SW<<}\n\n\
+                <!-- p2 -->\nEnd.\n";
+    let (got, _) = round_trip(body);
+    assert!(got.contains(body), "{got}");
     // Through a table, as in ids-table-changes: the table says `in c0`.
     let body = "<!-- p0 in c0 -->\n{==Some text==}\n\n\
                 <!-- t0 1x1, cells p1-p1 by row, in c0 -->\n|{==a==}|\n|-|\n\n\
@@ -349,6 +370,9 @@ fn emphasis_prints_as_a_tag_where_its_delimiters_would_not_read() {
         "{++0.081<b>\\*</b>++}{>>r1 @SW<<}",
         "word<b>.</b> and x<b>,</b>y",
         "in<i>side</i>out and **bold** and _it_.",
+        // `**` beside `_` is beside punctuation: it needs space or
+        // punctuation outside.
+        "in<b><i>side</i></b>out and a <b><i>b</i></b>c and **_both_** here.",
     ] {
         let (got, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
         assert!(got.contains(&format!("{line}\n")), "{line}\n{got}");
@@ -371,4 +395,18 @@ fn a_raised_link_of_several_runs_stays_one_link() {
         let (got, _) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
         assert!(got.contains(&format!("{line}\n")), "{line}\n{got}");
     }
+}
+
+/// A comment inside a change in a footnote moves to the note's reference
+/// mark without the change: the body has no insertion of its own.
+#[test]
+fn a_comment_moved_out_of_a_note_leaves_its_change_there() {
+    let (_, docx) = round_trip(
+        "<!-- p0 -->\nText[^1]\n\n[^1]: {++{==note text==}{>>c0 @SW: hi.<<}++}{>>r1 @SW<<}\n",
+    );
+    let document = part(&docx, "word/document.xml");
+    assert!(document.contains("<w:commentReference"), "{document}");
+    assert!(!document.contains("<w:ins "), "{document}");
+    let notes = part(&docx, "word/footnotes.xml");
+    assert!(notes.contains("<w:ins "), "{notes}");
 }

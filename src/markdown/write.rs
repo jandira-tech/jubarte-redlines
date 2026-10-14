@@ -1047,9 +1047,9 @@ struct Writer<'o, 'a> {
     field_code: Option<String>,
     /// What the last id line says, for the paragraph after it.
     id_line: Option<view_notes::IdLine>,
-    /// Whether the open paragraph's id line says a comment's range runs
-    /// into it (`in c5`); None without an id line.
-    paragraph_in_comment: Option<bool>,
+    /// The comments whose ranges the open paragraph's id line says run
+    /// into it (`in c5 c6`); None without an id line.
+    paragraph_in_comments: Option<Vec<u32>>,
     /// The open paragraph ends in a page break (`page-break`).
     page_break_due: bool,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
@@ -1139,7 +1139,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             shared_range: None,
             unplaced: HashMap::new(),
             id_line: None,
-            paragraph_in_comment: None,
+            paragraph_in_comments: None,
             page_break_due: false,
             run_after_close: false,
             highlight: None,
@@ -1707,12 +1707,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             paragraph.align = align;
         }
         // What the id line before it says.
-        self.paragraph_in_comment = None;
+        self.paragraph_in_comments = None;
         if self.cell.is_none()
             && self.target.is_none()
             && let Some(line) = self.id_line.take()
         {
-            self.paragraph_in_comment = Some(line.in_comment);
+            self.paragraph_in_comments = Some(line.in_comments.clone());
             let styled = line.style.is_some();
             if let Some(style) = line.style {
                 paragraph.style = Some(style.into());
@@ -2534,13 +2534,16 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.ensure_paragraph();
         let id = comment.id;
         let mut end_at = self.range_end_at.take();
-        // A range from an earlier block whose note opens a paragraph the
-        // range does not run into (no `in c5` on its id line) ends before
-        // that paragraph, as Word wrote it.
+        // A range from an earlier block whose note is in a paragraph the
+        // range does not run into (its id line's `in` names other comments
+        // or none) ends before that paragraph, as Word wrote it.
+        let runs_in = |ids: &Vec<u32>| comment.number.map_or(!ids.is_empty(), |n| ids.contains(&n));
         if end_at.is_none()
-            && self.paragraph_in_comment == Some(false)
+            && self
+                .paragraph_in_comments
+                .as_ref()
+                .is_some_and(|ids| !runs_in(ids))
             && let Some(start) = self.paragraph
-            && self.story().len() == start + 1
         {
             let mine: Vec<usize> = (0..self.document.slots.len())
                 .filter(|slot| {
@@ -2568,10 +2571,16 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         let story = self.story();
         match end_at {
-            Some(at) if at <= story.len() => story.insert(at, Item::RangeEnd(id)),
+            Some(at) if at <= story.len() => {
+                story.insert(at, Item::RangeEnd(id));
+                // The open paragraph's item moves along.
+                if let Some(start) = self.paragraph.filter(|&start| at <= start) {
+                    self.paragraph = Some(start + 1);
+                }
+            }
             _ => story.push(Item::RangeEnd(id)),
         }
-        story.push(Item::CommentReference(id));
+        self.story().push(Item::CommentReference(id));
         self.document.styles.insert("CommentText");
         self.document.styles.insert("CommentReference");
         self.document.comments.push(comment);
@@ -2822,6 +2831,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                     && !moved.iter().any(|(_, seen)| *seen == id)
                 {
                     moved.push((position, id));
+                }
+            }
+            // The reference leaves the note, and the note's change with it.
+            for item in &note.items {
+                if let Item::RangeEnd(id) | Item::CommentReference(id) = item {
+                    self.document.note_changes.remove(id);
                 }
             }
             note.items

@@ -657,7 +657,13 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         let inner = format!("{u_open}{h_open}{s_open}{core}{s_close}{h_close}{u_close}");
         // Line by line, a line's inner edges are its own: only the first
         // opening and the last closing meet the text around.
-        let reads = delimiters_read(before, &inner, after, marks.italic && !marks.bold);
+        // `**_…_**`: the `_` always reads beside the `*`; the `**` meets
+        // the text around with `_` inside it.
+        let reads = if marks.bold && marks.italic {
+            delimiters_read(before, &format!("_{inner}_"), after, false)
+        } else {
+            delimiters_read(before, &inner, after, marks.italic)
+        };
         let (emphasis_open, emphasis_close) = match (marks.bold, marks.italic, reads) {
             (true, true, true) => ("**_", "_**"),
             (true, false, true) => ("**", "**"),
