@@ -172,3 +172,82 @@ fn a_built_in_table_style_writes_its_borders_unwarned() {
         assert_eq!(stderr.contains("borders vary"), warned, "{style}: {stderr}");
     }
 }
+
+/// Each `w:ins`/`w:del` of `document` holds as many field begins as ends:
+/// no mark parts a tracked link's field.
+fn fields_whole_in_marks(document: &str) {
+    for tag in ["<w:ins ", "<w:del "] {
+        let close = if tag == "<w:ins " {
+            "</w:ins>"
+        } else {
+            "</w:del>"
+        };
+        for (at, _) in document.match_indices(tag) {
+            let mark = &document[at..at + document[at..].find(close).unwrap()];
+            assert_eq!(
+                mark.matches("fldCharType=\"begin\"").count(),
+                mark.matches("fldCharType=\"end\"").count(),
+                "{mark}"
+            );
+        }
+    }
+}
+
+/// A change written as two marks (`r213+361`) keeps its link's field in
+/// one of them; the second mark goes after the field.
+#[test]
+fn a_change_of_two_marks_keeps_its_link_field_in_one() {
+    let line =
+        "{--Title: [Ida Greaves](https://example.org/ida) and more words--}{>>r213+361 @SW<<}";
+    let (body, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
+    let document = part(&docx, "word/document.xml");
+    assert_eq!(document.matches("<w:del ").count(), 2, "{document}");
+    fields_whole_in_marks(&document);
+    assert!(body.contains(&format!("{line}\n")), "{body}");
+}
+
+/// A comment range or bookmark that ends a tracked link stays in the
+/// link's mark, which goes on to the field's end.
+#[test]
+fn a_range_ending_a_tracked_link_stays_in_its_mark() {
+    let line = "{--See [the {==site==}{>>c0 @SW: check<<}](https://example.org)--}{>>r7 @SW<<}";
+    let (body, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
+    let document = part(&docx, "word/document.xml");
+    assert_eq!(document.matches("<w:del ").count(), 1, "{document}\n{body}");
+    fields_whole_in_marks(&document);
+}
+
+/// A tracked link's title and target are field arguments: a quote is
+/// `\"` and a backslash `\\` in the code, and both read back as written.
+#[test]
+fn a_tracked_link_escapes_its_field_arguments() {
+    let line = "{++See [the site](https://example.org/a \"say \\\"hi\\\"\") now++}{>>r4 @SW<<}";
+    let (body, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
+    let document = part(&docx, "word/document.xml");
+    assert!(
+        document.contains("\\o &quot;say \\&quot;hi\\&quot;&quot;")
+            || document.contains("\\o \"say \\\"hi\\\"\""),
+        "{document}"
+    );
+    assert!(body.contains("say"), "{body}");
+    let plain = "[the site](https://example.org/a \"say \\\"hi\\\"\")";
+    let (plain_body, _) = round_trip(&format!("<!-- p0 -->\n{plain}\n"));
+    // The tracked link reads back as the plain one does.
+    let shown = plain_body.lines().find(|l| l.contains("the site")).unwrap();
+    assert!(body.contains(shown), "{body}\n{plain_body}");
+}
+
+/// A bulleted heading whose own text begins with `- ` keeps it: only the
+/// list's bullet is taken off, once.
+#[test]
+fn a_bulleted_heading_whose_text_begins_with_a_hyphen_keeps_it() {
+    let (got, docx) = round_trip("<!-- p0 bullet -->\n## - - Economics\n");
+    let document = part(&docx, "word/document.xml");
+    assert!(document.contains(">- Economics<"), "{document}");
+    assert!(got.contains("Economics\n"), "{got}");
+    let line = got.lines().find(|l| l.contains("Economics")).unwrap();
+    assert!(
+        line == "## - - Economics" || line == "## - \\- Economics",
+        "{got}"
+    );
+}

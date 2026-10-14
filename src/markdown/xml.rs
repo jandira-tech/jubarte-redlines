@@ -570,10 +570,14 @@ pub(super) fn story(
             Item::Run(_) => true,
             Item::LinkStart(..) | Item::LinkEnd if field.is_some() => true,
             Item::RangeEnd(_) if ends_inserted_side(&items[at + 1..], open) => true,
+            // Inside a tracked link's field they stay in its mark, which
+            // goes on to the field's end.
             Item::Bookmark(_)
             | Item::RangeStart(_)
             | Item::RangeEnd(_)
-            | Item::CommentReference(_) => continues(&items[at + 1..], open),
+            | Item::CommentReference(_) => {
+                fields.last().copied().flatten().is_some() || continues(&items[at + 1..], open)
+            }
             _ => false,
         };
         if !inside {
@@ -737,6 +741,8 @@ pub(super) fn story(
                     open = run.change;
                 } else if let Some((kind, by)) = run.change
                     && context.ids_left(by) > natural.get(&by).copied().unwrap_or(0)
+                    // A field's begin and end stay in one mark.
+                    && fields.last().copied().flatten().is_none()
                 {
                     // The change goes on in a new mark: no empty marks yet.
                     out.push_str(match kind {
@@ -789,11 +795,13 @@ pub(super) fn story(
                     open = field;
                 }
                 let mut instruction = match link {
-                    Link::External(url) => format!(" HYPERLINK \"{url}\""),
-                    Link::Anchor(name) => format!(" HYPERLINK \\l \"{name}\""),
+                    Link::External(url) => format!(" HYPERLINK \"{}\"", field_argument(url)),
+                    Link::Anchor(name) => {
+                        format!(" HYPERLINK \\l \"{}\"", field_argument(name))
+                    }
                 };
                 if let Some(title) = title {
-                    let _ = write!(instruction, " \\o \"{title}\"");
+                    let _ = write!(instruction, " \\o \"{}\"", field_argument(title));
                 }
                 let element = match kind {
                     Kind::Insert => "instrText",
@@ -1095,6 +1103,12 @@ fn starts_inserted_side(rest: &[Item]) -> Option<Change> {
     (matches!(rest.get(runs), Some(Item::RangeEnd(_)))
         && ends_inserted_side(&rest[runs + 1..], Some(*side)))
     .then_some(*side)
+}
+
+/// `text` as a quoted field-code argument: Word reads `\"` as a quote and
+/// `\\` as a backslash there.
+fn field_argument(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Whether `open` is an insertion and the next item a deleted run.

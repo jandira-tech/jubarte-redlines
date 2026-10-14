@@ -22,8 +22,10 @@ Word did for the source's own theme, to within 1 per channel.
 from __future__ import annotations
 
 import colorsys
+import os
 import re
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -64,6 +66,12 @@ def resolve(colours: dict[str, str], name: str, tint: str | None, shade: str | N
     return "".join(f"{int(v * 255):02X}" for v in colorsys.hls_to_rgb(h, lum, s))
 
 
+def check(holds: bool, problem: object) -> None:
+    """Stops the script when `holds` is false: a check `python -O` keeps."""
+    if not holds:
+        raise SystemExit(f"table_styles_asset: {problem}")
+
+
 def close(a: str, b: str) -> bool:
     return all(abs(int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) <= 1 for i in (0, 2, 4))
 
@@ -82,7 +90,7 @@ def templated(style: str, colours: dict[str, str]) -> str:
             if theme_key not in attrs or not re.fullmatch(r"[0-9A-F]{6}", attrs.get(key, "")):
                 continue
             want = resolve(colours, attrs[theme_key], attrs.get(tint), attrs.get(shade))
-            assert close(want, attrs[key]), (text, want)
+            check(close(want, attrs[key]), (text, want))
             text = text.replace(f'w:{key}="{attrs[key]}"', f'w:{key}="@"')
         return text
 
@@ -110,13 +118,23 @@ def main() -> None:
     for family in sorted(families):
         variants = families[family]
         accents = {variants[a] for a in "123456"}
-        assert len(accents) == 1, f"{family}: the accents differ beyond their colour"
+        check(len(accents) == 1, f"{family}: the accents differ beyond their colour")
         (template,) = accents
         lines.append(f"{family}\taccent\t{template}")
         if variants["0"] != template:
             lines.append(f"{family}\tplain\t{variants['0'].replace('{C}', 'text1')}")
-    assert len(families) == 14, sorted(families)
-    OUT.write_text("\n".join(lines) + "\n")
+    check(len(families) == 14, sorted(families))
+    # A whole asset or none: the build reads it with `include_str!`.
+    fd, staged = tempfile.mkstemp(dir=OUT.parent, prefix=f".{OUT.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write("\n".join(lines) + "\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(staged, OUT)
+    except BaseException:
+        Path(staged).unlink(missing_ok=True)
+        raise
     print(f"{OUT.relative_to(ROOT)}: {len(families)} families, {len(lines)} lines")
 
 

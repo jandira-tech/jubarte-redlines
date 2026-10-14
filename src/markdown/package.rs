@@ -518,7 +518,9 @@ fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
         name.push_str(n);
     }
     Some(format!(
-        "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>{}</w:style>",
+        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
+        escape(id),
+        escape(&name),
         with_theme_colours(&body, theme)
     ))
 }
@@ -567,6 +569,24 @@ fn with_theme_colours(xml: &str, theme: &str) -> String {
 
 /// The theme colour `name` (`accent1`, `text1`), tinted and shaded as Word
 /// does: by lightness, in HSL, each channel truncated.
+/// The prefix (`a:`, or none for a default namespace) a theme part binds
+/// to DrawingML: any name is valid, `a` is only Word's.
+fn drawing_prefix(theme: &str) -> String {
+    const DRAWINGML: &str = "=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
+    theme
+        .match_indices(DRAWINGML)
+        .find_map(|(at, _)| {
+            let before = &theme[..at];
+            let name = &before[before.rfind(char::is_whitespace)? + 1..];
+            match name.strip_prefix("xmlns") {
+                Some("") => Some(String::new()),
+                Some(prefix) => prefix.strip_prefix(':').map(|p| format!("{p}:")),
+                None => None,
+            }
+        })
+        .unwrap_or_else(|| "a:".to_string())
+}
+
 fn theme_colour(
     theme: &str,
     name: &str,
@@ -582,9 +602,10 @@ fn theme_colour(
         "followedHyperlink" => "folHlink",
         other => other,
     };
-    let open = format!("<a:{slot}>");
+    let a = drawing_prefix(theme);
+    let open = format!("<{a}{slot}>");
     let at = theme.find(&open)? + open.len();
-    let scheme = &theme[at..at + theme[at..].find(&format!("</a:{slot}>"))?];
+    let scheme = &theme[at..at + theme[at..].find(&format!("</{a}{slot}>"))?];
     let hex = ["lastClr=\"", "val=\""].iter().find_map(|key| {
         let (_, rest) = scheme.split_once(key)?;
         rest.get(..6)
@@ -1320,6 +1341,24 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_theme_colour_is_found_under_any_drawingml_prefix() {
+        for (root, a) in [("xmlns:a", "a:"), ("xmlns:d", "d:"), ("xmlns", "")] {
+            let theme = format!(
+                "<{a}theme {root}=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+                 <{a}accent1><{a}srgbClr val=\"112233\"/></{a}accent1></{a}theme>"
+            );
+            assert_eq!(drawing_prefix(&theme), a, "{root}");
+            assert_eq!(
+                theme_colour(&theme, "accent1", None, None).as_deref(),
+                Some("112233"),
+                "{root}"
+            );
+        }
+        // No DrawingML binding: Word's own prefix.
+        assert_eq!(drawing_prefix("<theme/>"), "a:");
+    }
 
     #[test]
     fn the_final_section_is_found_only_as_the_bodys_last_child() {

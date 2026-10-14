@@ -3697,9 +3697,9 @@ fn field_words(instruction: &str) -> Vec<(String, bool)> {
             while let Some(c) = chars.next() {
                 match c {
                     '"' => break,
-                    '\\' if chars.peek() == Some(&'"') => {
-                        word.push('"');
-                        chars.next();
+                    // `\"` is a quote, `\\` a backslash (a path's).
+                    '\\' if matches!(chars.peek(), Some('"' | '\\')) => {
+                        word.extend(chars.next());
                     }
                     _ => word.push(c),
                 }
