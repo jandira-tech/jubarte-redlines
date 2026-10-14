@@ -960,7 +960,10 @@ impl Blocks {
 /// Tracks list marker widths so nested items indent under their parent's content.
 #[derive(Default)]
 pub(crate) struct ListIndent {
-    widths: Vec<usize>,
+    /// Each open level's width, and whether an item holds it. A skipped
+    /// level takes no width: four columns past an item's content would
+    /// start a code block, and the id line names the level instead.
+    widths: Vec<(usize, bool)>,
 }
 
 impl ListIndent {
@@ -968,16 +971,29 @@ impl ListIndent {
         self.widths.clear();
     }
 
+    /// Where an item at `level` goes: its indentation, and the level that
+    /// indentation says (the items it nests under; less than `level` when
+    /// a level between is skipped).
+    pub(crate) fn place(&self, level: usize) -> (usize, usize) {
+        let level = level.min(8);
+        let kept = &self.widths[..level.min(self.widths.len())];
+        let indent = kept.iter().map(|(width, _)| width).sum::<usize>();
+        (indent, kept.iter().filter(|(_, item)| *item).count())
+    }
+
     /// Format an item at `level` with `marker` (e.g. "-", "3.").
     pub(crate) fn item(&mut self, level: usize, marker: &str, text: &str) -> String {
         let level = level.min(8);
         self.widths.truncate(level);
         while self.widths.len() < level {
-            self.widths.push(2);
+            self.widths.push((0, false));
         }
-        let indent = " ".repeat(self.widths.iter().sum());
-        self.widths.push(marker.chars().count() + 1);
-        let continuation = format!("\n{}", " ".repeat(self.widths.iter().sum()));
+        let indent = " ".repeat(self.widths.iter().map(|(width, _)| width).sum());
+        self.widths.push((marker.chars().count() + 1, true));
+        let continuation = format!(
+            "\n{}",
+            " ".repeat(self.widths.iter().map(|(width, _)| width).sum())
+        );
         format!("{indent}{marker} {}", text.replace('\n', &continuation))
     }
 }
@@ -1040,6 +1056,14 @@ mod tests {
         assert_eq!(list.item(0, "10.", "a"), "10. a");
         assert_eq!(list.item(1, "-", "b"), "    - b");
         assert_eq!(list.item(0, "11.", "c\nd"), "11. c\n    d");
+        // A skipped level takes no width, and the level said is the items
+        // nested under, so the id line names the level the indent cannot.
+        assert_eq!(list.place(1), (4, 1));
+        assert_eq!(list.place(3), (4, 1));
+        assert_eq!(list.item(3, "-", "e"), "    - e");
+        assert_eq!(list.place(4), (6, 2));
+        list.reset();
+        assert_eq!(list.place(2), (0, 0));
     }
 }
 #[cfg(test)]
@@ -1198,10 +1222,7 @@ mod ooxml_package_boundary_tests {
             assert_eq!(inline.render(false), expected);
         }
         let mut list = ListIndent::default();
-        assert_eq!(
-            list.item(3, "10.", "one\ntwo"),
-            "      10. one\n          two"
-        );
+        assert_eq!(list.item(3, "10.", "one\ntwo"), "10. one\n    two");
         list.reset();
         assert_eq!(list.item(0, "-", "next"), "- next");
     }

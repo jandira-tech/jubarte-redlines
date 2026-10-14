@@ -2089,11 +2089,13 @@ fn names_handle(text: &str, handle: &str) -> bool {
 }
 
 /// The id line a block opens with (`<!-- p3 … -->`, `<!-- t0 … -->`), or
-/// `""` for a block that opens with document text.
+/// `""` for a block that opens with document text. A nested list item's
+/// id line is indented with its item.
 fn id_line_of(block: &str) -> &str {
     block
         .lines()
         .next()
+        .map(str::trim_start)
         .filter(|line| line.starts_with("<!-- "))
         .unwrap_or("")
 }
@@ -2362,6 +2364,16 @@ pub(crate) fn note_label(note: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
+
+    /// A nested list item's id line is indented with its item; its mark
+    /// clause and its handle still select the block.
+    #[test]
+    fn an_indented_id_line_still_marks_its_block() {
+        let block = "   <!-- p5 ListParagraph bullet, break-ins r3 @AS -->\n   - Sub.";
+        assert!(is_marked(block));
+        assert!(has_handle(block, "AS", &HashMap::new()));
+        assert!(!has_handle(block, "AC", &HashMap::new()));
+    }
 
     /// pi review of Task 5 F4: a clause key is a mark only with its tag or
     /// comment id after it, so a style or list label reading `rev` keeps no

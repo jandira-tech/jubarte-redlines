@@ -345,6 +345,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         handles: handles.clone(),
         default_style: default_style.clone(),
         pending_empty: Vec::new(),
+        line_indent: 0,
         cached_pages,
         page_sections,
         break_due: false,
@@ -1920,6 +1921,9 @@ struct Writer<'a> {
     default_style: Option<String>,
     /// Agent view: empty paragraphs not yet written as `<!-- pN empty -->`.
     pending_empty: Vec<usize>,
+    /// Agent view: the indentation of the comment lines written before a
+    /// nested list item, its own, so they stay inside the list.
+    line_indent: usize,
     /// Agent view, cached-break fallback: `Some(total)` makes the writer
     /// emit `<!-- page N of total -->` itself; `None` leaves markers to
     /// `paginate`.
@@ -2202,6 +2206,10 @@ impl Writer<'_> {
                 self.pending_empty.push(index);
                 return;
             }
+            // A nested item's lines go where the item goes, and the level
+            // its indentation says is not repeated on its id line.
+            let place = list_marker.as_ref().map(|(_, _, ilvl)| list.place(*ilvl));
+            self.line_indent = place.map_or(0, |(indent, _)| indent);
             self.flush_empty(blocks);
             let opens = self.opens_page(agent::has_rendered_page_break(p));
             self.page_lines(blocks, opens);
@@ -2225,6 +2233,10 @@ impl Writer<'_> {
                     .as_ref()
                     .map(|(_, label, ilvl)| (label.as_str(), *ilvl)))
                 .map_or((None, 0), |(label, ilvl)| (Some(label), ilvl.min(8)));
+            let level = match place {
+                Some((_, said)) if said == level => 0,
+                _ => level,
+            };
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
@@ -2239,7 +2251,12 @@ impl Writer<'_> {
                 empty,
                 unshown: &unshown,
             };
-            blocks.push_line(&agent::id_line(p, &facts, &self.handles));
+            blocks.push_line(&format!(
+                "{}{}",
+                " ".repeat(self.line_indent),
+                agent::id_line(p, &facts, &self.handles)
+            ));
+            self.line_indent = 0;
         }
         if written {
             let edges = inline.edges();
@@ -2256,9 +2273,7 @@ impl Writer<'_> {
             } else if let Some(marker) = list_marker {
                 let (marker, _, ilvl) = marker;
                 let text = self.block_text(inline.render(true));
-                // The agent view prints the level on the id line.
-                let level = if self.agent { 0 } else { ilvl };
-                let item = list.item(level, &marker, &hard_breaks(&text));
+                let item = list.item(ilvl, &marker, &hard_breaks(&text));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
             } else if code_block {
@@ -2312,7 +2327,7 @@ impl Writer<'_> {
         let opens = self.opens_page(false);
         self.page_lines(blocks, opens);
         for line in agent::empty_lines(&std::mem::take(&mut self.pending_empty)) {
-            blocks.push_line(&line);
+            blocks.push_line(&format!("{}{line}", " ".repeat(self.line_indent)));
         }
     }
 
@@ -2325,14 +2340,22 @@ impl Writer<'_> {
         if self.page == 0 {
             self.page = 1;
             self.announce = false;
-            blocks.push_line(&agent::page_marker(1, total));
+            blocks.push_line(&format!(
+                "{}{}",
+                " ".repeat(self.line_indent),
+                agent::page_marker(1, total)
+            ));
         }
         if opens && self.page < total {
             self.page += 1;
             self.announce = true;
         }
         if std::mem::take(&mut self.announce) {
-            blocks.push_line(&agent::page_marker(self.page, total));
+            blocks.push_line(&format!(
+                "{}{}",
+                " ".repeat(self.line_indent),
+                agent::page_marker(self.page, total)
+            ));
         }
     }
 
