@@ -284,6 +284,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- `edit` under `existing_revisions: "keep"`, and a plan rewriting what a
+  comment covers (`c0.text`), dropped a `format_run`, `insert_footnote` or
+  `page_setup` from the redline while the clean copy had it and the report
+  said `ok`. A `format_run` is a tracked format change (`w:rPrChange`)
+  now; under `keep` the operations it cannot track are refused, naming
+  them, and a `c0.text` plan holding one goes through the comparer.
+- Replacing exactly the text a comment covers kept the deletion inside the
+  comment only in a plan of text edits: with paragraph formatting beside it,
+  or `whole: true`, Reject All left the comment on nothing. `update_fields`
+  beside such an edit is refused, as under `keep`, and both refusals name
+  `jubarte convert FILE --update-fields`, not the removed `fields update`.
 - `jubarte revisions x.docx` said only "reading revisions: No such file":
   the removed task's name reads as the first file to compare. A note now
   names `changes` first, on every host.

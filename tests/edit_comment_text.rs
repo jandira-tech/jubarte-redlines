@@ -183,6 +183,60 @@ fn a_footnote_beside_c0_text_reaches_the_redline() {
     );
 }
 
+/// The comment keeps both sides of a whole-range replacement whatever else
+/// the plan holds: paragraph formatting, or `whole` on the edit (ledger
+/// review of #451, finding 2). The comparer would put the deletion after
+/// the range, so Reject All left the comment on nothing.
+#[test]
+fn a_whole_range_replacement_keeps_the_comment_in_mixed_plans() {
+    for ops in [
+        r#"{"kind":"replace","paragraph":"p0","find":"ten dollars","replacement":"twelve euros"},
+        {"kind":"format_paragraph","paragraph":"p0","alignment":"center"}"#,
+        r#"{"kind":"replace","paragraph":"p0","find":"ten dollars","replacement":"twelve euros","whole":true}"#,
+    ] {
+        let edited = bob(ops).unwrap();
+        assert_word_valid_package(&edited.redline);
+        assert_eq!(
+            shape(&edited.redline),
+            ["start", "del:ten dollars", "ins:twelve euros", "end", "ref"],
+            "{ops}"
+        );
+        assert_eq!(
+            covered(&reject_revisions(&edited.redline).unwrap()),
+            "ten dollars",
+            "{ops}"
+        );
+    }
+}
+
+/// `update_fields` refreshes the clean copy only, so the emitted redline
+/// would not accept to it: refused, as under keep, and both refusals name
+/// the command that refreshes fields now (`jubarte fields update` is gone).
+#[test]
+fn update_fields_beside_a_whole_range_replacement_is_refused() {
+    let commented_plan = |extra: &str| {
+        plan(&format!(
+            r#"{{"schema_version":1,"author":"Bob",{extra}"operations":[
+            {{"kind":"replace","paragraph":"p0","find":"ten dollars","replacement":"twelve euros"}}]}}"#
+        ))
+    };
+    for extra in [
+        r#""update_fields":true,"#,
+        r#""update_fields":true,"existing_revisions":"keep","#,
+    ] {
+        let e = apply_plan(&commented(), &commented_plan(extra)).unwrap_err();
+        assert_eq!(e.code, "INVALID_PLAN", "{extra}: {e:?}");
+        assert!(
+            e.message.contains("convert") && e.message.contains("--update-fields"),
+            "{extra}: {}",
+            e.message
+        );
+        assert!(!e.message.contains("fields update"), "{}", e.message);
+        let e = jubarte::edit::preview_plan(&commented(), &commented_plan(extra)).unwrap_err();
+        assert_eq!(e.code, "INVALID_PLAN", "preview refuses too: {extra}");
+    }
+}
+
 #[test]
 fn an_anchor_in_c0_text_is_looked_up_in_the_covered_text_only() {
     let edited =
