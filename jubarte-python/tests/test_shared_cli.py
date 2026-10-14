@@ -241,3 +241,31 @@ def test_a_retired_name_keeps_its_note_when_the_parse_fails(capsys):
     assert exit.value.code == 2
     err = capsys.readouterr().err
     assert err.startswith("note: audit is now validate; audit is removed in 0.14\nerror: "), err
+
+
+NOT_A_ZIP = "error: INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record\n"
+LEGACY = ("error: LEGACY_DOC: ole.docx is a Word 97-2003 (.doc) or encrypted document; "
+          "open it in Word and save it as .docx without a password\n")
+
+
+@pytest.mark.parametrize("arguments", [
+    ["read", "{f}"], ["read", "{f}", "--json"], ["changes", "{f}"], ["comments", "{f}"],
+    ["accept", "{f}", "-o", "a.docx"], ["reject", "{f}", "-o", "a.docx"],
+    ["convert", "{f}", "-o", "a.pdf"], ["compare", "{f}", "good.docx"],
+    ["diff", "{f}", "good.docx"], ["edit", "{f}", "-p", "p0", "--delete"],
+])
+def test_an_unreadable_word_input_reads_as_the_binary_says(tmp_path, monkeypatch, capsys, arguments):
+    # Ledger review of #454, findings 3 and 4: the code first, then the file.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "fake.docx").write_bytes(b"hello, not a zip")
+    (tmp_path / "ole.docx").write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1rest")
+    (tmp_path / "good.docx").write_bytes(docx(para("Plain")))
+    for name, expected in (("fake.docx", NOT_A_ZIP), ("ole.docx", LEGACY)):
+        try:
+            code = main([a.format(f=name) for a in arguments])
+        except SystemExit as exit:
+            code = exit.code
+        assert code == 1, arguments
+        captured = capsys.readouterr()
+        assert captured.err == expected, (arguments, captured.err)
+        assert captured.out == "", arguments
