@@ -171,3 +171,12 @@ path = ["tests/corpus/neurotic_docx_bench/**", "tests/corpus/_to_improve_accepte
 precedence = "override"
 SPDX-FileCopyrightText = "NOASSERTION"
 SPDX-License-Identifier = "LicenseRef-Bench-Fixtures"
+
+# Microsoft Word's built-in Grid and List Table style definitions, extracted
+# from a Word-written fixture by scripts/table_styles_asset.py; provenance in
+# LICENSES/LicenseRef-Word-Table-Styles.txt.
+[[annotations]]
+path = "src/markdown/word_table_styles.tsv"
+precedence = "override"
+SPDX-FileCopyrightText = "Microsoft Corporation"
+SPDX-License-Identifier = "LicenseRef-Word-Table-Styles"

@@ -134,7 +134,10 @@ pub(super) fn assemble(
         let styles = with_styles(&styles, &wanted);
         let styles = with_named_styles(&styles, &document.named_styles);
         let styles = super::view_styles::apply(&styles, &document.style_specs);
-        let styles = with_table_styles(&styles, &document.table_styles);
+        let theme = related(&package, &main, "/theme")
+            .and_then(|part| package.part_string(&part))
+            .unwrap_or_else(|| crate::word_default_theme::WORD_DEFAULT_THEME.to_string());
+        let styles = with_table_styles(&styles, &document.table_styles, &theme);
         package.set_part(&styles_part, styles.into_bytes());
     }
 
@@ -432,15 +435,18 @@ fn separators_only(xml: &str) -> String {
     }
 }
 
-/// `styles` with a definition added for each wanted style it lacks.
 /// `styles` with a definition for each table style the view names that it
-/// lacks: the name is the id, on Word's Normal Table, with the legend's
-/// border all round when it gives one.
-fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>) -> String {
+/// lacks: one of Word's built-in Grid and List Tables as Word defines it,
+/// its colours from `theme`; else the name is the id, on Word's Normal
+/// Table, with the legend's border all round when it gives one.
+fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme: &str) -> String {
     let missing: String = wanted
         .iter()
         .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
         .map(|(id, border)| {
+            if let Some(style) = built_in_table_style(id, theme) {
+                return style;
+            }
             let borders = border.map_or_else(String::new, |sz| {
                 let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
                     .iter()
@@ -463,6 +469,223 @@ fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>) -> St
         }
         _ => styles.to_string(),
     }
+}
+
+/// Word's built-in Grid Table and List Table styles (1 to 7, plain and
+/// Accent 1 to 6), one template per family as Word writes them, `{C}` for
+/// the theme colour and `@` for each colour resolved from it (written by
+/// scripts/table_styles_asset.py).
+const WORD_TABLE_STYLES: &str = include_str!("word_table_styles.tsv");
+
+/// The definition of `id` when it is one of Word's built-in Grid or List
+/// Tables (`GridTable4-Accent1`, `ListTable6Colorful`), named as Word names
+/// it (`Grid Table 4 Accent 1`), its colours from `theme`.
+fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
+    let (family, accent) = match id.split_once("-Accent") {
+        Some((family, n)) if matches!(n, "1" | "2" | "3" | "4" | "5" | "6") => (family, Some(n)),
+        Some(_) => return None,
+        None => (id, None),
+    };
+    let template = |variant: &str| {
+        WORD_TABLE_STYLES.lines().find_map(|line| {
+            let mut fields = line.splitn(3, '\t');
+            (fields.next()? == family && fields.next()? == variant)
+                .then(|| fields.next())
+                .flatten()
+        })
+    };
+    let body = match accent {
+        Some(n) => template("accent")?.replace("{C}", &format!("accent{n}")),
+        None => match template("plain") {
+            Some(plain) => plain.to_string(),
+            None => template("accent")?.replace("{C}", "text1"),
+        },
+    };
+    // `GridTable1Light` is `Grid Table 1 Light`.
+    let mut name = String::new();
+    let mut previous = ' ';
+    for c in family.chars() {
+        if !name.is_empty()
+            && (c.is_ascii_uppercase() || (c.is_ascii_digit() && !previous.is_ascii_digit()))
+        {
+            name.push(' ');
+        }
+        name.push(c);
+        previous = c;
+    }
+    if let Some(n) = accent {
+        name.push_str(" Accent ");
+        name.push_str(n);
+    }
+    Some(format!(
+        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
+        escape(id),
+        escape(&name),
+        with_theme_colours(&body, theme)
+    ))
+}
+
+/// Whether `id` is one of Word's built-in Grid or List Tables, which the
+/// writer defines as Word does.
+pub(super) fn is_built_in_table_style(id: &str) -> bool {
+    built_in_table_style(id, "").is_some()
+}
+
+/// `xml` with each `@` colour resolved from `theme` as Word resolves a
+/// theme colour: the element's `w:themeColor` (or `w:themeFill`), lightened
+/// by its tint and darkened by its shade; `auto` for a colour the theme
+/// does not hold.
+fn with_theme_colours(xml: &str, theme: &str) -> String {
+    xml.split_inclusive('>')
+        .map(|tag| {
+            if !tag.contains("\"@\"") {
+                return tag.to_string();
+            }
+            let attribute = |name: &str| {
+                tag.split_once(&format!(" w:{name}=\""))
+                    .and_then(|(_, rest)| rest.split_once('"'))
+                    .map(|(value, _)| value)
+            };
+            let mut out = tag.to_string();
+            for (key, colour, tint, shade) in [
+                ("color", "themeColor", "themeTint", "themeShade"),
+                ("val", "themeColor", "themeTint", "themeShade"),
+                ("fill", "themeFill", "themeFillTint", "themeFillShade"),
+            ] {
+                let unresolved = format!(" w:{key}=\"@\"");
+                if out.contains(&unresolved) {
+                    let hex = attribute(colour)
+                        .and_then(|name| {
+                            theme_colour(theme, name, attribute(tint), attribute(shade))
+                        })
+                        .unwrap_or_else(|| "auto".to_string());
+                    out = out.replace(&unresolved, &format!(" w:{key}=\"{hex}\""));
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// The theme colour `name` (`accent1`, `text1`), tinted and shaded as Word
+/// does: by lightness, in HSL, each channel truncated.
+/// The prefix (`a:`, or none for a default namespace) a theme part binds
+/// to DrawingML: any name is valid, `a` is only Word's.
+fn drawing_prefix(theme: &str) -> String {
+    const DRAWINGML: &str = "=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
+    theme
+        .match_indices(DRAWINGML)
+        .find_map(|(at, _)| {
+            let before = &theme[..at];
+            let name = &before[before.rfind(char::is_whitespace)? + 1..];
+            match name.strip_prefix("xmlns") {
+                Some("") => Some(String::new()),
+                Some(prefix) => prefix.strip_prefix(':').map(|p| format!("{p}:")),
+                None => None,
+            }
+        })
+        .unwrap_or_else(|| "a:".to_string())
+}
+
+fn theme_colour(
+    theme: &str,
+    name: &str,
+    tint: Option<&str>,
+    shade: Option<&str>,
+) -> Option<String> {
+    let slot = match name {
+        "text1" | "dark1" => "dk1",
+        "background1" | "light1" => "lt1",
+        "text2" | "dark2" => "dk2",
+        "background2" | "light2" => "lt2",
+        "hyperlink" => "hlink",
+        "followedHyperlink" => "folHlink",
+        other => other,
+    };
+    let a = drawing_prefix(theme);
+    let open = format!("<{a}{slot}>");
+    let at = theme.find(&open)? + open.len();
+    let scheme = &theme[at..at + theme[at..].find(&format!("</{a}{slot}>"))?];
+    let hex = ["lastClr=\"", "val=\""].iter().find_map(|key| {
+        let (_, rest) = scheme.split_once(key)?;
+        rest.get(..6)
+            .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))
+    })?;
+    // Neither tint nor shade: the theme's colour as it is.
+    if tint.is_none() && shade.is_none() {
+        return Some(hex.to_ascii_uppercase());
+    }
+    let channel =
+        |at: usize| f64::from(u8::from_str_radix(&hex[at..at + 2], 16).unwrap_or(0)) / 255.0;
+    let (h, mut l, s) = rgb_to_hls(channel(0), channel(2), channel(4));
+    let fraction = |value: Option<&str>| {
+        value
+            .and_then(|v| u8::from_str_radix(v, 16).ok())
+            .map(|v| f64::from(v) / 255.0)
+    };
+    if let Some(t) = fraction(tint) {
+        l = l * t + (1.0 - t);
+    }
+    if let Some(t) = fraction(shade) {
+        l *= t;
+    }
+    let (r, g, b) = hls_to_rgb(h, l, s);
+    // Truncated, as Word writes it: each value is within 0..=255.
+    let byte = |v: f64| (v * 255.0).clamp(0.0, 255.0).floor();
+    Some(format!(
+        "{:02X}{:02X}{:02X}",
+        byte(r) as u8,
+        byte(g) as u8,
+        byte(b) as u8
+    ))
+}
+
+fn rgb_to_hls(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (max + min) / 2.0;
+    if (max - min).abs() < f64::EPSILON {
+        return (0.0, l, 0.0);
+    }
+    let d = max - min;
+    let s = if l <= 0.5 {
+        d / (max + min)
+    } else {
+        d / (2.0 - max - min)
+    };
+    let (rc, gc, bc) = ((max - r) / d, (max - g) / d, (max - b) / d);
+    let h = if (r - max).abs() < f64::EPSILON {
+        bc - gc
+    } else if (g - max).abs() < f64::EPSILON {
+        2.0 + rc - bc
+    } else {
+        4.0 + gc - rc
+    };
+    ((h / 6.0).rem_euclid(1.0), l, s)
+}
+
+fn hls_to_rgb(h: f64, l: f64, s: f64) -> (f64, f64, f64) {
+    if s == 0.0 {
+        return (l, l, l);
+    }
+    let m2 = if l <= 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let m1 = 2.0 * l - m2;
+    let value = |hue: f64| {
+        let hue = hue.rem_euclid(1.0);
+        if hue < 1.0 / 6.0 {
+            m1 + (m2 - m1) * hue * 6.0
+        } else if hue < 0.5 {
+            m2
+        } else if hue < 2.0 / 3.0 {
+            m1 + (m2 - m1) * (2.0 / 3.0 - hue) * 6.0
+        } else {
+            m1
+        }
+    };
+    (value(h + 1.0 / 3.0), value(h), value(h - 1.0 / 3.0))
 }
 
 fn with_styles(styles: &str, wanted: &BTreeSet<&str>) -> String {
@@ -1118,6 +1341,24 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_theme_colour_is_found_under_any_drawingml_prefix() {
+        for (root, a) in [("xmlns:a", "a:"), ("xmlns:d", "d:"), ("xmlns", "")] {
+            let theme = format!(
+                "<{a}theme {root}=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+                 <{a}accent1><{a}srgbClr val=\"112233\"/></{a}accent1></{a}theme>"
+            );
+            assert_eq!(drawing_prefix(&theme), a, "{root}");
+            assert_eq!(
+                theme_colour(&theme, "accent1", None, None).as_deref(),
+                Some("112233"),
+                "{root}"
+            );
+        }
+        // No DrawingML binding: Word's own prefix.
+        assert_eq!(drawing_prefix("<theme/>"), "a:");
+    }
 
     #[test]
     fn the_final_section_is_found_only_as_the_bodys_last_child() {

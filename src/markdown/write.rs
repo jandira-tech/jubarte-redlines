@@ -1725,8 +1725,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             if let Some(label) = line.label {
                 // The label stands for the list's own number, and a heading
                 // prints it before its text.
-                if let (Some(_), Label::Text(text)) = (self.heading, &label) {
-                    self.label_prefix = Some(format!("{text} "));
+                match (self.heading, &label) {
+                    (Some(_), Label::Text(text)) => self.label_prefix = Some(format!("{text} ")),
+                    // `## - Economics`: the bullet is the list's.
+                    (Some(_), Label::Bullet) => self.label_prefix = Some("- ".to_string()),
+                    _ => {}
                 }
                 let level = line
                     .level
@@ -2838,7 +2841,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             );
         }
         self.document.table_style = view_styles::table_style(text);
+        // One of Word's own table styles is written as Word defines it,
+        // borders and all.
         if let Some((id, None)) = &self.document.table_style
+            && !super::package::is_built_in_table_style(id)
             && text.lines().any(|line| {
                 let line = view_styles::without_comment(line).trim();
                 line.starts_with("table: ") && line.ends_with(", borders vary")

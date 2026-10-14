@@ -575,7 +575,7 @@ fn encode_range(
                         push_escaped(out, c.encode_utf8(&mut [0; 4]));
                     }
                     out.push(stand_in(Token::FieldSeparator));
-                    encode_range(source, closers, code.end + 1..end, allowed, false, out);
+                    encode_range(source, closers, code.end + 1..end, allowed, labels, out);
                     out.push(stand_in(Token::FieldEnd));
                     at = end + FIELD_END.len();
                     continue;
@@ -728,8 +728,9 @@ fn field_code(source: &str, at: usize, until: usize) -> Option<std::ops::Range<u
 }
 
 /// A body field opened at `at`: its code, and where the `{/}` that closes
-/// it sits, past any field nested in its result, in the same paragraph
-/// (before `until` and any blank line). Without that `{/}` it is text.
+/// it sits (before `until`), past any field nested in its result: in the
+/// same paragraph, or a later one when its `{CODE}` begins a line (see
+/// [`field_ends`]). Without that `{/}` it is text.
 fn field_at(
     source: &str,
     closers: &Closers<'_>,
@@ -743,19 +744,25 @@ fn field_at(
 
 /// The `{/}` that closes each body field, by the field's `{`, found in one
 /// pass with a stack of open fields: a nested field's `{/}` closes it
-/// first, a blank line or a fenced block leaves every open field unclosed,
-/// and code spans, link destinations and autolinks are passed over. A `{`
+/// first, and code spans, link destinations and autolinks are passed over.
+/// A blank line leaves unclosed every open field but one whose `{CODE}`
+/// begins its paragraph's text (a table of contents: its result is whole
+/// paragraphs, its `{/}` in a later one); a fenced block leaves every open
+/// field unclosed. A `{`
 /// inside a field's code (`{QUOTE "{PAGE}"}`) opens nothing.
 fn field_ends(source: &str, literal: &Literal) -> std::collections::HashMap<usize, usize> {
     let mut ends = std::collections::HashMap::new();
-    let mut open = Vec::new();
+    let mut open: Vec<usize> = Vec::new();
     let mut i = 0;
     while i < source.len() {
         if let Some(skip) = literal.verbatim_end(i) {
             i = skip;
-        } else if literal.in_fence(i) || source[i..].starts_with("\n\n") {
+        } else if literal.in_fence(i) {
             open.clear();
             i += source[i..].chars().next().map_or(1, char::len_utf8);
+        } else if source[i..].starts_with("\n\n") {
+            open.retain(|&start| opens_paragraph(source, start));
+            i += 1;
         } else if source[i..].starts_with(FIELD_END) && !escaped(source, i) {
             if let Some(start) = open.pop() {
                 ends.insert(start, i);
@@ -769,6 +776,36 @@ fn field_ends(source: &str, literal: &Literal) -> std::collections::HashMap<usiz
         }
     }
     ends
+}
+
+/// Whether the `{` at `at` begins its paragraph's text: only a heading,
+/// list or quote marker (`## `, `- `, `1. `, `> `) and spaces before it on
+/// its line.
+fn opens_paragraph(source: &str, at: usize) -> bool {
+    let line = &source[source[..at].rfind('\n').map_or(0, |n| n + 1)..at];
+    let mut rest = line.trim_start();
+    loop {
+        let marker = if let Some(after) = rest.strip_prefix('>') {
+            after
+        } else if rest.starts_with('#') {
+            rest.trim_start_matches('#')
+                .strip_prefix(' ')
+                .unwrap_or(rest)
+        } else if let Some(after) = rest.strip_prefix(['-', '*', '+']) {
+            after.strip_prefix(' ').unwrap_or(rest)
+        } else {
+            let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            rest[digits..]
+                .strip_prefix(['.', ')'])
+                .filter(|_| digits > 0)
+                .and_then(|after| after.strip_prefix(' '))
+                .unwrap_or(rest)
+        };
+        if marker.len() == rest.len() {
+            return rest.is_empty();
+        }
+        rest = marker.trim_start();
+    }
 }
 
 /// Where the `==` that closes a highlight opened at `at` sits, if `at`
@@ -1065,6 +1102,33 @@ mod tests {
             });
         });
         out
+    }
+
+    #[test]
+    fn a_field_crosses_paragraphs_only_from_a_paragraph_start() {
+        for (line, opens) in [
+            ("{TOC}", true),
+            ("  {TOC}", true),
+            ("## {TOC}", true),
+            ("- {TOC}", true),
+            ("> 1. {TOC}", true),
+            ("12) {TOC}", true),
+            ("See {TOC}", false),
+            ("#x {TOC}", false),
+            ("1.{TOC}", false),
+        ] {
+            let source = format!("<!-- p0 -->\n{line}a\n\nb{{/}}\n");
+            let at = source.find("{TOC").unwrap();
+            assert_eq!(opens_paragraph(&source, at), opens, "{line}");
+            let ends = field_ends(&source, &Literal::new(&source));
+            assert_eq!(ends.contains_key(&at), opens, "{line}");
+        }
+        // A field inside the spanning one closes first; a fence ends both.
+        let source = "{TOC}a {PAGE}1{/}\n\nb{/}";
+        let ends = field_ends(source, &Literal::new(source));
+        assert_eq!(ends.get(&0), Some(&(source.len() - 3)));
+        let source = "{TOC}a\n\n```\nx\n```\n\nb{/}";
+        assert!(field_ends(source, &Literal::new(source)).is_empty());
     }
 
     #[test]

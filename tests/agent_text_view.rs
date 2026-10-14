@@ -1619,7 +1619,8 @@ fn code_reads_as_code_spans_and_fences() {
 fn body_fields_read_as_code_then_result() {
     // Spec §3: a body field prints `{CODE}result{/}`, a hyperlink field
     // stays a link, literal braces are escaped, and a field that runs past
-    // its paragraph (a table of contents) shows its result only.
+    // its paragraph (a table of contents) prints its code at the start of
+    // its first paragraph and `{/}` in its last.
     let begin = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#;
     let separate = r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
     let end = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
@@ -1653,7 +1654,7 @@ fn body_fields_read_as_code_then_result() {
     let view = body(&full);
     assert_eq!(
         view,
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBegins {DATE \\@ \"MMMM d, yyyy\"}March 1, 2026{/} as {REF _Ref1 \\h}Section 2{/} says, {Client Name}, \\{page} and \\{/}.\n\n<!-- p1 -->\n[site](https://a.example/)\n\n<!-- p2 -->\nIntro 1\n\n<!-- p3 -->\nTerms 2\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBegins {DATE \\@ \"MMMM d, yyyy\"}March 1, 2026{/} as {REF _Ref1 \\h}Section 2{/} says, {Client Name}, \\{page} and \\{/}.\n\n<!-- p1 -->\n[site](https://a.example/)\n\n<!-- p2 -->\n{TOC \\o \"1-3\"}Intro 1\n\n<!-- p3 -->\nTerms 2{/}\n"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()

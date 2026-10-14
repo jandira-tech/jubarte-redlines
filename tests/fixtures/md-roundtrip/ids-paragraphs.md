@@ -79,7 +79,7 @@ eiusmod, dolor 93003
 <!-- p13 empty -->
 
 <!-- p14 TOC1 -->
-[**aliqua aliqua sit consectetur ipsum**](#_Toc218523778)	{PAGEREF _Toc218523778 \h}[**1-1**](#_Toc218523778){/}
+{TOC \h \z \t "Título 1;1;Título 2;2"}[**aliqua aliqua sit consectetur ipsum**](#_Toc218523778)	{PAGEREF _Toc218523778 \h}[**1-1**](#_Toc218523778){/}
 
 <!-- p15 TOC2 -->
 [lorem 1.01	consectetur consectetur ipsum](#_Toc218523779)	{PAGEREF _Toc218523779 \h}[1-1](#_Toc218523779){/}
@@ -478,6 +478,7 @@ eiusmod, dolor 93003
 [lorem 15.08	elit tempor incididunt do elit dolore](#_Toc218523910)	{PAGEREF _Toc218523910 \h}[15-9](#_Toc218523910){/}
 
 <!-- p147 section-break -->
+{/}
 
 <!-- p148 TitleDocument -->
 **eiusmod elit sit ipsum**
