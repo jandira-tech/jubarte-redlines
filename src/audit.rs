@@ -684,8 +684,8 @@ impl Package {
                         story.paragraph_id(index),
                         format!(
                             "{count} consecutive empty paragraphs ({} to {}) are used as vertical space",
-                            story.paragraph_id(index),
-                            story.paragraph_id(end - 1)
+                            crate::ids::short_paragraph(&story.paragraph_id(index)),
+                            crate::ids::short_paragraph(&story.paragraph_id(end - 1))
                         ),
                     ));
                 }
@@ -1013,9 +1013,11 @@ mod public_memory_spacer_ownership_tests {
                         "body:p:0".into()
                     },
                     message: if label == "section carrier precedes two independent blanks" {
-                        "2 consecutive empty paragraphs (body:p:1 to body:p:2) are used as vertical space".into()
+                        "2 consecutive empty paragraphs (p1 to p2) are used as vertical space"
+                            .into()
                     } else {
-                        "2 consecutive empty paragraphs (body:p:0 to body:p:1) are used as vertical space".into()
+                        "2 consecutive empty paragraphs (p0 to p1) are used as vertical space"
+                            .into()
                     },
                 }]
             } else {

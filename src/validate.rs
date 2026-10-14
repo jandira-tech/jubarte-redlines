@@ -2052,7 +2052,9 @@ pub fn audit_tracked(
                 a.id.clone(),
                 format!(
                     "{} differs after rejecting {author}'s changes: {:?} vs {:?}",
-                    a.id, b.text, a.text
+                    crate::ids::short_paragraph(&a.id),
+                    b.text,
+                    a.text
                 ),
             ));
         }
