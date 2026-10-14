@@ -1266,6 +1266,41 @@ He asked for D15 and D16, and asked again for compare to print instead of writin
 | Q16 | compare's printed authors line reads `R: Redline … 1970-01-01T00:00:00Z` (the pinned default date). | Arthur: date them now; `-d` pins (D17, Task 18b) |
 | Q17 | Naming the text a comment covers (Task 23): the id `c0.text`, or a flag on `-p c0`? | Open: `c0.text` recommended, so `-p c0` keeps one meaning |
 
+## Choices open with Arthur (2026-10-13)
+
+Raised by the catalogues of PR #458 (`docs/flags_datetime.md`, `docs/locations.md`) and the CLI audit (`jubarte-loop/cli-audit/FINDINGS.md`).
+
+| Q | Question | Facts | Recommendation |
+|---|---|---|---|
+| Q18 | Typed ids: one Rust type per id kind, parsed by clap? | No id flag has a `value_parser` today: `--id`, `-p/--location` and `-p/--paragraphs` reach `String` fields and are parsed after clap, by three parsers (`ids::parse_change_ids`, `ids::parse_location`, `markdown::Select::parse`). So a bad id exits 1 on `read -p` and 2 elsewhere, and each parser has its own message. A newtype per kind (`ChangeRef`, `CommentRef`, `Location`, `BlockSpec`) that implements `FromStr`, used as the field type, makes clap refuse a bad id at parse time with its own error and exit 2, in the binary, Python and npm alike (they share `parse_json`). | Yes. The types live in `src/ids.rs`; `read -p` joins the one grammar (the audit's A1/E1/G2). |
+| Q19 | `--id` for the short, intuitive id (`p3`, `c5`, `footnotes.r2`, `t0.row1.cell2`) and `--long-id` for one that strictly mimics the docx? | The long ids mimic the XML only in part. `body:rev:12` is the story (the part's file stem) plus the change's own `w:id`, as the XML spells it. `body:p:12` is the story plus the paragraph's position: no XML attribute holds it, and it shifts when a paragraph is inserted before it. No long id is a UUID. Word's only per-paragraph id is the optional `w14:paraId` (8 hex digits, Word 2010+). Word rewrites it on some edits and does not guarantee it unique. Footnotes have their own `w:id`, but `footnotes.p3` counts paragraphs across the whole part, not notes. Arthur also asked (2026-10-13) to treat long ids as deprecated; a `--long-id` flag keeps them alive. | Decide first whether long ids stay. If they stay: `--long-id` takes `story:rev:WID` and `story:comment:WID` (true XML ids), plus `story:para:PARAID` from `w14:paraId` where the document has one, and refuses the positional `body:p:12`. If they go: they stay only in JSON and machine hints (D7), and the CLI accepts short ids only. |
+| Q20 | Deprecate `cN.text` (Task 23) and let any edit change commented text: keep the comment and move its anchor when the range's boundaries survive, drop the comment when they do not? | Today `-p p1 --anchor …` inside a comment's range already works; replacing the whole range leaves the deletion outside the comment (the Task 23 bug). Dropping a comment deletes a reviewer's words, so it should be reported on stderr, never silent. Arthur expects Word's behaviour to depend on the end of the range. | Investigate Word first (below), then decide. |
+
+**Q19 alternatives (Arthur, 2026-10-13: "assume 8 hex digits are always unique").** Measured first, on 400 documents of `tests/corpus`:
+- 81 have a `w14:paraId` on every body paragraph, 314 on none, and 5 on some.
+- 2 documents repeat paraIds (61 repeats). These are copies, not chance.
+- Chance collisions are small but not zero: Word's range is 1..0x7FFFFFFF (31 bits), so a 1,000-paragraph document collides with probability about 0.02%, and a 10,000-paragraph one about 2.3%.
+
+Whichever scheme wins therefore needs two rules: (a) what a paragraph without a paraId gets; (b) a repeated paraId exits 2 and lists its candidates, as D7 does for change ids.
+
+| | Shape | Examples | For | Against |
+|---|---|---|---|---|
+| A | XML id only, no story, no position | `para:3F2A1B7C`, `row:1A2B3C4D`, `rev:12`, `comment:5`, `note:2`, `endnote:1`, `bookmark:_Ref123`; a cell `row:1A2B3C4D.cell2` (cells have no XML id) | Shortest; survives edits; one token, one element | A change `w:id` can repeat across stories (D7 already handles it), so `rev:12` sometimes needs a story anyway; a paragraph with no paraId has no id |
+| B | Story + kind + XML id | `body:para:3F2A1B7C`, `footnotes:note:2`, `header1:rev:4`, `body:comment:5`, `body:row:1A2B3C4D.cell2` | Same shape as today's `body:rev:12`; the story names the part to open; one rule for every kind | Longer; the story repeats what a unique paraId already says |
+| C | Part path + XPath, strictly the docx | `word/document.xml#w:p[@w14:paraId='3F2A1B7C']`; without an id, the element path `word/document.xml#/w:body/w:tbl[1]/w:tr[2]/w:tc[3]/w:p[1]` (what `validate` already prints as element chains) | Addresses every element, id or not; reads 1:1 against the XML | Long; `[`, `@`, `'` and `#` need quoting in every shell (breaks D7's shell-safe rule); positional where there is no id |
+
+For A and B, rule (a): jubarte gives a paraId to every paragraph that lacks one, as Word does on save, whenever it writes a file. Before that ships, check in Word that the stamped file opens cleanly. Recommendation: B, with stamping. It keeps the shape agents already parse (`body:rev:12`), and the positional `body:p:12` goes.
+
+**Q20 investigation: what Word does to a comment range when the text it covers changes.** Use the bench scripts only (`word_redline.py`; Word Compare of each pair, then read where Word puts `commentRangeStart`, `commentRangeEnd` and `commentReference` in its redline). Pairs (original → modified), each on a paragraph whose comment covers "ten dollars":
+1. the whole range replaced ("twelve euros");
+2. the first word replaced; the last word replaced;
+3. text typed just before the start and just after the end;
+4. the whole range deleted;
+5. a range spanning two paragraphs, with the second paragraph's text deleted;
+6. the range's end deleted together with the text after it.
+
+Record for each: whether the comment survives, where its start and end land (around the `w:del`, the `w:ins` or both), and whether the reference follows the end. Then, after accept all and after reject all, record what the comment covers. Record the results in `docs/WORD_COMPARE_RULES.md`. Settle Q20 from them.
+
 ## How this plan ships (Arthur, 2026-10-11)
 
 - Stacked PRs, one per task or small group of tasks, each based on the one before; Arthur merges.

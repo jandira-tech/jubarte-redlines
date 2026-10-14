@@ -4,6 +4,7 @@
 
 //! Utilities ported from `PtUtil.ts` — M1.6.
 
+pub(crate) mod datetime;
 pub mod group_adjacent;
 pub mod sha1;
 pub mod words;

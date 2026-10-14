@@ -147,6 +147,11 @@ js-sys = { version = "0.3", default-features = false }
 name = "jubarte"
 required-features = ["cli"]
 
+# scripts/cli_flags.sh: every flag from clap's model, as Markdown.
+[[example]]
+name = "cli_flags"
+required-features = ["cli"]
+
 [dev-dependencies]
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
