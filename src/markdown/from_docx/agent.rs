@@ -939,6 +939,9 @@ pub(crate) fn escape_markdown(text: &str) -> String {
             // reference or a reference definition.
             ']' => matches!(next, Some('(' | '[' | ':')),
             '&' => entity_follows(&chars[i + 1..]),
+            // A literal `{/}`, or `{` before a field code and `}`, would
+            // read back as a field.
+            '{' => field_follows(&chars[i + 1..]),
             _ => false,
         };
         if escape {
@@ -947,6 +950,17 @@ pub(crate) fn escape_markdown(text: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// Whether `rest` (the text after a `{`) is `/}` or a field code then `}`,
+/// which the writer reads as a body field.
+fn field_follows(rest: &[char]) -> bool {
+    let code: String = rest
+        .iter()
+        .take_while(|c| !matches!(c, '}' | '{' | '\n'))
+        .collect();
+    rest.get(code.chars().count()) == Some(&'}')
+        && (code == "/" || crate::markdown::critic::is_field_code(&code))
 }
 
 /// Whether `rest` (the text after a `&`) reads as an entity or character

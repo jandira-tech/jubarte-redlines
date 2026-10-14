@@ -275,6 +275,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         lead: None,
         flattening: 0,
         monospace_paragraph: false,
+        closing_fields: HashSet::new(),
         revisions: Vec::new(),
         comments: HashMap::new(),
         notes: HashMap::new(),
@@ -1237,11 +1238,55 @@ fn level_of(lvl: &Element) -> Level {
     }
 }
 
+/// What closes a field the agent view prints as `{CODE}result{/}`.
+const FIELD_END: &str = "{/}";
+
 /// An open complex field (`fldChar begin … separate … end`).
 struct Field {
     instruction: String,
     in_result: bool,
     link: Option<String>,
+    /// Its `end` lies in the same paragraph.
+    closes: bool,
+    /// A field sits inside its code, which `{CODE}` cannot show.
+    nested: bool,
+    /// Its `{CODE}` was written, so its end writes `{/}`.
+    printed: bool,
+}
+
+/// The `fldChar begin` of each field in `p` whose `end` is in `p` too,
+/// outside text boxes (their paragraphs are written on their own).
+fn closing_fields(p: &Element) -> HashSet<*const Element> {
+    fn walk<'e>(e: &'e Element, open: &mut Vec<&'e Element>, out: &mut HashSet<*const Element>) {
+        for child in e.elements() {
+            if child.is("txbxContent") || child.is("pPr") {
+                continue;
+            }
+            if child.is("fldChar") {
+                match child.attr("fldCharType") {
+                    Some("begin") => open.push(child),
+                    Some("end") => {
+                        if let Some(begin) = open.pop() {
+                            out.insert(std::ptr::from_ref(begin));
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                walk(child, open, out);
+            }
+        }
+    }
+    let mut out = HashSet::new();
+    walk(p, &mut Vec::new(), &mut out);
+    out
+}
+
+/// The `{CODE}` the agent view prints for a field with `instruction`, when
+/// it is a field code (see [`crate::markdown::critic::is_field_code`]).
+fn printed_code(instruction: &str) -> Option<String> {
+    crate::markdown::critic::is_field_code(instruction)
+        .then(|| format!("{{{}}}", instruction.trim()))
 }
 
 /// Whether a part holds a tracked change, or a comment anchor for a comment
@@ -1348,6 +1393,9 @@ struct Writer<'a> {
     flattening: usize,
     /// The paragraph being written is set in a monospace face.
     monospace_paragraph: bool,
+    /// The `fldChar begin` of each field whose `end` lies in the paragraph
+    /// being written: only those print as `{CODE}result{/}`.
+    closing_fields: HashSet<*const Element>,
     /// Tracked changes around the content being written, outermost first.
     revisions: Vec<Change>,
     /// Comment id → its `w:comment` element.
@@ -1958,7 +2006,9 @@ impl Writer<'_> {
         for _ in &self.open_comments {
             inline.open(Mark::Highlight, None);
         }
+        let closing = std::mem::replace(&mut self.closing_fields, closing_fields(p));
         self.inline(p, None, base, &mut fields, &mut inline, &mut extra);
+        self.closing_fields = closing;
         if !self.in_comment
             && !inline.is_blank()
             && let Some(lead) = self.lead.take()
@@ -1988,8 +2038,18 @@ impl Writer<'_> {
                     self.inline(child, url.as_deref().or(link), base, fields, out, extra);
                 }
                 "fldSimple" => {
-                    let url = child.attr("instr").and_then(hyperlink_instruction);
+                    let instruction = child.attr("instr").unwrap_or_default();
+                    let url = hyperlink_instruction(instruction);
+                    let code = (self.agent && url.is_none() && fields.iter().all(|f| f.in_result))
+                        .then(|| printed_code(instruction))
+                        .flatten();
+                    if let Some(code) = &code {
+                        out.raw(code);
+                    }
                     self.inline(child, url.as_deref().or(link), base, fields, out, extra);
+                    if code.is_some() {
+                        out.raw(FIELD_END);
+                    }
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
                     let (mark, by) = self.change_of(child);
@@ -2169,19 +2229,46 @@ impl Writer<'_> {
                 }
             }
             "fldChar" => match child.attr("fldCharType") {
-                Some("begin") => fields.push(Field {
-                    instruction: String::new(),
-                    in_result: false,
-                    link: None,
-                }),
+                Some("begin") => {
+                    if let Some(outer) = fields.last_mut()
+                        && !outer.in_result
+                    {
+                        outer.nested = true;
+                    }
+                    fields.push(Field {
+                        instruction: String::new(),
+                        in_result: false,
+                        link: None,
+                        closes: self.closing_fields.contains(&std::ptr::from_ref(child)),
+                        nested: false,
+                        printed: false,
+                    });
+                }
                 Some("separate") => {
+                    let shown = fields
+                        .split_last()
+                        .is_some_and(|(_, outer)| outer.iter().all(|f| f.in_result));
                     if let Some(field) = fields.last_mut() {
                         field.in_result = true;
                         field.link = hyperlink_instruction(&field.instruction);
+                        let code = (self.agent
+                            && shown
+                            && field.closes
+                            && !field.nested
+                            && field.link.is_none())
+                        .then(|| printed_code(&field.instruction))
+                        .flatten();
+                        if let Some(code) = code {
+                            out.raw(&code);
+                            field.printed = true;
+                        }
                     }
                 }
                 Some("end") => {
-                    fields.pop();
+                    let printed = fields.pop().is_some_and(|f| f.printed);
+                    if printed {
+                        out.raw(FIELD_END);
+                    }
                 }
                 _ => {}
             },

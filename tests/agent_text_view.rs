@@ -1594,6 +1594,52 @@ fn code_reads_as_code_spans_and_fences() {
 }
 
 #[test]
+fn body_fields_read_as_code_then_result() {
+    // Spec §3: a body field prints `{CODE}result{/}`, a hyperlink field
+    // stays a link, literal braces are escaped, and a field that runs past
+    // its paragraph (a table of contents) shows its result only.
+    let begin = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#;
+    let separate = r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
+    let end = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let instr = |code: &str| {
+        format!(r#"<w:r><w:instrText xml:space="preserve"> {code} </w:instrText></w:r>"#)
+    };
+    let p = [
+        format!(
+            r#"<w:p>{}{begin}{}{separate}{}{end}{}<w:fldSimple w:instr=" REF _Ref1 \h ">{}</w:fldSimple>{}</w:p>"#,
+            run("Begins "),
+            instr(r#"DATE \@ "MMMM d, yyyy""#),
+            run("March 1, 2026"),
+            run(" as "),
+            run("Section 2"),
+            run(" says, {Client Name}, {page} and {/}.")
+        ),
+        format!(
+            r#"<w:p>{begin}{}{separate}{}{end}</w:p>"#,
+            instr(r#"HYPERLINK "https://a.example/""#),
+            run("site")
+        ),
+        format!(
+            r#"<w:p>{begin}{}{separate}{}</w:p><w:p>{}{end}</w:p>"#,
+            instr(r#"TOC \o "1-3""#),
+            run("Intro 1"),
+            run("Terms 2")
+        ),
+    ]
+    .concat();
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBegins {DATE \\@ \"MMMM d, yyyy\"}March 1, 2026{/} as {REF _Ref1 \\h}Section 2{/} says, {Client Name}, \\{page} and \\{/}.\n\n<!-- p1 -->\n[site](https://a.example/)\n\n<!-- p2 -->\nIntro 1\n\n<!-- p3 -->\nTerms 2\n"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
+#[test]
 fn a_monospace_run_is_code_unless_its_paragraph_is_monospace_too() {
     // Spec §3: `` `x` `` is a run in a monospace font. A paragraph whose
     // own font is monospace (a contract set in Courier) is not code, and
