@@ -47,7 +47,7 @@ jubarte reject redline.docx -o rejected_jubarte.docx --force
 
 ## Tool versions used here
 
-- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`)
+- jubarte 0.11.2 (binary at `/Users/arthrod/temp/T/jr-adopt-bin/jubarte`) for the run; `changes_jubarte.json` was regenerated on 2026-10-14 with jubarte 0.12.0 (main), which prints short ids (`r12`, `c3`, `p4`) and the `ref`/`paragraph` fields
 - soffice: LibreOffice 26.8.0.3 (homebrew), own profile `lo_adopt_08`
 - Python 3.14.7 (probe only; no usable `uno` module, see above)
 
