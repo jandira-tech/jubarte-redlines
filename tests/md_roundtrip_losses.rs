@@ -173,6 +173,47 @@ fn a_built_in_table_style_writes_its_borders_unwarned() {
     }
 }
 
+/// A field whose result is whole paragraphs (a table of contents) opens at
+/// the start of its first paragraph and closes with `{/}` in a later one:
+/// its paragraphs between are its result, and the field survives the round
+/// trip, not just the fields inside it.
+#[test]
+fn a_field_across_paragraphs_keeps_its_code() {
+    let body = "<!-- p0 -->\n{TOC \\o \"1-3\" \\h \\z}Intro\t{PAGEREF _Toc1 \\h}1{/}\n\n\
+                <!-- p1 -->\nTerms\t{PAGEREF _Toc2 \\h}2{/}\n\n\
+                <!-- p2 -->\n{/}\n\n\
+                <!-- p3 -->\nBody text.\n";
+    let (got, docx) = round_trip(body);
+    assert!(got.contains(body), "{got}");
+    let document = part(&docx, "word/document.xml");
+    assert_eq!(
+        document.matches("w:fldCharType=\"begin\"").count(),
+        3,
+        "{document}"
+    );
+    assert_eq!(
+        document.matches("w:fldCharType=\"end\"").count(),
+        3,
+        "{document}"
+    );
+    let toc = document.find(" TOC ").expect("the TOC code");
+    let paragraphs: Vec<_> = document
+        .match_indices("<w:p>")
+        .chain(document.match_indices("<w:p "))
+        .map(|(at, _)| at)
+        .collect();
+    let last_end = document.rfind("w:fldCharType=\"end\"").unwrap();
+    let opened_in = paragraphs.iter().filter(|&&at| at < toc).count();
+    let closed_in = paragraphs.iter().filter(|&&at| at < last_end).count();
+    assert_eq!(closed_in - opened_in, 2, "{document}");
+    // An unclosed code mid-paragraph stays text, as before.
+    let (got, _) = round_trip("<!-- p0 -->\nSee {PAGE} here\n\n<!-- p1 -->\nnow{/}\n");
+    assert!(
+        got.contains("See \\{PAGE} here") || got.contains("See {PAGE} here"),
+        "{got}"
+    );
+}
+
 /// Each `w:ins`/`w:del` of `document` holds as many field begins as ends:
 /// no mark parts a tracked link's field.
 fn fields_whole_in_marks(document: &str) {

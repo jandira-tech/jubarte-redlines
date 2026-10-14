@@ -325,6 +325,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         ),
         monospace_paragraph: false,
         closing_fields: HashSet::new(),
+        spanning_fields: HashSet::new(),
+        open_fields: Vec::new(),
         revisions: Vec::new(),
         comments: HashMap::new(),
         notes: HashMap::new(),
@@ -1625,6 +1627,8 @@ struct Field {
     link: Option<String>,
     /// Its `end` lies in the same paragraph.
     closes: bool,
+    /// Its `end` lies in a later paragraph (see [`spanning_fields`]).
+    spans: bool,
     /// A field sits inside its code, which `{CODE}` cannot show.
     nested: bool,
     /// Its `{CODE}` was written, so its end writes `{/}`.
@@ -1678,6 +1682,63 @@ fn closing_fields(p: &Element) -> HashSet<*const Element> {
     }
     let mut out = HashSet::new();
     walk(p, &mut Vec::new(), &mut Vec::new(), &mut out);
+    out
+}
+
+/// The `fldChar begin` of each field in `container`'s paragraphs whose
+/// `end` lies in a later paragraph, with only paragraphs between (a table
+/// of contents), its begin, separate and end outside any tracked change:
+/// such a field prints `{CODE}` at the start of its first paragraph and
+/// `{/}` in its last. Text boxes are left out, as in [`closing_fields`].
+fn spanning_fields(container: &Element) -> HashSet<*const Element> {
+    /// A field open in the walk: its begin, the paragraph it began in, and
+    /// whether no tracked change has cut it yet.
+    type Open<'e> = (&'e Element, usize, bool);
+    fn walk<'e>(
+        e: &'e Element,
+        paragraph: usize,
+        changed: bool,
+        open: &mut Vec<Open<'e>>,
+        out: &mut HashSet<*const Element>,
+    ) {
+        for child in e.elements() {
+            if child.is("txbxContent") || child.is("pPr") {
+                continue;
+            }
+            if child.is("fldChar") {
+                match child.attr("fldCharType") {
+                    Some("begin") => open.push((child, paragraph, !changed)),
+                    Some("separate") => {
+                        if let Some((_, _, clean)) = open.last_mut() {
+                            *clean &= !changed;
+                        }
+                    }
+                    Some("end") => {
+                        if let Some((begin, began, clean)) = open.pop()
+                            && clean
+                            && !changed
+                            && began < paragraph
+                        {
+                            out.insert(std::ptr::from_ref(begin));
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                let changes = matches!(child.local(), "ins" | "del" | "moveTo" | "moveFrom");
+                walk(child, paragraph, changed || changes, open, out);
+            }
+        }
+    }
+    let mut out = HashSet::new();
+    let mut open = Vec::new();
+    for (i, child) in container.elements().enumerate() {
+        if child.is("p") {
+            walk(child, i, false, &mut open, &mut out);
+        } else {
+            open.clear();
+        }
+    }
     out
 }
 
@@ -1808,6 +1869,11 @@ struct Writer<'a> {
     /// The `fldChar begin` of each field whose `end` lies in the paragraph
     /// being written: only those print as `{CODE}result{/}`.
     closing_fields: HashSet<*const Element>,
+    /// The `fldChar begin` of each field whose `end` lies in a later
+    /// paragraph of its container (see [`spanning_fields`]).
+    spanning_fields: HashSet<*const Element>,
+    /// The fields a paragraph left open for a later one to close.
+    open_fields: Vec<Field>,
     /// Tracked changes around the content being written, outermost first.
     revisions: Vec<Change>,
     /// Comment id → its `w:comment` element.
@@ -1887,6 +1953,15 @@ impl Writer<'_> {
     }
 
     fn blocks(&mut self, container: &Element, blocks: &mut Blocks, list: &mut ListIndent) {
+        // The set is the container's own while it is written: pointers
+        // into a part already dropped could name another part's element.
+        let outer = std::mem::replace(&mut self.spanning_fields, spanning_fields(container));
+        self.blocks_in(container, blocks, list);
+        self.spanning_fields = outer;
+        self.open_fields.clear();
+    }
+
+    fn blocks_in(&mut self, container: &Element, blocks: &mut Blocks, list: &mut ListIndent) {
         for child in container.elements() {
             match child.local() {
                 "p" => self.paragraph(child, blocks, list),
@@ -2429,7 +2504,7 @@ impl Writer<'_> {
             inline.set_agent();
         }
         let mut extra = Vec::new();
-        let mut fields = Vec::new();
+        let mut fields = std::mem::take(&mut self.open_fields);
         let (bold, italic) = p
             .path(&["pPr", "pStyle"])
             .and_then(|s| s.attr("val"))
@@ -2455,6 +2530,11 @@ impl Writer<'_> {
         let closing = std::mem::replace(&mut self.closing_fields, closing_fields(p));
         self.inline(p, None, base, &mut fields, &mut inline, &mut extra);
         self.closing_fields = closing;
+        // A field that ends in a later paragraph stays open for it, with
+        // every field open inside it.
+        if fields.iter().any(|f| f.spans) {
+            self.open_fields = fields;
+        }
         if !self.in_comment
             && !inline.is_blank()
             && let Some(lead) = self.lead.take()
@@ -2692,11 +2772,18 @@ impl Writer<'_> {
                     {
                         outer.nested = true;
                     }
+                    let begin = std::ptr::from_ref(child);
+                    // A field across paragraphs prints its code only where
+                    // it begins its paragraph, as the writer reads it.
+                    let spans = self.spanning_fields.contains(&begin)
+                        && out.len() == 0
+                        && self.lead.is_none();
                     fields.push(Field {
                         instruction: String::new(),
                         in_result: false,
                         link: None,
-                        closes: self.closing_fields.contains(&std::ptr::from_ref(child)),
+                        closes: spans || self.closing_fields.contains(&begin),
+                        spans,
                         nested: false,
                         printed: false,
                     });
