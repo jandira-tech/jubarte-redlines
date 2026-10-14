@@ -965,13 +965,31 @@ fn field_follows(rest: &[char]) -> bool {
 
 /// Whether `rest` (the text after a `&`) reads as an entity or character
 /// reference (`copy;`, `#35;`, `#x23;`), which would decode on the way back.
+/// A name HTML does not define (`foo;`) is text to CommonMark: the parser
+/// itself says which names decode.
 fn entity_follows(rest: &[char]) -> bool {
-    let body = rest.strip_prefix(&['#']).unwrap_or(rest);
+    let numeric = rest.first() == Some(&'#');
+    let body = if numeric { &rest[1..] } else { rest };
     let name = body
         .iter()
         .take_while(|c| c.is_ascii_alphanumeric())
         .count();
-    name > 0 && body.get(name) == Some(&';')
+    if name == 0 || body.get(name) != Some(&';') {
+        return false;
+    }
+    if numeric {
+        return true;
+    }
+    let reference: String = std::iter::once('&')
+        .chain(body[..=name].iter().copied())
+        .collect();
+    let read: String = pulldown_cmark::Parser::new(&reference)
+        .filter_map(|event| match event {
+            pulldown_cmark::Event::Text(text) => Some(text.into_string()),
+            _ => None,
+        })
+        .collect();
+    read != reference
 }
 
 /// A heading's text with a trailing run of `#` escaped: CommonMark reads a
@@ -2063,10 +2081,11 @@ mod tests {
             ("a ^b^ c ~d~ e", "a \\^b\\^ c \\~d\\~ e"),
             ("H~2~O 2^10 x^2^ a ~ b ^", "H~2~O 2^10 x^2\\^ a ~ b ^"),
             ("[^1] [x]", "\\[^1] [x]"),
-            // An entity reference would decode on the way back.
+            // An entity reference would decode on the way back; a name
+            // HTML does not define (`&foo;`, `AT&T;`) stays as it is.
             (
-                "&copy; &#35; &#x23; AT&T & co &;",
-                "\\&copy; \\&#35; \\&#x23; AT&T & co &;",
+                "&copy; &#35; &#x23; AT&T & co &; &foo; AT&T; &amp;",
+                "\\&copy; \\&#35; \\&#x23; AT&T & co &; &foo; AT&T; \\&amp;",
             ),
             // A `]` right before `(`, `[` or `:` would close a link, an
             // image, a reference or a reference definition.
