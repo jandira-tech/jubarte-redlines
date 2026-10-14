@@ -10355,6 +10355,65 @@ fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, 
 }
 
 fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
+    let (size, box_h) = cell_font_line_box(fonts, runs, style);
+    (size, line_box_for_math(fonts, runs, size, box_h, style))
+}
+
+/// A math box is taller than its font. The cell line holds the ascent
+/// and the descent (quadratic-in-table's fraction).
+fn line_box_for_math(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    size: f32,
+    box_h: f32,
+    style: &ParaStyle,
+) -> f32 {
+    let mut up = 0.0_f32;
+    let mut down = 0.0_f32;
+    let mut any = false;
+    for run in runs {
+        if let Some(math) = &run.math {
+            any = true;
+            up = up.max(math.ascent);
+            down = down.max(math.descent);
+        }
+    }
+    if !any {
+        return box_h;
+    }
+    let face = fonts.get(cell_runs_face(fonts, runs).1);
+    let em = size.max(1.0);
+    let natural = (face.ascent_pt(em).max(up) + face.line_descent_pt(em).max(down))
+        .max(face.single_line_pt(em));
+    box_h.max(line_box_from_natural(natural, style))
+}
+
+/// How far the baseline sits below the top of a cell line.
+fn cell_baseline_drop(
+    face: &Face,
+    size: f32,
+    line: &[TextRun],
+    line_box: f32,
+    exact: bool,
+    grid_pad: f32,
+) -> f32 {
+    if exact {
+        return exact_baseline(line_box);
+    }
+    let math_up = line
+        .iter()
+        .filter_map(|run| run.math.as_ref().map(|math| math.ascent))
+        .fold(0.0_f32, f32::max);
+    // The equation's own ascent. A grid pad on top of it drops the
+    // radical out of the row.
+    if math_up > 0.0 {
+        face.ascent_pt(size).max(math_up)
+    } else {
+        face.ascent_pt(size) + grid_pad
+    }
+}
+
+fn cell_font_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
     let (size, face_id) = cell_runs_face(fonts, runs);
     let grid = para_grid_pitch(style, style.cell_grid);
     if grid > 0.5 {
@@ -30385,10 +30444,14 @@ impl<'a> Layout<'a> {
                                     0.0
                                 };
                             let ty = y_line
-                                - match para.style.line_exact {
-                                    Some(_) => exact_baseline(line_box),
-                                    None => face.ascent_pt(size) + grid_pad,
-                                };
+                                - cell_baseline_drop(
+                                    face,
+                                    size,
+                                    &line,
+                                    line_box,
+                                    para.style.line_exact.is_some(),
+                                    grid_pad,
+                                );
                             if ty < bottom {
                                 break;
                             }
@@ -51679,8 +51742,20 @@ mod coverage_round_three_tests {
                 squeeze: super::super::Squeeze::NONE,
                 hang_spaces: false,
             };
-            let h = super::super::cell_line_metrics(&fonts, &para, &para.runs).2;
+            let (size, face_id, h) = super::super::cell_line_metrics(&fonts, &para, &para.runs);
             assert!(h + 0.05 >= 30.0, "cell line {h} does not hold the math box");
+            let drop = super::super::cell_baseline_drop(
+                fonts.get(face_id),
+                size,
+                &para.runs,
+                h,
+                false,
+                0.0,
+            );
+            assert!(
+                (drop - 18.0).abs() < 0.05,
+                "baseline drop {drop} is not the math ascent"
+            );
         }
 
         /// Two stretches of missing glyphs around painted text: one hidden
