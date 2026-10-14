@@ -5386,3 +5386,14 @@ fn table_cells_preserve_adjacent_backslashes_pipes_and_unicode_in_both_views() {
         }
     }
 }
+
+#[test]
+fn an_internal_link_does_not_read_as_underlined() {
+    // Word's Hyperlink style underlines a link to a bookmark (a table of
+    // contents line) too: that is the link's look, not `<u>`.
+    let md = "# Intro\n\nSee [the intro](#intro).\n";
+    let docx = markdown_to_docx(md, &DocxOptions::default()).unwrap().docx;
+    let full = agent(&docx);
+    let view = body(&full);
+    assert!(view.contains("\nSee the intro.\n"), "{view}");
+}

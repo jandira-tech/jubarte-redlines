@@ -274,6 +274,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         note_changes: Vec::new(),
         lead: None,
         flattening: 0,
+        anchor_links: 0,
         monospace_paragraph: false,
         closing_fields: HashSet::new(),
         revisions: Vec::new(),
@@ -1391,6 +1392,9 @@ struct Writer<'a> {
     lead: Option<String>,
     /// Inside a nested table, whose cells are flattened onto one line.
     flattening: usize,
+    /// Inside a link to a bookmark (`w:hyperlink w:anchor`), which prints
+    /// as text but still wears the Hyperlink style's look.
+    anchor_links: usize,
     /// The paragraph being written is set in a monospace face.
     monospace_paragraph: bool,
     /// The `fldChar begin` of each field whose `end` lies in the paragraph
@@ -2035,7 +2039,10 @@ impl Writer<'_> {
                 "r" => self.run(child, link, base, fields, out, extra),
                 "hyperlink" => {
                     let url = child.rel_attr("id").and_then(|id| self.rels.link(id));
+                    let anchor = url.is_none() && child.attr("anchor").is_some();
+                    self.anchor_links += usize::from(anchor);
                     self.inline(child, url.as_deref().or(link), base, fields, out, extra);
+                    self.anchor_links -= usize::from(anchor);
                 }
                 "fldSimple" => {
                     let instruction = child.attr("instr").unwrap_or_default();
@@ -2125,10 +2132,12 @@ impl Writer<'_> {
             .and_then(|r| r.toggle("i"))
             .or(style_italic)
             .unwrap_or(base.1);
-        // Agent view only: the plain conversion has no underline. In a link
-        // the character style's underline is the link's look (Word's
-        // Hyperlink style), not formatting: only a direct `w:u` counts.
-        let in_link = link.is_some() || fields.iter().any(|f| f.link.is_some());
+        // Agent view only: the plain conversion has no underline. In a link,
+        // to a bookmark too, the character style's underline is the link's
+        // look (Word's Hyperlink style), not formatting: only a direct `w:u`
+        // counts.
+        let in_link =
+            link.is_some() || self.anchor_links > 0 || fields.iter().any(|f| f.link.is_some());
         let underline = self.agent
             && rpr
                 .and_then(|r| r.child("u"))
