@@ -435,18 +435,18 @@ fn view_round_trip(header: &str, body: &str) -> String {
 #[test]
 fn headers_and_footers_come_back_with_their_ids() {
     let header = "---\nheaders:\n  \
-                  first: {id: header3, text: \"{PAGE}\"}  # page 1 only (different first page)\n  \
+                  first: {id: header3, text: \"{PAGE}1{/}\"}  # page 1 only (different first page)\n  \
                   default: {id: header2.p1, text: Smith & Co, center}\n  \
                   even: {id: header1, text: Even, inactive}  # defined, but even/odd headers are off\n\
-                  footers:\n  default: {id: footer2, text: \"Page {PAGE}\", right}\n\
+                  footers:\n  default: {id: footer2, text: \"Page {PAGE}1{/}\", right}\n\
                   sections:\n  2: {p1-p1, footers: {default: {id: footer5, text: Annex}}}\n---\n\n";
     let body = "<!-- p0 section-break -->\nOne.\n\n<!-- p1 -->\nTwo.\n";
     let view = view_round_trip(header, body);
     for line in [
-        "  first: {id: header3, text: \"{PAGE}\"}",
+        "  first: {id: header3, text: \"{PAGE}1{/}\"}",
         "  default: {id: header2.p1, text: Smith & Co, center}",
         "  even: {id: header1, text: Even, inactive}",
-        "  default: {id: footer2, text: \"Page {PAGE}\", right}",
+        "  default: {id: footer2, text: \"Page {PAGE}1{/}\", right}",
         "  2: {p1-p1, footers: {default: {id: footer5, text: Annex}}}",
     ] {
         assert!(view.lines().any(|l| l.starts_with(line)), "{line}\n{view}");

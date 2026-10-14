@@ -1106,20 +1106,33 @@ pub(crate) enum StoryView<'a> {
     Reject,
 }
 
-/// A header/footer paragraph's text with fields as `{PAGE}`: field codes
-/// print, cached results do not, and a field nested in another prints as the
-/// outer one. Line breaks are newlines. Runs inside hyperlinks, content
-/// controls, smart tags and custom XML count; tracked changes read as
-/// `view` says.
+/// A header/footer paragraph's text with fields as the body prints them,
+/// `{CODE}result{/}` (`{PAGE}1{/}`, `{HYPERLINK "https://…"}site{/}`), and a
+/// code jubarte does not print whole as its name alone (`{XE}`), as is a
+/// code holding a nested field (`{IF}`). A field nested in another's result
+/// prints its result. Line breaks are newlines. Runs inside hyperlinks,
+/// content controls, smart tags and custom XML count; tracked changes read
+/// as `view` says.
 pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
     struct State<'a> {
         out: String,
-        /// Open complex fields, outermost first: the instruction so far and
-        /// whether the field has reached its result.
-        fields: Vec<(String, bool)>,
+        /// Open complex fields, outermost first.
+        fields: Vec<Open>,
         view: StoryView<'a>,
         /// Inside deleted text the view shows.
         deleting: bool,
+    }
+    /// A complex field being read.
+    #[derive(Default)]
+    struct Open {
+        /// The instruction so far.
+        instr: String,
+        /// Past its `separate`: in its result.
+        result: bool,
+        /// Its code printed whole: `{CODE}`, its result, then `{/}`.
+        printed: bool,
+        /// A field nested in its instruction, which a code cannot print.
+        nested: bool,
     }
     /// `ins`/`moveTo` → `Some(true)`, `del`/`moveFrom` → `Some(false)`.
     fn inserting(local: &str) -> Option<bool> {
@@ -1140,7 +1153,18 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
     fn walk(parent: &Element, s: &mut State) {
         for run in parent.elements() {
             match run.local() {
-                "fldSimple" => s.out.push_str(&code(run.attr("instr").unwrap_or(""))),
+                "fldSimple" => {
+                    let instr = run.attr("instr").unwrap_or("");
+                    match super::printed_code(instr).filter(|_| s.fields.is_empty()) {
+                        Some(code) => {
+                            s.out.push_str(&code);
+                            walk(run, s);
+                            s.out.push_str(super::FIELD_END);
+                        }
+                        None if s.fields.is_empty() => s.out.push_str(&code(instr)),
+                        None => walk(run, s),
+                    }
+                }
                 local if inserting(local).is_some() => {
                     let inserted = inserting(local) == Some(true);
                     let tagged = match s.view {
@@ -1187,27 +1211,47 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     for child in run.elements() {
                         match child.local() {
                             "fldChar" => match child.attr("fldCharType") {
-                                Some("begin") => s.fields.push((String::new(), false)),
+                                Some("begin") => {
+                                    if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                        field.nested = true;
+                                    }
+                                    s.fields.push(Open::default());
+                                }
                                 Some("separate") => {
+                                    let outermost = s.fields.len() == 1;
                                     if let Some(field) = s.fields.last_mut() {
-                                        field.1 = true;
+                                        field.result = true;
+                                        if outermost
+                                            && !field.nested
+                                            && let Some(code) = super::printed_code(&field.instr)
+                                        {
+                                            field.printed = true;
+                                            s.out.push_str(&code);
+                                        }
                                     }
                                 }
                                 Some("end") => {
-                                    if let Some((instr, _)) = s.fields.pop()
+                                    if let Some(field) = s.fields.pop()
                                         && s.fields.is_empty()
                                     {
-                                        s.out.push_str(&code(&instr));
+                                        s.out.push_str(&if field.printed {
+                                            super::FIELD_END.to_string()
+                                        } else {
+                                            code(&field.instr)
+                                        });
                                     }
                                 }
                                 _ => {}
                             },
                             "instrText" => {
-                                if let Some((instr, false)) = s.fields.last_mut() {
-                                    instr.push_str(&child.text());
+                                if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                    field.instr.push_str(&child.text());
                                 }
                             }
-                            _ if !s.fields.is_empty() => {}
+                            // Only a printed field's result shows, and not
+                            // the code of a field nested in it.
+                            _ if !s.fields.is_empty()
+                                && !(s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
                             "t" => s.push_text(&child.text()),
                             "delText" if s.deleting => s.push_text(&child.text()),
                             "tab" => s.out.push('\t'),
@@ -1298,13 +1342,26 @@ mod tests {
     }
 
     #[test]
+    fn a_story_field_prints_its_whole_code_and_its_result() {
+        // As in the body: `{CODE}result{/}`, so a link's target and text
+        // and a field's switches survive the round trip.
+        let root = ftr(&format!(
+            r#"<w:p><w:r><w:t>Page </w:t></w:r>{PAGE_RUNS}<w:r><w:t> · </w:t></w:r><w:fldSimple w:instr=" HYPERLINK &quot;https://x.example&quot; "><w:r><w:t>site</w:t></w:r></w:fldSimple></w:p>"#
+        ));
+        assert_eq!(
+            story_text(story_paragraphs(&root)[0], StoryView::Accept),
+            r#"Page {PAGE}1{/} · {HYPERLINK "https://x.example"}site{/}"#
+        );
+    }
+
+    #[test]
     fn a_page_field_in_a_block_content_control_is_found() {
         let root = ftr(&format!(
             "<w:sdt><w:sdtPr/><w:sdtContent><w:p>{PAGE_RUNS}</w:p></w:sdtContent></w:sdt><w:p/>"
         ));
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "{PAGE}");
+        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "{PAGE}1{/}");
         assert_eq!(story_text(paragraphs[1], StoryView::Accept), "");
     }
 
@@ -1315,7 +1372,7 @@ mod tests {
         ));
         assert_eq!(
             story_text(story_paragraphs(&root)[0], StoryView::Accept),
-            "Page {PAGE} of {NUMPAGES}"
+            "Page {PAGE}1{/} of {numpages}3{/}"
         );
     }
 

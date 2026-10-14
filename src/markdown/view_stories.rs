@@ -290,8 +290,9 @@ pub(super) fn section(entry: &str) -> Stories {
     stories
 }
 
-/// A story's text as paragraph content: `{PAGE}` and other `{NAME}` field
-/// codes become simple fields; the tracked view's changes (`{++…++}`,
+/// A story's text as paragraph content: a field printed as the body prints
+/// it (`{PAGE \* roman}i{/}`) becomes a simple field with that code and
+/// result, and a bare `{PAGE}` or other `{NAME}` one with the result `1`; the tracked view's changes (`{++…++}`,
 /// `{--…--}` with their `{>>…<<}` tags) come back as the text Word shows
 /// once they are accepted.
 pub(super) fn runs(text: &str) -> String {
@@ -329,6 +330,21 @@ pub(super) fn runs(text: &str) -> String {
             continue;
         }
         if let Some(after) = rest.strip_prefix('{')
+            && let Some(close) = super::critic::field_code_close(after.char_indices())
+            && super::critic::is_field_code(&after[..close])
+            && let Some(end) = result_end(&after[close + 1..])
+        {
+            flush(&mut plain, &mut out);
+            let result = &after[close + 1..close + 1 + end];
+            out.push_str(&format!(
+                "<w:fldSimple w:instr=\" {} \">{}</w:fldSimple>",
+                super::xml::escape(after[..close].trim()),
+                runs(result)
+            ));
+            rest = &after[close + 1 + end + FIELD_END.len()..];
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix('{')
             && let Some(end) = after.find('}')
             && end > 0
             && after[..end]
@@ -348,6 +364,35 @@ pub(super) fn runs(text: &str) -> String {
     }
     flush(&mut plain, &mut out);
     out
+}
+
+/// What closes a field's result, as in the body.
+const FIELD_END: &str = "{/}";
+
+/// Where the `{/}` that closes a field's result sits in `text`, the text
+/// after its `{CODE}`: past any field nested in the result.
+fn result_end(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        if rest.starts_with(FIELD_END) {
+            if depth == 0 {
+                return Some(at);
+            }
+            depth -= 1;
+            at += FIELD_END.len();
+        } else if let Some(after) = rest.strip_prefix('{')
+            && let Some(close) = super::critic::field_code_close(after.char_indices())
+            && super::critic::is_field_code(&after[..close])
+        {
+            depth += 1;
+            at += 1 + close + 1;
+        } else {
+            at += rest.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    None
 }
 
 /// What each section's `w:sectPr` takes from the view's headers and
@@ -676,6 +721,21 @@ mod tests {
             "<w:r><w:t xml:space=\"preserve\">p </w:t></w:r>\
              <w:fldSimple w:instr=\" PAGE \"><w:r><w:t>1</w:t></w:r></w:fldSimple>\
              <w:r><w:t xml:space=\"preserve\"> new</w:t></w:r>"
+        );
+    }
+
+    #[test]
+    fn a_field_with_its_result_keeps_its_code_and_result() {
+        assert_eq!(
+            runs(r#"{PAGE \* roman}i{/} · {HYPERLINK "https://x.example"}site{/}"#),
+            "<w:fldSimple w:instr=\" PAGE \\* roman \"><w:r><w:t xml:space=\"preserve\">i</w:t></w:r></w:fldSimple>\
+             <w:r><w:t xml:space=\"preserve\"> · </w:t></w:r>\
+             <w:fldSimple w:instr=\" HYPERLINK &quot;https://x.example&quot; \"><w:r><w:t xml:space=\"preserve\">site</w:t></w:r></w:fldSimple>"
+        );
+        // A brace that opens no field is text.
+        assert_eq!(
+            runs("{Client Name}"),
+            "<w:r><w:t xml:space=\"preserve\">{Client Name}</w:t></w:r>"
         );
     }
 }
