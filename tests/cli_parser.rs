@@ -360,9 +360,29 @@ fn facade_restricts_help_acceptance_aliases_and_shorthand() {
     ] {
         assert_eq!(parse(args, &supported)["exit_code"], 2);
     }
+    // Without -o compare prints the agent view, which needs read.
     assert_eq!(
-        parse(&["redline", "a", "b"], &["compare"])["command"],
+        parse(&["redline", "a", "b", "-o", "x.docx"], &["compare"])["command"],
         "compare"
+    );
+    for args in [
+        &["compare", "a", "b"][..],
+        &["a", "b"],
+        &["compare", "a", "b", "-o", "v.md"],
+    ] {
+        let result = parse(args, &["compare"]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert!(
+            result["text"]
+                .as_str()
+                .unwrap()
+                .contains("prints no agent view"),
+            "{result}"
+        );
+    }
+    assert_eq!(
+        parse(&["compare", "a", "b"], &["compare", "read"])["exit_code"],
+        0
     );
     assert_eq!(parse(&["--version"], &supported)["stream"], "stdout");
     assert_eq!(
@@ -506,6 +526,33 @@ fn help_explains_tasks_and_critic_markup() {
     let help = parse(&["--help"], &[]);
     let text = help["text"].as_str().unwrap();
     assert!(text.contains("compare") && text.contains("redline") && text.contains("Examples:"));
+    // The top level lists the tasks; the shorthand's options live in
+    // `compare --help` and `read --help`.
+    for hidden in [
+        "--detail-threshold",
+        "<ORIGINAL>",
+        "--head",
+        "--changed-pages",
+    ] {
+        assert!(!text.contains(hidden), "{hidden}: {text}");
+    }
+    assert!(text.contains("--quiet"), "{text}");
+    let native = Cli::try_parse_from(["jubarte", "--help"])
+        .unwrap_err()
+        .to_string();
+    assert!(!native.contains("--detail-threshold") && !native.contains("<ORIGINAL>"));
+    let compare = parse(&["compare", "--help"], &[]);
+    let text = compare["text"].as_str().unwrap();
+    for shown in [
+        "--detail-threshold",
+        "--changed-pages",
+        "--head",
+        "--reference-doc",
+        ".json",
+    ] {
+        assert!(text.contains(shown), "{shown}: {text}");
+    }
+    assert!(!text.contains("--powertools-faithful"), "{text}");
     let diff = parse(&["diff", "--help"], &[]);
     let text = diff["text"].as_str().unwrap();
     assert!(text.contains("GitHub") && text.contains("current document text with tracked marks"));
@@ -919,13 +966,25 @@ fn every_explicit_read_option_conflicts_with_writing_even_at_its_default() {
         let result = parse(&args, &[]);
         assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
         assert_eq!(result["stream"], "stderr");
-        assert!(result["text"].as_str().unwrap().contains("drop -o"));
+        assert!(
+            result["text"]
+                .as_str()
+                .unwrap()
+                .contains("read options shape the view: print it (no -o) or write it (-o FILE.md)"),
+            "{result}"
+        );
         assert_eq!(
-            Cli::try_parse_from([vec!["jubarte"], args].concat())
+            Cli::try_parse_from([vec!["jubarte"], args.clone()].concat())
                 .unwrap_err()
                 .kind(),
             clap::error::ErrorKind::ArgumentConflict
         );
+        // compare refuses them alike; a .md output is the view, which takes
+        // them.
+        let explicit = [vec!["compare"], args.clone()].concat();
+        assert_eq!(parse(&explicit, &[])["exit_code"], 2, "{explicit:?}");
+        let view = [&args[..2], &["-o", "out.md"], &args[4..]].concat();
+        assert_eq!(parse(&view, &[])["exit_code"], 0, "{view:?}");
     }
     assert_eq!(
         parse(&["a.docx", "b.docx", "-o", "out.docx"], &[])["exit_code"],
@@ -933,13 +992,102 @@ fn every_explicit_read_option_conflicts_with_writing_even_at_its_default() {
     );
 }
 
+/// Task 13: `compare A B` is the shorthand `A B`: the view is its output
+/// without -o and with a .md (unless both documents are Markdown, whose .md
+/// is CriticMarkup); any other -o has no view.
 #[test]
-fn explicit_compare_and_alias_do_not_request_a_printed_view() {
+fn explicit_compare_and_alias_print_the_view_like_the_shorthand() {
     for task in ["compare", "redline"] {
         let result = parse(&[task, "-b", "a.docx", "-m", "b.docx"], &[]);
         assert_eq!(result["exit_code"], 0, "{result}");
-        assert!(result["args"].get("view").is_none(), "{result}");
+        let shorthand = parse(&["-b", "a.docx", "-m", "b.docx"], &[]);
+        assert_eq!(
+            result["args"]["view"], shorthand["args"]["view"],
+            "{result}"
+        );
+        assert!(result["args"]["view"].is_object(), "{result}");
+        let head = parse(&[task, "a.docx", "b.docx", "--head", "2"], &[]);
+        assert_eq!(head["args"]["view"]["head"], 2, "{head}");
         assert_eq!(parse(&[task, "-b", "a.docx"], &[])["exit_code"], 2);
+    }
+    for (args, view) in [
+        (&["compare", "a.docx", "b.docx", "-o", "r.docx"][..], false),
+        (&["compare", "a.docx", "b.docx", "-o", "r.pdf"], false),
+        (&["compare", "a.docx", "b.docx", "-o", "r.json"], false),
+        (&["compare", "a.docx", "b.docx", "-o", "r.tmp"], false),
+        (&["compare", "a.docx", "b.docx", "-o", "v.md"], true),
+        (&["compare", "a.md", "b.docx", "-o", "v.md"], true),
+        // A .md's view or CriticMarkup is the host's to decide once it has
+        // read both documents (names may not say Markdown).
+        (&["compare", "a.md", "b.md", "-o", "c.md"], true),
+        (&["compare", "a.md", "b.md"], true),
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(
+            result["args"]["view"].is_object(),
+            view,
+            "{args:?}: {result}"
+        );
+    }
+    assert_eq!(
+        parse(&["compare", "a.docx", "b.docx", "-o", "r.tmp"], &[])["args"]["output_format"],
+        "docx"
+    );
+    // Whether the command line names a view option, at its default too: a
+    // .md of two Markdown documents is CriticMarkup, which none shapes.
+    for (args, given) in [
+        (&["compare", "a.md", "b.md", "-o", "c.md"][..], false),
+        (
+            &[
+                "compare",
+                "a.md",
+                "b.md",
+                "-o",
+                "c.md",
+                "--comments",
+                "inline",
+            ],
+            true,
+        ),
+        (&["a", "b", "--head", "1"], true),
+        (&["a", "b"], false),
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["args"]["view_given"], given, "{args:?}: {result}");
+        let native = Cli::try_parse_from([&["jubarte"][..], args].concat()).unwrap();
+        let compare = match native.command {
+            Some(Command::Compare(compare)) => compare,
+            _ => native.compare,
+        };
+        assert_eq!(compare.view_given, given, "{args:?}");
+    }
+    // A host without read takes CriticMarkup, never the view.
+    assert_eq!(
+        parse(&["compare", "a.md", "b.md", "-o", "c.md"], &["compare"])["exit_code"],
+        0
+    );
+    // `jubarte FILE` is read: compare's own options and the rendering ones
+    // need a second document.
+    for (flags, message) in [
+        (
+            &["--author", "Legal"][..],
+            "--author is a compare option: name two documents",
+        ),
+        (&["--critic"], "--critic is a compare option"),
+        (&["--mode", "powertools"], "--mode is a compare option"),
+        (
+            &["--dpi", "50"],
+            "--dpi draws a PDF or PNG, which read does not write",
+        ),
+        (&["--changed-pages"], "--changed-pages draws a PDF or PNG"),
+    ] {
+        let result = parse(&[&["a.docx"][..], flags].concat(), &[]);
+        assert_eq!(result["exit_code"], 2, "{flags:?}: {result}");
+        assert!(
+            result["text"].as_str().unwrap().contains(message),
+            "{result}"
+        );
     }
     let read = parse(&["placeholder.docx", "--original", "actual.docx"], &[]);
     assert_eq!(read["exit_code"], 0, "{read}");
@@ -1163,15 +1311,13 @@ fn the_output_rule_is_one_table() {
 
 /// pi-07 F2, F3: until a task writes the snapshot, its `.json` output exits
 /// 2 in the shared parser, so the binary and both bindings refuse alike.
-/// Compare and diff still refuse it (Task 13); the writing tasks, convert
-/// and read write it (Task 12).
+/// Diff still refuses it; the writing tasks, convert and read write it
+/// (Task 12), and compare (Task 13).
 #[test]
 fn json_output_is_refused_until_a_task_writes_it() {
     for args in [
         vec!["diff", "a.docx", "b.docx", "-t", "json"],
         vec!["diff", "a.docx", "b.docx", "-o", ".json"],
-        vec!["compare", "a.docx", "b.docx", "-o", "c.JSON"],
-        vec!["a.docx", "b.docx", "-o", "c.json"],
     ] {
         let task = if args[0].ends_with(".docx") {
             "compare"
@@ -1195,6 +1341,11 @@ fn json_output_is_refused_until_a_task_writes_it() {
         (vec!["append", "a.docx", "b.docx", "-o", "a.json"], "append"),
         (vec!["read", "a.docx", "-o", "a.json"], "read"),
         (vec!["a.docx", "-o", "a.json"], "compare"),
+        (
+            vec!["compare", "a.docx", "b.docx", "-o", "c.JSON"],
+            "compare",
+        ),
+        (vec!["a.docx", "b.docx", "-o", "c.json"], "compare"),
     ] {
         // The one-document shorthand needs compare's positionals (and read).
         let supported: &[&str] = if task == "compare" { &[] } else { &[task] };

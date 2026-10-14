@@ -3123,9 +3123,24 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         !dir.path().join("old_v_new.docx").exists(),
         "nothing written without -o"
     );
-    let written = ok(&["old.docx", "new.docx", "-o", "r.docx"], dir.path());
-    assert!(written.starts_with("wrote r.docx"), "{written}");
+    let written = jubarte(&["old.docx", "new.docx", "-o", "r.docx"], dir.path());
+    assert!(written.status.success());
+    assert!(written.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&written.stderr);
+    assert!(stderr.starts_with("wrote r.docx (docx, "), "{stderr}");
     assert!(dir.path().join("r.docx").is_file());
+    // -o FILE.md writes the view, read options included.
+    let view = jubarte(
+        &["old.docx", "new.docx", "-o", "v.md", "--head", "1"],
+        dir.path(),
+    );
+    assert!(
+        view.status.success(),
+        "{}",
+        String::from_utf8_lossy(&view.stderr)
+    );
+    let view = std::fs::read_to_string(dir.path().join("v.md")).unwrap();
+    assert!(view.contains("\nrange: "), "{view}");
     let changed = ok(&["old.docx", "new.docx", "--changed"], dir.path());
     assert!(
         changed.contains("\nrange: changed (p1) of p0-p2\n"),
@@ -3135,9 +3150,10 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         &["old.docx", "new.docx", "-o", "x.docx", "--head", "1"],
         dir.path(),
     );
-    assert!(
-        !bad.status.success(),
-        "read options go with the printed view, not with -o"
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "read options go with the view, not with a .docx"
     );
     let bad = jubarte(&["compare", "old.docx"], dir.path());
     assert!(!bad.status.success(), "compare still needs two documents");

@@ -654,25 +654,30 @@ def cmd_compare(args: argparse.Namespace) -> int:
     original = _read_side(args.original, args.old_format)
     modified = _read_side(args.modified, args.new_format)
     default = args.original.with_name(f"{args.original.stem}_v_{args.modified.stem}.docx")
-    view = getattr(args, "view", None)
-    if args.output is None and view is not None:
-        # The shorthand `A B` without -o prints the redline's agent view.
-        from . import _native
-
-        redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
-        return _print_view(redline, view, f"{default} (not written; -o keeps it)")
-    output: Path = args.output or default
-    if args.output_format == "md":
-        _markdown_needs_both(original, modified, args.original, args.modified)
-    _ensure_writable(output, args.force)
     from . import _native
 
+    if args.output is None:
+        # Without -o, compare (and the shorthand `A B`) prints the
+        # redline's agent view.
+        redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+        return _print_view(redline, args.view, f"{default} (not written; -o keeps it)")
+    output: Path = args.output
+    if args.output_format == "md":
+        # A .md of two Markdown documents is CriticMarkup; of anything else,
+        # the redline's view, which the engine's writer brings here later.
+        if not (isinstance(original, str) and isinstance(modified, str)):
+            print("error: -o FILE.md of a Word redline is not supported by the Python CLI yet", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+        if args.view_given:
+            print("error: read options shape the view; two Markdown documents write CriticMarkup to a .md", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+    _ensure_writable(output, args.force)
     redline = (diff(original, modified, format="critic", author=args.author, date=args.date).text
                if args.output_format == "md" else
                _native.redline_documents(original, modified, author=args.author, date=args.date))
     size = _write(output, redline)
     if not args.quiet:
-        print(f"wrote {output} ({size} bytes)")
+        print(f"wrote {output} ({args.output_format}, {size} bytes)", file=sys.stderr)
     return EXIT_OK
 
 
@@ -897,6 +902,12 @@ class SharedParser:
             self.error("read -o is not supported by the Python CLI yet")
         if command == "convert" and written == "json":
             self.error("-o FILE.json is not supported by the Python CLI yet")
+        if command == "compare" and written in ("pdf", "png", "json"):
+            self.error(f"-o FILE.{written} is not supported by the Python CLI yet")
+        if command == "compare":
+            for key in ("reference_doc", "critic", "resource_path"):
+                if values.get(key) not in (None, False):
+                    self.error(f"--{key.replace('_', '-')} is not supported by the Python CLI")
         if command == "read" and values.get("json"):
             for key in ("paragraphs", "head", "tail", "changed", "by"):
                 if values.get(key) not in (None, False):

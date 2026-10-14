@@ -51,6 +51,9 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
         ["read", str(letter), "-o", str(letter.with_name("v.md"))],
         [str(letter), "-o", str(letter.with_name("v.json"))],
         ["convert", str(letter), "-o", str(letter.with_name("c.json"))],
+        ["compare", str(letter), str(letter), "-o", str(letter.with_name("r.pdf"))],
+        ["compare", str(letter), str(letter), "-o", str(letter.with_name("r.json"))],
+        ["compare", str(letter), str(letter), "-o", str(letter.with_name("v.md"))],
     ):
         with pytest.raises(SystemExit) as refused:
             main(argv)
@@ -120,10 +123,14 @@ def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     a, b = tmp_path / "a.docx", tmp_path / "b.docx"
     a.write_bytes(docx(para("alpha beta")))
     b.write_bytes(docx(para("alpha gamma")))
+    # Without -o, compare (and its alias) prints the redline's agent view.
     assert main(["redline", str(a), str(b)]) == 0
-    assert (tmp_path / "a_v_b.docx").is_file()
+    assert capsys.readouterr().out.startswith(f"---\nsource: {tmp_path / 'a_v_b.docx'} (not written; -o keeps it)\n")
+    assert not (tmp_path / "a_v_b.docx").exists()
+    assert main(["redline", str(a), str(b), "-o", str(tmp_path / "a_v_b.docx")]) == 0
+    capsys.readouterr()
     assert main(["changes", str(tmp_path / "a_v_b.docx"), "--json"]) == 0
-    assert {json.loads(l)["kind"] for l in capsys.readouterr().out.splitlines()[1:]} >= {"insertion", "deletion"}
+    assert {json.loads(l)["kind"] for l in capsys.readouterr().out.splitlines()} >= {"insertion", "deletion"}
 
 
 def test_a_legacy_doc_is_refused_with_a_save_as_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -258,7 +265,8 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     redline = tmp_path / "redline.docx"
     assert main(["compare", str(a), str(b), "-o", str(redline), "--author", "Legal"]) == 0
     assert redline.is_file()
-    assert "wrote" in capsys.readouterr().out
+    written = capsys.readouterr()
+    assert written.out == "" and f"wrote {redline} (docx, " in written.err
     assert main(["changes", str(redline), "--json"]) == 0
     rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
     assert {r["kind"] for r in rows} >= {"insertion", "deletion"}
@@ -595,9 +603,25 @@ def test_shorthand_view_preserves_existing_output(
     assert "<!-- page " not in shown
     assert output.read_bytes() == sentinel
 
-    assert main(["compare", str(old), str(new)]) == 1
+    # compare prints the same view; only -o writes, and never over a file.
+    assert main(["compare", str(old), str(new)]) == 0
+    assert capsys.readouterr().out.startswith(f"---\nsource: {output} (not written; -o keeps it)\n")
+    assert main(["compare", str(old), str(new), "-o", str(output)]) == 1
     assert "already exists" in capsys.readouterr().err
     assert output.read_bytes() == sentinel
+    # Two Markdown documents written to a .md are CriticMarkup, which view
+    # options cannot shape; the host reads that from the bytes, as natively.
+    plain_old, plain_new = tmp_path / "plain-old", tmp_path / "plain-new.json"
+    plain_old.write_bytes(old.read_bytes())
+    plain_new.write_bytes(new.read_bytes())
+    critic = tmp_path / "critic.md"
+    assert main(["compare", str(plain_old), str(plain_new), "-o", str(critic)]) == 0
+    assert "{~~30~>45~~}" in critic.read_text(encoding="utf-8")
+    assert f"wrote {critic} (md, " in capsys.readouterr().err
+    with pytest.raises(SystemExit) as refused:
+        main(["compare", str(plain_old), str(plain_new), "-o", str(tmp_path / "h.md"), "--head", "1"])
+    assert refused.value.code == 2
+    assert "two Markdown documents write CriticMarkup" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("task,dry_run", [("edit", False), ("edit", True), ("add", False)])

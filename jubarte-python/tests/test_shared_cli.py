@@ -149,12 +149,16 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
         assert exit.value.code == 2
         assert f"{named} applies to PDF or PNG output only" in capsys.readouterr().err
 
-    # Markdown output needs both documents in Markdown, in diff and compare.
-    for argv in (["diff", str(word), str(b), "-o", str(tmp_path / "d.md")],
-                 ["compare", str(word), str(b), "-o", str(tmp_path / "c.md")]):
-        assert main(argv) == 1
-        assert "Markdown output needs both documents in Markdown" in capsys.readouterr().err
-        assert not Path(argv[-1]).exists()
+    # diff's Markdown output needs both documents in Markdown; compare's is
+    # the redline's view, which this CLI does not write yet.
+    assert main(["diff", str(word), str(b), "-o", str(tmp_path / "d.md")]) == 1
+    assert "Markdown output needs both documents in Markdown" in capsys.readouterr().err
+    assert not (tmp_path / "d.md").exists()
+    with pytest.raises(SystemExit) as refused:
+        main(["compare", str(word), str(b), "-o", str(tmp_path / "c.md")])
+    assert refused.value.code == 2
+    assert "-o FILE.md of a Word redline is not supported by the Python CLI yet" in capsys.readouterr().err
+    assert not (tmp_path / "c.md").exists()
 
     # --format critic writing a redline says so and prints no CriticMarkup.
     redline = tmp_path / "critic.docx"

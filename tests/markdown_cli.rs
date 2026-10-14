@@ -640,8 +640,21 @@ fn diff_and_compare_take_word_against_markdown() {
         stderr.contains("Markdown output needs both documents in Markdown"),
         "{stderr}"
     );
-    // The positional compare takes Markdown too.
-    ok(&jubarte(&["compare", "old.md", "new.md"], dir.path()));
+    // compare takes Markdown too, and without -o prints the redline's view.
+    let view = ok(&jubarte(&["compare", "old.md", "new.md"], dir.path()));
+    assert!(
+        view.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"),
+        "{view}"
+    );
+    assert!(view.contains("{++Returns++}"), "{view}");
+    assert!(
+        !dir.path().join("old_v_new.docx").exists(),
+        "no -o, no file"
+    );
+    wrote(&jubarte(
+        &["compare", "old.md", "new.md", "-o", "old_v_new.docx"],
+        dir.path(),
+    ));
     assert_word_valid_package(&std::fs::read(dir.path().join("old_v_new.docx")).unwrap());
     ok(&jubarte(
         &["old.md", "new.md", "-o", "changes.md"],
@@ -827,7 +840,7 @@ fn images_are_read_next_to_the_markdown_with_escapes_decoded() {
 }
 
 #[test]
-fn diff_takes_a_reference_and_can_read_critic_markup() {
+fn diff_reads_critic_markup_and_compare_takes_a_reference() {
     let dir = tempfile::tempdir().unwrap();
     seed(
         dir.path(),
@@ -843,9 +856,9 @@ fn diff_takes_a_reference_and_can_read_critic_markup() {
     ));
     assert_eq!(stdout, "Text \\{++kept++\\}{++ and more++}.\n");
     let reference = std::fs::canonicalize("tests/fixtures/redline-inpi/original-new.docx").unwrap();
-    ok(&jubarte(
+    wrote(&jubarte(
         &[
-            "diff",
+            "compare",
             "old.md",
             "new.md",
             "--critic",
@@ -859,22 +872,22 @@ fn diff_takes_a_reference_and_can_read_critic_markup() {
     let docx = std::fs::read(dir.path().join("d.docx")).unwrap();
     assert_word_valid_package(&docx);
     assert!(common::docx::part_string(&docx, "word/header1.xml").is_some());
-    ok(&jubarte(
-        &["diff", "old.md", "new.md", "-t", "png"],
+    wrote(&jubarte(
+        &["compare", "old.md", "new.md", "-o", "old_v_new.png"],
         dir.path(),
     ));
     assert!(dir.path().join("old_v_new-page-01.png").exists());
-    // Two Word documents cannot give Markdown yet.
+    // Two Word documents give the redline's agent view as Markdown.
     ok(&jubarte(&["convert", "old.md", "-o", "a.docx"], dir.path()));
     ok(&jubarte(&["convert", "new.md", "-o", "b.docx"], dir.path()));
-    let stderr = failed(&jubarte(
+    let stderr = wrote(&jubarte(
         &["a.docx", "b.docx", "-o", "changes.md"],
         dir.path(),
     ));
-    assert!(
-        stderr.contains("needs both documents in Markdown"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("wrote changes.md (md, "), "{stderr}");
+    let view = std::fs::read_to_string(dir.path().join("changes.md")).unwrap();
+    assert!(view.starts_with("---\nsource: a_v_b.docx"), "{view}");
+    assert!(view.contains("{++ and more++}"), "{view}");
 }
 
 #[test]

@@ -36,15 +36,38 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   PNG. `read` (and `jubarte FILE`) takes `-o FILE.md` for the view or
   `-o FILE.json` for the snapshot, and `--force`. `convert` writes `.json`.
   The Python and npm CLIs refuse these outputs until they share the writer.
+- `compare` takes the view's options (`--track-changes`, `--comments`,
+  `--dates`, `--no-page-markers`, `-p`, `--head`, `--tail`, `--changed`,
+  `--by`), `--reference-doc`, `--critic` and `--resource-path` for
+  Markdown inputs, and the Rendering group. `-o` writes `.docx` (and any
+  other extension), `.md` (the redline's agent view; CriticMarkup when
+  both documents are Markdown), `.pdf`, `.png` or `.json` (the snapshot).
+  The view's options go with the printed view or a `.md` view, the
+  Rendering group with a `.pdf` or `.png`, the Markdown-input options
+  with a Markdown document; anything else exits 2. Whether a `.md` is
+  CriticMarkup is read from the documents' bytes when their names do not
+  say, in the binary and in both hosts.
 
 ### Changed
+
+- **`compare A B` prints the redline's agent view**, as `jubarte A B`
+  does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
+  moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
+  in the Python and npm CLIs too.
+  The Python and npm CLIs print the view too; they refuse a `.md` view,
+  `.pdf`, `.png` and `.json` outputs and the Markdown-input options for
+  now, and a host without `read` refuses a compare that prints the view.
+- `jubarte --help` lists the tasks; the shorthands' options are in
+  `jubarte compare --help` and `jubarte read --help`.
+  `--powertools-faithful` is hidden (`--mode powertools` stays).
+  `jubarte FILE` refuses compare's own options (`--author`, `--mode`,
+  `--critic`, the Rendering group, …) with exit 2: they took no effect.
 
 - `accept`, `reject`, `append`, `scrub`, `convert` and `read -o` say
   `wrote PATH (KIND, N bytes[, P pages])` on stderr, or
   `wrote DIR/STEM-page-NN.png (png, K pages, D dpi)`; `-q` silences it
   (and `diff`'s line too). `convert` and `append` said it on stdout;
-  `accept`, `reject` and `scrub` said nothing before. `compare` still
-  prints its line on stdout.
+  `accept`, `reject` and `scrub` said nothing before.
 - `convert --changed-only` (and the library's `PdfOptions::changed_only`)
   also keeps the pages a comment is anchored on and the first page of each
   section on which a revised header or footer paints. The comment listing's
@@ -77,6 +100,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `number`, and the report JSON's pages carry it. `RenderReport` gains
   `document_pages` (also in the report JSON). `cli::PageOptions` is
   `cli::RenderArgs`, which `convert` and `diff` flatten.
+- `cli::Cli` loses `read`: the view's options are `Cli::compare.read`.
+  `CompareArgs` gains `reference_doc`, `critic`, `resource_path`,
+  `render` and `read`. `cli::top_level_command()` is the model whose
+  `--help` lists the tasks only.
 
 ## [0.12.0] - 2026-10-11
 

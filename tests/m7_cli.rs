@@ -41,10 +41,11 @@ fn assert_loadable(path: &Path) {
 }
 
 #[test]
-fn default_output_name_in_original_dir_and_loadable() {
+fn compare_prints_the_view_and_writes_only_with_o() {
     let dir = tmpdir();
     let (a, b) = seed(dir.path());
-    // `compare A B` writes the default name; the shorthand prints instead.
+    // `compare A B`, like the shorthand, prints the redline's agent view
+    // and writes nothing.
     let out = Command::new(BIN)
         .arg("compare")
         .arg(&a)
@@ -56,9 +57,34 @@ fn default_output_name_in_original_dir_and_loadable() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.starts_with("---\nsource: "), "{stdout}");
+    assert!(
+        stdout.contains("a_v_b.docx (not written; -o keeps it)"),
+        "{stdout}"
+    );
     let expected = dir.path().join("a_v_b.docx");
-    assert!(expected.exists(), "default output a_v_b.docx should exist");
-    assert!(String::from_utf8_lossy(&out.stdout).contains("a_v_b.docx"));
+    assert!(!expected.exists(), "no -o, no file");
+    // -o writes the redline and says so on stderr only.
+    let out = Command::new(BIN)
+        .arg("compare")
+        .arg(&a)
+        .arg(&b)
+        .arg("-o")
+        .arg(&expected)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!("wrote {} (docx, ", expected.display())),
+        "{stderr}"
+    );
     assert_loadable(&expected);
 }
 
@@ -78,7 +104,10 @@ fn explicit_flags_output_author_and_quiet() {
         .output()
         .unwrap();
     assert!(out.status.success());
-    assert!(out.stdout.is_empty(), "--quiet suppresses the success line");
+    assert!(
+        out.stdout.is_empty() && out.stderr.is_empty(),
+        "--quiet says nothing"
+    );
     assert_loadable(&out_path);
 }
 

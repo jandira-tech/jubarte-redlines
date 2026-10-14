@@ -138,11 +138,12 @@ release is always authoritative.
 $ jubarte --help
 Read, edit, compare and render Word documents
 
-Usage: jubarte [OPTIONS] [ORIGINAL] [MODIFIED]
+Usage: jubarte [OPTIONS]
        jubarte <COMMAND>
 
 Tasks:
-  compare       Compare documents and write a Word redline [alias: redline]
+  compare       Compare documents: print the redline as the agent view, or write it with
+                -o [alias: redline]
   changes       List tracked changes with IDs for accept, reject and edit plans
   accept        Accept all tracked changes, or select by ID, author or kind
   reject        Reject all tracked changes, or select by ID, author or kind
@@ -170,17 +171,39 @@ Tasks:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
-  -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
+  -q, --quiet    Print nothing on success (files are still written; warnings and errors
+                 still print)
+  -h, --help     Print help
+  -V, --version  Print version
 
-  -h, --help
-          Print help (see a summary with '-h')
+Examples:
+  jubarte compare old.docx new.docx -o redline.docx
+  jubarte contract.docx                    print the agent view (read)
+  jubarte old.docx new.docx                redline printed as the agent view (-o writes
+  it)
+  jubarte inspect contract.docx --json
+  jubarte diff old.docx new.docx --format github
+  jubarte convert contract.docx -o contract.pdf
 
-  -V, --version
-          Print version
+Run jubarte <task> --help for task options.
+```
 
-Compare options:
+#### `jubarte compare`
+
+```text
+$ jubarte compare --help
+Compare documents: print the redline as the agent view, or write it with -o
+
+Usage: jubarte compare [OPTIONS] [ORIGINAL] [MODIFIED]
+
+Arguments:
+  [ORIGINAL]
+          The original / base document (.docx or Markdown)
+
+  [MODIFIED]
+          The modified document (.docx or Markdown)
+
+Options:
   -b, --original <FILE>
           Original/base document (overrides the positional ORIGINAL)
 
@@ -188,8 +211,10 @@ Compare options:
           Modified document (overrides the positional MODIFIED)
 
   -o, --output <FILE>
-          Output path (default: `<original-dir>/<original>_v_<modified>.docx`). A `.md`
-          output writes the changes as CriticMarkup (both documents Markdown)
+          Write the redline to FILE instead of printing its agent view; the extension
+          picks the format: .docx (also any other), .md (the agent view; CriticMarkup
+          when both documents are Markdown), .pdf, .png (one file per page) or .json
+          (the snapshot)
 
   -a, --author <NAME>
           Author name recorded on the revisions
@@ -218,14 +243,64 @@ Compare options:
 
           [default: word]
 
-      --powertools-faithful
-          Same as --mode powertools
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
-  [MODIFIED]
-          The modified document (.docx or Markdown)
+  -h, --help
+          Print help (see a summary with '-h')
 
-  [ORIGINAL]
-          The original / base document (.docx or Markdown)
+Markdown inputs:
+      --reference-doc <FILE>
+          Two Markdown documents written as Word take styles, page setup, headers and
+          footers from this .docx
+
+      --critic
+          Read CriticMarkup in the Markdown documents as tracked changes. By default a
+          document compared is text
+
+      --resource-path <DIR>
+          Where images named by the Markdown are found (default: the original's
+          directory when it is Markdown, else the modified's)
+
+Rendering (-o FILE.pdf or FILE.png):
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
 
 Read options:
       --track-changes <CHOICE>
@@ -284,83 +359,11 @@ Read options:
           `ids=text` cells
 
 Examples:
+  jubarte compare old.docx new.docx                 the redline's agent view
   jubarte compare old.docx new.docx -o redline.docx
-  jubarte contract.docx                    print the agent view (read)
-  jubarte old.docx new.docx                redline printed as the agent view (-o writes
-  it)
-  jubarte inspect contract.docx --json
-  jubarte diff old.docx new.docx --format github
-  jubarte convert contract.docx -o contract.pdf
-
-Run jubarte <task> --help for task options.
-```
-
-#### `jubarte compare`
-
-```text
-$ jubarte compare --help
-Compare documents and write a Word redline
-
-Usage: jubarte compare [OPTIONS] [ORIGINAL] [MODIFIED]
-
-Arguments:
-  [ORIGINAL]
-          The original / base document (.docx or Markdown)
-
-  [MODIFIED]
-          The modified document (.docx or Markdown)
-
-Options:
-  -b, --original <FILE>
-          Original/base document (overrides the positional ORIGINAL)
-
-  -m, --modified <FILE>
-          Modified document (overrides the positional MODIFIED)
-
-  -o, --output <FILE>
-          Output path (default: `<original-dir>/<original>_v_<modified>.docx`). A `.md`
-          output writes the changes as CriticMarkup (both documents Markdown)
-
-  -a, --author <NAME>
-          Author name recorded on the revisions
-
-          [default: Redline]
-
-  -d, --date <ISO8601>
-          Revision timestamp (ISO 8601); pinned for reproducible output
-
-          [default: 1970-01-01T00:00:00Z]
-
-      --force
-          Overwrite the output file if it already exists
-
-      --detail-threshold <RATIO>
-          Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
-
-      --mode <MODE>
-          Compare like Microsoft Word or Open-Xml-PowerTools
-
-          Possible values:
-          - word:       Microsoft Word Compare's layout: word-level detail, replaced
-            paragraphs merged, Word's alignment passes
-          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
-            no Word alignment passes
-
-          [default: word]
-
-      --powertools-faithful
-          Same as --mode powertools
-
-  -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-Examples:
-  jubarte compare old.docx new.docx -o redline.docx
-  jubarte compare -b old.docx -m new.docx --author Legal
+  jubarte compare old.docx new.docx -o redline.pdf --changed-pages
+  jubarte compare old.md new.md -o changes.md       CriticMarkup
+  jubarte compare -b old.docx -m new.docx --author Legal -o r.docx
 ```
 
 #### `jubarte changes`
@@ -841,8 +844,8 @@ Word redline:
           By default a document compared is text
 
       --resource-path <DIR>
-          Where images named by the Markdown are found [default: each Markdown file's
-          directory]
+          Where images named by the Markdown are found [default: the old document's
+          directory when it is Markdown, else the new's]
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
