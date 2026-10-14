@@ -603,3 +603,22 @@ Six items from a file-by-file scout of `arthrod/anymd`, one PR each:
 - [ ] 4. Charts in docx read as tables, read-only (and, separately, PPTX to Markdown).
 - [ ] 5. `read --outline`: an outline of the view.
 - [ ] 6. `read --max-tokens`/`--cursor`: a long view read in parts; `--head`/`--tail` take a token budget (`--head 8000t`).
+
+## 14. What the Markdown round trip still loses (2026-10-14)
+
+Status: open. Plan:
+[superpowers/plans/2026-10-14-roundtrip-remaining.md](superpowers/plans/2026-10-14-roundtrip-remaining.md).
+31 of 73 strict round trips are not exact; twelve causes, one PR each:
+
+- [ ] 1. Separator-only notes parts (18 + 16 files).
+- [ ] 2. Story paragraph styles: headers, footers, comments, notes (≈25 files).
+- [ ] 3. Page count (10 files), measured after 2, 7 and 9.
+- [ ] 4. Change grouping in `revisions:` (9 files).
+- [ ] 5. Highlight colours (13 files).
+- [ ] 6. Header lines read back only partly (`notes`, `style_changes`, …).
+- [ ] 7. Section properties (`type`, `titlePg`, reference order).
+- [ ] 8. `TableGrid` renamed `TableGrid0`.
+- [ ] 9. Floating objects (anchors, frames, VML, AlternateContent).
+- [ ] 10. Paragraph text in Strict01 and ac6cd8d92f.
+- [ ] 11. Substitution order on write.
+- [ ] 12. Pandoc manuscripts (decision D2).
