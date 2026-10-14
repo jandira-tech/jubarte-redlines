@@ -496,6 +496,26 @@ fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
             2
         );
     }
+    // Codex on #440 and #441: every task that draws revisions refuses a
+    // palette without `custom` before reading a document, as convert does.
+    let palette = ["--revisions", "word", "--revision-palette", "deleted=#112233"];
+    for task in [
+        &["compare", "a.docx", "b.docx", "-o", "c.pdf"][..],
+        &["a.docx", "b.docx", "-o", "c.pdf"],
+        &["accept", "a.docx", "-o", "c.pdf"],
+        &["reject", "a.docx", "-o", "c.pdf"],
+        &["scrub", "a.docx", "-o", "c.pdf"],
+    ] {
+        let refused = parse(&[task, &palette[..]].concat(), &[]);
+        assert_eq!(refused["exit_code"], 2, "{task:?}: {refused}");
+        assert!(
+            refused["text"]
+                .as_str()
+                .unwrap()
+                .contains("--revision-palette needs --revisions custom"),
+            "{task:?}: {refused}"
+        );
+    }
     // --pages narrows a PDF too.
     let pdf = parse(&["convert", "a", "--pages", "1"], &[]);
     assert_eq!(pdf["exit_code"], 0, "{pdf}");
@@ -558,6 +578,19 @@ fn diff_has_no_rendering_flags() {
             text.contains(&format!("`compare OLD NEW -o {output}`")),
             "{text}"
         );
+    }
+}
+
+/// Codex on #442: add draws no PDF or PNG, so its help names none; edit's
+/// does. Both say what another -o extension writes.
+#[test]
+fn add_help_names_only_what_add_writes() {
+    let help = |task: &str| parse(&[task, "--help"], &[])["text"].as_str().unwrap().to_string();
+    let (add, edit) = (help("add"), help("edit"));
+    assert!(!add.contains("--pdf") && !add.contains("--png"), "{add}");
+    assert!(edit.contains("--pdf") && edit.contains("--png"), "{edit}");
+    for text in [&add, &edit] {
+        assert!(text.contains("Any other extension is written as"), "{text}");
     }
 }
 
@@ -870,6 +903,17 @@ fn parse_json_resolves_a_bare_plan() {
     );
     assert_eq!(bare["args"]["plan"], "d/a_plan.json", "{bare}");
     assert_eq!(bare["args"]["plan_default"], true, "{bare}");
+    // Codex on #433: a path ending in a separator names a folder, so the
+    // parser refuses it for every host alike.
+    let folder = parse(&["add", "a.docx", "--plan", "new.json/"], &["add"]);
+    assert_eq!(folder["exit_code"], 2, "{folder}");
+    assert!(
+        folder["text"]
+            .as_str()
+            .unwrap()
+            .contains("new.json/ ends in a separator"),
+        "{folder}"
+    );
     let named = parse(&["add", "a.docx", "--plan", "p.json"], &["add"]);
     assert_eq!(named["args"]["plan"], "p.json", "{named}");
     assert_eq!(named["args"]["plan_default"], false, "{named}");
@@ -1765,6 +1809,28 @@ fn quiet_is_global_before_or_after_the_task() {
     );
 }
 
+/// Codex on #437: help under a retired name still says it is retired, in
+/// the binary and in the hosts (the parser's help object carries the notes).
+#[test]
+fn a_retired_names_help_carries_its_note() {
+    let help = parse(&["diff-render", "--help"], &[]);
+    assert_eq!(help["exit_code"], 0, "{help}");
+    assert!(
+        help["notes"][0]
+            .as_str()
+            .is_some_and(|n| n.contains("diff-render") && n.contains("visual-diff")),
+        "{help}"
+    );
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["diff-render", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("visual-diff"), "{stderr}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage:"));
+}
+
 #[test]
 fn retired_spellings_are_scoped_and_listed_once() {
     let notes = |argv: &[&str]| retired_spellings(argv.iter().copied());
@@ -1876,6 +1942,21 @@ fn timestamp_flag_is_d_datetime_and_date_is_gone() {
             "{args:?}: {result}"
         );
     }
+    // Before the task too, where clap would suggest compare's `--dates`.
+    let inline = format!("--date={date}");
+    for args in [
+        &["--date", date, "compare", "a.docx", "b.docx"][..],
+        &["--date", date, "a.docx", "b.docx"][..],
+        &[inline.as_str(), "a.docx", "b.docx"][..],
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        let text = result["text"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("use --datetime") && !text.contains("--dates"),
+            "{args:?}: {result}"
+        );
+    }
     // No task's `--help` shows `--date`.
     for task in ["edit", "add", "compare", "diff", "convert"] {
         let help = parse(&[task, "--help"], &[]);
@@ -1885,5 +1966,26 @@ fn timestamp_flag_is_d_datetime_and_date_is_gone() {
             !text.contains("--date ") && !text.contains("--date\n"),
             "{task}: {text}"
         );
+    }
+}
+
+/// `-a, --author` on every task that writes changes: edit and add take the
+/// short form as compare, diff and convert do.
+#[test]
+fn edit_and_add_take_dash_a_for_the_author() {
+    for base in [
+        &["edit", "a.docx", "-p", "p0", "--content", "x"][..],
+        &["add", "a.docx", "-p", "p0", "--content", "x"][..],
+    ] {
+        for flag in ["-a", "--author"] {
+            let args = [base.to_vec(), vec![flag, "Ann Lee"]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(
+                result["args"]["author"].as_str(),
+                Some("Ann Lee"),
+                "{args:?}: {result}"
+            );
+        }
     }
 }
