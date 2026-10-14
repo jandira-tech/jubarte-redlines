@@ -73,6 +73,10 @@ test("removed command help and legacy listing flags are unavailable", () => {
     assert.equal(result.out, "");
     assert.ok(!fs.existsSync(path.join(tmp, "unused.docx")));
   }
+  // A retired name keeps its note when the run fails: npm has no validate.
+  const audit = run("audit", "missing.docx");
+  assert.equal(audit.code, 2, audit.err);
+  assert.ok(audit.err.startsWith("note: audit is now validate --rules a11y,style,structure; audit is removed in 0.14\nerror: "), audit.err);
   // `revisions` reads as a file name again; a note names `changes` first.
   const note = "note: revisions is no longer a task, so it reads as a file name; use changes\n";
   assert.ok(run("revisions", "missing.docx", "--json").err.startsWith(note));

@@ -233,3 +233,11 @@ def test_a_failed_writer_preserves_existing_output_even_with_force(command, tmp_
     assert f"reading {missing}" in streams.err
     assert output.read_bytes() == b"preserve existing output"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["existing.json"]
+
+
+def test_a_retired_name_keeps_its_note_when_the_parse_fails(capsys):
+    with pytest.raises(SystemExit) as exit:
+        main(["audit", "missing.docx", "--rules", "edits"])
+    assert exit.value.code == 2
+    err = capsys.readouterr().err
+    assert err.startswith("note: audit is now validate --rules a11y,style,structure; audit is removed in 0.14\nerror: "), err
