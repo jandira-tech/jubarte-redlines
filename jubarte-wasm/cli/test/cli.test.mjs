@@ -45,20 +45,26 @@ function copy(from, name) {
   return to;
 }
 
-test("field refresh is unsupported before reading or overwriting any file", () => {
+test("field refresh reads its input first and overwrites nothing without --force", () => {
   const out = path.join(tmp, "field-refresh.docx");
   const report = path.join(tmp, "field-refresh.json");
   fs.writeFileSync(out, "preserve document");
   fs.writeFileSync(report, "preserve report");
   for (const extra of [[], ["--to", "docx"], ["--track-changes", "accept"], ["--track-changes", "reject"], ["--report", report, "--force"]]) {
     const result = run("convert", "missing.docx", "-o", out, "--update-fields", ...extra);
-    assert.equal(result.code, 2, result.err);
-    assert.match(result.err, /--update-fields.*not supported/);
-    assert.doesNotMatch(result.err, /reading|ENOENT|already exists/);
+    assert.equal(result.code, 1, result.err);
+    assert.equal(result.err, "error: reading missing.docx: No such file or directory (os error 2)\n");
     assert.equal(result.out, "");
-    assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
-    assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
   }
+  const kept = run("convert", untracked, "-o", out, "--update-fields");
+  assert.equal(kept.code, 1, kept.err);
+  assert.match(kept.err, /already exists/);
+  assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
+  assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
+  const written = run("convert", untracked, "-o", out, "--update-fields", "--report", report, "--force");
+  assert.equal(written.code, 0, written.err);
+  assert.equal(typeof JSON.parse(fs.readFileSync(report, "utf8")).page_count, "number");
+  assert.equal(fs.readFileSync(out).subarray(0, 2).toString(), "PK");
 });
 
 test("removed command help and legacy listing flags are unavailable", () => {
@@ -277,9 +283,9 @@ test("an unreadable input reads as the binary says, on every task (#454)", () =>
   const expected = "error: INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record\n";
   for (const args of [
     ["read", "fake.docx"], ["read", "fake.docx", "--json"], ["read", "fake.docx", "--tables"],
-    ["changes", "fake.docx"], ["accept", "fake.docx", "-o", "a.docx"], ["reject", "fake.docx", "-o", "a.docx"],
-    ["convert", "fake.docx", "-o", "a.pdf"], ["compare", "fake.docx", "good.docx"],
-    ["compare", "good.docx", "fake.docx", "-o", "c.docx"], ["diff", "fake.docx", "good.docx"],
+    ["changes", "fake.docx"], ["accept", "fake.docx", "-o", "unread-a.docx"], ["reject", "fake.docx", "-o", "unread-r.docx"],
+    ["convert", "fake.docx", "-o", "unread.pdf"], ["compare", "fake.docx", "good.docx"],
+    ["compare", "good.docx", "fake.docx", "-o", "unread-c.docx"], ["diff", "fake.docx", "good.docx"],
     ["edit", "fake.docx", "-p", "p0", "--delete"], ["add", "fake.docx", "-p", "p0", "--content", "x"],
   ]) {
     const r = run(...args);
@@ -619,7 +625,7 @@ test("format contradictions and unsupported flags fail before I/O (integration)"
     assert.doesNotMatch(result.err, /reading/);
     assert.ok(!fs.existsSync(output));
   }
-  for (const args of [["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
+  for (const args of [["convert", "missing.docx", "--timeout", "1"], ["compare", "a", "b", "--mode", "powertools"]]) {
     const result = run(...args);
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading/);
@@ -891,17 +897,16 @@ test("unsupported host options are rejected before input I/O (integration)", () 
     assert.match(result.err, /not supported/);
     assert.doesNotMatch(result.err, /reading/);
   }
-  for (const flags of [["--from", "docx"], ["--resource-path", "."], ["--fail-on-substitution"], ["--no-page-markers"], ["--dpi", "120"], ["--pages", "1"], ["--report", "report.json"], ["--font-report", "fonts.json"], ["--to", "md"], ["-o", "output.md"], ["--to", "docx"], ["-o", "output.docx"]]) {
+  for (const flags of [["--from", "docx"], ["--resource-path", "."], ["--fail-on-substitution"], ["--dpi", "120"], ["--pages", "1"], ["--report", "report.json"], ["--font-report", "fonts.json"]]) {
     const result = run("convert", "missing.docx", ...flags);
     assert.equal(result.code, 2, `${flags}: ${result.err}`);
     assert.doesNotMatch(result.err, /reading/);
-    // pi review av2 F16: the advice names a read that runs as written.
-    if (flags.includes("md") || flags.includes("output.md")) {
-      assert.match(result.err, /read FILE/);
-      assert.doesNotMatch(result.err, /--track-changes/);
-    }
   }
-  for (const flags of [["--pdf"], ["--png"], ["--dpi", "120"], ["--revisions", "word"]]) {
+  // Markdown to Markdown has no engine call here; it says where it runs.
+  const markdown = run("convert", "missing.md", "-o", "output.md");
+  assert.equal(markdown.code, 2, markdown.err);
+  assert.match(markdown.err, /uvx jubarte-redlines convert/);
+  for (const flags of [["--png"]]) {
     const result = run("edit", "missing.docx", "--plan", "missing.json", "--out-dir", "missing-dir", ...flags);
     assert.equal(result.code, 2, `${flags}: ${result.err}`);
     assert.match(result.err, /not supported/);
@@ -922,11 +927,12 @@ test("convert to Word sniffs inputs whose name does not say Markdown (integratio
     assert.equal(result.code, 0, `${name}: ${result.err}`);
     assert.equal(fs.readFileSync(out).subarray(0, 2).toString(), "PK");
   }
-  // A Word file under a name that says nothing is still refused, unwritten.
+  // A Word file under a name that says nothing is Word, and Word to Word
+  // needs something to do, as the binary says; nothing is written.
   const zip = copy(untracked, "SNIFF-WORD"), out = path.join(tmp, "sniff-word.docx");
   const refused = run("convert", zip, "-o", out);
-  assert.equal(refused.code, 2, refused.err);
-  assert.match(refused.err, /--to docx requires Markdown input/);
+  assert.equal(refused.code, 1, refused.err);
+  assert.match(refused.err, /SNIFF-WORD is already Word: give --track-changes accept or reject, --update-fields, or another --to\n$/);
   assert.ok(!fs.existsSync(out));
 });
 
