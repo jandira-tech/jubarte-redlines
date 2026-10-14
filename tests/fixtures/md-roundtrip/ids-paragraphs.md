@@ -24,26 +24,26 @@ styles:
   TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, justify, named Text Heading 4
   table: TableGrid, all borders 0.5pt
 sections:
-  2: {p11-p147, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer1.p1, text: Smith Family Trust, center}}}
-  3: {p148-p207, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer2.p1, text: Smith Family Trust, center}}}
-  4: {p208-p216, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer3.p1, text: Smith Family Trust, center}}}
-  5: {p217-p325, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer4.p1, text: Smith Family Trust, center}}}
-  6: {p326-p359, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer5.p1, text: Smith Family Trust, center}}}
-  7: {p360-p418, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer6.p1, text: Smith Family Trust, center}}}
-  8: {p419-p434, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer7.p1, text: Smith Family Trust, center}}}
-  9: {p435-p458, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer8.p1, text: Smith Family Trust, center}}}
-  10: {p459-p478, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer9.p1, text: Smith Family Trust, center}}}
-  11: {p479-p481, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer10.p1, text: Smith Family Trust, center}}}
-  12: {p482-p483, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer11.p1, text: Smith Family Trust, center}}}
-  13: {p484-p572, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer12.p1, text: Smith Family Trust, center}}}
-  14: {p573-p623, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer13.p1, text: Smith Family Trust, center}}}
-  15: {p624-p733, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer14.p1, text: Smith Family Trust, center}}}
-  16: {p734-p919, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer15.p1, text: Smith Family Trust, center}}}
-  17: {p920-p1063, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer16.p1, text: Smith Family Trust, center}}}
-  18: {p1064-p1078, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer17.p1, text: Smith Family Trust, center}}}
-  19: {p1079-p1090, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer18.p1, text: Smith Family Trust, center}}}
-  20: {p1091-p1102, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer19.p1, text: Smith Family Trust, center}}}
-  21: {p1103-p1112, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer20.p1, text: Smith Family Trust, center}}}
+  2: {p11-p147, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer1.p1, text: [Smith Family Trust, "{PAGE}i{/}"], center}}}
+  3: {p148-p207, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer2.p1, text: [Smith Family Trust, "{PAGE}1-1{/}"], center}}}
+  4: {p208-p216, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer3.p1, text: [Smith Family Trust, "{PAGE}2-1{/}"], center}}}
+  5: {p217-p325, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer4.p1, text: [Smith Family Trust, "{PAGE}3-1{/}"], center}}}
+  6: {p326-p359, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer5.p1, text: [Smith Family Trust, "{PAGE}4-1{/}"], center}}}
+  7: {p360-p418, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer6.p1, text: [Smith Family Trust, "{PAGE}5-1{/}"], center}}}
+  8: {p419-p434, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer7.p1, text: [Smith Family Trust, "{PAGE}6-1{/}"], center}}}
+  9: {p435-p458, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer8.p1, text: [Smith Family Trust, "{PAGE}7-1{/}"], center}}}
+  10: {p459-p478, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer9.p1, text: [Smith Family Trust, "{PAGE}8-1{/}"], center}}}
+  11: {p479-p481, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer10.p1, text: [Smith Family Trust, "{PAGE}9-1{/}"], center}}}
+  12: {p482-p483, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer11.p1, text: [Smith Family Trust, "{PAGE}10-1{/}"], center}}}
+  13: {p484-p572, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer12.p1, text: [Smith Family Trust, "{PAGE}11-1{/}"], center}}}
+  14: {p573-p623, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer13.p1, text: [Smith Family Trust, "{PAGE}12-1{/}"], center}}}
+  15: {p624-p733, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer14.p1, text: [Smith Family Trust, "{PAGE}13-1{/}"], center}}}
+  16: {p734-p919, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer15.p1, text: [Smith Family Trust, "{PAGE}14-1{/}"], center}}}
+  17: {p920-p1063, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer16.p1, text: [Smith Family Trust, "{PAGE}15-1{/}"], center}}}
+  18: {p1064-p1078, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer17.p1, text: [Smith Family Trust, "C - {PAGE}1{/}"], center}}}
+  19: {p1079-p1090, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer18.p1, text: [Smith Family Trust, "G-1 - {PAGE}1{/}"], center}}}
+  20: {p1091-p1102, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer19.p1, text: [Smith Family Trust, "G-2 - {PAGE}1{/}"], center}}}
+  21: {p1103-p1112, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer20.p1, text: [Smith Family Trust, "{PAGE}15-1{/}"], center}}}
 ---
 
 <!-- p0 DocumentTitle -->
