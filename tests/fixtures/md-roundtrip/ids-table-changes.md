@@ -7,7 +7,7 @@ authors:
   document_owner: Un-named         # dc:creator
   AS: Arthur Souza Rodrigues       # 435 revisions, 4 comments, 2026-07-04..2026-09-26
   U: User                          # 2 comments, 2026-03-05T19:41:00Z
-body: p0-p218, 12 tables, 3 pages  # page count estimated from breaks
+body: p0-p218, 12 tables, 7 pages  # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in; fmt r440 @AS
 styles:
   Normal: Inter 11pt, left         # default; unannotated paragraphs use it

@@ -5,7 +5,7 @@ revisions: 0
 comments: 0
 authors:
   document_owner: Un-named         # dc:creator
-body: p0-p68, 1 table, 1 page      # page count estimated from breaks
+body: p0-p68, 1 table, 2 pages     # pages from layout
 page: A4 portrait, margins 1in, header/footer 0.49in
 styles:
   "1": Arial 12pt, left, named Normal  # default; unannotated paragraphs use it

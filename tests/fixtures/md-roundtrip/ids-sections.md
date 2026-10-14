@@ -6,7 +6,7 @@ comments: 0
 authors:
   document_owner: Christoffer Krogager  # dc:creator
   APS: Alcaldia Pasto SSI          # 2 revisions, 2026-09-22T12:47:00Z
-body: p0-p142, 1 table, 2 pages    # page count estimated from breaks
+body: p0-p142, 1 table, 2 pages    # pages from layout
 page: 8.26x11.69in portrait, margins top 1.18in, right 0.79in, bottom 1.18in, left 0.79in, header/footer 0.49in
 styles:
   Normal: Cambria 12pt, left       # default; unannotated paragraphs use it

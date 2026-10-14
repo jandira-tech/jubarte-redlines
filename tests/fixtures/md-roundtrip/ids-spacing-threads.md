@@ -6,7 +6,7 @@ comments: 0
 authors:
   document_owner: html-to-docx     # dc:creator
   ASR: Arthur Souza Rodrigues      # 67 revisions, 2026-05-02..2026-05-02
-body: p0-p131, 2 tables, 1 page    # page count estimated from breaks
+body: p0-p131, 2 tables, 5 pages   # pages from layout
 page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in
 styles:
   Normal: Times New Roman 11pt, after 6pt, line 12pt atLeast, left, named normal  # default; unannotated paragraphs use it
