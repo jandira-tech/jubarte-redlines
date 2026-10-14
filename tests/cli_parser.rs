@@ -1999,3 +1999,168 @@ fn edit_and_add_take_dash_a_for_the_author() {
         }
     }
 }
+
+#[test]
+fn writer_status_lines_preserve_paths_and_pluralize_page_counts() {
+    use jubarte::cli::{wrote_line, wrote_png_line};
+
+    for (format, name) in [
+        (Format::Docx, "docx"),
+        (Format::Md, "md"),
+        (Format::Json, "json"),
+    ] {
+        assert_eq!(
+            wrote_line(Path::new("out/ação final"), format, 0, None),
+            format!("wrote out/ação final ({name}, 0 bytes)")
+        );
+    }
+    for (pages, label) in [(0, "0 pages"), (1, "1 page"), (2, "2 pages")] {
+        assert_eq!(
+            wrote_line(Path::new("r.pdf"), Format::Pdf, 123, Some(pages)),
+            format!("wrote r.pdf (pdf, 123 bytes, {label})")
+        );
+        assert_eq!(
+            wrote_png_line(Path::new("out/r-page-NN.png"), pages, 72.5),
+            format!("wrote out/r-page-NN.png (png, {label}, 72.5 dpi)")
+        );
+    }
+}
+
+#[test]
+fn all_writer_render_flags_require_a_rendered_output_even_at_the_default() {
+    let flags: &[&[&str]] = &[
+        &["--revisions", "conventional"],
+        &[
+            "--revisions",
+            "custom",
+            "--revision-palette",
+            "inserted=#112233",
+        ],
+        &["--dpi", "96"],
+        &["--move-comments"],
+        &["--changed-pages"],
+        &["--pages", "1"],
+    ];
+    for task in ["accept", "reject", "append", "scrub"] {
+        for output in ["r.docx", "r.md", "r.json", "r.unknown", "r"] {
+            let mut base = vec![task, "a.docx"];
+            if task == "append" {
+                base.push("b.docx");
+            }
+            base.extend(["-o", output]);
+            let defaults = parse(&base, &[]);
+            assert_eq!(defaults["exit_code"], 0, "{base:?}: {defaults}");
+            for flag in flags {
+                let args = [base.as_slice(), flag].concat();
+                let result = parse(&args, &[]);
+                assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+                assert_eq!(result["stream"], "stderr");
+                assert!(
+                    result["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains(&format!("{} applies to PDF or PNG output only", flag[0])),
+                    "{args:?}: {result}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn writer_render_options_survive_shared_parser_serialization() {
+    for task in ["accept", "reject", "append", "scrub"] {
+        for output in ["result.PDF", "result.PNG"] {
+            let mut args = vec![task, "a.docx"];
+            if task == "append" {
+                args.push("b.docx");
+            }
+            args.extend([
+                "-o",
+                output,
+                "--revisions",
+                "custom",
+                "--revision-palette",
+                "inserted=#112233:underline",
+                "--dpi",
+                "72.5",
+                "--move-comments",
+                "--changed-pages",
+                "--pages",
+                "1-3,7",
+                "--force",
+                "-q",
+            ]);
+            let result = parse(&args, &[task]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            let values = &result["args"];
+            assert_eq!(values["output"], output);
+            assert_eq!(
+                values["output_format"],
+                if output.ends_with("PDF") {
+                    "pdf"
+                } else {
+                    "png"
+                }
+            );
+            assert_eq!(values["revisions"], "custom");
+            assert_eq!(values["revision_palette"], "inserted=#112233:underline");
+            assert_eq!(values["dpi"], 72.5);
+            assert_eq!(values["move_comments"], true);
+            assert_eq!(values["changed_pages"], true);
+            assert_eq!(values["pages"], "1-3,7");
+            assert_eq!(values["force"], true);
+            assert_eq!(values["quiet"], true);
+        }
+    }
+}
+
+#[test]
+fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
+    for prefix in [&["read", "a.docx"][..], &["text", "a.docx"], &["a.docx"]] {
+        for (output, flags, message) in [
+            (
+                "v.json",
+                vec!["--track-changes", "all"],
+                "--track-changes shapes the view",
+            ),
+            (
+                "v.json",
+                vec!["--comments", "inline"],
+                "--comments shapes the view",
+            ),
+            ("v.json", vec!["--dates"], "--dates shapes the view"),
+            (
+                "v.json",
+                vec!["--no-page-markers"],
+                "--no-page-markers shapes the view",
+            ),
+            ("v.json", vec!["--tables"], "--tables prints the grids"),
+            ("v.md", vec!["--tables"], "--tables prints the grids"),
+            ("v.unknown", vec!["--json"], "--json writes the snapshot"),
+            ("v.png", vec![], "read writes .md or .json"),
+        ] {
+            let args = [prefix, &["-o", output], &flags].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+            assert_eq!(result["stream"], "stderr");
+            assert!(
+                result["text"].as_str().unwrap().contains(message),
+                "{args:?}: {result}"
+            );
+        }
+        // Implicit view defaults must not reject JSON; explicit --json is redundant but valid.
+        let args = [
+            prefix,
+            &["-o", "v.JSON", "--json", "--head", "1", "--force", "-q"],
+        ]
+        .concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(result["command"], "read");
+        assert_eq!(result["args"]["output_format"], "json");
+        assert_eq!(result["args"]["head"], 1);
+        assert_eq!(result["args"]["force"], true);
+        assert_eq!(result["args"]["quiet"], true);
+    }
+}
