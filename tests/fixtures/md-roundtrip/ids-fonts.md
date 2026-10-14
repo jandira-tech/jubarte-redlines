@@ -33,7 +33,7 @@ Normal text, **bold text**, _italic text_, **_bold and italic_**.
 <u>Single underline</u>, <u>double underline</u>, <u>wavy underline</u>.
 
 <!-- p6 -->
-Strikethrough text, highlighted text, SMALL CAPS TEXT.
+~~Strikethrough text~~, ==highlighted text==, SMALL CAPS TEXT.
 
 <!-- p7 -->
 Mathematical notation: x<sup>2</sup> + y = H<sub>2</sub>O
@@ -93,7 +93,7 @@ Courier New font (monospace)
 **Purple text** | **Teal text** | **Brown text** | **Gray text**
 
 <!-- p26 -->
-Yellow highlight | Green highlight | Cyan highlight
+==Yellow highlight== | ==Green highlight== | ==Cyan highlight==
 
 <!-- p27 2 -->
 # 4. Styles from styles.xml
