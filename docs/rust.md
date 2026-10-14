@@ -477,12 +477,6 @@ Options:
       --force
           Overwrite the output file if it already exists
 
-      --pdf
-          Write the PDF (the default when neither --pdf nor --png is given)
-
-      --png
-          Rasterize every page to PNG (`<stem>-page-NN.png`)
-
       --report <FILE>
           Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`)
 
@@ -494,16 +488,6 @@ Options:
       --font-report <FILE>
           Write a JSON font-resolution report (`[{requested, step, physical, bold,
           italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
-
-      --move-comments
-          List the comments after the last page instead of in balloons beside the text.
-          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
-          their own width
-
-      --changed-only
-          Keep only the pages a tracked change touches. The whole document is laid out
-          first, so page numbers stay the document's; a document without changes keeps
-          its first page. --pages counts the kept pages
 
       --track-changes <CHOICE>
           Keep tracked changes (all), or write the document with every change accepted
@@ -538,10 +522,6 @@ Options:
 
           [default: 1970-01-01T00:00:00Z]
 
-  -q, --quiet
-          Print nothing on success (files are still written; warnings and errors still
-          print)
-
       --page <SIZE>
           Markdown to Word: the page size when there is no --reference-doc (one-inch
           margins either way); a reference's page setup wins
@@ -556,53 +536,12 @@ Options:
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
           pass that places them
 
-      --pages <SPEC>
-          Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs
-          over the whole document. Needs PNG output
-
-      --fail-on-substitution
-          Exit 4 when a requested font was substituted (listed on stderr and in
-          --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
-          requested font was substituted
-
-      --update-fields
-          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
-          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
-          --track-changes. Field codes stay, so Word can update them again; page numbers
-          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
-          per field; --report writes `{page_count, fields}`
-
-      --timeout <SECONDS>
-          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
-          written. An output being written at that moment may be left partial
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
-
-Rendering:
-      --dpi <DPI>
-          PNG resolution in dots per inch (1-1200)
-
-          [default: 96]
-
-Revision marks:
-      --revisions <REVISIONS>
-          How tracked changes are painted: `conventional` (deletions red struck through,
-          insertions blue underlined, moves green: double-struck where they left,
-          double-underlined where they landed), `word` (what Microsoft Word's Save as
-          PDF paints), or `custom` (see --revision-palette)
-
-          Possible values:
-          - conventional: Red strike, blue underline, green double marks for moves
-          - word:         Microsoft Word's own markup
-          - custom:       --revision-palette
-
-          [default: conventional]
-
-      --revision-palette <SPEC>
-          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
-          inserted, moved-from, moved-to and lines strike, double-strike, underline,
-          double-underline, plain. Kinds left out keep their conventional mark
 
 Formats:
   -f, --from <FORMAT>
@@ -621,6 +560,61 @@ Formats:
             CriticMarkup
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
+
+Rendering (-o FILE.pdf or FILE.png):
+      --revisions <REVISIONS>
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
+
+          Possible values:
+          - conventional: Red strike, blue underline, green double marks for moves
+          - word:         Microsoft Word's own markup
+          - custom:       --revision-palette
+
+          [default: conventional]
+
+      --revision-palette <SPEC>
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
+
+      --fail-on-substitution
+          Exit 4 when a requested font was substituted (listed on stderr and in
+          --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
+          requested font was substituted
+
+      --update-fields
+          Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from
+          jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after
+          --track-changes. Field codes stay, so Word can update them again; page numbers
+          are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line
+          per field; --report writes `{page_count, fields}`
+
+      --timeout <SECONDS>
+          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
+          written. An output being written at that moment may be left partial
 
 Examples:
   jubarte convert contract.docx                   PDF, Word-style layout
@@ -653,16 +647,6 @@ Arguments:
           The new document: .docx or Markdown
 
 Options:
-      --move-comments
-          List the comments after the last page instead of in balloons beside the text.
-          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
-          their own width
-
-      --changed-only
-          Keep only the pages a tracked change touches. The whole document is laid out
-          first, so page numbers stay the document's; a document without changes keeps
-          its first page. --pages counts the kept pages
-
   -q, --quiet
           Print nothing on success (files are still written; warnings and errors still
           print)
@@ -763,9 +747,12 @@ Word redline:
           Where images named by the Markdown are found [default: each Markdown file's
           directory]
 
-Revision marks:
+Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
-          How tracked changes are painted in PDF or PNG output (see `convert --help`)
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
 
           Possible values:
           - conventional: Red strike, blue underline, green double marks for moves
@@ -775,7 +762,29 @@ Revision marks:
           [default: conventional]
 
       --revision-palette <SPEC>
-          Marks for --revisions custom (see `convert --help`)
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
+
+      --dpi <DPI>
+          PNG resolution in dots per inch (1-1200)
+
+          [default: 96]
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-pages
+          Keep only the pages a change touches: a body or note revision, a comment
+          anchor, or the first page on which a revised header or footer paints (the
+          first page when none does). Page numbers stay the document's
+
+      --pages <SPEC>
+          Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still
+          covers the whole document; the PDF carries these pages and PNGs are named by
+          them (`STEM-page-03.png`)
 
 Examples:
   jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout

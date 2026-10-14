@@ -41,6 +41,8 @@ def test_render_pages_rasterizes_and_reports_only_the_selection() -> None:
     assert len(out.pngs) == 1
     assert out.report.page_count == 1
     assert [(p.index, p.number, p.text.strip()) for p in out.report.pages] == [(0, 2, "B")]
+    # The engine's report JSON carries the document's own page count.
+    assert out.report.document_pages == 3
     assert out.pdf is not None and b"/Count 1" in out.pdf
 
 
@@ -117,7 +119,7 @@ def test_cli_convert_pages_names_files_by_page_number(tmp_path: Path, capsys: py
         (["--png", "--pages", "1,,2"], "empty item"),
         (["--png", "--pages", "x"], "not a page number"),
         (["--png", "--pages", "\u00b2"], "not a page number"),
-        (["--pages", "1"], "add --png"),
+        (["-o", "out.md", "--pages", "1"], "--pages applies to PDF or PNG output only"),
         (["--png", "--pages", "9"], "page 9 is out of range"),
     ],
 )

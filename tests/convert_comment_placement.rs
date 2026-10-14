@@ -248,7 +248,7 @@ fn changed_only_without_changes_keeps_the_commented_pages() {
 }
 
 #[test]
-fn cli_convert_takes_move_comments_and_changed_only() {
+fn cli_convert_takes_move_comments_and_changed_pages() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     let input = dir.join("four.docx");
@@ -259,7 +259,7 @@ fn cli_convert_takes_move_comments_and_changed_only() {
             "convert",
             "--force",
             "--move-comments",
-            "--changed-only",
+            "--changed-pages",
             "-o",
         ])
         .arg(&output)
@@ -385,7 +385,7 @@ fn the_page_flags_are_refused_where_nothing_is_laid_out() {
     let new_bytes = four_pages(true);
     std::fs::write(&old, &old_bytes).unwrap();
     std::fs::write(&new, &new_bytes).unwrap();
-    for flag in ["--move-comments", "--changed-only"] {
+    for flag in ["--move-comments", "--changed-pages"] {
         for command in ["convert", "diff"] {
             for format in ["docx", "md"] {
                 for explicit_format in [false, true] {
@@ -868,7 +868,7 @@ fn changed_only_keeps_revised_table_cells() {
     assert!(!pages[0].contains("Untouched"), "{pages:?}");
 }
 
-/// The pages `--changed-only` keeps of `docx`.
+/// The pages `--changed-pages` keeps of `docx`.
 fn changed_only_pages(docx: &[u8]) -> Vec<String> {
     texts(&rendered(
         docx,
@@ -962,6 +962,7 @@ fn comment_anchors_keep_their_pages_and_list_their_comments() {
     // not after the last page kept: page 4 means one page only.
     let numbers: Vec<usize> = kept.report.pages.iter().map(|p| p.number).collect();
     assert_eq!(numbers, [2, 3, 5]);
+    assert_eq!(kept.report.document_pages, 5, "four pages and the listing");
     assert!(!pages.concat().contains("Alpha page text"), "{pages:?}");
     assert!(pages[2].contains("First note here") && pages[2].contains("Second note here"));
 }
@@ -1195,7 +1196,7 @@ fn cli_convert_png_selects_the_comment_listing_after_changed_pages() {
             "-t",
             "png",
             "--move-comments",
-            "--changed-only",
+            "--changed-pages",
             "--pages",
             "5",
             "--dpi",
@@ -1236,6 +1237,67 @@ fn cli_convert_png_selects_the_comment_listing_after_changed_pages() {
 }
 
 #[test]
+fn cli_changed_pages_name_each_png_by_its_document_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.docx");
+    let output = dir.path().join("kept.png");
+    let source = four_pages(true);
+    std::fs::write(&input, &source).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["convert", "--changed-pages", "--dpi", "12", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let expected = render(
+        &source,
+        PdfOptions {
+            changed_only: true,
+            ..PdfOptions::default()
+        },
+        RenderRequest {
+            pdf: false,
+            png_dpi: Some(12.0),
+            pages: None,
+        },
+    )
+    .unwrap();
+    let numbers: Vec<usize> = expected.report.pages.iter().map(|p| p.number).collect();
+    assert_ne!(
+        numbers,
+        (1..=numbers.len()).collect::<Vec<_>>(),
+        "a page dropped"
+    );
+    let mut names: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".png"))
+        .collect();
+    names.sort();
+    let wanted: Vec<String> = numbers
+        .iter()
+        .map(|n| format!("kept-page-{n:02}.png"))
+        .collect();
+    assert_eq!(names, wanted);
+    for (name, png) in wanted.iter().zip(&expected.pngs) {
+        assert_eq!(
+            &std::fs::read(dir.path().join(name)).unwrap(),
+            png,
+            "{name}"
+        );
+    }
+    assert!(
+        !dir.path().join("kept.pdf").exists(),
+        "-o X.png writes no PDF"
+    );
+}
+
+#[test]
 fn cli_diff_passes_page_options_to_pdf_rendering() {
     let dir = tempfile::tempdir().unwrap();
     let old = dir.path().join("old.docx");
@@ -1262,7 +1324,7 @@ fn cli_diff_passes_page_options_to_pdf_rendering() {
         String::from_utf8_lossy(&baseline.stderr)
     );
     let result = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .args(["diff", "--move-comments", "--changed-only", "-o"])
+        .args(["diff", "--move-comments", "--changed-pages", "-o"])
         .arg(&pdf)
         .arg(&old)
         .arg(&new)

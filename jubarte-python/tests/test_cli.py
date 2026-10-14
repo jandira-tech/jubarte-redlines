@@ -198,12 +198,18 @@ def test_refusal_summary_message_is_the_engine_detail(letter: Path, tmp_path: Pa
     assert summary["message"] and "ANCHOR_NOT_FOUND" not in summary["message"], summary
 
 
-def test_convert_checks_every_png_path_before_writing_the_pdf(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_convert_checks_every_png_path_before_writing_one(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "letter-page-01.png").write_bytes(b"keep")
-    assert main(["convert", str(letter), "--pdf", "--png", "--dpi", "24"]) == 1
+    report = tmp_path / "pages.json"
+    assert main(["convert", str(letter), "-o", str(tmp_path / "letter.png"), "--dpi", "24", "--report", str(report)]) == 1
     assert "letter-page-01.png" in capsys.readouterr().err
-    assert not (tmp_path / "letter.pdf").exists(), "a refused PNG leaves no partial bundle"
+    assert not report.exists(), "a refused PNG leaves no partial bundle"
     assert (tmp_path / "letter-page-01.png").read_bytes() == b"keep"
+    # One output names one format: the retired --pdf and --png together name two.
+    with pytest.raises(SystemExit) as exit:
+        main(["convert", str(letter), "--pdf", "--png"])
+    assert exit.value.code == 2
+    assert "--pdf and --png name two formats" in capsys.readouterr().err
 
 
 def test_convert_pdf_png_and_report(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -270,16 +276,17 @@ def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[s
 
 @pytest.mark.parametrize("flag", ["--report", "--font-report"])
 @pytest.mark.parametrize("target", ["input", "output"])
-def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path, capsys, flag, target):
-    output = tmp_path / "result.pdf"
+@pytest.mark.parametrize("ext", ["pdf", "png"])
+def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path, capsys, flag, target, ext):
+    output = tmp_path / f"result.{ext}"
     original = letter.read_bytes()
     side = letter if target == "input" else output
     assert main(["convert", str(letter), "-o", str(output), flag, str(side), "--force"]) == 1
     # Native's wording: the one file the side file would replace.
-    name = "input" if target == "input" else "PDF output"
+    name = "input" if target == "input" else f"{ext.upper()} output"
     assert f"error: {flag} '{side}' is the same file as the {name}" in capsys.readouterr().err.splitlines()
     assert letter.read_bytes() == original
-    assert not output.exists()
+    assert list(tmp_path.glob("result*")) == []
 
 
 @pytest.mark.parametrize("flag", ["--report", "--font-report"])

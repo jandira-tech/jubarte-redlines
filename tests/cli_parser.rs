@@ -32,7 +32,6 @@ fn convert_update_fields_requires_a_word_output_format() {
         vec!["--to", "pdf"],
         vec!["--to", "png"],
         vec!["--to", "md"],
-        vec!["--to", "pdf", "-o", "out.docx"],
     ] {
         let args = [vec!["convert", "missing.docx", "--update-fields"], output].concat();
         let result = parse(&args, &["convert"]);
@@ -46,6 +45,27 @@ fn convert_update_fields_requires_a_word_output_format() {
             "{result}"
         );
     }
+    // The -o rule fires first.
+    let result = parse(
+        &[
+            "convert",
+            "missing.docx",
+            "--update-fields",
+            "--to",
+            "pdf",
+            "-o",
+            "out.docx",
+        ],
+        &["convert"],
+    );
+    assert_eq!(result["exit_code"], 2, "{result}");
+    assert!(
+        result["text"]
+            .as_str()
+            .unwrap()
+            .contains("-o out.docx says docx and --to says pdf: drop one"),
+        "{result}"
+    );
 }
 
 #[test]
@@ -105,13 +125,12 @@ fn convert_update_fields_serializes_reports_resolution_and_format_overrides() {
 #[test]
 fn convert_update_fields_does_not_enable_render_only_options() {
     for flags in [
-        vec!["--pdf"],
-        vec!["--png"],
         vec!["--dpi", "96"],
         vec!["--font-report", "fonts.json"],
         vec!["--fail-on-substitution"],
         vec!["--move-comments"],
-        vec!["--changed-only"],
+        vec!["--changed-pages"],
+        vec!["--pages", "1"],
         vec!["--compress"],
         vec!["--revisions", "word"],
     ] {
@@ -137,6 +156,17 @@ fn convert_update_fields_does_not_enable_render_only_options() {
                 .as_str()
                 .unwrap()
                 .contains(&format!("{} applies to PDF or PNG output only", flags[0])),
+            "{result}"
+        );
+    }
+    // The retired --pdf and --png name a format the -o rule weighs.
+    for (alias, said) in [("--pdf", "pdf"), ("--png", "png")] {
+        let result = parse(&["convert", "missing.docx", "-o", "out.docx", alias], &[]);
+        assert_eq!(result["exit_code"], 2, "{result}");
+        assert!(
+            result["text"].as_str().unwrap().contains(&format!(
+                "-o out.docx says docx and --to says {said}: drop one"
+            )),
             "{result}"
         );
     }
@@ -417,13 +447,18 @@ fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
         ],
         vec!["--revisions", "custom", "--revision-palette", "deleted=red"],
         vec!["--to", "md", "--png"],
-        vec!["--pages", "1"],
+        vec!["-o", "out.md", "--pages", "1"],
+        vec!["--pdf", "--png"],
     ] {
         assert_eq!(
             parse(&[vec!["convert", "a"], flags].concat(), &[])["exit_code"],
             2
         );
     }
+    // --pages narrows a PDF too.
+    let pdf = parse(&["convert", "a", "--pages", "1"], &[]);
+    assert_eq!(pdf["exit_code"], 0, "{pdf}");
+    assert_eq!(pdf["args"]["pages"], "1");
 }
 
 #[test]
@@ -602,24 +637,54 @@ fn page_errors_explain_the_invalid_item() {
 
 #[test]
 fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
-    for args in [
-        vec!["convert", "a.docx", "--move-comments", "--changed-only"],
-        vec![
-            "diff",
-            "a.docx",
-            "b.docx",
-            "-o",
-            "out.pdf",
-            "--move-comments",
-            "--changed-only",
-        ],
+    let note = "note: --changed-only is now --changed-pages; --changed-only is removed in 0.14";
+    for (args, notes) in [
+        (
+            vec!["convert", "a.docx", "--move-comments", "--changed-only"],
+            vec![note],
+        ),
+        (
+            vec!["convert", "a.docx", "--move-comments", "--changed-pages"],
+            vec![],
+        ),
+        (
+            vec![
+                "diff",
+                "a.docx",
+                "b.docx",
+                "-o",
+                "out.pdf",
+                "--move-comments",
+                "--changed-only",
+            ],
+            vec![note],
+        ),
     ] {
         let result = parse(&args, &[]);
         assert_eq!(result["exit_code"], 0, "{result}");
         assert_eq!(result["args"]["move_comments"], true, "{result}");
-        assert_eq!(result["args"]["changed_only"], true, "{result}");
+        assert_eq!(result["args"]["changed_pages"], true, "{result}");
+        assert_eq!(result["notes"], serde_json::json!(notes), "{result}");
     }
-    for flag in ["--move-comments", "--changed-only"] {
+    // The retired --pdf and --png name the format.
+    for (alias, format) in [("--pdf", "pdf"), ("--png", "png")] {
+        let result = parse(&["convert", "a.docx", alias], &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["args"]["output_format"], format, "{result}");
+        assert_eq!(
+            result["notes"][0],
+            format!("note: {alias} is now --to {format}; {alias} is removed in 0.14")
+        );
+    }
+    let named = parse(&["convert", "a.docx", "-o", "out.png"], &[]);
+    assert_eq!(named["args"]["output_format"], "png", "{named}");
+    assert_eq!(named["notes"], serde_json::json!([]));
+    let by_input = parse(&["convert", "a.docx"], &[]);
+    assert_eq!(by_input["args"]["output_format"], Value::Null, "{by_input}");
+    // --pdf belongs to edit, where it is not retired.
+    let edit = parse(&["edit", "a.docx", "--plan", "p.json", "--pdf"], &[]);
+    assert_eq!(edit["notes"], serde_json::json!([]), "{edit}");
+    for flag in ["--move-comments", "--changed-pages", "--changed-only"] {
         for args in [
             vec!["convert", "a.docx", "-t", "md", flag],
             vec!["diff", "a.docx", "b.docx", "--format", "github", flag],

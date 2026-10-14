@@ -278,8 +278,8 @@ type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
 
 /// One layout pass → `(pdf_bytes | None, [png_bytes, ...], report_json)`.
 ///
-/// `report_json` is `{"page_count", "pages": [{"index", "number", "text"}],
-/// "fonts": [...]}`. `pages` (zero-based document pages) writes only those
+/// `report_json` is `{"page_count", "document_pages", "pages": [{"index",
+/// "number", "text"}], "fonts": [...]}`. `pages` (zero-based document pages) writes only those
 /// pages, ascending and without repeats: the PDF, the PNGs and the report.
 /// They count the document's pages whatever `changed_only` keeps; a dropped
 /// page or one past the last raises. `move_comments` and `changed_only` as

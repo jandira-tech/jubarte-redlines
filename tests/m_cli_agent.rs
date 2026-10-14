@@ -240,8 +240,9 @@ fn convert_can_write_png_pages_and_a_page_report() {
         serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
     assert_eq!(v["page_count"], 1);
     assert!(v["pages"][0]["text"].as_str().unwrap().contains("Heading"));
-    // PDF and PNG together, from one layout.
-    let (code, _, _) = run(&[
+    // One output names one format: the retired --pdf and --png together
+    // name two.
+    let (code, _, stderr) = run(&[
         "convert",
         file.to_str().unwrap(),
         "--pdf",
@@ -250,29 +251,33 @@ fn convert_can_write_png_pages_and_a_page_report() {
         "24",
         "--force",
     ]);
-    assert_eq!(code, 0);
-    assert!(dir.path().join("letter.pdf").is_file());
+    assert_eq!(code, 2);
+    assert!(
+        stderr.contains("--pdf and --png name two formats"),
+        "{stderr}"
+    );
+    assert!(!dir.path().join("letter.pdf").exists());
 }
 
 #[test]
-fn convert_checks_every_png_path_before_writing_the_pdf() {
+fn convert_checks_every_png_path_before_writing_one() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_fixture(dir.path());
     std::fs::write(dir.path().join("letter-page-01.png"), b"keep").unwrap();
+    let report = dir.path().join("pages.json");
     let (code, _, stderr) = run(&[
         "convert",
         file.to_str().unwrap(),
-        "--pdf",
-        "--png",
+        "-o",
+        dir.path().join("letter.png").to_str().unwrap(),
         "--dpi",
         "24",
+        "--report",
+        report.to_str().unwrap(),
     ]);
     assert_eq!(code, 1);
     assert!(stderr.contains("letter-page-01.png"), "{stderr}");
-    assert!(
-        !dir.path().join("letter.pdf").exists(),
-        "a refused PNG leaves no partial bundle"
-    );
+    assert!(!report.exists(), "a refused PNG leaves no partial bundle");
     assert_eq!(
         std::fs::read(dir.path().join("letter-page-01.png")).unwrap(),
         b"keep"

@@ -147,7 +147,7 @@ def _pdf_options(args: argparse.Namespace) -> PdfOptions:
         revisions=revisions,
         revision_palette=palette,
         move_comments=getattr(args, "move_comments", False),
-        changed_only=getattr(args, "changed_only", False),
+        changed_only=getattr(args, "changed_pages", False),
     )
 
 
@@ -513,9 +513,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
             raise CliError("--update-fields needs a Word document in")
         doc = _from_markdown(args, source)
         # Markdown goes to Word unless a PDF or PNG is asked for.
-        wants_render = args.pdf or args.png or (args.to != "docx" and args.output is not None and args.output.suffix.lower() != ".docx")
-        if not wants_render:
-            for given, flag in ((args.move_comments, "--move-comments"), (args.changed_only, "--changed-only")):
+        if args.output_format not in ("pdf", "png"):
+            for given, flag in ((args.move_comments, "--move-comments"), (args.changed_pages, "--changed-pages"), (args.pages is not None, "--pages")):
                 if given:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
@@ -523,8 +522,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
             print(f"wrote {docx_out} ({_write(docx_out, doc.to_bytes())} bytes)")
             return EXIT_OK
     else:
-        converts_to_docx = args.to == "docx" or (args.to is None and args.output is not None and args.output.suffix.lower() == ".docx")
-        if converts_to_docx and not args.update_fields:
+        if args.output_format == "docx" and not args.update_fields:
             # A name that said nothing; its bytes are Word.
             print(f"error: {_DOCX_NEEDS_MARKDOWN}", file=sys.stderr)
             raise SystemExit(EXIT_USAGE)
@@ -536,36 +534,35 @@ def cmd_convert(args: argparse.Namespace) -> int:
         if args.update_fields:
             return _write_updated_fields(args, doc)
     output: Path = args.output or args.file.with_suffix(".pdf")
-    want_pdf = args.pdf or not args.png
+    png = args.output_format == "png"
+    want_pdf = not png
     for side, flag in ((args.font_report, "--font-report"), (args.report, "--report")):
         if side is not None:
-            _check_side_file(side, flag, ((output, "PDF output"), (args.file, "input")), args.force)
+            named = "PNG output" if png else "PDF output"
+            _check_side_file(side, flag, ((output, named), (args.file, "input")), args.force)
     selected = None if args.pages is None else _parse_pages(args.pages)
-    if selected is not None and not args.png:
-        raise CliError("--pages selects PNG pages; add --png")
     if want_pdf:
         _ensure_writable(output, args.force)
-    rendered = doc.render(pdf=want_pdf, png_dpi=args.dpi if args.png else None, options=_pdf_options(args), pages=selected)
+    rendered = doc.render(pdf=want_pdf, png_dpi=args.dpi if png else None, options=_pdf_options(args), pages=selected)
     pages = rendered.report.page_count
-    # The page count is known only now; check every PNG path before the first
-    # write so a refused page leaves no partial bundle.
-    indices = range(len(rendered.pngs)) if selected is None else [p - 1 for p in selected]
-    # Padded to the highest document page written, as the native CLI does.
-    widest = max([p.number for p in rendered.report.pages] + [pages])
-    png_paths = [output.parent / _png_name(output.stem, i, widest) for i in indices]
+    # Each PNG is named by its document page, padded to the document's page
+    # count. The pages are known only now; check every PNG path before the
+    # first write so a refused page leaves no partial bundle.
+    numbered = rendered.report.pages[: len(rendered.pngs)]
+    png_paths = [output.parent / _png_name(output.stem, p.number - 1, rendered.report.document_pages) for p in numbered]
     for path in png_paths:
         _ensure_writable(path, args.force)
     if rendered.pdf is not None:
         _write(output, rendered.pdf)
         print(f"wrote {output} ({len(rendered.pdf)} bytes, {pages} page{'' if pages == 1 else 's'})")
-    if args.png:
-        for path, png in zip(png_paths, rendered.pngs):
-            _write(path, png)
+    if png:
+        for path, image in zip(png_paths, rendered.pngs):
+            _write(path, image)
         print(f"wrote {len(rendered.pngs)} PNG page{'' if len(rendered.pngs) == 1 else 's'} ({output.parent / output.stem}-page-NN.png, {args.dpi} dpi)")
     if args.font_report is not None:
         _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
     if args.report is not None:
-        report = {"page_count": pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
+        report = {"page_count": pages, "document_pages": rendered.report.document_pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
         _write(args.report, json.dumps(report, ensure_ascii=False))
     return EXIT_OK
 
