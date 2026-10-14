@@ -43,13 +43,21 @@ pub fn markdown_to_docx(
     if let Some(author) = defaults.author.filter(|_| !options.author_fixed) {
         own.author = author;
     }
-    if let Some(date) = defaults.date.filter(|_| !options.date_fixed) {
+    if let Some(date) = defaults.date.clone().filter(|_| !options.date_fixed) {
         own.date = date;
     }
     let options = &own;
+    // A date the caller gave must be one Word takes as `w:date`.
+    if !is_date(&options.date) {
+        return Err(MarkdownError::Package(format!(
+            "date {:?} is no timestamp such as 2026-10-01T09:00:00Z",
+            options.date
+        )));
+    }
     let document = read(markdown, options);
     let mut warnings = document.warnings.clone();
-    if let Some((key, value)) = defaults.unread {
+    // Only when no other date key gave the date.
+    if let Some((key, value)) = defaults.unread.filter(|_| defaults.date.is_none()) {
         warnings.push(format!(
             "{key}: {value} is no timestamp (YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD): \
              undated comments and changes keep the default date"
@@ -203,10 +211,16 @@ fn label_definitions(source: &str) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     for event in Parser::new_ext(source, parser_options()) {
         if let Event::Start(Tag::FootnoteDefinition(label)) = event {
-            *counts.entry(critic::decode(&label)).or_insert(0) += 1;
+            *counts.entry(note_label(&label)).or_insert(0) += 1;
         }
     }
     counts
+}
+
+/// A footnote label as the parser matches it: decoded, and the same
+/// whatever its case (`[^Note]` names `[^note]:`).
+fn note_label(label: &str) -> String {
+    critic::decode(label).to_lowercase()
 }
 
 /// The key of the `nth` note labelled `label` (from 0): the label itself
@@ -1078,7 +1092,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .unwrap_or_default();
                 self.note_paragraph_breaks = counted > 1 && breaks + 1 == counted;
                 self.note_count += 1;
-                let label = critic::decode(&label);
+                let label = note_label(&label);
                 if counted > 1 && !self.note_paragraph_breaks {
                     self.document.warnings.push(format!(
                         "[^{label}]: its id line counts {counted} paragraphs and its text \
@@ -2315,13 +2329,24 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn note_reference(&mut self, label: &str) {
-        let label = critic::decode(label);
         if let Some(comment) = &mut self.comment {
             if let Some(last) = comment.paragraphs.last_mut() {
-                last.push_str(&format!("[^{label}]"));
+                last.push_str(&format!("[^{}]", critic::decode(label)));
             }
             return;
         }
+        // Word holds no note inside a note: the reference stays text, and
+        // takes none of the label's definitions.
+        if let Some(target) = &self.target {
+            let outer = target.split('\u{0}').next().unwrap_or_default();
+            let text = format!("[^{}]", critic::decode(label));
+            self.document.warnings.push(format!(
+                "[^{outer}]: {text} in its text is written as text: a note holds no note"
+            ));
+            self.push(Content::Text(text));
+            return;
+        }
+        let label = note_label(label);
         // A label referenced again names the same note, unless the label
         // has a definition for each reference so far.
         let uses = {
@@ -2857,12 +2882,16 @@ impl<'o, 'a> Writer<'o, 'a> {
         let headings = heading_bookmarks(&body, &to_headings);
         // A link whose heading is missing still goes in; Word's jump goes
         // nowhere, so say so, once per name.
-        let landed: HashSet<&str> = headings
+        let landed: HashSet<String> = headings
             .iter()
-            .map(|(_, slug)| slug.as_str())
-            .chain(anchors.iter().copied())
+            .flat_map(|(_, _, named)| named.iter().cloned())
+            .chain(anchors.iter().map(|name| (*name).to_string()))
             .collect();
-        let mut missing: Vec<&str> = targets.difference(&landed).copied().collect();
+        let mut missing: Vec<&str> = targets
+            .iter()
+            .copied()
+            .filter(|name| !landed.contains(*name))
+            .collect();
         missing.sort_unstable();
         for name in missing {
             self.document.warnings.push(format!(
@@ -2873,15 +2902,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         let mut renamed: HashMap<String, String> = HashMap::new();
         let mut used: HashSet<String> = headings
             .iter()
-            .filter(|(_, slug)| word_takes(slug))
-            .map(|(_, slug)| slug.clone())
+            .filter(|(_, slug, _)| word_takes(slug))
+            .map(|(_, slug, _)| slug.clone())
             .chain(anchors.iter().map(|name| (*name).to_string()))
             .collect();
-        for (at, slug) in headings {
+        for (at, slug, named) in headings {
             let name = bookmark_name(&slug, &used);
             if name != slug {
                 used.insert(name.clone());
-                renamed.insert(slug, name.clone());
+            }
+            // Every name a link gave the heading now names its bookmark.
+            for target in named.into_iter().chain([slug]) {
+                if target != name {
+                    // The first heading a name fits keeps it.
+                    renamed.entry(target).or_insert_with(|| name.clone());
+                }
             }
             if let Item::Paragraph(paragraph) = &mut body[at] {
                 paragraph.bookmark = Some(name);
@@ -3052,6 +3087,23 @@ impl<'o, 'a> Writer<'o, 'a> {
             }) else {
                 continue;
             };
+            // A tag dated outside the days widens them when read again.
+            let last_day = &last[..first.len()];
+            let outside = self
+                .document
+                .attributions
+                .values()
+                .chain(self.document.comments.iter().filter_map(|c| c.by.as_ref()))
+                .filter(|(author, _)| *author == name)
+                .filter_map(|(_, date)| date.get(..first.len()))
+                .find(|day| *day < first.as_str() || *day > last_day)
+                .map(str::to_string);
+            if let Some(day) = outside {
+                self.document.warnings.push(format!(
+                    "authors: {handle}: a tag dated {day} falls outside {first}..{last_day}, \
+                     so the days read back wider"
+                ));
+            }
             // The author's items on the first day, dated by the view or
             // stamped: one must stay there.
             let on_first = |date: &str| date.starts_with(first.as_str());
@@ -3109,12 +3161,16 @@ impl<'o, 'a> Writer<'o, 'a> {
                         self.document.range_ends.insert(same, last.clone());
                     }
                 }
-            } else if firsts > 0
-                && let Some(person) = self.document.people.get_mut(&handle)
-            {
+            } else if firsts + marks > 0 {
                 // Every header and footer mark of theirs takes the last day;
                 // a body item keeps the first.
-                person.1 = last;
+                if let Some(person) = self.document.people.get_mut(&handle) {
+                    person.1 = last;
+                }
+            } else {
+                // Only headers and footers: their first mark keeps the
+                // first day, the others take the last.
+                self.document.story_range_ends.insert(handle, last);
             }
         }
     }
@@ -3157,6 +3213,30 @@ pub(super) fn bookmark_name(slug: &str, used: &HashSet<String>) -> String {
         })
         .find(|name| !used.contains(name))
         .unwrap_or_default()
+}
+
+/// Whether `name` is one [`bookmark_name`] gives `slug`, whatever names
+/// were used before: the slug, its Word form, or that form cut shorter and
+/// suffixed (`-1`, `-2`, …) after a collision.
+pub(super) fn is_bookmark_of(name: &str, slug: &str) -> bool {
+    if name == slug || name == bookmark_name(slug, &HashSet::new()) {
+        return true;
+    }
+    if word_takes(slug) {
+        return false;
+    }
+    let slug = if slug.starts_with(char::is_alphabetic) {
+        Cow::Borrowed(slug)
+    } else {
+        Cow::Owned(format!("_{slug}"))
+    };
+    name.rsplit_once('-').is_some_and(|(head, n)| {
+        !n.starts_with('0')
+            && n.parse::<u32>().is_ok_and(|n| n > 0)
+            && head
+                .chars()
+                .eq(slug.chars().take(MOST_BOOKMARK.saturating_sub(n.len() + 1)))
+    })
 }
 
 /// The slug github-slugger gives a heading's text: lowercase, then every
@@ -3213,7 +3293,7 @@ impl Slugger {
 /// each with the slug GitHub gives its text ([`github_slug`], a repeat
 /// `-1`, `-2`, …). Deleted text is no part of it; an empty slug names
 /// nothing.
-fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, String)> {
+fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, String, Vec<String>)> {
     let mut found = Vec::new();
     if targets.is_empty() {
         return found;
@@ -3243,8 +3323,16 @@ fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, Stri
         if slug.is_empty() {
             continue;
         }
-        if targets.contains(name.as_str()) {
-            found.push((at, name));
+        // A link may name the heading by its slug or by a name the writer
+        // gives it (cut to 40 characters, suffixed), as a docx read prints it.
+        let mut named: Vec<String> = targets
+            .iter()
+            .filter(|target| is_bookmark_of(target, &name))
+            .map(|target| (*target).to_string())
+            .collect();
+        if !named.is_empty() {
+            named.sort_unstable();
+            found.push((at, name, named));
         }
     }
     found
@@ -3484,10 +3572,10 @@ pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
 /// optional `Z` or `+HH:MM` offset.
 pub(super) fn is_date(text: &str) -> bool {
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    let Some((day, time)) = text.split_once('T') else {
+    let Some((day_text, time)) = text.split_once('T') else {
         return false;
     };
-    let day: Vec<&str> = day.split('-').collect();
+    let day: Vec<&str> = day_text.split('-').collect();
     if day.len() != 3
         || day[0].len() != 4
         || day[1..].iter().any(|p| p.len() != 2)
@@ -3495,7 +3583,7 @@ pub(super) fn is_date(text: &str) -> bool {
     {
         return false;
     }
-    let (clock, zone) = match time.find(['Z', '+', '-']) {
+    let (clock_text, zone) = match time.find(['Z', '+', '-']) {
         Some(at) => time.split_at(at),
         None => (time, ""),
     };
@@ -3509,15 +3597,20 @@ pub(super) fn is_date(text: &str) -> bool {
                 && digits(&offset[3..])
         }
     };
-    let clock: Vec<&str> = clock.split(':').collect();
+    let clock: Vec<&str> = clock_text.split(':').collect();
     let seconds_ok = clock.get(2).is_none_or(|seconds| {
         let (whole, fraction) = seconds.split_once('.').unwrap_or((seconds, "0"));
         whole.len() == 2 && digits(whole) && digits(fraction)
     });
-    zone_ok
+    let shaped = zone_ok
         && (2..=3).contains(&clock.len())
         && clock[..2].iter().all(|p| p.len() == 2 && digits(p))
-        && seconds_ok
+        && seconds_ok;
+    // In range too (no 2026-02-30, no 25:00): Word refuses such a w:date.
+    let seconds = if clock.len() == 2 { ":00" } else { "" };
+    shaped
+        && crate::util::datetime::parse_datetime(&format!("{day_text}T{clock_text}{seconds}{zone}"))
+            .is_ok()
 }
 
 /// Whether no table starts or ends between two story indexes.
@@ -3683,6 +3776,8 @@ mod tests {
             "2026-01-02T03:04:05.123Z",
             "2026-01-02T03:04:05+01:00",
             "2026-01-02T03:04-05:30",
+            "2024-02-29T23:59:59Z",
+            "2026-12-31T00:00+14:00",
         ] {
             assert!(is_date(date), "{date}");
         }
@@ -3698,6 +3793,17 @@ mod tests {
             "2026-01-02T03:04:05+01:0x",
             "2026-01-02T03:04:05:06",
             "yesterday",
+            // The shape of a date, out of range.
+            "2026-02-30T00:00:00Z",
+            "2025-02-29T00:00",
+            "2026-13-01T00:00Z",
+            "2026-00-01T00:00Z",
+            "2026-01-00T00:00Z",
+            "2026-01-02T24:00:00Z",
+            "2026-01-02T03:60Z",
+            "2026-01-02T03:04:60Z",
+            "2026-01-02T03:04+15:00",
+            "2026-99-99T99:99:99Z",
         ] {
             assert!(!is_date(text), "{text}");
         }

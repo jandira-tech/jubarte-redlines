@@ -61,6 +61,11 @@ pub(super) struct People {
     pub by_handle: HashMap<String, (String, String)>,
     pub author: String,
     pub date: String,
+    /// A handle's last day when only its story marks carry its range:
+    /// its first mark keeps the first day, the later ones take this.
+    pub range_ends: HashMap<String, String>,
+    /// The handles of `range_ends` whose first mark is written.
+    pub started: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 /// The marks of one story part being written: their people and the next
@@ -103,6 +108,12 @@ impl Marks<'_> {
                         (String::new(), self.people.date.clone())
                     }
                     None => return None,
+                };
+                let date = match self.people.range_ends.get(&tag.handle) {
+                    Some(last) if !self.people.started.borrow_mut().insert(tag.handle.clone()) => {
+                        last.clone()
+                    }
+                    _ => date,
                 };
                 Some((name, tag.date.clone().unwrap_or(date)))
             })
@@ -1139,6 +1150,7 @@ mod tests {
             )]),
             author: "Redline".into(),
             date: "2026-01-01T00:00:00Z".into(),
+            ..People::default()
         };
         runs(
             text,

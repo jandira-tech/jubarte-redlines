@@ -301,6 +301,9 @@ pub(super) struct Document {
     /// Each handle of the view's `authors:` table, as the headers' and
     /// footers' changes name it: its name and date.
     pub people: HashMap<String, (String, String)>,
+    /// Each handle whose date range only the headers and footers can
+    /// write: the last day, which every mark after its first takes.
+    pub story_range_ends: HashMap<String, String>,
     /// The default and heading styles the view's `styles:` legend defines.
     pub style_specs: Vec<super::view_styles::StyleSpec>,
 }
@@ -345,7 +348,9 @@ pub(super) enum Label {
     Text(String),
 }
 
-/// Text for XML content: markup escaped, characters XML 1.0 forbids dropped.
+/// Text for XML content or an attribute: markup escaped, characters XML 1.0
+/// forbids dropped. Tabs and line breaks are character references, which a
+/// parser keeps inside an attribute (a literal one reads as a space).
 pub(super) fn escape(text: &str) -> Cow<'_, str> {
     let clean = |c: char| {
         matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}')
@@ -353,7 +358,7 @@ pub(super) fn escape(text: &str) -> Cow<'_, str> {
     };
     if !text
         .chars()
-        .any(|c| matches!(c, '&' | '<' | '>' | '"') || !clean(c))
+        .any(|c| matches!(c, '&' | '<' | '>' | '"' | '\t' | '\n' | '\r') || !clean(c))
     {
         return Cow::Borrowed(text);
     }
@@ -364,6 +369,9 @@ pub(super) fn escape(text: &str) -> Cow<'_, str> {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
+            '\t' => out.push_str("&#x9;"),
+            '\n' => out.push_str("&#xA;"),
+            '\r' => out.push_str("&#xD;"),
             c => out.push(c),
         }
     }
@@ -1810,6 +1818,8 @@ mod tests {
     fn escape_drops_characters_xml_forbids() {
         assert_eq!(escape("a < b & \"c\""), "a &lt; b &amp; &quot;c&quot;");
         assert_eq!(escape("bell\u{7}\u{FFFE}ok"), "bellok");
+        // An author `A\nB` stays `A\nB` in `w:author`, not `A B`.
+        assert_eq!(escape("A\nB\tC\rD"), "A&#xA;B&#x9;C&#xD;D");
         assert!(matches!(escape("plain"), Cow::Borrowed(_)));
     }
 

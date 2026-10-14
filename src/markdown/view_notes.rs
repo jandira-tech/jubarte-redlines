@@ -151,24 +151,30 @@ pub(super) fn file_defaults(markdown: &str) -> FileDefaults {
     else {
         return defaults;
     };
+    let lines: Vec<&str> = rest.lines().map(|l| l.trim_end_matches('\r')).collect();
+    // Front matter ends at its closing `---` or `...`; a file that only
+    // opens with a thematic break has none.
+    let Some(end) = lines.iter().position(|l| *l == "---" || *l == "...") else {
+        return defaults;
+    };
     let mut dates: Vec<(usize, String, String)> = Vec::new();
-    for line in rest.lines() {
-        let line = line.trim_end_matches('\r');
-        if line == "---" || line == "..." {
-            break;
-        }
+    for line in &lines[..end] {
         if line.starts_with([' ', '\t', '#']) {
             continue;
         }
         let Some((key, value)) = line.split_once(':') else {
             continue;
         };
+        let key = key.trim();
+        // `author: ~` or `null` names no one, as `document_owner:` does.
+        if key == "author" && names_no_owner(value.trim_start()) {
+            continue;
+        }
         let (value, _) = scalar_and_comment(value.trim_start());
         let value = super::critic::decode(&value);
         if value.is_empty() {
             continue;
         }
-        let key = key.trim();
         if key == "author" {
             defaults.author.get_or_insert(value);
         } else if let Some(rank) = DATES.iter().position(|d| *d == key) {
@@ -194,8 +200,16 @@ pub(super) fn file_defaults(markdown: &str) -> FileDefaults {
 /// `2026-03-02..2026-03-04`: the first and last days.
 fn day_range(text: &str) -> Option<(String, String)> {
     let (first, last) = text.split_once("..")?;
-    let day = |d: &str| super::write::is_date(&format!("{d}T00:00:00Z"));
-    (day(first) && day(last) && first <= last).then(|| (first.to_string(), last.to_string()))
+    // A bare day, or a timestamp's day (`2026-03-02T10:00:00+02:00`).
+    let day = |d: &str| {
+        let d = d.trim();
+        let day = d.get(..10)?;
+        (super::write::is_date(&format!("{day}T00:00:00Z"))
+            && (d.len() == 10 || super::write::is_date(d)))
+        .then(|| day.to_string())
+    };
+    let (first, last) = (day(first)?, day(last)?);
+    (first <= last).then_some((first, last))
 }
 
 /// Who owns the document, as `authors: document_owner:` and its note say.
@@ -323,6 +337,10 @@ pub(super) fn scalar_and_comment(text: &str) -> (String, Option<&str>) {
             }
         }
         return (String::new(), None);
+    }
+    // `key:  # note`: YAML reads a comment, and the value is null.
+    if let Some(comment) = text.strip_prefix('#') {
+        return (String::new(), Some(comment.trim()));
     }
     match text.split_once(" #") {
         Some((value, comment)) => (value.trim().to_string(), Some(comment.trim())),

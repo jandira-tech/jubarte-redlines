@@ -153,6 +153,8 @@ pub(super) fn assemble(
         by_handle: document.people.clone(),
         author: options.author.clone(),
         date: options.date.clone(),
+        range_ends: document.story_range_ends.clone(),
+        ..super::view_stories::People::default()
     };
     // A header's fresh ids sit far above the body's.
     let section_stories = super::view_stories::write(
