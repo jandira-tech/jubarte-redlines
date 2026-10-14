@@ -255,10 +255,10 @@ def _edit_plan(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str,
     from . import _native
 
     if getattr(args, "plan", None) is not None:
-        try:
-            return Path(args.plan).read_text(encoding="utf-8"), []
-        except OSError as exc:
-            raise CliError(f"reading {args.plan}: {exc}") from exc
+        text = _read_plan_text(_spelled(args, "plan"))
+        if text is None:
+            raise CliError(f"reading {_spelled(args, 'plan')}: No such file or directory")
+        return text, []
     try:
         plan, notes = _native.flag_plan(
             verb,
@@ -282,10 +282,127 @@ def cmd_add(args: argparse.Namespace) -> int:
     return _run_edit(args, "add")
 
 
-def _run_edit(args: argparse.Namespace, verb: str) -> int:
+def _print_refusal(exc: EditPlanError) -> None:
+    """A refused plan's per-operation report on stdout, the error on stderr."""
+    for i, o in enumerate(exc.outcomes, start=1):
+        row: dict[str, object] = {"ev": "op", "i": i, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches}
+        for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
+            if value is not None:
+                row[key] = value
+        print(json.dumps(row, ensure_ascii=False))
+    print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}, ensure_ascii=False))
+    print(f"error: plan refused: {exc}", file=sys.stderr)
+
+
+def _spelled(args: argparse.Namespace, key: str) -> str:
+    """FILE or --plan as the command line spells it."""
+    return getattr(args, "spelled", {}).get(key) or str(getattr(args, key))
+
+
+def _read_plan_text(plan: str) -> str | None:
+    """PLAN.json's text, strictly UTF-8 as the binary reads it; ``None``
+    when there is no such file."""
+    try:
+        with open(plan, "rb") as f:
+            data = f.read()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise CliError(f"reading {plan}: {exc.strerror or exc}") from exc
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CliError(f"reading {plan}: stream did not contain valid UTF-8") from exc
+
+
+def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
+    """``--plan PLAN.json`` with operation flags: record them into the plan,
+    checked against FILE first; a refusal leaves PLAN.json as it was. The
+    shared parser has refused the flags that do not go with ``--plan``."""
     from . import _native
 
+    plan = _spelled(args, "plan")
+    held = _read_plan_text(plan)
+    dry_run = bool(getattr(args, "dry_run", False))
+    options = {
+        "author": args.author,
+        "date": args.datetime,
+        "existingRevisions": args.existing_revisions,
+        "file": _spelled(args, "file"),
+        "plan": plan,
+        "dryRun": dry_run,
+    }
+    try:
+        recorded = json.loads(
+            _native.record_plan(verb, json.dumps(args.operations, ensure_ascii=False), doc.to_bytes(), json.dumps(options), held=held)
+        )
+    except _native.JubarteError as exc:
+        print(f"error: {plan}: {exc}", file=sys.stderr)
+        return EXIT_PLAN_REFUSED
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE) from exc
+    try:
+        doc.preview(recorded["plan"])
+    except EditPlanError as exc:
+        _print_refusal(exc)
+        return EXIT_PLAN_REFUSED
+    if not args.quiet:
+        for note in recorded["notes"]:
+            print(f"note: {note}")
+    if not dry_run:
+        # Through a symbolic link to the file it names, written yet or not;
+        # via a hidden partial file named for this process, removed if the
+        # write fails; bytes as they are, so no platform newline translation.
+        target = Path(os.path.realpath(plan))
+        partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
+        try:
+            partial.write_bytes(recorded["json"].encode("utf-8"))
+            os.replace(partial, target)
+        except OSError as exc:
+            partial.unlink(missing_ok=True)
+            raise CliError(f"writing {plan}: {exc}") from exc
+    if not args.quiet:
+        print(recorded["summary"])
+    return EXIT_OK
+
+
+def _run_edit(args: argparse.Namespace, verb: str) -> int:
     doc = _read(args.file)
+    if getattr(args, "plan", None) is not None and args.operations:
+        return _record(args, verb, doc)
+    # What --consume deletes once the edit is written: the plan file as it
+    # was read, never a link to it or an output written over it.
+    consumed: bytes | None = None
+    plan = _spelled(args, "plan") if getattr(args, "plan", None) is not None else ""
+    if getattr(args, "consume", False) and not getattr(args, "dry_run", False):
+        if os.path.islink(plan):
+            print(f"error: --consume deletes {plan}, a symbolic link; pass the file it names", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+        try:
+            with open(plan, "rb") as f:
+                consumed = f.read()
+        except OSError as exc:
+            raise CliError(f"reading {plan}: {exc.strerror or exc}") from exc
+    code = _apply_edit(args, verb, doc)
+    if code == EXIT_OK and consumed is not None:
+        try:
+            with open(plan, "rb") as f:
+                current: bytes | None = f.read()
+        except OSError:
+            current = None
+        if current != consumed:
+            raise CliError(f"the plan was applied, but {plan} was not deleted: it no longer holds the plan (an output was written over it?)")
+        try:
+            os.remove(plan)
+        except OSError as exc:
+            raise CliError(f"the plan was applied, but {plan} was not deleted: {exc}") from exc
+    return code
+
+
+def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
+    from . import _native
+
     plan_text, notes = _edit_plan(args, verb, doc.to_bytes())
     editing = bool(args.editing_mode)
     try:
@@ -309,14 +426,7 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
             return EXIT_OK
         result = doc.edit(plan_text)
     except EditPlanError as exc:
-        for i, o in enumerate(exc.outcomes, start=1):
-            row: dict[str, object] = {"ev": "op", "i": i, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches}
-            for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
-                if value is not None:
-                    row[key] = value
-            print(json.dumps(row, ensure_ascii=False))
-        print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}, ensure_ascii=False))
-        print(f"error: plan refused: {exc}", file=sys.stderr)
+        _print_refusal(exc)
         return EXIT_PLAN_REFUSED
     lines = result.report.to_jsonl().splitlines()
     summary = lines.pop()
@@ -750,6 +860,9 @@ class SharedParser:
             raise SystemExit(parsed["exit_code"])
         command, values = parsed["command"], parsed["args"]
         self._validate_host(command, values)
+        # FILE and --plan as typed: messages quote them, and Path() would
+        # drop a "./" or a trailing "/" the other CLIs keep.
+        values["spelled"] = {key: values[key] for key in ("file", "plan") if values.get(key) is not None}
         for key in _PATH_ARGUMENTS:
             if values.get(key) is not None:
                 values[key] = Path(values[key])

@@ -262,15 +262,26 @@ const COMMANDS = {
   },
 };
 
+/** PLAN.json's text, strictly UTF-8 as the binary reads it; `undefined`
+ * when there is no such file and `missing` allows it. */
+function readPlanText(plan, missing = false) {
+  let bytes;
+  try {
+    bytes = fs.readFileSync(plan);
+  } catch (e) {
+    if (missing && e.code === "ENOENT") return undefined;
+    throw new CliError(`reading ${plan}: ${e.message}`);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new CliError(`reading ${plan}: stream did not contain valid UTF-8`);
+  }
+}
+
 /** `--plan`'s text, or the plan the operation flags describe, and its notes. */
 function editPlan(verb, docx, o) {
-  if (o.plan != null) {
-    try {
-      return { plan: fs.readFileSync(o.plan, "utf8"), notes: [] };
-    } catch (e) {
-      throw new CliError(`reading ${o.plan}: ${e.message}`);
-    }
-  }
+  if (o.plan != null) return { plan: readPlanText(o.plan), notes: [] };
   try {
     const options = { author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions };
     return JSON.parse(wasm.flagPlan(verb, JSON.stringify(o.operations ?? []), docx, JSON.stringify(options)));
@@ -289,8 +300,99 @@ function planKeepsRevisions(plan) {
   }
 }
 
+/** A refused plan's per-operation report on stdout, the error on stderr. */
+function printRefusal(result) {
+  const error = JSON.parse(result.json);
+  (error.outcomes ?? []).forEach((outcome, i) => {
+    const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
+    for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
+      if (outcome[field] != null) row[key] = outcome[field];
+    }
+    console.log(JSON.stringify(row));
+  });
+  console.log(JSON.stringify({ ev: "summary", status: "failed", code: error.code, operation: error.operation, message: error.message }));
+  console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
+  return EXIT_PLAN_REFUSED;
+}
+
+/** `--plan PLAN.json` with operation flags: record them into the plan,
+ * checked against FILE first; a refusal leaves PLAN.json as it was. The
+ * shared parser has refused the flags that do not go with `--plan`. */
+function recordPlan(verb, file, docx, o) {
+  const held = readPlanText(o.plan, true);
+  const options = {
+    author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
+    file, plan: o.plan, dryRun: Boolean(o.dry_run),
+  };
+  const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
+  if (!answer.ok) {
+    if (answer.usage) throw new UsageError(answer.message);
+    console.error(`error: ${o.plan}: ${answer.message}`);
+    return EXIT_PLAN_REFUSED;
+  }
+  const { recorded } = answer;
+  const preview = wasm.previewEditPlan(docx, recorded.plan);
+  if (!preview.ok) return printRefusal(preview);
+  if (!o.quiet) for (const note of recorded.notes) console.log(`note: ${note}`);
+  if (!o.dry_run) {
+    // Through a symbolic link to the file it names, written yet or not; via a hidden partial
+    // file named for this process, removed if the write fails.
+    let target = o.plan;
+    try {
+      target = fs.realpathSync(o.plan);
+    } catch {
+      // A link to a plan not written yet names where it goes.
+      try {
+        target = path.resolve(path.dirname(o.plan), fs.readlinkSync(o.plan));
+      } catch {}
+    }
+    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);
+    try {
+      fs.writeFileSync(partial, recorded.json);
+      fs.renameSync(partial, target);
+    } catch (e) {
+      fs.rmSync(partial, { force: true });
+      throw new CliError(`writing ${o.plan}: ${e.message}`);
+    }
+  }
+  if (!o.quiet) console.log(recorded.summary);
+  return EXIT_OK;
+}
+
 function runEdit(verb, file, o) {
   const docx = read(file);
+  if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
+  // What --consume deletes once the edit is written: the plan file as it
+  // was read, never a link to it or an output written over it.
+  let consumed;
+  if (o.consume && !o.dry_run) {
+    if (fs.lstatSync(o.plan, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+    }
+    try {
+      consumed = fs.readFileSync(o.plan);
+    } catch (e) {
+      throw new CliError(`reading ${o.plan}: ${e.message}`);
+    }
+  }
+  const code = applyEdit(verb, file, docx, o);
+  if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
+    const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
+    let current;
+    try {
+      current = fs.readFileSync(o.plan);
+    } catch {}
+    if (!current?.equals(consumed)) throw kept("it no longer holds the plan (an output was written over it?)");
+    try {
+      fs.unlinkSync(o.plan);
+    } catch (e) {
+      throw kept(e.message);
+    }
+  }
+  return code;
+}
+
+function applyEdit(verb, file, docx, o) {
   const { plan, notes } = editPlan(verb, docx, o);
   const editing = Boolean(o.editing_mode);
   if (editing && planKeepsRevisions(plan)) {
@@ -306,19 +408,7 @@ function runEdit(verb, file, o) {
     }
   }
   const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan);
-  if (!result.ok) {
-    const error = JSON.parse(result.json);
-    (error.outcomes ?? []).forEach((outcome, i) => {
-      const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
-      for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
-        if (outcome[field] != null) row[key] = outcome[field];
-      }
-      console.log(JSON.stringify(row));
-    });
-    console.log(JSON.stringify({ ev: "summary", status: "failed", code: error.code, operation: error.operation, message: error.message }));
-    console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
-    return EXIT_PLAN_REFUSED;
-  }
+  if (!result.ok) return printRefusal(result);
   const jsonl = wasm.editReportJsonl(result.json);
   if (o.dry_run) return void process.stdout.write(jsonl);
   const lines = jsonl.trimEnd().split("\n");

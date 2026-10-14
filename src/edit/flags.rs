@@ -19,7 +19,7 @@ use crate::ids::Location;
 
 /// One operation as the flags describe it, grouped by its `-p`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct FlagOp {
     /// The `-p` value: `p12`, `header1`, `t0.row1.cell2`, `c5`, or a long id.
     pub at: String,
@@ -500,7 +500,8 @@ pub fn editing_mode_conflict(plan: &EditPlan) -> Option<&'static str> {
 /// The two must agree on the source (`source_sha256`), the author, the date
 /// and `existing_revisions`, since one plan names each once; `more`'s
 /// operations follow `plan`'s and its revision ids join `plan`'s accept and
-/// reject lists. An error is a usage error and nothing is recorded.
+/// reject lists, which must select by id alone. A plan pinned to no source
+/// takes `more`'s. An error is a usage error and nothing is recorded.
 pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, String> {
     let Some(mut plan) = plan else {
         return Ok(more);
@@ -511,6 +512,9 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
         return Err(format!(
             "the plan was recorded against another document (sha256 {pinned}); this one is {source}"
         ));
+    }
+    if plan.author.is_empty() {
+        return Err("the plan names no author, so it cannot be applied; start a new plan".into());
     }
     if plan.author != more.author {
         return Err(format!(
@@ -530,21 +534,43 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
     }
     if plan.existing_revisions != more.existing_revisions {
         return Err(format!(
-            "the plan's existing_revisions is {}; pass --existing-revisions {}, or start a new plan",
-            existing_name(plan.existing_revisions),
-            existing_name(plan.existing_revisions)
+            "the plan's existing_revisions is {mode}; pass --existing-revisions {mode} to match it, or start a new plan",
+            mode = existing_name(plan.existing_revisions),
+        ));
+    }
+    let before = plan.operations.len();
+    let added = before + 1..=before + more.operations.len();
+    if let Some(id) = plan
+        .operations
+        .iter()
+        .filter_map(|op| op.id.as_deref())
+        .find(|id| added.clone().any(|n| *id == format!("op-{n}")))
+    {
+        return Err(format!(
+            "the plan names an operation {id}, the id a recorded operation takes; rename it, or start a new plan"
         ));
     }
     if let Some(more) = more.resolve_revisions {
         let resolve = plan.resolve_revisions.get_or_insert_with(Default::default);
-        join_ids(&mut resolve.accept, more.accept);
-        join_ids(&mut resolve.reject, more.reject);
+        // Every id in long form, as recorded ones are, so `r1` and
+        // `body:rev:1` are one id; a malformed one is left for the preview
+        // to report.
+        for side in [&mut resolve.accept, &mut resolve.reject] {
+            if let Some(normal) = side.as_ref().and_then(|f| f.normalized().ok()) {
+                *side = Some(normal);
+            }
+        }
+        join_ids(&mut resolve.accept, more.accept, "accept")?;
+        join_ids(&mut resolve.reject, more.reject, "reject")?;
         let (accept, reject) = (filter_ids(&resolve.accept), filter_ids(&resolve.reject));
         if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
             return Err(format!("{both} is both accepted and rejected"));
         }
     }
     plan.operations.extend(more.operations);
+    // The merged plan is previewed against `more`'s source before it is
+    // written, so an unpinned plan may take that pin.
+    plan.source_sha256 = plan.source_sha256.or(more.source_sha256);
     Ok(plan)
 }
 
@@ -558,11 +584,24 @@ fn existing_name(mode: ExistingRevisions) -> &'static str {
     }
 }
 
-/// `more`'s ids after `filter`'s, each once.
-fn join_ids(filter: &mut Option<ChangeFilter>, more: Option<ChangeFilter>) {
+/// `more`'s ids after `filter`'s, each once. A filter that also selects by
+/// author or kind, or one naming no ids (every change), would be narrowed by
+/// the ids, since a change must match every list: that is refused.
+fn join_ids(
+    filter: &mut Option<ChangeFilter>,
+    more: Option<ChangeFilter>,
+    side: &str,
+) -> Result<(), String> {
     let Some(more) = more.and_then(|m| m.ids) else {
-        return;
+        return Ok(());
     };
+    if let Some(held) = filter.as_ref()
+        && (held.authors.is_some() || held.kinds.is_some() || held.ids.is_none())
+    {
+        return Err(format!(
+            "the plan's {side} selects revisions by author or kind, or all of them; a recorded revision id would narrow it, so start a new plan"
+        ));
+    }
     let ids = filter
         .get_or_insert_with(Default::default)
         .ids
@@ -572,6 +611,7 @@ fn join_ids(filter: &mut Option<ChangeFilter>, more: Option<ChangeFilter>) {
             ids.push(id);
         }
     }
+    Ok(())
 }
 
 /// The ids `filter` names.
@@ -742,7 +782,7 @@ mod tests {
         refusing.existing_revisions = ExistingRevisions::Refuse;
         assert_eq!(
             refused(refusing),
-            "the plan's existing_revisions is keep; pass --existing-revisions keep, or start a new plan"
+            "the plan's existing_revisions is keep; pass --existing-revisions keep to match it, or start a new plan"
         );
         let accepted = recorded(Verb::Edit, &[revision("r2", true)], "Ann", "aa");
         let plan = record_into(Some(base()), accepted).unwrap();
@@ -753,6 +793,75 @@ mod tests {
             )
             .unwrap_err(),
             "body:rev:2 is both accepted and rejected"
+        );
+    }
+
+    /// pi review 06b F1, F2, F4.
+    #[test]
+    fn recording_pins_an_unpinned_plan_and_keeps_hand_written_meaning() {
+        let mut unpinned = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        unpinned.source_sha256 = None;
+        let more = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Ann", "bb");
+        let plan = record_into(Some(unpinned), more).unwrap();
+        assert_eq!(plan.source_sha256.as_deref(), Some("bb"));
+        // An accept by author (or of everything) would be narrowed by an id.
+        for held in [
+            ChangeFilter {
+                authors: Some(vec!["Ann".into()]),
+                ..ChangeFilter::default()
+            },
+            ChangeFilter::default(),
+        ] {
+            let mut plan = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+            plan.resolve_revisions = Some(ResolveRevisions {
+                accept: Some(held),
+                reject: None,
+            });
+            let accept = recorded(Verb::Edit, &[revision("r9", true)], "Ann", "aa");
+            assert!(
+                record_into(Some(plan), accept)
+                    .unwrap_err()
+                    .starts_with("the plan's accept selects revisions by author or kind, or all")
+            );
+        }
+        // A held id that a recorded operation's position would repeat.
+        let mut named = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        named.operations[0].id = Some("op-2".into());
+        let more = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Ann", "aa");
+        assert_eq!(
+            record_into(Some(named), more).unwrap_err(),
+            "the plan names an operation op-2, the id a recorded operation takes; rename it, or start a new plan"
+        );
+    }
+
+    /// pi review 06c: id spellings, string op ids, an empty author.
+    #[test]
+    fn recording_reads_ids_and_names_as_the_plan_spells_them() {
+        let mut short = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        short.resolve_revisions = Some(ResolveRevisions {
+            accept: Some(ChangeFilter::ids(["r1"])),
+            reject: None,
+        });
+        let again = recorded(Verb::Edit, &[revision("r1", true)], "Ann", "aa");
+        let plan = record_into(Some(short.clone()), again).unwrap();
+        let accept = plan.resolve_revisions.unwrap().accept.unwrap().ids.unwrap();
+        assert_eq!(accept, ["body:rev:1"]);
+        let reject = recorded(Verb::Edit, &[revision("r1", false)], "Ann", "aa");
+        assert_eq!(
+            record_into(Some(short), reject).unwrap_err(),
+            "body:rev:1 is both accepted and rejected"
+        );
+        let mut padded = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        padded.operations[0].id = Some("op-02".into());
+        let more = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "Ann", "aa");
+        assert!(record_into(Some(padded), more).is_ok());
+        let mut nobody = recorded(Verb::Edit, &[rewrite("p1", "One.")], "", "aa");
+        nobody.author = String::new();
+        let more = recorded(Verb::Edit, &[rewrite("p2", "Two.")], "", "aa");
+        assert!(
+            record_into(Some(nobody), more)
+                .unwrap_err()
+                .starts_with("the plan names no author")
         );
     }
 

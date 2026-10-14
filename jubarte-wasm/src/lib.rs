@@ -396,6 +396,49 @@ pub fn flag_plan(
     flag_plan_json(verb, operations_json, docx, options_json.as_deref()).map_err(js_err)
 }
 
+/// `record_plan` as JSON: `{ok: true, recorded: {plan, json, notes,
+/// summary}}`, or `{ok: false, usage, message}` (`usage` false when `held`
+/// is not a plan).
+fn record_plan_json(
+    verb: &str,
+    operations_json: &str,
+    docx: &[u8],
+    options_json: &str,
+    held: Option<&str>,
+) -> String {
+    use jubarte::edit::record::{RecordError, record_json};
+    match record_json(verb, operations_json, docx, held, options_json) {
+        Ok(recorded) => format!(r#"{{"ok":true,"recorded":{recorded}}}"#),
+        Err(e) => {
+            let (usage, message) = match e {
+                RecordError::Usage(m) => (true, m),
+                RecordError::Plan(m) => (false, m),
+            };
+            serde_json::json!({ "ok": false, "usage": usage, "message": message }).to_string()
+        }
+    }
+}
+
+/// `edit`/`add --plan PLAN.json` with operation flags: the operations
+/// recorded into `held` (PLAN.json's text, absent before the first
+/// recording), as JSON `{ok: true, recorded: {plan, json, notes,
+/// summary}}`: preview `plan`, write `json`, print `notes` and `summary`.
+/// On failure `{ok: false, usage, message}`: a usage error (exit 2), or
+/// `held` is not a plan (exit 3). Options (JSON): `author`, `date`,
+/// `existingRevisions`, `file`, `plan`, `dryRun`.
+///
+/// Mirrors `jubarte::edit::record::record`.
+#[wasm_bindgen(js_name = recordPlan)]
+pub fn record_plan(
+    verb: &str,
+    operations_json: &str,
+    docx: &[u8],
+    options_json: &str,
+    held: Option<String>,
+) -> String {
+    record_plan_json(verb, operations_json, docx, options_json, held.as_deref())
+}
+
 /// The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
 /// view `edit` and `add` print (every changed block when none does);
 /// `accepted` reads its accepted text, `source` is the name printed as
@@ -1469,6 +1512,50 @@ mod tests {
         assert!(view.contains("{~~30~>45~~}"), "{view}");
         assert!(flag_plan_json("edit", "[]", &source, None).is_err());
         assert!(flag_plan_json("edit", ops, &source, Some("{")).is_err());
+    }
+
+    #[test]
+    fn record_plan_records_into_the_held_plan_and_says_why_it_cannot() {
+        let source = word(OLD);
+        let ops = r#"[{"at":"p1","anchor":"30","content":"45"}]"#;
+        let options = r#"{"author":"Ann","file":"a.docx","plan":"p.json"}"#;
+        let first: serde_json::Value =
+            serde_json::from_str(&record_plan_json("edit", ops, &source, options, None)).unwrap();
+        assert_eq!(first["ok"], true, "{first}");
+        let held = first["recorded"]["json"].as_str().unwrap();
+        let second: serde_json::Value = serde_json::from_str(&record_plan_json(
+            "add",
+            r#"[{"at":"p1","comment":true,"content":"Why?"}]"#,
+            &source,
+            options,
+            Some(held),
+        ))
+        .unwrap();
+        assert!(
+            second["recorded"]["summary"]
+                .as_str()
+                .unwrap()
+                .starts_with("recorded 1 operation in p.json: 2 operations"),
+            "{second}"
+        );
+        let plan = second["recorded"]["plan"].as_str().unwrap();
+        let edited = jubarte::edit::apply_plan_json(&source, plan).unwrap();
+        let view = jubarte::markdown::changed_view(&edited.redline, "Ann", false, None).unwrap();
+        assert!(
+            view.contains("{~~30~>45~~}") && view.contains("Why?"),
+            "{view}"
+        );
+        let bob = r#"{"author":"Bob","file":"a.docx","plan":"p.json"}"#;
+        let refused: serde_json::Value =
+            serde_json::from_str(&record_plan_json("edit", ops, &source, bob, Some(held))).unwrap();
+        assert_eq!(
+            (&refused["ok"], &refused["usage"]),
+            (&false.into(), &true.into())
+        );
+        let not_plan: serde_json::Value =
+            serde_json::from_str(&record_plan_json("edit", ops, &source, options, Some("{}")))
+                .unwrap();
+        assert_eq!(not_plan["usage"], false, "{not_plan}");
     }
 
     #[test]

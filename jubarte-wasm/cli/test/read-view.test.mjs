@@ -153,11 +153,11 @@ test("invalid short selectors return useful refusals without output documents", 
     ["p6", "paragraph index 6 does not exist in body (6 paragraphs)"],
     ["t1.r0.c0", "t1 is not a table of this document (1 table)"],
     ["t0.r2.c0", "t0 has 2 rows, no row 2"],
-    ["t0.r0.c2", "t0.r0 has 2 cells, no cell 2"],
-    ["t0.r1.c1.p1", "t0.r1.c1 has 1 paragraph, no p1"],
-    ["t0.r0", "t0: a table id needs a row and a cell"],
+    ["t0.r0.c2", "t0.row0 has 2 cells, no cell 2"],
+    ["t0.r1.c1.p1", "t0.row1.cell1 has 1 paragraph, no p1"],
+    ["t0.r0", "t0.r0: a table id needs a row and a cell, as t0.row1.cell2"],
     ["p+0", "unknown paragraph id p+0"],
-    ["header1", "headers and footers: none"],
+    ["header1", "header1 is not a story of this document (stories: body)"],
   ]) {
     const result = wasm.applyEditPlan(docx, plan([{ kind: "replace", paragraph: id, find: "Intro", replacement: "Changed" }]));
     try {

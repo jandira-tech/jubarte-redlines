@@ -722,7 +722,7 @@ pub enum Command {
         /// Edit plan JSON. With operation flags, they are recorded into it
         /// (created on first use) and FILE is left as it is; alone, it is
         /// applied to FILE, as `edit --plan` does.
-        #[arg(long, value_name = "PLAN.json", required_unless_present = "location")]
+        #[arg(long, value_name = "PLAN.json")]
         plan: Option<PathBuf>,
         /// Delete PLAN.json once it has been applied and the outputs are
         /// written (with --plan and no operation flags).
@@ -730,7 +730,7 @@ pub enum Command {
         consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply.
         /// Each -p starts an operation; the flags after it belong to it.
-        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
+        #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required_unless_present = "plan")]
         location: Vec<String>,
         /// Text inside WHERE to comment on (must occur once).
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
@@ -1433,7 +1433,7 @@ fn styles() -> clap::builder::Styles {
 /// A revision timestamp: an xsd:dateTime as Word writes `w:date`
 /// (`2026-10-01T09:00:00Z`, optional fraction and offset of at most 14:00).
 /// xsd's `24:00:00` and leap second `:60` are refused: Word writes neither.
-fn parse_datetime(value: &str) -> Result<String, String> {
+pub(crate) fn parse_datetime(value: &str) -> Result<String, String> {
     let bad = || "expected an ISO 8601 date and time such as 2026-10-01T09:00:00Z".to_string();
     let b = value.as_bytes();
     let digits = |from: usize, to: usize| -> Option<u32> {
@@ -1689,6 +1689,24 @@ fn validate_matches(
     task.set_bin_name(format!("{} {name}", command.get_name()));
     let error =
         |task: &mut clap::Command, message: &str| task.error(ErrorKind::ArgumentConflict, message);
+    if matches!(name, "edit" | "add")
+        && let Some(plan) = args.get_one::<PathBuf>("plan")
+    {
+        // Only the flags the command line spells out: a default is no
+        // choice the plan could contradict.
+        let given: Vec<String> = args
+            .ids()
+            .filter(|id| args.value_source(id.as_str()) == Some(ValueSource::CommandLine))
+            .map(|id| format!("--{}", id.as_str().replace('_', "-")))
+            .collect();
+        let given: Vec<&str> = given.iter().map(String::as_str).collect();
+        let recording = given.contains(&"--location");
+        if let Some(message) =
+            crate::edit::record::plan_flag_conflict(recording, &given, &plan.display().to_string())
+        {
+            return Err(error(&mut task, &message));
+        }
+    }
     if matches!(name, "convert" | "edit" | "diff")
         && args.get_one::<String>("revision_palette").is_some()
         && args.get_one::<Revisions>("revisions") != Some(&Revisions::Custom)

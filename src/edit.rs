@@ -37,6 +37,7 @@ pub mod flags;
 mod images;
 mod notes;
 mod origin;
+pub mod record;
 mod rewrite;
 mod runs;
 mod sections;

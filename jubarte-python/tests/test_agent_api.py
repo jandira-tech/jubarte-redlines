@@ -403,7 +403,7 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     assert doc.reject(ids=[]).to_bytes() == doc.to_bytes()
     with pytest.raises(TypeError):
         doc.accept(ids="body:rev:1")  # type: ignore[arg-type]
-    with pytest.raises(jubarte.JubarteError, match="body:rev:9"):
+    with pytest.raises(jubarte.JubarteError, match="no tracked change r9"):
         doc.accept(ids=["body:rev:9"])
 
 
