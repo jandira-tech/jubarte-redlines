@@ -271,6 +271,18 @@ Read options:
           With --changed: only the blocks with this author's marks (a handle such as AC,
           or the full name)
 
+      --json
+          Print the snapshot as JSON instead of the view: `schema_version`,
+          `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
+          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body
+          paragraphs they select, and every change and comment that starts in one of
+          them, whoever made it; the rest of the snapshot stays whole
+
+      --tables
+          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          header_rows=H widths=W,...` line, then one line per row of tab-separated
+          `ids=text` cells
+
 Examples:
   jubarte compare old.docx new.docx -o redline.docx
   jubarte contract.docx                    print the agent view (read)
@@ -813,7 +825,8 @@ Arguments:
 
 Options:
       --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-                `paragraphs`, `stories`, `tables`) instead of a human summary
+                `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`)
+                instead of a human summary
       --tables  Print each body table as a grid instead of the paragraphs: a `table N:
                 ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
                 tab-separated `ids=text` cells
@@ -889,6 +902,18 @@ Read options:
       --by <AUTHOR>
           With --changed: only the blocks with this author's marks (a handle such as AC,
           or the full name)
+
+      --json
+          Print the snapshot as JSON instead of the view: `schema_version`,
+          `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
+          `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body
+          paragraphs they select, and every change and comment that starts in one of
+          them, whoever made it; the rest of the snapshot stays whole
+
+      --tables
+          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          header_rows=H widths=W,...` line, then one line per row of tab-separated
+          `ids=text` cells
 ```
 
 #### `jubarte edit`

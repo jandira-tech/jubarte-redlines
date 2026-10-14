@@ -199,6 +199,7 @@ const COMMANDS = {
   reject: resolution(false),
   read: {
     run(_, [file], o) {
+      if (o.json) return console.log(wasm.inspectDocument(read(file)));
       printView(read(file), o, path.basename(file));
     },
   },
@@ -501,7 +502,10 @@ function validateHost(name, o) {
     if (o.detail_threshold != null) reject("detail_threshold");
     if (o.no_paragraph_merge) reject("no_paragraph_merge");
   }
-  if (name === "inspect" && o.tables) reject("tables");
+  if (["inspect", "read"].includes(name) && o.tables) reject("tables");
+  if (name === "read" && o.json && (o.paragraphs != null || o.head != null || o.tail != null || o.changed || o.by != null)) {
+    throw new UsageError("--json with a selection is not supported by the npm CLI");
+  }
   if (["convert", "diff"].includes(name)) {
     for (const flag of [...(name === "convert" ? ["from"] : []), "resource_path", "timeout", "fail_on_substitution", "no_page_markers"]) {
       if (o[flag] != null && o[flag] !== false) reject(flag);

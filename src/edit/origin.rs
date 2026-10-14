@@ -91,7 +91,7 @@ impl Ids<'_> {
         index: usize,
     ) -> Result<String, String> {
         let dom = self.dom;
-        let (tc, tr, tbl, p, txbx) = (W::tc(), W::name("tr"), W::tbl(), W::p(), W::txbx_content());
+        let (tc, tr, tbl, p) = (W::tc(), W::name("tr"), W::tbl(), W::p());
         let nearest = |node: NodeId, name: &crate::xmllinq::XName| {
             dom.ancestors(node, Some(name)).first().copied()
         };
@@ -99,7 +99,7 @@ impl Ids<'_> {
         let tables: Vec<NodeId> = dom
             .descendants(self.body, Some(&tbl))
             .into_iter()
-            .filter(|&t| nearest(t, &tc).is_none() && nearest(t, &txbx).is_none())
+            .filter(|&t| nearest(t, &tc).is_none() && !crate::inspect::in_text_box(dom, t))
             .collect();
         let Some(&table) = tables.get(n) else {
             return Err(format!(
@@ -134,7 +134,7 @@ impl Ids<'_> {
             .into_iter()
             // As in the view, a table nested in the cell is part of it and a
             // text box is not.
-            .filter(|&q| nearest(q, &txbx).is_none())
+            .filter(|&q| !crate::inspect::in_text_box(dom, q))
             .collect();
         let Some(&node) = own.get(index) else {
             return Err(format!(

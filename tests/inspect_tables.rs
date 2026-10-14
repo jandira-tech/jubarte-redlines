@@ -12,7 +12,7 @@ use std::process::Command;
 
 use common::docx::{docx, para};
 use jubarte::edit::{EditPlan, apply_plan};
-use jubarte::inspect::{inspect_json, paragraphs, summary, tables};
+use jubarte::inspect::{inspect_json, paragraphs, summary, tables, tables_text};
 
 const BIN: &str = env!("CARGO_BIN_EXE_jubarte");
 
@@ -157,16 +157,34 @@ fn unreadable_grid_widths_read_as_zero() {
 }
 
 #[test]
+fn tables_text_prints_a_grid_line_and_escaped_cells() {
+    let text = tables_text(&tables(&two_by_two()).unwrap());
+    assert!(
+        text.starts_with("table 0: 2x2 header_rows=1 widths=6000,3360\n"),
+        "{text}"
+    );
+    assert!(text.ends_with('\n'), "{text}");
+    assert_eq!(tables_text(&[]), "no tables\n");
+}
+
+#[test]
 fn the_cli_prints_each_table_grid() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("table.docx");
     std::fs::write(&path, two_by_two()).unwrap();
     let out = Command::new(BIN)
-        .args(["inspect", path.to_str().unwrap(), "--tables"])
+        .args(["read", path.to_str().unwrap(), "--tables"])
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
+    // inspect --tables prints the same grid until inspect retires.
+    let inspect = Command::new(BIN)
+        .args(["inspect", path.to_str().unwrap(), "--tables"])
+        .output()
+        .unwrap();
+    assert_eq!(inspect.stdout, out.stdout);
     let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout, tables_text(&tables(&two_by_two()).unwrap()));
     assert!(
         stdout.contains("table 0: 2x2 header_rows=1 widths=6000,3360"),
         "{stdout}"
@@ -184,14 +202,16 @@ fn the_cli_says_when_there_are_no_tables_and_refuses_json_with_tables() {
     let path = dir.path().join("plain.docx");
     std::fs::write(&path, docx(&para("No table."))).unwrap();
     let out = Command::new(BIN)
-        .args(["inspect", path.to_str().unwrap(), "--tables"])
+        .args(["read", path.to_str().unwrap(), "--tables"])
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "no tables\n");
-    let both = Command::new(BIN)
-        .args(["inspect", path.to_str().unwrap(), "--tables", "--json"])
-        .output()
-        .unwrap();
-    assert!(!both.status.success(), "{both:?}");
+    for task in ["inspect", "read"] {
+        let both = Command::new(BIN)
+            .args([task, path.to_str().unwrap(), "--tables", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(both.status.code(), Some(2), "{task}: {both:?}");
+    }
 }

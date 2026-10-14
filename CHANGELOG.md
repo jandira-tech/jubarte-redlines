@@ -15,6 +15,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `read --json` prints the snapshot (`inspect --json`'s, which now also
+  carries `changes` and `comments` as `changes --json` and
+  `comments --json` list them). `-p`, `--head`, `--tail`, `--changed` and
+  `--by` keep the paragraphs they select and those paragraphs' changes and
+  comments; the view-only flags exit 2 with it, and so does `--json` with
+  two documents. `read --tables` prints the table grids. The Python and
+  npm CLIs print the whole snapshot and refuse `--tables` and a selected
+  snapshot for now. The library adds `inspect::snapshot`,
+  `Snapshot::retain`, `inspect::tables_text` and
+  `markdown::read_snapshot`; `ReadView` and `ReadDocx` gain `selected`.
+
 ### Changed
 
 - `convert --changed-only` (and the library's `PdfOptions::changed_only`)

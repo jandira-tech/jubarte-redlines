@@ -382,6 +382,9 @@ pub struct ReadDocx {
     /// Pictures to write under [`MarkdownOptions::extract_media`]: file
     /// name and bytes, sorted by name.
     pub media: Vec<(String, Vec<u8>)>,
+    /// The body paragraphs [`MarkdownOptions::select`] kept (`N` of `pN`,
+    /// ascending); `None` without a selection.
+    pub selected: Option<Vec<usize>>,
 }
 
 /// A `.docx` as Markdown: headings, emphasis, links, lists, tables,
@@ -424,6 +427,7 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     Ok(ReadDocx {
         markdown: converted.markdown,
         media: converted.media.into_iter().collect(),
+        selected: converted.selected,
     })
 }
 
@@ -466,6 +470,9 @@ pub struct ReadView {
     /// Why the page markers are missing (the layout pass failed), and the
     /// like. The view is complete otherwise.
     pub warnings: Vec<String>,
+    /// The body paragraphs [`ReadOptions::select`] kept (`N` of `pN`,
+    /// ascending); `None` without a selection.
+    pub selected: Option<Vec<usize>>,
 }
 
 /// The agent view every surface prints for `read` (alias `text`): a YAML
@@ -518,7 +525,31 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
     Ok(ReadView {
         markdown: read.markdown,
         warnings,
+        selected: read.selected,
     })
+}
+
+/// The snapshot `read --json` prints: [`crate::inspect::snapshot`], kept to
+/// the body paragraphs `options.select` picks (and the changes and comments
+/// in them) when it picks some. The selection reads the view `options`
+/// describes, without page markers.
+pub fn read_snapshot(
+    docx: &[u8],
+    options: &ReadOptions,
+) -> Result<crate::inspect::Snapshot, MarkdownError> {
+    let docx_error = |e: crate::inspect::InspectError| MarkdownError::Docx(e.to_string());
+    let mut snapshot = crate::inspect::snapshot(docx).map_err(docx_error)?;
+    if options.select.is_some() {
+        let view = read(
+            docx,
+            &ReadOptions {
+                page_markers: false,
+                ..options.clone()
+            },
+        )?;
+        snapshot.retain(view.selected.as_deref().unwrap_or_default());
+    }
+    Ok(snapshot)
 }
 
 /// What `edit` and `add` print after applying: the blocks of `docx` (the

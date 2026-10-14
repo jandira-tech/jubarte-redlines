@@ -234,6 +234,11 @@ def _print_view(docx: bytes, options: dict, source: str) -> int:
 
 
 def cmd_read(args: argparse.Namespace) -> int:
+    if args.json:
+        from . import _native
+
+        print(_native.inspect_json(_read(args.file).to_bytes()))
+        return EXIT_OK
     return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
 
 
@@ -881,8 +886,12 @@ class SharedParser:
                 self.error("--detail-threshold is not supported by the Python CLI")
             if values.get("no_paragraph_merge"):
                 self.error("--no-paragraph-merge is not supported by the Python CLI")
-        if command == "inspect" and values.get("tables"):
+        if command in ("inspect", "read") and values.get("tables"):
             self.error("--tables is not supported by the Python CLI")
+        if command == "read" and values.get("json"):
+            for key in ("paragraphs", "head", "tail", "changed", "by"):
+                if values.get(key) not in (None, False):
+                    self.error("--json with a selection is not supported by the Python CLI")
         if command in ("convert", "diff"):
             for key in (("from",) if command == "convert" else ()) + ("resource_path", "timeout", "fail_on_substitution", "no_page_markers"):
                 if values.get(key) not in (None, False):
