@@ -42,7 +42,7 @@ This document is intentionally varied{==. It mixes headings, body copy, inline f
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
 
 <!-- p6 -->
-**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough, monospace.~~==</u>_**
+**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough,~~==</u>_** **_<u>==~~`monospace.`~~==</u>_**
 
 <!-- p7 -->
 # 2. Lists
@@ -133,7 +133,7 @@ _— end of sample —_
 {++Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.++}{>>r16 @AS<<}
 
 <!-- p54 break-ins r17 @AS -->
-{++**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough, monospace.~~==</u>_**++}{>>r18 @AS<<}
+{++**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough,~~==</u>_** **_<u>==~~`monospace.`~~==</u>_**++}{>>r18 @AS<<}
 
 <!-- p55 break-ins r19 @AS -->
 # {++2. Lists++}{>>r20 @AS<<}
@@ -226,7 +226,7 @@ This document is intentionally {--varied. It mixes headings, body copy, inline f
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
 
 <!-- p103 -->
-**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough, monospace.~~==</u>_**
+**Bold blue,** **_italic red,_** **_<u>underlined green,</u>_** **_<u>==yellow-highlighted,==</u>_** **_<u>==~~strikethrough,~~==</u>_** **_<u>==~~`monospace.`~~==</u>_**
 
 <!-- p104 -->
 # 2. Lists

@@ -60,7 +60,7 @@ Georgia font (elegant serif)
 Verdana font (screen-optimized)
 
 <!-- p15 -->
-Courier New font (monospace)
+`Courier New font (monospace)`
 
 <!-- p16 3 -->
 ## 2.2 Different Font Sizes
