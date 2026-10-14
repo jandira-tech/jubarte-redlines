@@ -118,9 +118,9 @@ impl ChangeFilter {
         }
     }
 
-    /// The filter with every id in long form: `r12`, `12`, `header1.r1`,
-    /// `r1+2` (both) and 0.12's `#12` become `body:rev:12`, ...; an id that
-    /// is not a change id is [`ChangeError::InvalidId`].
+    /// The filter with every id in long form: `r12` becomes `body:rev:12`,
+    /// `header1.r1` `header1:rev:1`, `r1+2` both; an id that is not a
+    /// settled change id (`12`, 0.12's `#12`) is [`ChangeError::InvalidId`].
     pub fn normalized(&self) -> Result<Self, ChangeError> {
         let Some(ids) = &self.ids else {
             return Ok(self.clone());

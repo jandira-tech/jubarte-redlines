@@ -376,7 +376,7 @@ does not hide it (it silences the `wrote …` line of `-o`). Options go after
 the task: `jubarte --head 2 read a.docx` is refused, since the parser would
 take `read` for a document.
 
-`WHERE` is an id the view prints (`p12` or `12`, `header1`, `footer2.p1`,
+`WHERE` is an id the view prints (`p12`, `header1`, `footer2.p1`,
 `footnotes.p0`, `t0.row1.cell2`, `c5`, `c5.text`, `r12`); `edit` plans take
 the same ids. No id needs quoting in bash, zsh or csh. One command carries
 several operations: every `-p` starts one, and the flags after it belong to

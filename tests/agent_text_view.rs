@@ -118,7 +118,7 @@ fn options_default_to_the_plain_conversion() {
 fn select_parses_single_paragraphs_ranges_lists_and_tables() {
     use jubarte::markdown::Pick;
     assert_eq!(
-        Select::parse("p2, p5-p7,12,p17-,-p1,t0").unwrap(),
+        Select::parse("p2, p5-p7,p12,p17-,-p1,t0").unwrap(),
         Select::Picks(vec![
             Pick::Paragraphs {
                 from: 2,
@@ -149,9 +149,28 @@ fn select_parses_single_paragraphs_ranges_lists_and_tables() {
         "x3: expected pN, pN-pM or tN"
     );
     assert_eq!(Select::parse(" , ").unwrap_err(), "no paragraphs selected");
+    // A bare number is expired (Arthur, 2026-10-13).
+    assert_eq!(
+        Select::parse("12").unwrap_err(),
+        "12: expected pN, pN-pM or tN; the settled spelling is p12"
+    );
     assert_eq!(
         Select::parse("-").unwrap_err(),
         "-: expected pN, pN-pM or tN"
+    );
+    // A range's hint is the whole range, settled; none when it would run
+    // backwards.
+    assert_eq!(
+        Select::parse("p2-3").unwrap_err(),
+        "p2-3: expected pN, pN-pM or tN; the settled spelling is p2-p3"
+    );
+    assert_eq!(
+        Select::parse("2-").unwrap_err(),
+        "2-: expected pN, pN-pM or tN; the settled spelling is p2-"
+    );
+    assert_eq!(
+        Select::parse("2-1").unwrap_err(),
+        "2-1: expected pN, pN-pM or tN"
     );
 }
 
@@ -1996,12 +2015,11 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     assert_eq!(by_id(del_id)["ref"], format!("r{del_id}"));
     assert_eq!(by_id(ins_id)["ref"], format!("r{ins_id}"));
 
-    // The short id the view prints, a bare number and 0.12's `#N` (argv,
-    // no shell) select the same change as the long id.
+    // The short id the view prints selects the same change as the long id
+    // the JSON prints.
     for (one, other) in [
         (format!("r{del_id}"), format!("body:rev:{ins_id}")),
-        (del_id.to_string(), format!("r{ins_id}")),
-        (format!("#{del_id}"), ins_id.to_string()),
+        (format!("body:rev:{del_id}"), format!("r{ins_id}")),
     ] {
         ok(
             &[
@@ -2033,9 +2051,34 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     assert_eq!(bad.status.code(), Some(2));
     assert_eq!(
         String::from_utf8_lossy(&bad.stderr),
-        "error: c5: expected a change id such as r12, header1.r1 or body:rev:12\n"
+        "error: c5: expected a change id such as r12, r1+2 or header1.r1\n"
     );
     assert!(!dir.path().join("bad.docx").exists());
+    // A bare number and 0.12's `#N` are expired (Arthur, 2026-10-13):
+    // refused with exit 2 and the settled spelling, nothing written.
+    for expired in [del_id.to_string(), format!("#{del_id}")] {
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args([
+                "reject",
+                "review/redline.docx",
+                "-o",
+                "bad.docx",
+                "--id",
+                &expired,
+            ])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(2), "{expired}");
+        assert_eq!(
+            String::from_utf8_lossy(&refused.stderr),
+            format!(
+                "error: {expired}: expected a change id such as r12, r1+2 or header1.r1; \
+                 the settled spelling is r{del_id}\n"
+            )
+        );
+        assert!(!dir.path().join("bad.docx").exists());
+    }
     let rejected = ok(&["read", "rejected.docx", "--no-page-markers"], dir.path());
     assert!(
         rejected.contains(
@@ -4360,7 +4403,7 @@ fn a_header_reviser_takes_a_handle_before_a_commenter_with_the_same_initials() {
 fn selection_parser_accepts_zero_equal_endpoints_and_whitespace() {
     use jubarte::markdown::Pick;
     assert_eq!(
-        Select::parse(" , p0 , 2 - p2, p3 - , - p4, t0, ,").unwrap(),
+        Select::parse(" , p0 , p2 - p2, p3 - , - p4, t0, ,").unwrap(),
         Select::Picks(vec![
             Pick::Paragraphs {
                 from: 0,
@@ -4426,10 +4469,18 @@ fn selection_parser_checks_platform_integer_boundaries() {
 
 #[test]
 fn selection_parser_rejects_backwards_ranges_in_all_number_spellings() {
-    for item in ["p2-p1", "2-1", "p2-1", "2-p1", "p2 - p1"] {
+    for item in ["p2-p1", "p2 - p1"] {
         assert_eq!(
             Select::parse(item),
             Err(format!("{item}: the range runs backwards"))
+        );
+    }
+    // A bare number at either end is expired. The settled range would run
+    // backwards too, so no spelling is suggested.
+    for item in ["2-1", "p2-1", "2-p1"] {
+        assert_eq!(
+            Select::parse(item),
+            Err(format!("{item}: expected pN, pN-pM or tN"))
         );
     }
 }

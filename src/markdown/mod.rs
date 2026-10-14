@@ -323,50 +323,112 @@ impl Select {
         })
     }
 
-    /// `p2, p5-p7, 12, p17-, -p1, t0`: comma-separated picks; a bare number
-    /// is a paragraph.
+    /// `p2, p5-p7, p17-, -p1, t0`: comma-separated picks. A pick is a body
+    /// paragraph or a table, as the settled short ids spell them
+    /// ([`crate::ids::ShortId`]), or a range of paragraphs, which may be
+    /// open at one end (`p17-` to the end, `-p1` from the start). An expired
+    /// spelling (`12`) is refused with its settled one.
     pub fn parse(spec: &str) -> Result<Self, String> {
-        fn number(item: &str, text: &str) -> Result<usize, String> {
-            let text = text.trim();
-            text.strip_prefix('p')
-                .unwrap_or(text)
-                .parse()
-                .map_err(|_| format!("{item}: expected pN, pN-pM or tN"))
-        }
+        use crate::ids::{ShortId, Step, Story};
+        // The refusal of `item`, naming the settled spelling when known.
+        let refused = |item: &str, hint: Option<String>| {
+            let hint = hint.map_or_else(String::new, |h| format!("; the settled spelling is {h}"));
+            format!("{item}: {SELECT_EXPECTED}{hint}")
+        };
+        // The body path `text` names.
+        let body = |item: &str, text: &str| match text.trim().parse::<ShortId>() {
+            Ok(ShortId::Block {
+                story: Story::Body,
+                path,
+            }) => Ok(path),
+            Ok(_) => Err(refused(item, None)),
+            Err(e) => Err(refused(
+                item,
+                crate::ids::hint_where(e.hint, |id| {
+                    matches!(
+                        id,
+                        ShortId::Block {
+                            story: Story::Body,
+                            ..
+                        }
+                    )
+                }),
+            )),
+        };
+        // The body paragraph an end of a range names; `None` when open.
+        let end = |item: &str, text: &str| {
+            if text.trim().is_empty() {
+                return Ok(None);
+            }
+            match body(item, text)?[..] {
+                [Step::Paragraph(n)] => Ok(Some(n)),
+                _ => Err(refused(item, None)),
+            }
+        };
+        // The settled spelling of a whole range whose ends are expired
+        // (`2-3` is `p2-p3`): `None` when an end has none, or the range
+        // would run backwards.
+        let settled_range = |from: &str, to: &str| {
+            let settle = |text: &str| -> Option<Option<usize>> {
+                let text = text.trim();
+                if text.is_empty() {
+                    return Some(None);
+                }
+                let spelled = match text.parse::<ShortId>() {
+                    Ok(_) => text.to_string(),
+                    Err(e) => crate::ids::hint_where(e.hint, |id| {
+                        matches!(
+                            id,
+                            ShortId::Block {
+                                story: Story::Body,
+                                ..
+                            }
+                        )
+                    })?,
+                };
+                match spelled.parse::<ShortId>() {
+                    Ok(ShortId::Block {
+                        story: Story::Body,
+                        path,
+                    }) => match path[..] {
+                        [Step::Paragraph(n)] => Some(Some(n)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            };
+            let (from, to) = (settle(from)?, settle(to)?);
+            if from.is_none() && to.is_none() || matches!((from, to), (Some(a), Some(b)) if b < a) {
+                return None;
+            }
+            let spell = |n: Option<usize>| n.map_or_else(String::new, |n| format!("p{n}"));
+            Some(format!("{}-{}", spell(from), spell(to)))
+        };
         let mut picks = Vec::new();
         for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            if let Some(table) = item.strip_prefix('t') {
-                let n = table
-                    .parse()
-                    .map_err(|_| format!("{item}: expected pN, pN-pM or tN"))?;
-                picks.push(Pick::Table(n));
+            if let Some((from, to)) = item.split_once('-') {
+                let (Ok(from_end), Ok(to_end)) = (end(item, from), end(item, to)) else {
+                    return Err(refused(item, settled_range(from, to)));
+                };
+                let (from, to) = (from_end, to_end);
+                if from.is_none() && to.is_none() {
+                    return Err(refused(item, None));
+                }
+                let from = from.unwrap_or(0);
+                if to.is_some_and(|to| to < from) {
+                    return Err(format!("{item}: the range runs backwards"));
+                }
+                picks.push(Pick::Paragraphs { from, to });
                 continue;
             }
-            if !item.contains(|c: char| c.is_ascii_digit()) {
-                return Err(format!("{item}: expected pN, pN-pM or tN"));
-            }
-            let (from, to) = match item.split_once('-') {
-                None => {
-                    let n = number(item, item)?;
-                    (n, Some(n))
-                }
-                Some((a, b)) => (
-                    if a.trim().is_empty() {
-                        0
-                    } else {
-                        number(item, a)?
-                    },
-                    if b.trim().is_empty() {
-                        None
-                    } else {
-                        Some(number(item, b)?)
-                    },
-                ),
-            };
-            if to.is_some_and(|to| to < from) {
-                return Err(format!("{item}: the range runs backwards"));
-            }
-            picks.push(Pick::Paragraphs { from, to });
+            picks.push(match body(item, item)?[..] {
+                [Step::Paragraph(n)] => Pick::Paragraphs {
+                    from: n,
+                    to: Some(n),
+                },
+                [Step::Table(n)] => Pick::Table(n),
+                _ => return Err(refused(item, None)),
+            });
         }
         if picks.is_empty() {
             return Err("no paragraphs selected".to_string());
@@ -374,6 +436,9 @@ impl Select {
         Ok(Self::Picks(picks))
     }
 }
+
+/// Why a `read -p` pick was refused.
+const SELECT_EXPECTED: &str = "expected pN, pN-pM or tN";
 
 /// A document read as Markdown.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

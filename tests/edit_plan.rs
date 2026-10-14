@@ -359,9 +359,9 @@ fn a_plan_resolves_selected_changes_before_it_edits() {
     let err = apply_plan_json(&source, &json).unwrap_err();
     assert_eq!(err.code, "UNKNOWN_CHANGE");
 
-    // The view's short id, a bare number and 0.12's `#1` select body:rev:1;
-    // the report keeps the long id.
-    for id in ["r1", "1", "#1"] {
+    // The view's short id and the long id select body:rev:1; the report
+    // keeps the long id.
+    for id in ["r1", "body:rev:1"] {
         let json = with(&format!(
             r#""resolve_revisions":{{"accept":{{"ids":["{id}"]}},"reject":{{"authors":["b"]}}}}"#
         ));
@@ -378,7 +378,7 @@ fn a_plan_resolves_selected_changes_before_it_edits() {
     assert_eq!(err.code, "INVALID_PLAN");
     assert!(
         err.to_string()
-            .contains("c1: expected a change id such as r12, header1.r1 or body:rev:12"),
+            .contains("c1: expected a change id such as r12, r1+2 or header1.r1"),
         "{err}"
     );
 }

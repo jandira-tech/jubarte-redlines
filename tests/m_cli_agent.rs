@@ -63,7 +63,7 @@ fn retired_names_work_once_with_a_note() {
     let (code, stdout, stderr) = run(&["audit", bullets.to_str().unwrap()]);
     assert_eq!(code, 0, "{stdout}{stderr}");
     assert!(
-        stdout.contains("\n  LITERAL_BULLET\twarning\tbody:p:0\t"),
+        stdout.contains("\n  LITERAL_BULLET\twarning\tp0\t"),
         "{stdout}"
     );
     assert_eq!(
@@ -597,8 +597,12 @@ fn capabilities_describe_the_built_binary() {
         v["formats"]["diff"],
         serde_json::json!([".md", ".markdown", ".txt", ".patch", ".diff"])
     );
-    // 0.12's `#c27` still parses but is not advertised.
-    assert_eq!(v["ids"]["comment"], serde_json::json!(["c27", "27"]));
+    // Only the settled spellings are advertised (spec §2).
+    assert_eq!(v["ids"]["comment"], serde_json::json!(["c27"]));
+    assert_eq!(
+        v["ids"]["change"],
+        serde_json::json!(["r12", "r1+2", "header1.r1", "footnotes.r3"])
+    );
     assert_eq!(v["ids"]["comment_text"], serde_json::json!(["c27.text"]));
     assert_eq!(v["ids"]["table"], serde_json::json!(["t0"]));
     assert!(v["ids"]["note"].as_str().unwrap().contains("safe unquoted"));
@@ -624,7 +628,7 @@ fn capabilities_print_a_text_summary_by_default() {
         "validate rules: word (default), edits, a11y, style, structure",
         "audit codes: HEADING_SKIP, ",
         "formats: compare .docx .md .pdf .png .json; convert ",
-        "ids: revisions r12, 12, r1+2, ",
+        "ids: revisions r12, r1+2, header1.r1, footnotes.r3; ",
         "ids note: body ids print without a story",
     ] {
         assert!(
@@ -634,7 +638,7 @@ fn capabilities_print_a_text_summary_by_default() {
     }
     assert!(text.contains("; read .md .json; diff .md .markdown .txt .patch .diff;"));
     assert!(
-        text.contains("; comments c27, 27; comment text c27.text; "),
+        text.contains("; comments c27; comment text c27.text; "),
         "{text}"
     );
     assert_eq!(lines.last(), Some(&"run with --json for the manifest"));

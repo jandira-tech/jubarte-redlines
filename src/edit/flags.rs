@@ -15,7 +15,7 @@ use super::{
     RunSpec, Selector, Side,
 };
 use crate::changes::ChangeFilter;
-use crate::ids::Location;
+use crate::ids::{IdError, Location, ShortId};
 
 /// One operation as the flags describe it, grouped by its `-p`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,7 +181,7 @@ fn content_text(content: &str) -> (String, Option<&'static str>) {
     )
 }
 
-/// `c5` (or 0.12's `#c5`) → 5: the comment a `-p` names.
+/// `c5` → 5: the comment a `-p` names.
 fn comment_number(at: &str) -> Option<u32> {
     match crate::ids::parse_location(at) {
         Ok(crate::ids::Location::Comment(id)) => Some(id),
@@ -189,52 +189,34 @@ fn comment_number(at: &str) -> Option<u32> {
     }
 }
 
+/// The refusal of a `-p` id this group cannot take: an expired one, named
+/// with the settled spellings `keep` allows (`-p 5 --reject` → `r5`), or a
+/// settled id `-p` does not edit yet (`s0`, `p3-p7`). `None` when `at`
+/// parses, or when no settled spelling is known (the caller's own message
+/// is then the better one).
+fn expired(at: &str, keep: impl Fn(&ShortId) -> bool) -> Option<String> {
+    match crate::ids::parse_location(at) {
+        Err(e) if e.expected == crate::ids::LOCATION_NOT_YET => Some(format!("-p {e}")),
+        Err(e) if e.hint.is_some() => {
+            let hint = crate::ids::hint_where(e.hint.clone(), keep);
+            Some(format!("-p {}", IdError { hint, ..e }))
+        }
+        _ => None,
+    }
+}
+
 /// A `-p r12 --accept` (or `--reject`) group: whether it accepts, and the
 /// long ids it names. `None` for a group that is an operation. Only `edit`
 /// resolves revisions.
-/// On `-p` a bare number (`5`, `1+2`) names a paragraph (D7), so a
-/// revision flag beside one is refused with the revision it may have meant,
-/// `r1+2`, and a comment flag beside a single number with `c5`. Each number
-/// is written the way the id grammar (`crate::ids`) spells it (`01` → `1`),
-/// and a spelling the grammar would refuse (a number past `u32`) is never
-/// suggested.
-fn bare_numbers(at: &str) -> Option<Vec<u32>> {
-    at.split('+')
-        .map(|n| {
-            (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-                .then(|| n.parse::<u32>().ok())
-                .flatten()
-        })
-        .collect()
-}
-
-/// `r1+2` for `-p 1+02`, when the grammar takes it.
-fn bare_revision(at: &str) -> Option<String> {
-    let numbers = bare_numbers(at)?;
-    let id = format!(
-        "r{}",
-        numbers
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join("+")
-    );
-    crate::ids::parse_change_ids(&id).is_ok().then_some(id)
-}
-
-/// `c5` for `-p 05`, when the grammar takes it: one number only.
-fn bare_comment(at: &str) -> Option<String> {
-    let [number] = bare_numbers(at)?[..] else {
-        return None;
-    };
-    let id = format!("c{number}");
-    crate::ids::parse_comment_id(&id).is_ok().then_some(id)
-}
-
-const BARE_NUMBER: &str = "on -p a bare number names a paragraph";
-
 fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
     let at = op.at.trim();
+    // Only a revision group names a change; any other group's id is
+    // refused by [`flag_operation`], with the spellings it takes.
+    if (op.accept || op.reject)
+        && let Some(refused) = expired(at, |id| matches!(id, ShortId::Change { .. }))
+    {
+        return Err(refused);
+    }
     let bad = |m: &str| Err(format!("-p {at}: {m}"));
     let ids = match crate::ids::parse_location(at) {
         Ok(Location::Changes(ids)) => Some(ids),
@@ -255,17 +237,6 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         || op.comment
         || op.reply.is_some()
         || !op.styles.is_empty();
-    if ids.is_none()
-        && (op.accept || op.reject)
-        && let Some(id) = bare_revision(at)
-    {
-        let kind = if id.contains('+') {
-            "revisions are"
-        } else {
-            "revision is"
-        };
-        return bad(&format!("{BARE_NUMBER}; the {kind} {id}"));
-    }
     match ids {
         None if op.accept || op.reject => bad("--accept and --reject take a revision (-p r12)"),
         None => Ok(None),
@@ -288,11 +259,26 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     if at.is_empty() {
         return Err("-p needs a location".into());
     }
+    // The settled spellings this whole group takes: a reply or a
+    // resolution names a comment; a comment takes no --anchor, --style,
+    // --before or --comment (nor, under add, --delete or --resolve); a
+    // change takes --accept or --reject, never these.
+    let names_comment = op.reply.is_some() || op.resolve;
+    let comment_takes = op.anchor.is_none()
+        && op.styles.is_empty()
+        && !op.before
+        && !op.comment
+        && !(verb == Verb::Add && (op.delete || op.resolve));
+    let keep = |id: &ShortId| match id {
+        ShortId::Comment(_) => comment_takes,
+        ShortId::Change { .. } => false,
+        _ => !names_comment,
+    };
+    if let Some(refused) = expired(at, keep) {
+        return Err(refused);
+    }
     if let Some(reply) = &op.reply {
         let Some(comment_id) = comment_number(at) else {
-            if let Some(id) = bare_comment(at) {
-                return bad(&format!("{BARE_NUMBER}; the comment is {id}"));
-            }
             return bad("--reply is for a comment (-p c5)");
         };
         if op.anchor.is_some()
@@ -407,9 +393,6 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
         (Verb::Add, None, _, None) => return bad("add needs --content"),
         // Edit.
         (Verb::Edit, None, _, _) if op.resolve => {
-            if let Some(id) = bare_comment(at) {
-                return bad(&format!("{BARE_NUMBER}; the comment is {id}"));
-            }
             return bad("--resolve is for a comment (-p c5)");
         }
         (Verb::Edit, None, _, _) if op.before || op.comment => {
@@ -1357,7 +1340,7 @@ mod tests {
         );
         let only = plan_from_flags(
             Verb::Edit,
-            &[with("#7", |o| o.reject = true)],
+            &[with("r7", |o| o.reject = true)],
             "A",
             None,
             None,
@@ -1377,13 +1360,19 @@ mod tests {
     fn reply_answers_a_comment_on_edit_and_add() {
         let want = kind(Verb::Add, &with("c5", |o| o.content = Some("Yes.".into()))).unwrap();
         for verb in [Verb::Edit, Verb::Add] {
-            for at in ["c5", "#c5"] {
-                assert_eq!(
-                    kind(verb, &with(at, |o| o.reply = Some("Yes.".into()))),
-                    Ok(want.clone()),
-                    "{verb:?} {at}"
-                );
-            }
+            assert_eq!(
+                kind(verb, &with("c5", |o| o.reply = Some("Yes.".into()))),
+                Ok(want.clone()),
+                "{verb:?}"
+            );
+            // 0.12's `#c5` is expired, refused with the settled spelling.
+            let refused = kind(verb, &with("#c5", |o| o.reply = Some("Yes.".into())));
+            assert!(
+                refused
+                    .as_ref()
+                    .is_err_and(|m| m.ends_with("the settled spelling is c5")),
+                "{refused:?}"
+            );
         }
     }
 

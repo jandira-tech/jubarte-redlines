@@ -2477,6 +2477,11 @@ fn cli_main() -> ExitCode {
             output,
             force,
         }) => {
+            // A selection that does not parse is a usage error, before I/O.
+            if let Err(e) = selection(&args) {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
             return convert_exit_code(run_text(&file, &args, output.as_deref(), force, quiet));
         }
         Some(Command::Edit {

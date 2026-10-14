@@ -97,10 +97,31 @@ Arthur, 2026-10-13, "Simplify for now": `==x==` (a highlight, any colour), `~~x~
 `highlight` lines. Highlight colour, text colour and font names stay `✗ docx lost` until a later
 task gives them a spelling.
 
-### 8–13. The rest of the spec's order of work
+### 8. The reader: what the view writes comes back (Arthur, 2026-10-13: "Pay attention to the threaded replies … Spacing. Style legends. Mapping AC to an n counsel")
 
-Reader: threads and `resolved`, endnotes, id-line properties (spacing, keep-next, breaks), empty
-paragraphs, cell paragraphs, a change printed in several blocks read back as one (8). Pictures,
+Found in `src/markdown/{write,xml,package}.rs` on 2026-10-13, in this order of work:
+
+- **8a Threaded replies.** `c6 @AS re c5:` and `resolved` are parsed (`CommentHead.reply_to`,
+  `.resolved`) and dropped: only `comments.xml` is written. Write a `w14:paraId` on each comment's
+  last paragraph and `word/commentsExtended.xml` (`w15:commentEx w15:paraId`, `w15:paraIdParent`
+  for a reply, `w15:done="1"` when resolved), its content type and relationship; Word-check the
+  output (open it in Word, not only the validator).
+- **8b Comment ids.** `w:id` is a running counter (`comments.len()`), so `c5` comes back as `c0`:
+  keep the view's number.
+- **8c Authors.** `@AC` → `Ann Counsel` and its date already map through the `authors:` table
+  (`view_author`), initials from the handle: covered by a test in the round-trip gate, no change.
+- **8d Spacing and the id line.** The id lines (`<!-- p3 BodyText center, first-line 0.5in, left
+  0.5in, right 0.5in -->`) are not read: read the style, alignment, indents, spacing (`before`,
+  `after`, `line … atLeast/exact`), `keep-next`, breaks and `empty` back into `w:pPr`.
+- **8e The style legend.** The YAML `styles:` map (`Normal: Times New Roman 11pt, after 6pt, line
+  12pt atLeast, left`; `"#": Heading1, Times New Roman bold 24pt, before 24pt, keep-next`) is not
+  read: write it into `styles.xml` (fonts, sizes, bold, spacing, alignment, keep-next).
+- Then: endnotes, empty paragraphs, cell paragraphs, a change printed in several blocks read back
+  as one, and the nested change (pi F2 of #462).
+
+### 9–13. The rest of the spec's order of work
+
+Pictures,
 bookmarks, internal links, body fields as code plus result, brace escaping (9). YAML
 headers/footers/page/styles/sections, including a different first page (10). `convert -o X.md` in
 the view dialect, `--plain` (11). Anchored mode (12). Long ids, then stamping behind the Word gate

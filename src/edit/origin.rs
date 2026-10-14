@@ -17,7 +17,7 @@ use crate::inspect::Opened;
 use crate::namespaces::{W, W14};
 use crate::xmllinq::{Dom, NodeId};
 
-use crate::ids::short_number;
+use crate::ids::{ShortId, Step, Story};
 
 use super::{EditError, EditPlan, Loaded, Selector, err, load_stories, settle};
 
@@ -37,44 +37,51 @@ pub(super) struct Ids<'a> {
 pub(super) type Miss = (String, String, usize);
 
 impl Ids<'_> {
-    /// The long id of a short one, as the agent view prints them: `p3` and
-    /// `3` → `body:p:3`; a story's stem and `{stem}.p1` (`header1`,
+    /// The long id of a short one, as the agent view prints them: `p3` →
+    /// `body:p:3`; a story's stem and `{stem}.p1` (`header1`,
     /// `footnotes.p1`) → `header1:p:0` and `footnotes:p:1` (the part stem,
-    /// Word's own numbering); `t0.row1.cell2[.p1]` (or 0.12's `t0.r1.c2`)
-    /// → that cell's first (or K-th) paragraph. `None` when `id` is not a
-    /// short id ([`crate::ids`] is the grammar).
+    /// Word's own numbering); `t0.row1.cell2[.p1]` → that cell's first (or
+    /// K-th) paragraph. `None` for a long id (`body:p:3`) and for a short id
+    /// that is no paragraph; an expired or malformed id is refused with its
+    /// settled spelling ([`ShortId`] is the grammar).
     pub(super) fn long_id(&self, id: &str) -> Option<Result<String, String>> {
-        if let Some(n) = crate::ids::paragraph_number(id) {
-            return Some(Ok(format!("body:p:{n}")));
-        }
-        let parts: Vec<&str> = id.split('.').collect();
-        let head = parts[0];
-        if let Some(n) = short_number(head, 't') {
-            return Some(match crate::ids::cell_path(id) {
-                Some((_, row, cell, index)) => {
-                    self.table_paragraph(head, n, row, cell, index.unwrap_or(0))
-                }
-                None => Err(crate::ids::parse_location(id)
-                    .err()
-                    .map_or_else(|| format!("unknown paragraph id {id}"), |e| e.to_string())),
-            });
-        }
-        if !crate::ids::is_story(head) {
+        if id.contains(":p:") {
             return None;
         }
-        let index = match &parts[1..] {
-            [] => 0,
-            [p] => short_number(p, 'p')?,
-            _ => return None,
+        let (story, path) = match id.parse::<ShortId>() {
+            Ok(ShortId::Block { story, path }) => (story, path),
+            Ok(_) => return None,
+            Err(e) => return Some(Err(e.to_string())),
         };
-        Some(if self.story_ids.contains(&head) {
-            Ok(format!("{head}:p:{index}"))
-        } else {
-            Err(format!(
-                "{head} is not a story of this document (stories: {})",
-                self.story_ids.join(", ")
-            ))
-        })
+        let paragraph = |rest: &[Step]| match rest {
+            [] => Some(0),
+            [Step::Paragraph(p)] => Some(*p),
+            _ => None,
+        };
+        match (&story, path.as_slice()) {
+            (Story::Body, [Step::Paragraph(n)]) => Some(Ok(format!("body:p:{n}"))),
+            (Story::Body, [Step::Table(n), Step::Row(row), Step::Cell(cell), rest @ ..]) => {
+                let index = paragraph(rest)?;
+                Some(self.table_paragraph(&format!("t{n}"), *n, *row, *cell, index))
+            }
+            (Story::Body, [Step::Table(_)] | [Step::Table(_), Step::Row(_)]) => Some(Err(
+                crate::ids::parse_location(id)
+                    .err()
+                    .map_or_else(|| format!("unknown paragraph id {id}"), |e| e.to_string()),
+            )),
+            (Story::Part(stem), rest) => {
+                let index = paragraph(rest)?;
+                Some(if self.story_ids.contains(&stem.as_str()) {
+                    Ok(format!("{stem}:p:{index}"))
+                } else {
+                    Err(format!(
+                        "{stem} is not a story of this document (stories: {})",
+                        self.story_ids.join(", ")
+                    ))
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Table `n`, row `row`, cell `cell`: the long id of that cell's

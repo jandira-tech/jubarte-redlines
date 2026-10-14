@@ -805,17 +805,22 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
     }
     for &(t, rows, cols, a, b) in &printed.tables {
         let cells = table_cells(docx, t, rows, cols);
+        // Every paragraph of every cell, in the settled spelling: the cell
+        // is its first paragraph (`t0.row1.cell2`), the others `.pK`.
         let mut want = Vec::new();
-        let mut retired = Vec::new();
+        let mut settled = Vec::new();
         for (r, c, longs) in &cells {
             for (k, long) in longs.iter().enumerate() {
                 want.push(long.clone());
-                retired.push(format!("t{t}.r{r}.c{c}.p{k}"));
+                settled.push(match k {
+                    0 => format!("t{t}.row{r}.cell{c}"),
+                    k => format!("t{t}.row{r}.cell{c}.p{k}"),
+                });
             }
         }
-        let refs: Vec<&str> = retired.iter().map(String::as_str).collect();
+        let refs: Vec<&str> = settled.iter().map(String::as_str).collect();
         let back = jubarte::edit::long_paragraph_ids(docx, &refs).unwrap();
-        for ((token, long), back) in retired.iter().zip(&want).zip(&back) {
+        for ((token, long), back) in settled.iter().zip(&want).zip(&back) {
             if back.as_ref() != Ok(long) {
                 fail(format!("{token} resolves to {back:?}, not {long}"));
             }
@@ -1059,7 +1064,8 @@ fn every_story_and_every_collision_round_trips() {
         "footer1.r1 @JD",
         "footer2.r4 @JD",
         "footer3.r9 @JD",
-        "hdr.r1 @AC",
+        // Stems outside `header N` / `footer N` keep the long id (spec §2.2).
+        "hdr:rev:1 @AC",
         "Header_1:rev:1 @AC",
         "footnotes.r5 @AC",
         "footnotes.r51000 @JD",
@@ -1091,7 +1097,7 @@ fn every_story_and_every_collision_round_trips() {
         "footnotes.r5",
         "header1.r1",
         "header3.r1",
-        "hdr.r1",
+        "hdr:rev:1",
         "Header_1:rev:1",
         "footnotes.r51000",
         "endnotes.r12",
