@@ -1,0 +1,12 @@
+--- a/gemini.docx
++++ b/gemini.docx	Modified User	2026-10-12T06:06:18Z
+@@ [body:p:1] @@
+This extension runs jubarte-mcp, an MCP server whose tools read, edit,
+compare, resolve and render Word .docx files. Every path must sit
+{==under the workspace; outputs are written ==}{>>Arthur Souza Rodrigues
+(2026-10-12T02:02:00Z): nope<<}as files there, and no tool replaces an
+existing file unless you pass overwrite: true.
+
+@@ [body:p:4] @@
+- {+uga
+- +}**Check the result.** docx_render writes page by id, author or kind.

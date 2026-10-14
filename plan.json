@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "source_sha256": "98d9e45b30f07e5cc30aa6904658e38ff7af1a7902df5570a8ec5b7a627c7d9d",
+  "author": "Modified User",
+  "existing_revisions": "keep",
+  "operations": [
+    {
+      "kind": "replace",
+      "paragraph": "p5",
+      "find": "docx",
+      "replacement": "buceta"
+    },
+    {
+      "kind": "replace",
+      "paragraph": "p5",
+      "find": "kind",
+      "replacement": "buceta"
+    }
+  ]
+}
