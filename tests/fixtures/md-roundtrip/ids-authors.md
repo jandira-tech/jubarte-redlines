@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 22                      # 22 marks shown as 20 changes: 5 insertions, 7 deletions, 2 substitutions, 6 paragraph marks
+revisions: 22                      # 22 marks shown as 21 changes: 6 insertions, 8 deletions, 1 substitution, 6 paragraph marks
 comments: 0
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -26,7 +26,7 @@ Back to back: {++one++}{>>r0 @AL<<}{~~three~>two~~}{>>r2 @CD<<}{>>r1 @BC<<}{--fo
 {++Start of paragraph ++}{>>r4 @AL<<}middle{-- end of paragraph--}{>>r5 @BC<<}
 
 <!-- p3 left -->
-Replaced by two people: {~~old~>new~~}{>>r6 @AL<<}{>>r7 @BC<<}.
+Replaced by two people: {--old--}{>>r6 @AL<<}{++new++}{>>r7 @BC<<}.
 
 <!-- p4 left, break-del r9 @BC -->
 Deletion across paragraphs: alpha{-- beta--}{>>r8 @BC<<}

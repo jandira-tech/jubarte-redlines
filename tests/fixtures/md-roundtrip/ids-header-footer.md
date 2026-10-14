@@ -11,13 +11,13 @@ styles:
   Normal: Aptos 12pt, left         # default; unannotated paragraphs use it
   ListParagraph: Times 11.5pt, after 6pt, line 1.1, named List Paragraph
 headers:
-  first: {id: header3, text: "{PAGE}1{/}"}  # page 1 only (different first page)
-  default: {id: header2, text: "{PAGE}1{/}"}
-  even: {id: header1, text: "{PAGE}2{/}"}
+  first: {id: header3, text: ["{PAGE}1{/}", "This is my first page header, page numbers at the right"]}  # page 1 only (different first page)
+  default: {id: header2, text: ["{PAGE}1{/}", "Odd page header, page numbers at the right"]}
+  even: {id: header1, text: ["{PAGE}2{/}", "Even page header, page numbers at the right"]}
 footers:
-  first: {id: footer3, text: "{PAGE}1{/}"}  # page 1 only (different first page)
-  default: {id: footer2, text: "{PAGE}1{/}"}
-  even: {id: footer1, text: "{PAGE}2{/}"}
+  first: {id: footer3, text: ["{PAGE}1{/}", "This Is my first page footer, page numbers at the left"]}  # page 1 only (different first page)
+  default: {id: footer2, text: ["{PAGE}1{/}", "Odd page footer, page numbers at the left"]}
+  even: {id: footer1, text: ["{PAGE}2{/}", "Even page footer, page numbers at the right"]}
 ---
 
 <!-- p0 -->

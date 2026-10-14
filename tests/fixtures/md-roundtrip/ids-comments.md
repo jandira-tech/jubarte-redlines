@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 64                      # 63 marks shown as 47 changes: 14 insertions, 14 deletions, 15 substitutions, 4 paragraph marks; 1 in footnotes
+revisions: 64                      # 63 marks shown as 60 changes: 27 insertions, 27 deletions, 2 substitutions, 4 paragraph marks; 1 in footnotes
 comments: 30 threads open          # 30 comments: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -20,7 +20,7 @@ styles:
 # Heavy on everything
 
 <!-- p1 left -->
-{~~_The_~>notice~~}{>>r0 @AL<<}{>>r1 @DP<<} warranty {~~period~>supplier~~}{>>r2+3 @AL<<} is **twelve**{== months from delivery.==}{>>c0 @AL: Legal to review.<<}
+{--_The_--}{>>r0 @AL<<}{++notice++}{>>r1 @DP<<} warranty {--period--}{>>r2 @AL<<}{++supplier++}{>>r3 @AL<<} is **twelve**{== months from delivery.==}{>>c0 @AL: Legal to review.<<}
 
 <!-- p2 left -->
 Either party may end this agreement with ninety days{== written notice{++ without undue delay++}{>>r4 @BC<<}.==}{>>c1 @CD: Client asked for this.<<}
@@ -28,13 +28,13 @@ Either party may end this agreement with ninety days{== written notice{++ withou
 <!-- t0 5x3, cells p3-p17 by row -->
 |Clause|Change|Status|
 |:-|:-|:-|
-|Late payments{++ as reasonably required++}{>>r5 @BC<<}{== carry interest.==}{>>c2 @AL: Client asked for this.<<}|Each {~~party~>sixty~~}{>>r6 @CD<<}{>>r7 @AL<<} keeps {~~the~>supplier~~}{>>r8 @DP<<}{>>r9 @AL<<}.|{~~The~>sixty~~}{>>r10 @BC<<}{>>r11 @CD<<} warranty{== period is.==}{>>c3 @DP: Client asked for this.<<}{>>c4 @DP: Legal to review.<<}|
-|The {~~supplier~>written~~}{>>r12 @BC<<}{>>r13 @DP<<}{== keeps{++ promptly++}{>>r14 @DP<<} title.==}{>>c5 @DP: Agreed.<<}|{==The supplier{-- shall--}{>>r15 @CD<<}==}{>>c6 @BC: Legal to review.<<} {~~deliver~>vendor~~}{>>r16 @AL<<}{>>r17 @CD<<}.|The warranty period is.|
-|Payment is due {~~on~>written~~}{>>r18 @DP<<}{>>r19 @CD<<}.{>>c7 @CD: Check the defined term.<<}|The supplier{== shall deliver.==}{>>c8 @BC: Client asked for this.<<}{>>c9 @AL: Is this consistent with the master agreement?<<}|Late payments{== carry interest.==}{>>c10 @AL: Too broad, narrow it down.<<}|
-|{--The--}{>>r20 @BC<<}{== buyer shall==}{>>c11 @CD: Why thirty and not sixty?<<} return.|The buyer{-- may--}{>>r21 @AL<<}{== {~~inspect~>supplier~~}{>>r22 @AL<<}{>>r23 @BC<<}.==}{>>c12 @AL: Too broad, narrow it down.<<}|Notices must be sent.|
+|Late payments{++ as reasonably required++}{>>r5 @BC<<}{== carry interest.==}{>>c2 @AL: Client asked for this.<<}|Each {--party--}{>>r6 @CD<<}{++sixty++}{>>r7 @AL<<} keeps {--the--}{>>r8 @DP<<}{++supplier++}{>>r9 @AL<<}.|{--The--}{>>r10 @BC<<}{++sixty++}{>>r11 @CD<<} warranty{== period is.==}{>>c3 @DP: Client asked for this.<<}{>>c4 @DP: Legal to review.<<}|
+|The {--supplier--}{>>r12 @BC<<}{++written++}{>>r13 @DP<<}{== keeps{++ promptly++}{>>r14 @DP<<} title.==}{>>c5 @DP: Agreed.<<}|{==The supplier{-- shall--}{>>r15 @CD<<}==}{>>c6 @BC: Legal to review.<<} {--deliver--}{>>r16 @AL<<}{++vendor++}{>>r17 @CD<<}.|The warranty period is.|
+|Payment is due {--on--}{>>r18 @DP<<}{++written++}{>>r19 @CD<<}.{>>c7 @CD: Check the defined term.<<}|The supplier{== shall deliver.==}{>>c8 @BC: Client asked for this.<<}{>>c9 @AL: Is this consistent with the master agreement?<<}|Late payments{== carry interest.==}{>>c10 @AL: Too broad, narrow it down.<<}|
+|{--The--}{>>r20 @BC<<}{== buyer shall==}{>>c11 @CD: Why thirty and not sixty?<<} return.|The buyer{-- may--}{>>r21 @AL<<}{== {--inspect--}{>>r22 @AL<<}{++supplier++}{>>r23 @BC<<}.==}{>>c12 @AL: Too broad, narrow it down.<<}|Notices must be sent.|
 
 <!-- p18 left -->
-{==Disputes{++ unless agreed otherwise++}{>>r24 @CD<<} go{++ as reasonably required++}{>>r25 @DP<<} {~~first~>sixty~~}{>>r26 @DP<<}{>>r27 @CD<<}==}{>>c13 @DP: Why thirty and not sixty?<<} to mediation and then to the courts of{~~ Manhattan~> without undue delay~~}{>>r29 @AL<<}{>>r28 @DP<<}.
+{==Disputes{++ unless agreed otherwise++}{>>r24 @CD<<} go{++ as reasonably required++}{>>r25 @DP<<} {--first--}{>>r26 @DP<<}{++sixty++}{>>r27 @CD<<}==}{>>c13 @DP: Why thirty and not sixty?<<} to mediation and then to the courts of{~~ Manhattan~> without undue delay~~}{>>r29 @AL<<}{>>r28 @DP<<}.
 
 <!-- p19 left, hanging 0in, left 0in, bullet -->
 - Each party keeps the{== other{-- party's--}{>>r30 @CD<<} confidential information==}{>>c14 @AL: Too broad, narrow it down.<<} secret.
@@ -55,7 +55,7 @@ Neither party is liable{== for==}{>>c18 @AL: Is this consistent with the master 
 {>>c19 @BC: Legal to review.<<}The warranty period is twelve months from{++ without undue delay++}{>>r37 @CD<<} delivery.
 
 <!-- p25 left, break-del r45 @DP -->
-Either party may{-- end--}{>>r38 @DP<<}{-- _this_--}{>>r39+40 @AL<<}{== agreement {~~with~>customer~~}{>>r41 @CD<<}{>>r42 @BC<<}==}{>>c20 @CD: Agreed.<<} ninety{-- days--}{>>r43 @CD<<} written{++ unless agreed otherwise++}{>>r44 @CD<<} notice.
+Either party may{-- end--}{>>r38 @DP<<}{-- _this_--}{>>r39+40 @AL<<}{== agreement {--with--}{>>r41 @CD<<}{++customer++}{>>r42 @BC<<}==}{>>c20 @CD: Agreed.<<} ninety{-- days--}{>>r43 @CD<<} written{++ unless agreed otherwise++}{>>r44 @CD<<} notice.
 
 <!-- p26 left -->
 The supplier may subcontract only with the buyer's{== prior **consent**.==}{>>c21 @CD: Why thirty and not sixty?<<}{>>c22 @AL: Too broad, narrow it down.<<}
@@ -64,7 +64,7 @@ The supplier may subcontract only with the buyer's{== prior **consent**.==}{>>c2
 The
 
 <!-- p28 left -->
-buyer may {~~inspect~>supplier~~}{>>r47+48 @AL<<}{== the==}{>>c23 @AL: Check the defined term.<<} goods before accepting{++ at its own cost++}{>>r49 @AL<<} them{++ unless agreed otherwise++}{>>r50 @AL<<}.{>>c24 @BC: Client asked for this.<<}
+buyer may {--inspect--}{>>r47 @AL<<}{++supplier++}{>>r48 @AL<<}{== the==}{>>c23 @AL: Check the defined term.<<} goods before accepting{++ at its own cost++}{>>r49 @AL<<} them{++ unless agreed otherwise++}{>>r50 @AL<<}.{>>c24 @BC: Client asked for this.<<}
 
 <!-- p29 left -->
 The supplier{++ at its own cost++}{>>r51 @CD<<}{== may subcontract only _with_==}{>>c25 @AL: Client asked for this.<<} the buyer's prior{++ in good faith++}{>>r52 @DP<<} consent.
@@ -88,7 +88,7 @@ the statutory _rate_.
 {--Any--}{>>r59 @DP<<}{-- change--}{>>r60 @AL<<} to this agreement must be in writing _and_ signed by both parties.
 
 <!-- p36 left -->
-**This** agreement is governed by the **laws** _of_ the _State_ of New {~~York~>notice~~}{>>r61 @AL<<}{>>r62 @CD<<}.{>>c29 @BC: Is this consistent with the master agreement?<<}
+**This** agreement is governed by the **laws** _of_ the _State_ of New {--York--}{>>r61 @AL<<}{++notice++}{>>r62 @CD<<}.{>>c29 @BC: Is this consistent with the master agreement?<<}
 
 <!-- footnotes.p0 -->
 [^1]: The buyer{++ on a business day++}{>>footnotes.r63 @DP<<} shall return defective goods within fourteen days.

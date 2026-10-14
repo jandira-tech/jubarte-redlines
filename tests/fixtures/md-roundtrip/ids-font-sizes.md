@@ -12,7 +12,7 @@ styles:
   Normal: Calibri 12pt, left       # default; unannotated paragraphs use it
   "##": Heading2, Arial 9pt
   BodyText: Arial 8.5pt, named Body Text
-  table: TableGrid, all borders 0.5pt
+  tables: TableGrid
 headers:
   default: {id: header1, text: ""}
 ---
@@ -139,7 +139,7 @@ Director/a del …….…………………………………………………�
 
 <!-- p115 empty -->
 
-<!-- t4 6x4, cells p116-p139 by row -->
+<!-- t4 6x4, cells p116-p139 by row, style TableGrid -->
 |NOMBRE|APELLIDOS|NIF|COORDINADOR/ PARTICIPANTE|
 |-|-|-|-|
 |||||
