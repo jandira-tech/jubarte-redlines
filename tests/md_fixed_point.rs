@@ -122,11 +122,19 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
     };
     let mut part = String::new();
     let mut lines = Vec::new();
+    // A lost line and a new line that say the same once what the view
+    // cannot say is left out (a highlight's colour) cancel each other.
+    let mut lost: Vec<(String, String)> = Vec::new();
+    let mut new: Vec<(String, String)> = Vec::new();
     for line in out.lines() {
         if let Some(rest) = line.strip_prefix("-A ") {
-            lines.push(format!("  ✗ docx {part}lost: {}", rest.trim()));
+            if let Some(rest) = in_dialect(&part, rest.trim()) {
+                lost.push((part.clone(), rest));
+            }
         } else if let Some(rest) = line.strip_prefix("+B ") {
-            lines.push(format!("  ✗ docx {part}new: {}", rest.trim()));
+            if let Some(rest) = in_dialect(&part, rest.trim()) {
+                new.push((part.clone(), rest));
+            }
         } else if let Some(name) = line.strip_suffix(": only in A") {
             lines.push(format!("  ✗ docx {name} lost: the whole part"));
         } else if let Some(name) = line.strip_suffix(": only in B") {
@@ -136,7 +144,62 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
             part = format!("{name} ");
         }
     }
+    for line in lost {
+        match new.iter().position(|n| *n == line) {
+            Some(at) => {
+                new.remove(at);
+            }
+            None => lines.push(format!("  ✗ docx {}lost: {}", line.0, line.1)),
+        }
+    }
+    lines.extend(
+        new.iter()
+            .map(|(part, rest)| format!("  ✗ docx {part}new: {rest}")),
+    );
     lines
+}
+
+/// What the Markdown view cannot say, so a docx it writes cannot hold it:
+/// each pattern with why. Everything else `debug --check render` lists is
+/// compared: the styles legend (each style's font, size, bold, spacing,
+/// alignment), the page, highlights (all print as `==`), tables, sections,
+/// fields, notes and parts.
+static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
+    [
+        // A font set on a run, not through a style: the view has no run font.
+        (r#"^rfonts "[^"]*" ×"#, "direct run font"),
+        (r"^color ", "text colour, set on a run or by a style"),
+        (r"^(para|run)-shd ", "shading"),
+        // The package's font list and theme, the defaults under every
+        // style, and the faces a renderer loads for them: the legend gives
+        // each style's effective font instead.
+        (
+            r"^\(layout\) (fontTable|theme|font|docDefaults) ",
+            "fonts outside the legend",
+        ),
+    ]
+    .into_iter()
+    .map(|(pattern, why)| (Regex::new(pattern).unwrap(), why))
+    .collect()
+});
+
+/// A `debug --check render` line as far as the view can say it, `None` when
+/// it says nothing the view can: a highlight's colour and a table's cell
+/// shading are left out, so only whether text is highlighted and the table
+/// itself are compared.
+fn in_dialect(part: &str, rest: &str) -> Option<String> {
+    static HIGHLIGHT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^highlight \S+").unwrap());
+    static CELLS_SHD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r" cells-shd\[[^\]]*\]").unwrap());
+    let line = format!("{part}{rest}");
+    if OUT_OF_DIALECT
+        .iter()
+        .any(|(pattern, _)| pattern.is_match(rest) || pattern.is_match(&line))
+    {
+        return None;
+    }
+    let rest = HIGHLIGHT.replace(rest, "highlight");
+    Some(CELLS_SHD.replace_all(&rest, "").into_owned())
 }
 
 /// The docx a committed view was read from (`views.txt`), by file name.
