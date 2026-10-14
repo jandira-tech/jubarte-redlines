@@ -17,7 +17,8 @@ first):
 
 2. The grammar `capabilities --json` advertises.
 3. Every id the CLI prints for the committed fixtures below (the view, the
-   YAML header, `read --tables`, `read --json`, `changes`, `comments`),
+   YAML header, `read --tables`, `read --json`, `changes`, `comments`,
+   `validate`),
    grouped by shape (digits become N), with where it was printed and what
    it names.
 4. Each printed shape and a fixed list of other spellings fed back to
@@ -224,6 +225,15 @@ def harvest(binary: Path, fixture: str, seen: Seen) -> None:
             seen.add(parts[1], "comments (paragraph)", name)
         for reply in re.findall(r"reply to (\S+)", line):
             seen.add(reply, "comments (reply to)", name)
+    _, findings, _ = run(binary, ["validate", fixture, "--rules", "word,a11y,style,structure"], ROOT)
+    DEPRECATED.scan("printed in text", "validate", findings)
+    for line in findings.splitlines():
+        parts = line.strip().split("\t")
+        if len(parts) >= 4:
+            # The word and edits sets print `part#ref`; the audit sets the ref alone.
+            ref = parts[2].rpartition("#")[2]
+            if ref and "/" not in ref:
+                seen.add(ref, "validate (ref)", name)
     code, snapshot, _ = run(binary, ["read", fixture, "--json"], ROOT)
     if code != 0:
         return
