@@ -30,10 +30,11 @@ container, measured on 2026-10-04 in [`examples/adoption/00-install-size`](../..
 ## 2. The replacement, script by script
 
 Commands as `jubarte` (the binary); `python -m jubarte_redlines` takes a
-subset of the same subcommands (compare is `compare A B` there, and its
-`convert` has no `--timeout`, `--fail-on-substitution` or `-t/--to` yet).
+subset of the same subcommands (its `convert` has no `--timeout`,
+`--fail-on-substitution` or `-t md` yet).
 Exit codes: `0` done, `1` error, `2` usage error or `validate` findings
-(warnings included), `3` edit plan refused (nothing written).
+(any `word` or `edits` finding or error; warnings too with `--strict`),
+`3` edit plan refused (nothing written).
 
 | Today | jubarte | Status |
 |---|---|---|
