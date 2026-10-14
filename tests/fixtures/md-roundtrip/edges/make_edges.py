@@ -420,9 +420,39 @@ def edge_order_more():
             types=[COMMENTS[1]], styles_extra=styles)
 
 
+# 15. Notes inserted and deleted with their references, in Word's shape:
+#     each note paragraph's mark is a change of its own, and one w:ins or
+#     w:del holds the reference mark and the text (file_170.docx, Word 16).
+def edge_notes_tracked():
+    a = "Ann Lee"
+    ref = '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r>'
+
+    def mark(kind, i):
+        return f'<w:pStyle w:val="FootnoteText"/><w:rPr><w:{kind} w:id="{i}" w:author="{a}" w:date="{D1}"/></w:rPr>'
+
+    sep = '<w:footnote w:type="separator" w:id="-1">' + p('<w:r><w:separator/></w:r>') + '</w:footnote><w:footnote w:type="continuationSeparator" w:id="0">' + p('<w:r><w:continuationSeparator/></w:r>') + '</w:footnote>'
+    fn = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:footnotes {W}>{sep}'
+          '<w:footnote w:id="1">' + p(ins(12, a, ref + r(" An inserted note.")), ppr=mark("ins", 11)) + '</w:footnote>'
+          '<w:footnote w:id="2">' + p(dele(22, a, ref + dr(" A deleted note.")), ppr=mark("del", 21)) + '</w:footnote>'
+          '<w:footnote w:id="3">' + p(ins(32, a, ref + r(" Two paragraphs,")), ppr=mark("ins", 31))
+          + p(ins(34, a, r("inserted.")), ppr=mark("ins", 33)) + '</w:footnote></w:footnotes>')
+    styles = ('<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style>'
+              '<w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>')
+    note = '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="{}"/></w:r>'
+    body = (p(r("Added"), ins(10, a, note.format(1)), r(" and cut"),
+              dele(20, a, note.format(2)), r("."))
+            + p(r("Long"), ins(30, a, note.format(3)), r(".")))
+    settings = '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>'
+    package("edge-notes-tracked.docx", body,
+            parts={"word/footnotes.xml": fn},
+            rels=[("rIdFn", f"{REL}/footnotes", "footnotes.xml")],
+            types=[("/word/footnotes.xml", f"{CT}.footnotes+xml")],
+            styles_extra=styles, settings=settings)
+
+
 if __name__ == "__main__":
     for make in (edge_clauses, edge_clauses_more, edge_stories, edge_owner, edge_table_styles, edge_notes, edge_cells,
                  edge_change_ids, edge_order, edge_dates, edge_anchors, edge_change_ids_more, edge_cells_more,
-                 edge_order_more):
+                 edge_order_more, edge_notes_tracked):
         make()
     print("\n".join(sorted(p.name for p in HERE.glob("*.docx"))))
