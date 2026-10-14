@@ -947,6 +947,8 @@ fn edit_core(xml: &str, edits: &[CoreEdit<'_>]) -> Option<String> {
                 }
                 writer.write_event(Event::End(end)).ok()?;
             }
+            // A root the part never closes is XML cut short: no edit.
+            Event::Eof if depth > 0 => return None,
             Event::Eof => break,
             other => {
                 writer.write_event(other).ok()?;

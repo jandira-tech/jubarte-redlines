@@ -527,12 +527,32 @@ pub(super) fn story(
     let mut cell_change: Option<(Kind, u32)> = None;
     let mut row_own: Option<(Kind, u32)> = None;
     for (at, item) in items.iter().enumerate() {
+        // A range on just a substitution's inserted side starts inside the
+        // insertion as it ends there (`ends_inserted_side`): Word's shape,
+        // which keeps the two sides together.
+        if let Item::RangeStart(_) = item
+            && row_change.is_none()
+            && cell_change.is_none()
+            && row_own.is_none()
+            && let Some(side) = starts_inserted_side(&items[at + 1..])
+            && open != Some(side)
+        {
+            close_mark(context, &natural, &mut out, &mut open);
+            let (kind, by) = side;
+            spend(&mut natural, by);
+            let wrap = context.revision(kind, Some(by));
+            let _ = write!(out, "<{wrap}>");
+            open = Some(side);
+        }
         // A bookmark, a comment's range marks and its reference sit inside
         // a `w:ins`/`w:del` when the change goes on after them
         // (`{--cut {==by a==}{>>c0<<} comment--}`); between two changes
-        // they are in neither.
+        // they are in neither. A range that ends a substitution's inserted
+        // side, its deleted side next, ends inside the insertion, as Word
+        // writes it: between the two it would part them.
         let inside = match item {
             Item::Run(_) => true,
+            Item::RangeEnd(_) if ends_inserted_side(&items[at + 1..], open) => true,
             Item::Bookmark(_)
             | Item::RangeStart(_)
             | Item::RangeEnd(_)
@@ -973,6 +993,37 @@ fn continues(rest: &[Item], open: Option<Change>) -> bool {
 /// Ends the open mark. A change the view gives more ids than it has pieces
 /// left writes the rest as empty marks after it: `{++a++}{>>r4+5+6 @AL<<}`
 /// is `a` in mark 4, then empty marks 5 and 6.
+/// The insertion `rest` starts with, when its runs are all a comment range
+/// holds before it ends (`ends_inserted_side`) and a deleted run follows.
+fn starts_inserted_side(rest: &[Item]) -> Option<Change> {
+    let Some(Item::Run(Run {
+        change: Some(side @ (Kind::Insert, _)),
+        ..
+    })) = rest.first()
+    else {
+        return None;
+    };
+    let runs = rest
+        .iter()
+        .take_while(|item| matches!(item, Item::Run(run) if run.change == Some(*side)))
+        .count();
+    (matches!(rest.get(runs), Some(Item::RangeEnd(_)))
+        && ends_inserted_side(&rest[runs + 1..], Some(*side)))
+    .then_some(*side)
+}
+
+/// Whether `open` is an insertion and the next item a deleted run.
+fn ends_inserted_side(rest: &[Item], open: Option<Change>) -> bool {
+    matches!(open, Some((Kind::Insert, _)))
+        && matches!(
+            rest.first(),
+            Some(Item::Run(Run {
+                change: Some((Kind::Delete, _)),
+                ..
+            }))
+        )
+}
+
 fn close_mark(
     context: &mut Context<'_>,
     natural: &HashMap<u32, usize>,

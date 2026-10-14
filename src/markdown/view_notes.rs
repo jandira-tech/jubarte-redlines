@@ -34,7 +34,7 @@ pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
             continue;
         }
         if !line.starts_with(' ') {
-            inside = line.trim_end() == "authors:";
+            inside = opens_authors(line);
             continue;
         }
         if !inside {
@@ -47,13 +47,21 @@ pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
             continue;
         }
         let (value, comment) = scalar_and_comment(rest.trim_start());
-        if value.is_empty() {
+        // `??: ""` is the empty author's line: kept, so its marks keep the
+        // date it says, or none.
+        if value.is_empty() && handle != UNNAMED {
             continue;
         }
         let last = comment.and_then(|c| c.rsplit(',').next()).map(str::trim);
-        let date = last
-            .filter(|d| super::write::is_date(d))
-            .map(str::to_string);
+        // A bare day (`2026-03-02`) is that day's midnight.
+        let date = last.and_then(|d| {
+            if super::write::is_date(d) {
+                Some(d.to_string())
+            } else {
+                let midnight = format!("{d}T00:00:00Z");
+                super::write::is_date(&midnight).then_some(midnight)
+            }
+        });
         let range = last.and_then(day_range);
         table.insert(
             handle.to_string(),
@@ -91,6 +99,98 @@ pub(super) fn section_format(text: &str) -> Option<Tag> {
     first_tag(rest[..end].trim())
 }
 
+/// The handles whose `authors:` note dates them with a range that ends
+/// before it starts (`2026-03-04..2026-03-02`): no date is read for them.
+pub(super) fn reversed_ranges(yaml: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut inside = false;
+    for line in yaml.lines() {
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            inside = opens_authors(line);
+            continue;
+        }
+        let Some((handle, rest)) = line.trim_start().split_once(':').filter(|_| inside) else {
+            continue;
+        };
+        let (_, comment) = scalar_and_comment(rest.trim_start());
+        if let Some((first, last)) = comment
+            .and_then(|c| c.rsplit(',').next())
+            .map(str::trim)
+            .and_then(|d| d.split_once(".."))
+            && day_range(&format!("{last}..{first}")).is_some()
+            && first != last
+        {
+            found.push(handle.to_string());
+        }
+    }
+    found
+}
+
+/// What a Markdown file's front matter gives every comment and change
+/// that names none of its own: the top-level `author:`, and the file's
+/// date (`last_modified:`, else `modified:`, `date:`, `created:`).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct FileDefaults {
+    pub author: Option<String>,
+    pub date: Option<String>,
+    /// A date key whose value is no timestamp: `(key, value)`.
+    pub unread: Option<(String, String)>,
+}
+
+/// The front matter's [`FileDefaults`]; none without front matter.
+pub(super) fn file_defaults(markdown: &str) -> FileDefaults {
+    const DATES: [&str; 4] = ["last_modified", "modified", "date", "created"];
+    let mut defaults = FileDefaults::default();
+    let text = markdown.strip_prefix('\u{feff}').unwrap_or(markdown);
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
+        return defaults;
+    };
+    let mut dates: Vec<(usize, String, String)> = Vec::new();
+    for line in rest.lines() {
+        let line = line.trim_end_matches('\r');
+        if line == "---" || line == "..." {
+            break;
+        }
+        if line.starts_with([' ', '\t', '#']) {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let (value, _) = scalar_and_comment(value.trim_start());
+        let value = super::critic::decode(&value);
+        if value.is_empty() {
+            continue;
+        }
+        let key = key.trim();
+        if key == "author" {
+            defaults.author.get_or_insert(value);
+        } else if let Some(rank) = DATES.iter().position(|d| *d == key) {
+            dates.push((rank, key.to_string(), value));
+        }
+    }
+    dates.sort_by_key(|(rank, _, _)| *rank);
+    for (_, key, value) in dates {
+        let midnight = format!("{value}T00:00:00Z");
+        if super::write::is_date(&value) {
+            defaults.date = Some(value);
+            break;
+        } else if super::write::is_date(&midnight) {
+            defaults.date = Some(midnight);
+            break;
+        } else if defaults.unread.is_none() {
+            defaults.unread = Some((key, value));
+        }
+    }
+    defaults
+}
+
 /// `2026-03-02..2026-03-04`: the first and last days.
 fn day_range(text: &str) -> Option<(String, String)> {
     let (first, last) = text.split_once("..")?;
@@ -111,8 +211,58 @@ pub(crate) enum Owner {
     NoPart,
 }
 
-/// The `document_owner:` of a YAML header's `authors:`.
+/// Whether `line` opens the `authors:` block, a comment after it or not
+/// (`authors: # the legend`).
+fn opens_authors(line: &str) -> bool {
+    line.split_once(" #")
+        .map_or(line, |(key, _)| key)
+        .trim_end()
+        == "authors:"
+}
+
+/// The `document_owner:` of a YAML header's `authors:`; `None` also for an
+/// empty or null one (`document_owner:`, `~`, `null`), which names no
+/// owner to write: the document's own stays.
 pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
+    let rest = owner_value(yaml)?;
+    let (value, comment) = scalar_and_comment(rest);
+    if names_no_owner(rest) {
+        return None;
+    }
+    let comment = comment.unwrap_or("");
+    // `none` names nobody, unless quoted or noted as the element that
+    // holds it (`none # dc:creator`: someone called none).
+    let nobody = value == "none"
+        && !rest.starts_with(['"', '\''])
+        && !comment.starts_with("dc:creator")
+        && !comment.starts_with("cp:lastModifiedBy");
+    Some(if nobody {
+        if comment.starts_with("no docProps/core.xml") {
+            Owner::NoPart
+        } else {
+            Owner::Unnamed
+        }
+    } else if comment.starts_with("cp:lastModifiedBy") {
+        Owner::LastModifiedBy(value)
+    } else {
+        Owner::Creator(value)
+    })
+}
+
+/// Whether the header has a `document_owner:` that names no one to
+/// write: empty (`document_owner:`, `""`) or null (`~`, `null`).
+pub(super) fn empty_owner(yaml: &str) -> bool {
+    owner_value(yaml).is_some_and(names_no_owner)
+}
+
+fn names_no_owner(rest: &str) -> bool {
+    let (value, _) = scalar_and_comment(rest);
+    let quoted = rest.starts_with(['"', '\'']);
+    value.is_empty() || (!quoted && matches!(value.as_str(), "~" | "null" | "Null" | "NULL"))
+}
+
+/// The text after the first `document_owner:` of `authors:`.
+fn owner_value(yaml: &str) -> Option<&str> {
     let mut inside = false;
     for line in yaml.lines() {
         // A blank or comment line does not end the block, as in YAML.
@@ -120,7 +270,7 @@ pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
             continue;
         }
         if !line.starts_with(' ') {
-            inside = line.trim_end() == "authors:";
+            inside = opens_authors(line);
             continue;
         }
         let Some(rest) = line
@@ -130,25 +280,9 @@ pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
         else {
             continue;
         };
-        let (value, comment) = scalar_and_comment(rest.trim_start());
-        let comment = comment.unwrap_or("");
-        // `none` names nobody, unless quoted or noted as the element that
-        // holds it (`none # dc:creator`: someone called none).
-        let nobody = value == "none"
-            && !rest.trim_start().starts_with(['"', '\''])
-            && !comment.starts_with("dc:creator")
-            && !comment.starts_with("cp:lastModifiedBy");
-        return Some(if nobody {
-            if comment.starts_with("no docProps/core.xml") {
-                Owner::NoPart
-            } else {
-                Owner::Unnamed
-            }
-        } else if comment.starts_with("cp:lastModifiedBy") {
-            Owner::LastModifiedBy(value)
-        } else {
-            Owner::Creator(value)
-        });
+        // `document_owner:  # a note` holds no value.
+        let rest = rest.trim_start();
+        return Some(if rest.starts_with('#') { "" } else { rest });
     }
     None
 }

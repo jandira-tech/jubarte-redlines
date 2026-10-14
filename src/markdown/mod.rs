@@ -163,6 +163,14 @@ pub struct DocxOptions<'a> {
     /// Their date, `YYYY-MM-DDTHH:MM:SSZ`; fixed by default so the same
     /// Markdown writes the same bytes.
     pub date: String,
+    /// `author` names the changes and comments that name no one, even when
+    /// the front matter has an `author:` (an `--author` the user typed).
+    /// `false`: the front matter's wins over `author`.
+    pub author_fixed: bool,
+    /// `date` dates the undated changes and comments, even when the front
+    /// matter has a date (`last_modified:`, `modified:`, `date:`,
+    /// `created:`). `false`: the front matter's wins over `date`.
+    pub date_fixed: bool,
     /// The bytes of each image the Markdown names. Without it, or when it
     /// returns `None`, an image is written as its alt text.
     pub images: Option<ImageLoader<'a>>,
@@ -185,6 +193,8 @@ impl Default for DocxOptions<'_> {
             track_changes: TrackChanges::All,
             author: "Redline".to_string(),
             date: crate::document_comparer::DEFAULT_DATE.to_string(),
+            author_fixed: false,
+            date_fixed: false,
             images: None,
             page: PageSize::Letter,
             tracking: None,
@@ -445,6 +455,20 @@ impl Select {
         }
         Ok(Self::Picks(picks))
     }
+}
+
+/// The author and timestamp a `.docx` gives the changes and comments that
+/// name none, when no parameter does: its first `dc:creator` and its
+/// `dcterms:created`. `None` for each it does not tell (or bytes that are
+/// no package); the caller falls back to `Redline` and
+/// [`crate::document_comparer::DEFAULT_DATE`].
+///
+/// ```
+/// let (author, date) = jubarte::markdown::docx_stamp(b"not a docx");
+/// assert_eq!((author, date), (None, None));
+/// ```
+pub fn docx_stamp(docx: &[u8]) -> (Option<String>, Option<String>) {
+    from_docx::creator_created(docx)
 }
 
 /// Why a `read -p` pick was refused.

@@ -36,8 +36,25 @@ pub fn markdown_to_docx(
     markdown: &str,
     options: &DocxOptions<'_>,
 ) -> Result<WrittenDocx, MarkdownError> {
+    // A comment or change that names no author or date takes the file's
+    // own (`author:`, `last_modified:`), before the options' defaults.
+    let defaults = view_notes::file_defaults(markdown);
+    let mut own = options.clone();
+    if let Some(author) = defaults.author.filter(|_| !options.author_fixed) {
+        own.author = author;
+    }
+    if let Some(date) = defaults.date.filter(|_| !options.date_fixed) {
+        own.date = date;
+    }
+    let options = &own;
     let document = read(markdown, options);
     let mut warnings = document.warnings.clone();
+    if let Some((key, value)) = defaults.unread {
+        warnings.push(format!(
+            "{key}: {value} is no timestamp (YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD): \
+             undated comments and changes keep the default date"
+        ));
+    }
     if options.reference.is_some() && options.page != PageSize::default() {
         warnings.push(format!(
             "page size {} ignored: the reference document's page setup is used",
@@ -77,6 +94,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
+    writer.label_definitions = label_definitions(&source);
     for event in Parser::new_ext(&source, parser_options()) {
         writer.event(event);
     }
@@ -177,6 +195,28 @@ fn note_breaks(source: &str) -> Vec<(usize, usize)> {
         }
     }
     breaks
+}
+
+/// How many definitions each footnote label has in `source`: a footnote
+/// and an endnote may share one (`[^1]`).
+fn label_definitions(source: &str) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for event in Parser::new_ext(source, parser_options()) {
+        if let Event::Start(Tag::FootnoteDefinition(label)) = event {
+            *counts.entry(critic::decode(&label)).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// The key of the `nth` note labelled `label` (from 0): the label itself
+/// for the first, a name no Markdown label takes for the next.
+fn nth_label(label: &str, nth: usize) -> String {
+    if nth == 0 {
+        label.to_string()
+    } else {
+        format!("{label}\u{0}{nth}")
+    }
 }
 
 /// A plan for each table of `source`, in order; `None` for a table no table
@@ -306,8 +346,10 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         let mut pad = Vec::new();
         let mut at = cell;
         while column < end {
+            // A merge the line names keeps its span, also past the room
+            // the gap after leaves: the row had it so.
             let (across, down) = line.merges.get(&(r, at)).copied().unwrap_or((1, 1));
-            let across = across.clamp(1, end - column);
+            let across = across.max(1);
             let merge = if down > 1 {
                 merged_until.insert(column, r + down - 1);
                 Some(true)
@@ -347,7 +389,16 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
             .zip(rows)
             .zip(shaped)
             .map(|((&(first, n), &(_, breaks)), (cells, count, pad))| {
-                // The view leaves out empty cells only at a row's end.
+                // The view leaves out empty cells only at a row's end. A
+                // row of more cells than its grid has (`cells t0.row1
+                // p4-p7`) names them by its count alone: they come back
+                // empty.
+                let mut pad = pad;
+                if breaks == 0 {
+                    while count + pad.len() < n {
+                        pad.push((1, None));
+                    }
+                }
                 let pad = if count + pad.len() + breaks == n {
                     pad
                 } else {
@@ -717,6 +768,13 @@ struct Writer<'o, 'a> {
     /// Whether each footnote definition's `<br>`s end paragraphs
     /// ([`note_breaks`]), how many definitions are read, and the open one's.
     note_breaks: Vec<(usize, usize)>,
+    /// How many definitions each label has, how many of them are read, and
+    /// how many times the body referenced it: a label defined twice (a
+    /// footnote and an endnote both `[^1]`) is two notes, the first
+    /// reference the first definition's, the next the second's.
+    label_definitions: HashMap<String, usize>,
+    label_defined: HashMap<String, usize>,
+    label_uses: HashMap<String, usize>,
     note_count: usize,
     note_paragraph_breaks: bool,
     /// The number of the next cell paragraph, when the table line counts
@@ -778,6 +836,9 @@ struct Writer<'o, 'a> {
     /// Highlights with no comment yet and no text since them outside a
     /// highlight: pieces of one range whose comment follows the last piece.
     pending_highlights: Vec<(usize, usize)>,
+    /// Where the comment range of a highlight inside a substitution's
+    /// inserted side ends, once that side moved before the deleted one.
+    range_end_at: Option<usize>,
     /// The slot of the range a comment just took, while another comment
     /// may follow on the same text.
     shared_range: Option<usize>,
@@ -800,6 +861,12 @@ struct Writer<'o, 'a> {
     /// The changes of each author the view dates with a range of days, in
     /// the order their tags come.
     ranged: BTreeMap<String, Vec<u32>>,
+    /// The undated comments of each author dated with a range of days, by
+    /// comment id.
+    ranged_comments: BTreeMap<String, Vec<u32>>,
+    /// The authors dated with a range whose last day an undated formatting
+    /// mark already took.
+    range_ended: HashSet<String>,
 
     document: Document,
 }
@@ -830,6 +897,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_number: 0,
             row_breaks: false,
             note_breaks: Vec::new(),
+            label_definitions: HashMap::new(),
+            label_defined: HashMap::new(),
+            label_uses: HashMap::new(),
             note_count: 0,
             note_paragraph_breaks: false,
             cell_paragraph: None,
@@ -869,6 +939,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             substitution: None,
             comment_anchor: None,
             pending_highlights: Vec::new(),
+            range_end_at: None,
             shared_range: None,
             unplaced: HashMap::new(),
             id_line: None,
@@ -881,6 +952,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             field_code: None,
             authors: HashMap::new(),
             ranged: BTreeMap::new(),
+            ranged_comments: BTreeMap::new(),
+            range_ended: HashSet::new(),
             document: Document::default(),
         }
     }
@@ -1013,15 +1086,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                         breaks + 1
                     ));
                 }
-                // A second definition of a label is not the note's text.
-                let label = if self.definitions.contains_key(&label) {
-                    self.document.warnings.push(format!(
-                        "a second definition of [^{label}] was dropped: the first is the note's text"
-                    ));
-                    format!("\u{0}{label}")
-                } else {
-                    label
+                // A second definition of a label is a note of its own, for
+                // the label's second reference.
+                let nth = {
+                    let defined = self.label_defined.entry(label.clone()).or_insert(0);
+                    *defined += 1;
+                    *defined - 1
                 };
+                let label = nth_label(&label, nth);
                 if std::mem::take(&mut self.endnote_next) {
                     self.endnotes.insert(label.clone());
                 }
@@ -1170,6 +1242,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.story().push(Item::TableEnd);
                 if !self.table_in_range() {
                     self.pending_highlights.clear();
+                    self.range_end_at = None;
                     self.shared_range = None;
                 }
                 self.table = None;
@@ -1579,7 +1652,19 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     /// A formatting change or unshown mark as its tag names it.
     fn format_mark(&mut self, tag: &view_notes::Tag) -> FormatMark {
-        let (author, date) = self.view_author(&tag.handle, tag.date.as_deref());
+        let (author, mut date) = self.view_author(&tag.handle, tag.date.as_deref());
+        // A formatting mark is written where it stands, never revisited:
+        // the first undated one of an author dated `first..last` takes the
+        // last day now, the author's other items keep the first.
+        if tag.date.is_none()
+            && let Some((_, last)) = self
+                .authors
+                .get(&tag.handle)
+                .and_then(|known| known.range.as_ref())
+            && self.range_ended.insert(tag.handle.clone())
+        {
+            date = format!("{last}T23:59:59Z");
+        }
         let id = tag.ids.first().copied();
         if let Some(id) = id {
             self.document.reserved_ids.insert(id);
@@ -1731,6 +1816,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             || matches!(content, Content::Tab | Content::Break);
         if self.highlight.is_none() && !blank {
             self.pending_highlights.clear();
+            self.range_end_at = None;
             self.shared_range = None;
         }
         if self.code > 0 {
@@ -1907,35 +1993,57 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// deletion before an insertion as two changes, so they keep that
     /// order. Each side moves whole with its links, bookmarks and comments;
     /// a side holding more (a paragraph's end, half a link or comment range)
-    /// stays where it is.
+    /// stays where it is. A highlight that ends inside a side
+    /// (`{~~old~>{==new==}~~}{>>c0 …<<}`) still has its range open: the side
+    /// moves, and its range ends where the side does.
     fn inserted_side_first(&mut self) {
-        /// Runs, bookmarks, and links and comment ranges that open and
-        /// close within.
-        fn whole(items: &[Item]) -> bool {
-            let (mut links, mut ranges) = (0usize, 0usize);
+        /// The comment ranges a side leaves open, when it holds only runs,
+        /// bookmarks, links that close within, and ranges that close
+        /// within or are highlights awaiting their comment (`awaiting`).
+        fn whole(items: &[Item], awaiting: &[usize]) -> Option<usize> {
+            let mut links = 0usize;
+            let mut ranges = Vec::new();
             for item in items {
                 match item {
                     Item::Run(_) | Item::Bookmark(_) | Item::CommentReference(_) => {}
                     Item::LinkStart(..) => links += 1,
                     Item::LinkEnd if links > 0 => links -= 1,
-                    Item::RangeStart(_) => ranges += 1,
-                    Item::RangeEnd(_) if ranges > 0 => ranges -= 1,
-                    _ => return false,
+                    Item::RangeStart(slot) => ranges.push(*slot),
+                    Item::RangeEnd(_) if !ranges.is_empty() => {
+                        ranges.pop();
+                    }
+                    _ => return None,
                 }
             }
-            links == 0 && ranges == 0
+            (links == 0 && ranges.iter().all(|slot| awaiting.contains(slot)))
+                .then_some(ranges.len())
         }
         let Some((start, Some(split))) = self.substitution.take() else {
             return;
         };
+        let awaiting: Vec<usize> = self
+            .pending_highlights
+            .iter()
+            .map(|(slot, _)| *slot)
+            .collect();
         let story = self.story();
         let end = story.len();
-        if start <= split
-            && split <= end
-            && whole(&story[start..split])
-            && whole(&story[split..end])
-        {
-            story[start..end].rotate_left(split - start);
+        if start > split || split > end {
+            return;
+        }
+        let (Some(deleted), Some(inserted)) = (
+            whole(&story[start..split], &awaiting),
+            whole(&story[split..end], &awaiting),
+        ) else {
+            return;
+        };
+        // One open range at most: its comment ends it.
+        if deleted + inserted > 1 {
+            return;
+        }
+        story[start..end].rotate_left(split - start);
+        if inserted == 1 {
+            self.range_end_at = Some(start + (end - split));
         }
     }
 
@@ -2166,6 +2274,17 @@ impl<'o, 'a> Writer<'o, 'a> {
             if let Some(handle) = &head.handle {
                 let (author, date) = self.view_author(handle, head.date.as_deref());
                 comment.by = Some((author, date));
+                if head.date.is_none()
+                    && self
+                        .authors
+                        .get(handle)
+                        .is_some_and(|known| known.range.is_some())
+                {
+                    self.ranged_comments
+                        .entry(handle.clone())
+                        .or_default()
+                        .push(comment.id);
+                }
                 // A handle stands for initials unless it carries the
                 // digit that tells two authors' initials apart (`U2`):
                 // then the writer takes them from the name.
@@ -2183,8 +2302,12 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         self.ensure_paragraph();
         let id = comment.id;
+        let end_at = self.range_end_at.take();
         let story = self.story();
-        story.push(Item::RangeEnd(id));
+        match end_at {
+            Some(at) if at <= story.len() => story.insert(at, Item::RangeEnd(id)),
+            _ => story.push(Item::RangeEnd(id)),
+        }
         story.push(Item::CommentReference(id));
         self.document.styles.insert("CommentText");
         self.document.styles.insert("CommentReference");
@@ -2199,7 +2322,15 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             return;
         }
-        // A label referenced again names the same note.
+        // A label referenced again names the same note, unless the label
+        // has a definition for each reference so far.
+        let uses = {
+            let uses = self.label_uses.entry(label.clone()).or_insert(0);
+            *uses += 1;
+            *uses - 1
+        };
+        let definitions = self.label_definitions.get(&label).copied().unwrap_or(1);
+        let label = nth_label(&label, if uses < definitions { uses } else { 0 });
         let at = match self
             .references
             .iter()
@@ -2460,7 +2591,19 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// block.
     fn metadata(&mut self, text: &str) {
         self.authors = view_notes::authors(text);
+        for handle in view_notes::reversed_ranges(text) {
+            self.document.warnings.push(format!(
+                "authors: {handle}: its days run backwards (last..first), so its marks are written undated"
+            ));
+        }
         self.document.owner = view_notes::document_owner(text);
+        if view_notes::empty_owner(text) {
+            self.document.warnings.push(
+                "authors: document_owner: names no one, so the document's own owner stays; \
+                 write `none` to clear it"
+                    .to_string(),
+            );
+        }
         self.document.table_style = view_styles::table_style(text);
         if let Some((id, None)) = &self.document.table_style
             && text.lines().any(|line| {
@@ -2757,6 +2900,28 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
         }
         self.document.body = body;
+        // A label defined more than once: its references name the
+        // definitions in order, each a note of its own.
+        let mut shared: Vec<(&String, &usize)> = self
+            .label_definitions
+            .iter()
+            .filter(|(_, count)| **count > 1)
+            .collect();
+        shared.sort();
+        for (label, &count) in shared {
+            let uses = self.label_uses.get(label).copied().unwrap_or(0);
+            self.document.warnings.push(if uses >= count {
+                format!(
+                    "[^{label}] is defined {count} times: its first {count} references name \
+                     them in order, each written as a note of its own"
+                )
+            } else {
+                format!(
+                    "[^{label}] is defined {count} times but referenced {uses}: the \
+                     definitions past the {uses} its references name are dropped"
+                )
+            });
+        }
         for (label, change) in std::mem::take(&mut self.references) {
             let endnote = self.endnotes.contains(&label);
             let (text, reference) = if endnote {
@@ -2855,12 +3020,15 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.document
     }
 
-    /// An author dated `first..last` gets two timestamps back, when they
-    /// have two marks or comments or more to tell apart: everything is
-    /// stamped on the first day, and their last comment, else the last mark
-    /// of their last change, on the last day.
+    /// An author dated `first..last` gets two timestamps back: everything
+    /// undated is stamped on the first day, and one undated item on the
+    /// last, when another item keeps the first: an undated formatting mark
+    /// ([`Self::format_mark`]), else their last undated comment, else the
+    /// last mark of their last change, else their header and footer marks.
+    /// A date the view writes out stays as it is.
     fn range_ends(&mut self) {
         let mut ranged = std::mem::take(&mut self.ranged);
+        let mut comments = std::mem::take(&mut self.ranged_comments);
         let mut handles: BTreeSet<String> = ranged.keys().cloned().collect();
         handles.extend(
             self.authors
@@ -2870,30 +3038,40 @@ impl<'o, 'a> Writer<'o, 'a> {
         );
         for handle in handles {
             let serials = ranged.remove(&handle).unwrap_or_default();
+            let undated = comments.remove(&handle).unwrap_or_default();
+            if self.range_ended.contains(&handle) {
+                continue;
+            }
             let Some((name, first, last)) = self.authors.get(&handle).and_then(|known| {
                 let (first, last) = known.range.as_ref()?;
                 Some((
                     known.name.clone(),
-                    format!("{first}T00:00:00Z"),
+                    first.clone(),
                     format!("{last}T23:59:59Z"),
                 ))
             }) else {
                 continue;
             };
-            // The comments the range's first day stamped.
-            let comments: Vec<usize> = self
+            // The author's items on the first day, dated by the view or
+            // stamped: one must stay there.
+            let on_first = |date: &str| date.starts_with(first.as_str());
+            let firsts = self
                 .document
-                .comments
-                .iter()
-                .enumerate()
-                .filter(|(_, comment)| {
-                    comment
-                        .by
-                        .as_ref()
-                        .is_some_and(|(author, date)| *author == name && *date == first)
-                })
-                .map(|(at, _)| at)
-                .collect();
+                .attributions
+                .values()
+                .filter(|(author, date)| *author == name && on_first(date))
+                .count()
+                + self
+                    .document
+                    .comments
+                    .iter()
+                    .filter(|comment| {
+                        comment
+                            .by
+                            .as_ref()
+                            .is_some_and(|(author, date)| *author == name && on_first(date))
+                    })
+                    .count();
             let marks: usize = serials
                 .iter()
                 .map(|s| {
@@ -2903,16 +3081,40 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .map_or(1, |ids| ids.len().max(1))
                 })
                 .sum();
-            if let Some(&at) = comments.last()
-                && marks + comments.len() > 1
+            let comment = undated.last().and_then(|id| {
+                self.document
+                    .comments
+                    .iter()
+                    .position(|comment| comment.id == *id)
+            });
+            if let Some(at) = comment
+                && (firsts > 1 || marks > 0)
             {
                 if let Some((_, date)) = &mut self.document.comments[at].by {
                     date.clone_from(&last);
                 }
             } else if let Some(&serial) = serials.last()
-                && marks > 1
+                && (marks > 1 || firsts > 1)
             {
-                self.document.range_ends.insert(serial, last);
+                // A change the view tags more than once (`r3` on each cell
+                // of an inserted row) is written as one mark, from any of
+                // its tags: each takes the last day.
+                let ids = self.document.revision_ids.get(&serial).cloned();
+                for &same in &serials {
+                    if same == serial
+                        || ids.as_ref().is_some_and(|ids| {
+                            !ids.is_empty() && self.document.revision_ids.get(&same) == Some(ids)
+                        })
+                    {
+                        self.document.range_ends.insert(same, last.clone());
+                    }
+                }
+            } else if firsts > 0
+                && let Some(person) = self.document.people.get_mut(&handle)
+            {
+                // Every header and footer mark of theirs takes the last day;
+                // a body item keeps the first.
+                person.1 = last;
             }
         }
     }
@@ -2931,7 +3133,7 @@ fn word_takes(slug: &str) -> bool {
 /// `_` before a slug that starts with no letter (hidden, like Word's own
 /// `_Toc` bookmarks), cut to its first 40 characters, or fewer and `-1`,
 /// `-2`, … when that cut is `used`.
-fn bookmark_name(slug: &str, used: &HashSet<String>) -> String {
+pub(super) fn bookmark_name(slug: &str, used: &HashSet<String>) -> String {
     if word_takes(slug) {
         return slug.to_string();
     }
@@ -2985,6 +3187,28 @@ pub(super) fn github_slug(text: &str) -> String {
         .collect()
 }
 
+/// The names github-slugger gives a document's headings, one at a time.
+#[derive(Default)]
+pub(super) struct Slugger {
+    seen: HashMap<String, usize>,
+}
+
+impl Slugger {
+    /// The name for the next heading of `slug`: a repeat retries its
+    /// suffixed name against every name given out (`Intro`, `Intro`,
+    /// `Intro 1`: `intro`, `intro-1`, `intro-1-1`).
+    pub(super) fn name(&mut self, slug: &str) -> String {
+        let mut name = slug.to_string();
+        while self.seen.contains_key(&name) {
+            let repeats = self.seen.entry(slug.to_string()).or_insert(0);
+            *repeats += 1;
+            name = format!("{slug}-{repeats}");
+        }
+        self.seen.insert(name.clone(), 0);
+        name
+    }
+}
+
 /// The headings a link names (`[x](#the-intro)`), by position in `body`,
 /// each with the slug GitHub gives its text ([`github_slug`], a repeat
 /// `-1`, `-2`, …). Deleted text is no part of it; an empty slug names
@@ -2994,7 +3218,7 @@ fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, Stri
     if targets.is_empty() {
         return found;
     }
-    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut slugger = Slugger::default();
     for (at, item) in body.iter().enumerate() {
         let Item::Paragraph(paragraph) = item else {
             continue;
@@ -3015,16 +3239,7 @@ fn heading_bookmarks(body: &[Item], targets: &HashSet<&str>) -> Vec<(usize, Stri
             })
             .collect();
         let slug = github_slug(&text);
-        // github-slugger: a repeat retries its suffixed name against every
-        // name given out (`Intro`, `Intro`, `Intro 1`: `intro`, `intro-1`,
-        // `intro-1-1`).
-        let mut name = slug.clone();
-        while seen.contains_key(&name) {
-            let repeats = seen.entry(slug.clone()).or_insert(0);
-            *repeats += 1;
-            name = format!("{slug}-{repeats}");
-        }
-        seen.insert(name.clone(), 0);
+        let name = slugger.name(&slug);
         if slug.is_empty() {
             continue;
         }
