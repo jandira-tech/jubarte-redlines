@@ -481,11 +481,13 @@ fn next_free_revision_id(dom: &Dom, styles_root: NodeId) -> u32 {
 }
 
 /// The `w:id` of a new `w:pPrChange`/`w:rPrChange` under `block`. A style
-/// already carrying the other record from this comparison (same author and
-/// date) lends it its id: Word gives a style's two records one id (199 of
-/// 199 corpus styles carrying both), so the pair is one revision. A record
-/// the source already held keeps its own revision. Otherwise the
-/// stylesheet's next free id.
+/// whose own `w:pPr`/`w:rPr` already carries the other record from this
+/// comparison lends it its id: Word gives a style's two records one id (199
+/// of 199 corpus styles carrying both), so the pair is one revision.
+/// Otherwise the stylesheet's next free id. "From this comparison" is read
+/// as the comparison's author and date, so a source record stamped exactly
+/// so (a redline compared again under the same pinned stamp) lends its id
+/// too.
 fn style_record_id(
     dom: &Dom,
     styles_root: NodeId,
@@ -496,16 +498,16 @@ fn style_record_id(
         dom.attribute(c, &W::author()) == Some(settings.author_for_revisions.as_str())
             && dom.attribute(c, &W::date()) == Some(settings.date_time_for_revisions.as_str())
     };
-    dom.ancestors(block, Some(&W::name("style")))
-        .first()
-        .and_then(|&style| {
-            ["pPrChange", "rPrChange"].into_iter().find_map(|record| {
-                dom.descendants(style, Some(&W::name(record)))
-                    .into_iter()
-                    .find(|&c| ours(c))
-                    .and_then(|c| dom.attribute(c, &W::id()))
-                    .map(str::to_string)
-            })
+    dom.parent(block)
+        .filter(|&style| dom.name_is(style, &W::name("style")))
+        .and_then(|style| {
+            [("pPr", "pPrChange"), ("rPr", "rPrChange")]
+                .into_iter()
+                .find_map(|(own, record)| {
+                    let own = dom.element(style, &W::name(own))?;
+                    let c = dom.element(own, &W::name(record)).filter(|&c| ours(c))?;
+                    dom.attribute(c, &W::id()).map(str::to_string)
+                })
         })
         .unwrap_or_else(|| next_free_revision_id(dom, styles_root).to_string())
 }

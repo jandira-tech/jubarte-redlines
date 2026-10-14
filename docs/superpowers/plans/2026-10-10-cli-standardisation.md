@@ -159,7 +159,7 @@ Rules behind the table:
   - New, also parse errors: `t0.row0`, `t0.row-1.cell0`, `t0.row0.cell+1`, `t0.row0.cell0.p`, `t0.row0.cell0.p0.extra`, `t0.row0.cell18446744073709551616`.
   - `header` parses as a story stem and is refused because the document has no story named `header`.
 - **Shell spellings:** every printed id is shell-safe (Rule 6).
-- **One spelling per number:** digits are ASCII, without leading zeros (`p0` yes, `p012` no), up to `usize` for paragraphs, tables, rows and cells and `u32` for comments and `w:id`s; Task 5b proves it.
+- **One spelling per number:** digits are ASCII, without leading zeros (`p0` yes, `p012` no), up to `usize` for paragraphs, tables, rows and cells and `u32` for comments and `w:id`s; Task 5b proves it. A long change id is the exception: it carries the `w:id` as the document spells it (`body:rev:007` names `w:id="007"`), so every printed id reads back.
 - **Behaviour change for edit:** `-p 6` ≡ `-p p6`. Today it is refused with "unknown paragraph id 6". CHANGELOG.
 
 - [ ] **Failing tests** (in-module):

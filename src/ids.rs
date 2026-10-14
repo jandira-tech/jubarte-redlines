@@ -15,7 +15,9 @@
 //! This module reads syntax only. Whether a story, paragraph, change or
 //! comment exists is decided against a document by `edit` (`-p`) and
 //! [`crate::changes`] (`--id`). Every number has one spelling: ASCII digits
-//! without leading zeros, so two tokens never name one element. Every short
+//! without leading zeros, so two tokens never name one element; a long
+//! change id carries the `w:id` as the document spells it, so a change whose
+//! `w:id` the short form cannot spell (`007`) is still named. Every short
 //! id it prints uses only `[a-z0-9.+:-]` and never starts with `#`, `=`, `~`
 //! or `-`, so it is safe unquoted in bash, csh and zsh; a long id carries
 //! the story and `w:id` the document gives it. `body.r12` and `body.p2`
@@ -130,19 +132,14 @@ impl ChangeId {
         }
     }
 
-    /// The change a long id names; `None` when `long` is not one. A
-    /// numeric `w:id` has one spelling (a canonical `u32`); another `w:id`
-    /// is taken as the document spells it, without `:`, `+` or whitespace.
+    /// The change a long id names; `None` when `long` is not one. Everything
+    /// after the story's `:rev:` is the `w:id` as the document spells it
+    /// (`body:rev:007` names a `w:id="007"`, not `r7`; `body:rev:1+2` one
+    /// `w:id="1+2"`), so every id [`ChangeId::short`] prints reads back. The
+    /// short forms keep one spelling per number.
     pub fn from_long(long: &str) -> Option<Self> {
         let (story, wid) = long.split_once(":rev:")?;
-        let numeric = wid.bytes().all(|b| b.is_ascii_digit());
-        let wid_ok = if numeric {
-            number::<u32>(wid).is_some()
-        } else {
-            !wid.contains([':', '+']) && !wid.contains(char::is_whitespace)
-        };
-        (!story.is_empty() && !story.contains(':') && !wid.is_empty() && wid_ok)
-            .then(|| Self::new(story, wid))
+        (!story.is_empty() && !story.contains(':')).then(|| Self::new(story, wid))
     }
 }
 
@@ -434,15 +431,15 @@ mod tests {
         assert_eq!(ChangeId::new("Header_1", "4").short(), "Header_1:rev:4");
         assert_eq!(ChangeId::new("r1", "4").short(), "r1:rev:4");
         assert_eq!(body("007").short(), "body:rev:007");
-        for long in [
-            "body:rev:007",
-            "body:rev:4294967296",
-            "body:rev: 7",
-            "body:rev:12+13",
-            "body:rev:1:2",
-        ] {
+        // A w:id the short form cannot spell keeps its long id, and that id
+        // reads back: it names the document's own `w:id`, not the number.
+        for wid in ["007", "4294967296", "x9", "-5", "1+2", "1:2", " 7", ""] {
+            let printed = body(wid).short();
+            assert_eq!(parse_change_ids(&printed), Ok(vec![body(wid)]), "{printed}");
+        }
+        assert_ne!(body("007"), body("7"));
+        for long in [":rev:7", "a:b:rev:7", "body:p:7"] {
             assert_eq!(ChangeId::from_long(long), None, "{long}");
-            assert!(parse_change_ids(long).is_err(), "{long}");
         }
         assert_eq!(
             ChangeId::from_long("body:rev:x9"),
@@ -484,7 +481,6 @@ mod tests {
             "",
             "header1.p2",
             "Header_1.r1",
-            "body:rev:",
             "a:b:rev:1",
         ] {
             let err = parse_change_ids(token).unwrap_err();

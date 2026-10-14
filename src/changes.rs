@@ -20,7 +20,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::namespaces::W;
+use crate::namespaces::{MC, W};
 use crate::opc::PartFs;
 use crate::revision_processor::{FROZEN_NS, Resolution, resolve_package, revision_bearing_parts};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -279,10 +279,24 @@ pub fn changes_text(changes: &[Change]) -> String {
 /// Every tracked change, story by story (body, headers, footers, endnotes,
 /// footnotes, styles), in document order.
 pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
-    let pkg = open(docx)?;
-    let main = main_part(&pkg);
+    Ok(changes_in(&open(docx)?))
+}
+
+/// [`list_changes`] for a view that already renders the package: no
+/// admission, and a part that does not parse lists nothing, so the view's
+/// count fails only where the package itself does.
+pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    let pkg = PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
+    Ok(changes_in(&pkg))
+}
+
+/// The changes of an opened (transitional) package, as [`list_changes`]
+/// lists them.
+pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
+    let main = main_part(pkg);
     let mut out = Vec::new();
-    for (part, _) in revision_bearing_parts(&pkg) {
+    for (part, _) in revision_bearing_parts(pkg) {
         let Some(xml) = pkg.part_string(&part) else {
             continue;
         };
@@ -298,15 +312,18 @@ pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
                 .filter_map(|c| c.change),
         );
     }
-    Ok(out)
+    out
 }
 
-/// Accept the changes `filter` selects; the others stay tracked.
+/// Accept the changes `filter` selects; the others stay tracked. A Strict
+/// package is written back transitional, as the comparer writes it; with
+/// nothing selected the bytes come back untouched.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Accept)
 }
 
-/// Reject the changes `filter` selects; the others stay tracked.
+/// Reject the changes `filter` selects; the others stay tracked. A Strict
+/// package is written back transitional, as [`accept_changes`] writes it.
 pub fn reject_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Reject)
 }
@@ -317,13 +334,13 @@ fn resolve(
     resolution: Resolution,
 ) -> Result<Vec<u8>, ChangeError> {
     let filter = &filter.normalized()?;
-    let listed = list_changes(docx)?;
+    let mut pkg = open(docx)?;
+    let listed = changes_in(&pkg);
     filter.check(&listed)?;
     // Nothing selected: nothing to resolve, and nothing else to touch.
     if !listed.iter().any(|c| filter.matches(c)) {
         return Ok(docx.to_vec());
     }
-    let mut pkg = open(docx)?;
     let main = main_part(&pkg);
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
         let found = carriers(dom, root, &story_id(&main, part));
@@ -352,10 +369,12 @@ fn resolve(
         .map_err(|e| ChangeError::Package(e.to_string()))
 }
 
+/// The package, Strict normalized to transitional as `inspect` reads it.
 fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
     crate::document_comparer::admit_package(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    PartFs::open(docx).map_err(|e| ChangeError::Package(e.to_string()))
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))
 }
 
 fn main_part(pkg: &PartFs) -> String {
@@ -501,6 +520,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
             }),
         });
     }
+    fold_twins(dom, &mut out);
     fold_style_pairs(dom, &mut out);
     let ids: HashMap<NodeId, String> = out
         .iter()
@@ -519,19 +539,95 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
     out
 }
 
+/// Word stores a text box twice, in an `mc:AlternateContent`'s `mc:Choice`
+/// and its `mc:Fallback`, and gives the Fallback copy of each change its own
+/// consecutive `w:id`. Each Fallback's carriers pair, in order, with the
+/// Choice's still-listed carriers of the same kind, target and text (a
+/// carrier the Choice lacks is skipped, not mispaired): the Choice copy (the
+/// one the view shows) is listed, and the twin joins its group unlisted, so
+/// resolving the change resolves both copies. Inner `mc:AlternateContent`s
+/// pair first, so an outer Fallback meets one listed copy of each nested
+/// change. A carrier without a partner stays listed.
+fn fold_twins(dom: &Dom, carriers: &mut [Carrier]) {
+    let (choice, fallback) = (MC::name("Choice"), MC::name("Fallback"));
+    // Each listed carrier's mc:Choice / mc:Fallback ancestors.
+    let branches: Vec<(usize, Vec<NodeId>)> = carriers
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.change.is_some())
+        .map(|(i, c)| {
+            let mut found = dom.ancestors(c.node, Some(&choice));
+            found.extend(dom.ancestors(c.node, Some(&fallback)));
+            (i, found)
+        })
+        .filter(|(_, found)| !found.is_empty())
+        .collect();
+    let mut fallbacks: Vec<NodeId> = Vec::new();
+    for (_, found) in &branches {
+        for &b in found {
+            if dom.name_is(b, &fallback) && !fallbacks.contains(&b) {
+                fallbacks.push(b);
+            }
+        }
+    }
+    // Innermost first.
+    fallbacks.sort_by_key(|&f| std::cmp::Reverse(dom.ancestors(f, None).len()));
+    let key = |c: &Carrier| {
+        c.change
+            .as_ref()
+            .map(|ch| (ch.kind, ch.target, ch.text.clone()))
+    };
+    for f in fallbacks {
+        let Some(partner) = dom.parent(f).and_then(|ac| dom.element(ac, &choice)) else {
+            continue;
+        };
+        let under = |b: NodeId, carriers: &[Carrier]| -> Vec<usize> {
+            branches
+                .iter()
+                .filter(|(i, found)| found.contains(&b) && carriers[*i].change.is_some())
+                .map(|(i, _)| *i)
+                .collect()
+        };
+        let originals = under(partner, carriers);
+        let mut next = 0;
+        for twin in under(f, carriers) {
+            let Some(at) = originals[next..]
+                .iter()
+                .position(|&o| key(&carriers[o]) == key(&carriers[twin]))
+            else {
+                continue;
+            };
+            let original = originals[next + at];
+            next += at + 1;
+            carriers[twin].group = carriers[original].group.clone();
+            carriers[twin].change = None;
+        }
+    }
+}
+
 /// Word records a style's paragraph and run formatting changes
-/// (`w:pPrChange`, `w:rPrChange`) under one `w:id`: one change. The first
-/// carrier is listed; the others join its group unlisted, so resolving it
-/// resolves them all.
+/// (`w:style/w:pPr/w:pPrChange`, `w:style/w:rPr/w:rPrChange`) under one
+/// `w:id`: one change. The first is listed; the other joins its group
+/// unlisted, so resolving it resolves both. Any other record sharing the
+/// id (a `w:tblStylePr`'s) stays a change of its own.
 fn fold_style_pairs(dom: &Dom, carriers: &mut [Carrier]) {
     let style = W::name("style");
+    // The style whose own pPr/rPr holds `node`, a pPrChange or rPrChange.
+    let own_style = |node: NodeId| {
+        let block = dom.parent(node)?;
+        let owner = dom.parent(block)?;
+        let pair = [("pPrChange", "pPr"), ("rPrChange", "rPr")];
+        let (name, block_name) = (dom.name(node)?, dom.name(block)?);
+        let shape = (name.local_name(), block_name.local_name());
+        (pair.contains(&shape) && dom.name_is(owner, &style)).then_some(owner)
+    };
     let mut first: HashMap<(NodeId, String), Group> = HashMap::new();
     for c in carriers.iter_mut() {
         let Some(change) = &c.change else { continue };
         if change.kind != ChangeKind::Formatting {
             continue;
         }
-        let Some(&owner) = dom.ancestors(c.node, Some(&style)).first() else {
+        let Some(owner) = own_style(c.node) else {
             continue;
         };
         let wid = change

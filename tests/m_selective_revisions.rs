@@ -629,6 +629,33 @@ fn a_styles_one_id_pair_is_one_change() {
     );
 }
 
+/// Only a style's own `w:pPr`/`w:rPr` records pair: a table style's
+/// conditional (`w:tblStylePr`) record sharing the id is another change, so
+/// the id is ambiguous instead of one record vanishing from the list.
+#[test]
+fn a_conditional_style_record_does_not_pair() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="9" {A}><w:pPr/></w:pPrChange></w:pPr><w:tblStylePr w:type="firstRow"><w:rPr><w:b/><w:rPrChange w:id="9" {B}><w:rPr/></w:rPrChange></w:rPr></w:tblStylePr></w:style></w:styles>"#
+    );
+    let styles: &'static str = Box::leak(styles.into_boxed_str());
+    let pkg = common::docx::docx_with(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: styles,
+        }],
+    );
+    let listed = list_changes(&pkg).unwrap();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(matches!(
+        reject_changes(&pkg, &filter_ids(&["styles.r9"])),
+        Err(ChangeError::Ambiguous { .. })
+    ));
+}
+
 /// A header change prints `header1.rN` and resolves by it.
 #[test]
 fn a_header_change_resolves_by_its_short_id() {
@@ -655,4 +682,122 @@ fn a_header_change_resolves_by_its_short_id() {
     assert_eq!(refs, ["r7 body:p:0", "header1.r7 header1:p:0"]);
     let out = reject_changes(&pkg, &filter_ids(&["header1.r7"])).unwrap();
     assert_eq!(ids(&out), ["body:rev:7"]);
+}
+
+/// A text box Word stores twice: the `mc:Choice` copy and its `mc:Fallback`
+/// twin, `extra` adding a Fallback-only insertion.
+fn boxed(extra: &str) -> Vec<u8> {
+    let copy = |id: u32, more: &str| {
+        format!(
+            r#"<w:txbxContent><w:p><w:ins w:id="{id}" {A}><w:r><w:t>Boxed</w:t></w:r></w:ins>{more}</w:p></w:txbxContent>"#
+        )
+    };
+    docx(&format!(
+        r#"<w:p><w:r><w:t>Lead</w:t></w:r><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+        copy(5, ""),
+        copy(6, extra)
+    ))
+}
+
+/// Word gives the Fallback copy of a text box change its own consecutive
+/// `w:id`: the change lists once (the Choice copy, the one the view shows)
+/// and resolves in both copies. A Fallback carrier without a Choice partner
+/// stays listed.
+#[test]
+fn a_text_box_change_lists_once_and_resolves_in_both_copies() {
+    assert_eq!(ids(&boxed("")), ["body:rev:5"]);
+    let accepted = accept_changes(&boxed(""), &filter_ids(&["r5"])).unwrap();
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:ins"), "{xml}");
+    assert_eq!(xml.matches(">Boxed<").count(), 2, "{xml}");
+    let rejected = reject_changes(&boxed(""), &filter_ids(&["r5"])).unwrap();
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(!xml.contains("Boxed"), "{xml}");
+
+    let extra = format!(r#"<w:ins w:id="7" {A}><w:r><w:t>Extra</w:t></w:r></w:ins>"#);
+    assert_eq!(ids(&boxed(&extra)), ["body:rev:5", "body:rev:7"]);
+}
+
+/// Word's own redline of a text box: the Choice copy's deletions are
+/// r9-r10 and the Fallback's r11-r12. Each lists once; rejecting r10 also
+/// restores its Fallback twin r12, and the deletion around the box stays.
+#[test]
+fn a_word_redlines_text_box_twins_list_once() {
+    let word = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/4640e71ddd__vs__1424386e9b_redline_32d0abcfc9.docx"
+    ))
+    .unwrap();
+    let listed = ids(&word);
+    for twin in ["body:rev:11", "body:rev:12"] {
+        assert!(!listed.iter().any(|id| id == twin), "{twin}: {listed:?}");
+    }
+    for own in ["body:rev:8", "body:rev:9", "body:rev:10"] {
+        assert!(listed.iter().any(|id| id == own), "{own}: {listed:?}");
+    }
+    let rejected = reject_changes(&word, &filter_ids(&["r10"])).unwrap();
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    for gone in [r#"w:id="10""#, r#"w:id="12""#] {
+        assert!(!xml.contains(gone), "{gone}");
+    }
+    for kept in [r#"w:id="8""#, r#"w:id="9""#, r#"w:id="11""#] {
+        assert!(xml.contains(kept), "{kept}");
+    }
+}
+
+fn alternate(choice: &str, fallback: &str) -> String {
+    format!(
+        r#"<mc:AlternateContent><mc:Choice Requires="wps">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"#
+    )
+}
+
+fn boxed_text(inner: &str) -> String {
+    format!(r#"<w:txbxContent><w:p>{inner}</w:p></w:txbxContent>"#)
+}
+
+/// A Fallback-only change between two twins is skipped, not paired with
+/// the next Choice change: each twin still finds its own partner.
+#[test]
+fn a_fallback_only_change_between_twins_does_not_shift_the_pairs() {
+    let ins = |id: u32, text: &str| {
+        format!(r#"<w:ins w:id="{id}" {A}><w:r><w:t>{text}</w:t></w:r></w:ins>"#)
+    };
+    let del = |id: u32, text: &str| {
+        format!(r#"<w:del w:id="{id}" {A}><w:r><w:delText>{text}</w:delText></w:r></w:del>"#)
+    };
+    let body = format!(
+        r#"<w:p><w:r>{}</w:r></w:p>"#,
+        alternate(
+            &boxed_text(&format!("{}{}", ins(5, "One"), del(6, "Two"))),
+            &boxed_text(&format!(
+                "{}{}{}",
+                ins(7, "One"),
+                ins(8, "Extra"),
+                del(9, "Two")
+            )),
+        )
+    );
+    let pkg = docx(&body);
+    assert_eq!(ids(&pkg), ["body:rev:5", "body:rev:6", "body:rev:8"]);
+    let rejected = reject_changes(&pkg, &filter_ids(&["r6"])).unwrap();
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:del "), "both copies of r6 resolve: {xml}");
+}
+
+/// A group shape nests one `mc:AlternateContent` in another's Choice: the
+/// inner Fallback twin and the outer Fallback copy both join the change.
+#[test]
+fn nested_alternate_content_copies_join_one_change() {
+    let ins = |id: u32| format!(r#"<w:ins w:id="{id}" {A}><w:r><w:t>Grouped</w:t></w:r></w:ins>"#);
+    let inner = alternate(&boxed_text(&ins(5)), &boxed_text(&ins(6)));
+    let body = format!(
+        r#"<w:p><w:r>{}</w:r></w:p>"#,
+        alternate(&format!("<w:r>{inner}</w:r>"), &boxed_text(&ins(7)))
+    );
+    let pkg = docx(&body);
+    assert_eq!(ids(&pkg), ["body:rev:5"]);
+    let accepted = accept_changes(&pkg, &filter_ids(&["r5"])).unwrap();
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:ins "), "every copy resolves: {xml}");
+    assert_eq!(xml.matches(">Grouped<").count(), 3, "{xml}");
 }

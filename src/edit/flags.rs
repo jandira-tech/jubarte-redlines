@@ -83,7 +83,7 @@ pub fn plan_from_flags(
     let mut notes = Vec::new();
     let (mut accept, mut reject) = (Vec::new(), Vec::new());
     for op in ops {
-        if let Some((accepted, ids)) = revision_group(op)? {
+        if let Some((accepted, ids)) = revision_group(verb, op)? {
             if accepted { &mut accept } else { &mut reject }.extend(ids);
             continue;
         }
@@ -188,14 +188,22 @@ fn comment_number(at: &str) -> Option<u32> {
 }
 
 /// A `-p r12 --accept` (or `--reject`) group: whether it accepts, and the
-/// long ids it names. `None` for a group that is an operation.
-fn revision_group(op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
+/// long ids it names. `None` for a group that is an operation. Only `edit`
+/// resolves revisions.
+fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
     let at = op.at.trim();
     let bad = |m: &str| Err(format!("-p {at}: {m}"));
     let ids = match crate::ids::parse_location(at) {
         Ok(Location::Changes(ids)) => Some(ids),
         _ => None,
     };
+    // A `--reply` group is an operation: off a comment it says so.
+    if op.reply.is_some() {
+        return Ok(None);
+    }
+    if verb == Verb::Add && ids.is_some() {
+        return bad("add resolves no revision; use edit -p r12 --accept or --reject");
+    }
     let others = op.anchor.is_some()
         || op.content.is_some()
         || op.delete
@@ -241,10 +249,10 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
             return bad("--reply takes no other flag");
         }
         let (text, note) = content_text(reply);
-        return Ok((
-            K::ReplyComment { comment_id, text },
-            note.map(str::to_string),
-        ));
+        let note = note.map(|_| {
+            "the reply keeps its Markdown marks as text; replies take no formatting".to_string()
+        });
+        return Ok((K::ReplyComment { comment_id, text }, note));
     }
     if op.delete && (op.content.is_some() || op.resolve) {
         return bad("--delete excludes --content and --resolve");
@@ -1034,7 +1042,7 @@ mod tests {
             ),
             (
                 with("r1", |o| o.reply = Some("x".into())),
-                "-p r1: a revision takes --accept or --reject",
+                "-p r1: --reply is for a comment (-p c5)",
             ),
             (
                 with("c5", |o| {
@@ -1070,6 +1078,26 @@ mod tests {
                 })
             ),
             "-p c5: --reply takes no other flag"
+        );
+        for o in [
+            with("r1", |o| o.accept = true),
+            with("r1", |o| o.content = Some("x".into())),
+        ] {
+            assert_eq!(
+                refusal(Verb::Add, o.clone()),
+                format!(
+                    "-p {}: add resolves no revision; use edit -p r12 --accept or --reject",
+                    o.at
+                )
+            );
+        }
+        assert_eq!(
+            refusal(Verb::Add, with("r1", |o| o.reply = Some("x".into()))),
+            "-p r1: --reply is for a comment (-p c5)"
+        );
+        assert_eq!(
+            refusal(Verb::Add, with("c5", |o| o.accept = true)),
+            "-p c5: --accept and --reject take a revision (-p r12)"
         );
     }
 }
