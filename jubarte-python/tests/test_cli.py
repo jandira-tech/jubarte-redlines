@@ -741,3 +741,16 @@ def test_editing_mode_keep_is_usage_error_before_output(
     assert "--existing-revisions accept or reject" in captured.err
     assert captured.out == ""
     assert not output.exists()
+
+
+def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commented = tmp_path / "commented.docx"
+    assert main(["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]) == 0
+    out = tmp_path / "their.docx"
+    capsys.readouterr()
+    assert main(["edit", str(commented), "-p", "c0.text", "--content", "their", "-o", str(out)]) == 0
+    capsys.readouterr()
+    assert main(["read", str(out)]) == 0
+    assert "{=={~~his or her~>their~~}" in capsys.readouterr().out
+    assert main(["edit", str(commented), "-p", "c0.text", "--anchor", "signs", "--content", "x", "-o", str(tmp_path / "no.docx")]) == 3
+    assert "not in the text c0 covers" in capsys.readouterr().err

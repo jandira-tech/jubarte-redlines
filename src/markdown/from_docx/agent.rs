@@ -1886,7 +1886,7 @@ pub(crate) fn select_blocks(
 /// The label of a note definition, `1` for `[^1]: …`. A note inserted or
 /// deleted with its reference carries its label inside the mark
 /// (`{++[^1]: …++}`).
-fn note_label(note: &str) -> Option<&str> {
+pub(crate) fn note_label(note: &str) -> Option<&str> {
     let note = ["{++", "{--"]
         .into_iter()
         .find_map(|mark| note.strip_prefix(mark))

@@ -17,6 +17,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `c5.text` names the text comment c5 covers, for `edit -p` and a plan's
+  `paragraph`. `edit X -p c5.text --content "new"` replaces it as one
+  tracked substitution inside the comment (a range over two paragraphs
+  that follow each other also deletes the mark between them);
+  `--anchor` looks only inside it (`… is not in the text c5 covers`,
+  exit 3); `--delete` deletes it. `-p c5` still edits the comment's own
+  text. `capabilities` lists the spelling under `ids.comment_text`.
+- `read` prints the paragraph id of each footnote and endnote on the
+  line before its definition (`<!-- footnotes.p0 -->`,
+  `<!-- endnotes.p0-p2 -->` for a note of three paragraphs): the id
+  `edit -p` takes to change the note.
 - `read --json` prints the snapshot (`inspect --json`'s, which now also
   carries `changes` and `comments` as `changes --json` and
   `comments --json` list them). `-p`, `--head`, `--tail`, `--changed` and
@@ -166,6 +177,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   writes PNG pages only, and convert no longer writes a PDF and PNGs in
   one run. `--pages` narrows a PDF too, and each PNG is named by its
   document page (`X-page-03.png`), also under `--changed-pages`.
+
+### Fixed
+
+- `edit`: replacing exactly the text a comment covers keeps both the
+  deletion and the insertion inside the comment's range, so Accept All
+  leaves the comment on the new text and Reject All on the old. The
+  redline used to put the insertion before the range and the deletion
+  after it.
 
 ### Deprecated
 

@@ -219,6 +219,28 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .flatten()
         .map(|e| Numbering::parse(&e))
         .unwrap_or_default();
+    // Each note's paragraphs as `edit` numbers its story
+    // (`inspect::story_paragraph_nodes`): the first index and how many;
+    // separator notes are not numbered.
+    let mut note_paragraphs: HashMap<(bool, String), (usize, usize)> = HashMap::new();
+    for (name, root) in &note_roots {
+        let mut first = 0;
+        for note in root.children_named(name) {
+            if note.attr("type").is_some_and(|t| {
+                matches!(
+                    t,
+                    "separator" | "continuationSeparator" | "continuationNotice"
+                )
+            }) {
+                continue;
+            }
+            let count = agent::paragraphs(note).len();
+            if let Some(id) = note.attr("id") {
+                note_paragraphs.insert((*name == "endnote", id.to_string()), (first, count));
+            }
+            first += count;
+        }
+    }
     let mut notes = HashMap::new();
     for (name, root) in &note_roots {
         for note in root.children_named(name) {
@@ -315,6 +337,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     writer.hidden_ranges.clear();
     let mut index = 0;
     let mut defs = Vec::new();
+    // The id line of each definition, by label: `footnotes.p2`, or
+    // `footnotes.p2-p3` for a note of two paragraphs.
+    let mut note_ids: HashMap<String, String> = HashMap::new();
     // The notes a definition line shows.
     let mut defined: HashSet<(bool, String)> = HashSet::new();
     while index < writer.note_refs.len() {
@@ -362,6 +387,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 if !clauses.is_empty() {
                     def.push_str(&format!(" <!-- {} -->", clauses.join(", ")));
                 }
+            }
+            if let (Some(story), Some(&(first, count))) =
+                (note_stories.get(&key.0), note_paragraphs.get(&key))
+            {
+                let id = match count {
+                    0 | 1 => format!("{story}.p{first}"),
+                    _ => format!("{story}.p{first}-p{}", first + count - 1),
+                };
+                note_ids.insert(index.to_string(), id);
             }
             defs.push(def);
             defined.insert(key);
@@ -711,7 +745,20 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     }
     if !defs.is_empty() {
         markdown.push_str("\n\n");
-        markdown.push_str(&defs.join("\n"));
+        // The agent view names the paragraphs `edit -p` takes for each note.
+        let lines: Vec<String> = defs
+            .iter()
+            .map(|def| {
+                match agent::note_label(def)
+                    .and_then(|label| note_ids.get(label))
+                    .filter(|_| options.ids)
+                {
+                    Some(id) => format!("<!-- {id} -->\n{def}"),
+                    None => def.clone(),
+                }
+            })
+            .collect();
+        markdown.push_str(&lines.join("\n"));
     }
     if !markdown.is_empty() {
         markdown.push('\n');

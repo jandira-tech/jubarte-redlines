@@ -7,7 +7,9 @@
 //! - **Revisions** (tracked changes): `r12`, `12`, `r1+2` (both), `header1.r1`,
 //!   `footnotes.r3`, the long `body:rev:12`; 0.12's printed `#12` and `#1+2`
 //!   still parse.
-//! - **Comments:** `c27`, `27`; 0.12's `#c27` still parses.
+//! - **Comments:** `c27`, `27`; 0.12's `#c27` still parses. `c27.text` is
+//!   the text comment 27 covers, for `edit` (`#c27.text` parses, never
+//!   printed).
 //! - **Paragraphs:** `p12`, `12`, `header1` (its first paragraph),
 //!   `header1.p2`, `footnotes.p3`, a cell's `t0.row1.cell2[.p1]`, the long
 //!   `body:p:12`; 0.12's cell form `t0.r1.c2[.p1]` still parses.
@@ -33,7 +35,7 @@ pub const CHANGE_EXPECTED: &str = "expected a change id such as r12, header1.r1 
 /// Why a comment id was refused.
 pub const COMMENT_EXPECTED: &str = "expected a comment id such as c27 or 27";
 /// Why a `-p` value was refused, when no narrower reason applies.
-pub const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12 or 12), a story paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5) or a revision (r12)";
+pub const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12 or 12), a story paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5), the text a comment covers (c5.text) or a revision (r12)";
 /// Why a table id without its row and cell was refused.
 pub const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row1.cell2";
 /// Why a row or cell without its table was refused.
@@ -50,6 +52,8 @@ pub const CHANGE_SPELLINGS: &[&str] = &[
 ];
 /// The comment spellings the manifest advertises.
 pub const COMMENT_SPELLINGS: &[&str] = &["c27", "27"];
+/// The spellings of the text a comment covers the manifest advertises.
+pub const COMMENT_TEXT_SPELLINGS: &[&str] = &["c27.text"];
 /// The paragraph spellings the manifest advertises.
 pub const PARAGRAPH_SPELLINGS: &[&str] = &[
     "p12",
@@ -151,6 +155,8 @@ pub enum Location {
     Paragraph(String),
     /// A comment, by `w:id`.
     Comment(u32),
+    /// The text a comment covers (`c5.text`), by the comment's `w:id`.
+    CommentText(u32),
     /// Tracked changes (`r12`, `header1.r1`, `r1+2`).
     Changes(Vec<ChangeId>),
 }
@@ -237,6 +243,15 @@ pub fn parse_comment_id(token: &str) -> Result<u32, IdError> {
     number(digits).ok_or_else(|| IdError::new(token, COMMENT_EXPECTED))
 }
 
+/// `c5.text` (or `#c5.text`) → 5: the comment whose covered text a `-p`
+/// or a plan's `paragraph` names.
+pub fn comment_text_id(token: &str) -> Option<u32> {
+    let head = token.strip_suffix(".text")?;
+    (digit_shaped(head, "c") || digit_shaped(head, "#c"))
+        .then(|| parse_comment_id(head).ok())
+        .flatten()
+}
+
 /// A serde `deserialize_with` for a comment id: a number, or a string
 /// [`parse_comment_id`] reads.
 pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
@@ -287,6 +302,14 @@ pub fn is_retired_cell(token: &str) -> bool {
 /// paragraph, a table cell, a story paragraph, a long paragraph id.
 pub fn parse_location(token: &str) -> Result<Location, IdError> {
     let refuse = |why| Err(IdError::new(token, why));
+    if let Some(head) = token.strip_suffix(".text")
+        && (digit_shaped(head, "c") || digit_shaped(head, "#c"))
+    {
+        return match parse_comment_id(head) {
+            Ok(id) => Ok(Location::CommentText(id)),
+            Err(_) => refuse(LOCATION_EXPECTED),
+        };
+    }
     if digit_shaped(token, "c") || digit_shaped(token, "#c") {
         return match parse_comment_id(token) {
             Ok(id) => Ok(Location::Comment(id)),
@@ -551,6 +574,8 @@ mod tests {
         let ok = |token: &str| parse_location(token).unwrap();
         assert_eq!(ok("c5"), Comment(5));
         assert_eq!(ok("#c5"), Comment(5));
+        assert_eq!(ok("c5.text"), CommentText(5));
+        assert_eq!(ok("#c5.text"), CommentText(5));
         assert_eq!(ok("r12"), Changes(vec![body("12")]));
         assert_eq!(ok("#12"), Changes(vec![body("12")]));
         assert_eq!(ok("r1+2"), Changes(vec![body("1"), body("2")]));
@@ -605,19 +630,17 @@ mod tests {
             "Header_1",
             "c05",
             "#c05",
+            "c05.text",
+            "c.text",
             "c4294967296",
+            "c4294967296.text",
             "t0.p1",
             "t0.row1.c2",
             "t0.r1.cell2",
             "t0.row01.cell2",
             "t0.row1.cell2.p1.p2",
         ] {
-            assert_eq!(
-                why(token),
-                format!(
-                    "{token}: -p takes a paragraph (p12 or 12), a story paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5) or a revision (r12)"
-                ),
-            );
+            assert_eq!(why(token), format!("{token}: {LOCATION_EXPECTED}"));
         }
     }
 
@@ -742,6 +765,7 @@ mod tests {
         let mut printed: Vec<String> = [
             CHANGE_SPELLINGS,
             COMMENT_SPELLINGS,
+            COMMENT_TEXT_SPELLINGS,
             PARAGRAPH_SPELLINGS,
             TABLE_SPELLINGS,
         ]
@@ -787,6 +811,7 @@ mod tests {
             ":rev:",
             ":p:",
             "#c",
+            ".text",
             "01",
             "4294967296",
         ];
@@ -821,6 +846,11 @@ mod tests {
             }
             match parse_location(&token) {
                 Ok(Location::Comment(n)) => assert_eq!(parse_comment_id(&token), Ok(n)),
+                Ok(Location::CommentText(n)) => assert_eq!(
+                    parse_location(&format!("c{n}.text")),
+                    Ok(Location::CommentText(n)),
+                    "{token}"
+                ),
                 Ok(Location::Changes(ids)) => assert_eq!(parse_change_ids(&token), Ok(ids)),
                 Ok(Location::Paragraph(p)) => {
                     assert!(
