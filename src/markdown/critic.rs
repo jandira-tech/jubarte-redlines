@@ -236,6 +236,9 @@ impl Literal {
         };
         let bytes = source.as_bytes();
         let mut fence: Option<(u8, usize, usize)> = None;
+        // Whether a link reference definition may start here: it cannot
+        // interrupt a paragraph.
+        let mut can_define = true;
         let mut line_start = 0;
         let mut at = 0;
         while at < bytes.len() {
@@ -250,6 +253,7 @@ impl Literal {
                             literal.fences.push(start..line_end);
                             fence = None;
                         }
+                        can_define = true;
                         at = line_end + 1;
                         line_start = at;
                         continue;
@@ -262,7 +266,16 @@ impl Literal {
                                 fence = Some((b, width, at));
                             }
                         }
-                        if fence.is_some() {
+                        let destination =
+                            can_define.then(|| definition_destination(line)).flatten();
+                        can_define = fence.is_some()
+                            || destination.is_some()
+                            || line.trim().is_empty()
+                            || line.trim_start().starts_with('#');
+                        if let Some(from) = destination {
+                            literal.verbatim.push(at + from..line_end);
+                        }
+                        if fence.is_some() || destination.is_some() {
                             at = line_end + 1;
                             line_start = at;
                             continue;
@@ -333,6 +346,31 @@ fn code_span_end(source: &str, at: usize) -> Option<usize> {
             return None;
         } else {
             i += 1;
+        }
+    }
+    None
+}
+
+/// Where the destination (and title) of a link reference definition
+/// (`[label]: destination "title"`) starts in `line`, if the line is one.
+/// A footnote definition (`[^1]:`) is not one.
+fn definition_destination(line: &str) -> Option<usize> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let label = line.get(indent..)?.strip_prefix('[')?;
+    if indent > 3 || label.starts_with('^') {
+        return None;
+    }
+    let mut chars = label.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '[' => return None,
+            ']' => {
+                return (i > 0 && label[i + 1..].starts_with(':')).then_some(indent + 1 + i + 2);
+            }
+            _ => {}
         }
     }
     None

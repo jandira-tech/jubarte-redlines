@@ -1253,3 +1253,25 @@ fn a_brace_inside_a_quoted_field_argument_is_part_of_the_code() {
     );
     assert_eq!(texts(&docx), ["A X and Y B."]);
 }
+
+#[test]
+fn a_reference_definitions_destination_is_read_literally() {
+    // Like an inline destination, a definition's destination and title
+    // open no highlight or field; a footnote definition still does.
+    let docx = write(
+        "See [x] and [y] then ==hl== end.\n\n\
+         [x]: http://e.example/u==v==\n\
+         [y]: <http://e.example/{PAGE}1{/}> \"t ==z==\"\n\n\
+         A [^1].\n\n\
+         [^1]: Note ==n== here.\n\n\
+         A paragraph line\n[z]: is no ==definition==.\n",
+    );
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("http://e.example/u==v=="), "{rels}");
+    assert!(rels.contains("http://e.example/{PAGE}1{/}"), "{rels}");
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight ").count(), 2, "{xml}");
+    assert!(!xml.contains("<w:fldChar"), "{xml}");
+    let notes = part_string(&docx, "word/footnotes.xml").unwrap();
+    assert_eq!(notes.matches("<w:highlight ").count(), 1, "{notes}");
+}
