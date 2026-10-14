@@ -1,0 +1,19 @@
+Manuscript round-trip fixtures (tests/fixtures/md-roundtrip/)
+
+dolphins.md, eLife.00047.md, git_manuscript.md and list_of_figures.md are
+third-party scholarly manuscripts in Pandoc Markdown, added on 2026-10-14
+as round-trip inputs at Arthur Souza Rodrigues's request:
+
+- eLife.00047.md: Ferguson, Mansur, Peters, Ren and Smith, "DNA-PK is a
+  DNA sensor for IRF-3-dependent innate immunity", eLife 2012;1:e00047.
+- git_manuscript.md and list_of_figures.md: Karthik Ram, "Git can
+  facilitate greater reproducibility and increased transparency in
+  science", Source Code for Biology and Medicine 2013, and its list of
+  figures.
+- dolphins.md: Thompson, Abraham and Berkenbusch, "Common dolphin
+  (Delphinus delphis) bycatch in New Zealand commercial trawl fisheries".
+
+They are not licensed by Jandira Technologies, LLC and are not covered by
+this repository's AGPL-3.0-only license. Each remains under its authors'
+and publishers' terms; those upstream terms were not verified when the
+files were added. They are kept unmodified, for testing only.
