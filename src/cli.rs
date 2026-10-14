@@ -2980,6 +2980,14 @@ fn error_json(error: &clap::Error) -> String {
     .to_string()
 }
 
+/// The usage error for a task the host (`program`) does not have.
+fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap::Error {
+    command.error(
+        clap::error::ErrorKind::InvalidSubcommand,
+        format!("this {program} has no {task} task; the `jubarte` binary has it"),
+    )
+}
+
 /// Parse arguments (excluding argv0) for native-compatible adapters.
 ///
 /// `supported` contains canonical command names; empty enables every command.
@@ -2996,14 +3004,6 @@ fn error_json(error: &clap::Error) -> String {
 /// document or `out_dir` for the bundle, both null while recording into a plan. Informational/error results contain
 /// `{exit_code, stream, text}`.
 /// This function performs no document, filesystem, network or process I/O.
-/// The usage error for a task the host (`program`) does not have.
-fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap::Error {
-    command.error(
-        clap::error::ErrorKind::InvalidSubcommand,
-        format!("this {program} has no {task} task; the `jubarte` binary has it"),
-    )
-}
-
 pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> String {
     let model = top_level_command();
     let accepts = |name: &str| supported.is_empty() || supported.iter().any(|s| s == name);

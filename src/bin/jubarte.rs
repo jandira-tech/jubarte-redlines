@@ -1005,22 +1005,7 @@ fn run_edit(
         let mut starts = serde_json::Map::new();
         for (name, rendered) in &renders {
             pages.insert((*name).into(), rendered.report.page_count.into());
-            let firsts: Vec<serde_json::Value> = rendered
-                .report
-                .pages
-                .iter()
-                .map(|p| {
-                    p.text
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .chars()
-                        .take(60)
-                        .collect::<String>()
-                        .into()
-                })
-                .collect();
-            starts.insert((*name).into(), firsts.into());
+            starts.insert((*name).into(), rendered.report.page_starts().into());
         }
         let render_line = serde_json::json!({
             "ev": "render",
@@ -1949,16 +1934,12 @@ fn paginated(
     track_changes: TrackChanges,
     revisions: jubarte::convert::RevisionStyle,
 ) -> String {
-    match jubarte::markdown::page_texts(docx, track_changes.into(), revisions) {
-        Ok(pages) => {
-            let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
-            jubarte::markdown::paginate(markdown, &pages)
-        }
-        Err(e) => {
-            eprintln!("warning: no page markers: {e}");
-            markdown.to_string()
-        }
+    let (text, warning) =
+        jubarte::markdown::with_page_markers(docx, markdown, track_changes.into(), revisions);
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
     }
+    text
 }
 
 fn run_convert_any(

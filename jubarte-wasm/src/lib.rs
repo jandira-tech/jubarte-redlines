@@ -1207,12 +1207,150 @@ pub fn capabilities() -> Result<String, JsValue> {
     serde_json::to_string_pretty(&manifest()).map_err(js_err)
 }
 
-/// [`capabilities`] as the text summary `jubarte capabilities` prints.
+/// [`capabilities`] as the text summary `jubarte capabilities` prints; of
+/// `manifestJson` when given (a manifest a host narrowed to what it does),
+/// else of this build's.
 ///
 /// Mirrors `jubarte::capabilities::capabilities_text`.
 #[wasm_bindgen(js_name = capabilitiesText)]
-pub fn capabilities_text() -> String {
-    jubarte::capabilities::capabilities_text(&manifest())
+pub fn capabilities_text(manifest_json: Option<String>) -> Result<String, JsValue> {
+    let manifest = match manifest_json {
+        Some(json) => serde_json::from_str(&json).map_err(js_err)?,
+        None => manifest(),
+    };
+    Ok(jubarte::capabilities::capabilities_text(&manifest))
+}
+
+/// The error line for an input no task reads, as the binary prints it:
+/// `LEGACY_DOC: a.docx is a Word 97-2003 …`, or (`word`) `INVALID_PACKAGE:
+/// a.docx is not a ZIP file: …`; `undefined` when the bytes may be read.
+///
+/// Mirrors `jubarte::cli::refused_input`.
+#[wasm_bindgen(js_name = refusedInput)]
+pub fn refused_input(path: &str, bytes: &[u8], word: bool) -> Option<String> {
+    jubarte::cli::refused_input(std::path::Path::new(path), bytes, word)
+}
+
+/// Why `planJson` is no edit plan, as the binary prints it (`INVALID_PLAN:
+/// …`); `undefined` for a plan. A plan that parses can still be refused when
+/// applied; that refusal carries the per-operation report.
+///
+/// Mirrors `jubarte::edit::EditPlan::from_json`.
+#[wasm_bindgen(js_name = planError)]
+pub fn plan_error(plan_json: &str) -> Option<String> {
+    jubarte::edit::EditPlan::from_json(plan_json)
+        .err()
+        .map(|e| e.to_string())
+}
+
+/// What [`renderPdf`](render_pdf) returns.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen]
+pub struct RenderOutput {
+    pdf: Vec<u8>,
+    json: String,
+}
+
+#[cfg(feature = "pdf")]
+#[wasm_bindgen]
+impl RenderOutput {
+    /// The PDF.
+    #[wasm_bindgen(getter)]
+    pub fn pdf(&self) -> Vec<u8> {
+        self.pdf.clone()
+    }
+
+    /// `{"page_count", "page_starts"}`: the pages written and each one's
+    /// first line (60 characters at most), as an edit bundle's `render`
+    /// line lists them.
+    #[wasm_bindgen(getter)]
+    pub fn json(&self) -> String {
+        self.json.clone()
+    }
+}
+
+/// An edited document's PDF, compressed, its changes painted as
+/// `revisions` (`conventional`, `word` or `custom` with
+/// `revisionPalette`), with the page facts `edit --pdf` reports. Full build
+/// only.
+///
+/// Mirrors `jubarte::convert::render`.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen(js_name = renderPdf)]
+pub fn render_pdf(
+    docx: &[u8],
+    revisions: Option<String>,
+    revision_palette: Option<String>,
+) -> Result<RenderOutput, JsValue> {
+    let revisions = jubarte::convert::RevisionStyle::from_choice(
+        revisions.as_deref().unwrap_or("conventional"),
+        revision_palette.as_deref(),
+    )
+    .map_err(|e| JsValue::from_str(&e))?;
+    let rendered = jubarte::convert::render(
+        docx,
+        jubarte::convert::PdfOptions {
+            compress: true,
+            revisions,
+            ..jubarte::convert::PdfOptions::default()
+        },
+        jubarte::convert::RenderRequest {
+            pdf: true,
+            png_dpi: None,
+            pages: None,
+        },
+    )
+    .map_err(js_err)?;
+    let json = serde_json::json!({
+        "page_count": rendered.report.page_count,
+        "page_starts": rendered.report.page_starts(),
+    })
+    .to_string();
+    Ok(RenderOutput {
+        pdf: rendered.pdf.unwrap_or_default(),
+        json,
+    })
+}
+
+/// A Word document as `convert --to md` writes it: Markdown with its
+/// changes kept, accepted or rejected (`trackChanges`: `all`, `accept`,
+/// `reject`), and unless `pageMarkers` is false `<!-- page N of M -->` lines
+/// from the layout, its changes painted as `revisions`. JSON
+/// `{"markdown", "warning"}`: the warning says why the markers are missing.
+/// Full build only.
+///
+/// Mirrors `jubarte::markdown::with_page_markers`.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen(js_name = convertMarkdown)]
+pub fn convert_markdown(
+    docx: &[u8],
+    track_changes: &str,
+    page_markers: bool,
+    revisions: Option<String>,
+    revision_palette: Option<String>,
+) -> Result<String, JsValue> {
+    let choice = jubarte::markdown::TrackChanges::parse(track_changes)
+        .ok_or_else(|| js_err("track_changes must be all, accept or reject"))?;
+    let read = jubarte::markdown::docx_to_markdown(
+        docx,
+        &jubarte::markdown::MarkdownOptions {
+            track_changes: choice,
+            extract_media: None,
+            ..jubarte::markdown::MarkdownOptions::default()
+        },
+    )
+    .map_err(|e| js_err(format!("convert failed: {e}")))?;
+    let (markdown, warning) = if page_markers {
+        let revisions = jubarte::convert::RevisionStyle::from_choice(
+            revisions.as_deref().unwrap_or("conventional"),
+            revision_palette.as_deref(),
+        )
+        .map_err(|e| JsValue::from_str(&e))?;
+        jubarte::markdown::with_page_markers(docx, &read.markdown, choice, revisions)
+    } else {
+        (read.markdown, None)
+    };
+    Ok(serde_json::json!({"markdown": markdown, "warning": warning}).to_string())
 }
 
 fn wrote_line_of(
@@ -1551,7 +1689,7 @@ mod tests {
         assert_eq!(manifest["operations"]["edit"], true);
         assert_eq!(manifest["operations"]["fields"], cfg!(feature = "pdf"));
         let yes = |on: bool| if on { "yes" } else { "no" };
-        let text = capabilities_text();
+        let text = capabilities_text(None).unwrap();
         assert!(text.starts_with("engine: jubarte "), "{text}");
         assert!(text.contains(" (wasm)\n"), "{text}");
         assert!(text.contains("\npng: no\n"), "{text}");
@@ -1562,6 +1700,34 @@ mod tests {
         let formats = manifest["formats"].to_string();
         assert!(!formats.contains(".png"), "{formats}");
         assert_eq!(formats.contains(".pdf"), cfg!(feature = "pdf"), "{formats}");
+    }
+
+    #[test]
+    fn capabilities_text_reads_a_narrowed_manifest() {
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&capabilities().unwrap()).unwrap();
+        manifest["operations"]["scrub"] = false.into();
+        let text = capabilities_text(Some(manifest.to_string())).unwrap();
+        assert!(text.contains("\nscrub: no\n"), "{text}");
+        assert!(text.contains("\nedit: yes\n"), "{text}");
+    }
+
+    #[test]
+    fn refused_input_and_plan_error_are_the_binary_lines() {
+        assert_eq!(
+            refused_input("fake.docx", b"hello", true).as_deref(),
+            Some("INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record")
+        );
+        // Markdown is no ZIP and is read.
+        assert_eq!(refused_input("a.md", b"# Title", false), None);
+        assert!(
+            refused_input("ole.docx", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1rest", false)
+                .is_some_and(|line| line.starts_with("LEGACY_DOC: ole.docx is a Word 97-2003"))
+        );
+        assert_eq!(
+            plan_error("not json at all").as_deref(),
+            Some("INVALID_PLAN: expected ident at line 1 column 2")
+        );
     }
 
     #[cfg(feature = "pdf")]
@@ -1928,7 +2094,10 @@ mod tests {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
         let changes = changes_text(&docx).unwrap();
         assert!(
-            changes.starts_with("r1\tdeletion\ttext\tRedline\tp0\t\"30\"\n"),
+            // A substitution is written as Word writes one: insertion first.
+            changes.starts_with(
+                "r1\tinsertion\ttext\tRedline\tp0\t\"45\"\nr2\tdeletion\ttext\tRedline\tp0\t\"30\"\n"
+            ),
             "{changes}"
         );
         assert!(
