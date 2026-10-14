@@ -940,9 +940,19 @@ pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
     out
 }
 
-/// Twips as inches with up to two decimals: `720` → `0.5in`, `1440` → `1in`.
+/// Twips as inches with the fewest decimals (two at least, four at most)
+/// that read back to the same twips: `720` → `0.5in`, `1440` → `1in`,
+/// `1134` (2cm) → `0.7875in`. Four decimals are always enough: they are off
+/// by 0.072 twips at most.
 pub(crate) fn inches(twips: f64) -> String {
-    let value = format!("{:.2}", twips / 1440.0);
+    let inches = twips / 1440.0;
+    let value = (2..=4)
+        .map(|places| format!("{inches:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 1440.0).round() == twips.round())
+        })
+        .unwrap_or_else(|| format!("{inches:.4}"));
     let value = value.trim_end_matches('0').trim_end_matches('.');
     format!("{value}in")
 }
@@ -2379,6 +2389,20 @@ mod tests {
             .map(|t| format!("{}:{}", t.kind, t.tag))
             .collect();
         assert_eq!(tags, ["ins:8@AC", "del:11+13@AC"]);
+    }
+
+    #[test]
+    fn inches_read_back_to_the_same_twips() {
+        // 2cm margins are 1134 twips: `0.79in` came back as 1138.
+        assert_eq!(inches(1134.0), "0.7875in");
+        assert_eq!(inches(1417.0), "0.984in");
+        assert_eq!(inches(720.0), "0.5in");
+        assert_eq!(inches(1440.0), "1in");
+        for twips in 0..=31_680u32 {
+            let text = inches(f64::from(twips));
+            let back: f64 = text.strip_suffix("in").unwrap().parse().unwrap();
+            assert_eq!((back * 1440.0).round(), f64::from(twips), "{text}");
+        }
     }
 
     #[test]

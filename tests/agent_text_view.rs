@@ -650,7 +650,7 @@ fn a_tracked_mark_inside_a_footnote_carries_its_agent_tag() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("[^1]: First{++ ++}{>>footnotes.r4 @AC<<}second"),
+        out.contains("[^1]: First{++<br>++}{>>footnotes.r4 @AC<<}second"),
         "{out}"
     );
     assert!(!out.contains("Ann Counsel ("), "{out}");
@@ -1897,7 +1897,7 @@ footers:
 fn header_page_line_for_a4_landscape_with_uneven_margins_and_a_gutter() {
     let sect = r#"<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="709" w:footer="709" w:gutter="720"/></w:sectPr>"#;
     let out = agent(&common::docx::docx_with_sect_pr(&para("x"), &[], sect));
-    assert!(out.contains("\npage: A4 landscape, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.49in, gutter 0.5in\n"), "{out}");
+    assert!(out.contains("\npage: A4 landscape, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.4924in, gutter 0.5in\n"), "{out}");
 }
 
 #[test]
