@@ -30,8 +30,10 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Print nothing on success (files are still written; warnings and
-    /// errors still print).
+    /// No status on success: no `wrote` lines, and no summary or view of
+    /// what `edit`/`add` changed. Files are still written; a reading task
+    /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
+    /// still prints what it read, and warnings and errors still print.
     #[arg(
         short = 'q',
         long,
