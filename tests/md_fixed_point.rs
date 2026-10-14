@@ -87,7 +87,19 @@ fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
     let md = format!("{name}.md");
     let docx = format!("{name}.docx");
     std::fs::write(dir.join(&md), markdown).map_err(|e| e.to_string())?;
-    jubarte(dir, &["convert", &md, "-o", &docx, "--force"])?;
+    // The epoch pinned: unpinned, an undated change is dated now.
+    jubarte(
+        dir,
+        &[
+            "convert",
+            &md,
+            "-o",
+            &docx,
+            "--force",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    )?;
     Ok(docx)
 }
 

@@ -1813,9 +1813,10 @@ fn retired_spellings_are_scoped_and_listed_once() {
     ] {
         assert_eq!(notes(argv), vec![], "{argv:?}");
     }
-    // A retired spelling (--date for --datetime) takes its value.
+    // A removed spelling (--date for --datetime) is found as a retired one
+    // is, and takes its value.
     assert_eq!(
-        notes(&[
+        jubarte::cli::removed_spellings([
             "edit",
             "a",
             "--date",
@@ -1839,10 +1840,11 @@ fn retired_spellings_are_scoped_and_listed_once() {
 }
 
 /// Arthur (2026-10-13): one spelling for the timestamp flag: `-d,
-/// --datetime` on edit, add, compare, diff and convert (md->docx), with
-/// `--date` kept as a hidden alias that still parses.
+/// --datetime` on edit, add, compare, diff and convert (md->docx). Arthur
+/// (2026-10-14): `--date` is gone, not an alias; the error names
+/// `--datetime`.
 #[test]
-fn timestamp_flag_is_d_datetime_with_hidden_date_alias() {
+fn timestamp_flag_is_d_datetime_and_date_is_gone() {
     let date = "2026-10-01T09:00:00Z";
     let bases: &[&[&str]] = &[
         &["edit", "a.docx", "-p", "p0", "--content", "x"],
@@ -1852,7 +1854,7 @@ fn timestamp_flag_is_d_datetime_with_hidden_date_alias() {
         &["convert", "a.md", "-t", "docx"],
     ];
     for base in bases {
-        for flag in ["-d", "--datetime", "--date"] {
+        for flag in ["-d", "--datetime"] {
             let args = [base.to_vec(), vec![flag, date]].concat();
             let result = parse(&args, &[]);
             assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
@@ -1861,25 +1863,20 @@ fn timestamp_flag_is_d_datetime_with_hidden_date_alias() {
                 Some(date),
                 "{args:?}: {result}"
             );
-        }
-        // `--date` is retired: it parses, with the note `parse_json` carries.
-        let args = [base.to_vec(), vec!["--date", date]].concat();
-        let result = parse(&args, &[]);
-        assert!(
-            result["notes"]
-                .as_array()
-                .is_some_and(|notes| notes.iter().any(|note| note.as_str()
-                    == Some("note: --date is now --datetime; --date is removed in 0.14"))),
-            "{args:?}: {result}"
-        );
-        // `-d` and `--datetime` are current: they earn no note.
-        for flag in ["-d", "--datetime"] {
-            let args = [base.to_vec(), vec![flag, date]].concat();
-            let result = parse(&args, &[]);
+            // Current flags earn no note.
             assert_eq!(result["notes"], serde_json::json!([]), "{args:?}: {result}");
         }
+        let args = [base.to_vec(), vec!["--date", date]].concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert!(
+            result["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("--datetime")),
+            "{args:?}: {result}"
+        );
     }
-    // `--date` is hidden: no task's `--help` shows it.
+    // No task's `--help` shows `--date`.
     for task in ["edit", "add", "compare", "diff", "convert"] {
         let help = parse(&[task, "--help"], &[]);
         let text = help["text"].as_str().unwrap();

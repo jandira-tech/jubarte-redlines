@@ -31,7 +31,18 @@ fn round_trip(dir: &Path) -> (Vec<u8>, Vec<u8>) {
     std::fs::write(dir.join("source/received.docx"), &source).unwrap();
     let view = jubarte(dir, &["read", "source/received.docx"]);
     std::fs::write(dir.join("view.md"), view).unwrap();
-    jubarte(dir, &["convert", "view.md", "-o", "back.docx"]);
+    // The epoch pinned: unpinned, an undated change is dated now.
+    jubarte(
+        dir,
+        &[
+            "convert",
+            "view.md",
+            "-o",
+            "back.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    );
     (source, std::fs::read(dir.join("back.docx")).unwrap())
 }
 
@@ -79,7 +90,17 @@ fn an_author_with_several_dates_is_never_dated_1970() {
     let dir = tempfile::tempdir().unwrap();
     let view = "---\nview: tracked\ncomments: 2 threads open\nauthors:\n  MW: Michael Williamson           # 2 comments, 2016-07-03..2016-07-03\n---\n\n<!-- p0 -->\nA tachyon{== walks==}{>>c0 @MW: A tachyon walks into a bar.<<} in.{== Fin==}{>>c1 @MW: Fin.<<}\n";
     std::fs::write(dir.path().join("view.md"), view).unwrap();
-    jubarte(dir.path(), &["convert", "view.md", "-o", "back.docx"]);
+    jubarte(
+        dir.path(),
+        &[
+            "convert",
+            "view.md",
+            "-o",
+            "back.docx",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    );
     let back = std::fs::read(dir.path().join("back.docx")).unwrap();
     let comments = jubarte::comments::list_comments(&back).unwrap();
     assert_eq!(comments.len(), 2, "{comments:?}");
