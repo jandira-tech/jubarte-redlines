@@ -90,8 +90,8 @@ shell needs a store build that embeds the new engine.
    # push when ready: git push && git push --tags
    ```
    Pushing `v*` runs `.github/workflows/release.yml`: it refuses a tag that
-   does not match `Cargo.toml`, builds `jubarte` for linux/macos/windows
-   (x86_64 + aarch64), and creates the `jubarte vX.Y.Z` GitHub release with
+   does not match `Cargo.toml`, builds `jubarte` for linux and macOS
+   (x86_64 + aarch64) and windows (x86_64), and creates the `jubarte vX.Y.Z` GitHub release with
    the CHANGELOG section as notes and the archives + `SHA256SUMS.txt`
    attached.
 
@@ -223,11 +223,11 @@ tree check stops the run, and a tag cannot be moved once pushed.
 
 The release job needs every binary. If one fails (v0.10.1: the Windows
 checkout), the wheels and the other binaries exist only as workflow
-artifacts. Step 10 notices a finished run with no release and then:
+artifacts. Step 11 notices a finished run with no release and then:
 
 1. `gh run download <run>` fetches every artifact into `dist/release/`;
 2. builds the sdist from `git archive vX.Y.Z` (the tagged source, not the
-   working tree);
+   working tree); a missing wheel stops the run here, with no release;
 3. writes `SHA256SUMS.txt`, and creates the release with `gh release create`.
    The notes are the tag summary, a line naming the binaries that are
    missing, the CHANGELOG section and the compare link;

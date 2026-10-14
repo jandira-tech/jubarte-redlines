@@ -5,7 +5,7 @@ The buyer shall return defective at its own cost goods written fourteen days pro
 Notices must in good faith **be** sent without undue delay by _email_ and by registered _mail_.
 
 |Clause|Change|Status|
-|-|-|-|
+|:-|:-|:-|
 |This agreement as reasonably required is governed.|The buyer shall return.|customer first vendor.|
 |Disputes go first notice.|Any change to this.|Notices must be on a business day sent.|
 |party is liable.|Notices must be.|party end.|

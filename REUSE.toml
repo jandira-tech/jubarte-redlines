@@ -53,6 +53,50 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2026 Jandira Technologies, LLC", "Microsoft Corporation"]
 SPDX-License-Identifier = "AGPL-3.0-only"
 
+# Office Math fixtures Word wrote, copied from their projects' test data
+# (tests/fixtures/math/SOURCES.md names each file's URL).
+[[annotations]]
+path = ["tests/fixtures/math/builtin-equations.docx", "tests/fixtures/math/quadratic-in-table.docx"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Docling Contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["tests/fixtures/math/floating-table-subsup.docx", "tests/fixtures/math/mismatched-delimiters.docx", "tests/fixtures/math/open-brace-delimiter.docx", "tests/fixtures/math/brackets-and-braces.docx", "tests/fixtures/math/accents-dot.docx", "tests/fixtures/math/accent-overline.docx", "tests/fixtures/math/word2007-equations.docx", "tests/fixtures/math/bold-italic-math.docx", "tests/fixtures/math/literal-bracket-chars.docx", "tests/fixtures/math/inline-symbol-runs.docx"]
+precedence = "override"
+SPDX-FileCopyrightText = "LibreOffice contributors"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = ["tests/fixtures/math/tracked-changes-equations.docx", "tests/fixtures/math/strict-binomial.docx"]
+precedence = "override"
+SPDX-FileCopyrightText = "Plutext Pty Ltd"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["tests/fixtures/math/rev-inserted-math.docx", "tests/fixtures/math/rev-deleted-math.docx"]
+precedence = "override"
+SPDX-FileCopyrightText = "Microsoft Corporation"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["tests/fixtures/math/matrix-angle-brackets.docx", "tests/fixtures/math/ssubsup-arg-size.docx", "tests/fixtures/math/eqarr-row-spacing.docx"]
+precedence = "override"
+SPDX-FileCopyrightText = ".NET Foundation and Contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "tests/fixtures/math/matrix-subscripts.docx"
+precedence = "override"
+SPDX-FileCopyrightText = "The Apache Software Foundation"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tests/fixtures/math/inline-binomial-parens.docx"
+precedence = "override"
+SPDX-FileCopyrightText = "2020 zlqm"
+SPDX-License-Identifier = "MIT"
+
 # Metric-compatible Calibri substitute used by LibreOffice (same files soffice embeds).
 [[annotations]]
 path = "assets/fonts/Carlito-*.ttf"

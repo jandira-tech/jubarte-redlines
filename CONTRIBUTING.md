@@ -27,10 +27,10 @@ Build with Rust (MSRV in Cargo.toml) and Cargo, using only FLOSS tools:
 cargo build --locked --all-features
 cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo install cargo-llvm-cov --locked --version 0.8.7
-rustup component add llvm-tools-preview
-cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-cargo llvm-cov report --summary-only --fail-under-lines 80
+cargo install cargo-llvm-cov --locked
+rustup toolchain install nightly --component llvm-tools-preview
+cargo +nightly llvm-cov --all-features --workspace --branch --doctests --lcov --output-path lcov.info
+cargo +nightly llvm-cov report --branch --summary-only --fail-under-lines 95
 cargo run --locked --bin jubarte -- --help
 ```
 
@@ -47,8 +47,9 @@ tests. Keep tests beside the protected behavior, use pure functions and
 upstream test utilities before fakes, and mock only as a last resort. Unit tests
 must not depend on network, disk, databases or wall-clock time. Use integration
 tests for those dependencies. Do not remove coverage to make a failure pass.
-The CI line-coverage floor is 80%; branch coverage needs nightly LLVM coverage
-and must be reported separately rather than inferred from line coverage.
+The CI coverage floors are 95% of lines and 88% of branches, measured on
+nightly (branch instrumentation needs it); report branch coverage rather than
+infer it from line coverage.
 
 Before a release run the security checks in [SECURITY.md](SECURITY.md), and
 all four [fuzz targets and native allocator runs](fuzz/README.md). Debug

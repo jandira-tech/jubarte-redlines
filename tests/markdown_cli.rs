@@ -313,7 +313,11 @@ fn convert_renders_markdown_to_pdf_with_the_changes_painted() {
 fn convert_writes_word_back_as_critic_markup() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("draft.md", DRAFT)]);
-    ok(&jubarte(&["convert", "draft.md"], dir.path()));
+    // The epoch pinned: unpinned, the changes are dated now.
+    ok(&jubarte(
+        &["convert", "draft.md", "-d", "1970-01-01T00:00:00Z"],
+        dir.path(),
+    ));
     let critic = "Payment is due in {~~30~>45~~}{>>Redline (1970-01-01T00:00:00Z)<<} days.\
                   {>>Redline (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
     // By default the Markdown names its pages; the text after the marker is

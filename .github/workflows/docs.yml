@@ -7,7 +7,8 @@ name: Docs
 # The generated blocks in docs/rust.md, docs/python.md and docs/javascript.md
 # (CLI references from real --help output, API references from the shipped
 # module/declaration files), README.md's command table, and the per-library
-# READMEs scripts/library_readmes.py cuts from README.md must never drift
+# READMEs scripts/library_readmes.py cuts from README.md, and the flag and id
+# catalogues (docs/flags_datetime.md, docs/locations.md) must never drift
 # from the code. This job
 # regenerates them and fails when the committed pages differ.
 on:
@@ -29,6 +30,15 @@ on:
       - scripts/gen_cli_docs.py
       - scripts/gen_python_api.py
       - scripts/gen_wasm_api.py
+      - scripts/cli_flags.sh
+      - scripts/cli_locations.py
+      - scripts/cli_id_sources.py
+      - examples/cli_flags.rs
+      - Cargo.toml
+      - Cargo.lock
+      - docs/flags_datetime.md
+      - docs/locations.md
+      - tests/fixtures/**
   pull_request:
     paths:
       - .github/workflows/docs.yml
@@ -46,6 +56,15 @@ on:
       - scripts/gen_cli_docs.py
       - scripts/gen_python_api.py
       - scripts/gen_wasm_api.py
+      - scripts/cli_flags.sh
+      - scripts/cli_locations.py
+      - scripts/cli_id_sources.py
+      - examples/cli_flags.rs
+      - Cargo.toml
+      - Cargo.lock
+      - docs/flags_datetime.md
+      - docs/locations.md
+      - tests/fixtures/**
 
 permissions:
   contents: read

@@ -33,11 +33,15 @@ mod anchor;
 mod critic;
 mod diff;
 mod from_docx;
+mod math;
 pub(crate) mod package;
 mod pages;
 mod patch;
 mod redline;
 mod unified;
+mod view_notes;
+mod view_stories;
+mod view_styles;
 mod write;
 pub(crate) mod xml;
 
@@ -159,6 +163,14 @@ pub struct DocxOptions<'a> {
     /// Their date, `YYYY-MM-DDTHH:MM:SSZ`; fixed by default so the same
     /// Markdown writes the same bytes.
     pub date: String,
+    /// `author` names the changes and comments that name no one, even when
+    /// the front matter has an `author:` (an `--author` the user typed).
+    /// `false`: the front matter's wins over `author`.
+    pub author_fixed: bool,
+    /// `date` dates the undated changes and comments, even when the front
+    /// matter has a date (`last_modified:`, `modified:`, `date:`,
+    /// `created:`). `false`: the front matter's wins over `date`.
+    pub date_fixed: bool,
     /// The bytes of each image the Markdown names. Without it, or when it
     /// returns `None`, an image is written as its alt text.
     pub images: Option<ImageLoader<'a>>,
@@ -166,6 +178,11 @@ pub struct DocxOptions<'a> {
     /// its page setup wins and a page other than the default is reported in
     /// [`WrittenDocx::warnings`].
     pub page: PageSize,
+    /// Word's Track Changes switch (`w:trackRevisions`) in the output:
+    /// `Some` sets it whatever the Markdown's `track_changes:` key says;
+    /// `None` follows the key, and without one keeps the reference's
+    /// setting (off without a reference).
+    pub tracking: Option<bool>,
 }
 
 impl Default for DocxOptions<'_> {
@@ -176,8 +193,11 @@ impl Default for DocxOptions<'_> {
             track_changes: TrackChanges::All,
             author: "Redline".to_string(),
             date: crate::document_comparer::DEFAULT_DATE.to_string(),
+            author_fixed: false,
+            date_fixed: false,
             images: None,
             page: PageSize::Letter,
+            tracking: None,
         }
     }
 }
@@ -192,6 +212,7 @@ impl std::fmt::Debug for DocxOptions<'_> {
             .field("date", &self.date)
             .field("images", &self.images.is_some())
             .field("page", &self.page)
+            .field("tracking", &self.tracking)
             .finish()
     }
 }
@@ -322,50 +343,112 @@ impl Select {
         })
     }
 
-    /// `p2, p5-p7, 12, p17-, -p1, t0`: comma-separated picks; a bare number
-    /// is a paragraph.
+    /// `p2, p5-p7, p17-, -p1, t0`: comma-separated picks. A pick is a body
+    /// paragraph or a table, as the settled short ids spell them
+    /// ([`crate::ids::ShortId`]), or a range of paragraphs, which may be
+    /// open at one end (`p17-` to the end, `-p1` from the start). An expired
+    /// spelling (`12`) is refused with its settled one.
     pub fn parse(spec: &str) -> Result<Self, String> {
-        fn number(item: &str, text: &str) -> Result<usize, String> {
-            let text = text.trim();
-            text.strip_prefix('p')
-                .unwrap_or(text)
-                .parse()
-                .map_err(|_| format!("{item}: expected pN, pN-pM or tN"))
-        }
+        use crate::ids::{ShortId, Step, Story};
+        // The refusal of `item`, naming the settled spelling when known.
+        let refused = |item: &str, hint: Option<String>| {
+            let hint = hint.map_or_else(String::new, |h| format!("; the settled spelling is {h}"));
+            format!("{item}: {SELECT_EXPECTED}{hint}")
+        };
+        // The body path `text` names.
+        let body = |item: &str, text: &str| match text.trim().parse::<ShortId>() {
+            Ok(ShortId::Block {
+                story: Story::Body,
+                path,
+            }) => Ok(path),
+            Ok(_) => Err(refused(item, None)),
+            Err(e) => Err(refused(
+                item,
+                crate::ids::hint_where(e.hint, |id| {
+                    matches!(
+                        id,
+                        ShortId::Block {
+                            story: Story::Body,
+                            ..
+                        }
+                    )
+                }),
+            )),
+        };
+        // The body paragraph an end of a range names; `None` when open.
+        let end = |item: &str, text: &str| {
+            if text.trim().is_empty() {
+                return Ok(None);
+            }
+            match body(item, text)?[..] {
+                [Step::Paragraph(n)] => Ok(Some(n)),
+                _ => Err(refused(item, None)),
+            }
+        };
+        // The settled spelling of a whole range whose ends are expired
+        // (`2-3` is `p2-p3`): `None` when an end has none, or the range
+        // would run backwards.
+        let settled_range = |from: &str, to: &str| {
+            let settle = |text: &str| -> Option<Option<usize>> {
+                let text = text.trim();
+                if text.is_empty() {
+                    return Some(None);
+                }
+                let spelled = match text.parse::<ShortId>() {
+                    Ok(_) => text.to_string(),
+                    Err(e) => crate::ids::hint_where(e.hint, |id| {
+                        matches!(
+                            id,
+                            ShortId::Block {
+                                story: Story::Body,
+                                ..
+                            }
+                        )
+                    })?,
+                };
+                match spelled.parse::<ShortId>() {
+                    Ok(ShortId::Block {
+                        story: Story::Body,
+                        path,
+                    }) => match path[..] {
+                        [Step::Paragraph(n)] => Some(Some(n)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            };
+            let (from, to) = (settle(from)?, settle(to)?);
+            if from.is_none() && to.is_none() || matches!((from, to), (Some(a), Some(b)) if b < a) {
+                return None;
+            }
+            let spell = |n: Option<usize>| n.map_or_else(String::new, |n| format!("p{n}"));
+            Some(format!("{}-{}", spell(from), spell(to)))
+        };
         let mut picks = Vec::new();
         for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            if let Some(table) = item.strip_prefix('t') {
-                let n = table
-                    .parse()
-                    .map_err(|_| format!("{item}: expected pN, pN-pM or tN"))?;
-                picks.push(Pick::Table(n));
+            if let Some((from, to)) = item.split_once('-') {
+                let (Ok(from_end), Ok(to_end)) = (end(item, from), end(item, to)) else {
+                    return Err(refused(item, settled_range(from, to)));
+                };
+                let (from, to) = (from_end, to_end);
+                if from.is_none() && to.is_none() {
+                    return Err(refused(item, None));
+                }
+                let from = from.unwrap_or(0);
+                if to.is_some_and(|to| to < from) {
+                    return Err(format!("{item}: the range runs backwards"));
+                }
+                picks.push(Pick::Paragraphs { from, to });
                 continue;
             }
-            if !item.contains(|c: char| c.is_ascii_digit()) {
-                return Err(format!("{item}: expected pN, pN-pM or tN"));
-            }
-            let (from, to) = match item.split_once('-') {
-                None => {
-                    let n = number(item, item)?;
-                    (n, Some(n))
-                }
-                Some((a, b)) => (
-                    if a.trim().is_empty() {
-                        0
-                    } else {
-                        number(item, a)?
-                    },
-                    if b.trim().is_empty() {
-                        None
-                    } else {
-                        Some(number(item, b)?)
-                    },
-                ),
-            };
-            if to.is_some_and(|to| to < from) {
-                return Err(format!("{item}: the range runs backwards"));
-            }
-            picks.push(Pick::Paragraphs { from, to });
+            picks.push(match body(item, item)?[..] {
+                [Step::Paragraph(n)] => Pick::Paragraphs {
+                    from: n,
+                    to: Some(n),
+                },
+                [Step::Table(n)] => Pick::Table(n),
+                _ => return Err(refused(item, None)),
+            });
         }
         if picks.is_empty() {
             return Err("no paragraphs selected".to_string());
@@ -373,6 +456,46 @@ impl Select {
         Ok(Self::Picks(picks))
     }
 }
+
+/// The author and timestamp a `.docx` gives the changes and comments that
+/// name none, when no parameter does: its first `dc:creator` and its
+/// `dcterms:created`. `None` for each it does not tell (or bytes that are
+/// no package); the caller falls back to `Redline` and
+/// [`crate::document_comparer::DEFAULT_DATE`].
+///
+/// ```
+/// let (author, date) = jubarte::markdown::docx_stamp(b"not a docx");
+/// assert_eq!((author, date), (None, None));
+/// ```
+pub fn docx_stamp(docx: &[u8]) -> (Option<String>, Option<String>) {
+    from_docx::creator_created(docx)
+}
+
+/// The author and timestamp a Markdown document gives the changes and
+/// comments that name none, when no parameter does: its front matter
+/// (`author:`; `last_modified:`, else `modified:`, `date:`, `created:`),
+/// else the reference `.docx`'s creator and creation time ([`docx_stamp`]),
+/// each on its own. `None` for each neither tells: the caller falls back
+/// to `Redline` and now, as `jubarte convert` does.
+///
+/// ```
+/// let md = "---\nauthor: Ann\ncreated: 2026-03-02\n---\n\nText.\n";
+/// let (author, date) = jubarte::markdown::markdown_stamp(md, None);
+/// assert_eq!(author.as_deref(), Some("Ann"));
+/// assert_eq!(date.as_deref(), Some("2026-03-02T00:00:00Z"));
+/// assert_eq!(jubarte::markdown::markdown_stamp("Text.\n", None), (None, None));
+/// ```
+pub fn markdown_stamp(
+    markdown: &str,
+    reference: Option<&[u8]>,
+) -> (Option<String>, Option<String>) {
+    let front = view_notes::file_defaults(markdown);
+    let (creator, created) = reference.map(docx_stamp).unwrap_or_default();
+    (front.author.or(creator), front.date.or(created))
+}
+
+/// Why a `read -p` pick was refused.
+const SELECT_EXPECTED: &str = "expected pN, pN-pM or tN";
 
 /// A document read as Markdown.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -385,6 +508,9 @@ pub struct ReadDocx {
     /// The body paragraphs [`MarkdownOptions::select`] kept (`N` of `pN`,
     /// ascending); `None` without a selection.
     pub selected: Option<Vec<usize>>,
+    /// The header, footer and note stories (`header1`, `footnotes`) a
+    /// `--changed` selection keeps for their changes; empty otherwise.
+    pub selected_stories: Vec<String>,
 }
 
 /// A `.docx` as Markdown: headings, emphasis, links, lists, tables,
@@ -428,6 +554,7 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
         markdown: converted.markdown,
         media: converted.media.into_iter().collect(),
         selected: converted.selected,
+        selected_stories: converted.selected_stories,
     })
 }
 
@@ -473,6 +600,9 @@ pub struct ReadView {
     /// The body paragraphs [`ReadOptions::select`] kept (`N` of `pN`,
     /// ascending); `None` without a selection.
     pub selected: Option<Vec<usize>>,
+    /// The header, footer and note stories (`header1`, `footnotes`) a
+    /// `--changed` selection keeps for their changes; empty otherwise.
+    pub selected_stories: Vec<String>,
 }
 
 /// The agent view every surface prints for `read` (alias `text`): a YAML
@@ -526,12 +656,14 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
         markdown: read.markdown,
         warnings,
         selected: read.selected,
+        selected_stories: read.selected_stories,
     })
 }
 
 /// The snapshot `read --json` prints: [`crate::inspect::snapshot`], kept to
 /// the body paragraphs `options.select` picks (and the changes and comments
-/// in them) when it picks some. The selection reads the view `options`
+/// in them, and under `--changed` those of the stories it changed) when it
+/// picks some. The selection reads the view `options`
 /// describes, without page markers.
 pub fn read_snapshot(
     docx: &[u8],
@@ -547,7 +679,10 @@ pub fn read_snapshot(
                 ..options.clone()
             },
         )?;
-        snapshot.retain(view.selected.as_deref().unwrap_or_default());
+        snapshot.retain_with(
+            view.selected.as_deref().unwrap_or_default(),
+            &view.selected_stories,
+        );
     }
     Ok(snapshot)
 }

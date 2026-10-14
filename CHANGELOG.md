@@ -41,21 +41,27 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `[body:p:N]` ids; plans take `p12` as written.
 
 - **One id grammar** (`jubarte::ids`), the same in every place an id goes:
-  revisions `r12`, `12`, `r1+2` (both marks of one change), `header1.r1`,
-  `footnotes.r3`, `body:rev:12`; comments `c27`, `27`; paragraphs `p12`,
-  `12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2` (`.p1` for a cell's
-  second paragraph), `body:p:12`. `accept`/`reject --id`, `edit`/`add -p`,
-  a plan's `paragraph`, `resolve_revisions` ids and `comment_id` take them
-  all. 0.12's `#12`, `#1+2` and `#c27` still parse and are never printed.
-  Every printed id is safe unquoted in bash, zsh and csh, and each number
-  has one spelling (`p012` is refused).
+  revisions `r12`, `r1+2` (both marks of one change), `header1.r1`,
+  `footnotes.r3`, and the long `body:rev:12` the JSON prints; comments
+  `c27` (a plan's `comment_id` also takes the number `27`); paragraphs
+  `p12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2` (`.p1` for a cell's
+  second paragraph), and the long `body:p:12`. `accept`/`reject --id`,
+  `edit`/`add -p`, a plan's `paragraph`, `resolve_revisions` ids and
+  `comment_id` take them all; bare numbers and 0.12's `#12`, `#1+2`,
+  `#c27` and `t0.r1.c2` exit 2 (see Changed). Every printed id is safe
+  unquoted in bash, zsh and csh, and each number has one spelling (`p012`
+  is refused).
 - `edit FILE -p r12 --accept` (or `--reject`) resolves one tracked change,
   before the command's other operations; `-p` repeats. `--reply TEXT` on
   `edit` and `add` with `-p c5` answers a comment.
 - `changes --json` and `comments --json` lines, and the snapshot's
   `changes` and `comments`, carry `ref`, the short id (`r12`, `c5`), beside
   the long `id`; a change also names its `paragraph`, and the `changes`
-  text listing gains a paragraph column.
+  text listing gains a paragraph column. `validate --json` lines carry
+  `ref`, the short id (`p5`) beside the long `location` (`body:p:5`);
+  Python's `Finding` gains `ref`, and MCP `docx_validate` returns it
+  (as `docx_changes`/`docx_comments` already return `Change`/`Comment`
+  `ref`).
 - `c5.text` names the text comment c5 covers, for `edit -p` and a plan's
   `paragraph`. `edit X -p c5.text --content "new"` replaces it as one
   tracked substitution inside the comment (a range over two paragraphs
@@ -104,7 +110,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **Breaking: jubarte prints short ids.** The agent view tags revisions
   `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
   (a reply names its root, `re c5`); table lines name rows and cells
-  `row1` and `row1.cell2`. `changes` and `comments` list the same ids.
+  `row1` and `row1.cell2`. `changes` and `comments` list the same ids,
+  and `validate`'s messages name paragraphs by them (`p108`, `header1.p1`).
   JSON keeps the long `id` and adds `ref`; machine hints and refusals keep
   the long id.
 - **Breaking: one revision count.** `summary.revisions`, the view's
@@ -114,21 +121,58 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   own pairs count once: a style's `w:pPrChange` and `w:rPrChange` sharing a
   `w:id`, and a text box's `mc:Fallback` copy. Marks in `comments.xml` and
   `numbering.xml` no longer count.
-- **Breaking: `edit -p 6` means `p6`**; it was refused as an unknown id.
+- **Breaking: only the settled short ids parse.** `12`, `#12`, `#c27`,
+  `#c27.text` and `t0.r1.c2` exit 2 wherever an id is taken (`--id`,
+  `edit -p`, `read -p`, plan JSON, Python and npm alike), naming the
+  settled spelling the option takes: `--id 12` → `r12`, `read -p 12` →
+  `p12`, `-p 6 --resolve` → `c6`, `t0.r1.c2` → `t0.row1.cell2`. A settled
+  id `-p` does not edit yet (`s0`, `p3-p7`, `toc0`) exits 2 as well. The
+  long `body:rev:12` and `body:p:12` the JSON prints still parse.
+- **Breaking: `read --tables` and `validate` print short ids.** A table
+  cell that read `body:p:1=Item\tbody:p:2=Qty` now reads
+  `p1=Item\tp2=Qty` (a cell's `p3,p4`, via `ids::short_paragraph`, the id
+  the agent view prints for the same paragraph); the snapshot's tables keep
+  the long ids. A finding that read `word/document.xml#body:p:5` (or
+  `body:p:0` for the audit sets) now reads `word/document.xml#p5` (or
+  `p0`); JSON keeps the long `location` and adds `ref`.
 - Python: `Document.accept`/`reject` raise `ValueError` for an id that is no
   change id or names two changes (it was `JubarteError`), and the CLI exits
   2 for it, as the binary does; a resolution that fails otherwise says
   `accept failed: …`.
 - **Breaking: `compare` (and `jubarte OLD NEW`) dates its revisions now.**
-  Without `-d/--date` the shared parser fills the current UTC time, to the
+  Without `-d/--datetime` the shared parser fills the current UTC time, to the
   second, so the binary, Python and npm hand the same value to the engine;
   `-d 1970-01-01T00:00:00Z` pins it for reproducible output (the old
   default). `diff`'s patch header already said now; Python and npm no longer
   fill it themselves. MCP `docx_compare` without `date` follows the CLI. The
   library default (`document_comparer::DEFAULT_DATE`, Python
-  `Document.compare`, WASM `redlineDocuments`) stays the epoch, and
-  `convert`'s Markdown-to-Word date is unchanged. `cli::CompareArgs::date`
-  is `Option<String>`.
+  `Document.compare`, WASM `redlineDocuments`) stays the epoch.
+  `cli::CompareArgs::datetime` is `Option<String>`.
+- **Breaking: `convert X.md -o X.docx` signs and dates by the document's
+  own metadata.** A change or comment that names no author or date takes,
+  in order: its own tag or the `authors:` table; `-a/--author` and
+  `-d/--datetime`; the front matter's `author:` and `last_modified:` (else
+  `modified:`, `date:`, `created:`; a bare day is its midnight); the
+  `--reference-doc`'s `dc:creator` and `dcterms:created`; else `Redline`
+  and now. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output (the
+  old default). `compare`, `edit`, `add` and `diff` change a file, so they
+  keep `--author` (default `Redline`) and `-d/--datetime` (default now)
+  and never read the files' metadata. The library (`DocxOptions::default()`, Python
+  `markdown_to_docx`/`from_markdown`, WASM `markdownToDocx`) keeps
+  `Redline` and the epoch, so library calls stay deterministic, and reads
+  no reference document's metadata; a given `author` or `date` beats the
+  front matter (Python's `author` default is now `None`). No file owner or
+  modification time is read. `cli::MarkdownArgs::author` and `datetime`
+  are `Option<String>`.
+- **Breaking: the timestamp flag is `-d, --datetime` everywhere** (`edit`,
+  `add`, `compare`, `diff`, `convert`'s Markdown-to-Word date); `--date`
+  is gone, and passing it exits 2 naming `--datetime`. `edit` and `add`
+  gain the `-d` short flag; `compare`, `diff` and `convert` move it from
+  `--date`. The clap
+  field is `datetime` on `cli::EditOptions`, `cli::CompareArgs`,
+  `cli::Command::Diff` and `cli::MarkdownArgs`, and the shared parser's
+  JSON carries `datetime`, so the Python CLI reads `args.datetime` and
+  the npm CLI `o.datetime`.
 - **Breaking: the default author of `edit` and `add` is `Redline`** (was
   `Modified User`), so the agent view's handle is `@R`. A plan recorded
   from operation flags (`--plan X -p …`), WASM `flagPlan` and the hosts'
@@ -173,7 +217,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `--resource-path`, `--revisions`, `--revision-palette`, `--dpi`,
   `--pages`, `--move-comments` and `--changed-pages` are compare's and
   convert's, and diff no longer takes them. `--format critic` with a Word
-  side exits 1, naming compare; with `--author`, `--date` or `--columns`
+  side exits 1, naming compare; with `--author`, `--datetime` or `--columns`
   (the patch's) it exits 2. The patch's owner is `Redline` unless
   `--author` says otherwise (git's `user.name` is no longer read). An
   existing `-o` file exits 1 before anything is read. The Python and npm
@@ -240,8 +284,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
-- `edit -p #c5`, a plan's `"comment_id": "c5"` and `accept --id #12` were
-  refused. (Unquoted, `#c5` starts a shell comment; write `c5`.)
+- A plan's `"comment_id": "c5"` was refused. (`#c5`, which an unquoted
+  shell reads as a comment, is now refused too; write `c5`.)
 - `changes` listed a text box's change twice, once per
   `mc:AlternateContent` branch.
 - `convert --changed-only` named PNG pages by their index among the kept
@@ -254,6 +298,32 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   leaves the comment on the new text and Reject All on the old. The
   redline used to put the insertion before the range and the deletion
   after it.
+- Markdown to Word, notes: when a footnote and an endnote (or two notes)
+  share a label such as `[^1]`, the first reference names the first
+  definition and each later reference the next one, each a note of its
+  own, with a warning. A label defined once and referenced twice stays one
+  note.
+- Markdown to Word: a change by `@??` (or `??: ""` in `authors:`) is
+  written back with an empty `w:author`, which Word opens.
+- Heading bookmarks: the reader and the writer share one github-slugger,
+  and only the exact name the writer gives a heading reads as its own
+  bookmark; any other (`title-01`, a lone `title-1`) stays an `<a id>`
+  anchor.
+- The agent view hides a run whose character style has `w:vanish`
+  (directly or through `basedOn`), as it hides directly hidden text.
+- A table row whose cells and gaps overflow the grid and that holds an
+  empty cell gets per-row paragraph counts on the table line
+  (`<!-- tN … cells tN.row0 p1-p3 tN.row1 p4 … -->`), so the empty cell
+  comes back.
+- An empty or null `document_owner:` is ignored with a warning ("names no
+  one"); the reader takes the first non-empty `dc:creator`, keeping its
+  spaces but not the XML's indentation.
+- An author dated with a range `first..last` keeps it across the round
+  trip (the last day lands on a formatting mark, an inserted row or a
+  header mark); a bare day reads as its midnight, and a reversed range
+  warns ("its days run backwards") and writes the marks undated.
+- A comment inside one side of a substitution
+  (`{~~old~>{==new==}~~}{>>c0 …<<}`) stays one substitution.
 
 ### Deprecated
 
@@ -262,12 +332,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   grid), `audit` (now `validate --rules a11y,style,structure`, which it
   still checks when no `--rules` is given), `--changed-only` (now
   `--changed-pages`), convert's `--pdf` and `--png` (now `--to pdf`/`--to
-  png`; together they exit 2), and 0.12's cell id `t0.r1.c2` as an
-  `edit`/`add` `-p` value, keep working and print `note: X is now Y; X is
-  removed in 0.14` on stderr. The shared parser's JSON carries those notes
-  as `notes`, and `args.quiet` on every task. `jubarte --help` no longer
-  lists them, nor `debug` (still documented in AGENTS.md); `self-update`
-  is listed last.
+  png`; together they exit 2) keep working and print
+  `note: X is now Y; X is removed in 0.14` on stderr. The shared parser's
+  JSON carries those notes as `notes`, and `args.quiet` on every task.
+  `jubarte --help` no longer lists them, nor `debug` (still documented in
+  AGENTS.md); `self-update` is listed last.
 
 ### Breaking (library)
 
@@ -287,7 +356,15 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - `cli::EditOptions` gains `output`; `out_dir` is
   `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
   `EditOptions::target(file)` gives the `EditTarget` (`Single` or
-  `Bundle`) a host writes.
+  `Bundle`) a host writes. `cli::EditOptions::datetime` gains the `-d`
+  short flag; `cli::CompareArgs::date`, `cli::MarkdownArgs::date` and
+  `cli::Command::Diff`'s `date` are renamed to `datetime` (`--date` is
+  gone).
+- `markdown::DocxOptions` gains `author_fixed` and `date_fixed`: `true`
+  makes `author` and `date` win over the front matter's; a struct literal
+  needs them or `..DocxOptions::default()`. New
+  `markdown::docx_stamp(docx)` returns a `.docx`'s first non-empty
+  `dc:creator` and its `dcterms:created`.
 - `validate::Finding` is `{code, set, severity, part, location, message,
   word_fatal, repairable}` (`path` is `location`); `ValidateError` gains
   `Usage` and `Layout`. `cli::Command::Audit` and `Command::Inspect` are
@@ -377,6 +454,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **Breaking: the `revisions` command is gone.** `changes` is the one
+  listing: every tracked change in every story, with the ids `accept`,
+  `reject` and `edit` take. `revisions` printed Docxodus's grouping, with
+  no ids, no headers or footers, and a count that disagreed with
+  `changes`. The word is a file name again (`jubarte revisions new.docx`
+  compares two files); the library's `get_revisions` and the wasm
+  `getRevisions` export stay.
 - `jubarte A B` no longer writes a file unless `-o` is given: it prints the
   redline's agent view. `jubarte compare A B` is unchanged.
 - `edit` prints the redline's changed blocks as the agent view instead of

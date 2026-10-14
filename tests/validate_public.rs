@@ -106,6 +106,7 @@ fn findings_are_json_with_stable_field_names() {
             "location",
             "message",
             "part",
+            "ref",
             "repairable",
             "set",
             "severity",
@@ -132,8 +133,11 @@ fn the_audit_names_an_untracked_edit_by_paragraph() {
     let findings = audit_tracked(&original, &edited, "Reviewer").unwrap();
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].code, "UNTRACKED_EDIT");
+    // The location keeps the long id; the printed message names the short one.
+    assert_eq!(findings[0].location, "body:p:1");
+    assert_eq!(findings[0].r#ref, "p1");
     assert!(
-        findings[0].message.contains("body:p:1"),
+        findings[0].message.starts_with("p1 differs") && !findings[0].message.contains(":p:"),
         "{}",
         findings[0].message
     );
@@ -483,6 +487,14 @@ fn the_audit_sees_an_untracked_header_edit_and_names_its_part() {
         findings[0].location.starts_with("header1:p:"),
         "{}",
         findings[0].location
+    );
+    assert!(
+        findings[0]
+            .message
+            .starts_with(&format!("{} differs", findings[0].r#ref))
+            && !findings[0].message.contains(":p:"),
+        "{}",
+        findings[0].message
     );
     assert!(
         audit_tracked(&original, &original, "Legal")

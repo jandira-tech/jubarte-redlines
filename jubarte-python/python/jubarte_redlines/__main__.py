@@ -10,8 +10,8 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
     python -m jubarte_redlines read letter.docx --json
     python -m jubarte_redlines read letter.docx
     python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
-    python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
-    python -m jubarte_redlines convert letter.docx --png --pages 3-5
+    python -m jubarte_redlines convert letter.docx -t png --dpi 150 --report pages.json
+    python -m jubarte_redlines convert letter.docx -t png --pages 3-5
     python -m jubarte_redlines visual-diff before.docx after.docx --out-dir diff
     python -m jubarte_redlines convert draft.md --page a4 -o draft.docx
     python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
@@ -284,11 +284,6 @@ def cmd_read(args: argparse.Namespace) -> int:
     return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
 
 
-_EDITING_KEEPS = (
-    "--editing-mode needs a document without tracked changes; it has some, "
-    "so pass --existing-revisions accept or reject"
-)
-
 _DOCX_NEEDS_MARKDOWN = "--to docx requires Markdown input in the Python CLI"
 
 
@@ -465,12 +460,11 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
 
     plan_text, notes = _edit_plan(args, verb, doc.to_bytes())
     editing = bool(args.editing_mode)
-    try:
-        parsed = json.loads(plan_text)
-    except ValueError:
-        parsed = None  # the engine reports it as INVALID_PLAN below
-    if editing and isinstance(parsed, dict) and parsed.get("existing_revisions") == "keep":
-        print(f"error: {_EDITING_KEEPS}", file=sys.stderr)
+    # Changes the plan itself accepts or rejects (-p r12 --accept) do not
+    # count; a plan that does not parse is reported as INVALID_PLAN below.
+    conflict = _native.editing_mode_conflict(plan_text, doc.to_bytes()) if editing else None
+    if conflict:
+        print(f"error: {conflict}", file=sys.stderr)
         raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
@@ -618,14 +612,25 @@ def _from_markdown(args: argparse.Namespace, text: str) -> Document:
     from .document import from_markdown
 
     reference = None if args.reference_doc is None else _read(args.reference_doc).to_bytes()
+    # What names no one: the flags, else the front matter, else the
+    # reference's creator and creation time, else Redline and now.
+    author, date = args.author, args.datetime
+    if author is None or date is None:
+        from datetime import datetime, timezone
+
+        from . import _native
+
+        stamp_author, stamp_date = _native.markdown_stamp(text, reference)
+        author = author or stamp_author or "Redline"
+        date = date or stamp_date or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         doc = from_markdown(
             text,
             reference=reference,
             page=args.page,
-            author=args.author,
-            date=args.date,
+            author=author,
+            date=date,
             critic=not args.no_critic,
             track_changes=args.track_changes,
         )
@@ -690,6 +695,11 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
     png_paths = [output.parent / _png_name(output.stem, p.number - 1, rendered.report.document_pages) for p in numbered]
     for path in png_paths:
         _ensure_writable(path, args.force)
+        # `-o r.png --report r-page-01.png` would write the page, then the
+        # report over it.
+        for side, flag in ((getattr(args, "font_report", None), "--font-report"), (getattr(args, "report", None), "--report")):
+            if side is not None and _same_file(side, path):
+                raise CliError(f"{flag} '{side}' is the same file as the PNG output")
     if rendered.pdf is not None:
         _write(output, rendered.pdf)
         _wrote(args, output, "pdf", len(rendered.pdf), pages)
@@ -710,7 +720,11 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
 
 def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
     """`convert --update-fields`: the .docx with refreshed field results."""
-    output: Path = args.output
+    output: Path | None = args.output
+    if output is None:
+        # As the binary: Word from Word goes to a named file, never stdout.
+        print("error: --output is required to write Word from Word", file=sys.stderr)
+        return EXIT_ERROR
     if args.report is not None:
         _check_side_file(args.report, "--report", ((output, "Word output"), (args.file, "input")), args.force)
     _ensure_writable(output, args.force)
@@ -787,7 +801,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     if args.output is None:
         # Without -o, compare (and the shorthand `A B`) prints the
         # redline's agent view.
-        redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+        redline = _native.redline_documents(original, modified, author=args.author, date=args.datetime)
         return _print_view(redline, args.view, f"{default} (not written; -o keeps it)")
     output: Path = args.output
     if args.output_format == "md" and isinstance(original, str) and isinstance(modified, str):
@@ -797,12 +811,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
             print("error: read options shape the view; two Markdown documents write CriticMarkup to a .md", file=sys.stderr)
             raise SystemExit(EXIT_USAGE)
         _ensure_writable(output, args.force)
-        critic = diff(original, modified, format="critic", author=args.author, date=args.date).text
+        critic = diff(original, modified, format="critic", author=args.author, date=args.datetime).text
         _wrote(args, output, "md", _write(output, critic))
         return EXIT_OK
     if args.output_format != "png":
         _ensure_writable(output, args.force)
-    redline = _native.redline_documents(original, modified, author=args.author, date=args.date)
+    redline = _native.redline_documents(original, modified, author=args.author, date=args.datetime)
     _write_result(args, redline, source=f"{default} (not written; -o keeps it)", view=getattr(args, "view", None))
     return EXIT_OK
 
@@ -829,7 +843,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
                            "`jubarte compare OLD NEW` prints their redline as the agent view")
         # The shared parser dated the run (D17).
         text = _decode_diff(_native.diff_json(old, new, old_name=_spelled(args, "old"), new_name=_spelled(args, "new"),
-                                              author=args.author, date=args.date, columns=args.columns, critic=critic)).text
+                                              author=args.author, date=args.datetime, columns=args.columns, critic=critic)).text
     if output is None:
         sys.stdout.write(text)
         return EXIT_OK
@@ -955,6 +969,8 @@ class SharedParser:
         arguments = list(sys.argv[1:] if argv is None else argv)
         parsed = json.loads(_native.parse_cli_json(arguments, program="jubarte-redlines", supported=list(self.supported)))
         if "text" in parsed:
+            for note in parsed.get("notes", ()):
+                print(note, file=sys.stderr)
             stream = sys.stderr if parsed["stream"] == "stderr" else sys.stdout
             stream.write(parsed["text"])
             raise SystemExit(parsed["exit_code"])

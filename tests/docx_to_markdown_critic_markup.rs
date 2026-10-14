@@ -135,7 +135,8 @@ fn every_change_names_its_author_and_date() {
     let markdown = markdown();
     for change in [
         "{-- to people that--}{>>Bo Chen (2026-09-29T15:12:00Z)<<}",
-        "{~~fonts~>font-styles~~}{>>Ana Lima (2026-09-29T14:05:00Z)<<}",
+        // Writer writes the replacement deletion first: two changes.
+        "{--fonts--}{>>Ana Lima (2026-09-29T14:05:00Z)<<}{++font-styles++}{>>Ana Lima (2026-09-29T14:05:00Z)<<}",
         // LibreOffice splits this insertion in two; one author, one note.
         "{++**any** ++}{>>Bo Chen (2026-09-29T15:10:00Z)<<}",
         "{--This whole paragraph was cut.\n\n--}{>>Ana Lima (2026-09-30T09:00:00Z)<<}",

@@ -15,7 +15,7 @@ use super::{
     RunSpec, Selector, Side,
 };
 use crate::changes::ChangeFilter;
-use crate::ids::Location;
+use crate::ids::{IdError, Location, ShortId};
 
 /// One operation as the flags describe it, grouped by its `-p`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,10 +181,26 @@ fn content_text(content: &str) -> (String, Option<&'static str>) {
     )
 }
 
-/// `c5` (or 0.12's `#c5`) → 5: the comment a `-p` names.
+/// `c5` → 5: the comment a `-p` names.
 fn comment_number(at: &str) -> Option<u32> {
     match crate::ids::parse_location(at) {
         Ok(crate::ids::Location::Comment(id)) => Some(id),
+        _ => None,
+    }
+}
+
+/// The refusal of a `-p` id this group cannot take: an expired one, named
+/// with the settled spellings `keep` allows (`-p 5 --reject` → `r5`), or a
+/// settled id `-p` does not edit yet (`s0`, `p3-p7`). `None` when `at`
+/// parses, or when no settled spelling is known (the caller's own message
+/// is then the better one).
+fn expired(at: &str, keep: impl Fn(&ShortId) -> bool) -> Option<String> {
+    match crate::ids::parse_location(at) {
+        Err(e) if e.expected == crate::ids::LOCATION_NOT_YET => Some(format!("-p {e}")),
+        Err(e) if e.hint.is_some() => {
+            let hint = crate::ids::hint_where(e.hint.clone(), keep);
+            Some(format!("-p {}", IdError { hint, ..e }))
+        }
         _ => None,
     }
 }
@@ -194,13 +210,25 @@ fn comment_number(at: &str) -> Option<u32> {
 /// resolves revisions.
 fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
     let at = op.at.trim();
+    // Only a revision group names a change; any other group's id is
+    // refused by [`flag_operation`], with the spellings it takes.
+    if (op.accept || op.reject)
+        && let Some(refused) = expired(at, |id| matches!(id, ShortId::Change { .. }))
+    {
+        return Err(refused);
+    }
     let bad = |m: &str| Err(format!("-p {at}: {m}"));
     let ids = match crate::ids::parse_location(at) {
         Ok(Location::Changes(ids)) => Some(ids),
         _ => None,
     };
-    // A `--reply` group is an operation: off a comment it says so.
+    // A `--reply` group is an operation: off a comment it says so. It
+    // resolves no revision, so `--accept` or `--reject` beside it is refused,
+    // not ignored.
     if op.reply.is_some() {
+        if op.accept || op.reject {
+            return bad("--reply takes no other flag");
+        }
         return Ok(None);
     }
     if verb == Verb::Add && ids.is_some() {
@@ -235,6 +263,24 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     let bad = |m: &str| Err(format!("-p {at}: {m}"));
     if at.is_empty() {
         return Err("-p needs a location".into());
+    }
+    // The settled spellings this whole group takes: a reply or a
+    // resolution names a comment; a comment takes no --anchor, --style,
+    // --before or --comment (nor, under add, --delete or --resolve); a
+    // change takes --accept or --reject, never these.
+    let names_comment = op.reply.is_some() || op.resolve;
+    let comment_takes = op.anchor.is_none()
+        && op.styles.is_empty()
+        && !op.before
+        && !op.comment
+        && !(verb == Verb::Add && (op.delete || op.resolve));
+    let keep = |id: &ShortId| match id {
+        ShortId::Comment(_) => comment_takes,
+        ShortId::Change { .. } => false,
+        _ => !names_comment,
+    };
+    if let Some(refused) = expired(at, keep) {
+        return Err(refused);
     }
     if let Some(reply) = &op.reply {
         let Some(comment_id) = comment_number(at) else {
@@ -487,12 +533,23 @@ fn inline_edit(
     })
 }
 
-/// Why `--editing-mode` cannot apply `plan`: under `keep` the document's
-/// tracked changes stay, so its "clean" copy would still carry revisions.
-pub fn editing_mode_conflict(plan: &EditPlan) -> Option<&'static str> {
-    (plan.existing_revisions == ExistingRevisions::Keep).then_some(
-        "--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject",
-    )
+/// Why `--editing-mode` cannot apply `plan` to `source`: under `keep` the
+/// tracked changes `plan` does not itself accept or reject (`-p r12
+/// --accept`) stay, so the "clean" copy would still carry revisions.
+pub fn editing_mode_conflict(plan: &EditPlan, source: &[u8]) -> Option<&'static str> {
+    (plan.existing_revisions == ExistingRevisions::Keep && crate::edit::revisions_left(source, plan))
+        .then_some(
+            "--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject",
+        )
+}
+
+/// [`editing_mode_conflict`] for a plan as JSON, as the Python and npm CLIs
+/// hold it. A plan that does not parse conflicts with nothing here: running
+/// it reports why.
+pub fn editing_mode_conflict_json(plan: &str, source: &[u8]) -> Option<&'static str> {
+    EditPlan::from_json(plan)
+        .ok()
+        .and_then(|plan| editing_mode_conflict(&plan, source))
 }
 
 /// `plan` with `more` recorded after it: what `--plan PLAN.json` with
@@ -1299,7 +1356,7 @@ mod tests {
         );
         let only = plan_from_flags(
             Verb::Edit,
-            &[with("#7", |o| o.reject = true)],
+            &[with("r7", |o| o.reject = true)],
             "A",
             None,
             None,
@@ -1319,13 +1376,19 @@ mod tests {
     fn reply_answers_a_comment_on_edit_and_add() {
         let want = kind(Verb::Add, &with("c5", |o| o.content = Some("Yes.".into()))).unwrap();
         for verb in [Verb::Edit, Verb::Add] {
-            for at in ["c5", "#c5"] {
-                assert_eq!(
-                    kind(verb, &with(at, |o| o.reply = Some("Yes.".into()))),
-                    Ok(want.clone()),
-                    "{verb:?} {at}"
-                );
-            }
+            assert_eq!(
+                kind(verb, &with("c5", |o| o.reply = Some("Yes.".into()))),
+                Ok(want.clone()),
+                "{verb:?}"
+            );
+            // 0.12's `#c5` is expired, refused with the settled spelling.
+            let refused = kind(verb, &with("#c5", |o| o.reply = Some("Yes.".into())));
+            assert!(
+                refused
+                    .as_ref()
+                    .is_err_and(|m| m.ends_with("the settled spelling is c5")),
+                "{refused:?}"
+            );
         }
     }
 
@@ -1390,6 +1453,20 @@ mod tests {
                 with("c5", |o| {
                     o.reply = Some("x".into());
                     o.comment = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.accept = true;
+                }),
+                "-p c5: --reply takes no other flag",
+            ),
+            (
+                with("c5", |o| {
+                    o.reply = Some("x".into());
+                    o.reject = true;
                 }),
                 "-p c5: --reply takes no other flag",
             ),

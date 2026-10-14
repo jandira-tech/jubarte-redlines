@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-Bench-Fixtures
+SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
@@ -32,6 +32,11 @@ did not author:
 - `LICENSES/Apache-2.0.txt` — Apache License 2.0 text for the Roboto
   Condensed fonts (`assets/fonts/extra/RobotoCondensed-*.ttf`, (c) 2011
   Google Inc.), the exact files Word draws from its cloud-font cache.
+- `LICENSES/MIT.txt`, `LICENSES/MPL-2.0.txt` and `LICENSES/Apache-2.0.txt`
+  — the terms of the Office Math fixtures in `tests/fixtures/math/`: Word's
+  own documents from the test data of Docling, LibreOffice, docx4j,
+  Open-Xml-PowerTools, the Open XML SDK, Apache POI and docx-equation.
+  `tests/fixtures/math/SOURCES.md` names each file's URL and license.
 - `LICENSES/OFL-1.1.txt` — SIL Open Font License 1.1 text for the bundled
   metric-compatible fonts: Carlito ((c) 2010-2013 tyPoland Lukasz Dziedzic)
   and Liberation ((c) 2010 Google Corporation, 2012 Red Hat, Inc.) under

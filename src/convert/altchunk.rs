@@ -721,7 +721,7 @@ fn collapse_ws(s: &str) -> String {
     out
 }
 
-fn decode_entities(s: &str) -> String {
+pub(crate) fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }

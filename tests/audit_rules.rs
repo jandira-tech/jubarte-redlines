@@ -518,7 +518,10 @@ fn cli_exits_zero_on_warnings_and_two_with_strict() {
     let (code, stdout, _) = run_cli(&bytes, &["--rules", "LITERAL_BULLET"]);
     assert_eq!(code, 0, "{stdout}");
     assert!(stdout.contains("LITERAL_BULLET"), "{stdout}");
-    assert!(stdout.contains("body:p:0"), "{stdout}");
+    assert!(
+        stdout.starts_with("  LITERAL_BULLET\twarning\tp0\t"),
+        "{stdout}"
+    );
     let (code, _, _) = run_cli(&bytes, &["--rules", "LITERAL_BULLET", "--strict"]);
     assert_eq!(code, 2);
 }
@@ -550,6 +553,7 @@ fn cli_json_prints_one_finding_per_line_in_the_shared_shape() {
     assert_eq!(rows[0]["severity"], "warning");
     assert_eq!(rows[0]["part"], "word/document.xml");
     assert_eq!(rows[0]["location"], "body:p:0");
+    assert_eq!(rows[0]["ref"], "p0");
     assert_eq!(rows[0]["word_fatal"], false);
 }
 

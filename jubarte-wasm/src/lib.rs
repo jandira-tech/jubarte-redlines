@@ -127,8 +127,9 @@ pub fn list_changes(docx: &[u8]) -> Result<String, JsValue> {
 
 /// List every comment as a JSON array string (the objects `jubarte comments
 /// --json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
-/// `done`, `paragraph`, `anchor_text`, `before`, `after`). `author` keeps
-/// one author's comments; `latest` keeps the newest comment of each thread.
+/// `done`, `paragraph`, `last_paragraph` when the range ends in a later
+/// paragraph, `anchor_text`, `before`, `after`). `author` keeps one
+/// author's comments; `latest` keeps the newest comment of each thread.
 ///
 /// Mirrors `jubarte::comments::list_comments` and `select_comments`.
 #[wasm_bindgen(js_name = listComments)]
@@ -496,6 +497,15 @@ pub fn flag_plan(
     options_json: Option<String>,
 ) -> Result<String, JsValue> {
     flag_plan_json(verb, operations_json, docx, options_json.as_deref()).map_err(js_err)
+}
+
+/// Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
+/// it keeps and does not itself accept or reject; `undefined` when none.
+///
+/// Mirrors `jubarte::edit::flags::editing_mode_conflict`.
+#[wasm_bindgen(js_name = editingModeConflict)]
+pub fn editing_mode_conflict(plan: &str, docx: &[u8]) -> Option<String> {
+    jubarte::edit::flags::editing_mode_conflict_json(plan, docx).map(str::to_string)
 }
 
 /// `record_plan` as JSON: `{ok: true, recorded: {plan, json, notes,
@@ -1045,7 +1055,8 @@ pub fn append_documents(
 }
 
 /// Word-validity findings beyond the schema as a JSON array (`code`, `set`,
-/// `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+/// `severity`, `part`, `location`, `ref`, `message`, `word_fatal`,
+/// `repairable`; `ref` is the short id the CLI prints for `location`);
 /// `[]` is a pass.
 ///
 /// Mirrors `jubarte::validate::validate`.
@@ -1277,9 +1288,11 @@ fn markdown_docx(
     };
     if let Some(author) = options.author {
         docx_options.author = author;
+        docx_options.author_fixed = true;
     }
     if let Some(date) = options.date {
         docx_options.date = date;
+        docx_options.date_fixed = true;
     }
     if let Some(critic) = options.critic {
         docx_options.critic = critic;
@@ -1289,12 +1302,28 @@ fn markdown_docx(
         .map_err(|e| e.to_string())
 }
 
+/// The author and timestamp a Markdown document gives the changes and
+/// comments that name none, as JSON `[author, date]` (`null` for each it
+/// does not tell): its front matter, else the reference `.docx`'s creator
+/// and creation time. The CLI falls back to `Redline` and now.
+#[wasm_bindgen(js_name = markdownStamp)]
+pub fn markdown_stamp(text: &str, reference: Option<Vec<u8>>) -> String {
+    serde_json::to_string(&jubarte::markdown::markdown_stamp(
+        text,
+        reference.as_deref(),
+    ))
+    .expect("two optional strings")
+}
+
 /// Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
 ///
 /// `optionsJson` (every field optional): `page` (`"letter"` default, or
-/// `"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
-/// writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
-/// changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+/// `"a4"`), `author` and `date` (for a change or comment that names none;
+/// given, they beat the front matter's `author:` and `last_modified:`,
+/// `modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
+/// epoch, so the same Markdown writes the same bytes; the CLI dates them now
+/// instead), `critic` (`true`: CriticMarkup becomes tracked changes and
+/// comments) and `track_changes` (or `trackChanges`: `"all"`,
 /// `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
 /// `.docx`, lends its styles and page setup, and then `page` is ignored.
 /// Images are written as their alt text, and the engine's warnings are not
@@ -1391,7 +1420,8 @@ mod tests {
             Some(r#"{"oldFormat":"docx","newFormat":"docx"}"#),
         )
         .unwrap();
-        assert!(marked.contains("{--30--}{++45++}") && marked.contains("{--60--}{++45++}"));
+        // The writer emits a substitution insertion-first (document order).
+        assert!(marked.contains("{++45++}{--30--}") && marked.contains("{++45++}{--60--}"));
         for options in [r#"{"acceptChanges":true}"#, r#"{"format":"word"}"#] {
             assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
         }

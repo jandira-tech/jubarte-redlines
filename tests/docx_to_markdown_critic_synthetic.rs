@@ -251,6 +251,8 @@ fn link_text(line: &str) -> String {
 
 #[test]
 fn every_document_is_heavy_on_what_its_name_says() {
+    // A deletion, its note, then an insertion.
+    let replacement = regex::Regex::new(r"--\}(\{>>[^<]*<<\})?\{\+\+").unwrap();
     for &name in &DOCUMENTS[..10] {
         let markup = markdown(&format!("{name}.docx"), TrackChanges::All);
         let count = |delimiter: &str| markup.matches(delimiter).count();
@@ -262,7 +264,13 @@ fn every_document_is_heavy_on_what_its_name_says() {
             "comments" => assert!(commented >= 10 && changes == 0, "{name}: {markup}"),
             "deletions" => assert!(deleted >= 10 && inserted == 0, "{name}: {markup}"),
             "additions" => assert!(inserted >= 10 && deleted == 0, "{name}: {markup}"),
-            "substitutions" => assert!(substituted >= 5, "{name}: {markup}"),
+            // Writer writes a replacement as the deletion then the
+            // insertion: two changes side by side, not Word Compare's
+            // insertion-then-deletion substitution.
+            "substitutions" => {
+                let replaced = replacement.find_iter(&markup).count();
+                assert!(substituted + replaced >= 5, "{name}: {markup}");
+            }
             _ => {}
         }
     }

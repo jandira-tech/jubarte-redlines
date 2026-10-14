@@ -1104,6 +1104,36 @@ export function editReportJsonl(report_json) {
 }
 
 /**
+ * Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
+ * it keeps and does not itself accept or reject; `undefined` when none.
+ *
+ * Mirrors `jubarte::edit::flags::editing_mode_conflict`.
+ * @param {string} plan
+ * @param {Uint8Array} docx
+ * @returns {string | undefined}
+ */
+export function editingModeConflict(plan, docx) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(plan, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.editingModeConflict(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        let v3;
+        if (r0 !== 0) {
+            v3 = getStringFromWasm0(r0, r1);
+            wasm.__wbindgen_export(r0, r1 * 1, 1);
+        }
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * The plan the `edit`/`add` operation flags describe, as JSON `{plan,
  * notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
  * `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
@@ -1276,8 +1306,9 @@ export function listChanges(docx) {
 /**
  * List every comment as a JSON array string (the objects `jubarte comments
  * --json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
- * `done`, `paragraph`, `anchor_text`, `before`, `after`). `author` keeps
- * one author's comments; `latest` keeps the newest comment of each thread.
+ * `done`, `paragraph`, `last_paragraph` when the range ends in a later
+ * paragraph, `anchor_text`, `before`, `after`). `author` keeps one
+ * author's comments; `latest` keeps the newest comment of each thread.
  *
  * Mirrors `jubarte::comments::list_comments` and `select_comments`.
  * @param {Uint8Array} docx
@@ -1315,12 +1346,45 @@ export function listComments(docx, author, latest) {
 }
 
 /**
+ * The author and timestamp a Markdown document gives the changes and
+ * comments that name none, as JSON `[author, date]` (`null` for each it
+ * does not tell): its front matter, else the reference `.docx`'s creator
+ * and creation time. The CLI falls back to `Redline` and now.
+ * @param {string} text
+ * @param {Uint8Array | null} [reference]
+ * @returns {string}
+ */
+export function markdownStamp(text, reference) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(reference) ? 0 : passArray8ToWasm0(reference, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.markdownStamp(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred3_0 = r0;
+        deferred3_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
  *
  * `optionsJson` (every field optional): `page` (`"letter"` default, or
- * `"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
- * writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
- * changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+ * `"a4"`), `author` and `date` (for a change or comment that names none;
+ * given, they beat the front matter's `author:` and `last_modified:`,
+ * `modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
+ * epoch, so the same Markdown writes the same bytes; the CLI dates them now
+ * instead), `critic` (`true`: CriticMarkup becomes tracked changes and
+ * comments) and `track_changes` (or `trackChanges`: `"all"`,
  * `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
  * `.docx`, lends its styles and page setup, and then `page` is ignored.
  * Images are written as their alt text, and the engine's warnings are not
@@ -1814,7 +1878,8 @@ export function updateFields(docx) {
 
 /**
  * Word-validity findings beyond the schema as a JSON array (`code`, `set`,
- * `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+ * `severity`, `part`, `location`, `ref`, `message`, `word_fatal`,
+ * `repairable`; `ref` is the short id the CLI prints for `location`);
  * `[]` is a pass.
  *
  * Mirrors `jubarte::validate::validate`.

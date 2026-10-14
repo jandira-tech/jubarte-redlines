@@ -67,8 +67,8 @@ You can also pass the wasm source yourself: `await init({ module_or_path: url })
 
 ## Slim builds (no PDF)
 
-If you don't need PDF rendering, the slim entry points drop `docxToPdf` /
-`pdfPageCount`. Bundle size depends on the shared engine and embedded assets.
+If you don't need PDF rendering, the slim entry points drop `docxToPdf`,
+`pdfPageCount` and `updateFields`. Bundle size depends on the shared engine and embedded assets.
 Redline output carries the same parts and revisions as the full build.
 
 ```js
@@ -80,8 +80,8 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `changesText`, `commentsText`, `tablesText`, `readJson`, `wroteLine`, `changeFilter`) |
-| `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf` / `pdfPageCount` (same export set as `node-slim`) |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount` and `updateFields` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `changesText`, `commentsText`, `tablesText`, `readJson`, `wroteLine`, `changeFilter`) |
+| `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf`, `pdfPageCount` and `updateFields` (same export set as `node-slim`) |
 
 ## API
 
@@ -109,7 +109,8 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `tablesText` | `(docx) → string` | The grids `jubarte read --tables` prints, or `no tables`. |
 | `changedView` | `(docx, author, accepted, source?) → string` | The blocks of a redline carrying `author`'s marks (every changed block when none does), as the agent view `edit` and `add` print; `accepted` reads its accepted text, `source` is printed as `source:`. |
 | `flagPlan` | `(verb, operationsJson, docx, optionsJson?) → string` | The plan the CLI's `edit`/`add` operation flags describe, as JSON `{plan, notes}` (`plan` is the JSON for `applyEditPlan`). `verb` is `edit` or `add`; options: `author` (default `Redline`), `date`, `existingRevisions` (`auto`, `keep`, `accept`, `reject`, `refuse`). |
-| `recordPlan` | `(verb, operationsJson, docx, optionsJson, held?) → string` | `edit`/`add --plan PLAN.json` with operation flags: the operations recorded into `held` (PLAN.json's text; absent before the first recording), pinned to `docx`'s SHA-256. Returns JSON `{ok: true, recorded: {plan, json, notes, summary}}` — preview `plan` with `previewEditPlan`, write `json`, print `notes` and `summary` — or `{ok: false, usage, message}` (`usage` false when `held` is not a plan). Options: `author`, `date`, `existingRevisions`, `file`, `plan`, `dryRun`. |
+| `recordPlan` | `(verb, operationsJson, docx, optionsJson, held?) → string` | `edit`/`add --plan PLAN.json` with operation flags: the operations recorded into `held` (PLAN.json's text; absent before the first recording), pinned to `docx`'s SHA-256. Returns JSON `{ok: true, recorded: {plan, json, notes, summary}}` — preview `plan` with `previewEditPlan`, write `json`, print `notes` and `summary` — or `{ok: false, usage, message}` (`usage` false when `held` is not a plan). Options: `author`, `date`, `existingRevisions`, `file`, `plan`, `defaultPlan` (a bare `--plan`), `dryRun`. |
+| `editingModeConflict` | `(planJson, docx) → string \| undefined` | Why `--editing-mode` cannot apply the plan to `docx`: the tracked changes it keeps and does not itself accept or reject; `undefined` when none. |
 | `documentMarkdown` | `(docx) → string` | Body, then every header, footer and notes story, as Markdown with a `[body:p:N]` / `[header1:p:N]` id before every paragraph. |
 | `sourceSha256` | `(docx) → string` | SHA-256 of the bytes: the `source_sha256` guard an edit plan carries. |
 | `applyEditPlan` | `(docx, planJson, name?) → EditOutput` | Apply an edit plan: every operation kind `capabilities()` lists under `edit_operations` (text edits, paragraphs, tables, lists, comments and their threads, footnotes, images, page setup, TOC, watermark, content controls, redaction, settings). `ok`, `clean`, `redline`, `patch` (the plan's changes as a patch headed `name`, default `document.docx`), and `json` (the report, or the refusal with `code` and every operation's outcome). |
@@ -124,12 +125,13 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `diffDocumentsCritic` | `(old, next, author?, date?) → string` | Existing CriticMarkup document representation, separate from word comparison. |
 | `redlineDocuments` | `(old, next, author, date) → Uint8Array` | Compare DOCX or Markdown inputs into a Word redline. |
 | `documentMarkdownWithChanges` | `(docx, trackChanges) → string` | Document Markdown with `all`, `accept` or `reject` revision handling. |
-| `parseCli` | `(argsJson) → string` | Shared clap-derived CLI parsing; returns command/options or help/usage errors as JSON without host I/O. |
+| `parseCli` | `(argsJson, program?, supportedJson?) → string` | Shared clap-derived CLI parsing; returns command/options or help/usage errors as JSON without host I/O. `program` (default `jubarte-redlines`) names the command in help; `supportedJson` lists the tasks the host runs (default: all). |
 | `markdownToDocx` | `(text, optionsJson?, reference?) → Uint8Array` | Markdown with CriticMarkup → DOCX (`page`, `author`, `date`, `critic`, `track_changes`); `reference`, a `.docx`, lends its styles and page setup. |
+| `markdownStamp` | `(text, reference?) → string` | The author and timestamp a Markdown document gives the changes and comments that name none, as JSON `[author, date]` (`null` for each it does not tell): its front matter, else `reference`'s creator and creation time. The CLI falls back to `Redline` and now. |
 | `appendDocuments` | `(a, b, optionsJson?) → AppendOutput` | B after A, carrying B's images, links, headers, styles, lists and notes (`section_break`, `keep_sections`, `comments` `"drop"` or `"carry"`). `docx` and `warnings`. |
 | `listComments` | `(docx, author?, latest?) → string` | Every comment with its thread (`parent`, `done`), its short `ref` (`c5`) and anchor text, as a JSON array string. |
 | `commentsText` | `(docx, author?, latest?) → string` | The listing `jubarte comments` prints: a line per comment with its short id (`c5`), paragraph, author, text and anchor, then `N comment(s)`. |
-| `validateDocument` | `(docx) → string` | Word-validity findings beyond the schema as a JSON array (`code`, `set`, `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`); `[]` is a pass. |
+| `validateDocument` | `(docx) → string` | Word-validity findings beyond the schema as a JSON array (`code`, `set`, `severity`, `part`, `location`, `ref`, `message`, `word_fatal`, `repairable`); `[]` is a pass. |
 | `repairDocument` | `(docx) → RepairOutput` | The package with every repairable finding fixed: `docx`, and `json` with what was fixed and what remains. |
 | `auditTracked` | `(original, edited, author) → string` | Every text change must be a revision by `author`: `UNTRACKED_EDIT` and `FOREIGN_AUTHOR` findings as JSON. |
 | `auditDocument` | `(docx, rules?) → string` | Accessibility, style and structure findings, JSON `{findings, rules, layout}`; `rules` is a comma-separated list of sets or codes. |

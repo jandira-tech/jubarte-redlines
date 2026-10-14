@@ -47,7 +47,7 @@ uvx jubarte-redlines --help
 `redline` is an alias of `compare`; `python -m jubarte_redlines` runs the same
 commands. `changes` lists what a document tracks, one change per line with
 its short id (`r12`; `--json` for one object per line); `accept` and `reject`
-take repeatable `--id` (`r12`, `12`, `r1+2`, `header1.r1` or `body:rev:12`),
+take repeatable `--id` (`r12`, `r1+2`, `header1.r1` or `body:rev:12`),
 `--author` and `--kind` to resolve a selection and keep the rest tracked, or
 everything when none is given; `read` prints the agent view with the
 `<!-- p12 -->` ids edits use (`--json` the snapshot); `edit` and `add` write
@@ -178,7 +178,12 @@ doc.update_fields()   # PAGEREF, REF, NUMPAGES, SEQ and TOC results from jubarte
 `from_markdown(text, author=..., track_changes="all")` writes Markdown as a
 Word document, CriticMarkup becoming tracked changes and comments, as
 `jubarte convert draft.md` does; `reference=` lends a document's styles and
-page setup. `diff_render(a, b, dpi=100)` says which pages of two documents
+page setup. A change or comment that names no author or date takes `author`
+and `date` when you pass them, else the front matter's `author:` and
+`last_modified:`/`modified:`/`date:`/`created:`, else `Redline` and the fixed
+epoch, so the same Markdown writes the same bytes (the CLI falls back to
+`--reference-doc`'s creator and creation time, then `Redline` and now).
+`diff_render(a, b, dpi=100)` says which pages of two documents
 look different, pixel for pixel, with magenta overlays on the changed pages.
 
 `Document.from_bytes(data)` holds bytes you already have and `to_bytes()`

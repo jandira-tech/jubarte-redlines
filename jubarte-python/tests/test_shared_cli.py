@@ -81,7 +81,7 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     a, b = (tmp_path / name for name in ("before.md", "after.md"))
     a.write_text("Due in 30 days.\n")
     b.write_text("Due in 45 days.\n")
-    assert main(["diff", str(a), str(b), "--author", "Legal", "--date", "2026-09-30T14:05:00Z"]) == 0
+    assert main(["diff", str(a), str(b), "--author", "Legal", "--datetime", "2026-09-30T14:05:00Z"]) == 0
     assert "[-30-]{+45+}" in capsys.readouterr().out
     assert main(["diff", str(a), str(b), "--format", "critic"]) == 0
     assert capsys.readouterr().out == "Due in {~~30~>45~~} days.\n"
@@ -187,18 +187,14 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
     assert not (tmp_path / "pages-page-01.png").exists()
 
 
+# bebbbfff pinned these as refusals; 12d4c810 made -o write what its
+# extension names, in any case, with .markdown as Markdown.
 @pytest.mark.parametrize("command", ["accept", "reject"])
 @pytest.mark.parametrize("extension", ["md", "markdown", "PDF", "png", "JSON"])
-def test_shared_writer_rejects_unsupported_formats(command, extension, capsys):
-    argv = [command, "missing.docx"]
-    argv += ["-o", f"result.{extension}", "--force", "-q"]
-    with pytest.raises(SystemExit) as refused:
-        build_parser().parse_args(argv)
-    assert refused.value.code == 2
-    streams = capsys.readouterr()
-    assert streams.out == ""
-    kind = "md" if extension == "markdown" else extension.lower()
-    assert f"-o FILE.{kind} is not supported by the Python CLI yet" in streams.err
+def test_shared_writer_picks_the_format_its_extension_names(command, extension):
+    args = build_parser().parse_args([command, "missing.docx", "-o", f"result.{extension}", "--force", "-q"])
+    assert args.command == command
+    assert args.output_format == ("md" if extension == "markdown" else extension.lower())
 
 
 @pytest.mark.parametrize("command", ["accept", "reject"])
@@ -213,37 +209,27 @@ def test_shared_writer_preserves_word_and_unknown_extension_support(command, ext
 
 
 @pytest.mark.parametrize("prefix", [["read", "missing.docx"], ["text", "missing.docx"], ["missing.docx"]])
-@pytest.mark.parametrize("output", ["view.md", "view.JSON", "view.unknown"])
-def test_shared_read_writer_refuses_aliases_and_unknown_extensions(prefix, output, capsys):
-    with pytest.raises(SystemExit) as refused:
-        build_parser().parse_args([*prefix, "-o", output, "--force", "-q"])
-    assert refused.value.code == 2
-    streams = capsys.readouterr()
-    assert streams.out == ""
-    assert "read -o is not supported by the Python CLI yet" in streams.err
+@pytest.mark.parametrize(("output", "kind"), [("view.md", "md"), ("view.JSON", "json"), ("view.unknown", "md")])
+def test_shared_read_writer_takes_aliases_and_reads_an_unknown_extension_as_markdown(prefix, output, kind):
+    args = build_parser().parse_args([*prefix, "-o", output, "--force", "-q"])
+    assert args.command == "read"
+    assert args.output_format == kind
 
 
 @pytest.mark.parametrize("output", [["--to", "json"], ["-o", "result.JSON"], ["--to", "json", "-o", "result.unknown"]])
-def test_shared_convert_writer_refuses_json_by_format_or_extension(output, capsys):
-    with pytest.raises(SystemExit) as refused:
-        build_parser().parse_args(["convert", "missing.docx", *output])
-    assert refused.value.code == 2
-    streams = capsys.readouterr()
-    assert streams.out == ""
-    assert "-o FILE.json is not supported by the Python CLI yet" in streams.err
+def test_shared_convert_writer_picks_json_by_format_or_extension(output):
+    assert build_parser().parse_args(["convert", "missing.docx", *output]).output_format == "json"
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("command", ["accept", "reject", "convert", "read"])
-def test_unsupported_writer_preserves_existing_output_even_with_force(command, tmp_path, capsys):
+def test_a_failed_writer_preserves_existing_output_even_with_force(command, tmp_path, capsys):
     output = tmp_path / "existing.json"
     output.write_bytes(b"preserve existing output")
-    argv = [command, str(tmp_path / "missing.docx")]
-    with pytest.raises(SystemExit) as refused:
-        main([*argv, "-o", str(output), "--force", "-q"])
-    assert refused.value.code == 2
+    missing = tmp_path / "missing.docx"
+    assert main([command, str(missing), "-o", str(output), "--force", "-q"]) == 1
     streams = capsys.readouterr()
     assert streams.out == ""
-    assert "not supported by the Python CLI yet" in streams.err
+    assert f"reading {missing}" in streams.err
     assert output.read_bytes() == b"preserve existing output"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["existing.json"]

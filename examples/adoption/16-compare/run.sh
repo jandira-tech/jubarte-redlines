@@ -57,7 +57,7 @@ fi
 
 # ---------- jubarte: compare + diff --------------------------------------------
 "$JUBARTE" v1.docx v2.docx -d 1970-01-01T00:00:00Z -o redline_jubarte.docx --author Reviewer --force
-"$JUBARTE" diff v1.docx v2.docx --author Reviewer --date 2026-10-04T12:00:00Z \
+"$JUBARTE" diff v1.docx v2.docx --author Reviewer --datetime 2026-10-04T12:00:00Z \
   > diff_jubarte.patch
 "$JUBARTE" changes redline_jubarte.docx > changes_jubarte.txt
 

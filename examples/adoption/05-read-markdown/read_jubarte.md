@@ -13,6 +13,7 @@ styles:
   Normal: Cambria 11pt, after 10pt, line 1.15, left  # default; unannotated paragraphs use it
   "#": Heading1, Calibri bold 14pt, before 24pt, keep-next
   "##": Heading2, Calibri bold 13pt, before 10pt, keep-next
+  ListBullet: Cambria 11pt, named List Bullet
   table: TableGrid, all borders 0.5pt
 headers:
   default: {id: header1, text: "Jandira Technologies, LLC - Professional Services Agreement (Draft 3)"}

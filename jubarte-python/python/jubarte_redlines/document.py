@@ -651,7 +651,7 @@ def from_markdown(
     *,
     reference: Document | bytes | None = None,
     page: Literal["letter", "a4"] = "letter",
-    author: str = "Redline",
+    author: str | None = None,
     date: str | None = None,
     critic: bool = True,
     track_changes: Literal["all", "accept", "reject"] = "all",
@@ -659,8 +659,11 @@ def from_markdown(
     """Write Markdown as a Word document, as ``jubarte convert draft.md``.
 
     CriticMarkup (``{++ ++}``, ``{-- --}``, ``{~~ ~> ~~}``, ``{>> <<}``)
-    becomes tracked changes and comments by ``author`` at ``date`` (the
-    engine's fixed epoch by default), unless ``critic`` is false.
+    becomes tracked changes and comments, unless ``critic`` is false. One
+    that names no author or date takes ``author`` and ``date`` when given,
+    else the front matter's (``author:``; ``last_modified:``,
+    ``modified:``, ``date:``, ``created:``), else ``Redline`` and the
+    engine's fixed epoch (the CLI dates them now instead).
     ``track_changes`` keeps them (``all``) or writes the document with each
     accepted or rejected. ``reference`` lends its styles and page setup;
     without it ``page`` picks US Letter or A4, both with one-inch margins.

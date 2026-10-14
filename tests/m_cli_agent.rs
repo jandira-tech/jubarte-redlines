@@ -63,7 +63,7 @@ fn retired_names_work_once_with_a_note() {
     let (code, stdout, stderr) = run(&["audit", bullets.to_str().unwrap()]);
     assert_eq!(code, 0, "{stdout}{stderr}");
     assert!(
-        stdout.contains("\n  LITERAL_BULLET\twarning\tbody:p:0\t"),
+        stdout.contains("\n  LITERAL_BULLET\twarning\tp0\t"),
         "{stdout}"
     );
     assert_eq!(
@@ -227,7 +227,7 @@ fn strict_text_boxes_leave_the_paragraph_ids_alone() {
         "{kept}"
     );
     assert!(
-        view.contains("<!-- p131 -->\n**_<u>Video provides"),
+        view.contains("<!-- p131 -->\n**_<u>==Video provides"),
         "{view}"
     );
     assert!(
@@ -597,8 +597,12 @@ fn capabilities_describe_the_built_binary() {
         v["formats"]["diff"],
         serde_json::json!([".md", ".markdown", ".txt", ".patch", ".diff"])
     );
-    // 0.12's `#c27` still parses but is not advertised.
-    assert_eq!(v["ids"]["comment"], serde_json::json!(["c27", "27"]));
+    // Only the settled spellings are advertised (spec §2).
+    assert_eq!(v["ids"]["comment"], serde_json::json!(["c27"]));
+    assert_eq!(
+        v["ids"]["change"],
+        serde_json::json!(["r12", "r1+2", "header1.r1", "footnotes.r3"])
+    );
     assert_eq!(v["ids"]["comment_text"], serde_json::json!(["c27.text"]));
     assert_eq!(v["ids"]["table"], serde_json::json!(["t0"]));
     assert!(v["ids"]["note"].as_str().unwrap().contains("safe unquoted"));
@@ -624,7 +628,7 @@ fn capabilities_print_a_text_summary_by_default() {
         "validate rules: word (default), edits, a11y, style, structure",
         "audit codes: HEADING_SKIP, ",
         "formats: compare .docx .md .pdf .png .json; convert ",
-        "ids: revisions r12, 12, r1+2, ",
+        "ids: revisions r12, r1+2, header1.r1, footnotes.r3; ",
         "ids note: body ids print without a story",
     ] {
         assert!(
@@ -634,7 +638,7 @@ fn capabilities_print_a_text_summary_by_default() {
     }
     assert!(text.contains("; read .md .json; diff .md .markdown .txt .patch .diff;"));
     assert!(
-        text.contains("; comments c27, 27; comment text c27.text; "),
+        text.contains("; comments c27; comment text c27.text; "),
         "{text}"
     );
     assert_eq!(lines.last(), Some(&"run with --json for the manifest"));
@@ -825,4 +829,71 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
     let (stdout, quiet_patch) = edit("quiet", true);
     assert_eq!(stdout, "");
     assert_eq!(quiet_patch, patch);
+}
+
+/// codex 4249037697: a comment whose range starts in p4 and spans p5 is
+/// kept by `-p p5`, as the view marks p5 `in c0`.
+#[test]
+fn read_json_keeps_a_comment_spanning_a_kept_paragraph() {
+    const CLAUSES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/md-roundtrip/edges/edge-clauses.docx"
+    );
+    let (code, view, stderr) = run(&["read", CLAUSES, "-p", "p5", "--no-page-markers"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(view.contains("p5 in c0"), "{view}");
+    let one = json(&["read", CLAUSES, "--json", "-p", "p5"]);
+    let refs: Vec<&str> = one["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["ref"].as_str().unwrap())
+        .collect();
+    assert_eq!(refs, ["c0"], "{one}");
+    let comment = &one["comments"][0];
+    assert_eq!(comment["paragraph"], "body:p:4");
+    // c0 runs on through the table to p12.
+    assert_eq!(comment["last_paragraph"], "body:p:12");
+}
+
+/// codex 4242942130: `--changed` keeps a header's changes: the view notes
+/// them on its headers: line, and the snapshot lists them.
+#[test]
+fn read_json_changed_keeps_a_headers_changes() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{}"><w:p><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>Head</w:t></w:r></w:ins></w:p></w:hdr>"#,
+        common::docx::W_NS
+    );
+    let bytes = common::docx::docx_with_sect(
+        &format!(
+            r#"{}<w:p><w:ins w:id="1" w:author="Bo Other"><w:r><w:t>Body</w:t></w:r></w:ins></w:p>"#,
+            para("Plain")
+        ),
+        &[common::docx::Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("head.docx");
+    std::fs::write(&path, bytes).unwrap();
+    let path = path.to_str().unwrap();
+    let ids = |value: &serde_json::Value| -> Vec<String> {
+        value["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let changed = json(&["read", path, "--json", "--changed"]);
+    assert_eq!(ids(&changed), ["body:rev:1", "header1:rev:7"], "{changed}");
+    let by_ann = json(&["read", path, "--json", "--changed", "--by", "AC"]);
+    assert_eq!(ids(&by_ann), ["header1:rev:7"], "{by_ann}");
+    // A paragraph pick names body paragraphs only.
+    let one = json(&["read", path, "--json", "-p", "p1"]);
+    assert_eq!(ids(&one), ["body:rev:1"], "{one}");
 }

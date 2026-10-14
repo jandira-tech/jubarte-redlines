@@ -17,7 +17,8 @@ first):
 
 2. The grammar `capabilities --json` advertises.
 3. Every id the CLI prints for the committed fixtures below (the view, the
-   YAML header, `read --tables`, `read --json`, `changes`, `comments`),
+   YAML header, `read --tables`, `read --json`, `changes`, `comments`,
+   `validate`),
    grouped by shape (digits become N), with where it was printed and what
    it names.
 4. Each printed shape and a fixed list of other spellings fed back to
@@ -44,6 +45,7 @@ import concurrent.futures
 import difflib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -145,7 +147,19 @@ DEPRECATED = Deprecated()
 
 
 def run(binary: Path, args: list[str], cwd: Path) -> tuple[int, str, str]:
-    done = subprocess.run([str(binary), *args], cwd=cwd, capture_output=True, text=True, timeout=120)
+    # UTF-8 whatever the locale: the view prints em dashes, and a C-locale
+    # host would otherwise fail to decode them.
+    try:
+        done = subprocess.run(
+            [str(binary), *args],
+            cwd=cwd,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", "timed out after 120s"
     return done.returncode, done.stdout, done.stderr
 
 
@@ -211,6 +225,15 @@ def harvest(binary: Path, fixture: str, seen: Seen) -> None:
             seen.add(parts[1], "comments (paragraph)", name)
         for reply in re.findall(r"reply to (\S+)", line):
             seen.add(reply, "comments (reply to)", name)
+    _, findings, _ = run(binary, ["validate", fixture, "--rules", "word,a11y,style,structure"], ROOT)
+    DEPRECATED.scan("printed in text", "validate", findings)
+    for line in findings.splitlines():
+        parts = line.strip().split("\t")
+        if len(parts) >= 4:
+            # The word and edits sets print `part#ref`; the audit sets the ref alone.
+            ref = parts[2].rpartition("#")[2]
+            if ref and "/" not in ref:
+                seen.add(ref, "validate (ref)", name)
     code, snapshot, _ = run(binary, ["read", fixture, "--json"], ROOT)
     if code != 0:
         return
@@ -446,12 +469,13 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="exit 1 when docs/locations.md drifted")
     parser.add_argument("--strict", action="store_true", help="exit 1 while any deprecated id is in use")
     args = parser.parse_args()
-    subprocess.run(["cargo", "build", "--quiet", "--bin", "jubarte"], cwd=ROOT, check=True)
+    cargo = shutil.which("cargo") or str(Path.home() / ".cargo" / "bin" / "cargo")
+    subprocess.run([cargo, "build", "--quiet", "--bin", "jubarte"], cwd=ROOT, check=True)
     fresh = render(BINARY)
     if warn_deprecated() and args.strict:
         return 1
     if args.check:
-        current = TARGET.read_text() if TARGET.exists() else ""
+        current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else ""
         if current != fresh:
             sys.stdout.writelines(
                 difflib.unified_diff(current.splitlines(True), fresh.splitlines(True), str(TARGET), "fresh")
@@ -462,7 +486,7 @@ def main() -> int:
             )
             return 1
         return 0
-    TARGET.write_text(fresh)
+    TARGET.write_text(fresh, encoding="utf-8")
     print(f"wrote {TARGET.relative_to(ROOT)}", file=sys.stderr)
     return 0
 

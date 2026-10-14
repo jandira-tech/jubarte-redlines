@@ -61,6 +61,7 @@ fn validate_exit_codes_prose_json_and_repair() {
     assert_eq!(row["set"], "word");
     assert_eq!(row["severity"], "error");
     assert_eq!(row["location"], "w:body[0]/w:p[0]/w:del[0]/w:r[0]/w:t[0]");
+    assert_eq!(row["ref"], "w:body[0]/w:p[0]/w:del[0]/w:r[0]/w:t[0]");
     assert_eq!(row["word_fatal"], true);
     assert!(row.get("path").is_none(), "{row}");
 
@@ -135,7 +136,12 @@ fn validate_audits_tracked_edits_against_an_original() {
     assert_eq!(row["set"], "edits");
     assert_eq!(row["severity"], "error");
     assert_eq!(row["location"], "body:p:0");
-    assert!(row["message"].as_str().unwrap().contains("body:p:0"));
+    assert_eq!(row["ref"], "p0");
+    // The JSON location keeps the long id; the message prints the short one.
+    assert!(
+        row["message"].as_str().unwrap().starts_with("p0 differs"),
+        "{row}"
+    );
 
     let (code, _, _) = run(
         dir.path(),
@@ -196,10 +202,7 @@ fn a_word_lead_still_fails_but_audit_warnings_fail_only_under_strict() {
         &["validate", "bullets.docx", "--rules", "style"],
     );
     assert_eq!(code, 0, "{out}");
-    assert!(
-        out.starts_with("  LITERAL_BULLET\twarning\tbody:p:0\t"),
-        "{out}"
-    );
+    assert!(out.starts_with("  LITERAL_BULLET\twarning\tp0\t"), "{out}");
     assert!(
         out.ends_with("1 finding(s): 0 error, 1 warning, 0 info\n"),
         "{out}"

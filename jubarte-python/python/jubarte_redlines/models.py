@@ -266,7 +266,8 @@ class Comment:
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
     ``parent`` is the id of the comment it replies to (Word threads are one
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
-    is the paragraph id where the range starts (``body:p:12``);
+    is the paragraph id where the range starts (``body:p:12``), and
+    ``last_paragraph`` the one where it ends when that is a later one;
     ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
     up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
     the CLI prints and ``-p`` takes (``c5``).
@@ -284,6 +285,7 @@ class Comment:
     before: str
     after: str
     ref: str | None = None
+    last_paragraph: str | None = None
 
 
 class _CommentRow(TypedDict):
@@ -301,6 +303,7 @@ class _CommentRow(TypedDict):
     before: str
     after: str
     ref: NotRequired[str]
+    last_paragraph: NotRequired[str]
 
 
 def _decode_comments(payload: str) -> tuple[Comment, ...]:
@@ -322,6 +325,7 @@ def _comments_of(rows: list[_CommentRow]) -> tuple[Comment, ...]:
             before=row["before"],
             after=row["after"],
             ref=row.get("ref"),
+            last_paragraph=row.get("last_paragraph"),
         )
         for row in rows
     )
@@ -1580,7 +1584,8 @@ class Finding:
     ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
     ``warning`` or ``info``. ``part`` is the package part and ``location``
     the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
-    id (``body:p:3``), or empty for a package-level finding.
+    id (``body:p:3``), or empty for a package-level finding. ``ref`` is the
+    short id the CLI prints for ``location`` (``p3`` for ``body:p:3``).
     ``word_fatal`` is true when Word refuses or repairs the file for it,
     ``repairable`` when ``Document.repair`` fixes it.
     """
@@ -1593,6 +1598,7 @@ class Finding:
     message: str
     word_fatal: bool
     repairable: bool
+    ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1616,6 +1622,7 @@ class _FindingRow(TypedDict):
     message: str
     word_fatal: bool
     repairable: bool
+    ref: NotRequired[str]
 
 
 def _decode_findings(rows: list[_FindingRow]) -> tuple[Finding, ...]:
@@ -1629,6 +1636,7 @@ def _decode_findings(rows: list[_FindingRow]) -> tuple[Finding, ...]:
             message=row["message"],
             word_fatal=bool(row["word_fatal"]),
             repairable=bool(row["repairable"]),
+            ref=row.get("ref"),
         )
         for row in rows
     )

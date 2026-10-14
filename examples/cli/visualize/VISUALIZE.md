@@ -23,7 +23,7 @@ nine tracked changes (insertions, deletions, a table cell change) and two
 comments, built from CriticMarkup:
 
 ```bash
-jubarte convert received.md -o out/received.docx --author "Ann Counsel" --date 2026-10-01T09:00:00Z
+jubarte convert received.md -o out/received.docx --author "Ann Counsel" --datetime 2026-10-01T09:00:00Z
 ```
 
 Pages are rendered at 60 dpi to keep this folder small; read them at 96 dpi
@@ -331,9 +331,9 @@ $ jubarte comments out/received.docx --json --author Ann\ Counsel
 ```console
 $ jubarte read out/received.docx --tables
 table 0: 3x3 header_rows=1 widths=3120,3120,3120
-body:p:8=Deliverable	body:p:9=Due	body:p:10=Owner
-body:p:11=Route-cost report	body:p:12=Day 15	body:p:13=Consultant
-body:p:14=Review call	body:p:15=Monthly	body:p:16=Both
+p8=Deliverable	p9=Due	p10=Owner
+p11=Route-cost report	p12=Day 15	p13=Consultant
+p14=Review call	p15=Monthly	p16=Both
 ```
 
 `read --json` (or `-o FILE.json`) writes the full snapshot (`schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`, `changes`, `comments`): [`out/read.json`](out/read.json). Its `source_sha256` is the value an edit plan pins.

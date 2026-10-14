@@ -1,0 +1,44 @@
+# Markdown fixtures that are the view of a real docx: NAME.md, then the docx (from the repository root).
+# They are the dialect exactly as `jubarte read --no-page-markers` prints it, without source:/sha256:.
+received.md tests/fixtures/agent-view/received.docx
+potpourri.md tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/32997dd3c9_potpourritest.docx
+ids-paragraphs.md tests/corpus/broken_ones_two/sources/file_22.docx
+ids-tables.md tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/aeb0ace263__vs__1000537d17_redline_3d4318d7e9.docx
+ids-revisions.md tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/2319b00645__vs__aad76374be_redline_7dd062b618.docx
+ids-comments.md tests/fixtures/from-docx/critic/synthetic/all.docx
+ids-footnotes.md tests/corpus/broken_ones_two/sources/file_170.docx
+ids-endnotes.md tests/corpus/broken_ones_two/sources/file_77.docx
+ids-fields.md tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/791ca61933.docx
+ids-spacing-threads.md tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/5331b981b7_redline_cicerodo_v_plate_30.docx
+ids-sections.md tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/3c920d5996_rejected_tracking.docx
+ids-first-page.md tests/corpus/broken_ones_two/sources/file_202.docx
+ids-header-footer.md tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source/super_editor__h_f_normal_odd_even_firstpg_9b210d9a.docx
+ids-authors.md tests/fixtures/from-docx/critic/synthetic/hard-adjacent.docx
+ids-dates.md tests/goldens/redline.redline.docx
+ids-table-changes.md tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/5f0fed8e2a.docx
+ids-fonts.md tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/44f83e9351_word_tolerated_misplaced_uipriority.docx
+ids-font-sizes.md tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/24d37f7b5e_rejected_tracking.docx
+mix.md tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/25f1d6ecc3.docx
+math.md tests/fixtures/agent-view/quadratic.docx
+# Edge documents: tests/fixtures/md-roundtrip/edges/make_edges.py writes them; each is one behaviour both directions must keep.
+edge-anchors.md tests/fixtures/md-roundtrip/edges/edge-anchors.docx
+edge-cells.md tests/fixtures/md-roundtrip/edges/edge-cells.docx
+edge-change-ids.md tests/fixtures/md-roundtrip/edges/edge-change-ids.docx
+edge-change-ids-more.md tests/fixtures/md-roundtrip/edges/edge-change-ids-more.docx
+edge-clauses.md tests/fixtures/md-roundtrip/edges/edge-clauses.docx
+edge-clauses-more.md tests/fixtures/md-roundtrip/edges/edge-clauses-more.docx
+edge-dates.md tests/fixtures/md-roundtrip/edges/edge-dates.docx
+edge-notes.md tests/fixtures/md-roundtrip/edges/edge-notes.docx
+edge-order.md tests/fixtures/md-roundtrip/edges/edge-order.docx
+edge-owner-creator.md tests/fixtures/md-roundtrip/edges/edge-owner-creator.docx
+edge-owner-modifier.md tests/fixtures/md-roundtrip/edges/edge-owner-modifier.docx
+edge-owner-none.md tests/fixtures/md-roundtrip/edges/edge-owner-none.docx
+edge-owner-specials.md tests/fixtures/md-roundtrip/edges/edge-owner-specials.docx
+edge-stories.md tests/fixtures/md-roundtrip/edges/edge-stories.docx
+edge-table-styles.md tests/fixtures/md-roundtrip/edges/edge-table-styles.docx
+edge-cells-more.md tests/fixtures/md-roundtrip/edges/edge-cells-more.docx
+edge-order-more.md tests/fixtures/md-roundtrip/edges/edge-order-more.docx
+edge-notes-tracked.md tests/fixtures/md-roundtrip/edges/edge-notes-tracked.docx
+edge-notes-table.md tests/fixtures/md-roundtrip/edges/edge-notes-table.docx
+# Word-checked: Arthur opened it in Word on 2026-10-14 (marks with w:author="" in the body and a header); jubarte wrote it from a view.
+edge-authorless.md tests/fixtures/md-roundtrip/edges/edge-authorless.docx

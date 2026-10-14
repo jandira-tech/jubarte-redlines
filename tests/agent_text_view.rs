@@ -6,7 +6,9 @@
 //! `tests/fixtures/agent-view/`.
 mod common;
 use common::docx::{Part, W_NS, docx, para};
-use jubarte::markdown::{MarkdownOptions, Select, TrackChanges, docx_to_markdown};
+use jubarte::markdown::{
+    DocxOptions, MarkdownOptions, Select, TrackChanges, docx_to_markdown, markdown_to_docx,
+};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -118,7 +120,7 @@ fn options_default_to_the_plain_conversion() {
 fn select_parses_single_paragraphs_ranges_lists_and_tables() {
     use jubarte::markdown::Pick;
     assert_eq!(
-        Select::parse("p2, p5-p7,12,p17-,-p1,t0").unwrap(),
+        Select::parse("p2, p5-p7,p12,p17-,-p1,t0").unwrap(),
         Select::Picks(vec![
             Pick::Paragraphs {
                 from: 2,
@@ -149,9 +151,28 @@ fn select_parses_single_paragraphs_ranges_lists_and_tables() {
         "x3: expected pN, pN-pM or tN"
     );
     assert_eq!(Select::parse(" , ").unwrap_err(), "no paragraphs selected");
+    // A bare number is expired (Arthur, 2026-10-13).
+    assert_eq!(
+        Select::parse("12").unwrap_err(),
+        "12: expected pN, pN-pM or tN; the settled spelling is p12"
+    );
     assert_eq!(
         Select::parse("-").unwrap_err(),
         "-: expected pN, pN-pM or tN"
+    );
+    // A range's hint is the whole range, settled; none when it would run
+    // backwards.
+    assert_eq!(
+        Select::parse("p2-3").unwrap_err(),
+        "p2-3: expected pN, pN-pM or tN; the settled spelling is p2-p3"
+    );
+    assert_eq!(
+        Select::parse("2-").unwrap_err(),
+        "2-: expected pN, pN-pM or tN; the settled spelling is p2-"
+    );
+    assert_eq!(
+        Select::parse("2-1").unwrap_err(),
+        "2-1: expected pN, pN-pM or tN"
     );
 }
 
@@ -420,7 +441,36 @@ fn table_line_gives_grid_cells_and_header_row() {
 fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_marks() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:rPr><w:ins w:id="12" w:author="Ann Counsel"/></w:rPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged cells, break-ins r12 @AC in p1 -->\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged t0.row0.cell0 across 2, break-ins r12 @AC in p1 -->\n"), "{out}");
+}
+
+#[test]
+fn a_cells_empty_paragraphs_keep_their_breaks() {
+    // Each paragraph of a cell after its first starts with a `<br>`, an
+    // empty one too: the table line counts them all.
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let tbl = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{}<w:p/>{}</w:tc><w:tc>{}<w:p/></w:tc></w:tr></w:tbl>"#,
+        p("a"),
+        p("b"),
+        p("c")
+    );
+    let out = body(&agent(&docx(&tbl))).to_string();
+    assert!(
+        out.starts_with(
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells t0.row0 p0-p4 -->\n|a<br><br>b|c<br>|\n"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn table_line_names_each_merged_cell_and_how_far_it_reaches() {
+    // A vertical merge names its first cell and the rows it covers; a cell
+    // spanning columns names how many.
+    let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let out = body(&agent(&docx(tbl))).to_string();
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x3, cells p0-p4 by row, merged t0.row0.cell0 down 2; t0.row0.cell1 across 2 -->\n|A|B||\n|-|-|-|\n||C|D|\n"), "{out}");
 }
 
 /// The ids round trip (Task 5b): a table's own property changes and a
@@ -438,7 +488,7 @@ fn table_line_names_the_tables_own_changes() {
     let bytes = docx(&tbl);
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
+        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, p2 right, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
         "{out}"
     );
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
@@ -478,8 +528,8 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
     let p = format!(
         "<w:p>{}{}{}{}{}{}{}</w:p>",
         run("Pay within "),
-        del(3, "Ann Counsel", "thirty"),
         ins(4, "Ann Counsel", "forty-five"),
+        del(3, "Ann Counsel", "thirty"),
         run(" days, "),
         ins(5, "Ann Counsel", "quarterly"),
         run(" reports"),
@@ -510,8 +560,8 @@ fn a_substitution_by_two_authors_gets_two_notes_deleted_side_first() {
     let p = format!(
         "<w:p>{}{}{}{}</w:p>",
         run("x "),
-        del(1, "Ann Counsel", "old"),
         ins(2, "John Doe", "new"),
+        del(1, "Ann Counsel", "old"),
         ins(3, "Ann Counsel", "!")
     );
     assert_eq!(
@@ -600,7 +650,7 @@ fn a_tracked_mark_inside_a_footnote_carries_its_agent_tag() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("[^1]: First{++ ++}{>>footnotes.r4 @AC<<}second"),
+        out.contains("[^1]: First{++<br>++}{>>footnotes.r4 @AC<<}second"),
         "{out}"
     );
     assert!(!out.contains("Ann Counsel ("), "{out}");
@@ -687,8 +737,8 @@ fn a_header_change_is_visible_on_the_headers_line() {
 }
 
 /// Task 5b: a change whose text the view cannot show still prints its id
-/// once: a section's `w:sectPrChange` on `page:`, a style's change under
-/// `styles: changes:`, a header's formatting on its `headers:` entry, and a
+/// once: a section's `w:sectPrChange` on `page:`, a style's change on
+/// `style_changes:`, a header's formatting on its `headers:` entry, and a
 /// footnote's formatting on its definition line. The resolved views print
 /// none of them.
 #[test]
@@ -745,7 +795,7 @@ fn changes_without_text_name_their_ids() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("  changes: {Normal: styles.r9 @AC}")),
+            .any(|l| l.starts_with("style_changes: {Normal: styles.r9 @AC}")),
         "{out}"
     );
     assert!(
@@ -823,7 +873,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev r6 @AC in t0.row1 -->"),
+        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev-del r6 @AC in t0.row1 -->"),
         "{out}"
     );
     let lines = header_lines(&out);
@@ -888,7 +938,7 @@ fn history_numbering_and_fallback_rows_follow_the_listing() {
         regex::Regex::new(r"\b(r|\+)5\b").unwrap().is_match(p0),
         "{out}"
     );
-    assert!(out.contains("rev r6 @AC in t0.row0"), "{out}");
+    assert!(out.contains("rev-del r6 @AC in t0.row0"), "{out}");
 }
 
 /// pi review of Task 5b F6: an author whose only changes sit in the styles
@@ -973,6 +1023,27 @@ fn changes_printed_nowhere_else_are_unplaced() {
     assert!(
         !agent(&docx(&format!("<w:p>{}</w:p>", ins(1, "Ann Counsel", "x")))).contains("unplaced:")
     );
+}
+
+/// A textless change inside a printed container is not shown by the
+/// container's tag: accepting the inserted row keeps the row and leaves
+/// the deleted drawing tracked, so the drawing's own id must be printed.
+#[test]
+fn a_textless_change_in_a_printed_row_is_unplaced() {
+    let body = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        ins(3, "Ann Counsel", "Cell")
+    );
+    let out = agent(&docx(&body));
+    let lines = header_lines(&out);
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r2 @AC"), "{out}");
+    // The row's own tag and the cell text's print, so neither is unplaced.
+    assert!(!unplaced.contains("r1 "), "{out}");
+    assert!(!unplaced.contains("r3 "), "{out}");
 }
 
 /// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
@@ -1062,7 +1133,8 @@ fn numbering_and_styles_authors_get_handles_after_comment_authors() {
 
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own
 /// way, moves included, and the tracked view escapes document text that
-/// reads like a mark.
+/// reads like a mark. An insertion directly followed by a deletion is one
+/// substitution, as in the body.
 #[test]
 fn header_text_follows_each_view() {
     let header = format!(
@@ -1091,7 +1163,7 @@ fn header_text_follows_each_view() {
     };
     assert_eq!(
         text(&agent(&bytes)),
-        r#"  default: {id: header1, text: "Status: {++DRAFT++}{>>header1.r1 @AC<<}{--FINAL--}{>>header1.r2 @AC<<} {\\>>x<<\\} Page {++2++}{>>header1.r9 @AC<<}{--7--}{>>header1.r8 @AC<<} of 3"}"#
+        r#"  default: {id: header1, text: "Status: {~~FINAL~>DRAFT~~}{>>header1.r2+1 @AC<<} {\\>>x<<\\} Page {~~7~>2~~}{>>header1.r8+9 @AC<<} of 3"}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Accept, true)),
@@ -1384,8 +1456,8 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
     let p1 = format!(
         "<w:p>{}{}{}</w:p>",
         run("Within "),
-        del(3, "Ann Counsel", "thirty"),
-        ins(4, "Ann Counsel", "forty-five")
+        ins(4, "Ann Counsel", "forty-five"),
+        del(3, "Ann Counsel", "thirty")
     );
     let bytes = docx(&format!("{p0}{p1}"));
     assert_eq!(
@@ -1470,6 +1542,163 @@ fn underline_renders_inside_bold_in_the_agent_view_only() {
     assert_eq!(legacy, "keep it **secret**.\n");
 }
 
+#[test]
+fn highlight_and_strike_render_in_the_agent_view() {
+    // Spec §3: `==x==` is a highlight of any colour and `~~x~~` a strike.
+    // Text that holds `==` or `~~` itself is escaped, so it stays text.
+    let p = r#"<w:p><w:r><w:t xml:space="preserve">pay </w:t></w:r><w:r><w:rPr><w:b/><w:highlight w:val="cyan"/></w:rPr><w:t>now</w:t></w:r><w:r><w:t xml:space="preserve">, </w:t></w:r><w:r><w:rPr><w:strike/></w:rPr><w:t>later</w:t></w:r><w:r><w:t xml:space="preserve">, </w:t></w:r><w:r><w:rPr><w:highlight w:val="none"/><w:strike w:val="0"/></w:rPr><w:t>a==b ~~c</w:t></w:r></w:p>"#;
+    let full = agent(&docx(p));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\npay **==now==**, ~~later~~, a\\=\\=b \\~\\~c\n"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
+#[test]
+fn link_entity_and_heading_syntax_in_text_reads_back_as_text() {
+    // Text that looks like Markdown stays text through a round trip: an
+    // entity reference, a link, an image, a reference definition, and a
+    // heading whose text ends in `#` (a closing sequence otherwise).
+    let p = [
+        r#"<w:p><w:r><w:t>&amp;copy; and &amp;#35; at AT&amp;T</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>see [a](http://b) and ![i](p.png)</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>[r]: /u</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">C #</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>#</w:t></w:r></w:p>"#,
+    ]
+    .concat();
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n\\&copy; and \\&#35; at AT&T\n\n<!-- p1 -->\nsee [a\\](http://b) and ![i\\](p.png)\n\n<!-- p2 -->\n[r\\]: /u\n\n<!-- p3 -->\n# C \\#\n\n<!-- p4 -->\n# \\#\n"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
+#[test]
+fn code_reads_as_code_spans_and_fences() {
+    // `VerbatimChar` runs print as code spans and a `SourceCode` paragraph
+    // as a fence: their text stays as written, unescaped and with its
+    // spaces, so it reads back the same.
+    let code = |t: &str| {
+        format!(
+            r#"<w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t xml:space="preserve">{t}</w:t></w:r>"#
+        )
+    };
+    let p = [
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Run </w:t></w:r>{}<w:r><w:t xml:space="preserve"> or </w:t></w:r>{}<w:r><w:t>.</w:t></w:r></w:p>"#,
+            code("a*b  c"),
+            code("x`y")
+        ),
+        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t>fn main() {</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">    println!("*hi*");</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>}</w:t></w:r></w:p>"#.to_string(),
+    ]
+    .concat();
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nRun `a*b  c` or ``x`y``.\n\n<!-- p1 SourceCode -->\n```\nfn main() {\n    println!(\"*hi*\");\n}\n```\n"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
+#[test]
+fn body_fields_read_as_code_then_result() {
+    // Spec §3: a body field prints `{CODE}result{/}`, a hyperlink field
+    // stays a link, literal braces are escaped, and a field that runs past
+    // its paragraph (a table of contents) shows its result only.
+    let begin = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#;
+    let separate = r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
+    let end = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let instr = |code: &str| {
+        format!(r#"<w:r><w:instrText xml:space="preserve"> {code} </w:instrText></w:r>"#)
+    };
+    let p = [
+        format!(
+            r#"<w:p>{}{begin}{}{separate}{}{end}{}<w:fldSimple w:instr=" REF _Ref1 \h ">{}</w:fldSimple>{}</w:p>"#,
+            run("Begins "),
+            instr(r#"DATE \@ "MMMM d, yyyy""#),
+            run("March 1, 2026"),
+            run(" as "),
+            run("Section 2"),
+            run(" says, {Client Name}, {page} and {/}.")
+        ),
+        format!(
+            r#"<w:p>{begin}{}{separate}{}{end}</w:p>"#,
+            instr(r#"HYPERLINK "https://a.example/""#),
+            run("site")
+        ),
+        format!(
+            r#"<w:p>{begin}{}{separate}{}</w:p><w:p>{}{end}</w:p>"#,
+            instr(r#"TOC \o "1-3""#),
+            run("Intro 1"),
+            run("Terms 2")
+        ),
+    ]
+    .concat();
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBegins {DATE \\@ \"MMMM d, yyyy\"}March 1, 2026{/} as {REF _Ref1 \\h}Section 2{/} says, {Client Name}, \\{page} and \\{/}.\n\n<!-- p1 -->\n[site](https://a.example/)\n\n<!-- p2 -->\nIntro 1\n\n<!-- p3 -->\nTerms 2\n"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
+#[test]
+fn a_monospace_run_is_code_unless_its_paragraph_is_monospace_too() {
+    // Spec §3: `` `x` `` is a run in a monospace font. A paragraph whose
+    // own font is monospace (a contract set in Courier) is not code, and
+    // neither are its runs.
+    let mono = |font: &str, t: &str| {
+        format!(
+            r#"<w:r><w:rPr><w:rFonts w:ascii="{font}" w:hAnsi="{font}"/></w:rPr><w:t xml:space="preserve">{t}</w:t></w:r>"#
+        )
+    };
+    let body_xml = [
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Call </w:t></w:r>{}<w:r><w:t xml:space="preserve"> with </w:t></w:r>{}<w:r><w:t>.</w:t></w:r></w:p>"#,
+            mono("Courier New", "open()"),
+            mono("Consolas", "a*b")
+        ),
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Typed"/></w:pPr><w:r><w:t xml:space="preserve">Typed </w:t></w:r>{}</w:p>"#,
+            mono("Courier New", "clause")
+        ),
+    ]
+    .concat();
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Typed"><w:name w:val="Typed"/><w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr></w:style></w:styles>"#
+        ),
+    };
+    let full = agent(&common::docx::docx_with(&body_xml, &[styles]));
+    let view = body(&full);
+    assert_eq!(
+        view,
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nCall `open()` with `a*b`.\n\n<!-- p1 Typed -->\nTyped clause\n"
+    );
+}
+
 const CORE_CT: &str = "application/vnd.openxmlformats-package.core-properties+xml";
 
 fn core(xml: &str) -> Part<'_> {
@@ -1486,8 +1715,8 @@ fn header_counts_revisions_comments_and_authors() {
     let p = format!(
         "<w:p>{}{}{}{}</w:p>",
         run("a "),
-        del(1, "Ann Counsel", "b"),
         ins(2, "Ann Counsel", "c"),
+        del(1, "Ann Counsel", "b"),
         ins(3, "John Doe", "d")
     );
     let bytes = common::docx::docx_with(
@@ -1680,8 +1909,8 @@ headers:
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: footer2, text: \"{PAGE}\"}
-  even: {id: footer1, text: \"{PAGE}\", inactive}  # defined, but even/odd headers are off
+  default: {id: footer2, text: \"{PAGE}1{/}\"}
+  even: {id: footer1, text: \"{PAGE}1{/}\", inactive}  # defined, but even/odd headers are off
 ";
     assert!(header.ends_with(expected), "header:\n{header}");
 }
@@ -1690,7 +1919,7 @@ footers:
 fn header_page_line_for_a4_landscape_with_uneven_margins_and_a_gutter() {
     let sect = r#"<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="709" w:footer="709" w:gutter="720"/></w:sectPr>"#;
     let out = agent(&common::docx::docx_with_sect_pr(&para("x"), &[], sect));
-    assert!(out.contains("\npage: A4 landscape, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.49in, gutter 0.5in\n"), "{out}");
+    assert!(out.contains("\npage: A4 landscape, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.4924in, gutter 0.5in\n"), "{out}");
 }
 
 #[test]
@@ -1727,7 +1956,7 @@ fn later_sections_list_their_range_and_what_differs_from_the_first() {
     );
     let out = agent(&bytes);
     let header = out.split("---\n").nth(1).unwrap();
-    assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, headers: {default: {id: header2, text: SCHEDULE A}}, columns: 2}\n"), "header:\n{header}");
+    assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, page: Letter portrait, margins 1in, header/footer 0.5in, columns 2, headers: {default: {id: header2, text: SCHEDULE A}}}\n"), "header:\n{header}");
     assert!(
         body(&out).contains("<!-- p1 section-break -->\nEnd of part one\n"),
         "{out}"
@@ -1996,12 +2225,11 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     assert_eq!(by_id(del_id)["ref"], format!("r{del_id}"));
     assert_eq!(by_id(ins_id)["ref"], format!("r{ins_id}"));
 
-    // The short id the view prints, a bare number and 0.12's `#N` (argv,
-    // no shell) select the same change as the long id.
+    // The short id the view prints selects the same change as the long id
+    // the JSON prints.
     for (one, other) in [
         (format!("r{del_id}"), format!("body:rev:{ins_id}")),
-        (del_id.to_string(), format!("r{ins_id}")),
-        (format!("#{del_id}"), ins_id.to_string()),
+        (format!("body:rev:{del_id}"), format!("r{ins_id}")),
     ] {
         ok(
             &[
@@ -2033,9 +2261,34 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     assert_eq!(bad.status.code(), Some(2));
     assert_eq!(
         String::from_utf8_lossy(&bad.stderr),
-        "error: c5: expected a change id such as r12, header1.r1 or body:rev:12\n"
+        "error: c5: expected a change id such as r12, r1+2 or header1.r1\n"
     );
     assert!(!dir.path().join("bad.docx").exists());
+    // A bare number and 0.12's `#N` are expired (Arthur, 2026-10-13):
+    // refused with exit 2 and the settled spelling, nothing written.
+    for expired in [del_id.to_string(), format!("#{del_id}")] {
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args([
+                "reject",
+                "review/redline.docx",
+                "-o",
+                "bad.docx",
+                "--id",
+                &expired,
+            ])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(2), "{expired}");
+        assert_eq!(
+            String::from_utf8_lossy(&refused.stderr),
+            format!(
+                "error: {expired}: expected a change id such as r12, r1+2 or header1.r1; \
+                 the settled spelling is r{del_id}\n"
+            )
+        );
+        assert!(!dir.path().join("bad.docx").exists());
+    }
     let rejected = ok(&["read", "rejected.docx", "--no-page-markers"], dir.path());
     assert!(
         rejected.contains(
@@ -2099,11 +2352,11 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
     let text = edited(dir.path(), second, "two");
     captures(
         &text,
-        r"\{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.",
+        r"\{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @AC<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
     );
     assert!(
         text.contains(
-            "revisions: 4                       # 4 marks shown as 2 changes: 2 substitutions"
+            "revisions: 4                       # 4 marks shown as 3 changes: 1 insertion, 1 deletion, 1 substitution"
         ),
         "{text}"
     );
@@ -2795,7 +3048,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.",
+        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
     );
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(
@@ -3698,14 +3951,14 @@ fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
 }
 
 /// pi review av2 F10: `w:bdo`/`w:dir` are transparent to revisions as they
-/// are to the text: a deletion then an insertion across one pairs as the
+/// are to the text: an insertion then a deletion across one pairs as the
 /// substitution the tracked view shows, and the resolved `rev` agrees.
 #[test]
 fn a_bidi_wrapper_does_not_split_a_substitution() {
     let doc = docx(&format!(
         r#"<w:p>{}<w:bdo w:val="rtl">{}</w:bdo></w:p>"#,
-        del(1, "Ann Counsel", "a"),
-        ins(2, "Ann Counsel", "b")
+        ins(2, "Ann Counsel", "b"),
+        del(1, "Ann Counsel", "a")
     ));
     let tracked = agent(&doc);
     assert!(tracked.contains("{~~a~>b~~}{>>r1+2 @AC<<}"), "{tracked}");
@@ -3848,21 +4101,22 @@ fn id_line_number_is_the_label_word_prints() {
     ]
     .concat();
     let out = body(&agent(&common::docx::docx_with(&body_xml, &[numbering]))).to_string();
-    for (p, label) in [
-        (0, "1)"),
-        (1, "a)"),
-        (2, "b)"),
-        (3, "2)"),
-        (4, "a)"),
-        (5, "i)"),
-        (6, "2.A"),
+    // The level past the first is a clause of its own (`level 1`).
+    for (p, clauses) in [
+        (0, r#""1)""#),
+        (1, r#""a)", level 1"#),
+        (2, r#""b)", level 1"#),
+        (3, r#""2)""#),
+        (4, r#""a)", level 1"#),
+        (5, r#""i)", level 2"#),
+        (6, r#""2.A", level 3"#),
         // pi review r392b tests F5: a quote or backslash in the label is
         // escaped, so the clause still parses.
-        (7, r#"\"Ch\\\" 01"#),
+        (7, r#""\"Ch\\\" 01", level 4"#),
     ] {
         assert!(
-            out.contains(&format!("<!-- p{p} num \"{label}\" -->")),
-            "p{p} {label}:\n{out}"
+            out.contains(&format!("<!-- p{p} num {clauses} -->")),
+            "p{p} {clauses}:\n{out}"
         );
     }
     assert!(out.contains("1. one\n"), "{out}");
@@ -3917,7 +4171,7 @@ fn an_unanchored_comment_is_not_an_open_thread() {
     assert!(
         line.starts_with("comments: 1 thread open, 1 unanchored ")
             && line
-                .contains("# 2 comments: c9, c54 (unanchored: in no story, Word shows no balloon)"),
+                .contains("# 2 comments: c9, c54 (unanchored: not in the body or a note, Word shows no balloon)"),
         "{line}"
     );
     assert!(!body(&view).contains("c54"), "{view}");
@@ -4030,10 +4284,11 @@ fn changed_keeps_every_paragraph_inside_a_comment_range() {
     }
 }
 
-/// pi review r392b F1: a comment anchored in a header is an open thread, as
-/// `jubarte comments` lists it; only a comment no story holds is unanchored.
+/// A comment anchored in a header is unanchored: Word opens such a file and
+/// shows no balloon for it (Word probe d27_comment_in_header, 2026-10-10),
+/// and the view cannot carry it back into the header.
 #[test]
-fn a_comment_anchored_in_a_header_is_an_open_thread() {
+fn a_comment_anchored_in_a_header_is_unanchored() {
     let comments = format!(
         r#"<w:comments xmlns:w="{W_NS}" {W14}>{}{}</w:comments>"#,
         comment(
@@ -4082,9 +4337,9 @@ fn a_comment_anchored_in_a_header_is_an_open_thread() {
         .find(|l| l.starts_with("comments: "))
         .unwrap_or_default();
     assert!(
-        line.starts_with("comments: 1 thread open, 1 unanchored ")
-            && line.contains("c5, c7 (unanchored")
-            && !line.contains("c5 (unanchored"),
+        line.starts_with("comments: 0 threads open, 2 unanchored ")
+            && line.contains("c5 (unanchored: not in the body or a note")
+            && line.contains("c7 (unanchored"),
         "{line}"
     );
 }
@@ -4360,7 +4615,7 @@ fn a_header_reviser_takes_a_handle_before_a_commenter_with_the_same_initials() {
 fn selection_parser_accepts_zero_equal_endpoints_and_whitespace() {
     use jubarte::markdown::Pick;
     assert_eq!(
-        Select::parse(" , p0 , 2 - p2, p3 - , - p4, t0, ,").unwrap(),
+        Select::parse(" , p0 , p2 - p2, p3 - , - p4, t0, ,").unwrap(),
         Select::Picks(vec![
             Pick::Paragraphs {
                 from: 0,
@@ -4426,10 +4681,18 @@ fn selection_parser_checks_platform_integer_boundaries() {
 
 #[test]
 fn selection_parser_rejects_backwards_ranges_in_all_number_spellings() {
-    for item in ["p2-p1", "2-1", "p2-1", "2-p1", "p2 - p1"] {
+    for item in ["p2-p1", "p2 - p1"] {
         assert_eq!(
             Select::parse(item),
             Err(format!("{item}: the range runs backwards"))
+        );
+    }
+    // A bare number at either end is expired. The settled range would run
+    // backwards too, so no spelling is suggested.
+    for item in ["2-1", "p2-1", "2-p1"] {
+        assert_eq!(
+            Select::parse(item),
+            Err(format!("{item}: expected pN, pN-pM or tN"))
         );
     }
 }
@@ -4636,8 +4899,8 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
 fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers() {
     let bytes = docx(&format!(
         "<w:tbl><w:tr><w:tc><w:p>{}{}</w:p></w:tc></w:tr></w:tbl>{}",
-        del(1, "Ann Counsel", "old"),
         ins(2, "Ann Counsel", "new"),
+        del(1, "Ann Counsel", "old"),
         para("After")
     ));
     for (mode, text) in [(TrackChanges::Accept, "new"), (TrackChanges::Reject, "old")] {
@@ -4949,7 +5212,7 @@ fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
 }
 
 #[test]
-fn pr392_alternate_content_uses_only_the_rendered_branch_for_authors_and_counts() {
+fn pr392_alternate_content_renders_one_branch_and_names_every_listed_author() {
     let choice = format!(
         r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
         ins(1, "Ann Counsel", "Chosen")
@@ -4984,10 +5247,19 @@ fn pr392_alternate_content_uses_only_the_rendered_branch_for_authors_and_counts(
         // A Fallback change that is no twin of the Choice's (another text)
         // is still a change of the file: listed and counted (D8), though
         // the view shows the Choice only.
-        let listed = jubarte::changes::list_changes(&bytes).unwrap().len();
-        // Handles name the authors the view shows: the only other entry is
+        let changes = jubarte::changes::list_changes(&bytes).unwrap();
+        let listed = changes.len();
+        // Handles name the authors of the listed changes: a Fallback
+        // change the Choice does not twin prints on `unplaced:` with its
+        // author's handle (codex 4244120690). The only other entry is
         // document_owner.
-        assert_eq!(yaml["authors"].as_mapping().unwrap().len(), 2, "{view}");
+        let authors: std::collections::BTreeSet<_> =
+            changes.iter().filter_map(|c| c.author.as_deref()).collect();
+        assert_eq!(
+            yaml["authors"].as_mapping().unwrap().len(),
+            1 + authors.len(),
+            "{view}"
+        );
         assert!(
             header_lines(&view)
                 .iter()
@@ -5145,4 +5417,250 @@ fn table_cells_preserve_adjacent_backslashes_pipes_and_unicode_in_both_views() {
             );
         }
     }
+}
+
+#[test]
+fn an_internal_link_does_not_read_as_underlined() {
+    // Word's Hyperlink style underlines a link to a bookmark (a table of
+    // contents line) too: that is the link's look, not `<u>`. The link
+    // reads back as the Markdown link it was, and the heading's bookmark,
+    // which the writer makes from its slug, prints no `<a id>`.
+    let md = "# Intro\n\nSee [the intro](#intro).\n";
+    let docx = markdown_to_docx(md, &DocxOptions::default()).unwrap().docx;
+    let full = agent(&docx);
+    let view = body(&full);
+    assert!(view.contains("\n# Intro\n"), "{view}");
+    assert!(view.contains("\nSee [the intro](#intro).\n"), "{view}");
+}
+
+#[test]
+fn a_field_across_a_change_boundary_shows_its_result_only() {
+    // `{CODE}` and `{/}` print only where the field's begin, separate and
+    // end share their tracked changes: the writer reads a field inside one
+    // change, never one cut by `{++`, so a cut field shows its result.
+    let ins = r#"<w:ins w:id="10" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z">"#;
+    let del = r#"<w:del w:id="11" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z">"#;
+    let begin = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>"#;
+    let separate = r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
+    let end = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let p = format!(
+        "<w:p>{}{ins}{begin}{separate}</w:ins>{}{end}{}</w:p>\
+         <w:p>{}{begin}{separate}{del}<w:r><w:delText>1</w:delText></w:r>{end}</w:del>{}</w:p>\
+         <w:p>{}{begin}{separate}{del}<w:r><w:delText>1</w:delText></w:r></w:del>{end}{}</w:p>",
+        run("A "),
+        run("1"),
+        run(" B."),
+        run("C "),
+        run(" D."),
+        run("E "),
+        run(" F."),
+    );
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert!(
+        !view.contains("A {PAGE}") && !view.contains("{++{PAGE}"),
+        "{view}"
+    );
+    assert!(!view.contains("C {PAGE}"), "{view}");
+    assert!(view.contains("E {PAGE}{--1--}"), "{view}");
+    // The insertion that holds only the field's start shows as `rev` on
+    // p0's id line and has nothing to write back; the rest survives, and
+    // from there on the view is a fixed point.
+    let once = agent(
+        &markdown_to_docx(&full, &DocxOptions::default())
+            .unwrap()
+            .docx,
+    );
+    assert!(body(&once).contains("C {--1--}"), "{once}");
+    assert!(body(&once).contains("E {PAGE}{--1--}"), "{once}");
+    let twice = agent(
+        &markdown_to_docx(&once, &DocxOptions::default())
+            .unwrap()
+            .docx,
+    );
+    assert_eq!(body(&twice), body(&once));
+}
+
+#[test]
+fn a_field_code_with_quoted_braces_reads_back() {
+    let field = |code: &str, result: &str| {
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {code} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            run(result)
+        )
+    };
+    let p = format!(
+        "<w:p>{}{}{}</w:p>",
+        field("QUOTE &quot;a}b&quot;", "X"),
+        run(" and {QUOTE \"c}d\"}literal{/}."),
+        ""
+    );
+    let full = agent(&docx(&p));
+    let view = body(&full);
+    assert!(
+        view.contains("{QUOTE \"a}b\"}X{/} and \\{QUOTE \"c}d\"}literal\\{/}."),
+        "{view}"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
+#[test]
+fn an_empty_table_row_keeps_its_place_in_the_agent_view() {
+    // The table's id line counts its rows (row1, row2...): an empty row
+    // dropped from the Markdown table would shift every row after it.
+    let cell = |t: &str| {
+        format!(
+            "<w:tc><w:p>{}</w:p></w:tc>",
+            if t.is_empty() { String::new() } else { run(t) }
+        )
+    };
+    let row = |a: &str, b: &str| format!("<w:tr>{}{}</w:tr>", cell(a), cell(b));
+    let tbl = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>{}{}{}</w:tbl>"#,
+        row("Item", "Due"),
+        row("", ""),
+        row("Call", "Monthly")
+    );
+    let full = agent(&docx(&format!("{tbl}<w:p>{}</w:p>", run("End."))));
+    let view = body(&full);
+    let lines: Vec<&str> = view.lines().filter(|l| l.starts_with('|')).collect();
+    assert_eq!(lines.len(), 4, "{view}");
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(body(&agent(&back)), view);
+}
+
+/// codex 4244120690: a change only a text box's `mc:Fallback` holds is
+/// listed, so its author, with no change in the `mc:Choice`, gets a handle
+/// and a legend line, and the `unplaced:` entry names it.
+#[test]
+fn a_fallback_only_author_gets_a_handle() {
+    let body = format!(
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+        drawing_box(r#"<w:r><w:t>Box</w:t></w:r>"#),
+        pict_box(&format!(
+            r#"<w:r><w:t>Box</w:t></w:r>{}"#,
+            ins(21, "Zoe Fallback", "Other")
+        ))
+    );
+    let out = agent(&docx(&body));
+    let lines = header_lines(&out);
+    assert!(
+        lines.iter().any(|l| l.starts_with("  ZF: Zoe Fallback")),
+        "{out}"
+    );
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r21 @ZF"), "{out}");
+}
+
+/// codex 4244378287: free-text header fields (the title, the owner, an
+/// author's name) that read like a tag do not count as printing it.
+#[test]
+fn a_title_or_name_that_reads_like_a_tag_prints_no_change() {
+    let body = format!(
+        r#"<w:p>{}</w:p><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+        ins(1, "Ann Counsel", "x"),
+        drawing_box(
+            r#"<w:r><w:t>Box</w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>"#
+        ),
+        pict_box(r#"<w:r><w:t>Box</w:t></w:r>"#)
+    );
+    let sect = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#;
+    let bytes = common::docx::docx_with_sect_pr(
+        &body,
+        &[core(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>r3 @AC</dc:title><dc:creator>r3 @AC</dc:creator></cp:coreProperties>"#,
+        )],
+        sect,
+    );
+    let out = agent(&bytes);
+    let lines = header_lines(&out);
+    assert!(lines.iter().any(|l| l.starts_with("title: ")), "{out}");
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r3 @AC"), "{out}");
+}
+
+/// codex 4244378292: a story id outside the short grammar
+/// (`Header_1:p:0`) holds colons, so its flow-map value is quoted.
+#[test]
+fn a_long_story_id_is_quoted_in_the_header() {
+    let header =
+        format!(r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:hdr>"#);
+    let bytes = common::docx::docx_with_sect_pr(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/Header_1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    assert!(out.contains(r#"{id: "Header_1:p:0", text: Head}"#), "{out}");
+    let yaml = header_yaml(&out);
+    assert_eq!(
+        yaml["headers"]["default"]["id"].as_str(),
+        Some("Header_1:p:0")
+    );
+}
+
+/// codex 4244378295: a default style whose id is `changes` keeps its
+/// `styles:` entry; the style changes print under `style_changes:`.
+#[test]
+fn a_style_named_changes_does_not_collide_with_the_style_changes() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="changes"><w:name w:val="changes"/><w:rPr><w:b/><w:rPrChange w:id="9" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        "<w:p><w:r><w:t>Text</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+        r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    let yaml = header_yaml(&out);
+    assert!(yaml["styles"]["changes"].as_str().is_some(), "{out}");
+    assert_eq!(
+        yaml["style_changes"]["changes"].as_str(),
+        Some("styles.r9 @AC"),
+        "{out}"
+    );
+    assert!(!out.contains("unplaced:"), "{out}");
+}
+
+/// coderabbit 4269828968 (#427): a `w:id` that holds a `+` (`1+2`, only a
+/// malformed file has one) is one change. Its tag prints the long id
+/// `jubarte changes` lists, never `r1+2`, which names r1 and r2.
+#[test]
+fn a_revision_id_holding_a_plus_prints_as_one_change() {
+    let bytes = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Lead </w:t></w:r><w:ins w:id="1+2" w:author="Ann Counsel"><w:r><w:t>new</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> mid </w:t></w:r>{}</w:p>"#,
+        ins(1, "Ann Counsel", "one")
+    ));
+    let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert!(listed.contains(&"body:rev:1+2".to_string()), "{listed:?}");
+    let out = agent(&bytes);
+    assert!(out.contains("{>>body:rev:1+2 @AC<<}"), "{out}");
+    assert!(out.contains("{>>r1 @AC<<}"), "{out}");
+    assert!(!out.contains("r1+2 @AC"), "{out}");
+    assert!(!out.contains("unplaced:"), "{out}");
 }

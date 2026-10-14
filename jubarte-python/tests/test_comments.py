@@ -24,6 +24,7 @@ def test_reply_and_resolve_round_trip() -> None:
     (root,) = first.clean.comments()
     assert (root.text, root.done, root.parent) == ("Too low", False, None)
     assert (root.anchor_text, root.before, root.after, root.paragraph) == ("cap", "The ", " is 10.", "body:p:0")
+    assert root.last_paragraph is None
     second = first.clean.edit(
         jubarte.EditPlan(author="Bob").reply_comment(root.id, text="Agreed").resolve_comment(root.id)
     )
@@ -37,6 +38,7 @@ def test_edit_delete_through_and_filters() -> None:
     spanned = doc.edit(jubarte.EditPlan(author="Ann").comment("body:p:0", through="body:p:1", text="Both"))
     (c,) = spanned.clean.comments()
     assert c.anchor_text == "One.\nTwo."
+    assert (c.paragraph, c.last_paragraph) == ("body:p:0", "body:p:1")
     edited = spanned.clean.edit(jubarte.EditPlan(author="Ann").edit_comment(c.id, text="Reworded", id="e"))
     assert [x.text for x in edited.clean.comments()] == ["Reworded"]
     assert edited.report.operations[0].id == "e"

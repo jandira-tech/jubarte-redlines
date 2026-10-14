@@ -66,6 +66,10 @@ pub struct CommentRecord {
     /// reference when the comment has no range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paragraph: Option<String>,
+    /// Story and paragraph id of the range end (`body:p:14`) when the range
+    /// ends in a later paragraph than it starts; `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_paragraph: Option<String>,
     /// The anchored text, exact; paragraphs joined by `\n`.
     pub anchor_text: String,
     /// Up to 80 characters before the anchor in its first paragraph.
@@ -116,7 +120,12 @@ impl From<crate::inspect::InspectError> for CommentError {
 /// Every comment in `comments.xml` order, with its thread, resolution and
 /// anchor. A document without comments lists none.
 pub fn list_comments(docx: &[u8]) -> Result<Vec<CommentRecord>, CommentError> {
-    let mut opened = Opened::open(docx)?;
+    comments_in(&mut Opened::open(docx)?)
+}
+
+/// [`list_comments`] of a package already open. The scan marks up the
+/// body's DOM, so read what else `opened` holds first.
+pub(crate) fn comments_in(opened: &mut Opened) -> Result<Vec<CommentRecord>, CommentError> {
     let family = CommentFamily::load(&opened.pkg, &opened.main).map_err(CommentError::Package)?;
     if family.is_empty() {
         return Ok(Vec::new());
@@ -334,6 +343,7 @@ impl Anchors {
             {
                 let texts = &self.stories[story].1;
                 record.paragraph = Some(paragraph_id(story, first));
+                record.last_paragraph = (last > first).then(|| paragraph_id(story, last));
                 if first == last {
                     record.anchor_text = texts[first][s..e].to_string();
                 } else {
@@ -574,6 +584,7 @@ impl CommentFamily {
             parent: meta.parent,
             done: meta.done,
             paragraph: None,
+            last_paragraph: None,
             anchor_text: String::new(),
             before: String::new(),
             after: String::new(),
@@ -736,6 +747,19 @@ impl CommentFamily {
         }
         fill_comment_paragraph(dom, keep, text);
         dom.add(comment, keep);
+    }
+
+    /// Set comment `id`'s thread: the comment it replies to (it hangs off
+    /// that comment's thread root, Word threads being one level deep) and
+    /// whether it is resolved. A parent the family lacks is ignored.
+    pub(crate) fn set_thread(&mut self, id: u32, parent: Option<u32>, done: bool) {
+        let parent = parent
+            .filter(|p| *p != id && self.meta.contains_key(p))
+            .map(|p| self.thread_root(p));
+        if let Some(meta) = self.meta.get_mut(&id) {
+            meta.parent = parent.filter(|&p| p != id);
+            meta.done = done;
+        }
     }
 
     /// Mark `id` and its replies resolved (or open again).
@@ -1392,6 +1416,10 @@ mod public_memory_anchor_boundary_tests {
             );
             let source = snapshot(&pkg);
             let bytes = pkg.to_zip().unwrap();
+            // A range over several paragraphs names its last one too.
+            let start: usize = paragraph["body:p:".len()..].parse().unwrap();
+            let lines = anchor.matches('\n').count();
+            let last_paragraph = (lines > 0).then(|| format!("body:p:{}", start + lines));
             let expected = vec![CommentRecord {
                 id: 7,
                 r#ref: "c7".into(),
@@ -1402,6 +1430,7 @@ mod public_memory_anchor_boundary_tests {
                 parent: None,
                 done: false,
                 paragraph: Some(paragraph.into()),
+                last_paragraph,
                 anchor_text: anchor.into(),
                 before: before.into(),
                 after: after.into(),
@@ -1431,6 +1460,7 @@ mod public_memory_anchor_boundary_tests {
             text: format!("Source comment {id}"),
             done: false,
             paragraph: Some(format!("body:p:{id}")),
+            last_paragraph: None,
             anchor_text: format!("Owned anchor {id}"),
             before: "before".into(),
             after: "after".into(),

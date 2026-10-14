@@ -52,14 +52,9 @@ fn read(docx: &[u8], track_changes: TrackChanges) -> String {
 /// Where the Markdown read back differs, and why the Word documents still
 /// hold the same changes. Accepting and rejecting agree for all of them
 /// but the formatting change.
-const KNOWN: [(&str, TrackChanges, &str); 6] = [
+const KNOWN: [(&str, TrackChanges, &str); 5] = [
     (
         "tables",
-        TrackChanges::All,
-        "adjacent insertions and deletions pair into substitutions differently",
-    ),
-    (
-        "hard-adjacent",
         TrackChanges::All,
         "adjacent insertions and deletions pair into substitutions differently",
     ),

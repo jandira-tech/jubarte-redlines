@@ -519,6 +519,7 @@ mod tests {
             severity: "error".into(),
             part: part.into(),
             location: path.into(),
+            r#ref: crate::ids::short_paragraph(path),
             message: String::new(),
             word_fatal: true,
             repairable: false,

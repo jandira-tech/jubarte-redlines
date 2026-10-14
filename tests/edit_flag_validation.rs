@@ -6,6 +6,15 @@
 use jubarte::edit::flags::{FlagOp, Verb, editing_mode_conflict, plan_from_flags};
 use jubarte::edit::{EditPlan, ExistingRevisions};
 
+/// A document with tracked changes of its text.
+fn tracked() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/agent-view/received.docx"
+    ))
+    .unwrap()
+}
+
 fn build(verb: Verb, op: FlagOp) -> Result<EditPlan, String> {
     // Explicit revision policy avoids document inspection: these tests only
     // exercise the operation and editing-mode validators.
@@ -110,7 +119,7 @@ fn editing_mode_conflicts_only_with_keep() {
         )
         .unwrap();
         plan.existing_revisions = policy;
-        let conflict = editing_mode_conflict(&plan);
+        let conflict = editing_mode_conflict(&plan, &tracked());
         if policy == ExistingRevisions::Keep {
             assert!(
                 conflict
@@ -121,4 +130,49 @@ fn editing_mode_conflicts_only_with_keep() {
             assert_eq!(conflict, None, "{policy:?}");
         }
     }
+}
+
+/// Codex on #425: the changes a plan accepts or rejects itself (`-p r12
+/// --accept`) are not kept, so editing mode conflicts only with what is left.
+#[test]
+fn editing_mode_counts_only_the_changes_the_plan_leaves() {
+    let source = tracked();
+    let refs: Vec<String> = jubarte::changes::list_changes(&source)
+        .unwrap()
+        .into_iter()
+        .filter(|c| !c.id.starts_with("styles:"))
+        .map(|c| c.r#ref)
+        .collect();
+    assert!(refs.len() > 1, "{refs:?}");
+    let settle = |refs: &[String]| {
+        let ops: Vec<FlagOp> = refs
+            .iter()
+            .map(|at| FlagOp {
+                at: at.clone(),
+                accept: true,
+                ..Default::default()
+            })
+            .collect();
+        plan_from_flags(Verb::Edit, &ops, "Reviewer", None, None, &source)
+            .unwrap()
+            .plan
+    };
+    let all = settle(&refs);
+    assert_eq!(all.existing_revisions, ExistingRevisions::Keep);
+    assert_eq!(editing_mode_conflict(&all, &source), None);
+    let some = settle(&refs[..1]);
+    assert!(editing_mode_conflict(&some, &source).is_some());
+    // A document with no tracked change keeps nothing, whatever the policy.
+    let mut keep = build(
+        Verb::Edit,
+        FlagOp {
+            at: "p0".into(),
+            content: Some("Fees".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    keep.existing_revisions = ExistingRevisions::Keep;
+    let clean = jubarte::changes::accept_changes(&source, &Default::default()).unwrap();
+    assert_eq!(editing_mode_conflict(&keep, &clean), None);
 }

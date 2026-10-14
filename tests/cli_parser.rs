@@ -496,6 +496,31 @@ fn invalid_numbers_pages_palettes_and_render_combinations_are_usage_errors() {
             2
         );
     }
+    // Codex on #440 and #441: every task that draws revisions refuses a
+    // palette without `custom` before reading a document, as convert does.
+    let palette = [
+        "--revisions",
+        "word",
+        "--revision-palette",
+        "deleted=#112233",
+    ];
+    for task in [
+        &["compare", "a.docx", "b.docx", "-o", "c.pdf"][..],
+        &["a.docx", "b.docx", "-o", "c.pdf"],
+        &["accept", "a.docx", "-o", "c.pdf"],
+        &["reject", "a.docx", "-o", "c.pdf"],
+        &["scrub", "a.docx", "-o", "c.pdf"],
+    ] {
+        let refused = parse(&[task, &palette[..]].concat(), &[]);
+        assert_eq!(refused["exit_code"], 2, "{task:?}: {refused}");
+        assert!(
+            refused["text"]
+                .as_str()
+                .unwrap()
+                .contains("--revision-palette needs --revisions custom"),
+            "{task:?}: {refused}"
+        );
+    }
     // --pages narrows a PDF too.
     let pdf = parse(&["convert", "a", "--pages", "1"], &[]);
     assert_eq!(pdf["exit_code"], 0, "{pdf}");
@@ -524,7 +549,7 @@ fn diff_has_no_rendering_flags() {
     // flags are refused rather than dropped.
     for flags in [
         &["-a", "Ann"][..],
-        &["--date", "2026-01-01T00:00:00Z"],
+        &["--datetime", "2026-01-01T00:00:00Z"],
         &["--columns", "40"],
     ] {
         let result = parse(
@@ -558,6 +583,24 @@ fn diff_has_no_rendering_flags() {
             text.contains(&format!("`compare OLD NEW -o {output}`")),
             "{text}"
         );
+    }
+}
+
+/// Codex on #442: add draws no PDF or PNG, so its help names none; edit's
+/// does. Both say what another -o extension writes.
+#[test]
+fn add_help_names_only_what_add_writes() {
+    let help = |task: &str| {
+        parse(&[task, "--help"], &[])["text"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (add, edit) = (help("add"), help("edit"));
+    assert!(!add.contains("--pdf") && !add.contains("--png"), "{add}");
+    assert!(edit.contains("--pdf") && edit.contains("--png"), "{edit}");
+    for text in [&add, &edit] {
+        assert!(text.contains("Any other extension is written as"), "{text}");
     }
 }
 
@@ -870,6 +913,17 @@ fn parse_json_resolves_a_bare_plan() {
     );
     assert_eq!(bare["args"]["plan"], "d/a_plan.json", "{bare}");
     assert_eq!(bare["args"]["plan_default"], true, "{bare}");
+    // Codex on #433: a path ending in a separator names a folder, so the
+    // parser refuses it for every host alike.
+    let folder = parse(&["add", "a.docx", "--plan", "new.json/"], &["add"]);
+    assert_eq!(folder["exit_code"], 2, "{folder}");
+    assert!(
+        folder["text"]
+            .as_str()
+            .unwrap()
+            .contains("new.json/ ends in a separator"),
+        "{folder}"
+    );
     let named = parse(&["add", "a.docx", "--plan", "p.json"], &["add"]);
     assert_eq!(named["args"]["plan"], "p.json", "{named}");
     assert_eq!(named["args"]["plan_default"], false, "{named}");
@@ -969,7 +1023,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
         ("", false),
     ] {
         for args in [
-            vec!["compare", "a.docx", "b.docx", "--date", date],
+            vec!["compare", "a.docx", "b.docx", "--datetime", date],
             vec!["a.docx", "b.docx", "-d", date],
             vec![
                 "edit",
@@ -978,7 +1032,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
                 "p0",
                 "--content",
                 "x",
-                "--date",
+                "--datetime",
                 date,
             ],
             vec![
@@ -991,8 +1045,8 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
                 "--datetime",
                 date,
             ],
-            vec!["convert", "a.md", "-t", "docx", "--date", date],
-            vec!["diff", "a.md", "b.md", "--date", date],
+            vec!["convert", "a.md", "-t", "docx", "--datetime", date],
+            vec!["diff", "a.md", "b.md", "--datetime", date],
         ] {
             let result = parse(&args, &[]);
             assert_eq!(
@@ -1009,7 +1063,7 @@ fn pr392_revision_dates_cover_calendar_fraction_and_offset_boundaries() {
         }
         if valid {
             assert_eq!(
-                parse(&["compare", "a", "b", "-d", date], &[])["args"]["date"],
+                parse(&["compare", "a", "b", "-d", date], &[])["args"]["datetime"],
                 date
             );
         }
@@ -1032,9 +1086,14 @@ fn compare_and_diff_date_their_revisions_now_unless_d_pins_it() {
         .unwrap();
     let mut dates: Vec<String> = runs
         .iter()
-        .map(|run| run["args"]["date"].as_str().expect("a date").to_string())
+        .map(|run| {
+            run["args"]["datetime"]
+                .as_str()
+                .expect("a date")
+                .to_string()
+        })
         .collect();
-    dates.push(native.compare.date.expect("the shorthand's date"));
+    dates.push(native.compare.datetime.expect("the shorthand's date"));
     for date in &dates {
         assert!(
             before.as_str() <= date.as_str() && date.as_str() <= after.as_str(),
@@ -1049,7 +1108,7 @@ fn compare_and_diff_date_their_revisions_now_unless_d_pins_it() {
         ]
         .concat();
         assert_eq!(
-            parse(&args, &[])["args"]["date"],
+            parse(&args, &[])["args"]["datetime"],
             "1970-01-01T00:00:00Z",
             "{args:?}"
         );
@@ -1760,6 +1819,28 @@ fn quiet_is_global_before_or_after_the_task() {
     );
 }
 
+/// Codex on #437: help under a retired name still says it is retired, in
+/// the binary and in the hosts (the parser's help object carries the notes).
+#[test]
+fn a_retired_names_help_carries_its_note() {
+    let help = parse(&["diff-render", "--help"], &[]);
+    assert_eq!(help["exit_code"], 0, "{help}");
+    assert!(
+        help["notes"][0]
+            .as_str()
+            .is_some_and(|n| n.contains("diff-render") && n.contains("visual-diff")),
+        "{help}"
+    );
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["diff-render", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("visual-diff"), "{stderr}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage:"));
+}
+
 #[test]
 fn retired_spellings_are_scoped_and_listed_once() {
     let notes = |argv: &[&str]| retired_spellings(argv.iter().copied());
@@ -1785,8 +1866,10 @@ fn retired_spellings_are_scoped_and_listed_once() {
         vec![],
         "a value after the task is not a task either"
     );
-    // 0.12's cell form, as a -p value of edit or add, in every spelling.
-    let cell = vec![("tN.rR.cC", "tN.rowR.cellC")];
+    // 0.12's cell form is expired, not retired: the id parsers refuse it
+    // with its settled spelling, so it earns no note. Every spelling of the
+    // -p value is still skipped as a value (a short cluster, `=`, after a
+    // flag that takes none).
     for argv in [
         &["edit", "a", "-p", "t0.r1.c2", "--content", "x"][..],
         &["edit", "a", "-pt0.r1.c2.p1", "--content", "x"],
@@ -1798,15 +1881,18 @@ fn retired_spellings_are_scoped_and_listed_once() {
             "--content",
             "x",
         ],
-        &["add", "a", "--location", "t1.r0.c0", "-p", "t2.r1.c1"],
-        // A short cluster: -q takes no value, so -p's is the next token.
         &["edit", "a", "-qp", "t0.r1.c2", "--content", "x"],
         &["edit", "a", "-qpt0.r1.c2", "--content", "x"],
         &["edit", "--content", "x", "a", "-p", "t0.r1.c2"],
-        // --delete takes no value, so -p after it is still an option.
         &["edit", "a", "--delete", "-p", "t0.r1.c2"],
-        // A hidden alias (--date for --datetime) takes its value.
-        &[
+        &["read", "a", "-p", "t0.r1.c2"],
+    ] {
+        assert_eq!(notes(argv), vec![], "{argv:?}");
+    }
+    // A removed spelling (--date for --datetime) is found as a retired one
+    // is, and takes its value.
+    assert_eq!(
+        jubarte::cli::removed_spellings([
             "edit",
             "a",
             "--date",
@@ -1815,25 +1901,103 @@ fn retired_spellings_are_scoped_and_listed_once() {
             "t0.r1.c2",
             "--content",
             "x",
-        ],
-    ] {
-        assert_eq!(notes(argv), cell, "{argv:?}");
-    }
+        ]),
+        vec![("--date", "--datetime")]
+    );
+    // A -p value spelled like a retired flag is a value, not the flag.
     assert_eq!(
-        notes(&["edit", "a", "-p", "t0.row1.cell2", "--content", "x"]),
+        notes(&["edit", "a", "-p", "--date", "--content", "x"]),
         vec![]
     );
-    assert_eq!(notes(&["read", "a", "-p", "t0.r1.c2"]), vec![]);
     assert_eq!(
         retired_note("diff-render", "visual-diff"),
         "note: diff-render is now visual-diff; diff-render is removed in 0.14"
     );
-    let parsed = parse(&["edit", "a", "-p", "t0.r1.c2", "--content", "x"], &[]);
-    assert_eq!(parsed["exit_code"], 0, "{parsed}");
-    assert_eq!(
-        parsed["notes"][0],
-        "note: tN.rR.cC is now tN.rowR.cellC; tN.rR.cC is removed in 0.14"
-    );
+}
+
+/// Arthur (2026-10-13): one spelling for the timestamp flag: `-d,
+/// --datetime` on edit, add, compare, diff and convert (md->docx). Arthur
+/// (2026-10-14): `--date` is gone, not an alias; the error names
+/// `--datetime`.
+#[test]
+fn timestamp_flag_is_d_datetime_and_date_is_gone() {
+    let date = "2026-10-01T09:00:00Z";
+    let bases: &[&[&str]] = &[
+        &["edit", "a.docx", "-p", "p0", "--content", "x"],
+        &["add", "a.docx", "-p", "p0", "--content", "x"],
+        &["compare", "a.docx", "b.docx"],
+        &["diff", "a.md", "b.md"],
+        &["convert", "a.md", "-t", "docx"],
+    ];
+    for base in bases {
+        for flag in ["-d", "--datetime"] {
+            let args = [base.to_vec(), vec![flag, date]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(
+                result["args"]["datetime"].as_str(),
+                Some(date),
+                "{args:?}: {result}"
+            );
+            // Current flags earn no note.
+            assert_eq!(result["notes"], serde_json::json!([]), "{args:?}: {result}");
+        }
+        let args = [base.to_vec(), vec!["--date", date]].concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        assert!(
+            result["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("--datetime")),
+            "{args:?}: {result}"
+        );
+    }
+    // Before the task too, where clap would suggest compare's `--dates`.
+    let inline = format!("--date={date}");
+    for args in [
+        &["--date", date, "compare", "a.docx", "b.docx"][..],
+        &["--date", date, "a.docx", "b.docx"][..],
+        &[inline.as_str(), "a.docx", "b.docx"][..],
+    ] {
+        let result = parse(args, &[]);
+        assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+        let text = result["text"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("use --datetime") && !text.contains("--dates"),
+            "{args:?}: {result}"
+        );
+    }
+    // No task's `--help` shows `--date`.
+    for task in ["edit", "add", "compare", "diff", "convert"] {
+        let help = parse(&[task, "--help"], &[]);
+        let text = help["text"].as_str().unwrap();
+        assert!(text.contains("--datetime"), "{task}: {text}");
+        assert!(
+            !text.contains("--date ") && !text.contains("--date\n"),
+            "{task}: {text}"
+        );
+    }
+}
+
+/// `-a, --author` on every task that writes changes: edit and add take the
+/// short form as compare, diff and convert do.
+#[test]
+fn edit_and_add_take_dash_a_for_the_author() {
+    for base in [
+        &["edit", "a.docx", "-p", "p0", "--content", "x"][..],
+        &["add", "a.docx", "-p", "p0", "--content", "x"][..],
+    ] {
+        for flag in ["-a", "--author"] {
+            let args = [base.to_vec(), vec![flag, "Ann Lee"]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(
+                result["args"]["author"].as_str(),
+                Some("Ann Lee"),
+                "{args:?}: {result}"
+            );
+        }
+    }
 }
 
 #[test]

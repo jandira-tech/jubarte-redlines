@@ -7,7 +7,7 @@ Text that looks like markup stays as written: a {++ b ++} ~> c --} and {>> d <<}
 ## A table
 
 |Name|Value|
-|-|-|
+|:-|:-|
 |alpha|1|
 
 Last paragraph.

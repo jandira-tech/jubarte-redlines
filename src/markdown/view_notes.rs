@@ -1,0 +1,1399 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! The view's own notes read back: the YAML `authors:` table
+//! (`AC: Ann Counsel  # 9 revisions, 2026-10-01T09:00:00Z`), a revision's
+//! tag note (`r1+2 @AC`, `r1 @AC; r2 @JD`, `header1.r4 @AC 2026-…`) and a
+//! comment's head (`c5 @AC: `, `c6 @AS re c5: `, `c7 @AC resolved: `).
+//! `jubarte read` writes them (`from_docx::agent`, `from_docx::header`).
+
+use std::collections::HashMap;
+
+use super::xml::Label;
+
+/// An author of the `authors:` table: the full name, and the timestamp
+/// every one of their changes and comments shares, when they share one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Author {
+    pub name: String,
+    pub date: Option<String>,
+    /// The first and last days of an author whose marks have several
+    /// timestamps (`# 2 revisions, 2026-03-02..2026-03-04`).
+    pub range: Option<(String, String)>,
+}
+
+/// The `authors:` table of a YAML header, by handle. `document_owner` is
+/// not an author.
+pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
+    let mut table = HashMap::new();
+    let mut inside = false;
+    for line in yaml.lines() {
+        // A blank or comment line does not end the block, as in YAML.
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            inside = opens_authors(line);
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let Some((handle, rest)) = line.trim_start().split_once(':') else {
+            continue;
+        };
+        if handle == "document_owner" || !is_handle(handle) {
+            continue;
+        }
+        let (value, comment) = scalar_and_comment(rest.trim_start());
+        // `??: ""` is the empty author's line: kept, so its marks keep the
+        // date it says, or none.
+        if value.is_empty() && handle != UNNAMED {
+            continue;
+        }
+        let last = comment.and_then(|c| c.rsplit(',').next()).map(str::trim);
+        // A bare day (`2026-03-02`) is that day's midnight.
+        let date = last.and_then(|d| {
+            if super::write::is_date(d) {
+                Some(d.to_string())
+            } else {
+                let midnight = format!("{d}T00:00:00Z");
+                super::write::is_date(&midnight).then_some(midnight)
+            }
+        });
+        let range = last.and_then(day_range);
+        table.insert(
+            handle.to_string(),
+            Author {
+                name: value,
+                date,
+                range,
+            },
+        );
+    }
+    table
+}
+
+/// The formatting change a page or section entry names: `Letter
+/// portrait, margins 1in; fmt r17 @AL` or `{p2-p9, fmt: r5 @AC, …}`.
+pub(super) fn section_format(text: &str) -> Option<Tag> {
+    let at = text
+        .find("; fmt ")
+        .map(|at| at + 6)
+        .or_else(|| text.find("fmt: ").map(|at| at + 5))?;
+    let rest = &text[at..];
+    let rest = rest.strip_prefix('"').map_or(rest, |quoted| quoted);
+    let end = [
+        ", headers: ",
+        ", footers: ",
+        ", columns: ",
+        ", page: ",
+        "\"",
+        "}",
+    ]
+    .iter()
+    .filter_map(|key| rest.find(key))
+    .min()
+    .unwrap_or(rest.len());
+    first_tag(rest[..end].trim())
+}
+
+/// The handles whose `authors:` note dates them with a range that ends
+/// before it starts (`2026-03-04..2026-03-02`): no date is read for them.
+pub(super) fn reversed_ranges(yaml: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut inside = false;
+    for line in yaml.lines() {
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            inside = opens_authors(line);
+            continue;
+        }
+        let Some((handle, rest)) = line.trim_start().split_once(':').filter(|_| inside) else {
+            continue;
+        };
+        let (_, comment) = scalar_and_comment(rest.trim_start());
+        if let Some((first, last)) = comment
+            .and_then(|c| c.rsplit(',').next())
+            .map(str::trim)
+            .and_then(|d| d.split_once(".."))
+            && day_range(&format!("{last}..{first}")).is_some()
+            && first != last
+        {
+            found.push(handle.to_string());
+        }
+    }
+    found
+}
+
+/// What a Markdown file's front matter gives every comment and change
+/// that names none of its own: the top-level `author:`, and the file's
+/// date (`last_modified:`, else `modified:`, `date:`, `created:`).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct FileDefaults {
+    pub author: Option<String>,
+    pub date: Option<String>,
+    /// A date key whose value is no timestamp: `(key, value)`.
+    pub unread: Option<(String, String)>,
+}
+
+/// The front matter's [`FileDefaults`]; none without front matter.
+pub(super) fn file_defaults(markdown: &str) -> FileDefaults {
+    const DATES: [&str; 4] = ["last_modified", "modified", "date", "created"];
+    let mut defaults = FileDefaults::default();
+    let text = markdown.strip_prefix('\u{feff}').unwrap_or(markdown);
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
+        return defaults;
+    };
+    let lines: Vec<&str> = rest.lines().map(|l| l.trim_end_matches('\r')).collect();
+    // Front matter ends at its closing `---` or `...`; a file that only
+    // opens with a thematic break has none.
+    let Some(end) = lines.iter().position(|l| *l == "---" || *l == "...") else {
+        return defaults;
+    };
+    let mut dates: Vec<(usize, String, String)> = Vec::new();
+    for line in &lines[..end] {
+        if line.starts_with([' ', '\t', '#']) {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        // `author: ~` or `null` names no one, as `document_owner:` does.
+        if key == "author" && names_no_owner(value.trim_start()) {
+            continue;
+        }
+        let (value, _) = scalar_and_comment(value.trim_start());
+        let value = super::critic::decode(&value);
+        if value.is_empty() {
+            continue;
+        }
+        if key == "author" {
+            defaults.author.get_or_insert(value);
+        } else if let Some(rank) = DATES.iter().position(|d| *d == key) {
+            dates.push((rank, key.to_string(), value));
+        }
+    }
+    dates.sort_by_key(|(rank, _, _)| *rank);
+    for (_, key, value) in dates {
+        let midnight = format!("{value}T00:00:00Z");
+        if super::write::is_date(&value) {
+            defaults.date = Some(value);
+            break;
+        } else if super::write::is_date(&midnight) {
+            defaults.date = Some(midnight);
+            break;
+        } else if defaults.unread.is_none() {
+            defaults.unread = Some((key, value));
+        }
+    }
+    defaults
+}
+
+/// `2026-03-02..2026-03-04`: the first and last days.
+fn day_range(text: &str) -> Option<(String, String)> {
+    let (first, last) = text.split_once("..")?;
+    // A bare day, or a timestamp's day (`2026-03-02T10:00:00+02:00`).
+    let day = |d: &str| {
+        let d = d.trim();
+        let day = d.get(..10)?;
+        (super::write::is_date(&format!("{day}T00:00:00Z"))
+            && (d.len() == 10 || super::write::is_date(d)))
+        .then(|| day.to_string())
+    };
+    let (first, last) = (day(first)?, day(last)?);
+    (first <= last).then_some((first, last))
+}
+
+/// Who owns the document, as `authors: document_owner:` and its note say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Owner {
+    /// `dc:creator`; a name with no note, too.
+    Creator(String),
+    /// `cp:lastModifiedBy`, and no `dc:creator`.
+    LastModifiedBy(String),
+    /// `none`: core properties naming nobody.
+    Unnamed,
+    /// `none # no docProps/core.xml`: no core properties.
+    NoPart,
+}
+
+/// Whether `line` opens the `authors:` block, a comment after it or not
+/// (`authors: # the legend`).
+fn opens_authors(line: &str) -> bool {
+    line.split_once(" #")
+        .map_or(line, |(key, _)| key)
+        .trim_end()
+        == "authors:"
+}
+
+/// The `document_owner:` of a YAML header's `authors:`; `None` also for an
+/// empty or null one (`document_owner:`, `~`, `null`), which names no
+/// owner to write: the document's own stays.
+pub(super) fn document_owner(yaml: &str) -> Option<Owner> {
+    let rest = owner_value(yaml)?;
+    let (value, comment) = scalar_and_comment(rest);
+    if names_no_owner(rest) {
+        return None;
+    }
+    let comment = comment.unwrap_or("");
+    // `none` names nobody, unless quoted or noted as the element that
+    // holds it (`none # dc:creator`: someone called none).
+    let nobody = value == "none"
+        && !rest.starts_with(['"', '\''])
+        && !comment.starts_with("dc:creator")
+        && !comment.starts_with("cp:lastModifiedBy");
+    Some(if nobody {
+        if comment.starts_with("no docProps/core.xml") {
+            Owner::NoPart
+        } else {
+            Owner::Unnamed
+        }
+    } else if comment.starts_with("cp:lastModifiedBy") {
+        Owner::LastModifiedBy(value)
+    } else {
+        Owner::Creator(value)
+    })
+}
+
+/// Whether the header has a `document_owner:` that names no one to
+/// write: empty (`document_owner:`, `""`) or null (`~`, `null`).
+pub(super) fn empty_owner(yaml: &str) -> bool {
+    owner_value(yaml).is_some_and(names_no_owner)
+}
+
+fn names_no_owner(rest: &str) -> bool {
+    let (value, _) = scalar_and_comment(rest);
+    let quoted = rest.starts_with(['"', '\'']);
+    value.is_empty() || (!quoted && matches!(value.as_str(), "~" | "null" | "Null" | "NULL"))
+}
+
+/// The text after the first `document_owner:` of `authors:`.
+fn owner_value(yaml: &str) -> Option<&str> {
+    let mut inside = false;
+    for line in yaml.lines() {
+        // A blank or comment line does not end the block, as in YAML.
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            inside = opens_authors(line);
+            continue;
+        }
+        let Some(rest) = line
+            .trim_start()
+            .strip_prefix("document_owner:")
+            .filter(|_| inside)
+        else {
+            continue;
+        };
+        // `document_owner:  # a note` holds no value.
+        let rest = rest.trim_start();
+        return Some(if rest.starts_with('#') { "" } else { rest });
+    }
+    None
+}
+
+/// Letters and digits: the view's handles (`from_docx::agent`).
+/// An author's handle: letters and digits, or `??`, the reader's handle
+/// for a mark whose author is missing or empty.
+fn is_handle(text: &str) -> bool {
+    text == UNNAMED || (!text.is_empty() && text.chars().all(char::is_alphanumeric))
+}
+
+/// The handle of a mark with no author's name.
+pub(super) const UNNAMED: &str = "??";
+
+/// A YAML scalar as `header::scalar` writes it (plain, or a JSON-quoted
+/// string), and the `# comment` after it.
+pub(super) fn scalar_and_comment(text: &str) -> (String, Option<&str>) {
+    if text.starts_with('"') {
+        let mut de = serde_json::Deserializer::from_str(text).into_iter::<String>();
+        if let Some(Ok(value)) = de.next() {
+            let rest = text[de.byte_offset()..].trim_start();
+            return (value, rest.strip_prefix('#').map(str::trim));
+        }
+        return (String::new(), None);
+    }
+    // A YAML single-quoted scalar: `''` is one quote, the next lone `'` ends it.
+    if let Some(body) = text.strip_prefix('\'') {
+        let mut value = String::new();
+        let mut chars = body.char_indices().peekable();
+        while let Some((at, c)) = chars.next() {
+            if c != '\'' {
+                value.push(c);
+            } else if chars.next_if(|&(_, next)| next == '\'').is_some() {
+                value.push('\'');
+            } else {
+                let rest = body[at + 1..].trim_start();
+                return (value, rest.strip_prefix('#').map(str::trim));
+            }
+        }
+        return (String::new(), None);
+    }
+    // `key:  # note`: YAML reads a comment, and the value is null.
+    if let Some(comment) = text.strip_prefix('#') {
+        return (String::new(), Some(comment.trim()));
+    }
+    match text.split_once(" #") {
+        Some((value, comment)) => (value.trim().to_string(), Some(comment.trim())),
+        None => (text.trim().to_string(), None),
+    }
+}
+
+/// One tag of a revision note: who and, when the note says, when.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Tag {
+    pub handle: String,
+    pub date: Option<String>,
+    /// The `w:id`s it names, in order (`r1+2` → 1, 2); none for `noid`.
+    pub ids: Vec<u32>,
+}
+
+/// The tags of a revision note, `r1+2 @AC` or `r1 @AC; r2 @JD 2026-…`;
+/// `None` for any other comment text. Each id part must be a change id
+/// (`crate::ids`), or `noid` for a mark without a `w:id`.
+pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
+    text.trim()
+        .split("; ")
+        .map(|tag| {
+            let mut words = tag.split(' ');
+            let id = words.next()?;
+            let handle = words.next()?.strip_prefix('@')?;
+            let date = words.next();
+            if words.next().is_some() || !is_handle(handle) {
+                return None;
+            }
+            // A bare number (`5 @AC`) is a person's comment, not a tag.
+            let id_ok = !id.starts_with(|c: char| c.is_ascii_digit())
+                && (id == "noid"
+                    || id.strip_suffix(".noid").is_some()
+                    || crate::ids::parse_change_ids(id).is_ok());
+            let date_ok = date.is_none_or(super::write::is_date);
+            (id_ok && date_ok && !id.starts_with('#')).then(|| Tag {
+                handle: handle.to_string(),
+                date: date.map(str::to_string),
+                ids: crate::ids::parse_change_ids(id)
+                    .map(|ids| {
+                        ids.iter()
+                            .filter_map(|c| c.wid.parse().ok())
+                            .filter(|&id| id <= MOST_ID)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a
+/// larger number a view names is left for a fresh one.
+pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
+
+/// A comment head the view writes: `c5 @AC: `, `c5 @AC 2026-…: `,
+/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CommentHead {
+    /// The comment's number in the source (`c5` → 5).
+    pub number: u32,
+    pub handle: Option<String>,
+    pub date: Option<String>,
+    /// The number of the comment this one replies to.
+    pub reply_to: Option<u32>,
+    pub resolved: bool,
+}
+
+/// What a table's id line says about its rows (`<!-- t0 4x7, cells
+/// t0.row0 p1-p13 t0.row1 p14-p50, header row repeats -->`): how many
+/// paragraphs each row holds, when it counts them row by row, and whether
+/// its first row repeats on each page. `None` for any other line.
+pub(super) struct TableLine {
+    /// Each row's first paragraph and paragraph count, row by row.
+    pub row_paragraphs: Option<Vec<(usize, usize)>>,
+    /// The first paragraph of a table whose every cell holds one (`cells
+    /// p8-p16 by row`).
+    pub one_per_cell: Option<usize>,
+    pub header_repeats: bool,
+    /// The cell paragraphs' mark changes, by paragraph (`break-ins r3 @SW
+    /// in p1`): true for an insertion.
+    pub marks: HashMap<usize, (bool, Tag)>,
+    /// The grid's columns (`4x7`).
+    pub columns: Option<usize>,
+    /// The table's alignment (`t0 center 4x7`), as Word's `jc` value.
+    pub align: Option<&'static str>,
+    /// The merged cells by row and cell (`merged t0.row0.cell1 across 2
+    /// down 3`): the grid columns each spans and the rows it covers.
+    pub merges: HashMap<(usize, usize), (usize, usize)>,
+    /// Cell paragraphs aligned against their column (`p5 center`), as
+    /// Word's `jc` value, by paragraph.
+    pub aligns: HashMap<usize, &'static str>,
+    /// The table's style (`style Ledger`) when tables differ in theirs.
+    pub style: Option<String>,
+    /// A comment's range runs through the table (`in c5`).
+    pub in_comment: bool,
+    /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
+    /// r15 @AL in t0.row1.cell0`): its own, its rows' and its cells'.
+    pub fmt: Option<Tag>,
+    /// Word's `w:tblGridChange`, which names no author (`r17 @??`).
+    pub grid_fmt: Option<u32>,
+    pub row_fmt: HashMap<usize, Tag>,
+    pub cell_fmt: HashMap<(usize, usize), Tag>,
+    /// The cell paragraphs' formatting changes (`fmt r9 @AL in p4`), by
+    /// paragraph number.
+    pub para_fmt: HashMap<usize, Vec<Tag>>,
+    /// A row's own insertion or deletion, when it has no text to show it
+    /// (`rev r6 @AC in t0.row1`, `rev-del …`): whether it is inserted.
+    pub row_marks: HashMap<usize, (bool, Tag)>,
+    /// A cell's own insertion, deletion or merge (`rev r5 @AC in
+    /// t0.row1.cell2`, `rev-del …`, `rev-merge …`).
+    pub cell_marks: HashMap<(usize, usize), (CellMark, Tag)>,
+    /// The grid columns each row leaves out before and after its cells
+    /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
+    pub gaps: HashMap<usize, (usize, usize)>,
+}
+
+/// A cell's own change: `w:cellIns`, `w:cellDel` or `w:cellMerge`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellMark {
+    Insert,
+    Delete,
+    Merge,
+}
+
+/// The header's `unplaced: [r40 @AL in p1, …]`: each change no other line
+/// shows, and the paragraph it is in. One without a paragraph, or not a
+/// change's tag, is left out.
+pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
+    let (list, _) = value.split_once(" #").unwrap_or((value, ""));
+    let Some(list) = list
+        .trim()
+        .strip_prefix('[')
+        .and_then(|l| l.strip_suffix(']'))
+    else {
+        return Vec::new();
+    };
+    list.split(", ")
+        .filter_map(|entry| {
+            let (entry, _) = scalar_and_comment(entry.trim());
+            let (tag, at) = entry.rsplit_once(" in ")?;
+            Some((crate::ids::short_number(at, 'p')?, first_tag(tag)?))
+        })
+        .collect()
+}
+
+/// The most grid columns a table has, and rows one merged cell reaches: a
+/// bound on what a hand-edited table line can make the reader write (Word
+/// takes 63 columns).
+const MOST_GRID: usize = 64;
+
+pub(super) fn table_line(line: &str) -> Option<TableLine> {
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
+    crate::ids::short_number(id, 't')?;
+    let mut parsed = TableLine {
+        row_paragraphs: None,
+        one_per_cell: None,
+        header_repeats: false,
+        marks: HashMap::new(),
+        columns: None,
+        align: None,
+        merges: HashMap::new(),
+        aligns: HashMap::new(),
+        style: None,
+        in_comment: false,
+        fmt: None,
+        grid_fmt: None,
+        row_fmt: HashMap::new(),
+        cell_fmt: HashMap::new(),
+        para_fmt: HashMap::new(),
+        row_marks: HashMap::new(),
+        cell_marks: HashMap::new(),
+        gaps: HashMap::new(),
+    };
+    for (i, clause) in rest.split(", ").enumerate() {
+        // `p5 center`: a cell paragraph aligned against its column.
+        if let Some((at, word)) = clause.split_once(' ')
+            && let Some(at) = crate::ids::short_number(at, 'p')
+            && let Some(jc) = match word {
+                "left" => Some("left"),
+                "center" => Some("center"),
+                "right" => Some("right"),
+                "justify" => Some("both"),
+                _ => None,
+            }
+        {
+            parsed.aligns.insert(at, jc);
+            continue;
+        }
+        if clause == "header row repeats" {
+            parsed.header_repeats = true;
+        }
+        if clause.strip_prefix("in ").is_some_and(comment_numbers) {
+            parsed.in_comment = true;
+        }
+        if let Some(rows) = clause.strip_prefix("gaps ") {
+            for row in rows.split("; ") {
+                let mut words = row.split(' ');
+                let Some(r) = words.next().and_then(row_of) else {
+                    continue;
+                };
+                let (mut before, mut after) = (0, 0);
+                while let (Some(word), Some(Ok(n))) =
+                    (words.next(), words.next().map(str::parse::<usize>))
+                {
+                    match word {
+                        "before" => before = n.min(MOST_GRID),
+                        "after" => after = n.min(MOST_GRID),
+                        _ => {}
+                    }
+                }
+                parsed.gaps.insert(r, (before, after));
+            }
+        }
+        if let Some(changes) = clause.strip_prefix("fmt ") {
+            for change in changes.split("; ") {
+                let (tag, at) = change
+                    .rsplit_once(" in ")
+                    .map_or((change, None), |(tag, at)| (tag, Some(at)));
+                // The grid's change has no author to name: `@??` on the
+                // table itself.
+                let grid = at.is_none() && tag.ends_with(&format!(" @{UNNAMED}"));
+                let Some(tag) = first_tag(tag).filter(|_| !grid) else {
+                    if at.is_none()
+                        && let Some(id) = tag.strip_suffix(" @??").and_then(|id| {
+                            crate::ids::parse_change_ids(id)
+                                .ok()?
+                                .first()?
+                                .wid
+                                .parse()
+                                .ok()
+                        })
+                    {
+                        parsed.grid_fmt = Some(id);
+                    }
+                    continue;
+                };
+                match at {
+                    None => parsed.fmt = Some(tag),
+                    Some(at) => {
+                        if let Some(cell) = row_and_cell(at) {
+                            parsed.cell_fmt.insert(cell, tag);
+                        } else if let Some(row) = row_of(at) {
+                            parsed.row_fmt.insert(row, tag);
+                        } else if let Some(p) = crate::ids::short_number(at, 'p') {
+                            parsed.para_fmt.entry(p).or_default().push(tag);
+                        }
+                    }
+                }
+            }
+        }
+        for (word, kind) in [
+            ("rev ", CellMark::Insert),
+            ("rev-del ", CellMark::Delete),
+            ("rev-merge ", CellMark::Merge),
+        ] {
+            let Some(marks) = clause.strip_prefix(word) else {
+                continue;
+            };
+            // `r6 @AC in t0.row1; r5 @AC in t0.row1.cell2`
+            for mark in marks.split("; ") {
+                let Some((tag, at)) = mark.rsplit_once(" in ") else {
+                    continue;
+                };
+                let Some(tag) = first_tag(tag) else { continue };
+                if let Some(cell) = row_and_cell(at) {
+                    parsed.cell_marks.insert(cell, (kind, tag));
+                } else if let Some(row) = row_of(at)
+                    && kind != CellMark::Merge
+                {
+                    parsed
+                        .row_marks
+                        .insert(row, (kind == CellMark::Insert, tag));
+                }
+            }
+        }
+        if let Some(style) = clause.strip_prefix("style ").filter(|s| !s.is_empty()) {
+            parsed.style = Some(style.to_string());
+        }
+        // The size opens the clauses, after the alignment: `center 3x2`.
+        if i == 0
+            && let Some((_, columns)) = clause.rsplit(' ').next().and_then(|s| s.split_once('x'))
+        {
+            parsed.columns = columns.parse().ok().filter(|&n| n <= MOST_GRID);
+            parsed.align = match clause.split(' ').next() {
+                Some("center") => Some("center"),
+                Some("right") => Some("right"),
+                _ => None,
+            };
+        }
+        if let Some(cells) = clause.strip_prefix("merged ") {
+            // `t0.row0.cell1 across 2 down 3; t0.row2.cell0 down 2`
+            for cell in cells.split("; ") {
+                let mut words = cell.split(' ');
+                let Some((row, at)) = words.next().and_then(row_and_cell) else {
+                    continue;
+                };
+                let (mut across, mut down) = (1, 1);
+                while let (Some(word), Some(Ok(n))) =
+                    (words.next(), words.next().map(str::parse::<usize>))
+                {
+                    match word {
+                        "across" => across = n.clamp(1, MOST_GRID),
+                        "down" => down = n.clamp(1, MOST_GRID),
+                        _ => {}
+                    }
+                }
+                parsed.merges.insert((row, at), (across, down));
+            }
+        }
+        for (word, inserted) in [("break-ins ", true), ("break-del ", false)] {
+            let Some(marks) = clause.strip_prefix(word) else {
+                continue;
+            };
+            // `r3 @SW in p1; r4 @SW in p2`
+            for mark in marks.split("; ") {
+                if let Some((tag, at)) = mark.rsplit_once(" in ")
+                    && let Some(at) = crate::ids::short_number(at, 'p')
+                    && let Some(tag) = first_tag(tag)
+                {
+                    parsed.marks.insert(at, (inserted, tag));
+                }
+            }
+        }
+        let Some(rows) = clause.strip_prefix("cells ") else {
+            continue;
+        };
+        if let Some(range) = rows.strip_suffix(" by row") {
+            let first = range.split_once('-').map_or(range, |(first, _)| first);
+            parsed.one_per_cell = crate::ids::short_number(first, 'p');
+            continue;
+        }
+        // `t0.row0 p1-p13 t0.row1 p14`: a row, then its paragraphs.
+        let words: Vec<&str> = rows.split(' ').collect();
+        parsed.row_paragraphs = words
+            .chunks(2)
+            .map(|pair| {
+                let range = pair.get(1)?;
+                let (first, last) = range.split_once('-').unwrap_or((range, range));
+                let first = crate::ids::short_number(first, 'p')?;
+                let last = crate::ids::short_number(last, 'p')?;
+                last.checked_sub(first)?
+                    .checked_add(1)
+                    .map(|count| (first, count))
+            })
+            .collect();
+    }
+    Some(parsed)
+}
+
+/// The row and cell of `t0.row2.cell1`.
+/// `t0.row2` → 2.
+fn row_of(id: &str) -> Option<usize> {
+    let mut parts = id.split('.').skip(1);
+    let row = parts.next()?.strip_prefix("row")?.parse().ok()?;
+    parts.next().is_none().then_some(row)
+}
+
+fn row_and_cell(id: &str) -> Option<(usize, usize)> {
+    let mut parts = id.split('.').skip(1);
+    let row = parts.next()?.strip_prefix("row")?.parse().ok()?;
+    let cell = parts.next()?.strip_prefix("cell")?.parse().ok()?;
+    parts.next().is_none().then_some((row, cell))
+}
+
+/// The most empty paragraphs one id line stands for: a bound on what a
+/// hand-edited range (`p0-p4294967295 empty`) can make the reader write.
+const MOST_EMPTY: usize = 100_000;
+
+/// The id of a note definition's id line, `endnotes.p0` in
+/// `<!-- endnotes.p0 -->`, when it starts with `part`.
+fn note_line<'l>(line: &'l str, part: &str) -> Option<&'l str> {
+    let id = line
+        .trim()
+        .strip_prefix("<!--")?
+        .split_whitespace()
+        .next()?
+        .trim_end_matches("-->");
+    id.strip_prefix(part)
+        .filter(|rest| {
+            rest.split_once('.')
+                .is_some_and(|(_, p)| p.starts_with('p'))
+        })
+        .map(|_| id)
+}
+
+/// How many paragraphs a note definition's id line counts: one for
+/// `<!-- footnotes.p2 -->`, two for `<!-- endnotes.p2-p3, rev … -->`.
+pub(super) fn note_paragraphs(line: &str) -> Option<usize> {
+    let id = note_line(line, "footnotes").or_else(|| note_line(line, "endnotes"))?;
+    let (_, range) = id.split_once('.')?;
+    let range = range.trim_end_matches(',');
+    let (first, last) = range.split_once('-').unwrap_or((range, range));
+    let first = crate::ids::short_number(first, 'p')?;
+    let last = crate::ids::short_number(last, 'p')?;
+    last.checked_sub(first)?.checked_add(1)
+}
+
+/// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).
+pub(super) fn endnote_line(line: &str) -> bool {
+    note_line(line, "endnotes").is_some()
+}
+
+/// Whether `line` is a footnote definition's id line (`<!-- footnotes.p1 -->`).
+pub(super) fn footnote_line(line: &str) -> bool {
+    note_line(line, "footnotes").is_some()
+}
+
+/// How many empty paragraphs an id line stands for: `<!-- p2 empty -->`
+/// one, `<!-- p2-p4 BodyText empty -->` three; `None` for any other line.
+pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
+    let count = match id.split_once('-') {
+        Some((first, last)) => {
+            let first = crate::ids::short_number(first, 'p')?;
+            let last = crate::ids::short_number(last, 'p')?;
+            last.checked_sub(first)?.checked_add(1)?
+        }
+        None => {
+            crate::ids::short_number(id, 'p')?;
+            1
+        }
+    };
+    // `empty` is a clause of its own, or the first clause after the style
+    // name (`BodyText empty`).
+    let empty = rest.split(", ").enumerate().any(|(i, clause)| {
+        clause == "empty"
+            || (i == 0
+                && clause
+                    .split_once(' ')
+                    .is_some_and(|(_, tail)| tail == "empty"))
+    });
+    (empty && count <= MOST_EMPTY).then_some(count)
+}
+
+/// The words that open an id line's clauses (`center`, `left 0.5in`,
+/// `break-ins r3 @AC`): any other word after the id is a style.
+const CLAUSE_WORDS: [&str; 18] = [
+    "empty",
+    "center",
+    "right",
+    "justify",
+    "left",
+    "first-line",
+    "hanging",
+    "bullet",
+    "num",
+    "level",
+    "page-break",
+    "section-break",
+    "break-ins",
+    "break-del",
+    "fmt",
+    "rev",
+    "comments",
+    "in",
+];
+
+/// What a paragraph's id line says about it (`<!-- p5 TitlePage center,
+/// first-line 0.5in -->`): its style, alignment (`w:jc`) and indents in
+/// twips.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct IdLine {
+    pub style: Option<String>,
+    pub align: Option<&'static str>,
+    pub first_line: Option<i64>,
+    pub hanging: Option<i64>,
+    pub left: Option<i64>,
+    pub right: Option<i64>,
+    /// The paragraph holds a page break (`page-break`).
+    pub page_break: bool,
+    /// The paragraph ends a section (`section-break`).
+    pub section_break: bool,
+    /// The list label (`num "(a)"`, `bullet`).
+    pub label: Option<Label>,
+    /// The label's list level (`level 2`), when not the first.
+    pub level: Option<u32>,
+    /// The paragraph mark's insertion (`break-ins r4 @AC`).
+    pub break_ins: Option<Tag>,
+    /// The paragraph mark's deletion (`break-del r6 @AC`).
+    pub break_del: Option<Tag>,
+    /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
+    pub fmt: Vec<Tag>,
+    /// The marks its text shows nothing of (`rev r9 @AL`).
+    pub rev: Vec<Tag>,
+}
+
+/// The id line of one paragraph (`pN`, not a range); `None` for any
+/// other line.
+pub(super) fn id_line(line: &str) -> Option<IdLine> {
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
+    crate::ids::short_number(id, 'p')?;
+    let mut parsed = IdLine::default();
+    // The label first: its quotes may hold `, `.
+    let (rest, label) = take_label(rest);
+    parsed.label = label.map(Label::Text);
+    let rest = rest.as_str();
+    let mut clauses = rest.split(", ").filter(|c| !c.is_empty()).peekable();
+    // The style is the head's second word: `p5 TitlePage[ clause]`.
+    if let Some(first) = clauses.peek().copied() {
+        let (word, tail) = first.split_once(' ').unwrap_or((first, ""));
+        if !CLAUSE_WORDS.contains(&word) {
+            parsed.style = Some(word.to_string());
+            clauses.next();
+            if !tail.is_empty() {
+                parsed.clause(tail);
+            }
+        }
+    }
+    for clause in clauses {
+        parsed.clause(clause);
+    }
+    Some(parsed)
+}
+
+impl IdLine {
+    fn clause(&mut self, clause: &str) {
+        let twips = |value: &str| {
+            let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
+            let twips = (inches * 1440.0).round();
+            // `as` cannot overflow: the bound is checked first.
+            (twips.is_finite() && twips.abs() <= 31_680.0).then_some(twips as i64)
+        };
+        match clause.split_once(' ') {
+            None => {
+                self.align = match clause {
+                    "center" => Some("center"),
+                    "right" => Some("right"),
+                    "justify" => Some("both"),
+                    "left" => Some("left"),
+                    _ => self.align,
+                };
+                self.page_break |= clause == "page-break";
+                self.section_break |= clause == "section-break";
+                if clause == "bullet" {
+                    self.label = Some(Label::Bullet);
+                }
+            }
+            Some(("first-line", v)) => self.first_line = twips(v),
+            Some(("hanging", v)) => self.hanging = twips(v),
+            Some(("left", v)) => self.left = twips(v),
+            Some(("right", v)) => self.right = twips(v),
+            Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
+            // A mark has one change: the first tag names it.
+            Some(("break-ins", v)) => self.break_ins = first_tag(v),
+            Some(("break-del", v)) => self.break_del = first_tag(v),
+            Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
+            Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
+            Some(_) => {}
+        }
+    }
+}
+
+/// `c5 c6`: the comment numbers of an `in` clause.
+fn comment_numbers(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .split(' ')
+            .all(|id| crate::ids::short_number(id, 'c').is_some())
+}
+
+/// The clauses without their `num "…"` one, and its label (`\\` and `\"`
+/// unescaped). The clause opens the line, follows `, `, or follows the
+/// style (`BodyText num "(a)"`).
+fn take_label(rest: &str) -> (String, Option<String>) {
+    let style_end = rest.find([' ', ',']);
+    let start = rest.match_indices("num \"").map(|(i, _)| i).find(|&i| {
+        i == 0
+            || rest[..i].ends_with(", ")
+            || style_end.is_some_and(|end| end + 1 == i && rest.as_bytes()[end] == b' ')
+    });
+    let Some(start) = start else {
+        return (rest.to_string(), None);
+    };
+    let mut label = String::new();
+    let mut chars = rest[start + 5..].char_indices();
+    let mut end = None;
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some((_, escaped)) => label.push(escaped),
+                None => break,
+            },
+            '"' => {
+                end = Some(start + 5 + i + 1);
+                break;
+            }
+            c => label.push(c),
+        }
+    }
+    let Some(end) = end else {
+        return (rest.to_string(), None);
+    };
+    let before = rest[..start].trim_end_matches(", ").trim_end();
+    let after = rest[end..].trim_start_matches(", ").trim_start();
+    let joined = match (before.is_empty(), after.is_empty()) {
+        (true, _) => after.to_string(),
+        (false, true) => before.to_string(),
+        // After the style the next clause joins with a space, as the
+        // view prints it; after a clause, with `, `.
+        (false, false) if rest[..start].ends_with(", ") => format!("{before}, {after}"),
+        (false, false) => format!("{before} {after}"),
+    };
+    (joined, Some(label))
+}
+
+fn first_tag(text: &str) -> Option<Tag> {
+    revision_tags(text)?.into_iter().next()
+}
+
+/// The head of `text` and the comment text after it.
+pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
+    let (head, body) = text.split_once(": ").or_else(|| {
+        // A comment with no text: `c5 @AC:` at the end.
+        text.strip_suffix(':').map(|head| (head, ""))
+    })?;
+    let mut words = head.split(' ').peekable();
+    // `c5`, never a bare `5`: a person's comment such as `3: item three` is
+    // text, not a head.
+    let id = words.next().filter(|w| w.starts_with('c'))?;
+    let number = crate::ids::parse_comment_id(id).ok()?;
+    let mut parsed = CommentHead {
+        number,
+        handle: None,
+        date: None,
+        reply_to: None,
+        resolved: false,
+    };
+    if let Some(handle) = words.peek().and_then(|w| w.strip_prefix('@')) {
+        if !is_handle(handle) {
+            return None;
+        }
+        parsed.handle = Some(handle.to_string());
+        words.next();
+    }
+    if let Some(date) = words.peek().filter(|w| super::write::is_date(w)) {
+        parsed.date = Some((*date).to_string());
+        words.next();
+    }
+    match (words.next(), words.next(), words.next()) {
+        (None, ..) => {}
+        (Some("resolved"), None, _) => parsed.resolved = true,
+        (Some("re"), Some(root), None) if root.starts_with('c') => {
+            parsed.reply_to = Some(crate::ids::parse_comment_id(root).ok()?);
+        }
+        _ => return None,
+    }
+    Some((parsed, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quoted_scalars_unescape_and_keep_their_comment() {
+        assert_eq!(
+            scalar_and_comment(r#""a \"b\" #c" # note"#),
+            (r#"a "b" #c"#.to_string(), Some("note"))
+        );
+        assert_eq!(
+            scalar_and_comment("'it''s #1' # note"),
+            ("it's #1".to_string(), Some("note"))
+        );
+        assert_eq!(scalar_and_comment("'open"), (String::new(), None));
+        assert_eq!(
+            scalar_and_comment("plain # c"),
+            ("plain".to_string(), Some("c"))
+        );
+    }
+
+    #[test]
+    fn a_blank_line_inside_authors_keeps_the_block_open() {
+        let yaml = "authors:\n  AL: Ann Lee\n\n# a note\n  document_owner: Bo Ray # dc:creator\n";
+        assert_eq!(
+            document_owner(yaml),
+            Some(Owner::Creator("Bo Ray".to_string()))
+        );
+        let yaml = "authors:\n\n  AL: Ann Lee\n";
+        assert!(authors(yaml).contains_key("AL"));
+    }
+
+    #[test]
+    fn note_id_lines_name_their_part() {
+        assert!(endnote_line("<!-- endnotes.p0 -->"));
+        assert!(endnote_line("<!-- endnotes.p1-p2, rev endnotes.r4 @AL -->"));
+        assert!(endnote_line("<!-- endnotes.p3-->"));
+        assert!(!endnote_line("<!-- footnotes.p0 -->"));
+        assert!(footnote_line("<!-- footnotes.p1 -->"));
+        assert!(!footnote_line("<!-- p1 -->"));
+        assert!(!footnote_line("<!-- footnotes -->"));
+        assert!(!endnote_line("endnotes.p0"));
+    }
+
+    #[test]
+    fn id_lines_carry_alignment_and_indents() {
+        let line =
+            id_line("<!-- p0 BodyText center, first-line 0.5in, left -0.25in, right 1in -->")
+                .unwrap();
+        assert_eq!(line.align, Some("center"));
+        assert_eq!(line.first_line, Some(720));
+        assert_eq!(line.left, Some(-360));
+        assert_eq!(line.right, Some(1440));
+        assert_eq!(line.hanging, None);
+        let line = id_line("<!-- p1 justify, hanging 0.3in -->").unwrap();
+        assert_eq!(
+            (line.style, line.align, line.hanging),
+            (None, Some("both"), Some(432))
+        );
+        // Out of Word's range, or not inches: no indent.
+        let line = id_line("<!-- p2 left 99in, right 3cm, first-line NaNin -->").unwrap();
+        assert_eq!((line.left, line.right, line.first_line), (None, None, None));
+        assert_eq!(id_line("<!-- p2-p4 empty -->"), None);
+    }
+
+    #[test]
+    fn id_lines_name_their_style() {
+        for (line, style) in [
+            ("<!-- p5 TitlePage -->", Some("TitlePage")),
+            (
+                "<!-- p5 TitlePage center, first-line 0.5in -->",
+                Some("TitlePage"),
+            ),
+            ("<!-- p5 BodyText, page-break -->", Some("BodyText")),
+            ("<!-- p5 BodyText right 1in -->", Some("BodyText")),
+            ("<!-- p5 center -->", None),
+            ("<!-- p5 left 0.5in -->", None),
+            ("<!-- p5 -->", None),
+            ("<!-- p5 empty -->", None),
+            ("<!-- t0 TableGrid -->", None),
+            ("<!-- page 3 of 9 -->", None),
+            ("p5 TitlePage", None),
+        ] {
+            let named = id_line(line).and_then(|l| l.style);
+            assert_eq!(named.as_deref(), style, "{line}");
+        }
+    }
+
+    #[test]
+    fn empty_id_lines_count_their_paragraphs() {
+        for (line, count) in [
+            ("<!-- p2 empty -->", Some(1)),
+            ("<!-- p2-p4 empty -->", Some(3)),
+            ("<!-- p2-p4 BodyText empty -->", Some(3)),
+            ("<!-- p7 empty, page-break -->", Some(1)),
+            ("  <!-- p0 empty -->  ", Some(1)),
+            ("<!-- p2 -->", None),
+            ("<!-- p2 BodyText center -->", None),
+            ("<!-- p2 Empty -->", None),
+            ("<!-- p2 BodyText, empty -->", Some(1)),
+            ("<!-- p4-p2 empty -->", None),
+            ("<!-- p02 empty -->", None),
+            ("<!-- t0 empty -->", None),
+            ("<!-- p0-p100000 empty -->", None),
+            ("<!-- p0-p18446744073709551615 empty -->", None),
+            ("<!-- p0-p99999 empty -->", Some(100_000)),
+            ("p2 empty", None),
+        ] {
+            assert_eq!(empty_paragraphs(line), count, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_table_lines_row_count_stays_inside_usize() {
+        // A hand-edited range ending at usize::MAX is not a row count.
+        for line in [
+            "<!-- t0 1x1, cells t0.row0 p0-p18446744073709551615 -->",
+            "<!-- t0 1x1, cells t0.row0 p5-p3 -->",
+        ] {
+            assert_eq!(table_line(line).unwrap().row_paragraphs, None, "{line}");
+        }
+        let line = table_line("<!-- t0 1x1, cells t0.row0 p0-p2 t0.row1 p3 -->").unwrap();
+        assert_eq!(line.row_paragraphs, Some(vec![(0, 3), (3, 1)]));
+    }
+
+    #[test]
+    fn the_authors_table_names_each_handle() {
+        let yaml = "source: r.docx\nauthors:\n  document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy\n  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z\n  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z\n  JD: \"Jo #1 Doe\"  # 2 revisions, 2026-10-01..2026-10-02\n  R: Redline\nbody: p0-p20\n  XX: not an author\n";
+        let table = authors(yaml);
+        assert_eq!(table.len(), 4, "{table:?}");
+        assert_eq!(
+            table["AC"],
+            Author {
+                name: "Ann Counsel".into(),
+                date: Some("2026-10-01T09:00:00Z".into()),
+                range: None,
+            }
+        );
+        assert_eq!(table["AS"].date.as_deref(), Some("2026-10-09T16:13:00Z"));
+        assert_eq!(
+            table["JD"],
+            Author {
+                name: "Jo #1 Doe".into(),
+                date: None,
+                range: Some(("2026-10-01".into(), "2026-10-02".into())),
+            }
+        );
+        assert_eq!(table["R"].date, None);
+    }
+
+    #[test]
+    fn revision_notes_are_tags_and_nothing_else_is() {
+        let tag = |handle: &str, date: Option<&str>, ids: &[u32]| Tag {
+            handle: handle.into(),
+            date: date.map(str::to_string),
+            ids: ids.to_vec(),
+        };
+        assert_eq!(revision_tags("r0 @AC"), Some(vec![tag("AC", None, &[0])]));
+        assert_eq!(
+            revision_tags("r1+2 @AC"),
+            Some(vec![tag("AC", None, &[1, 2])])
+        );
+        assert_eq!(
+            revision_tags("r1 @AC; r2 @JD 2026-10-02T08:00:00Z"),
+            Some(vec![
+                tag("AC", None, &[1]),
+                tag("JD", Some("2026-10-02T08:00:00Z"), &[2])
+            ])
+        );
+        assert_eq!(
+            revision_tags("header1.r4 @AC"),
+            Some(vec![tag("AC", None, &[4])])
+        );
+        assert_eq!(
+            revision_tags("Header_1:rev:4 @AC"),
+            Some(vec![tag("AC", None, &[4])])
+        );
+        // A long id's w:id need not be a number; `noid` names none.
+        assert_eq!(
+            revision_tags("body:rev:x9 @AC"),
+            Some(vec![tag("AC", None, &[])])
+        );
+        assert_eq!(revision_tags("noid @AC"), Some(vec![tag("AC", None, &[])]));
+        for text in [
+            "Ann Counsel (2026-10-01T09:00:00Z)",
+            "r0 @AC: why?",
+            "r0 AC",
+            "p3 @AC",
+            "r0 @A-C",
+            "r0 @AC tomorrow",
+            "#12 @AC",
+            "please check r0 @AC",
+            // A person's comment that happens to look like a tag (pi review).
+            "5 @AC",
+            "12 @home",
+            "1+2 @AC",
+            "",
+        ] {
+            assert_eq!(revision_tags(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn comment_heads_carry_author_date_thread_and_state() {
+        let (head, text) = comment_head("c5 @AC: Is one percent the cap?").unwrap();
+        assert_eq!(
+            head,
+            CommentHead {
+                number: 5,
+                handle: Some("AC".into()),
+                date: None,
+                reply_to: None,
+                resolved: false
+            }
+        );
+        assert_eq!(text, "Is one percent the cap?");
+        let (head, text) = comment_head("c6 @AS re c5: Disagree.").unwrap();
+        assert_eq!(
+            (head.number, head.reply_to, text),
+            (6, Some(5), "Disagree.")
+        );
+        let (head, _) = comment_head("c7 @AC 2026-10-01T09:00:00Z resolved: ok").unwrap();
+        assert!(head.resolved);
+        assert_eq!(head.date.as_deref(), Some("2026-10-01T09:00:00Z"));
+        let (head, text) = comment_head("c8:").unwrap();
+        assert_eq!((head.handle, text), (None, ""));
+        assert_eq!(comment_head("c9: a: b").unwrap().1, "a: b");
+        for text in [
+            "Note: hi",
+            "c5 @AC re: x",
+            "c5 @AC maybe: x",
+            "p5 @AC: x",
+            "c5 @A-C: x",
+        ] {
+            assert_eq!(comment_head(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_persons_comment_is_not_a_head() {
+        // pi review of #462: `c5: x` without a handle and `3: item three`
+        // kept their prefix only by luck; a bare number is never a head.
+        for text in ["3: item three", "5 @AC: x", "Note: hi", "c5 @AC re 4: x"] {
+            assert_eq!(comment_head(text), None, "{text}");
+        }
+        assert!(comment_head("c5 @AC re c4: x").is_some());
+    }
+}
+
+/// A section's page as the view's YAML header prints it (`page: A4
+/// landscape, margins 0.5in, header/footer 0.49in`), in twips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PageSetup {
+    pub width: u32,
+    pub height: u32,
+    pub landscape: bool,
+    /// Top, right, bottom, left.
+    pub margins: [u32; 4],
+    pub header: u32,
+    pub footer: u32,
+    pub gutter: u32,
+    /// Text columns and the gap between them.
+    pub columns: u32,
+    pub column_gap: u32,
+}
+
+impl PageSetup {
+    /// The `w:sectPr` of this page.
+    pub(super) fn sect_pr(&self) -> String {
+        let [top, right, bottom, left] = self.margins;
+        let num = if self.columns > 1 {
+            format!(" w:num=\"{}\"", self.columns)
+        } else {
+            String::new()
+        };
+        let orient = if self.landscape {
+            " w:orient=\"landscape\""
+        } else {
+            ""
+        };
+        format!(
+            "<w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
+             w:right=\"{right}\" w:bottom=\"{bottom}\" w:left=\"{left}\" w:header=\"{}\" \
+             w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"{}\"{num}/></w:sectPr>",
+            self.width, self.height, self.header, self.footer, self.gutter, self.column_gap
+        )
+    }
+}
+
+/// The most text columns Word lets a section have.
+const MOST_COLUMNS: u32 = 45;
+
+/// The largest page side or margin a view can set: Word's 22 inches.
+const MOST_PAGE: u32 = 31_680;
+
+/// Twips from the view's inches (`0.49in`), within Word's page.
+fn page_twips(value: &str) -> Option<u32> {
+    let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
+    let twips = (inches * 1440.0).round();
+    // `as` cannot overflow: the bound is checked first.
+    (twips.is_finite() && (0.0..=f64::from(MOST_PAGE)).contains(&twips)).then_some(twips as u32)
+}
+
+/// The page `text` names: `Letter portrait`, `A4 landscape`, `8.5x14in
+/// portrait`, then `margins 1in` (or `margins top 1in, right 1.25in,
+/// bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header 0.5in,
+/// footer 0.6in`), `gutter 0.2in`, `columns 2` and `column gap 0.25in`.
+/// A `; fmt …` tail is left out.
+pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
+    let text = text.split(';').next()?.trim();
+    let mut clauses = text.split(", ");
+    let (size, orientation) = clauses.next()?.rsplit_once(' ')?;
+    let landscape = match orientation {
+        "landscape" => true,
+        "portrait" => false,
+        _ => return None,
+    };
+    let (width, height) = match size {
+        "Letter" => (12_240, 15_840),
+        "Legal" => (12_240, 20_160),
+        "A4" => (11_906, 16_838),
+        // `8.5x14in`: the sheet as it lies, not its short side first.
+        custom => {
+            let (w, h) = custom.split_once('x')?;
+            let (w, h) = (page_twips(&format!("{w}in"))?, page_twips(h)?);
+            (w.min(h), w.max(h))
+        }
+    };
+    let (width, height) = if landscape {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let mut page = PageSetup {
+        width,
+        height,
+        landscape,
+        margins: [1440; 4],
+        header: 720,
+        footer: 720,
+        gutter: 0,
+        columns: 1,
+        column_gap: 720,
+    };
+    for clause in clauses {
+        let (name, value) = clause.rsplit_once(' ')?;
+        if name == "columns" {
+            page.columns = value
+                .parse()
+                .ok()
+                .filter(|n| (1..=MOST_COLUMNS).contains(n))?;
+            continue;
+        }
+        let twips = page_twips(value)?;
+        match name {
+            "margins" => page.margins = [twips; 4],
+            "margins top" | "top" => page.margins[0] = twips,
+            "right" => page.margins[1] = twips,
+            "bottom" => page.margins[2] = twips,
+            "left" => page.margins[3] = twips,
+            "header/footer" => (page.header, page.footer) = (twips, twips),
+            "header" => page.header = twips,
+            "footer" => page.footer = twips,
+            "gutter" => page.gutter = twips,
+            "column gap" => page.column_gap = twips,
+            _ => return None,
+        }
+    }
+    Some(page)
+}
+
+/// A `sections:` entry of the view's YAML header (`  2: {p30-p103, page:
+/// Letter landscape, margins 1in, headers: {…}}`): the section's number and
+/// its page, when it names one (else it keeps the first section's).
+pub(super) fn section_page(line: &str) -> Option<(usize, Option<PageSetup>)> {
+    let (number, entry) = line.trim().split_once(": ")?;
+    let number: usize = number.parse().ok()?;
+    let entry = entry.strip_prefix('{')?;
+    let Some((_, page)) = entry.split_once(", page: ") else {
+        return Some((number, None));
+    };
+    // The page's own clauses end where the entry's next key starts.
+    let end = [", fmt: ", ", headers: ", ", footers: ", ", columns: "]
+        .iter()
+        .filter_map(|key| page.find(key))
+        .min()
+        .or_else(|| page.rfind('}'))
+        .unwrap_or(page.len());
+    Some((number, page_setup(&page[..end])))
+}

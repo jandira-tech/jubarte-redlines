@@ -13,7 +13,7 @@ download, no server round-trip):
 | Package | What it is |
 |---|---|
 | [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm) | the library: compare, changes, revisions, PDF, inspection, edit plans |
-| [`jubarte-redlines`](https://www.npmjs.com/package/jubarte-redlines) | the CLI: `npx jubarte-redlines …`, same shared command set |
+| [`jubarte-redlines`](https://www.npmjs.com/package/jubarte-redlines) | the CLI: `npx jubarte-redlines …`, ten of the native tasks (see [CLI usage](#cli-usage)) |
 
 For the other surfaces see [docs/rust.md](rust.md) and
 [docs/python.md](python.md).
@@ -55,12 +55,12 @@ also pass the source yourself: `await init({ module_or_path: url })`.
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount` and `updateFields` |
 | `jubarte-wasm/web-slim` | slim, browser ESM | same export set as `node-slim` |
 
 The slim builds drop the PDF engine and its embedded Carlito/Liberation
-fonts, shrinking the wasm from ~13 MB to ~3.9 MB; redline output is
-identical.
+fonts; redline output is identical. The size saving is now small: in
+0.12.0 the full wasm is 17.47 MB and the slim one 17.45 MB.
 
 ## API reference
 
@@ -469,6 +469,17 @@ editReportJsonl(report_json: string): string
 The JSON-lines form of a report (`load`, one `op` per operation,
 `summary`), for agent logs.
 
+### `editingModeConflict`
+
+```typescript
+editingModeConflict(plan: string, docx: Uint8Array): string | undefined
+```
+
+Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
+it keeps and does not itself accept or reject; `undefined` when none.
+
+Mirrors `jubarte::edit::flags::editing_mode_conflict`.
+
 ### `flagPlan`
 
 ```typescript
@@ -540,10 +551,22 @@ listComments(docx: Uint8Array, author?: string | null, latest?: boolean | null):
 
 List every comment as a JSON array string (the objects `jubarte comments
 --json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
-`done`, `paragraph`, `anchor_text`, `before`, `after`). `author` keeps
-one author's comments; `latest` keeps the newest comment of each thread.
+`done`, `paragraph`, `last_paragraph` when the range ends in a later
+paragraph, `anchor_text`, `before`, `after`). `author` keeps one
+author's comments; `latest` keeps the newest comment of each thread.
 
 Mirrors `jubarte::comments::list_comments` and `select_comments`.
+
+### `markdownStamp`
+
+```typescript
+markdownStamp(text: string, reference?: Uint8Array | null): string
+```
+
+The author and timestamp a Markdown document gives the changes and
+comments that name none, as JSON `[author, date]` (`null` for each it
+does not tell): its front matter, else the reference `.docx`'s creator
+and creation time. The CLI falls back to `Redline` and now.
 
 ### `markdownToDocx`
 
@@ -554,9 +577,12 @@ markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Arra
 Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
 
 `optionsJson` (every field optional): `page` (`"letter"` default, or
-`"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
-writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
-changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+`"a4"`), `author` and `date` (for a change or comment that names none;
+given, they beat the front matter's `author:` and `last_modified:`,
+`modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
+epoch, so the same Markdown writes the same bytes; the CLI dates them now
+instead), `critic` (`true`: CriticMarkup becomes tracked changes and
+comments) and `track_changes` (or `trackChanges`: `"all"`,
 `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
 `.docx`, lends its styles and page setup, and then `page` is ignored.
 Images are written as their alt text, and the engine's warnings are not
@@ -735,7 +761,8 @@ validateDocument(docx: Uint8Array): string
 ```
 
 Word-validity findings beyond the schema as a JSON array (`code`, `set`,
-`severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
+`severity`, `part`, `location`, `ref`, `message`, `word_fatal`,
+`repairable`; `ref` is the short id the CLI prints for `location`);
 `[]` is a pass.
 
 Mirrors `jubarte::validate::validate`.
@@ -764,13 +791,19 @@ npx jubarte-redlines convert redline.docx --revisions word
 npx jubarte-redlines edit contract.docx --plan plan.json --out-dir review
 ```
 
-The shared command set, messages and exit codes match the Python wheel and
-the Rust binary (0 success, 1 error, 2 usage, 3 edit plan refused), but the
-flags differ per surface: PNG pages, `--date` and the other render-side or
-PDF-producing flags need the Python or Rust build, and defaults differ (the
-Rust binary's `--author` is `Redline`; the others ship `jubarte`). The
-generated references below are authoritative. OLE `.doc` and encrypted
-files are refused with a clear message before parsing.
+The npm CLI parses with the native CLI's own parser and has its tasks
+`compare`, `changes`, `accept`, `reject`, `convert`, `diff`, `read`, `edit`,
+`add` and `capabilities`; `visual-diff`, `comments`, `append`, `validate` and
+`scrub` need the Python or Rust build. Messages and exit codes match the
+Python wheel and the Rust binary (0 success, 1 error, 2 usage, 3 edit plan
+refused). A flag the npm CLI cannot honour exits 2 naming it: PNG output,
+`--pages`, `--dpi`, `--update-fields`, `--report`, `--font-report`,
+`--timeout`, `--fail-on-substitution`, `convert --from`, `--resource-path`
+and Markdown output (`-t md`; `read` prints the agent view), `edit
+--pdf`/`--png`/`--revisions`, and `compare --mode powertools`,
+`--detail-threshold`, `--no-paragraph-merge`, `--reference-doc` and
+`--critic`. The generated references below are authoritative. OLE `.doc`
+and encrypted files are refused with a clear message before parsing.
 
 ### CLI reference
 
@@ -855,7 +888,7 @@ Options:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
+  -d, --datetime <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
           output
 
@@ -1038,8 +1071,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
-          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it),
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1121,8 +1154,8 @@ Options:
           Overwrite the output file if it already exists
 
       --id <ID>
-          Only this change: `r12` (as the view and `jubarte changes` print it), `12`,
-          `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable
+          Only this change: `r12` (as the view and `jubarte changes` print it),
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1246,8 +1279,9 @@ Options:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
-          Markdown to Word: their date (ISO 8601); pinned for reproducible output
+  -d, --datetime <ISO8601>
+          Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible
+          output
 
           [default: 1970-01-01T00:00:00Z]
 
@@ -1433,8 +1467,9 @@ Paragraph patch:
 
           [default: Redline]
 
-  -d, --date <ISO8601>
-          When (ISO 8601) [default: now, UTC]; pin it for reproducible output
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
 Formats:
   -t, --to <FORMAT>
@@ -1611,8 +1646,9 @@ Options:
 
           [default: Redline]
 
-      --datetime <ISO8601>
-          Their timestamp (ISO 8601) [default: now, UTC]
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
       --suggesting-mode
           The edits are tracked changes (the default): the file written is the redline
@@ -1757,8 +1793,9 @@ Options:
 
           [default: Redline]
 
-      --datetime <ISO8601>
-          Their timestamp (ISO 8601) [default: now, UTC]
+  -d, --datetime <ISO8601>
+          Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
+          output
 
       --suggesting-mode
           The edits are tracked changes (the default): the file written is the redline

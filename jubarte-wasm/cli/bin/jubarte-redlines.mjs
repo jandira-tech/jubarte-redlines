@@ -173,7 +173,7 @@ const COMMANDS = {
       // Without -o, compare (and the shorthand `A B`) prints the redline's
       // agent view.
       if (o.output == null) {
-        return void printView(wasm.redlineDocuments(a, b, o.author, o.date), o.view, `${fallback} (not written; -o keeps it)`);
+        return void printView(wasm.redlineDocuments(a, b, o.author, o.datetime), o.view, `${fallback} (not written; -o keeps it)`);
       }
       const output = o.output;
       // A .md of two Markdown documents is CriticMarkup; of anything else,
@@ -181,12 +181,12 @@ const COMMANDS = {
       if (o.output_format === "md" && kindOf(original, a, o.old_format) === "md" && kindOf(modified, b, o.new_format) === "md") {
         if (o.view_given) throw new UsageError("read options shape the view; two Markdown documents write CriticMarkup to a .md");
         ensureWritable(output, o.force);
-        const critic = wasm.diffDocumentsCritic(a, b, o.author, o.date);
+        const critic = wasm.diffDocumentsCritic(a, b, o.author, o.datetime);
         write(output, critic);
         return void wrote(o, output, "md", Buffer.byteLength(critic, "utf8"));
       }
       ensureWritable(output, o.force);
-      writeResult(o, wasm.redlineDocuments(a, b, o.author, o.date), `${fallback} (not written; -o keeps it)`, o.view);
+      writeResult(o, wasm.redlineDocuments(a, b, o.author, o.datetime), `${fallback} (not written; -o keeps it)`, o.view);
     },
   },
   diff: {
@@ -208,7 +208,7 @@ const COMMANDS = {
           acceptChanges: o.accept_changes, fullLines: o.full_lines, oldFormat, newFormat,
         }));
       } else {
-        const date = o.date; // the shared parser dated the run (D17)
+        const date = o.datetime; // the shared parser dated the run (D17)
         if (o.format === "critic") {
           if (oldFormat !== "md" || newFormat !== "md") {
             throw new CliError("--format critic needs both documents in Markdown; `jubarte compare OLD NEW` prints their redline as the agent view");
@@ -244,7 +244,18 @@ const COMMANDS = {
     run(_, [file], o) {
       let docx = read(file);
       if (kindOf(file, docx) === "md") {
-        docx = wasm.markdownToDocx(markdownText(file, docx), JSON.stringify({ page: o.page, author: o.author, date: o.date, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
+        const text = markdownText(file, docx);
+        const reference = o.reference_doc == null ? undefined : read(o.reference_doc);
+        // What names no one: the flags, else the front matter, else the
+        // reference's creator and creation time, else Redline and now.
+        let author = o.author;
+        let date = o.datetime;
+        if (author == null || date == null) {
+          const [stampAuthor, stampDate] = JSON.parse(wasm.markdownStamp(text, reference));
+          author ??= stampAuthor ?? "Redline";
+          date ??= stampDate ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+        }
+        docx = wasm.markdownToDocx(text, JSON.stringify({ page: o.page, author, date, critic: !o.no_critic, track_changes: o.track_changes }), reference);
         if (!o.pdf && o.output_format !== "json" && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
           if (o.move_comments || o.changed_pages) {
             throw new CliError("--move-comments / --changed-pages applies to PDF or PNG output only");
@@ -306,14 +317,6 @@ function editPlan(verb, docx, o) {
 
 /** Whether the plan keeps the source's revisions; a plan that is not a JSON
  * object answers no, and the engine then reports it as INVALID_PLAN. */
-function planKeepsRevisions(plan) {
-  try {
-    return JSON.parse(plan)?.existing_revisions === "keep";
-  } catch {
-    return false;
-  }
-}
-
 /** A refused plan's per-operation report on stdout, the error on stderr. */
 function printRefusal(result) {
   const error = JSON.parse(result.json);
@@ -409,9 +412,9 @@ function runEdit(verb, file, o) {
 function applyEdit(verb, file, docx, o) {
   const { plan, notes } = editPlan(verb, docx, o);
   const editing = Boolean(o.editing_mode);
-  if (editing && planKeepsRevisions(plan)) {
-    throw new UsageError("--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject");
-  }
+  // Changes the plan itself accepts or rejects (-p r12 --accept) do not count.
+  const conflict = editing ? wasm.editingModeConflict(plan, docx) : undefined;
+  if (conflict) throw new UsageError(conflict);
   // The plan first: a refused plan prints its whole report, whatever the
   // outputs (D15).
   const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan, path.basename(file));
@@ -604,6 +607,7 @@ function main(argv) {
   try {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(argv), PROG, JSON.stringify(Object.keys(COMMANDS))));
     if ("text" in parsed) {
+      for (const note of parsed.notes ?? []) console.error(note);
       (parsed.stream === "stderr" ? process.stderr : process.stdout).write(parsed.text);
       return parsed.exit_code;
     }

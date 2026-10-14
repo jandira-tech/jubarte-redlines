@@ -5,11 +5,12 @@
 //! The `.docx` package around the written items: built-in parts, or a
 //! reference document's styles, numbering, page setup, headers and footers.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Write as _};
 
 use super::xml::{self, Context, Document, Relate, escape};
 use super::{DocxOptions, MarkdownError, PageSize};
+use crate::comments::CommentFamily;
 use crate::namespaces::W;
 use crate::opc::{PartFs, relative_rel_target};
 use crate::xmllinq::{Dom, serialize_element};
@@ -65,6 +66,29 @@ const KEPT: [&str; 14] = [
     "/people",
 ];
 
+/// Replies (`c6 @AS re c5`) and resolved comments (`c5 @AC resolved`):
+/// Word keys both by the `w14:paraId` of a comment's last paragraph, in
+/// `commentsExtended.xml`. A resolved thread's replies are resolved too, as
+/// Word resolves a thread whole; the view marks only its first comment.
+fn threads(
+    package: &mut PartFs,
+    main: &str,
+    comments: &[xml::Comment],
+) -> Result<(), MarkdownError> {
+    if !comments.iter().any(|c| c.parent.is_some() || c.done) {
+        return Ok(());
+    }
+    let mut family = CommentFamily::load(package, main).map_err(err)?;
+    for comment in comments {
+        family.set_thread(comment.id, comment.parent, comment.done);
+    }
+    for comment in comments.iter().filter(|c| c.done && c.parent.is_none()) {
+        family.set_done(comment.id, true);
+    }
+    family.store(package, main);
+    Ok(())
+}
+
 fn err(message: impl std::fmt::Display) -> MarkdownError {
     MarkdownError::Package(message.to_string())
 }
@@ -98,22 +122,72 @@ pub(super) fn assemble(
     let styles_part = styles_part(&mut package, &main);
     let mut wanted: BTreeSet<&str> = BASE_STYLES.into_iter().collect();
     wanted.extend(document.styles.iter().copied());
+    // The headers and footers the view names take Word's styles for them.
+    for story in document.stories.values().flat_map(|s| &s.stories) {
+        wanted.insert(if story.kind == "header" {
+            "Header"
+        } else {
+            "Footer"
+        });
+    }
     if let Some(styles) = package.part_string(&styles_part) {
-        package.set_part(&styles_part, with_styles(&styles, &wanted).into_bytes());
+        let styles = with_styles(&styles, &wanted);
+        let styles = with_named_styles(&styles, &document.named_styles);
+        let styles = super::view_styles::apply(&styles, &document.style_specs);
+        let styles = with_table_styles(&styles, &document.table_styles);
+        package.set_part(&styles_part, styles.into_bytes());
     }
 
     let num_ids = numbering(&mut package, &main, document);
+    let label_nums = label_numbering(&mut package, &main, document);
+    // A view's YAML header names its sections' pages, headers and footers.
+    let sections = document.section_breaks() + 1;
+    let next_revision = document
+        .revision_ids
+        .values()
+        .flatten()
+        .chain(&document.reserved_ids)
+        .max()
+        .map_or(1, |max| max.saturating_add(1));
+    let people = super::view_stories::People {
+        by_handle: document.people.clone(),
+        author: options.author.clone(),
+        date: options.date.clone(),
+        range_ends: document.story_range_ends.clone(),
+        ..super::view_stories::People::default()
+    };
+    // A header's fresh ids sit far above the body's.
+    let section_stories = super::view_stories::write(
+        &mut package,
+        &main,
+        &document.stories,
+        sections,
+        &people,
+        next_revision
+            .saturating_add(1_000_000)
+            .min(super::view_notes::MOST_ID / 2),
+    );
+    let default_section = section.clone();
+    let section = section_stories.apply(sections, &document.section(sections, &section));
     let text_width = text_width(&section);
     let next_drawing = max_drawing_id(&package) + 1;
     let mut context = Context {
         document,
         author: escape(&options.author).into_owned(),
         date: escape(&options.date).into_owned(),
-        next_revision: 1,
+        next_revision,
+        cursors: HashMap::new(),
+        used_revisions: HashSet::new(),
         num_ids,
-        note_base: 0,
+        label_nums,
+        note_ids: Vec::new(),
+        in_endnote: false,
         next_drawing,
+        next_bookmark: 0,
         text_width,
+        sections_ended: 0,
+        default_section,
+        section_stories,
     };
     let mut media = Media::default();
 
@@ -144,6 +218,7 @@ pub(super) fn assemble(
             &format!("{RELS}/comments"),
             &relative_rel_target(&main, &part),
         );
+        threads(&mut package, &main, &document.comments)?;
     }
     core_properties(&mut package, document);
     package.set_part(
@@ -186,7 +261,7 @@ pub(crate) fn styles_part(package: &mut PartFs, main: &str) -> String {
 }
 
 /// The part next to `main` named `name` (`word/` + `name`).
-fn sibling(main: &str, name: &str) -> String {
+pub(super) fn sibling(main: &str, name: &str) -> String {
     match main.rsplit_once('/') {
         Some((dir, _)) => format!("{dir}/{name}"),
         None => name.to_string(),
@@ -194,7 +269,7 @@ fn sibling(main: &str, name: &str) -> String {
 }
 
 /// The part `main` relates to with the relationship type ending in `kind`.
-fn related(package: &PartFs, main: &str, kind: &str) -> Option<String> {
+pub(super) fn related(package: &PartFs, main: &str, kind: &str) -> Option<String> {
     let rels = package.read_rels_for(main)?;
     let rel = rels
         .items
@@ -346,6 +421,38 @@ fn separators_only(xml: &str) -> String {
 }
 
 /// `styles` with a definition added for each wanted style it lacks.
+/// `styles` with a definition for each table style the view names that it
+/// lacks: the name is the id, on Word's Normal Table, with the legend's
+/// border all round when it gives one.
+fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>) -> String {
+    let missing: String = wanted
+        .iter()
+        .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
+        .map(|(id, border)| {
+            let borders = border.map_or_else(String::new, |sz| {
+                let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+                    .iter()
+                    .map(|side| {
+                        format!("<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
+                    })
+                    .collect();
+                format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
+            });
+            format!(
+                "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{id}\"/>\
+                 <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
+                id = escape(id)
+            )
+        })
+        .collect();
+    match styles.rfind("</w:styles>") {
+        Some(at) if !missing.is_empty() => {
+            format!("{}{missing}{}", &styles[..at], &styles[at..])
+        }
+        _ => styles.to_string(),
+    }
+}
+
 fn with_styles(styles: &str, wanted: &BTreeSet<&str>) -> String {
     let missing: String = wanted
         .iter()
@@ -360,9 +467,31 @@ fn with_styles(styles: &str, wanted: &BTreeSet<&str>) -> String {
     }
 }
 
+/// `styles` with a definition for each style an id line names that it
+/// lacks: the reader's own definition when it has one (`Quote`), else a
+/// paragraph style on Normal.
+fn with_named_styles(styles: &str, named: &BTreeSet<String>) -> String {
+    let missing: String = named
+        .iter()
+        .filter(|id| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
+        .map(|id| xml::style_definition(id).unwrap_or_else(|| xml::named_style_definition(id)))
+        .collect();
+    match styles.rfind("</w:styles>") {
+        Some(at) if !missing.is_empty() => {
+            format!("{}{missing}{}", &styles[..at], &styles[at..])
+        }
+        _ => styles.to_string(),
+    }
+}
+
 /// The largest value of attribute `name` on elements `element` in `xml`.
 fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
-    let mut best = None;
+    attribute_values(xml, element, name).into_iter().max()
+}
+
+/// Every numeric `name` attribute of `element` in `xml`.
+fn attribute_values(xml: &str, element: &str, name: &str) -> Vec<i64> {
+    let mut values = Vec::new();
     let mut rest = xml;
     let open = format!("<{element} ");
     let key = format!("{name}=\"");
@@ -374,11 +503,11 @@ fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
             .map(|i| &tag[i + key.len()..])
             .and_then(|v| v[..v.find('"')?].parse::<i64>().ok())
         {
-            best = Some(best.map_or(value, |b: i64| b.max(value)));
+            values.push(value);
         }
         rest = &rest[tag_end..];
     }
-    best
+    values
 }
 
 /// The numbering part `main` relates to, made empty when there is none.
@@ -420,6 +549,25 @@ fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> 
     (0..document.lists.len())
         .map(|i| first_num + u32::try_from(i).unwrap_or(0))
         .collect()
+}
+
+/// Adds a list for each label an id line names; returns each label's
+/// `w:numId`.
+fn label_numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> {
+    if document.label_uses.is_empty() {
+        return Vec::new();
+    }
+    let Some((_, first_num)) = append_numbering(package, main, |first_abstract, first_num| {
+        xml::label_numbering(
+            &document.labels,
+            &document.label_uses,
+            first_abstract,
+            first_num,
+        )
+    }) else {
+        return Vec::new();
+    };
+    (first_num..).take(document.label_uses.len()).collect()
 }
 
 /// Appends `w:abstractNum`s and `w:num`s to `main`'s numbering part, making
@@ -466,28 +614,39 @@ pub(crate) fn append_numbering(
 /// continuation separator notes, its relationship and its content type when
 /// absent.
 pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String {
-    related(package, main, "/footnotes").unwrap_or_else(|| {
-        let part = sibling(main, "footnotes.xml");
+    ensure_notes_part(package, main, "footnote")
+}
+
+/// The notes part of `kind` (`footnote`, `endnote`) `main` relates to,
+/// made as [`ensure_footnotes_part`] makes one.
+fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
+    related(package, main, &format!("/{kind}s")).unwrap_or_else(|| {
+        let part = sibling(main, &format!("{kind}s.xml"));
         package.add_document_relationship(
             main,
-            &format!("{RELS}/footnotes"),
+            &format!("{RELS}/{kind}s"),
             &relative_rel_target(main, &part),
         );
         package.add_content_type_override(
             &format!("/{part}"),
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            &format!(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}s+xml"
+            ),
         );
+        let separator = |id: i32, name: &str| {
+            format!(
+                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                 <w:r><w:{name}/></w:r></w:p></w:{kind}>"
+            )
+        };
         package.set_part(
             &part,
             format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
-                 <w:footnotes xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\">\
-                 <w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:pPr>\
-                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
-                 <w:r><w:separator/></w:r></w:p></w:footnote>\
-                 <w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:pPr>\
-                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
-                 <w:r><w:continuationSeparator/></w:r></w:p></w:footnote></w:footnotes>"
+                 <w:{kind}s xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\">{}{}</w:{kind}s>",
+                separator(-1, "separator"),
+                separator(0, "continuationSeparator"),
             )
             .into_bytes(),
         );
@@ -495,43 +654,71 @@ pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String 
     })
 }
 
-/// Writes the footnotes into the notes part, making one if needed.
+/// Writes the footnotes and the endnotes into their notes parts, making
+/// each part a kind of note needs.
 fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
-    let part = ensure_footnotes_part(package, main);
-    let Some(existing) = package.part_string(&part) else {
-        return;
-    };
-    let highest = max_attribute(&existing, "w:footnote", "w:id")
-        .unwrap_or(0)
-        .max(0);
-    context.note_base = u32::try_from(highest).unwrap_or(0);
     let document = context.document;
-    let mut notes = String::new();
-    {
-        let mut relate = PartRelate {
-            package,
-            part: part.clone(),
-            media,
-            document,
+    context.note_ids = vec![0; document.notes.len()];
+    for (kind, endnote) in [("footnote", false), ("endnote", true)] {
+        if !document.notes.iter().any(|note| note.endnote == endnote) {
+            continue;
+        }
+        let part = ensure_notes_part(package, main, kind);
+        let Some(existing) = package.part_string(&part) else {
+            continue;
         };
+        let highest = max_attribute(&existing, &format!("w:{kind}"), "w:id")
+            .unwrap_or(0)
+            .max(0);
+        let mut next = u32::try_from(highest).unwrap_or(0);
         for (index, note) in document.notes.iter().enumerate() {
-            let id = context.note_base + u32::try_from(index + 1).unwrap_or(0);
-            let body = xml::story(context, &note.items, &mut relate, Some(note.change));
-            notes.push_str(&format!("<w:footnote w:id=\"{id}\">{body}</w:footnote>"));
+            if note.endnote == endnote {
+                next += 1;
+                context.note_ids[index] = next;
+            }
         }
-    }
-    let mut root = existing;
-    for (prefix, namespace) in [("r", R_NS), ("wp", WP_NS)] {
-        if let Some(at) = root.find("<w:footnotes")
-            && let Some(end) = root[at..].find('>').map(|i| at + i)
-            && !root[at..end].contains(&format!("xmlns:{prefix}="))
+        let mut notes = String::new();
+        // Revision ids are unique within a part, not across them: a note's
+        // mark keeps the id its reference's has in the body.
+        let in_part: HashSet<u32> = ["w:ins", "w:del", "w:moveFrom", "w:moveTo"]
+            .iter()
+            .flat_map(|element| attribute_values(&existing, element, "w:id"))
+            .filter_map(|id| u32::try_from(id).ok())
+            .collect();
+        let outside = std::mem::replace(&mut context.used_revisions, in_part);
         {
-            root.insert_str(end, &format!(" xmlns:{prefix}=\"{namespace}\""));
+            let mut relate = PartRelate {
+                package,
+                part: part.clone(),
+                media,
+                document,
+            };
+            context.in_endnote = endnote;
+            for (index, note) in document.notes.iter().enumerate() {
+                if note.endnote != endnote {
+                    continue;
+                }
+                let id = context.note_ids[index];
+                let body = xml::story(context, &note.items, &mut relate, Some(note.change));
+                notes.push_str(&format!("<w:{kind} w:id=\"{id}\">{body}</w:{kind}>"));
+            }
+            context.in_endnote = false;
         }
-    }
-    if let Some(at) = root.rfind("</w:footnotes>") {
-        root.insert_str(at, &notes);
-        package.set_part(&part, root.into_bytes());
+        context.used_revisions = outside;
+        let mut root = existing;
+        let open = format!("<w:{kind}s");
+        for (prefix, namespace) in [("r", R_NS), ("wp", WP_NS)] {
+            if let Some(at) = root.find(&open)
+                && let Some(end) = root[at..].find('>').map(|i| at + i)
+                && !root[at..end].contains(&format!("xmlns:{prefix}="))
+            {
+                root.insert_str(end, &format!(" xmlns:{prefix}=\"{namespace}\""));
+            }
+        }
+        if let Some(at) = root.rfind(&format!("</w:{kind}s>")) {
+            root.insert_str(at, &notes);
+            package.set_part(&part, root.into_bytes());
+        }
     }
 }
 
@@ -548,43 +735,234 @@ pub(crate) fn max_drawing_id(package: &PartFs) -> u32 {
         .unwrap_or(0)
 }
 
-/// `dc:title` and `dc:creator` from the front matter, when the package has
-/// core properties.
+/// `dc:title`, and the owner (`dc:creator`, or `cp:lastModifiedBy` alone)
+/// from the front matter. A view whose document had no core properties
+/// (`document_owner: none # no docProps/core.xml`) and no title writes
+/// none; a reference without them gets them when the view names someone.
 fn core_properties(package: &mut PartFs, document: &Document) {
-    if document.title.is_none() && document.author.is_none() {
-        return;
-    }
-    let Some(part) = package
+    use super::view_notes::Owner;
+    let part = package
         .parts()
         .into_iter()
-        .find(|name| name.ends_with("core.xml") && name.starts_with("docProps/"))
-    else {
+        .find(|name| name.ends_with("core.xml") && name.starts_with("docProps/"));
+    let owner = document.owner.as_ref();
+    if owner == Some(&Owner::NoPart) && document.title.is_none() && document.author.is_none() {
+        if let Some(part) = part {
+            package.remove_part(&part);
+            package.remove_content_type_override(&part);
+            package.remove_package_relationships_by_type(CORE_PROPERTIES);
+        }
         return;
+    }
+    // The owner line says whom the file names, and so whom the template's
+    // names give way to; a top-level `author:` names the creator only when
+    // there is no owner line.
+    let (creator, editor, named) = match owner {
+        Some(Owner::Creator(name)) => (Some(name), None, true),
+        Some(Owner::LastModifiedBy(name)) => (None, Some(name), true),
+        Some(Owner::Unnamed | Owner::NoPart) => (None, None, true),
+        None => (document.author.as_ref(), None, false),
     };
-    let Some(mut xml) = package.part_string(&part) else {
+    let edits = [
+        CoreEdit {
+            namespace: DC_NS,
+            local: "title",
+            value: document.title.as_deref(),
+            clear: false,
+        },
+        CoreEdit {
+            namespace: DC_NS,
+            local: "creator",
+            value: creator.map(String::as_str),
+            clear: named,
+        },
+        CoreEdit {
+            namespace: CP_NS,
+            local: "lastModifiedBy",
+            value: editor.map(String::as_str),
+            clear: named,
+        },
+    ];
+    if edits.iter().all(|edit| edit.value.is_none()) && (part.is_none() || !named) {
         return;
+    }
+    let (part, xml) = match part {
+        Some(part) => {
+            let Some(xml) = package.part_string(&part) else {
+                return;
+            };
+            (part, xml)
+        }
+        None => {
+            let part = "docProps/core.xml".to_string();
+            package.add_content_type_override(
+                &part,
+                "application/vnd.openxmlformats-package.core-properties+xml",
+            );
+            package.add_package_relationship(CORE_PROPERTIES, &part);
+            let xml = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n\
+                 <cp:coreProperties xmlns:cp=\"{CP_NS}\" xmlns:dc=\"{DC_NS}\" \
+                 xmlns:dcterms=\"http://purl.org/dc/terms/\" \
+                 xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" \
+                 xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"></cp:coreProperties>"
+            );
+            (part, xml)
+        }
     };
-    for (element, value) in [
-        ("dc:title", &document.title),
-        ("dc:creator", &document.author),
-    ] {
-        let Some(value) = value else {
-            continue;
+    if let Some(xml) = edit_core(&xml, &edits) {
+        package.set_part(&part, xml.into_bytes());
+    }
+}
+
+/// The Dublin Core namespace of `dc:title` and `dc:creator`.
+const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
+/// The core properties namespace of `cp:lastModifiedBy`.
+const CP_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+
+/// One core property the view sets (`value`), or clears (`clear`).
+struct CoreEdit<'a> {
+    namespace: &'static str,
+    local: &'static str,
+    value: Option<&'a str>,
+    clear: bool,
+}
+
+/// `xml` with each edited property's first element given its value in
+/// place, keeping its own tag, its later copies dropped, and a property
+/// the part lacks written last in the root. Elements are matched by
+/// namespace, not by spelling, and comments and CDATA pass through
+/// untouched. `None` for XML the reader refuses: the part is then left as
+/// it is.
+fn edit_core(xml: &str, edits: &[CoreEdit<'_>]) -> Option<String> {
+    use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+    use quick_xml::name::ResolveResult;
+    /// `start` holding `value`.
+    fn element(
+        writer: &mut quick_xml::Writer<Vec<u8>>,
+        start: BytesStart<'_>,
+        value: &str,
+    ) -> Option<()> {
+        let end = BytesEnd::new(start.name().as_ref().to_owned());
+        writer.write_event(Event::Start(start)).ok()?;
+        writer
+            .write_event(Event::Text(BytesText::new(value)))
+            .ok()?;
+        writer.write_event(Event::End(end)).ok()
+    }
+    /// The edits the root lacks, written last in it.
+    fn missing(
+        writer: &mut quick_xml::Writer<Vec<u8>>,
+        edits: &[CoreEdit<'_>],
+        written: &[bool],
+        prefixes: &HashMap<String, String>,
+    ) -> Option<()> {
+        for (edit, _) in edits.iter().zip(written).filter(|(_, done)| !**done) {
+            let Some(value) = edit.value else {
+                continue;
+            };
+            let (name, declare) = match prefixes.get(edit.namespace) {
+                Some(prefix) => (format!("{prefix}:{}", edit.local), None),
+                None => {
+                    let prefix = if edit.namespace == DC_NS { "dc" } else { "cp" };
+                    (format!("{prefix}:{}", edit.local), Some(prefix))
+                }
+            };
+            let mut start = BytesStart::new(name.as_str());
+            if let Some(prefix) = declare {
+                start.push_attribute((format!("xmlns:{prefix}").as_str(), edit.namespace));
+            }
+            element(writer, start, value)?;
+        }
+        Some(())
+    }
+    let mut reader = quick_xml::NsReader::from_str(xml);
+    let mut writer = quick_xml::Writer::new(Vec::new());
+    let mut depth = 0usize;
+    // The prefix the root binds to each namespace.
+    let mut prefixes: HashMap<String, String> = HashMap::new();
+    // The edits whose element is written.
+    let mut written = vec![false; edits.len()];
+    let edited = |resolved: &ResolveResult<'_>, local: &str| {
+        let ResolveResult::Bound(namespace) = resolved else {
+            return None;
         };
-        let replacement = format!("<{element}>{}</{element}>", escape(value));
-        let open = format!("<{element}>");
-        let close = format!("</{element}>");
-        let empty = format!("<{element}/>");
-        if let (Some(start), Some(end)) = (xml.find(&open), xml.find(&close)) {
-            xml.replace_range(start..end + close.len(), &replacement);
-        } else if let Some(start) = xml.find(&empty) {
-            xml.replace_range(start..start + empty.len(), &replacement);
-        } else if let Some(at) = xml.rfind("</cp:coreProperties>") {
-            xml.insert_str(at, &replacement);
+        edits.iter().position(|edit| {
+            (edit.value.is_some() || edit.clear)
+                && namespace.as_ref() == edit.namespace
+                && local == edit.local
+        })
+    };
+    loop {
+        let (resolved, event) = reader.read_resolved_event().ok()?;
+        match event {
+            Event::Start(start) => {
+                if depth == 0 {
+                    for attribute in start.attributes().flatten() {
+                        if let Some(prefix) = attribute.key.as_ref().strip_prefix("xmlns:") {
+                            prefixes.insert(attribute.value.to_string(), prefix.to_string());
+                        }
+                    }
+                }
+                if depth == 1
+                    && let Some(at) = edited(&resolved, start.local_name().as_ref())
+                {
+                    reader.read_to_end(start.name()).ok()?;
+                    if let Some(value) = edits[at].value.filter(|_| !written[at]) {
+                        element(&mut writer, start.into_owned(), value)?;
+                    }
+                    written[at] = true;
+                    continue;
+                }
+                depth += 1;
+                writer.write_event(Event::Start(start)).ok()?;
+            }
+            Event::Empty(empty) if depth == 0 => {
+                // `<cp:coreProperties/>`: a root with no properties yet
+                // opens to take the edits.
+                for attribute in empty.attributes().flatten() {
+                    if let Some(prefix) = attribute.key.as_ref().strip_prefix("xmlns:") {
+                        prefixes.insert(attribute.value.to_string(), prefix.to_string());
+                    }
+                }
+                let end = BytesEnd::new(empty.name().as_ref().to_owned());
+                writer.write_event(Event::Start(empty)).ok()?;
+                missing(&mut writer, edits, &written, &prefixes)?;
+                writer.write_event(Event::End(end)).ok()?;
+            }
+            Event::Empty(empty) => {
+                if depth == 1
+                    && let Some(at) = edited(&resolved, empty.local_name().as_ref())
+                {
+                    if let Some(value) = edits[at].value.filter(|_| !written[at]) {
+                        element(&mut writer, empty.into_owned(), value)?;
+                    }
+                    written[at] = true;
+                    continue;
+                }
+                writer.write_event(Event::Empty(empty)).ok()?;
+            }
+            Event::End(end) => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    missing(&mut writer, edits, &written, &prefixes)?;
+                }
+                writer.write_event(Event::End(end)).ok()?;
+            }
+            // A root the part never closes is XML cut short: no edit.
+            Event::Eof if depth > 0 => return None,
+            Event::Eof => break,
+            other => {
+                writer.write_event(other).ok()?;
+            }
         }
     }
-    package.set_part(&part, xml.into_bytes());
+    String::from_utf8(writer.into_inner()).ok()
 }
+
+/// The package relationship to the core properties part.
+const CORE_PROPERTIES: &str =
+    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 
 /// Picture parts added so far, by picture index.
 #[derive(Default)]
@@ -868,6 +1246,24 @@ mod literal_package_metadata_contract_tests {
             core_properties(&mut package, &document);
             assert_eq!(package.part_string("docProps/core.xml").unwrap(), again);
         }
+    }
+
+    #[test]
+    fn a_self_closing_core_root_opens_to_take_the_owner() {
+        let source = r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"/>"#;
+        let edits = [CoreEdit {
+            namespace: DC_NS,
+            local: "creator",
+            value: Some("Ada"),
+            clear: false,
+        }];
+        assert_eq!(
+            edit_core(source, &edits).unwrap(),
+            format!(
+                "{}><dc:creator>Ada</dc:creator></cp:coreProperties>",
+                source.trim_end_matches("/>")
+            )
+        );
     }
 
     #[test]

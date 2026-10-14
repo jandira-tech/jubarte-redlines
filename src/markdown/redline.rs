@@ -83,8 +83,11 @@ pub fn redline(
                         track_changes: TrackChanges::All,
                         author: options.settings.author_for_revisions.clone(),
                         date: options.settings.date_time_for_revisions.clone(),
+                        author_fixed: false,
+                        date_fixed: false,
                         images: options.images,
                         page: PageSize::Letter,
+                        tracking: None,
                     },
                 )?;
                 Ok(written.docx)

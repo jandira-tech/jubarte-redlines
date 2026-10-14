@@ -563,12 +563,13 @@ fn formatting_history_inside_a_kept_change_stays_as_recorded() {
     }
 }
 
-/// Every spelling of a change id selects the same change (plan Task 3).
+/// The short id and the long id the JSON prints select the same change;
+/// expired spellings are refused with the settled one (Arthur, 2026-10-13).
 #[test]
 fn every_spelling_of_a_change_id_selects_the_same_change() {
     let pkg = three_changes();
     let want = accept_changes(&pkg, &filter_ids(&["body:rev:2"])).unwrap();
-    for spelling in ["r2", "2", "#2", "body.r2"] {
+    for spelling in ["r2", "body:rev:2"] {
         assert_eq!(
             accept_changes(&pkg, &filter_ids(&[spelling])).unwrap(),
             want,
@@ -576,17 +577,23 @@ fn every_spelling_of_a_change_id_selects_the_same_change() {
         );
     }
     let both = accept_changes(&pkg, &filter_ids(&["body:rev:1", "body:rev:2"])).unwrap();
-    for spelling in ["r1+2", "1+2", "#1+2"] {
+    assert_eq!(accept_changes(&pkg, &filter_ids(&["r1+2"])).unwrap(), both);
+    for (expired, settled) in [("2", "r2"), ("#2", "r2"), ("1+2", "r1+2"), ("#1+2", "r1+2")] {
+        let err = accept_changes(&pkg, &filter_ids(&[expired])).unwrap_err();
         assert_eq!(
-            accept_changes(&pkg, &filter_ids(&[spelling])).unwrap(),
-            both,
-            "{spelling}"
+            err.to_string(),
+            format!(
+                "{expired}: expected a change id such as r12, r1+2 or header1.r1; \
+                 the settled spelling is {settled}"
+            )
         );
     }
+    let err = accept_changes(&pkg, &filter_ids(&["body.r2"])).unwrap_err();
+    assert!(matches!(err, ChangeError::InvalidId(_)), "{err:?}");
     let err = accept_changes(&pkg, &filter_ids(&["c2"])).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "c2: expected a change id such as r12, header1.r1 or body:rev:12"
+        "c2: expected a change id such as r12, r1+2 or header1.r1"
     );
     assert!(matches!(err, ChangeError::InvalidId(_)), "{err:?}");
     let err = accept_changes(&pkg, &filter_ids(&["r9"])).unwrap_err();

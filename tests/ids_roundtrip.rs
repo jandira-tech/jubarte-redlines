@@ -169,9 +169,10 @@ fn long_body() -> &'static [u8] {
                 inner.push_str(&ins(w, A, &format!("added{i}")));
             }
             if i == 7 {
-                // Two marks one after the other: one substitution, `r3+4`.
-                inner.push_str(&del("3", A, "old"));
+                // Word Compare's order, the insertion then the deletion:
+                // one substitution, `r3+4`.
                 inner.push_str(&ins("4", A, "new"));
+                inner.push_str(&del("3", A, "old"));
             }
             if let Some(ids) = commented_at.get(&i) {
                 inner.push_str(&commented(ids, &format!("noted{i}")));
@@ -472,12 +473,23 @@ fn patterns() -> &'static Patterns {
         table_line: Regex::new(r"^<!-- t(\d+)(?: center| right)? (\d+)x(\d+), (.*) -->$").unwrap(),
         cells_by_row: Regex::new(r"^cells p(\d+)-p(\d+) by row").unwrap(),
         cells_rows: Regex::new(r"t\d+\.row\d+ p(\d+)(?:-p(\d+))?").unwrap(),
-        story: Regex::new(r"\{id: ([^,}\s]+)").unwrap(),
+        // A long story id holds colons, so the header quotes it.
+        story: Regex::new(r#"\{id: "?([^,}\s"]+)"?"#).unwrap(),
         definition: Regex::new(r"^(?:\{(?:--|\+\+))?\[\^\d+\]: ").unwrap(),
     })
 }
 
 /// Splits the view into its YAML header and its body.
+/// A note definition's id line: `<!-- footnotes.p0 -->`, `<!-- endnotes.p2-p3 -->`.
+fn is_note_id_line(line: &str) -> bool {
+    line.strip_prefix("<!-- ")
+        .and_then(|rest| {
+            rest.strip_prefix("footnotes.p")
+                .or_else(|| rest.strip_prefix("endnotes.p"))
+        })
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+}
+
 fn split_view(view: &str) -> (&str, &str) {
     let mut parts = view.splitn(3, "---\n");
     let _ = parts.next();
@@ -594,9 +606,11 @@ fn printed(view: &str) -> Printed {
             continue;
         }
         // A note's definition (`[^1]: …`, or wrapped in the change that
-        // deleted its reference: `{--[^1]: …--}`) closes the paragraph's text.
-        if pat.definition.is_match(line) {
+        // deleted its reference: `{--[^1]: …--}`) closes the paragraph's text,
+        // and so does the definition's own id line (`<!-- footnotes.p0 -->`).
+        if pat.definition.is_match(line) || is_note_id_line(line) {
             current = None;
+            continue;
         }
         if let Some((_, _, Some(text))) = current.and_then(|i| out.paragraphs.get_mut(i)) {
             if !text.is_empty() {
@@ -633,11 +647,15 @@ fn view_text(block: &str) -> String {
     let refs = Regex::new(r"\[\^\d+\]").unwrap();
     let images = Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
-    let text = plain_anchor(block);
+    // `<mailto:a@b>` shows the address the document holds.
+    let text = plain_anchor(block).replace("<mailto:", "<");
     let text = refs.replace_all(&text, "");
     let text = images.replace_all(&text, "");
-    let tags = Regex::new(r"</?[a-z]+>").unwrap();
+    let tags = Regex::new(r#"</?[a-z]+(?:\s[^>]*)?>"#).unwrap();
     let text = tags.replace_all(&text, "");
+    // A field prints `{CODE}result{/}`: only its result is text.
+    let fields = Regex::new(r#"\{[A-Z]+(?:\s(?:[^{}"]|"[^"]*")*)?\}|\{/\}"#).unwrap();
+    let text = fields.replace_all(&text, "");
     letters(&links.replace_all(&text, "]"))
 }
 
@@ -793,17 +811,22 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
     }
     for &(t, rows, cols, a, b) in &printed.tables {
         let cells = table_cells(docx, t, rows, cols);
+        // Every paragraph of every cell, in the settled spelling: the cell
+        // is its first paragraph (`t0.row1.cell2`), the others `.pK`.
         let mut want = Vec::new();
-        let mut retired = Vec::new();
+        let mut settled = Vec::new();
         for (r, c, longs) in &cells {
             for (k, long) in longs.iter().enumerate() {
                 want.push(long.clone());
-                retired.push(format!("t{t}.r{r}.c{c}.p{k}"));
+                settled.push(match k {
+                    0 => format!("t{t}.row{r}.cell{c}"),
+                    k => format!("t{t}.row{r}.cell{c}.p{k}"),
+                });
             }
         }
-        let refs: Vec<&str> = retired.iter().map(String::as_str).collect();
+        let refs: Vec<&str> = settled.iter().map(String::as_str).collect();
         let back = jubarte::edit::long_paragraph_ids(docx, &refs).unwrap();
-        for ((token, long), back) in retired.iter().zip(&want).zip(&back) {
+        for ((token, long), back) in settled.iter().zip(&want).zip(&back) {
             if back.as_ref() != Ok(long) {
                 fail(format!("{token} resolves to {back:?}, not {long}"));
             }
@@ -1047,7 +1070,8 @@ fn every_story_and_every_collision_round_trips() {
         "footer1.r1 @JD",
         "footer2.r4 @JD",
         "footer3.r9 @JD",
-        "hdr.r1 @AC",
+        // Stems outside `header N` / `footer N` keep the long id (spec §2.2).
+        "hdr:rev:1 @AC",
         "Header_1:rev:1 @AC",
         "footnotes.r5 @AC",
         "footnotes.r51000 @JD",
@@ -1079,7 +1103,7 @@ fn every_story_and_every_collision_round_trips() {
         "footnotes.r5",
         "header1.r1",
         "header3.r1",
-        "hdr.r1",
+        "hdr:rev:1",
         "Header_1:rev:1",
         "footnotes.r51000",
         "endnotes.r12",
@@ -1122,4 +1146,62 @@ fn word_redlines_round_trip() {
         }
     }
     report(&fails);
+}
+
+/// codex 4244120691: a long id reads back only when its story is the
+/// document's and its index a number, as `edit -p` reads it.
+#[test]
+fn a_long_id_reads_back_only_when_its_story_and_index_do() {
+    let back = jubarte::edit::long_paragraph_ids(
+        stories(),
+        &["missing:p:0", "body:p:x", "Header_1:p:0", "body:p:0"],
+    )
+    .unwrap();
+    assert!(
+        back[0].as_ref().is_err_and(|e| e.contains("unknown story")),
+        "{back:?}"
+    );
+    assert!(
+        back[1]
+            .as_ref()
+            .is_err_and(|e| e.contains("unknown paragraph id")),
+        "{back:?}"
+    );
+    assert_eq!(back[2], Ok("Header_1:p:0".to_string()));
+    assert_eq!(back[3], Ok("body:p:0".to_string()));
+}
+
+/// codex 4242942149: a header part whose stem a shell would expand
+/// (`hdr!old.xml`) gets a story id that is safe unquoted, and that id
+/// names its change and paragraph back.
+#[test]
+fn a_shell_unsafe_part_stem_prints_a_safe_story_id() {
+    let header = story_xml("hdr", &p(&ins("1", A, "Head")));
+    let docx = docx_with_sect(
+        &para("Body"),
+        &[part("word/hdr!old.xml", HEADER_CT, HEADER_REL, &header)],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let changes = jubarte::changes::list_changes(&docx).unwrap();
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].id, "hdr%21old:rev:1");
+    assert_eq!(changes[0].r#ref, "hdr%21old:rev:1");
+    let stories = jubarte::inspect::stories(&docx).unwrap();
+    assert_eq!(stories[0].id, "hdr%21old");
+    let back = jubarte::edit::long_paragraph_ids(&docx, &["hdr%21old:p:0"]).unwrap();
+    assert_eq!(back[0], Ok("hdr%21old:p:0".to_string()));
+    let accepted = jubarte::changes::accept_changes(
+        &docx,
+        &jubarte::changes::ChangeFilter {
+            ids: Some(vec![changes[0].r#ref.clone()]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        jubarte::changes::list_changes(&accepted)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(view(&docx).contains("hdr%21old"), "{}", view(&docx));
 }

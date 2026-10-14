@@ -27,7 +27,7 @@
 //! with a Markdown backslash (`{\++`), which renders as the original characters
 //! but no longer matches the delimiter.
 
-use super::ooxml::Inline;
+use super::ooxml::{Inline, Marks};
 
 /// A CriticMarkup span kind. Moves are an insertion at their destination and a
 /// deletion at their source.
@@ -125,10 +125,7 @@ enum Leaf {
     /// Document text: escaped when rendered.
     Text {
         text: String,
-        bold: bool,
-        italic: bool,
-        /// Agent view only: `<u>…</u>`.
-        underline: bool,
+        marks: Marks,
         link: Option<String>,
     },
     /// Markdown built by the converter (images, math, note references).
@@ -170,8 +167,11 @@ pub(crate) struct Critic {
     /// The paragraph is joined to more text on the same line (a flattened
     /// table's cells): see [`space_into_last_change`].
     inline_end: bool,
-    /// Agent view: runs of spaces stay as the file holds them.
-    keep_spaces: bool,
+    /// Agent view: runs of spaces stay as the file holds them, and Markdown
+    /// syntax in the text is escaped once neighbouring runs are joined.
+    agent: bool,
+    /// A code block's paragraph: its text is written as is, spaces and all.
+    code_block: bool,
 }
 
 impl Critic {
@@ -184,9 +184,17 @@ impl Critic {
         }
     }
 
-    /// Agent view: keeps runs of spaces as the file holds them.
-    pub(crate) fn set_keep_spaces(&mut self) {
-        self.keep_spaces = true;
+    /// Agent view: keeps runs of spaces as the file holds them and escapes
+    /// Markdown syntax in the text. Word splits runs anywhere, so `==` or
+    /// `~~` can straddle two runs: the escaping waits for the joined text.
+    pub(crate) fn set_agent(&mut self) {
+        self.agent = true;
+    }
+
+    /// A code block's paragraph (`SourceCode`): its text goes in a fence
+    /// unescaped, with its runs of spaces.
+    pub(crate) fn set_code_block(&mut self) {
+        self.code_block = true;
     }
 
     /// Marks the paragraph as joined to more text on the same line.
@@ -195,22 +203,20 @@ impl Critic {
     }
 
     pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
-        self.push_styled(text, (bold, italic, false), link);
+        let marks = Marks {
+            bold,
+            italic,
+            ..Marks::default()
+        };
+        self.push_styled(text, marks, link);
     }
 
     /// [`Critic::push`] with underline, which only the agent view sets.
-    pub(crate) fn push_styled(
-        &mut self,
-        text: &str,
-        (bold, italic, underline): (bool, bool, bool),
-        link: Option<&str>,
-    ) {
+    pub(crate) fn push_styled(&mut self, text: &str, marks: Marks, link: Option<&str>) {
         if !text.is_empty() {
             self.tokens.push(Token::Leaf(Leaf::Text {
                 text: text.to_string(),
-                bold,
-                italic,
-                underline,
+                marks,
                 link: link.map(str::to_string),
             }));
         }
@@ -294,19 +300,22 @@ impl Critic {
         if self.inline_end {
             space_into_last_change(&mut nodes);
         }
+        let escaping = Escaping {
+            plain: self.plain,
+            agent: self.agent,
+            code_block: self.code_block,
+        };
         let mut pieces = Vec::new();
-        render(&nodes, &mut pieces, self.plain, &mut 0);
+        render(&nodes, &mut pieces, escaping, &mut 0);
         wrap_markers(&mut pieces);
         let mut inline = Inline::default();
-        if self.keep_spaces {
+        if self.code_block {
+            inline.verbatim();
+        } else if self.agent {
             inline.keep_spaces();
         }
         for piece in pieces {
-            inline.push_styled(
-                &piece.text,
-                (piece.bold, piece.italic, piece.underline),
-                piece.link.as_deref(),
-            );
+            inline.push_styled(&piece.text, piece.marks, piece.link.as_deref());
         }
         inline
     }
@@ -417,19 +426,11 @@ fn join_text(nodes: Vec<Node>) -> Vec<Node> {
             (
                 Some(Node::Leaf(Leaf::Text {
                     text: before,
-                    bold: b,
-                    italic: i,
-                    underline: u,
+                    marks: m,
                     link: l,
                 })),
-                Node::Leaf(Leaf::Text {
-                    text,
-                    bold,
-                    italic,
-                    underline,
-                    link,
-                }),
-            ) if *b == bold && *i == italic && *u == underline && *l == link => {
+                Node::Leaf(Leaf::Text { text, marks, link }),
+            ) if *m == marks && *l == link => {
                 before.push_str(&text);
             }
             (_, node) => out.push(node),
@@ -486,33 +487,58 @@ fn lift_comments(nodes: Vec<Node>, comments: &mut Vec<Node>) -> Vec<Node> {
 /// notes, which take a link only from the text around them.
 struct Piece {
     text: String,
-    bold: bool,
-    italic: bool,
-    underline: bool,
+    marks: Marks,
     link: Option<String>,
     /// For a marker, the change or comment it belongs to: all of one change's
     /// markers join a link, or none do, so brackets never cross.
     marker: Option<usize>,
 }
 
-fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
+/// How [`render`] escapes document text.
+#[derive(Clone, Copy)]
+struct Escaping {
+    /// No tracked change or comment: nothing can open a CriticMarkup span.
+    plain: bool,
+    /// Agent view: Markdown syntax is escaped too.
+    agent: bool,
+    /// A code block: nothing is escaped.
+    code_block: bool,
+}
+
+impl Escaping {
+    /// `text` escaped; a code span's or a code block's text is written as
+    /// is, since a backslash shows there.
+    fn text(self, text: &str, marks: Marks) -> String {
+        if self.code_block || marks.code {
+            return text.to_string();
+        }
+        match (self.agent, self.plain) {
+            (true, true) => super::agent::escape_markdown(text),
+            (true, false) => escape(&super::agent::escape_markdown(text)),
+            (false, true) => text.to_string(),
+            (false, false) => escape(text),
+        }
+    }
+}
+
+fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut usize) {
     let mut index = 0;
     while index < nodes.len() {
         match (&nodes[index], nodes.get(index + 1)) {
+            // The new text, then the old it replaces: Word's Compare
+            // writes a substitution so, and so the writer puts
+            // `{~~old~>new~~}` back. A deletion before an insertion stays
+            // two changes, in their order.
             (
-                Node::Span(Mark::Deletion, old_by, old),
-                Some(Node::Span(Mark::Insertion, new_by, new)),
-            )
-            | (
                 Node::Span(Mark::Insertion, new_by, new),
                 Some(Node::Span(Mark::Deletion, old_by, old)),
             ) => {
                 *ids += 1;
                 let id = *ids;
                 marker(out, "{~~", id);
-                render(old, out, plain, ids);
+                render(old, out, escaping, ids);
                 marker(out, "~>", id);
-                render(new, out, plain, ids);
+                render(new, out, escaping, ids);
                 marker(out, "~~}", id);
                 match (tag(old_by.as_deref()), tag(new_by.as_deref())) {
                     (Some(a), Some(b)) if same_author(old_by.as_deref(), new_by.as_deref()) => {
@@ -534,38 +560,25 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
                 let id = *ids;
                 let (open, close) = mark.delimiters();
                 marker(out, open, id);
-                render(nodes, out, plain, ids);
+                render(nodes, out, escaping, ids);
                 marker(out, close, id);
                 attribution(out, by.as_deref(), id);
             }
-            (
-                Node::Leaf(Leaf::Text {
-                    text,
-                    bold,
-                    italic,
-                    underline,
-                    link,
-                }),
-                _,
-            ) => {
+            (Node::Leaf(Leaf::Text { text, marks, link }), _) => {
                 out.push(Piece {
-                    text: if plain { text.clone() } else { escape(text) },
-                    bold: *bold,
-                    italic: *italic,
-                    underline: *underline,
+                    text: escaping.text(text, *marks),
+                    marks: *marks,
                     link: link.clone(),
                     marker: None,
                 });
             }
             (Node::Leaf(Leaf::Raw(markdown)), _) => out.push(Piece {
-                text: if plain {
+                text: math_changes(&if escaping.plain {
                     markdown.clone()
                 } else {
                     defuse(markdown)
-                },
-                bold: false,
-                italic: false,
-                underline: false,
+                }),
+                marks: Marks::default(),
                 link: None,
                 marker: None,
             }),
@@ -581,9 +594,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, plain: bool, ids: &mut usize) {
 fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
     out.push(Piece {
         text: text.to_string(),
-        bold: false,
-        italic: false,
-        underline: false,
+        marks: Marks::default(),
         link: None,
         marker: Some(id),
     });
@@ -596,15 +607,8 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
 /// resolve. A change joins only if all its markers do; one that starts inside
 /// the link and ends after it stays outside.
 fn wrap_markers(pieces: &mut [Piece]) {
-    type Format = (bool, bool, bool, Option<String>);
-    let format = |piece: &Piece| -> Format {
-        (
-            piece.bold,
-            piece.italic,
-            piece.underline,
-            piece.link.clone(),
-        )
-    };
+    type Format = (Marks, Option<String>);
+    let format = |piece: &Piece| -> Format { (piece.marks, piece.link.clone()) };
     let mut joined: Vec<Option<Format>> = vec![None; pieces.len()];
     let mut start = 0;
     while start < pieces.len() {
@@ -618,7 +622,7 @@ fn wrap_markers(pieces: &mut [Piece]) {
         let before = start.checked_sub(1).map(|at| format(&pieces[at]));
         let after = pieces.get(end).map(format);
         if let Some(around) =
-            before.filter(|f| *f != (false, false, false, None) && Some(f) == after.as_ref())
+            before.filter(|f| *f != (Marks::default(), None) && Some(f) == after.as_ref())
         {
             joined[start..end].fill(Some(around));
         }
@@ -631,12 +635,10 @@ fn wrap_markers(pieces: &mut [Piece]) {
         .filter_map(|(piece, _)| piece.marker)
         .collect();
     for (piece, around) in pieces.iter_mut().zip(joined) {
-        if let Some((bold, italic, underline, link)) =
+        if let Some((marks, link)) =
             around.filter(|_| piece.marker.is_some_and(|id| !refused.contains(&id)))
         {
-            piece.bold = bold;
-            piece.italic = italic;
-            piece.underline = underline;
+            piece.marks = marks;
             piece.link = link;
         }
     }
@@ -701,6 +703,25 @@ fn defuse(markdown: &str) -> String {
         })
 }
 
+/// An equation's changes (`$A={--π--}r^2$`), which the converter marks
+/// with [`math::INSERT_START`] and its kin so `defuse` leaves them whole.
+fn math_changes(markdown: &str) -> String {
+    use crate::markdown::math;
+    if !markdown.contains([
+        math::INSERT_START,
+        math::INSERT_END,
+        math::DELETE_START,
+        math::DELETE_END,
+    ]) {
+        return markdown.to_string();
+    }
+    markdown
+        .replace(math::INSERT_START, "{++")
+        .replace(math::INSERT_END, "++}")
+        .replace(math::DELETE_START, "{--")
+        .replace(math::DELETE_END, "--}")
+}
+
 /// Appends `prefix` and `body` to `out` after `separator`. When the separator is
 /// itself tracked (a paragraph mark that was inserted or deleted), it is marked
 /// the way the CriticMarkup spec marks a paragraph break (`{++\n\n++}`), with
@@ -757,7 +778,7 @@ pub(crate) fn splice(
 /// The change a rendered part is wholly inside, with its attribution:
 /// `{--gone--}{>>Ana<<}` is `(Deletion, Some("Ana"))`. Document text is
 /// escaped, so the first closer after the opener is the span's own.
-fn whole_change(part: &str) -> Option<Change> {
+pub(crate) fn whole_change(part: &str) -> Option<Change> {
     [Mark::Insertion, Mark::Deletion]
         .into_iter()
         .find_map(|mark| {
@@ -796,24 +817,45 @@ pub(crate) type Part = (String, Option<Change>, (bool, bool));
 /// Joins paragraphs, each paired with the tracked change on the paragraph mark
 /// that ends it. A blank paragraph drops the pending change: its own break stays.
 pub(crate) fn join_marked(parts: Vec<Part>, separator: &str) -> String {
+    join_paragraphs(parts, separator, false)
+}
+
+/// [`join_marked`], keeping a separator for each empty paragraph when
+/// `keep_empty` (the agent view, whose table line counts every paragraph).
+pub(crate) fn join_paragraphs(parts: Vec<Part>, separator: &str, keep_empty: bool) -> String {
     let mut out = String::new();
     let mut pending = None;
     let mut trailing = false;
     // The first paragraph, while it is the only one and wholly one change.
     let mut first = None;
-    for (part, mark, (leading, ends_in_space)) in parts {
+    for (i, (part, mark, (leading, ends_in_space))) in parts.into_iter().enumerate() {
         if part.trim().is_empty() {
-            pending = None;
+            // The agent view keeps an empty paragraph, and its mark's change
+            // goes with the break after it.
+            pending = if keep_empty { mark } else { None };
+            if keep_empty && i > 0 {
+                first = None;
+                out.push_str(separator);
+            }
             continue;
         }
         if out.is_empty() {
             first = whole_change(&part);
-            out = part;
+            if keep_empty && i > 0 {
+                out.push_str(separator);
+            }
+            out.push_str(&part);
         } else {
             // A break with no change of its own goes with a paragraph that is
             // wholly one change, which leaves no stray break once resolved.
+            // The agent view (`keep_empty`) prints the break as its caller
+            // marks it: in a change only when the paragraph's mark is.
             let first = first.take();
-            let change = pending.take().or_else(|| whole_change(&part)).or(first);
+            let change = if keep_empty {
+                pending.take()
+            } else {
+                pending.take().or_else(|| whole_change(&part)).or(first)
+            };
             let space = trailing || leading;
             splice(&mut out, separator, "", &part, change.as_ref(), space);
         }
@@ -884,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn deletion_next_to_insertion_becomes_a_substitution_in_either_order() {
+    fn an_insertion_then_a_deletion_is_a_substitution_and_the_reverse_two_changes() {
         let del_ins = [
             ("open", "-"),
             ("t", "old"),
@@ -901,9 +943,11 @@ mod tests {
             ("t", "old"),
             ("close", "-"),
         ];
-        assert_eq!(script(&del_ins), "{~~old~>new~~}");
+        // Word's Compare writes the new text first; the writer puts
+        // `{~~old~>new~~}` back so. The other order keeps its two changes.
         assert_eq!(script(&ins_del), "{~~old~>new~~}");
-        // Only one pair: a third span stays on its own.
+        assert_eq!(script(&del_ins), "{--old--}{++new++}");
+        // Only one pair: a span before it stays on its own.
         let triple = [
             ("open", "-"),
             ("t", "a"),
@@ -915,7 +959,7 @@ mod tests {
             ("t", "c"),
             ("close", "-"),
         ];
-        assert_eq!(script(&triple), "{~~a~>b~~}{--c--}");
+        assert_eq!(script(&triple), "{--a--}{~~c~>b~~}");
     }
 
     #[test]
@@ -1315,16 +1359,15 @@ mod tests {
     #[test]
     fn a_substitution_names_one_author_or_both() {
         let same = [
-            ("by-", "Ana"),
-            ("t", "old"),
-            ("close", "-"),
             ("by+", "Ana"),
             ("t", "new"),
             ("close", "+"),
+            ("by-", "Ana"),
+            ("t", "old"),
+            ("close", "-"),
         ];
         assert_eq!(script(&same), "{~~old~>new~~}{>>Ana<<}");
-        // Insertion first still reads old ~> new, and each author follows in
-        // the order of old then new.
+        // Each author follows in the order of old then new.
         let different = [
             ("by+", "Bo"),
             ("t", "new"),
@@ -1335,21 +1378,21 @@ mod tests {
         ];
         assert_eq!(script(&different), "{~~old~>new~~}{>>Ana<<}{>>Bo<<}");
         let one_side = [
-            ("open", "-"),
-            ("t", "old"),
-            ("close", "-"),
             ("by+", "Bo"),
             ("t", "new"),
             ("close", "+"),
+            ("open", "-"),
+            ("t", "old"),
+            ("close", "-"),
         ];
         assert_eq!(script(&one_side), "{~~old~>new~~}{>>Bo<<}");
         let other_side = [
-            ("by-", "Ana"),
-            ("t", "old"),
-            ("close", "-"),
             ("open", "+"),
             ("t", "new"),
             ("close", "+"),
+            ("by-", "Ana"),
+            ("t", "old"),
+            ("close", "-"),
         ];
         assert_eq!(script(&other_side), "{~~old~>new~~}{>>Ana<<}");
     }
