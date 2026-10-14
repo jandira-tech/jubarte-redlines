@@ -146,6 +146,18 @@ Status: open; agent finding. `read` prints the whole document; a 300-page redlin
 overflows an agent's context window.
 
 - [ ] A token estimate (`estimate_tokens`, anymd 29-59, calibrated on o200k).
+- [ ] `--head` and `--tail` take a token budget as well as a block count:
+  `--head 8000t` is the leading whole blocks whose estimated tokens fit 8000,
+  and `--tail 8000t` the trailing ones. A bare number stays a block count, as
+  today (`src/cli.rs:88`); a table is one block. A block is never cut, and the
+  first block always prints even when it alone exceeds the budget. The
+  selection line names the estimate (`head 12 (p0-p11, ~7,900 tokens)`). The
+  same `t` budget works in Python (`head=`/`tail=`) and wasm.
+- [ ] Tests:
+  - `--head Nt` and `--tail Nt` on each committed view stay within N estimated
+    tokens, except for a first block that alone exceeds N;
+  - `--head` with a bare number keeps today's output byte for byte;
+  - `--head 0t` reads like `--head 0`.
 - [ ] `read --max-tokens N` stops at a paragraph boundary and prints a
   resume cursor (`page:offset`). `read --cursor C` continues from it (anymd
   63-98, 186-202, 394-425).
