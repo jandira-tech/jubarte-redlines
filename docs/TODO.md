@@ -590,3 +590,16 @@ the 0.12.0 release, whose evidence was measured on zip 8.6.0.
     CSV. Every sha256 must match the CSVs' (600/600 each).
   The legacy `arthrod/jubarte-rs` Renovate PR for this bump (#30) was
   closed in favour of this entry.
+
+## 13. What jubarte takes from anymd (2026-10-14)
+
+Status: open. Plan:
+[superpowers/plans/2026-10-14-anymd-imports.md](superpowers/plans/2026-10-14-anymd-imports.md).
+Six items from a file-by-file scout of `arthrod/anymd`, one PR each:
+
+- [ ] 1. `--pages` cannot exhaust memory (verified: `src/bin/jubarte.rs:657` expands ranges without a bound).
+- [ ] 2. PDF bookmarks, page labels and clickable links, as far as Word's own PDFs carry them.
+- [ ] 3. Pictures in the Markdown view: none lost for want of alt text; `extract_media` wired.
+- [ ] 4. Charts in docx read as tables, read-only (and, separately, PPTX to Markdown).
+- [ ] 5. `read --outline`: an outline of the view.
+- [ ] 6. `read --max-tokens`/`--cursor`: a long view read in parts.
