@@ -1,20 +1,37 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+// SPDX-FileCopyrightText: 2023 Ismael Shakverdiev
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! OpenType MATH constants and vertical glyph stretch.
 //!
 //! Values are font design units. `fallback` supplies the TeX stand-ins
-//! when a face has no MATH table. This stub returns zeros so the tests
-//! fail before the reader exists.
+//! when a face has no MATH table. The stretch and constant reading follow
+//! markdown2pdf's MATH reader (MIT, Ismael Shakverdiev, 2023).
 
-/// The MATH constants this step reads. Font units, except the two
-/// percents, which are fractions of the base size (0.7 = 70%).
+/// The MATH constants this step reads. Font units, except the percents,
+/// which are fractions of the base size (0.7 = 70%).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct MathConstants {
+    pub script_percent: f32,
+    pub script_script_percent: f32,
     pub axis_height: f32,
     pub fraction_rule_thickness: f32,
+    pub fraction_num_shift_up: f32,
+    pub fraction_num_display_shift_up: f32,
+    pub fraction_denom_shift_down: f32,
+    pub fraction_denom_display_shift_down: f32,
+    pub fraction_num_gap_min: f32,
+    pub fraction_num_display_gap_min: f32,
+    pub fraction_denom_gap_min: f32,
+    pub fraction_denom_display_gap_min: f32,
     pub radical_vertical_gap: f32,
+    pub radical_display_vertical_gap: f32,
+    pub radical_rule_thickness: f32,
+    pub radical_extra_ascender: f32,
+    pub radical_kern_before_degree: f32,
+    pub radical_kern_after_degree: f32,
+    pub radical_degree_bottom_raise_percent: f32,
 }
 
 /// One glyph's design-space box. `y` grows up from the baseline.
@@ -55,7 +72,12 @@ pub(crate) enum Stretch {
 }
 
 /// Font bytes plus the constants laid out against them.
+///
+/// The face is parsed on each call. `ttf_parser::Face` borrows the
+/// bytes, so the struct keeps the bytes and not the face.
 pub(crate) struct MathFont {
+    bytes: Vec<u8>,
+    index: u32,
     upem: f32,
     has_math: bool,
     c: MathConstants,
@@ -65,31 +87,38 @@ pub(crate) struct MathFont {
 impl MathFont {
     /// Face 0 of a standalone font. A face with no MATH table still
     /// returns `Some`: constants come from [`Self::fallback`].
-    pub(crate) fn from_bytes(_bytes: &[u8]) -> Option<Self> {
-        Some(Self::zeros(1000.0))
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        Self::from_collection(bytes, 0)
     }
 
     /// One face of a collection. Same contract as [`Self::from_bytes`].
-    pub(crate) fn from_collection(_bytes: &[u8], _index: u32) -> Option<Self> {
-        Some(Self::zeros(1000.0))
+    pub(crate) fn from_collection(bytes: &[u8], index: u32) -> Option<Self> {
+        let face = ttf_parser::Face::parse(bytes, index).ok()?;
+        let upem = f32::from(face.units_per_em());
+        let family = family_name(&face);
+        let (has_math, c) = match face.tables().math.and_then(|m| m.constants) {
+            Some(k) => (true, read_constants(&k)),
+            None => (false, fallback_constants(upem)),
+        };
+        Some(Self {
+            bytes: bytes.to_vec(),
+            index,
+            upem,
+            has_math,
+            c,
+            family,
+        })
     }
 
     /// TeXbook Appendix G stand-ins, in font units of `upem`.
     /// `fallback(1000)` is axis 250 and rule thickness 40.
     pub(crate) fn fallback(upem: f32) -> Self {
-        let _ = upem;
-        Self::zeros(upem)
-    }
-
-    fn zeros(upem: f32) -> Self {
         Self {
+            bytes: Vec::new(),
+            index: 0,
             upem,
             has_math: false,
-            c: MathConstants {
-                axis_height: 0.0,
-                fraction_rule_thickness: 0.0,
-                radical_vertical_gap: 0.0,
-            },
+            c: fallback_constants(upem),
             family: String::new(),
         }
     }
@@ -106,27 +135,164 @@ impl MathFont {
         self.c
     }
 
+    /// Font units to points at `size_pt`.
+    pub(crate) fn scale(&self, units: f32, size_pt: f32) -> f32 {
+        if self.upem == 0.0 {
+            return 0.0;
+        }
+        units * size_pt / self.upem
+    }
+
     pub(crate) fn family_name(&self) -> &str {
         &self.family
     }
 
-    pub(crate) fn glyph_id(&self, _ch: char) -> Option<u16> {
-        Some(1)
+    pub(crate) fn glyph_id(&self, ch: char) -> Option<u16> {
+        self.with_face(|face| face.glyph_index(ch).map(|g| g.0))
+            .flatten()
     }
 
-    pub(crate) fn glyph(&self, _gid: u16) -> Glyph {
-        Glyph {
-            advance: 0.0,
-            y_min: 0.0,
-            y_max: 0.0,
-        }
+    pub(crate) fn glyph(&self, gid: u16) -> Glyph {
+        self.with_face(|face| glyph_metrics(face, gid))
+            .unwrap_or(Glyph {
+                advance: 0.0,
+                y_min: 0.0,
+                y_max: 0.0,
+            })
     }
 
     /// A vertical form of `base` at least `target` font units tall
-    /// (height + depth). The stub returns `base` unchanged.
-    pub(crate) fn stretch_vertical(&self, base: u16, _target: f32) -> Stretch {
-        Stretch::Single(base)
+    /// (height + depth). Variants first, then an assembly, then the
+    /// tallest variant, then `base` itself.
+    pub(crate) fn stretch_vertical(&self, base: u16, target: f32) -> Stretch {
+        self.with_face(|face| stretch_vertical(face, base, target))
+            .unwrap_or(Stretch::Single(base))
     }
+
+    fn with_face<T>(&self, f: impl FnOnce(&ttf_parser::Face<'_>) -> T) -> Option<T> {
+        let face = ttf_parser::Face::parse(&self.bytes, self.index).ok()?;
+        Some(f(&face))
+    }
+}
+
+/// TeXbook Appendix G / plain TeX at 10pt, scaled into `upem`.
+/// The cmsy axis is 2.5pt (0.25 em) and the cmex rule is 0.4pt (0.04 em).
+/// Used only when the face has no MATH table.
+fn fallback_constants(upem: f32) -> MathConstants {
+    let u = |em: f32| em * upem;
+    MathConstants {
+        script_percent: 0.70,
+        script_script_percent: 0.50,
+        axis_height: u(0.25),
+        fraction_rule_thickness: u(0.04),
+        fraction_num_shift_up: u(0.394),
+        fraction_num_display_shift_up: u(0.676),
+        fraction_denom_shift_down: u(0.345),
+        fraction_denom_display_shift_down: u(0.686),
+        fraction_num_gap_min: u(0.10),
+        fraction_num_display_gap_min: u(0.30),
+        fraction_denom_gap_min: u(0.10),
+        fraction_denom_display_gap_min: u(0.30),
+        radical_vertical_gap: u(0.05),
+        radical_display_vertical_gap: u(0.14),
+        radical_rule_thickness: u(0.04),
+        radical_extra_ascender: u(0.04),
+        radical_kern_before_degree: u(0.05),
+        radical_kern_after_degree: u(-0.10),
+        radical_degree_bottom_raise_percent: 0.60,
+    }
+}
+
+fn read_constants(k: &ttf_parser::math::Constants<'_>) -> MathConstants {
+    let v = |m: ttf_parser::math::MathValue<'_>| f32::from(m.value);
+    MathConstants {
+        script_percent: f32::from(k.script_percent_scale_down()) / 100.0,
+        script_script_percent: f32::from(k.script_script_percent_scale_down()) / 100.0,
+        axis_height: v(k.axis_height()),
+        fraction_rule_thickness: v(k.fraction_rule_thickness()),
+        fraction_num_shift_up: v(k.fraction_numerator_shift_up()),
+        fraction_num_display_shift_up: v(k.fraction_numerator_display_style_shift_up()),
+        fraction_denom_shift_down: v(k.fraction_denominator_shift_down()),
+        fraction_denom_display_shift_down: v(k.fraction_denominator_display_style_shift_down()),
+        fraction_num_gap_min: v(k.fraction_numerator_gap_min()),
+        fraction_num_display_gap_min: v(k.fraction_num_display_style_gap_min()),
+        fraction_denom_gap_min: v(k.fraction_denominator_gap_min()),
+        fraction_denom_display_gap_min: v(k.fraction_denom_display_style_gap_min()),
+        radical_vertical_gap: v(k.radical_vertical_gap()),
+        radical_display_vertical_gap: v(k.radical_display_style_vertical_gap()),
+        radical_rule_thickness: v(k.radical_rule_thickness()),
+        radical_extra_ascender: v(k.radical_extra_ascender()),
+        radical_kern_before_degree: v(k.radical_kern_before_degree()),
+        radical_kern_after_degree: v(k.radical_kern_after_degree()),
+        radical_degree_bottom_raise_percent: f32::from(k.radical_degree_bottom_raise_percent())
+            / 100.0,
+    }
+}
+
+fn family_name(face: &ttf_parser::Face<'_>) -> String {
+    face.names()
+        .into_iter()
+        .filter(|n| n.name_id == ttf_parser::name_id::FAMILY)
+        .filter_map(|n| n.to_string())
+        .find(|n| !n.is_empty())
+        .unwrap_or_default()
+}
+
+fn glyph_metrics(face: &ttf_parser::Face<'_>, gid: u16) -> Glyph {
+    let g = ttf_parser::GlyphId(gid);
+    let advance = f32::from(face.glyph_hor_advance(g).unwrap_or(0));
+    match face.glyph_bounding_box(g) {
+        Some(r) => Glyph {
+            advance,
+            y_min: f32::from(r.y_min),
+            y_max: f32::from(r.y_max),
+        },
+        None => Glyph {
+            advance,
+            y_min: 0.0,
+            y_max: 0.0,
+        },
+    }
+}
+
+/// Variants until one is at least `target` tall, else the assembly,
+/// else the tallest variant. Parts stay in MATH order (bottom to top).
+fn stretch_vertical(face: &ttf_parser::Face<'_>, base: u16, target: f32) -> Stretch {
+    let Some(variants) = face.tables().math.and_then(|m| m.variants) else {
+        return Stretch::Single(base);
+    };
+    let Some(con) = variants
+        .vertical_constructions
+        .get(ttf_parser::GlyphId(base))
+    else {
+        return Stretch::Single(base);
+    };
+    for var in con.variants {
+        if f32::from(var.advance_measurement) >= target {
+            return Stretch::Single(var.variant_glyph.0);
+        }
+    }
+    if let Some(asm) = con.assembly {
+        let parts: Vec<AssemblyPart> = asm
+            .parts
+            .into_iter()
+            .map(|p| AssemblyPart {
+                gid: p.glyph_id.0,
+                full_advance: f32::from(p.full_advance),
+                extender: p.part_flags.extender(),
+            })
+            .collect();
+        if !parts.is_empty() {
+            return Stretch::Assembly {
+                parts,
+                overlap: f32::from(variants.min_connector_overlap),
+            };
+        }
+    }
+    if let Some(last) = con.variants.last() {
+        return Stretch::Single(last.variant_glyph.0);
+    }
+    Stretch::Single(base)
 }
 
 #[cfg(test)]
