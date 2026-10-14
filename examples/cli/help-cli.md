@@ -495,15 +495,16 @@ Options:
           directory]
 
   -a, --author <NAME>
-          Markdown to Word: author of the tracked changes and comments
-          
-          [default: Redline]
+          Markdown to Word: author of the tracked changes and comments that name none
+          [default: the front matter's `author:`, else the --reference-doc's creator,
+          else Redline]
 
   -d, --datetime <ISO8601>
-          Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible
+          Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments
+          that carry none [default: the front matter's
+          `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's
+          creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible
           output
-          
-          [default: 1970-01-01T00:00:00Z]
 
       --page <SIZE>
           Markdown to Word: the page size when there is no --reference-doc (one-inch
