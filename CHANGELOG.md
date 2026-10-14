@@ -113,6 +113,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **The view nests list items by indentation.** An item past its list's
+  first level is indented to the content column of the item it nests
+  under, and its id line with it, so the Markdown reads as a nested list
+  at any depth. `level N` stays on the id line only when indentation
+  cannot say it (a list that starts deep, or a skipped level, which adds
+  no indentation). Reading back, an HTML block indented inside a list item
+  no longer leaves a stray empty paragraph.
+
 - **Breaking: jubarte prints short ids.** The agent view tags revisions
   `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
   (a reply names its root, `re c5`); table lines name rows and cells

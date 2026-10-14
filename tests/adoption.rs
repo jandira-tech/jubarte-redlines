@@ -719,7 +719,8 @@ fn markdown_page_markers_count_the_pdf_pages() {
     let numbers: Vec<usize> = markdown
         .lines()
         .filter_map(|l| {
-            l.strip_prefix("<!-- page ")?
+            l.trim_start()
+                .strip_prefix("<!-- page ")?
                 .split(' ')
                 .next()?
                 .parse()

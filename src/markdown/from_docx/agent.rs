@@ -2007,7 +2007,9 @@ fn blocks_of(body: &str) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut page: Option<String> = None;
     for chunk in body.split("\n\n").filter(|c| !c.trim().is_empty()) {
-        let first = chunk.lines().next().unwrap_or("");
+        // A nested list item's id line, and a page marker between nested
+        // items, are indented with the item.
+        let first = chunk.lines().next().unwrap_or("").trim_start();
         if first.starts_with("<!-- page ") {
             page = Some(first.to_string());
             continue;
@@ -2089,11 +2091,13 @@ fn names_handle(text: &str, handle: &str) -> bool {
 }
 
 /// The id line a block opens with (`<!-- p3 … -->`, `<!-- t0 … -->`), or
-/// `""` for a block that opens with document text.
+/// `""` for a block that opens with document text. A nested list item's
+/// id line is indented with its item.
 fn id_line_of(block: &str) -> &str {
     block
         .lines()
         .next()
+        .map(str::trim_start)
         .filter(|line| line.starts_with("<!-- "))
         .unwrap_or("")
 }
@@ -2362,6 +2366,30 @@ pub(crate) fn note_label(note: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
+
+    /// empryo review of #476: a nested item's indented id line opens its
+    /// own block, and an indented page marker still attaches to the block
+    /// after it, so `-p`, `--head`, `--tail` and `--changed` see the item.
+    #[test]
+    fn an_indented_id_line_opens_its_own_block() {
+        let body = "<!-- p0 ListParagraph num \"1.\" -->\n1. One.\n\n\
+                    \x20  <!-- page 2 of 2 -->\n\n\
+                    \x20  <!-- p1 bullet -->\n   - Sub.\n\n<!-- p2 -->\nTwo.";
+        let blocks = blocks_of(body);
+        let spans: Vec<_> = blocks.iter().map(|block| block.span).collect();
+        assert_eq!(spans, [Some((0, 0)), Some((1, 1)), Some((2, 2))]);
+        assert_eq!(blocks[1].page.as_deref(), Some("<!-- page 2 of 2 -->"));
+    }
+
+    /// A nested list item's id line is indented with its item; its mark
+    /// clause and its handle still select the block.
+    #[test]
+    fn an_indented_id_line_still_marks_its_block() {
+        let block = "   <!-- p5 ListParagraph bullet, break-ins r3 @AS -->\n   - Sub.";
+        assert!(is_marked(block));
+        assert!(has_handle(block, "AS", &HashMap::new()));
+        assert!(!has_handle(block, "AC", &HashMap::new()));
+    }
 
     /// pi review of Task 5 F4: a clause key is a mark only with its tag or
     /// comment id after it, so a style or list label reading `rev` keeps no

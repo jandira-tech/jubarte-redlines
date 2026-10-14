@@ -4102,24 +4102,27 @@ fn id_line_number_is_the_label_word_prints() {
     ]
     .concat();
     let out = body(&agent(&common::docx::docx_with(&body_xml, &[numbering]))).to_string();
-    // The level past the first is a clause of its own (`level 1`).
-    for (p, clauses) in [
-        (0, r#""1)""#),
-        (1, r#""a)", level 1"#),
-        (2, r#""b)", level 1"#),
-        (3, r#""2)""#),
-        (4, r#""a)", level 1"#),
-        (5, r#""i)", level 2"#),
-        (6, r#""2.A", level 3"#),
+    // A level past the first is indented under the item it nests in (the
+    // Markdown marker `1.` takes three columns), its id line with it.
+    for (p, indent, clauses) in [
+        (0, 0, r#""1)""#),
+        (1, 3, r#""a)""#),
+        (2, 3, r#""b)""#),
+        (3, 0, r#""2)""#),
+        (4, 3, r#""a)""#),
+        (5, 6, r#""i)""#),
+        (6, 9, r#""2.A""#),
         // pi review r392b tests F5: a quote or backslash in the label is
         // escaped, so the clause still parses.
-        (7, r#""\"Ch\\\" 01", level 4"#),
+        (7, 12, r#""\"Ch\\\" 01""#),
     ] {
+        let indent = " ".repeat(indent);
         assert!(
-            out.contains(&format!("<!-- p{p} num {clauses} -->")),
+            out.contains(&format!("\n{indent}<!-- p{p} num {clauses} -->\n")),
             "p{p} {clauses}:\n{out}"
         );
     }
+    assert!(!out.contains("level"), "{out}");
     assert!(out.contains("1. one\n"), "{out}");
     // pi review r392b F7: a `%k` deeper than the paragraph's level (here
     // `%7` at level 6, undefined) makes Word print no label and no list

@@ -467,7 +467,7 @@ fn patterns() -> &'static Patterns {
         )
         .unwrap(),
         reply: Regex::new(r" re c(\d+)").unwrap(),
-        id_line: Regex::new(r"^<!-- p(\d+)(?:-p(\d+))?(.*) -->$").unwrap(),
+        id_line: Regex::new(r"^ *<!-- p(\d+)(?:-p(\d+))?(.*) -->$").unwrap(),
         line_tag: Regex::new(r"(?:^|[ ,;\[])([^\s,;\[]+) @[A-Za-z0-9?]+").unwrap(),
         comment_word: Regex::new(r"(?:^|[\s,;(])c(\d+)\b").unwrap(),
         table_line: Regex::new(r"^<!-- t(\d+)(?: center| right)? (\d+)x(\d+), (.*) -->$").unwrap(),

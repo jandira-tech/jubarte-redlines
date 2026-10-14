@@ -299,10 +299,23 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   level 2) gets no label, and no list indent, from Word: the view shows
   a plain paragraph. `bullet` is a
   bulleted item. Labels are not document text, and a list body keeps its
-  Markdown marker (`1.`). `level 1` (to `level 8`) follows the label of a
-  paragraph past its list's first level (Word's `w:ilvl`): every list
-  paragraph has its own id line, which ends the Markdown list, so the view
-  prints no list indentation (past one level it would read as code).
+  Markdown marker (`1.`). An item past its list's first level (Word's
+  `w:ilvl`) is indented to the content column of the item it nests under,
+  and its id line with it, so the Markdown reads as a nested list:
+
+  ```markdown
+  <!-- p14 ListNumber num "2." -->
+  2. Whisk dry ingredients.
+
+     <!-- p15 ListNumber bullet -->
+     - Sift the flour twice.
+  ```
+
+  `level 1` (to `level 8`) follows the label only when the indentation
+  cannot say the level: a list that starts past its first level, or an
+  item that skips one. A skipped level adds no indentation (four columns
+  past an item's content would read as code). Reading a view back, an
+  explicit `level N` wins over the indentation.
 - `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
   its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
   the YAML header names for its section (`page:` for the first,

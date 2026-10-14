@@ -35,10 +35,10 @@ This Master Services Agreement is made between Northwind Logistics LLC ("Provide
 <!-- p4 ListParagraph num "2." -->
 2. "Deliverables" means the reports listed in Section 3.
 
-<!-- p5 ListParagraph bullet -->
+   <!-- p5 ListParagraph bullet -->
    - Monthly route reports.
 
-<!-- p6 ListParagraph bullet -->
+   <!-- p6 ListParagraph bullet -->
    - Quarterly cost reviews.
 
 <!-- p7 -->

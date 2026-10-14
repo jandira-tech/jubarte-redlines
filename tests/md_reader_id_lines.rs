@@ -171,6 +171,7 @@ fn paragraphs(markdown: &str) -> Vec<String> {
         .expect("the docx reads")
         .markdown;
     view.lines()
+        .map(str::trim_start)
         .filter(|line| {
             line.strip_prefix("<!-- p")
                 .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
@@ -332,17 +333,25 @@ fn an_inserted_row_stays_one_change_when_a_cell_holds_paragraphs() {
 
 #[test]
 fn a_nested_list_item_keeps_its_level_from_its_id_line() {
-    // Each id line ends the Markdown list, so the view prints the level
-    // Word gives the paragraph (`ilvl`) on its id line, not as indentation
-    // (which past one level would read as code).
-    let md = "<!-- p0 ListParagraph num \"1)\" -->\n1. One.\n\n\
-              <!-- p1 ListParagraph num \"a)\", level 1 -->\n1. Under one.\n\n\
-              <!-- p2 ListParagraph num \"i)\", level 2 -->\n1. Deeper.\n\n\
-              <!-- p3 ListParagraph num \"b)\", level 1 -->\n2. Under one again.\n\n\
-              <!-- p4 ListParagraph num \"2)\" -->\n2. Two.\n\n\
-              <!-- p5 bullet, level 1 -->\n- A bullet under two.\n\n\
-              <!-- p6 -->\nAfter.\n";
-    assert_eq!(round_trip(md), md.trim());
+    // The 0.12 view printed the level on the id line (`level 1`) and no
+    // indentation; that Markdown still reads, and comes back nested by
+    // indentation, which then round-trips as it is.
+    let flat = "<!-- p0 ListParagraph num \"1)\" -->\n1. One.\n\n\
+                <!-- p1 ListParagraph num \"a)\", level 1 -->\n1. Under one.\n\n\
+                <!-- p2 ListParagraph num \"i)\", level 2 -->\n1. Deeper.\n\n\
+                <!-- p3 ListParagraph num \"b)\", level 1 -->\n2. Under one again.\n\n\
+                <!-- p4 ListParagraph num \"2)\" -->\n2. Two.\n\n\
+                <!-- p5 bullet, level 1 -->\n- A bullet under two.\n\n\
+                <!-- p6 -->\nAfter.\n";
+    let nested = "<!-- p0 ListParagraph num \"1)\" -->\n1. One.\n\n\
+                  \x20  <!-- p1 ListParagraph num \"a)\" -->\n   1. Under one.\n\n\
+                  \x20     <!-- p2 ListParagraph num \"i)\" -->\n      1. Deeper.\n\n\
+                  \x20  <!-- p3 ListParagraph num \"b)\" -->\n   2. Under one again.\n\n\
+                  <!-- p4 ListParagraph num \"2)\" -->\n2. Two.\n\n\
+                  \x20  <!-- p5 bullet -->\n   - A bullet under two.\n\n\
+                  <!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(flat), nested.trim());
+    assert_eq!(round_trip(nested), nested.trim());
 }
 
 #[test]

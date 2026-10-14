@@ -201,7 +201,7 @@ def harvest(binary: Path, fixture: str, seen: Seen) -> None:
     _, view, _ = run(binary, ["read", fixture], ROOT)
     DEPRECATED.scan("printed in text", "read (view)", view)
     for line in view.splitlines():
-        if match := re.match(r"<!-- (\S+)", line):
+        if match := re.match(r"\s*<!-- (\S+)", line):
             if match.group(1) != "page":
                 seen.add(match.group(1), "view id line", name)
         for note in re.findall(r"\{>>(\S+)", line):
