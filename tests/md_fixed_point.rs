@@ -159,8 +159,8 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
     lines
 }
 
-/// What the Markdown view cannot say, so a docx it writes cannot hold it:
-/// each pattern with why. Everything else `debug --check render` lists is
+/// What the Markdown view cannot say, so a docx it writes cannot hold it,
+/// or says in another form Word shows alike: each pattern with why. Everything else `debug --check render` lists is
 /// compared: the styles legend (each style's font, size, bold, spacing,
 /// alignment), the page, highlights (all print as `==`), tables, sections,
 /// fields, notes and parts.
@@ -173,6 +173,15 @@ static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
         // The package's font list and theme, the defaults under every
         // style, and the faces a renderer loads for them: the legend gives
         // each style's effective font instead.
+        // Word draws a `HYPERLINK "url"` field and a `w:hyperlink` alike,
+        // and the view prints both as `[text](url)`, whose text and target
+        // the Markdown comparison checks. Arthur, 2026-10-13: treat them as
+        // equal. A header's or footer's field is not a link the writer
+        // writes, so it stays compared.
+        (
+            r"^word/(document|footnotes|endnotes|comments)\.xml field HYPERLINK ",
+            "a HYPERLINK field and a link are the same link",
+        ),
         (
             r"^\(layout\) (fontTable|theme|font|docDefaults) ",
             "fonts outside the legend",
