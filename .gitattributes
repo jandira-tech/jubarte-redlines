@@ -6,3 +6,5 @@ release_info/** -text
 
 # The Markdown round-trip fixtures compare byte for byte (tests/md_fixed_point.rs).
 tests/fixtures/md-roundtrip/** text eol=lf
+# Their Word documents are zips: never rewritten.
+tests/fixtures/md-roundtrip/**/*.docx binary
