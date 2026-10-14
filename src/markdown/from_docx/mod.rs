@@ -77,6 +77,8 @@ pub(crate) struct Converted {
     /// The body paragraphs a selection kept (`pN` numbers, ascending);
     /// `None` without [`Options::select`].
     pub(crate) selected: Option<Vec<usize>>,
+    /// The header, footer and note stories a `--changed` selection keeps.
+    pub(crate) selected_stories: Vec<String>,
     /// Pictures by file name, under [`Options::media_dir`].
     pub(crate) media: BTreeMap<String, Vec<u8>>,
 }
@@ -84,8 +86,7 @@ pub(crate) struct Converted {
 /// A part's file stem: `word/footnotes.xml` → `footnotes`, the story
 /// `jubarte changes` names its changes by.
 fn part_stem(path: &str) -> String {
-    let file = path.rsplit('/').next().unwrap_or(path);
-    file.strip_suffix(".xml").unwrap_or(file).to_string()
+    crate::ids::part_story(path)
 }
 
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
@@ -133,6 +134,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     }
     // Header and footer parts, for their comment anchors and changes.
     let mut story_roots = Vec::new();
+    let mut story_stems = Vec::new();
     for target in rels
         .targets_of_type("/header")
         .into_iter()
@@ -140,6 +142,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     {
         if let Ok(Some(root)) = package.xml(&target) {
             story_roots.push(root);
+            story_stems.push(part_stem(&target));
         }
     }
     // Auxiliary parts are best-effort: a broken styles part should not lose the text.
@@ -505,6 +508,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let mut range = None;
     let mut kept = None;
     let mut stories_changed = false;
+    let mut selected_stories = Vec::new();
     if let Some(select) = options.select.as_ref().filter(|_| options.ids) {
         let select = match select {
             super::Select::Changed { by: Some(by) } => super::Select::Changed {
@@ -513,9 +517,21 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             other => other.clone(),
         };
         if let super::Select::Changed { by } = &select {
-            stories_changed = story_roots
+            let revised = |root: &Element| agent::revised_by(root, by.as_deref(), &handles);
+            stories_changed = story_roots.iter().any(revised);
+            selected_stories = story_stems
                 .iter()
-                .any(|root| agent::revised_by(root, by.as_deref(), &handles));
+                .zip(&story_roots)
+                .filter(|(_, root)| revised(root))
+                .map(|(stem, _)| stem.clone())
+                .chain(
+                    note_roots
+                        .iter()
+                        .filter(|(_, root)| revised(root))
+                        .filter_map(|(name, _)| note_stories.get(&(*name == "endnote")).cloned()),
+                )
+                .collect();
+            selected_stories.dedup();
         }
         // Hidden comments print ids only; `--by` reads their authors here.
         let comment_handles: HashMap<String, String> = writer
@@ -698,10 +714,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     } else {
                         format!("word/{}", target.trim_start_matches('/'))
                     };
-                    let stem = std::path::Path::new(&target)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                    let stem = part_stem(&target);
                     let Ok(Some(root)) = package.xml(&path) else {
                         continue;
                     };
@@ -722,8 +735,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                 None if options.ids => {
                                     header::StoryView::Tagged(&handles, stem.as_str())
                                 }
-                                Some(false) => header::StoryView::Reject,
-                                _ => header::StoryView::Accept,
+                                Some(false) => header::StoryView::Reject(&writer.hidden_styles),
+                                _ => header::StoryView::Accept(&writer.hidden_styles),
                             };
                             (i, header::story_text(p, view), align)
                         })
@@ -867,25 +880,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         if accept.is_none() && facts.range.is_none() {
             let printed =
                 agent::printed_change_ids(&head, &format!("{markdown}\n{}", defs.join("\n")));
-            // A change inside another (a cell's text in an inserted row)
-            // reads from its container's tag: resolving one takes both.
-            let by_id: HashMap<&str, &crate::changes::Change> =
-                facts.changes.iter().map(|c| (c.id.as_str(), c)).collect();
-            let shown = |change: &crate::changes::Change| {
-                let mut at = Some(change);
-                for _ in 0..=facts.changes.len() {
-                    let Some(c) = at else { break };
-                    if printed.contains(&c.id) {
-                        return true;
-                    }
-                    at = c.inside.as_deref().and_then(|i| by_id.get(i).copied());
-                }
-                false
-            };
+            // Only a change's own printed id shows it. A container's tag
+            // does not: accepting an inserted row keeps the row and leaves
+            // a change inside it tracked, so that change needs its own id.
             let unplaced: Vec<String> = facts
                 .changes
                 .iter()
-                .filter(|c| !shown(c))
+                .filter(|c| !printed.contains(&c.id))
                 .map(|c| agent::unplaced_entry(c, &handles))
                 .collect();
             facts.unplaced = unplaced;
@@ -919,6 +920,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     Ok(Converted {
         markdown,
         selected: kept,
+        selected_stories,
         media: writer.media.into_files(),
     })
 }
@@ -1229,10 +1231,11 @@ fn own_slug(slugger: &mut super::write::Slugger, p: &Element) -> Option<String> 
     (!slug.is_empty()).then_some(name)
 }
 
-/// Whether bookmark `name` is a heading's `own` slug: that name, or the
-/// one Word takes for it (`_` before a slug of no first letter, cut to 40).
+/// Whether bookmark `name` is a heading's `own` slug: that name, or one
+/// the writer gives it (`_` before a slug of no first letter, cut to 40,
+/// suffixed `-1` when an anchor took that name).
 fn is_own_slug(name: &str, own: Option<&str>) -> bool {
-    own.is_some_and(|own| name == own || name == super::write::bookmark_name(own, &HashSet::new()))
+    own.is_some_and(|own| super::write::is_bookmark_of(name, own))
 }
 
 /// A paragraph's heading level: its own outline level, else its style's;

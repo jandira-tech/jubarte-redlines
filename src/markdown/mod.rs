@@ -471,6 +471,29 @@ pub fn docx_stamp(docx: &[u8]) -> (Option<String>, Option<String>) {
     from_docx::creator_created(docx)
 }
 
+/// The author and timestamp a Markdown document gives the changes and
+/// comments that name none, when no parameter does: its front matter
+/// (`author:`; `last_modified:`, else `modified:`, `date:`, `created:`),
+/// else the reference `.docx`'s creator and creation time ([`docx_stamp`]),
+/// each on its own. `None` for each neither tells: the caller falls back
+/// to `Redline` and now, as `jubarte convert` does.
+///
+/// ```
+/// let md = "---\nauthor: Ann\ncreated: 2026-03-02\n---\n\nText.\n";
+/// let (author, date) = jubarte::markdown::markdown_stamp(md, None);
+/// assert_eq!(author.as_deref(), Some("Ann"));
+/// assert_eq!(date.as_deref(), Some("2026-03-02T00:00:00Z"));
+/// assert_eq!(jubarte::markdown::markdown_stamp("Text.\n", None), (None, None));
+/// ```
+pub fn markdown_stamp(
+    markdown: &str,
+    reference: Option<&[u8]>,
+) -> (Option<String>, Option<String>) {
+    let front = view_notes::file_defaults(markdown);
+    let (creator, created) = reference.map(docx_stamp).unwrap_or_default();
+    (front.author.or(creator), front.date.or(created))
+}
+
 /// Why a `read -p` pick was refused.
 const SELECT_EXPECTED: &str = "expected pN, pN-pM or tN";
 
@@ -485,6 +508,9 @@ pub struct ReadDocx {
     /// The body paragraphs [`MarkdownOptions::select`] kept (`N` of `pN`,
     /// ascending); `None` without a selection.
     pub selected: Option<Vec<usize>>,
+    /// The header, footer and note stories (`header1`, `footnotes`) a
+    /// `--changed` selection keeps for their changes; empty otherwise.
+    pub selected_stories: Vec<String>,
 }
 
 /// A `.docx` as Markdown: headings, emphasis, links, lists, tables,
@@ -528,6 +554,7 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
         markdown: converted.markdown,
         media: converted.media.into_iter().collect(),
         selected: converted.selected,
+        selected_stories: converted.selected_stories,
     })
 }
 
@@ -573,6 +600,9 @@ pub struct ReadView {
     /// The body paragraphs [`ReadOptions::select`] kept (`N` of `pN`,
     /// ascending); `None` without a selection.
     pub selected: Option<Vec<usize>>,
+    /// The header, footer and note stories (`header1`, `footnotes`) a
+    /// `--changed` selection keeps for their changes; empty otherwise.
+    pub selected_stories: Vec<String>,
 }
 
 /// The agent view every surface prints for `read` (alias `text`): a YAML
@@ -626,12 +656,14 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
         markdown: read.markdown,
         warnings,
         selected: read.selected,
+        selected_stories: read.selected_stories,
     })
 }
 
 /// The snapshot `read --json` prints: [`crate::inspect::snapshot`], kept to
 /// the body paragraphs `options.select` picks (and the changes and comments
-/// in them) when it picks some. The selection reads the view `options`
+/// in them, and under `--changed` those of the stories it changed) when it
+/// picks some. The selection reads the view `options`
 /// describes, without page markers.
 pub fn read_snapshot(
     docx: &[u8],
@@ -647,7 +679,10 @@ pub fn read_snapshot(
                 ..options.clone()
             },
         )?;
-        snapshot.retain(view.selected.as_deref().unwrap_or_default());
+        snapshot.retain_with(
+            view.selected.as_deref().unwrap_or_default(),
+            &view.selected_stories,
+        );
     }
     Ok(snapshot)
 }

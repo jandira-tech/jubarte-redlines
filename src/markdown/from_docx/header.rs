@@ -777,7 +777,7 @@ fn entry(s: &StoryFact) -> String {
             .collect();
         format!("[{}]", all.join(", "))
     };
-    let mut inner = format!("id: {}, text: {text}", s.id);
+    let mut inner = format!("id: {}, text: {text}", scalar(&s.id, true));
     if let Some(align) = s.align {
         inner.push_str(&format!(", {align}"));
     }
@@ -1049,7 +1049,7 @@ fn part_two(out: &mut String, f: &Facts) {
                 .collect();
             kv(
                 out,
-                &format!("  changes: {{{}}}", list.join(", ")),
+                &format!("style_changes: {{{}}}", list.join(", ")),
                 Some("tracked changes to the styles"),
             );
         }
@@ -1120,11 +1120,11 @@ pub(crate) enum StoryView<'a> {
     /// document text that reads like CriticMarkup is escaped.
     Tagged(&'a super::agent::Handles, &'a str),
     /// Every change accepted: inserted and moved-to runs count, deleted and
-    /// moved-from runs do not.
-    Accept,
+    /// moved-from runs do not. With the character styles that hide a run.
+    Accept(&'a std::collections::HashSet<String>),
     /// Every change rejected: deleted and moved-from runs count, inserted
     /// and moved-to runs do not.
-    Reject,
+    Reject(&'a std::collections::HashSet<String>),
 }
 
 /// A header/footer paragraph's text with fields as the body prints them,
@@ -1214,8 +1214,8 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     };
                     let shown = match s.view {
                         StoryView::Tagged(..) => tagged.is_some() || inserted,
-                        StoryView::Accept => inserted,
-                        StoryView::Reject => !inserted,
+                        StoryView::Accept(_) => inserted,
+                        StoryView::Reject(_) => !inserted,
                     };
                     if !shown {
                         continue;
@@ -1249,7 +1249,7 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     // A hidden run prints nothing, as in the body.
                     let hidden = match s.view {
                         StoryView::Tagged(handles, _) => &handles.hidden_styles,
-                        _ => &std::collections::HashSet::new(),
+                        StoryView::Accept(hidden) | StoryView::Reject(hidden) => hidden,
                     };
                     if super::agent::hidden_run(run.child("rPr"), hidden) {
                         continue;
@@ -1490,7 +1490,10 @@ mod tests {
             r#"<w:p><w:r><w:t>Page </w:t></w:r>{PAGE_RUNS}<w:r><w:t> · </w:t></w:r><w:fldSimple w:instr=" HYPERLINK &quot;https://x.example&quot; "><w:r><w:t>site</w:t></w:r></w:fldSimple></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], StoryView::Accept),
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
             r#"Page {PAGE}1{/} · {HYPERLINK "https://x.example"}site{/}"#
         );
     }
@@ -1502,8 +1505,14 @@ mod tests {
         ));
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "{PAGE}1{/}");
-        assert_eq!(story_text(paragraphs[1], StoryView::Accept), "");
+        assert_eq!(
+            story_text(paragraphs[0], StoryView::Accept(&Default::default())),
+            "{PAGE}1{/}"
+        );
+        assert_eq!(
+            story_text(paragraphs[1], StoryView::Accept(&Default::default())),
+            ""
+        );
     }
 
     #[test]
@@ -1512,7 +1521,10 @@ mod tests {
             r#"<w:p><w:hyperlink><w:r><w:t>Page </w:t></w:r></w:hyperlink><w:sdt><w:sdtContent>{PAGE_RUNS}</w:sdtContent></w:sdt><w:ins><w:r><w:t> of </w:t></w:r></w:ins><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:fldSimple w:instr=" numpages "><w:r><w:t>3</w:t></w:r></w:fldSimple></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], StoryView::Accept),
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
             "Page {PAGE}1{/} of {numpages}3{/}"
         );
     }
@@ -1526,8 +1538,14 @@ mod tests {
         );
         let paragraphs = story_paragraphs(&root);
         assert_eq!(paragraphs.len(), 2);
-        assert_eq!(story_text(paragraphs[0], StoryView::Accept), "");
-        assert_eq!(story_text(paragraphs[1], StoryView::Accept), "body");
+        assert_eq!(
+            story_text(paragraphs[0], StoryView::Accept(&Default::default())),
+            ""
+        );
+        assert_eq!(
+            story_text(paragraphs[1], StoryView::Accept(&Default::default())),
+            "body"
+        );
     }
 
     /// pi review r392 F1/F6: values a YAML 1.1 or 1.2 reader takes as a
@@ -1563,7 +1581,10 @@ mod tests {
             r#"<w:p><w:r><w:t>line one</w:t><w:br/><w:t>line two</w:t><w:cr/><w:t>three</w:t></w:r></w:p>"#,
         );
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], StoryView::Accept),
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
             "line one\nline two\nthree"
         );
     }
@@ -1576,7 +1597,10 @@ mod tests {
             r#"<w:p><w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF </w:instrText></w:r>{PAGE_RUNS}<w:r><w:instrText xml:space="preserve"> > 1 "more" "" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>more</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t> end</w:t></w:r></w:p>"#
         ));
         assert_eq!(
-            story_text(story_paragraphs(&root)[0], StoryView::Accept),
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
             "Page {IF} end"
         );
     }

@@ -611,7 +611,10 @@ fn walk_revision_authors(
                 .insert(date.to_string());
         }
     }
-    for child in shown_children(e) {
+    // Every child, a text box's `mc:Fallback` copy too: `jubarte changes`
+    // lists a change only the Fallback holds, so its author needs a handle.
+    // A Fallback twin repeats the Choice's authors, already in `out`.
+    for child in e.elements() {
         walk_revision_authors(child, out, dates);
     }
 }
@@ -813,9 +816,23 @@ fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
 pub(crate) fn printed_change_ids(head: &str, body: &str) -> HashSet<String> {
     let mut spans: Vec<String> = Vec::new();
     tag_spans(body, true, &mut spans);
+    let mut authors = false;
     for line in head.lines() {
+        // The author legend, the title, the source path and the owner are
+        // free text: a name or title that reads like a tag prints nothing.
+        if line == "authors:" {
+            authors = true;
+            continue;
+        }
+        if authors && line.starts_with("  ") {
+            continue;
+        }
+        authors = false;
+        if line.starts_with("source: ") || line.starts_with("title: ") {
+            continue;
+        }
         let (rest, texts) = split_story_text(line);
-        spans.push(rest);
+        spans.extend(tag_fields(&rest));
         for text in texts {
             tag_spans(&text, false, &mut spans);
         }
@@ -836,6 +853,33 @@ pub(crate) fn printed_change_ids(head: &str, body: &str) -> HashSet<String> {
         );
     }
     printed
+}
+
+/// The values of a header line's tag fields: the `style_changes:` map
+/// whole, else each `rev:` and `fmt:` value and a page's `; fmt` tail. A
+/// quoted value runs to its closing quote, a plain one to the next `,` or
+/// `}`, the page's tail to the line's end.
+fn tag_fields(line: &str) -> Vec<String> {
+    if let Some(map) = line.strip_prefix("style_changes: ") {
+        return vec![map.to_string()];
+    }
+    let mut out = Vec::new();
+    if let Some((_, tail)) = line.split_once("; fmt ") {
+        out.push(tail.to_string());
+    }
+    for key in ["rev: ", "fmt: "] {
+        let mut rest = line;
+        while let Some(at) = rest.find(key) {
+            let value = &rest[at + key.len()..];
+            let end = match value.strip_prefix('"') {
+                Some(quoted) => 1 + quoted.find('"').map_or(quoted.len(), |i| i + 1),
+                None => value.find([',', '}']).unwrap_or(value.len()),
+            };
+            out.push(value[..end].to_string());
+            rest = &value[end..];
+        }
+    }
+    out
 }
 
 /// The tag notes (`{>>r5 @AC<<}`, a comment's skipped) in `text`, and with
@@ -864,7 +908,8 @@ fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
 
 /// A header line without its `text: …` values (a header's or footer's own
 /// words, which keep their tag notes), and those values: a plain value runs
-/// to the next `,` or `}`, a quoted one to its closing quote.
+/// to the next `,` or `}`, a quoted one to its closing quote, a list (a
+/// story of several paragraphs) to its `]` outside quotes.
 fn split_story_text(line: &str) -> (String, Vec<String>) {
     let mut out = String::with_capacity(line.len());
     let mut texts = Vec::new();
@@ -872,6 +917,23 @@ fn split_story_text(line: &str) -> (String, Vec<String>) {
     while let Some(at) = rest.find("text: ") {
         out.push_str(&rest[..at]);
         let value = &rest[at + "text: ".len()..];
+        // The end of the quoted values in `s`, scanning past them, at the
+        // first `stop` outside quotes.
+        let past_quotes = |s: &str, stop: char| {
+            let (mut quoted, mut escaped) = (false, false);
+            s.char_indices()
+                .find(|&(_, c)| {
+                    let done = c == stop && !quoted;
+                    if quoted {
+                        quoted = !(c == '"' && !escaped);
+                        escaped = c == '\\' && !escaped;
+                    } else {
+                        quoted = c == '"';
+                    }
+                    done
+                })
+                .map_or(s.len(), |(i, _)| i + 1)
+        };
         let end = if let Some(quoted) = value.strip_prefix('"') {
             let mut escaped = false;
             let close = quoted
@@ -883,6 +945,8 @@ fn split_story_text(line: &str) -> (String, Vec<String>) {
                 })
                 .map_or(quoted.len(), |(i, _)| i + 1);
             1 + close
+        } else if let Some(list) = value.strip_prefix('[') {
+            1 + past_quotes(list, ']')
         } else {
             value.find([',', '}']).unwrap_or(value.len())
         };
