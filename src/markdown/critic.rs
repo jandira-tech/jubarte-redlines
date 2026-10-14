@@ -45,10 +45,16 @@ pub(crate) enum Token {
     MarkStart,
     /// `==` closing a highlight run
     MarkEnd,
+    /// `{` opening a body field's code (`{REF _Ref1 \h}result{/}`)
+    FieldStart,
+    /// `}` ending the code: the result follows
+    FieldSeparator,
+    /// `{/}` ending the field
+    FieldEnd,
 }
 
 /// Every delimiter with its stand-in (Supplemental Punctuation, all Po).
-const STAND_INS: [(Token, char); 13] = [
+const STAND_INS: [(Token, char); 16] = [
     (Token::InsertStart, '\u{2E0E}'),
     (Token::InsertEnd, '\u{2E0F}'),
     (Token::DeleteStart, '\u{2E10}'),
@@ -62,6 +68,9 @@ const STAND_INS: [(Token, char); 13] = [
     (Token::CommentEnd, '\u{2E19}'),
     (Token::MarkStart, '\u{2E1B}'),
     (Token::MarkEnd, '\u{2E1E}'),
+    (Token::FieldStart, '\u{2E1F}'),
+    (Token::FieldSeparator, '\u{2E2A}'),
+    (Token::FieldEnd, '\u{2E2B}'),
 ];
 
 /// Put before a stand-in character (or itself) that was in the source.
@@ -148,8 +157,9 @@ const DELETE: Allowed = 2;
 const SUBSTITUTE: Allowed = 4;
 const HIGHLIGHT: Allowed = 8;
 const COMMENT: Allowed = 16;
+const FIELD: Allowed = 32;
 const CHANGES: Allowed = INSERT | DELETE | SUBSTITUTE;
-const ALL: Allowed = CHANGES | HIGHLIGHT | COMMENT;
+const ALL: Allowed = CHANGES | HIGHLIGHT | COMMENT | FIELD;
 
 fn kind_of(start: Token) -> Allowed {
     match start {
@@ -268,6 +278,23 @@ fn encode_range(
                 at = after;
             }
             None => {
+                if allowed & FIELD != 0
+                    && let Some((code, end)) = field_at(source, at, range.end)
+                {
+                    out.push(stand_in(Token::FieldStart));
+                    // The code is text to the end: no Markdown reads it.
+                    for c in source[code.clone()].trim().chars() {
+                        if c.is_ascii_punctuation() {
+                            out.push('\\');
+                        }
+                        push_escaped(out, c.encode_utf8(&mut [0; 4]));
+                    }
+                    out.push(stand_in(Token::FieldSeparator));
+                    encode_range(source, closers, code.end + 1..end, allowed, false, out);
+                    out.push(stand_in(Token::FieldEnd));
+                    at = end + FIELD_END.len();
+                    continue;
+                }
                 if allowed != 0
                     && let Some(close) = mark_close(source, at, range.end)
                 {
@@ -283,6 +310,137 @@ fn encode_range(
             }
         }
     }
+}
+
+/// What closes a body field.
+const FIELD_END: &str = "{/}";
+
+/// The field names ECMA-376 Part 1 §17.16.5 lists. Only a code that starts
+/// with one is a field, so a placeholder such as `{Client Name}` stays text.
+const FIELD_NAMES: [&str; 76] = [
+    "ADDRESSBLOCK",
+    "ADVANCE",
+    "ASK",
+    "AUTHOR",
+    "AUTONUM",
+    "AUTONUMLGL",
+    "AUTONUMOUT",
+    "AUTOTEXT",
+    "AUTOTEXTLIST",
+    "BARCODE",
+    "BIBLIOGRAPHY",
+    "BIDIOUTLINE",
+    "CITATION",
+    "COMMENTS",
+    "COMPARE",
+    "CREATEDATE",
+    "DATABASE",
+    "DATE",
+    "DISPLAYBARCODE",
+    "DOCPROPERTY",
+    "DOCVARIABLE",
+    "EDITTIME",
+    "EQ",
+    "FILENAME",
+    "FILESIZE",
+    "FILLIN",
+    "FORMCHECKBOX",
+    "FORMDROPDOWN",
+    "FORMTEXT",
+    "GOTOBUTTON",
+    "GREETINGLINE",
+    "HYPERLINK",
+    "IF",
+    "INCLUDEPICTURE",
+    "INCLUDETEXT",
+    "INDEX",
+    "INFO",
+    "KEYWORDS",
+    "LASTSAVEDBY",
+    "LINK",
+    "LISTNUM",
+    "MACROBUTTON",
+    "MERGEBARCODE",
+    "MERGEFIELD",
+    "MERGEREC",
+    "MERGESEQ",
+    "NEXT",
+    "NEXTIF",
+    "NOTEREF",
+    "NUMCHARS",
+    "NUMPAGES",
+    "NUMWORDS",
+    "PAGE",
+    "PAGEREF",
+    "PRINT",
+    "PRINTDATE",
+    "QUOTE",
+    "RD",
+    "REF",
+    "REVNUM",
+    "SAVEDATE",
+    "SECTION",
+    "SECTIONPAGES",
+    "SEQ",
+    "SET",
+    "SKIPIF",
+    "STYLEREF",
+    "SUBJECT",
+    "SYMBOL",
+    "TA",
+    "TC",
+    "TEMPLATE",
+    "TIME",
+    "TITLE",
+    "TOA",
+    "TOC",
+];
+
+/// Whether `code` is a field code jubarte prints as `{CODE}`: one line, no
+/// braces, and a field name from [`FIELD_NAMES`] (in any case) first.
+pub(crate) fn is_field_code(code: &str) -> bool {
+    let code = code.trim();
+    let name = code.split([' ', '\\']).next().unwrap_or_default();
+    !code.contains(['{', '}', '\n', '\r'])
+        && FIELD_NAMES.iter().any(|f| f.eq_ignore_ascii_case(name))
+}
+
+/// The code of a body field opened at `at` (`{` then a field code, up to the
+/// next `}` on the line), if `at` opens one.
+fn field_code(source: &str, at: usize, until: usize) -> Option<std::ops::Range<usize>> {
+    let rest = source.get(at..until)?;
+    if !rest.starts_with('{') || escaped(source, at) {
+        return None;
+    }
+    let close = 1 + rest[1..].find(['}', '{', '\n'])?;
+    (rest.as_bytes()[close] == b'}' && is_field_code(&rest[1..close])).then_some(at + 1..at + close)
+}
+
+/// A body field opened at `at`: its code, and where the `{/}` that closes
+/// it sits, past any field nested in its result, in the same paragraph
+/// (before `until` and any blank line). Without that `{/}` it is text.
+fn field_at(source: &str, at: usize, until: usize) -> Option<(std::ops::Range<usize>, usize)> {
+    let code = field_code(source, at, until)?;
+    let end = source[at..until]
+        .find("\n\n")
+        .map_or(until, |blank_line| at + blank_line);
+    let mut depth = 0usize;
+    let mut i = code.end + 1;
+    while i < end {
+        if source[i..end].starts_with(FIELD_END) && !escaped(source, i) {
+            if depth == 0 {
+                return Some((code, i));
+            }
+            depth -= 1;
+            i += FIELD_END.len();
+        } else if let Some(nested) = field_code(source, i, end) {
+            depth += 1;
+            i = nested.end + 1;
+        } else {
+            i += source[i..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    None
 }
 
 /// Where the `==` that closes a highlight opened at `at` sits, if `at`
@@ -377,6 +535,9 @@ pub(crate) fn delimiter(token: Token) -> &'static str {
         Token::HighlightEnd => "==}",
         Token::CommentStart => "{>>",
         Token::CommentEnd => "<<}",
+        Token::FieldStart => "{",
+        Token::FieldSeparator => "}",
+        Token::FieldEnd => FIELD_END,
         Token::MarkStart | Token::MarkEnd => "==",
     }
 }
@@ -508,8 +669,13 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 removed_text = true;
             }
             let opened = match token {
-                // A highlight run is Markdown, not a change: it stays.
-                Token::MarkStart | Token::MarkEnd => {
+                // A highlight run or a field is Markdown, not a change: it
+                // stays.
+                Token::MarkStart
+                | Token::MarkEnd
+                | Token::FieldStart
+                | Token::FieldSeparator
+                | Token::FieldEnd => {
                     let shown = match state {
                         In::Text => true,
                         In::Inserted | In::New => accept,

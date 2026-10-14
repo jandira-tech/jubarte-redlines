@@ -595,8 +595,12 @@ fn segments(critic: &str) -> Vec<Segment> {
             }
         }
         Piece::Token(token) => match token {
-            // A highlight run is Markdown text, not a change.
-            Token::MarkStart | Token::MarkEnd => {
+            // A highlight run or a field is Markdown text, not a change.
+            Token::MarkStart
+            | Token::MarkEnd
+            | Token::FieldStart
+            | Token::FieldSeparator
+            | Token::FieldEnd => {
                 let text = critic::delimiter(token);
                 if let Some(note) = &mut note {
                     note.push_str(text);

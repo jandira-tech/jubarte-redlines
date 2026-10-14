@@ -576,6 +576,51 @@ fn inline_html_bold_italic_strike_code_and_mark() {
 }
 
 #[test]
+fn a_braced_code_and_its_result_are_a_field() {
+    // Spec §3: `{CODE}result{/}` is a body field, the code then the result
+    // the reader sees. Braces that do not close with `{/}` in their
+    // paragraph, and escaped ones, are text.
+    let docx = write(
+        "Begins {DATE \\@ \"MMMM d, yyyy\"}March 1, 2026{/} as {REF _Ref1 \\h}Section **2**{/} says.\n\n\
+         Dear {Client Name}, and \\{PAGE}1{/}.\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(
+        xml.matches(r#"<w:fldChar w:fldCharType="begin"/>"#).count(),
+        2,
+        "{xml}"
+    );
+    assert_eq!(
+        xml.matches(r#"<w:fldChar w:fldCharType="separate"/>"#)
+            .count(),
+        2,
+        "{xml}"
+    );
+    assert_eq!(
+        xml.matches(r#"<w:fldChar w:fldCharType="end"/>"#).count(),
+        2,
+        "{xml}"
+    );
+    assert!(
+        xml.contains(
+            r#"<w:instrText xml:space="preserve"> DATE \@ &quot;MMMM d, yyyy&quot; </w:instrText>"#
+        ),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:instrText xml:space="preserve"> REF _Ref1 \h </w:instrText>"#),
+        "{xml}"
+    );
+    assert_eq!(
+        texts(&docx),
+        [
+            "Begins March 1, 2026 as Section 2 says.",
+            "Dear {Client Name}, and {PAGE}1{/}."
+        ]
+    );
+}
+
+#[test]
 fn code_inside_a_link_keeps_its_face() {
     // A run has one character style: inside a link it is `Hyperlink`, so
     // code there takes `VerbatimChar`'s face directly and reads back as code.

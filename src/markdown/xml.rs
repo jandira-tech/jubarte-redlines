@@ -51,6 +51,11 @@ pub(super) enum Content {
         latex: String,
         display: bool,
     },
+    /// A body field's start: its code (`w:instrText`) between the begin and
+    /// separate characters; its result runs follow.
+    FieldBegin(String),
+    /// A body field's end character.
+    FieldEnd,
 }
 
 /// A run: content, formatting, the change it belongs to and the highlight
@@ -711,6 +716,21 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
         Content::Break => out.push_str("<w:br/>"),
         Content::PageBreak => out.push_str("<w:br w:type=\"page\"/>"),
         Content::Tab => out.push_str("<w:tab/>"),
+        Content::FieldBegin(code) => {
+            let element = if deleted {
+                "w:delInstrText"
+            } else {
+                "w:instrText"
+            };
+            let _ = write!(
+                out,
+                "<w:fldChar w:fldCharType=\"begin\"/></w:r><w:r>{properties}\
+                 <{element} xml:space=\"preserve\"> {} </{element}></w:r><w:r>{properties}\
+                 <w:fldChar w:fldCharType=\"separate\"/>",
+                escape(code)
+            );
+        }
+        Content::FieldEnd => out.push_str("<w:fldChar w:fldCharType=\"end\"/>"),
         Content::NoteReference(position) => {
             let _ = write!(
                 out,

@@ -471,6 +471,8 @@ struct Writer<'o, 'a> {
     groups: usize,
     anchor: Option<Anchor>,
     comment: Option<Comment>,
+    /// A body field's code being read (`{REF _Ref1 \h}`), up to its `}`.
+    field_code: Option<String>,
     /// What the last id line says, for the paragraph after it.
     id_line: Option<view_notes::IdLine>,
     /// The open paragraph ends in a page break (`page-break`).
@@ -543,6 +545,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             groups: 0,
             anchor: None,
             comment: None,
+            field_code: None,
             authors: HashMap::new(),
             document: Document::default(),
         }
@@ -1332,6 +1335,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             return;
         }
+        if let Some(code) = &mut self.field_code {
+            code.push_str(text);
+            return;
+        }
         let lines: Vec<&str> = if self.code_block {
             text.split('\n').collect()
         } else {
@@ -1435,6 +1442,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             Token::CommentEnd => {}
             Token::MarkStart => self.mark += 1,
             Token::MarkEnd => self.mark = self.mark.saturating_sub(1),
+            Token::FieldStart => self.field_code = Some(String::new()),
+            Token::FieldSeparator => {
+                let code = self.field_code.take().unwrap_or_default();
+                self.push(Content::FieldBegin(code));
+            }
+            Token::FieldEnd => self.push(Content::FieldEnd),
         }
     }
 
