@@ -805,11 +805,51 @@ fn hard_breaks(text: &str) -> String {
 /// view's) already has its backslashes escaped: its escapes are copied as
 /// they are, and only a bare `|` gains one. In other text an equation
 /// (`$…$`, `$$…$$`) keeps its LaTeX backslashes: Markdown does not unescape
-/// math, so doubling them would turn `\frac` into a line break.
+/// math, so doubling them would turn `\frac` into a line break. Either way
+/// every `|` in an equation gains a backslash, `\|` (‖) too: a pipe table
+/// reads `\|` as `|` even there.
 fn table_cell(value: &str, escaped: bool) -> String {
     if !escaped {
         return cell_math_kept(value);
     }
+    let mut out = String::with_capacity(value.len() + 8);
+    let mut rest = value;
+    while let Some(start) = unescaped_dollar(rest) {
+        let fence = if rest[start..].starts_with("$$") {
+            "$$"
+        } else {
+            "$"
+        };
+        let body = start + fence.len();
+        let Some(len) = rest[body..].find(fence) else {
+            break;
+        };
+        out.push_str(&escaped_cell_text(&rest[..start]));
+        let end = body + len + fence.len();
+        out.push_str(&rest[start..end].replace('|', "\\|"));
+        rest = &rest[end..];
+    }
+    out.push_str(&escaped_cell_text(rest));
+    one_line(&out)
+}
+
+/// The byte offset of the first `$` no backslash escapes.
+fn unescaped_dollar(value: &str) -> Option<usize> {
+    let mut chars = value.char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '$' => return Some(at),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Escaped cell text outside equations: escapes copied, bare `|` escaped.
+fn escaped_cell_text(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut chars = value.chars();
     while let Some(c) = chars.next() {
@@ -824,7 +864,7 @@ fn table_cell(value: &str, escaped: bool) -> String {
             _ => out.push(c),
         }
     }
-    one_line(&out)
+    out
 }
 
 /// `table_cell` for unescaped text: backslashes doubled outside equations,
@@ -3344,6 +3384,20 @@ mod tests {
         // Two dollars are math, as Markdown reads them; a lone one is text.
         assert_eq!(table_cell(r"$5 \ $", false), r"$5 \ $");
         assert_eq!(table_cell(r"costs $5\", false), r"costs $5\\");
+    }
+
+    #[test]
+    fn an_agent_view_cell_keeps_an_equations_norm_bars() {
+        // A pipe table reads `\|` as `|`, so an equation's `\|` (‖) needs
+        // its backslash doubled; outside an equation it stays an escape.
+        assert_eq!(
+            table_cell(r"$\left\|x\right\|$ a\\b \| c", true),
+            r"$\left\\|x\right\\|$ a\\b \| c"
+        );
+        assert_eq!(table_cell(r"$$\|y\|$$ a|b", true), r"$$\\|y\\|$$ a\|b");
+        // An escaped dollar opens no equation.
+        assert_eq!(table_cell(r"\$5 \| \$6", true), r"\$5 \| \$6");
+        assert_eq!(table_cell(r"$a|b$", true), r"$a\|b$");
     }
 
     #[test]
