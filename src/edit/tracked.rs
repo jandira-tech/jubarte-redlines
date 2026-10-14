@@ -21,8 +21,8 @@ use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounts,
     ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format,
     apply_text_edit, attach_segment, build_paragraph, format_paragraph, insert_ppr_child,
-    new_position, place_reply_markers, remove_comment_markers, set_text, split_run_at,
-    toc_paragraphs,
+    new_position, place_reply_markers, remove_comment_markers, runs_in_range, set_text,
+    split_run_at, toc_paragraphs,
 };
 use crate::changes::list_changes;
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -47,15 +47,63 @@ impl Stamp<'_> {
     }
 }
 
+/// The operation kind of `resolved` when the emitter cannot write it as a
+/// tracked change: such a plan goes through the comparer, or is refused
+/// under `keep`, never left out of the redline.
+fn untracked_kind(resolved: &Resolved) -> Option<&'static str> {
+    match resolved {
+        Resolved::FillControl { .. } => Some("fill_control"),
+        Resolved::InsertFootnote { .. } => Some("insert_footnote"),
+        Resolved::InsertImage { .. } => Some("insert_image"),
+        Resolved::PageSetup { .. } => Some("page_setup"),
+        _ => None,
+    }
+}
+
+/// Whether the emitter writes every operation of `tx` as tracked changes.
+pub(super) fn emits_all(tx: &Transaction<'_>) -> bool {
+    tx.resolved.iter().all(|(_, r)| untracked_kind(r).is_none())
+}
+
+/// Whether a run holding `[start, end)` of `paragraph` has a tracked
+/// formatting change.
+fn formatting_tracked(dom: &Dom, paragraph: NodeId, start: usize, end: usize) -> bool {
+    project_paragraph(dom, paragraph)
+        .segments
+        .iter()
+        .filter(|s| s.start < end && start < s.end)
+        .any(|s| {
+            let (Piece::Text { run, .. } | Piece::Glyph { run, .. }) = &s.piece;
+            dom.element(*run, &W::r_pr())
+                .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
+                .is_some()
+        })
+}
+
 /// Refusals that only `keep` needs, checked on the untouched source after
-/// resolution: a paragraph-level change on top of another revision of the
-/// same paragraph mark or properties.
+/// resolution: an operation the emitter cannot track, and a paragraph- or
+/// run-level change on top of another revision of the same paragraph mark
+/// or properties.
 pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
     if tx.plan.existing_revisions != ExistingRevisions::Keep {
         return Ok(());
     }
     let dom = &tx.opened.dom;
+    let refuse = |op: usize, message: &str| {
+        let mut error = tx.conflict(op, message);
+        error.code = "UNSUPPORTED_STRUCTURE".into();
+        error.outcomes[op].code = Some(error.code.clone());
+        error
+    };
     for (op, resolved) in &tx.resolved {
+        if let Some(kind) = untracked_kind(resolved) {
+            return Err(refuse(
+                *op,
+                &format!(
+                    "under keep, {kind} cannot be written as a tracked change yet; apply it in a plan without existing_revisions keep"
+                ),
+            ));
+        }
         let message = match resolved {
             Resolved::DeleteParagraph { para } => {
                 let node = tx.paragraph_nodes[*para];
@@ -103,13 +151,15 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                     "under keep, a paragraph whose formatting change is still tracked cannot be numbered; resolve that change first with resolve_revisions",
                 )
             }
+            Resolved::FormatRun {
+                para, start, end, ..
+            } if formatting_tracked(dom, tx.paragraph_nodes[*para], *start, *end) => Some(
+                "under keep, text whose formatting change is still tracked cannot be formatted again; resolve that change first with resolve_revisions",
+            ),
             _ => None,
         };
         if let Some(message) = message {
-            let mut error = tx.conflict(*op, message);
-            error.code = "UNSUPPORTED_STRUCTURE".into();
-            error.outcomes[*op].code = Some(error.code.clone());
-            return Err(error);
+            return Err(refuse(*op, message));
         }
     }
     Ok(())
@@ -232,6 +282,21 @@ fn emit(
     comment_ids: &BTreeMap<usize, u32>,
     stamp: &mut Stamp<'_>,
 ) -> Vec<NodeId> {
+    // 0. Run formatting, on source offsets (no text edit overlaps it), each
+    // run's old properties in `w:rPrChange`.
+    for (_, r) in &t.resolved {
+        let Resolved::FormatRun {
+            para,
+            start,
+            end,
+            format,
+        } = r
+        else {
+            continue;
+        };
+        let node = t.paragraph_nodes[*para];
+        track_run_format(&mut t.opened.dom, node, (*start, *end), format, stamp);
+    }
     // 1. Text edits and their comments, paragraph by paragraph.
     let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
     let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
@@ -601,6 +666,38 @@ fn track_properties(
         let record = stamp.container(dom, W::p_pr_change());
         dom.add(record, old);
         insert_ppr_child(dom, ppr, record);
+    }
+}
+
+/// Format `range` of `paragraph` as `Transaction::apply` does, each changed
+/// run's old properties in a `w:rPrChange`, the last child of its `w:rPr`.
+fn track_run_format(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    (start, end): (usize, usize),
+    format: &super::RunFormat,
+    stamp: &mut Stamp<'_>,
+) {
+    for run in runs_in_range(dom, paragraph, start, end) {
+        let rpr = match dom.element(run, &W::r_pr()) {
+            Some(rpr) => rpr,
+            None => {
+                let rpr = dom.new_element(W::r_pr());
+                dom.add_first(run, rpr);
+                rpr
+            }
+        };
+        let old = dom.clone_subtree(rpr);
+        apply_run_format(dom, rpr, format);
+        if dom.serialize_element(old) == dom.serialize_element(rpr) {
+            if dom.elements(rpr, None).is_empty() {
+                dom.remove(rpr);
+            }
+            continue;
+        }
+        let record = stamp.container(dom, W::r_pr_change());
+        dom.add(record, old);
+        dom.add(rpr, record);
     }
 }
 

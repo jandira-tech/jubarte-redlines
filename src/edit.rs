@@ -1513,8 +1513,9 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     tx.resolve()?;
     tracked::check(&tx)?;
     // The comparer moves a comment's range off text an edit replaces whole,
-    // so such edits are emitted directly, as under keep.
-    let emit = !plan.update_fields && tx.edits_a_comment_range();
+    // so such edits are emitted directly, as under keep, unless the plan
+    // holds an operation the emitter cannot track (a footnote, an image).
+    let emit = !plan.update_fields && tx.edits_a_comment_range() && tracked::emits_all(&tx);
     tx.apply()?;
     let (mut clean, mut marked) = tx.finish()?;
     if plan.existing_revisions == ExistingRevisions::Keep
@@ -5866,8 +5867,27 @@ fn run_of(piece: &Piece) -> NodeId {
 /// Apply `format` to the runs holding projection range `[start, end)` of
 /// `paragraph`, splitting runs at the boundaries first.
 fn format_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, format: &RunFormat) {
+    for run in runs_in_range(dom, paragraph, start, end) {
+        let rpr = match dom.element(run, &W::r_pr()) {
+            Some(rpr) => rpr,
+            None => {
+                let rpr = dom.new_element(W::r_pr());
+                dom.add_first(run, rpr);
+                rpr
+            }
+        };
+        apply_run_format(dom, rpr, format);
+        if dom.elements(rpr, None).is_empty() {
+            dom.remove(rpr);
+        }
+    }
+}
+
+/// The runs holding projection range `[start, end)` of `paragraph`, in
+/// order, split at the boundaries first; none for an empty range.
+fn runs_in_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> Vec<NodeId> {
     if start >= end {
-        return;
+        return Vec::new();
     }
     for at in [start, end] {
         let projection = project_paragraph(dom, paragraph);
@@ -5890,20 +5910,7 @@ fn format_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, form
             }
         }
     }
-    for run in runs {
-        let rpr = match dom.element(run, &W::r_pr()) {
-            Some(rpr) => rpr,
-            None => {
-                let rpr = dom.new_element(W::r_pr());
-                dom.add_first(run, rpr);
-                rpr
-            }
-        };
-        apply_run_format(dom, rpr, format);
-        if dom.elements(rpr, None).is_empty() {
-            dom.remove(rpr);
-        }
-    }
+    runs
 }
 
 /// Set the paragraph style, alignment and spacing in `paragraph`'s `w:pPr`.

@@ -135,6 +135,54 @@ fn rewriting_c0_text_replaces_what_the_comment_covers() {
     );
 }
 
+/// A plan that rewrites what a comment covers is emitted directly, and the
+/// emitter once replayed only text and paragraph operations: a `format_run`
+/// beside `c0.text` reached the clean copy but not the redline, reported
+/// `ok` (ledger review of #451). It is a tracked format change now.
+#[test]
+fn a_format_run_beside_c0_text_is_tracked_in_the_redline() {
+    let edited = bob(
+        r#"{"kind":"rewrite","paragraph":"c0.text","text":"twelve euros"},
+        {"kind":"format_run","paragraph":"p0","find":"per hour","format":{"italic":true}}"#,
+    )
+    .unwrap();
+    assert_word_valid_package(&edited.redline);
+    assert_eq!(
+        shape(&edited.redline),
+        ["start", "del:ten dollars", "ins:twelve euros", "end", "ref"]
+    );
+    assert_eq!(edited.report.revisions.format_changed, 1);
+    let italic = |docx: &[u8]| {
+        part_string(docx, "word/document.xml")
+            .unwrap()
+            .contains("<w:i />")
+    };
+    assert!(italic(&edited.clean));
+    let accepted = accept_revisions(&edited.redline).unwrap();
+    let rejected = reject_revisions(&edited.redline).unwrap();
+    assert!(italic(&accepted));
+    assert!(!italic(&rejected));
+    assert_eq!(covered(&rejected), "ten dollars");
+}
+
+/// An operation the emitter cannot track (a footnote) sends the plan
+/// through the comparer, which writes it, instead of dropping it.
+#[test]
+fn a_footnote_beside_c0_text_reaches_the_redline() {
+    let edited = bob(
+        r#"{"kind":"rewrite","paragraph":"c0.text","text":"twelve euros"},
+        {"kind":"insert_footnote","paragraph":"p0","after":"per hour","text":"Why."}"#,
+    )
+    .unwrap();
+    assert_word_valid_package(&edited.redline);
+    let red = part_string(&edited.redline, "word/document.xml").unwrap();
+    assert!(red.contains("<w:footnoteReference "), "{red}");
+    assert_eq!(
+        covered(&accept_revisions(&edited.redline).unwrap()),
+        "twelve euros"
+    );
+}
+
 #[test]
 fn an_anchor_in_c0_text_is_looked_up_in_the_covered_text_only() {
     let edited =
