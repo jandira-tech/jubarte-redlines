@@ -18,6 +18,7 @@ styles:
   ListNumber: Aptos 12pt, named List Number
   Quote: Aptos italic 12pt, before 8pt, center
   table: GridTable4-Accent1, all borders 0.5pt
+notes: {empty: [endnotes]}         # notes parts that hold no note
 headers:
   first: {id: header3, text: "", inactive}  # defined, but different first page is off
   default: {id: header2, text: ""}
