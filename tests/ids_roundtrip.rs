@@ -169,9 +169,10 @@ fn long_body() -> &'static [u8] {
                 inner.push_str(&ins(w, A, &format!("added{i}")));
             }
             if i == 7 {
-                // Two marks one after the other: one substitution, `r3+4`.
-                inner.push_str(&del("3", A, "old"));
+                // Word Compare's order, the insertion then the deletion:
+                // one substitution, `r3+4`.
                 inner.push_str(&ins("4", A, "new"));
+                inner.push_str(&del("3", A, "old"));
             }
             if let Some(ids) = commented_at.get(&i) {
                 inner.push_str(&commented(ids, &format!("noted{i}")));
