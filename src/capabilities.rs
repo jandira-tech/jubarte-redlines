@@ -61,9 +61,11 @@ pub struct Ids {
     pub change: Vec<String>,
     /// Comments (`edit`/`add -p`, a plan's `comment_id`).
     pub comment: Vec<String>,
-    /// Paragraphs (`edit`/`add -p`, `read -p`).
+    /// Paragraphs (`edit`/`add -p`, a plan's anchors); `read -p` takes only
+    /// `pN`, `pN-pM` and `tN`.
     pub paragraph: Vec<String>,
-    /// Tables (`edit -p tN`).
+    /// Tables: `read -p tN` selects one; `edit`/`add -p` address a cell as
+    /// `tN.rowR.cellC`.
     pub table: Vec<String>,
     /// How ids print.
     pub note: String,
@@ -275,8 +277,8 @@ impl From<crate::admission::InputLimits> for InputBudget {
 }
 
 /// The extensions each task's `-o` writes, by task name: Word, the agent
-/// view (`md`), a rendered PDF, PNG pages and the JSON snapshot. `diff` also
-/// takes `.patch` and `.diff`, both text. The CLI's `-o` rule reads this
+/// view (`md`), a rendered PDF, PNG pages and the JSON snapshot. `diff -o`
+/// writes text under any of [`DIFF_EXTENSIONS`]. The CLI's `-o` rule reads this
 /// table, so its refusals and its help agree.
 pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
     ("compare", &["docx", "md", "pdf", "png", "json"]),

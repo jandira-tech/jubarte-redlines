@@ -434,7 +434,7 @@ function applyEditPlan(docx, plan_json) {
 exports.applyEditPlan = applyEditPlan;
 
 /**
- * Audit findings as JSON `{findings, rules, layout}` (see `jubarte audit`).
+ * Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
  * `rules` is a comma-separated list of rule sets (`a11y`, `style`,
  * `structure`) or codes; omitted or empty runs every rule. The slim build
  * has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
@@ -1012,7 +1012,7 @@ exports.editReportJsonl = editReportJsonl;
  * notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
  * `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
  * `operationsJson` the parsed command's `operations` array. Options (JSON,
- * all optional): `author` (default `Modified User`), `date`,
+ * all optional): `author` (default `Redline`), `date`,
  * `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
  * An error is a usage error.
  *

@@ -273,7 +273,7 @@ Mirrors `jubarte::edit::apply_plan_json`.
 auditDocument(docx: Uint8Array, rules?: string | null): string
 ```
 
-Audit findings as JSON `{findings, rules, layout}` (see `jubarte audit`).
+Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
 `rules` is a comma-separated list of rule sets (`a11y`, `style`,
 `structure`) or codes; omitted or empty runs every rule. The slim build
 has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
@@ -440,7 +440,7 @@ The plan the `edit`/`add` operation flags describe, as JSON `{plan,
 notes}`: `plan` is the plan's JSON for `applyEditPlan`,
 `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
 `operationsJson` the parsed command's `operations` array. Options (JSON,
-all optional): `author` (default `Modified User`), `date`,
+all optional): `author` (default `Redline`), `date`,
 `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
 An error is a usage error.
 
@@ -1533,7 +1533,7 @@ Options:
       --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: "Modified User"]
+          [default: Redline]
 
       --datetime <ISO8601>
           Their timestamp (ISO 8601) [default: now, UTC]
@@ -1678,7 +1678,7 @@ Options:
       --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: "Modified User"]
+          [default: Redline]
 
       --datetime <ISO8601>
           Their timestamp (ISO 8601) [default: now, UTC]

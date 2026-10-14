@@ -110,7 +110,7 @@ def test_identical_documents_give_an_empty_patch() -> None:
     assert jubarte.diff(OLD_MD, OLD_MD, **OWNER).text == ""
 
 
-def test_the_owner_defaults_to_git_user_name_else_redline_and_the_date_to_now(
+def test_the_owner_defaults_to_redline_not_git_user_name_and_the_date_to_now(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -121,10 +121,8 @@ def test_the_owner_defaults_to_git_user_name_else_redline_and_the_date_to_now(
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "user.name")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "Ana Lima")
     header = jubarte.diff(OLD_MD, NEW_MD).text.splitlines()[1].split("\t")
-    assert header[:2] == ["+++ b/new.md", "Ana Lima"]
+    assert header[:2] == ["+++ b/new.md", "Redline"]
     assert re.fullmatch(r"20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ", header[2]), header
-    monkeypatch.delenv("GIT_CONFIG_COUNT")
-    assert jubarte.diff(OLD_MD, NEW_MD).text.splitlines()[1].split("\t")[1] == "Redline"
 
 
 def test_an_edit_returns_the_patch_of_its_redline() -> None:

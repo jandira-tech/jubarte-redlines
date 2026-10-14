@@ -375,7 +375,7 @@ it. `--plan PLAN.json` stays for batches and the other operation kinds, and
 excludes the operation flags.
 
 The options apply to every operation of the command: `--author NAME`
-(default `Modified User`), `--datetime ISO8601` (default now, UTC),
+(default `Redline`), `--datetime ISO8601` (default now, UTC),
 `--suggesting-mode` (the default: tracked changes; `redline.docx`,
 `clean.docx`, `patch.diff` and `report.jsonl` are written) or
 `--editing-mode` (the edits land directly: `clean.docx` and `report.jsonl`

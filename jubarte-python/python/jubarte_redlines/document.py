@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -583,7 +582,7 @@ def diff(
     Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
     or a path (``.md``/``.markdown`` read as Markdown, anything else as
     Word). ``author`` and ``date`` own the changes, shown once in the
-    header [default: ``git config user.name``, else Redline; now].
+    header [default: Redline; now].
     ``columns`` wraps the lines (0 does not). ``format="critic"`` gives the
     whole document as CriticMarkup instead, as ``jubarte diff --format
     critic`` does. ``github`` (aliases ``unified`` and ``text``) gives a Git
@@ -611,7 +610,7 @@ def diff(
             new_side,
             old_name=old_name,
             new_name=new_name,
-            author=author if author is not None else _default_author(),
+            author=author if author is not None else "Redline",
             date=date if date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             columns=columns,
             critic=format == "critic",
@@ -633,18 +632,6 @@ def _side(side: object, default: str) -> tuple[bytes | str, str]:
             return path.read_text(encoding="utf-8"), path.name
         return path.read_bytes(), path.name
     raise TypeError("each side must be a Document, bytes, Markdown text or a path")
-
-
-def _default_author() -> str:
-    """``git config user.name``, else Redline: as ``jubarte diff``."""
-    try:
-        out = subprocess.run(
-            ["git", "config", "user.name"], capture_output=True, text=True, check=False, timeout=5
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "Redline"
-    name = out.stdout.strip()
-    return name if out.returncode == 0 and name else "Redline"
 
 
 def capabilities() -> dict[str, object]:
