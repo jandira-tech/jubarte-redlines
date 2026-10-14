@@ -964,6 +964,33 @@ mod tests {
     }
 
     #[test]
+    fn math_layout_delimiters_cover_a_nobar_stack() {
+        // word2007's binomial is m:d around m:f type=noBar. The stack
+        // keeps today's shifts. The fences still have to cover it.
+        let font = stix();
+        let omml = r#"<m:d><m:e><m:f><m:fPr><m:type m:val="noBar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>k</m:t></m:r></m:den></m:f></m:e></m:d>"#;
+        let b = lay(&font, true, omml);
+        let open = opening(&b);
+        let (top, bot) = span(&font, open);
+        let num = glyph(&b, 'n');
+        let den = glyph(&b, 'k');
+        let (num_top, _) = span(&font, num);
+        let (_, den_bot) = span(&font, den);
+        assert!(
+            top + 0.05 >= num_top,
+            "fence top {top} does not cover the numerator {num_top}"
+        );
+        assert!(
+            bot - 0.05 <= den_bot,
+            "fence bottom {bot} does not cover the denominator {den_bot}"
+        );
+        assert!(
+            b.rules.is_empty(),
+            "a noBar stack inside a delimiter has no fraction bar"
+        );
+    }
+
+    #[test]
     fn math_layout_nests_a_fraction_in_a_radical_in_brackets() {
         let font = stix();
         let omml = format!(
