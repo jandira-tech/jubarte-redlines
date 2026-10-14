@@ -179,7 +179,7 @@ fn the_cli_prints_each_table_grid() {
     assert!(out.status.success(), "{out:?}");
     // inspect --tables prints the same grid until inspect retires.
     let inspect = Command::new(BIN)
-        .args(["read", path.to_str().unwrap(), "--tables"])
+        .args(["inspect", path.to_str().unwrap(), "--tables"])
         .output()
         .unwrap();
     assert_eq!(inspect.stdout, out.stdout);

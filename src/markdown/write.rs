@@ -223,7 +223,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
                         cells,
                         pad,
                     };
-                    at += count + pad;
+                    at = at.saturating_add(count + pad);
                     row
                 })
                 .collect()

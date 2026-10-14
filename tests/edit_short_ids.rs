@@ -492,8 +492,9 @@ fn received() -> Vec<u8> {
     .unwrap()
 }
 
-/// A plan's `comment_id` takes the view's `c5`, 0.12's `#c5` and the
-/// number; all three write the same reply.
+/// A plan's `comment_id` takes only the view's `c5` and the number;
+/// both write the same reply, while `#c5` and `"5"` are refused with
+/// the settled spelling.
 #[test]
 fn a_plan_comment_id_takes_every_comment_spelling() {
     let reply = |id: serde_json::Value| {

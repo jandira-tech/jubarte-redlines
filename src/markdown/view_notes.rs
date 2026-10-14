@@ -266,7 +266,9 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 let (first, last) = range.split_once('-').unwrap_or((range, range));
                 let first = crate::ids::short_number(first, 'p')?;
                 let last = crate::ids::short_number(last, 'p')?;
-                last.checked_sub(first).map(|n| (first, n + 1))
+                last.checked_sub(first)?
+                    .checked_add(1)
+                    .map(|count| (first, count))
             })
             .collect();
     }
@@ -298,7 +300,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
         Some((first, last)) => {
             let first = crate::ids::short_number(first, 'p')?;
             let last = crate::ids::short_number(last, 'p')?;
-            last.checked_sub(first)? + 1
+            last.checked_sub(first)?.checked_add(1)?
         }
         None => {
             crate::ids::short_number(id, 'p')?;
@@ -587,11 +589,25 @@ mod tests {
             ("<!-- p02 empty -->", None),
             ("<!-- t0 empty -->", None),
             ("<!-- p0-p100000 empty -->", None),
+            ("<!-- p0-p18446744073709551615 empty -->", None),
             ("<!-- p0-p99999 empty -->", Some(100_000)),
             ("p2 empty", None),
         ] {
             assert_eq!(empty_paragraphs(line), count, "{line}");
         }
+    }
+
+    #[test]
+    fn a_table_lines_row_count_stays_inside_usize() {
+        // A hand-edited range ending at usize::MAX is not a row count.
+        for line in [
+            "<!-- t0 1x1, cells t0.row0 p0-p18446744073709551615 -->",
+            "<!-- t0 1x1, cells t0.row0 p5-p3 -->",
+        ] {
+            assert_eq!(table_line(line).unwrap().row_paragraphs, None, "{line}");
+        }
+        let line = table_line("<!-- t0 1x1, cells t0.row0 p0-p2 t0.row1 p3 -->").unwrap();
+        assert_eq!(line.row_paragraphs, Some(vec![(0, 3), (3, 1)]));
     }
 
     #[test]
