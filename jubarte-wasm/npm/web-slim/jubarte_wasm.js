@@ -337,22 +337,28 @@ export function appendDocuments(a, b, options_json) {
 }
 
 /**
- * Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline and
- * the per-operation report.
+ * Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
+ * the patch of the plan's changes and the per-operation report. `name`
+ * (default `document.docx`) is the file the patch names; under
+ * `existing_revisions: keep` the patch shows the plan's own changes, not
+ * the other party's the redline also holds.
  *
  * Mirrors `jubarte::edit::apply_plan_json`.
  * @param {Uint8Array} docx
  * @param {string} plan_json
+ * @param {string | null} [name]
  * @returns {EditOutput}
  */
-export function applyEditPlan(docx, plan_json) {
+export function applyEditPlan(docx, plan_json, name) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(plan_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len1 = WASM_VECTOR_LEN;
-        wasm.applyEditPlan(retptr, ptr0, len0, ptr1, len1);
+        var ptr2 = isLikeNone(name) ? 0 : passStringToWasm0(name, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.applyEditPlan(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -502,6 +508,43 @@ export function capabilitiesText() {
 }
 
 /**
+ * `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
+ * in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
+ * change id throws `jubarte-wasm: c5: expected a change id …`, which the
+ * binary reports as a usage error before reading the document.
+ *
+ * Mirrors `jubarte::changes::ChangeFilter::normalized`.
+ * @param {string} filter_json
+ * @returns {string}
+ */
+export function changeFilter(filter_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(filter_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.changeFilter(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
  * view `edit` and `add` print (every changed block when none does);
  * `accepted` reads its accepted text, `source` is the name printed as
@@ -542,6 +585,81 @@ export function changedView(docx, author, accepted, source) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * The listing `jubarte changes` prints: a line per change with its short
+ * id (`r0`), kind, target, author, paragraph and text, then `N change(s)`.
+ *
+ * Mirrors `jubarte::changes::changes_text`.
+ * @param {Uint8Array} docx
+ * @returns {string}
+ */
+export function changesText(docx) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.changesText(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The listing `jubarte comments` prints: a line per comment with its short
+ * id (`c5`), paragraph, author, text and anchor, then `N comment(s)`.
+ * `author` and `latest` filter as in [`listComments`](list_comments).
+ *
+ * Mirrors `jubarte::comments::comments_text`.
+ * @param {Uint8Array} docx
+ * @param {string | null} [author]
+ * @param {boolean | null} [latest]
+ * @returns {string}
+ */
+export function commentsText(docx, author, latest) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(author) ? 0 : passStringToWasm0(author, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.commentsText(retptr, ptr0, len0, ptr1, len1, isLikeNone(latest) ? 0xFFFFFF : latest ? 1 : 0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -1194,6 +1312,47 @@ export function previewEditPlan(docx, plan_json) {
 }
 
 /**
+ * The snapshot `jubarte read --json` prints, with its `changes` and
+ * `comments`. Options (JSON, all optional) select as in
+ * [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
+ * `source` names the document. The snapshot keeps the selected paragraphs
+ * and their changes and comments.
+ *
+ * Mirrors `jubarte::markdown::read_snapshot`.
+ * @param {Uint8Array} docx
+ * @param {string | null} [options_json]
+ * @returns {string}
+ */
+export function readJson(docx, options_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.readJson(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
  * then Markdown with `<!-- pN -->` id lines and every change and comment
  * with its id. Options (JSON, all optional): `trackChanges` (all, accept,
@@ -1466,6 +1625,42 @@ export function sourceSha256(docx) {
 }
 
 /**
+ * The grids `jubarte read --tables` prints: a `table N: RxC …` line per
+ * body table, then a line per row of `ids=text` cells; `no tables` when
+ * there are none.
+ *
+ * Mirrors `jubarte::inspect::tables_text`.
+ * @param {Uint8Array} docx
+ * @returns {string}
+ */
+export function tablesText(docx) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.tablesText(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Word-validity findings beyond the schema as a JSON array (`code`, `set`,
  * `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
  * `[]` is a pass.
@@ -1498,6 +1693,47 @@ export function validateDocument(docx) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The line a writing task prints on stderr for the file it wrote:
+ * `wrote r.pdf (pdf, 48213 bytes, 3 pages)`. `format` is `docx`, `md`,
+ * `pdf`, `png` or `json`; `pages` is a PDF's.
+ *
+ * Mirrors `jubarte::cli::wrote_line`.
+ * @param {string} path
+ * @param {string} format
+ * @param {number} size
+ * @param {number | null} [pages]
+ * @returns {string}
+ */
+export function wroteLine(path, format, size, pages) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.wroteLine(retptr, ptr0, len0, ptr1, len1, size, isLikeNone(pages) ? Number.MAX_SAFE_INTEGER : (pages) >>> 0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred4_0, deferred4_1, 1);
     }
 }
 function __wbg_get_imports() {

@@ -119,7 +119,7 @@ test("a legacy .doc is refused with a save-as hint", () => {
 test("changes, accept and reject by kind", () => {
   const listed = run("changes", tracked);
   assert.equal(listed.code, 0, listed.err);
-  assert.match(listed.out, /^body:rev:0\tdeletion\ttext\tBo Chen\t" to people that"/);
+  assert.match(listed.out, /^r0\tdeletion\ttext\tBo Chen\tp1\t" to people that"\n/);
   assert.match(listed.out, /\n\d+ change\(s\)\n$/);
   const rows = run("changes", tracked, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(rows[0].kind, "deletion");
@@ -134,6 +134,34 @@ test("changes, accept and reject by kind", () => {
   const base = path.join(tmp, "base.docx");
   assert.equal(run("reject", tracked, "-o", base).code, 0);
   assert.equal(run("changes", base).out, "0 change(s)\n");
+});
+
+test("errors read as the binary's: bad ids are usage, I/O as Rust words it, sorted report keys", () => {
+  const out = path.join(tmp, "never-accepted.docx");
+  const bad = run("accept", tracked, "-o", out, "--id", "c5");
+  assert.equal(bad.code, 2, bad.err);
+  assert.equal(bad.err, "error: c5: expected a change id such as r12, header1.r1 or body:rev:12\n");
+  // The id is checked before any I/O, as natively.
+  assert.equal(run("reject", "missing.docx", "-o", out, "--id", "c5").code, 2);
+  const unknown = run("accept", tracked, "-o", out, "--id", "r99");
+  assert.equal(unknown.code, 1);
+  assert.equal(unknown.err, "error: accept failed: no tracked change r99\n");
+  assert.ok(!fs.existsSync(out));
+  assert.equal(run("reject", tracked, "-o", out, "--id", "r99").err, "error: reject failed: no tracked change r99\n");
+  const picked = run("read", tracked, "-p", "c5");
+  assert.equal(picked.err, "error: c5: expected pN, pN-pM or tN\n");
+  for (const command of ["changes", "read"]) {
+    const missing = run(command, "missing.docx");
+    assert.equal(missing.code, 1);
+    assert.equal(missing.err, "error: reading missing.docx: No such file or directory (os error 2)\n");
+  }
+  // A refused plan's report lines are compact with sorted keys.
+  const refused = run("edit", untracked, "-p", "p99", "--content", "x", "-o", out);
+  assert.equal(refused.code, 3, refused.err);
+  for (const line of refused.out.trim().split("\n")) {
+    const row = JSON.parse(line);
+    assert.equal(line, JSON.stringify(Object.fromEntries(Object.entries(row).sort(([a], [b]) => (a < b ? -1 : 1)))));
+  }
 });
 
 test("read (alias text), inspect, capabilities and convert", () => {
@@ -175,22 +203,32 @@ test("read (alias text), inspect, capabilities and convert", () => {
   assert.equal(snapshot.schema_version, 1);
   assert.ok(Array.isArray(snapshot.changes) && Array.isArray(snapshot.comments));
   assert.deepEqual(JSON.parse(run("read", untracked, "--json").out), snapshot);
-  for (const args of [["--tables"], ["--json", "--head", "1"]]) {
-    const refused = run("read", untracked, ...args);
-    assert.equal(refused.code, 2, `${args}: ${refused.err}`);
-    assert.match(refused.err, /not supported by the npm CLI/);
-  }
-  // The engine writes a task's view, snapshot or PDF; this CLI, Word only.
-  for (const args of [
-    ["accept", tracked, "-o", path.join(tmp, "a.pdf")],
-    ["reject", tracked, "-o", path.join(tmp, "s.md")],
-    ["read", untracked, "-o", path.join(tmp, "v.md")],
-    [untracked, "-o", path.join(tmp, "v.json")],
-    ["convert", tracked, "-o", path.join(tmp, "c.json")],
+  const wasm = createRequire(bin)("jubarte-wasm");
+  // The grids and a selected snapshot, as the binary prints them.
+  const tables = run("read", untracked, "--tables");
+  assert.equal(tables.code, 0, tables.err);
+  assert.match(tables.out, /^table 0: 2x2 header_rows=0 widths=4818,4820\nbody:p:4=Name\tbody:p:5=Value\n/);
+  const headed = JSON.parse(run("read", untracked, "--json", "--head", "1").out);
+  assert.equal(headed.paragraphs.length, 1);
+  // The engine's writer: -o's extension picks the task's Word file, its
+  // view (.md, headed by the Word name it did not write), its snapshot
+  // (.json) or its drawing (.pdf); the wrote line is on stderr.
+  for (const [args, format, check] of [
+    [["accept", tracked, "-o", path.join(tmp, "a.pdf")], "pdf", (bytes) => bytes.subarray(0, 5).toString() === "%PDF-"],
+    [["reject", tracked, "-o", path.join(tmp, "s.md")], "md", (bytes) => bytes.toString().startsWith(`---\nsource: ${path.join(tmp, "s.docx")} (not written)\n`)],
+    [["read", untracked, "-o", path.join(tmp, "v.md")], "md", (bytes) => bytes.toString().startsWith(`---\nsource: ${path.basename(untracked)}\n`)],
+    [[untracked, "-o", path.join(tmp, "v.json"), "-p", "p0"], "json", (bytes) => JSON.parse(bytes).paragraphs.length === 1],
+    [["convert", tracked, "-o", path.join(tmp, "c.json")], "json", (bytes) => JSON.parse(bytes).changes.length === 8],
+    [["accept", tracked, "-o", path.join(tmp, "writer-a.docx")], "docx", (bytes) => bytes.subarray(0, 2).toString() === "PK"],
   ]) {
-    const refused = run(...args);
-    assert.equal(refused.code, 2, `${args}: ${refused.err}`);
-    assert.match(refused.err, /not supported by the npm CLI yet/);
+    const written = run(...args);
+    const out = args[args.indexOf("-o") + 1];
+    assert.equal(written.code, 0, `${args}: ${written.err}`);
+    assert.equal(written.out, "", `${args}`);
+    const bytes = fs.readFileSync(out);
+    const pages = format === "pdf" ? `, ${wasm.pdfPageCount(bytes)} page` : "";
+    assert.match(written.err, new RegExp(`^wrote ${out.replaceAll(".", "\\.")} \\(${format}, ${bytes.length} bytes${pages}s?\\)\n$`), `${args}`);
+    assert.ok(check(bytes), `${args}`);
   }
   const manifest = JSON.parse(run("capabilities", "--json").out);
   assert.equal(manifest.runtime, "wasm");
@@ -213,7 +251,8 @@ test("read (alias text), inspect, capabilities and convert", () => {
   const pdf = path.join(tmp, "out.pdf");
   const r = run("convert", tracked, "-o", pdf, "--revisions", "word", "--compress");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /^wrote .*out\.pdf \(\d+ bytes, \d+ pages?\)\n$/);
+  assert.equal(r.out, "");
+  assert.match(r.err, /^wrote .*out\.pdf \(pdf, \d+ bytes, \d+ pages?\)\n$/);
   assert.equal(fs.readFileSync(pdf).subarray(0, 5).toString(), "%PDF-");
   const png = run("convert", tracked, "--png");
   assert.equal(png.code, 2);
@@ -224,7 +263,7 @@ test("read (alias text), inspect, capabilities and convert", () => {
 test("convert --move-comments and --changed-only", () => {
   const pages = (r) => {
     assert.equal(r.code, 0, r.err);
-    return Number(/, (\d+) pages?\)/.exec(r.out)[1]);
+    return Number(/, (\d+) pages?\)/.exec(r.err)[1]);
   };
   const out = path.join(tmp, "flags.pdf");
   assert.equal(pages(run("convert", tracked, "-o", out, "--force")), 1);
@@ -274,6 +313,9 @@ test("edit and add by flags print the changed blocks, as the binary does", () =>
   const r = run("edit", untracked, "-p", `p${para.index}`, "--anchor", word, "--content", "Changed", "--author", "Ann Counsel", "--out-dir", dir);
   assert.equal(r.code, 0, r.err);
   for (const name of ["clean.docx", "redline.docx", "patch.diff", "report.jsonl"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
+  // The patch names the edited file, as the binary's bundle does.
+  const base = path.basename(untracked);
+  assert.ok(fs.readFileSync(path.join(dir, "patch.diff"), "utf8").startsWith(`--- a/${base}\n+++ b/${base}\tAnn Counsel\t`));
   assert.match(r.out, new RegExp(`\\nrange: changed by @AC \\(p${para.index}\\) of p0-`));
   assert.ok(r.out.includes(`{~~${word}~>Changed~~}`), r.out);
   assert.doesNotMatch(r.out, /\n@@ /);
@@ -480,7 +522,7 @@ test("format contradictions and unsupported flags fail before I/O (integration)"
     assert.doesNotMatch(result.err, /reading/);
     assert.ok(!fs.existsSync(output));
   }
-  for (const args of [["read", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
+  for (const args of [["convert", "missing.docx", "--timeout", "1"], ["convert", "missing.docx", "-o", "x.docx", "--update-fields"], ["compare", "a", "b", "--mode", "powertools"]]) {
     const result = run(...args);
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading/);
@@ -691,7 +733,8 @@ test("Markdown conversion supports a reference, inferred output and PDF (integra
   fs.writeFileSync(source, "# Draft\n\nA clause.\n");
   const docx = run("convert", source, "--reference-doc", untracked);
   assert.equal(docx.code, 0, docx.err);
-  assert.match(docx.out, /reference-draft\.docx/);
+  assert.equal(docx.out, "");
+  assert.match(docx.err, /^wrote .*reference-draft\.docx \(docx, \d+ bytes\)\n$/);
   assert.match(run("text", path.join(tmp, "reference-draft.docx")).out, /A clause\./);
   const pdf = run("convert", source, "--pdf");
   assert.equal(pdf.code, 0, pdf.err);
@@ -701,12 +744,11 @@ test("Markdown conversion supports a reference, inferred output and PDF (integra
 test("comparison refuses Markdown output of Word inputs and sniffs unknown input suffixes (integration)", () => {
   // As natively, a .md output is CriticMarkup of two Markdown documents.
   const markdown = path.join(tmp, "compare-output.md");
-  // A .md of Word inputs is the redline's view, which this CLI does not
-  // write yet.
-  const result = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", markdown);
-  assert.equal(result.code, 2, result.out);
-  assert.match(result.err, /-o FILE\.md of a Word redline is not supported by the npm CLI yet/);
-  assert.ok(!fs.existsSync(markdown));
+  // A .md of Word inputs is the redline's view, headed by the Word file
+  // compare did not write.
+  const result = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", markdown, "-d", "1970-01-01T00:00:00Z");
+  assert.equal(result.code, 0, result.err);
+  assert.match(fs.readFileSync(markdown, "utf8"), new RegExp(`^---\nsource: ${path.join(pair, "base_v_next.docx").replaceAll(".", "\\.")} \\(not written; -o keeps it\\)\n`));
   const a = copy(path.join(pair, "base.docx"), "sniff-a.bin");
   const b = copy(path.join(pair, "next.docx"), "sniff-b.bin");
   const inferred = run("diff", a, b);
@@ -744,7 +786,7 @@ test("unsupported host options are rejected before input I/O (integration)", () 
   const comparison = [
     ["--powertools-faithful"], ["--detail-threshold", "0.1"], ["--no-paragraph-merge"],
     ["--critic"], ["--reference-doc", "r.docx"], ["--resource-path", "."],
-    ["-o", "r.pdf"], ["-o", "r.json"],
+    ["-o", "r.png"], ["-o", "r.pdf", "--pages", "1"],
   ];
   for (const flags of comparison) {
     const result = run("compare", "missing-a.docx", "missing-b.docx", ...flags);
@@ -811,14 +853,13 @@ test("diff, compare and convert follow the native input and output contract (int
   const word = path.join(tmp, "contract-a.docx");
   assert.equal(run("convert", a, "--to", "docx", "-o", word).code, 0);
 
-  // diff -o FILE.md of a Word side writes the patch; compare's .md is the
-  // redline's view, which this CLI does not write yet; diff writes no Word.
+  // diff -o FILE.md of a Word side writes the patch (compare's .md is the
+  // redline's view); diff writes no Word.
   const written = path.join(tmp, "contract-d.md");
   const patched = run("diff", word, b, "-o", written);
   assert.equal(patched.code, 0, patched.err);
   assert.match(fs.readFileSync(written, "utf8"), /\[-30-\]\{\+45\+\}/);
   for (const [args, code, message] of [
-    [["compare", word, b, "-o", path.join(tmp, "contract-c.md")], 2, /not supported by the npm CLI yet/],
     [["diff", word, b, "-o", path.join(tmp, "contract-patch.docx")], 2, /`compare OLD NEW -o /],
   ]) {
     const result = run(...args);

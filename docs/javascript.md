@@ -259,11 +259,14 @@ Mirrors `jubarte::append::append_documents`.
 ### `applyEditPlan`
 
 ```typescript
-applyEditPlan(docx: Uint8Array, plan_json: string): EditOutput
+applyEditPlan(docx: Uint8Array, plan_json: string, name?: string | null): EditOutput
 ```
 
-Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline and
-the per-operation report.
+Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
+the patch of the plan's changes and the per-operation report. `name`
+(default `document.docx`) is the file the patch names; under
+`existing_revisions: keep` the patch shows the plan's own changes, not
+the other party's the redline also holds.
 
 Mirrors `jubarte::edit::apply_plan_json`.
 
@@ -312,6 +315,19 @@ capabilitiesText(): string
 
 Mirrors `jubarte::capabilities::capabilities_text`.
 
+### `changeFilter`
+
+```typescript
+changeFilter(filter_json: string): string
+```
+
+`filterJson` (as `acceptChanges` takes it) with each id
+in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
+change id throws `jubarte-wasm: c5: expected a change id …`, which the
+binary reports as a usage error before reading the document.
+
+Mirrors `jubarte::changes::ChangeFilter::normalized`.
+
 ### `changedView`
 
 ```typescript
@@ -324,6 +340,29 @@ view `edit` and `add` print (every changed block when none does);
 `source:`.
 
 Mirrors `jubarte::markdown::changed_view`.
+
+### `changesText`
+
+```typescript
+changesText(docx: Uint8Array): string
+```
+
+The listing `jubarte changes` prints: a line per change with its short
+id (`r0`), kind, target, author, paragraph and text, then `N change(s)`.
+
+Mirrors `jubarte::changes::changes_text`.
+
+### `commentsText`
+
+```typescript
+commentsText(docx: Uint8Array, author?: string | null, latest?: boolean | null): string
+```
+
+The listing `jubarte comments` prints: a line per comment with its short
+id (`c5`), paragraph, author, text and anchor, then `N comment(s)`.
+`author` and `latest` filter as in `listComments`.
+
+Mirrors `jubarte::comments::comments_text`.
 
 ### `compareDocuments`
 
@@ -552,6 +591,20 @@ Resolve every operation of an edit plan without producing documents.
 
 Mirrors `jubarte::edit::preview_plan`.
 
+### `readJson`
+
+```typescript
+readJson(docx: Uint8Array, options_json?: string | null): string
+```
+
+The snapshot `jubarte read --json` prints, with its `changes` and
+`comments`. Options (JSON, all optional) select as in
+`readView`: `paragraphs`, `head`, `tail`, `changed`, `by`;
+`source` names the document. The snapshot keeps the selected paragraphs
+and their changes and comments.
+
+Mirrors `jubarte::markdown::read_snapshot`.
+
 ### `readView`
 
 ```typescript
@@ -651,6 +704,18 @@ plan carries.
 
 Mirrors `jubarte::inspect::source_sha256`.
 
+### `tablesText`
+
+```typescript
+tablesText(docx: Uint8Array): string
+```
+
+The grids `jubarte read --tables` prints: a `table N: RxC …` line per
+body table, then a line per row of `ids=text` cells; `no tables` when
+there are none.
+
+Mirrors `jubarte::inspect::tables_text`.
+
 ### `updateFields`
 
 ```typescript
@@ -674,6 +739,18 @@ Word-validity findings beyond the schema as a JSON array (`code`, `set`,
 `[]` is a pass.
 
 Mirrors `jubarte::validate::validate`.
+
+### `wroteLine`
+
+```typescript
+wroteLine(path: string, format: string, size: number, pages?: number | null): string
+```
+
+The line a writing task prints on stderr for the file it wrote:
+`wrote r.pdf (pdf, 48213 bytes, 3 pages)`. `format` is `docx`, `md`,
+`pdf`, `png` or `json`; `pages` is a PDF's.
+
+Mirrors `jubarte::cli::wrote_line`.
 <!-- gen:wasm-api:end -->
 
 ## CLI usage
@@ -1213,7 +1290,7 @@ Formats:
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
           - json: The JSON snapshot (`read --json`'s object): written, never read.
-            `compare` and `diff` refuse it until they write it (`json_not_yet`)
+            `diff` refuses it (`json_not_yet`)
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>

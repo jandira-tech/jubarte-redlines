@@ -105,12 +105,15 @@ export function acceptRevisions(docx: Uint8Array): Uint8Array;
 export function appendDocuments(a: Uint8Array, b: Uint8Array, options_json?: string | null): AppendOutput;
 
 /**
- * Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline and
- * the per-operation report.
+ * Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline,
+ * the patch of the plan's changes and the per-operation report. `name`
+ * (default `document.docx`) is the file the patch names; under
+ * `existing_revisions: keep` the patch shows the plan's own changes, not
+ * the other party's the redline also holds.
  *
  * Mirrors `jubarte::edit::apply_plan_json`.
  */
-export function applyEditPlan(docx: Uint8Array, plan_json: string): EditOutput;
+export function applyEditPlan(docx: Uint8Array, plan_json: string, name?: string | null): EditOutput;
 
 /**
  * Audit findings as JSON `{findings, rules, layout}` (see `jubarte validate --rules`).
@@ -146,6 +149,16 @@ export function capabilities(): string;
 export function capabilitiesText(): string;
 
 /**
+ * `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
+ * in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
+ * change id throws `jubarte-wasm: c5: expected a change id …`, which the
+ * binary reports as a usage error before reading the document.
+ *
+ * Mirrors `jubarte::changes::ChangeFilter::normalized`.
+ */
+export function changeFilter(filter_json: string): string;
+
+/**
  * The blocks of `docx` (a redline) carrying `author`'s marks, as the agent
  * view `edit` and `add` print (every changed block when none does);
  * `accepted` reads its accepted text, `source` is the name printed as
@@ -154,6 +167,23 @@ export function capabilitiesText(): string;
  * Mirrors `jubarte::markdown::changed_view`.
  */
 export function changedView(docx: Uint8Array, author: string, accepted: boolean, source?: string | null): string;
+
+/**
+ * The listing `jubarte changes` prints: a line per change with its short
+ * id (`r0`), kind, target, author, paragraph and text, then `N change(s)`.
+ *
+ * Mirrors `jubarte::changes::changes_text`.
+ */
+export function changesText(docx: Uint8Array): string;
+
+/**
+ * The listing `jubarte comments` prints: a line per comment with its short
+ * id (`c5`), paragraph, author, text and anchor, then `N comment(s)`.
+ * `author` and `latest` filter as in [`listComments`](list_comments).
+ *
+ * Mirrors `jubarte::comments::comments_text`.
+ */
+export function commentsText(docx: Uint8Array, author?: string | null, latest?: boolean | null): string;
 
 /**
  * Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
@@ -301,6 +331,17 @@ export function parseCli(arguments_json: string, program?: string | null, suppor
 export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput;
 
 /**
+ * The snapshot `jubarte read --json` prints, with its `changes` and
+ * `comments`. Options (JSON, all optional) select as in
+ * [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
+ * `source` names the document. The snapshot keeps the selected paragraphs
+ * and their changes and comments.
+ *
+ * Mirrors `jubarte::markdown::read_snapshot`.
+ */
+export function readJson(docx: Uint8Array, options_json?: string | null): string;
+
+/**
  * The agent view (`read`) as JSON `{markdown, warnings}`: a YAML header,
  * then Markdown with `<!-- pN -->` id lines and every change and comment
  * with its id. Options (JSON, all optional): `trackChanges` (all, accept,
@@ -376,6 +417,15 @@ export function scrubDocument(docx: Uint8Array, options_json?: string | null): U
 export function sourceSha256(docx: Uint8Array): string;
 
 /**
+ * The grids `jubarte read --tables` prints: a `table N: RxC …` line per
+ * body table, then a line per row of `ids=text` cells; `no tables` when
+ * there are none.
+ *
+ * Mirrors `jubarte::inspect::tables_text`.
+ */
+export function tablesText(docx: Uint8Array): string;
+
+/**
  * Word-validity findings beyond the schema as a JSON array (`code`, `set`,
  * `severity`, `part`, `location`, `message`, `word_fatal`, `repairable`);
  * `[]` is a pass.
@@ -383,3 +433,12 @@ export function sourceSha256(docx: Uint8Array): string;
  * Mirrors `jubarte::validate::validate`.
  */
 export function validateDocument(docx: Uint8Array): string;
+
+/**
+ * The line a writing task prints on stderr for the file it wrote:
+ * `wrote r.pdf (pdf, 48213 bytes, 3 pages)`. `format` is `docx`, `md`,
+ * `pdf`, `png` or `json`; `pages` is a PDF's.
+ *
+ * Mirrors `jubarte::cli::wrote_line`.
+ */
+export function wroteLine(path: string, format: string, size: number, pages?: number | null): string;
