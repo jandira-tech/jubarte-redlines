@@ -1,0 +1,4 @@
+{"author":"Modified User","base_sha256":"43562fc1fb644d5e24fabb2804de61e05c1c6332b71b94a12caae5adc51a8b1e","date":"2026-10-12T06:06:18Z","ev":"load","existing_revisions":"keep","guarded":false,"paras":7,"sha256":"43562fc1fb644d5e24fabb2804de61e05c1c6332b71b94a12caae5adc51a8b1e"}
+{"at":"body:p:3","ctx":"{+¶ uga}","ev":"op","i":1,"id":"op-1","matches":1,"op":"insert_paragraph","status":"ok"}
+{"dir":"gemini.edit","ev":"save","outputs":[{"bytes":21419,"f":"clean.docx","sha256":"2f26dead53fd0f414b8001ecb52dd672e29fb6736947b33a6cd04e275e174795"},{"bytes":21485,"f":"redline.docx","sha256":"98d9e45b30f07e5cc30aa6904658e38ff7af1a7902df5570a8ec5b7a627c7d9d"},{"bytes":515,"f":"patch.diff","sha256":"22b739938210e667ef1ce52618b36d1e86061f756d025c245df214a8d31057c9"}]}
+{"comments":{"added":0},"ev":"summary","ops":{"failed":0,"ok":1},"paras":{"d":1,"from":7,"to":8},"revs":{"deleted":0,"format_changed":0,"inserted":2,"moved":0,"total":2},"status":"ok"}
