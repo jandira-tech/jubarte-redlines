@@ -763,7 +763,10 @@ fn inputs_are_told_apart_by_extension_then_by_their_bytes() {
     let stderr = failed(&jubarte(&["convert", "bad.md"], dir.path()));
     assert!(stderr.contains("must be UTF-8"), "{stderr}");
     let stderr = failed(&jubarte(&["convert", "plain.txt", "-f", "pdf"], dir.path()));
-    assert!(stderr.contains("not inputs"), "{stderr}");
+    assert!(
+        stderr.contains("invalid value 'pdf'") && stderr.contains("docx, md, markdown"),
+        "{stderr}"
+    );
     let stderr = failed(&jubarte(
         &["diff", "plain.txt", "NOTES", "-f", "png"],
         dir.path(),

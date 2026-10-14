@@ -184,6 +184,21 @@ impl From<crate::admission::InputLimits> for InputBudget {
     }
 }
 
+/// The extensions each task's `-o` writes, by task name: Word, the agent
+/// view (`md`), a rendered PDF, PNG pages and the JSON snapshot. `diff` also
+/// takes `.patch` and `.diff`, both text. The CLI's `-o` rule reads this
+/// table, so its refusals and its help agree.
+pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
+    ("compare", &["docx", "md", "pdf", "png", "json"]),
+    ("convert", &["docx", "md", "pdf", "png", "json"]),
+    ("read", &["md", "json"]),
+    ("diff", &["md"]),
+    ("accept", &["docx", "md", "pdf", "png", "json"]),
+    ("reject", &["docx", "md", "pdf", "png", "json"]),
+    ("append", &["docx", "md", "pdf", "png", "json"]),
+    ("scrub", &["docx", "md", "pdf", "png", "json"]),
+];
+
 /// The manifest for `runtime`.
 #[must_use]
 pub fn capabilities(runtime: &str) -> Capabilities {

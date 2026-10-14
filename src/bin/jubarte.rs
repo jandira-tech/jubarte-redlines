@@ -1470,8 +1470,11 @@ impl<'p> Input<'p> {
         let markdown = match format {
             Format::Md => Some(markdown_text(path, bytes.clone())?),
             Format::Docx => None,
-            Format::Pdf | Format::Png => {
-                return Err(format!("{}: PDF and PNG are not inputs", path.display()));
+            Format::Pdf | Format::Png | Format::Json => {
+                return Err(format!(
+                    "{}: PDF, PNG and JSON are not inputs",
+                    path.display()
+                ));
             }
         };
         Ok(Self {
@@ -1680,6 +1683,9 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         } else {
             Format::Docx
         });
+    if to == Format::Json {
+        return Err("diff does not write .json yet".into());
+    }
     if matches!(to, Format::Docx | Format::Md) {
         for (given, flag) in [
             (job.page.move_comments, "--move-comments"),
@@ -1697,6 +1703,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         (None, Format::Pdf | Format::Png) => {
             Some(default_output(job.old, job.new).with_extension("pdf"))
         }
+        (None, Format::Json) => unreachable!("refused above"),
     };
     let reference = job.reference.map(read_document).transpose()?;
     // Images of a Markdown side are read next to it (both sides share
@@ -1767,6 +1774,7 @@ fn write_diff_output(
     patch_on_stdout: bool,
 ) -> Result<(), String> {
     match (to, output) {
+        (Format::Json, _) => Err("diff does not write .json yet".into()),
         (Format::Md, None) => write_stdout(out),
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
@@ -1884,6 +1892,8 @@ fn run_convert_any(
         run_convert(&rendered)
     };
     match (from, to) {
+        // The snapshot writer comes with read --json.
+        (_, Format::Json) => Err("convert does not write .json yet".into()),
         (Format::Docx, Format::Pdf | Format::Png) => match markdown.track_changes {
             TrackChanges::All => pdf_job(converted, to),
             // The pages of the document with every change accepted or rejected.
@@ -2022,8 +2032,8 @@ fn run_convert_any(
             outln!("wrote {} ({} bytes)", output.display(), written.docx.len());
             Ok(())
         }
-        (Format::Pdf | Format::Png, _) => {
-            Err(format!("{}: PDF and PNG are not inputs", job.file.display()).into())
+        (Format::Pdf | Format::Png | Format::Json, _) => {
+            Err(format!("{}: PDF, PNG and JSON are not inputs", job.file.display()).into())
         }
     }
 }
