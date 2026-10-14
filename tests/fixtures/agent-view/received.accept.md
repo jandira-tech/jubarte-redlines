@@ -35,22 +35,22 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 <!-- p2 -->
 ## 1. Services
 
-<!-- p3 rev #0 @AC; #1+2 @AC -->
+<!-- p3 rev r0 @AC; r1+2 @AC -->
 Consultant will deliver the services in each Statement of Work, including quarterly route-cost reports and a monthly review call.
 
 <!-- p4 -->
 ## 2. Fees
 
-<!-- p5 rev #3+4 @AC -->
-Client shall pay each invoice within forty-five days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>#c5 @AC: Is one percent the statutory cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}
+<!-- p5 rev r3+4 @AC -->
+Client shall pay each invoice within forty-five days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c5 @AC: Is one percent the statutory cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}
 
 <!-- p6 -->
 ## 3. Term
 
-<!-- p7 rev #7+8 @AC -->
+<!-- p7 rev r7+8 @AC -->
 This Agreement begins on March 1, 2026 and continues until either party ends it with sixty days written notice.
 
-<!-- t0 center 3x3, cells p8-p16 by row, header row repeats, rev #9+10 @AC in p12 -->
+<!-- t0 center 3x3, cells p8-p16 by row, header row repeats, rev r9+10 @AC in p12 -->
 |Deliverable|Due|Owner|
 |-|-|-|
 |Route-cost report|Day 15|Consultant|
@@ -60,7 +60,7 @@ This Agreement begins on March 1, 2026 and continues until either party ends it 
 ## 4. Confidentiality
 
 <!-- p18 first-line 0.5in -->
-Each party shall keep the other's Confidential Information **<u>secret</u>**{>>#c11 @AC: Add a three-year survival period?<<}.
+Each party shall keep the other's Confidential Information **<u>secret</u>**{>>c11 @AC: Add a three-year survival period?<<}.
 
 <!-- p19 page-break -->
 

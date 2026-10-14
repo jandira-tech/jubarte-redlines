@@ -100,44 +100,88 @@ pub(crate) fn tag_of(element: &Element, handles: &Handles) -> String {
     format!("{id}@{handle}")
 }
 
+/// One internal tag's parts: `header1#1+2@AC` → (`Some("header1")`,
+/// `1+2`, `AC`). The story is absent in the body's tags. Internal only:
+/// [`format_tag`] prints it.
+pub(crate) fn split_tag(one: &str) -> (Option<&str>, &str, &str) {
+    let (head, handle) = one.rsplit_once('@').unwrap_or((one, "??"));
+    match head.split_once('#') {
+        Some((story, ids)) => (Some(story), ids, handle),
+        None => (None, head, handle),
+    }
+}
+
 /// The handle of a one-author tag (`1+2@AC` → `AC`); `None` for several.
 pub(crate) fn handle_of(tag: &str) -> Option<&str> {
     if tag.contains('|') {
         return None;
     }
-    tag.rsplit_once('@').map(|(_, h)| h)
+    Some(split_tag(tag).2)
 }
 
 /// Joins the tags of one logical change: `1@AC` + `2@AC` is `1+2@AC`,
-/// `1@AC` + `2@JD` is `1@AC|2@JD`, `1+2@AC` + `3@AC` is `1+2+3@AC`.
+/// `1@AC` + `2@JD` is `1@AC|2@JD`, `1+2@AC` + `3@AC` is `1+2+3@AC`. Tags
+/// join only within one story and one handle.
 pub(crate) fn join_tags(parts: &[String]) -> String {
     if parts.is_empty() {
         return String::new();
     }
-    let handles: Vec<Option<&str>> = parts.iter().map(|p| handle_of(p)).collect();
-    if handles.iter().all(|h| h.is_some() && *h == handles[0]) {
-        let ids: Vec<&str> = parts
-            .iter()
-            .map(|p| p.rsplit_once('@').map_or(p.as_str(), |(ids, _)| ids))
-            .collect();
-        format!("{}@{}", ids.join("+"), handles[0].unwrap_or("??"))
-    } else {
-        parts.join("|")
+    let keys: Vec<Option<(Option<&str>, &str)>> = parts
+        .iter()
+        .map(|p| {
+            (!p.contains('|')).then(|| {
+                let (story, _, handle) = split_tag(p);
+                (story, handle)
+            })
+        })
+        .collect();
+    match keys[0] {
+        Some((story, handle)) if keys.iter().all(|k| *k == keys[0]) => {
+            let ids: Vec<&str> = parts.iter().map(|p| split_tag(p).1).collect();
+            let story = story.map_or(String::new(), |s| format!("{s}#"));
+            format!("{story}{}@{handle}", ids.join("+"))
+        }
+        _ => parts.join("|"),
     }
 }
 
-/// `0@AC` → `#0 @AC`; `1+2@AC` → `#1+2 @AC`; `1@AC|2@JD` → `#1 @AC; #2 @JD`.
+/// `0@AC` → `r0 @AC`; `1+2@AC` → `r1+2 @AC`; `header1#2@JD` →
+/// `header1.r2 @JD`; `1@AC|2@JD` → `r1 @AC; r2 @JD`. An id the short form
+/// cannot spell prints its long id, one per id: every printed id is one
+/// `accept --id` takes. A mark without a `w:id` (only a malformed file has
+/// one) prints `r?`: it names no change, so no id reads it back.
 pub(crate) fn format_tag(tag: &str) -> String {
     tag.split('|')
-        .map(|one| match one.rsplit_once('@') {
-            Some((ids, handle)) => format!("#{ids} @{handle}"),
-            None => format!("#{one}"),
+        .map(|one| {
+            let (story, ids, handle) = split_tag(one);
+            if ids.split('+').any(|w| w == "?") {
+                let story = story.map_or(String::new(), |s| format!("{s}."));
+                return format!("{story}r{ids} @{handle}");
+            }
+            let changes: Vec<crate::ids::ChangeId> = ids
+                .split('+')
+                .map(|w| crate::ids::ChangeId::new(story.unwrap_or("body"), w))
+                .collect();
+            let short: Vec<String> = changes.iter().map(crate::ids::ChangeId::short).collect();
+            if changes.iter().zip(&short).all(|(c, s)| *s != c.long()) {
+                let numbers: Vec<&str> = changes.iter().map(|c| c.wid.as_str()).collect();
+                let head = short[0]
+                    .strip_suffix(changes[0].wid.as_str())
+                    .unwrap_or("r");
+                format!("{head}{} @{handle}", numbers.join("+"))
+            } else {
+                short
+                    .iter()
+                    .map(|s| format!("{s} @{handle}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            }
         })
         .collect::<Vec<_>>()
         .join("; ")
 }
 
-/// A list of tags for an id line: `#0 @AC; #1+2 @AC`.
+/// A list of tags for an id line: `r0 @AC; r1+2 @AC`.
 pub(crate) fn format_tags(tags: &[String]) -> String {
     tags.iter()
         .map(|t| format_tag(t))
@@ -541,10 +585,10 @@ pub(crate) struct LineFacts<'a> {
     /// Comment ids to list (comments hidden).
     pub comments: &'a [String],
     /// Comment threads whose range runs on past this paragraph, inline or
-    /// hidden: `in #c5`.
+    /// hidden: `in c5`.
     pub spans: &'a [String],
     /// The paragraph has no text but keeps its own line for its marks,
-    /// revisions or comments: `<!-- p4 empty, break-ins #3 @AC -->`.
+    /// revisions or comments: `<!-- p4 empty, break-ins r3 @AC -->`.
     pub empty: bool,
 }
 
@@ -780,7 +824,7 @@ pub(crate) fn line(head: &str, clauses: &[String]) -> String {
     }
 }
 
-/// `<!-- p3 justify, first-line 0.5in, comments #c5 -->` (the plan's grammar).
+/// `<!-- p3 justify, first-line 0.5in, comments c5 -->` (the plan's grammar).
 pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     let mut head = format!("p{}", f.index);
     if let Some(style) = f.style {
@@ -863,11 +907,11 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         }
     }
     if !f.comments.is_empty() {
-        let ids: Vec<String> = f.comments.iter().map(|c| format!("#c{c}")).collect();
+        let ids: Vec<String> = f.comments.iter().map(|c| format!("c{c}")).collect();
         clauses.push(format!("comments {}", ids.join(" ")));
     }
     if !f.spans.is_empty() {
-        let ids: Vec<String> = f.spans.iter().map(|c| format!("#c{c}")).collect();
+        let ids: Vec<String> = f.spans.iter().map(|c| format!("c{c}")).collect();
         clauses.push(format!("in {}", ids.join(" ")));
     }
     line(&head, &clauses)
@@ -904,8 +948,8 @@ pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
 
 /// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
 /// `None` for a nested table (not numbered). With `comments` (comments
-/// hidden) the cells' comment ids print as `comments #c9 in p3`; `spans`
-/// are the comment threads whose range runs through the table (`in #c5`).
+/// hidden) the cells' comment ids print as `comments c9 in p3`; `spans`
+/// are the comment threads whose range runs through the table (`in c5`).
 pub(crate) fn table_line(
     tbl: &Element,
     resolved: bool,
@@ -949,7 +993,7 @@ pub(crate) fn table_line(
             revs.extend(
                 stamped_revs(tr)
                     .into_iter()
-                    .map(|(_, tag)| format!("{} in r{r}", format_tag(&tag))),
+                    .map(|(_, tag)| format!("{} in t{t}.row{r}", format_tag(&tag))),
             );
         }
         for (c, tc) in super::row_cells(tr).enumerate() {
@@ -957,7 +1001,7 @@ pub(crate) fn table_line(
                 revs.extend(
                     stamped_revs(tc)
                         .into_iter()
-                        .map(|(_, tag)| format!("{} in r{r}.c{c}", format_tag(&tag))),
+                        .map(|(_, tag)| format!("{} in t{t}.row{r}.cell{c}", format_tag(&tag))),
                 );
             }
             if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
@@ -992,7 +1036,7 @@ pub(crate) fn table_line(
                 });
                 if !ids.is_empty() {
                     held_ids.extend(ids.iter().cloned());
-                    let ids: Vec<String> = ids.iter().map(|c| format!("#c{c}")).collect();
+                    let ids: Vec<String> = ids.iter().map(|c| format!("c{c}")).collect();
                     held.push(format!("{} in p{i}", ids.join(" ")));
                 }
             }
@@ -1017,9 +1061,9 @@ pub(crate) fn table_line(
             .enumerate()
             .map(|(i, (a, b))| {
                 if a == b {
-                    format!("r{i} p{a}")
+                    format!("t{t}.row{i} p{a}")
                 } else {
-                    format!("r{i} p{a}-p{b}")
+                    format!("t{t}.row{i} p{a}-p{b}")
                 }
             })
             .collect();
@@ -1050,7 +1094,7 @@ pub(crate) fn table_line(
     let ids: Vec<String> = spans
         .iter()
         .filter(|c| !held_ids.contains(c))
-        .map(|c| format!("#c{c}"))
+        .map(|c| format!("c{c}"))
         .collect();
     if !ids.is_empty() {
         clauses.push(format!("in {}", ids.join(" ")));
@@ -1095,7 +1139,7 @@ pub(crate) fn threads(comments: Option<&Element>, extended: Option<&Element>) ->
     t
 }
 
-/// `#c5 @AC: `, `#c5 @AC resolved: `, `#c6 @AS re #c5: `, or `#c5: ` with
+/// `c5 @AC: `, `c5 @AC resolved: `, `c6 @AS re c5: `, or `c5: ` with
 /// no author. `date` is the inline timestamp, when wanted.
 pub(crate) fn comment_head(
     id: &str,
@@ -1104,7 +1148,7 @@ pub(crate) fn comment_head(
     handles: &Handles,
     threads: &Threads,
 ) -> String {
-    let mut head = format!("#c{id}");
+    let mut head = format!("c{id}");
     if let Some(handle) = handles.of(author) {
         head.push_str(&format!(" @{handle}"));
     }
@@ -1113,7 +1157,7 @@ pub(crate) fn comment_head(
         head.push_str(date);
     }
     if let Some(root) = threads.reply_of.get(id) {
-        head.push_str(&format!(" re #c{root}"));
+        head.push_str(&format!(" re c{root}"));
     } else if threads.done.contains(id) {
         head.push_str(" resolved");
     }
@@ -1293,19 +1337,35 @@ fn names_handle(text: &str, handle: &str) -> bool {
     })
 }
 
+/// The id line a block opens with (`<!-- p3 … -->`, `<!-- t0 … -->`), or
+/// `""` for a block that opens with document text.
+fn id_line_of(block: &str) -> &str {
+    block
+        .lines()
+        .next()
+        .filter(|line| line.starts_with("<!-- "))
+        .unwrap_or("")
+}
+
+/// The number a comment word names: `c5`, or the 0.12 spelling `#c5`.
+fn comment_word(word: &str) -> Option<&str> {
+    let id = word.strip_prefix('#').unwrap_or(word).strip_prefix('c')?;
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
 /// Whether a block holds a mark of `handle`: on its id or table line, in the
-/// tag of a note (`{>>#4 @AC<<}`, `{>>#c6 @AS re #c5: …<<}`; the comment text
+/// tag of a note (`{>>r4 @AC<<}`, `{>>c6 @AS re c5: …<<}`; the comment text
 /// after the colon is the author's words, not a tag), or as the author of a
 /// hidden comment its line names. Document text never counts: the view
 /// escapes any `{>>` in it.
 fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, String>) -> bool {
-    let first = block.lines().next().unwrap_or("");
+    let first = id_line_of(block);
     if names_handle(first, handle) {
         return true;
     }
     let hidden = first
         .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
-        .filter_map(|word| word.strip_prefix("#c"))
+        .filter_map(comment_word)
         .any(|id| comment_handles.get(id).is_some_and(|h| h == handle));
     hidden
         || block.match_indices("{>>").any(|(at, _)| {
@@ -1317,18 +1377,19 @@ fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, Strin
 }
 
 /// Whether a block of the agent view carries a tracked change or a comment:
-/// a note in its text, or a mark clause on its id or table line (`in #c5`
-/// for a block inside a comment range whose note is elsewhere).
+/// a note in its text (the view escapes any `{>>` in document text), or a
+/// mark clause on its id or table line (`in c5` for a block inside a
+/// comment range whose note is elsewhere).
 fn is_marked(block: &str) -> bool {
-    let first = block.lines().next().unwrap_or("");
-    block.contains("{>>#")
+    let first = id_line_of(block);
+    block.contains("{>>")
         || [
-            " rev #",
-            " comments #",
-            " in #",
-            " break-ins #",
-            " break-del #",
-            " fmt #",
+            " rev ",
+            " comments ",
+            " in c",
+            " break-ins ",
+            " break-del ",
+            " fmt ",
         ]
         .iter()
         .any(|key| first.contains(key))
@@ -1540,8 +1601,8 @@ mod tests {
     #[test]
     fn note_label_reads_through_the_mark_around_an_inserted_or_deleted_note() {
         assert_eq!(note_label("[^1]: text"), Some("1"));
-        assert_eq!(note_label("{++[^2]: added++}{>>#5 @AC<<}"), Some("2"));
-        assert_eq!(note_label("{--[^3]: gone--}{>>#6 @AC<<}"), Some("3"));
+        assert_eq!(note_label("{++[^2]: added++}{>>r5 @AC<<}"), Some("2"));
+        assert_eq!(note_label("{--[^3]: gone--}{>>r6 @AC<<}"), Some("3"));
         assert_eq!(note_label("text [^4]: not a definition"), None);
     }
 
@@ -1679,10 +1740,29 @@ mod tests {
         assert_eq!(join_tags(&["1@AC".into(), "2@AC".into()]), "1+2@AC");
         assert_eq!(join_tags(&["1@AC".into(), "2@JD".into()]), "1@AC|2@JD");
         assert_eq!(join_tags(&["1+2@AC".into(), "3@AC".into()]), "1+2+3@AC");
-        assert_eq!(format_tag("0@AC"), "#0 @AC");
-        assert_eq!(format_tag("1+2@AC"), "#1+2 @AC");
-        assert_eq!(format_tag("1@AC|2@JD"), "#1 @AC; #2 @JD");
+        assert_eq!(format_tag("0@AC"), "r0 @AC");
+        assert_eq!(format_tag("1+2@AC"), "r1+2 @AC");
+        assert_eq!(format_tag("1@AC|2@JD"), "r1 @AC; r2 @JD");
+        assert_eq!(format_tag("footnotes#1+2@AC"), "footnotes.r1+2 @AC");
+        assert_eq!(format_tag("1@AC|header1#2@JD"), "r1 @AC; header1.r2 @JD");
+        // An id the short form cannot spell prints its long id.
+        assert_eq!(format_tag("007@AC"), "body:rev:007 @AC");
+        assert_eq!(
+            format_tag("Header_1#4+5@AC"),
+            "Header_1:rev:4 @AC; Header_1:rev:5 @AC"
+        );
+        assert_eq!(format_tag("?@??"), "r? @??");
+        assert_eq!(format_tag("footnotes#?@AC"), "footnotes.r? @AC");
         assert_eq!(handle_of("1+2@AC"), Some("AC"));
+        assert_eq!(handle_of("header1#1@AC"), Some("AC"));
+        assert_eq!(
+            join_tags(&["header1#1@AC".into(), "header1#2@AC".into()]),
+            "header1#1+2@AC"
+        );
+        assert_eq!(
+            join_tags(&["1@AC".into(), "header1#2@AC".into()]),
+            "1@AC|header1#2@AC"
+        );
     }
 
     #[test]

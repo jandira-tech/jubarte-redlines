@@ -36,30 +36,30 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 ## 1. Services
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>#0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>#1+2 @AC<<} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r1+2 @AC<<} review call.
 
 <!-- p4 -->
 ## 2. Fees
 
-<!-- p5 comments #c5 #c6 -->
-Client shall pay each invoice within {~~thirty~>forty-five~~}{>>#3+4 @AC<<} days of receipt. Late amounts accrue interest at one percent per month.
+<!-- p5 comments c5 c6 -->
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days of receipt. Late amounts accrue interest at one percent per month.
 
 <!-- p6 -->
 ## 3. Term
 
 <!-- p7 -->
-This Agreement begins on March 1, 2026 and continues until either party ends it with {~~ninety days~>sixty days~~}{>>#7+8 @AC<<} written notice.
+This Agreement begins on March 1, 2026 and continues until either party ends it with {~~ninety days~>sixty days~~}{>>r7+8 @AC<<} written notice.
 
 <!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->
 |Deliverable|Due|Owner|
 |-|-|-|
-|Route-cost report|{~~Day 10~>Day 15~~}{>>#9+10 @AC<<}|Consultant|
+|Route-cost report|{~~Day 10~>Day 15~~}{>>r9+10 @AC<<}|Consultant|
 |Review call|Monthly|Both|
 
 <!-- p17 -->
 ## 4. Confidentiality
 
-<!-- p18 first-line 0.5in, comments #c11 -->
+<!-- p18 first-line 0.5in, comments c11 -->
 Each party shall keep the other's Confidential Information **<u>secret</u>**.
 
 <!-- p19 page-break -->

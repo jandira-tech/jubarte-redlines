@@ -160,7 +160,7 @@ fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
 }
 
 /// pi review r392b F5: a table nested in a cell is part of the cell in the
-/// view (`cells r0 p2-p4`), so `tN.rR.cC.pK` counts its paragraphs too.
+/// view (`cells t0.row0 p2-p4`), so `tN.rR.cC.pK` counts its paragraphs too.
 #[test]
 fn a_cell_paragraph_id_counts_the_nested_table_as_the_view_does() {
     let inner = format!(
@@ -183,7 +183,7 @@ fn a_cell_paragraph_id_counts_the_nested_table_as_the_view_does() {
     )
     .unwrap()
     .markdown;
-    assert!(view.contains("cells r0 p1-p3"), "{view}");
+    assert!(view.contains("cells t0.row0 p1-p3"), "{view}");
     let out = apply_plan(
         &source,
         &plan(
@@ -534,10 +534,13 @@ fn a_plan_comment_id_takes_every_comment_spelling() {
     );
 }
 
+/// `jubarte edit ARGS` under a pinned timestamp, so two runs compared byte
+/// for byte cannot straddle a second.
 fn edit_cli(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
         .arg("edit")
         .args(args)
+        .args(["--datetime", "2026-10-11T00:00:00Z"])
         .current_dir(dir)
         .output()
         .unwrap()

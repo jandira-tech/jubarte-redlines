@@ -56,8 +56,9 @@ impl Mark {
 /// `{>>…<<}` note (`Ana Lima (2026-09-29T14:05:00Z)`), already escaped.
 pub(crate) type Change = (Mark, Option<String>);
 
-/// Agent-view attribution: an internal tag (`0@AC`, `1+2@AC`, optionally
-/// `0@AC 2026-10-03T14:05:00Z`) behind this sentinel, so that it is never
+/// Agent-view attribution: an internal tag (`0@AC`, `1+2@AC`,
+/// `header1#1@AC`, optionally `0@AC 2026-10-03T14:05:00Z`) behind this
+/// sentinel, so that it is never
 /// mistaken for an author's note. Printed through `agent::format_tag`;
 /// never written to the output.
 pub(crate) const TAG: &str = "\u{E000}";
@@ -91,11 +92,13 @@ fn display(by: &str) -> String {
 }
 
 /// Two attributions join as neighbours: equal notes, or two tags of one
-/// author (their ids differ by design).
+/// author in one story (their ids differ by design).
 fn same_author(a: Option<&str>, b: Option<&str>) -> bool {
+    use super::agent::{handle_of, split_tag};
     match (tag(a), tag(b)) {
         (Some(a), Some(b)) => {
-            super::agent::handle_of(tag_parts(a).0) == super::agent::handle_of(tag_parts(b).0)
+            let (a, b) = (tag_parts(a).0, tag_parts(b).0);
+            handle_of(a) == handle_of(b) && split_tag(a).0 == split_tag(b).0
         }
         _ => a == b,
     }
