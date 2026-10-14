@@ -1114,9 +1114,14 @@ fn is_monospace(font: &str) -> bool {
         "terminal",
     ];
     let font = font.trim().to_ascii_lowercase();
+    // Whole words only: "Monotype Corsiva" and "Barcode 39" are not code.
     font.starts_with("courier")
-        || font.contains("mono")
-        || font.contains("code")
+        || font.split([' ', '-', '_']).any(|word| {
+            matches!(
+                word,
+                "mono" | "monospace" | "monospaced" | "code" | "typewriter"
+            )
+        })
         || FACES.contains(&font.as_str())
 }
 
@@ -3199,6 +3204,29 @@ mod tests {
         // Two dollars are math, as Markdown reads them; a lone one is text.
         assert_eq!(table_cell(r"$5 \ $", false), r"$5 \ $");
         assert_eq!(table_cell(r"costs $5\", false), r"costs $5\\");
+    }
+
+    #[test]
+    fn monospace_faces_are_named_by_whole_words() {
+        for face in [
+            "Courier New",
+            "Consolas",
+            "DejaVu Sans Mono",
+            "Source Code Pro",
+            "Cascadia-Code",
+            "Lucida Sans Typewriter",
+        ] {
+            assert!(is_monospace(face), "{face}");
+        }
+        for face in [
+            "Monotype Corsiva",
+            "Barcode 39",
+            "Code2000",
+            "Calibri",
+            "Times New Roman",
+        ] {
+            assert!(!is_monospace(face), "{face}");
+        }
     }
 
     #[test]
