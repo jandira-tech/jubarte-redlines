@@ -51646,6 +51646,43 @@ mod coverage_round_three_tests {
             assert!(rule, "the fraction bar is painted with the box");
         }
 
+        /// quadratic-in-table's fraction is one box inside a cell. The row
+        /// stayed a body font line, so the radical painted into the cell
+        /// above and the denominator through the bottom border.
+        #[test]
+        fn a_cell_line_holds_a_math_box() {
+            let fonts = fonts();
+            let mut run = TextRun::new("fraction", Defaults::word().run);
+            run.style.size = 11.0;
+            run.math = Some(super::math_layout::MathBox {
+                width: 40.0,
+                ascent: 18.0,
+                descent: 12.0,
+                glyphs: vec![],
+                rules: vec![],
+            });
+            let mut style = Defaults::word().para;
+            style.before = 0.0;
+            style.after = 0.0;
+            style.line_exact = None;
+            style.line_at_least = None;
+            style.line_mult = 1.0;
+            let para = super::super::CellPara {
+                runs: vec![run],
+                images: Vec::new(),
+                boxes: Vec::new(),
+                style,
+                bookmarks: Vec::new(),
+                blank_bookmarks: Vec::new(),
+                continued: false,
+                vertical: false,
+                squeeze: super::super::Squeeze::NONE,
+                hang_spaces: false,
+            };
+            let h = super::super::cell_line_metrics(&fonts, &para, &para.runs).2;
+            assert!(h + 0.05 >= 30.0, "cell line {h} does not hold the math box");
+        }
+
         /// Two stretches of missing glyphs around painted text: one hidden
         /// op each, in reading order between the painted ones.
         #[test]
