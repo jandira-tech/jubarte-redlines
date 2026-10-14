@@ -256,9 +256,12 @@ fn a_cell_keeps_its_paragraphs() {
 
 #[test]
 fn a_line_break_in_a_cell_stays_a_line_break() {
-    // Two cells, one `<br>`, two paragraphs: the `<br>` is a line break.
+    // Two cells, one `<br>`, two paragraphs: the `<br>` is a line break,
+    // which the view reads back as `<br/>`, and `<br/>` stays one.
     let md = "<!-- t0 1x2, cells p0-p1 by row -->\n|A<br>B|C|\n|-|-|\n\n<!-- p2 -->\nAfter.\n";
-    assert_eq!(round_trip(md), md.trim());
+    let again = md.replace("A<br>B", "A<br/>B");
+    assert_eq!(round_trip(md), again.trim());
+    assert_eq!(round_trip(&again), again.trim());
 }
 
 #[test]
@@ -769,7 +772,7 @@ fn a_note_of_two_paragraphs_keeps_them() {
     assert!(view.contains(line), "{line} in {view}");
     for body in [
         "<!-- p0 -->\nSee[^1].\n\n<!-- footnotes.p0-p1 -->\n[^1]: One,<br>two.",
-        "<!-- p0 -->\nSee[^1].\n\n<!-- footnotes.p0 -->\n[^1]: One,<br>broken.",
+        "<!-- p0 -->\nSee[^1].\n\n<!-- footnotes.p0 -->\n[^1]: One,<br/>broken.",
     ] {
         let docx = markdown_to_docx(
             &as_view(&format!("{AUTHORS}{body}\n")),
@@ -1164,6 +1167,68 @@ fn a_table_style_whose_borders_vary_warns_that_they_are_not_written() {
     let out = markdown_to_docx(plain, &DocxOptions::default()).expect("the view reads");
     assert!(
         !out.warnings.iter().any(|w| w.contains("borders vary")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+/// The view a note `[^1]` with `text` and id line `ids` writes and reads.
+fn note_trip(ids: &str, text: &str) -> String {
+    let view = format!(
+        "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n---\n\n\
+         <!-- p0 -->\nSee[^1].\n\n<!-- {ids} -->\n[^1]: {text}\n"
+    );
+    full_trip(&view).0
+}
+
+#[test]
+fn a_note_keeps_its_line_break_apart_from_its_inserted_paragraph() {
+    // `<br/>` is a w:br in the paragraph; `<br>` ends it. The inserted
+    // paragraph is one change, its mark untracked.
+    let again = note_trip(
+        "footnotes.p0-p1",
+        "Keep<br/>this<br>{++added++}{>>footnotes.r2 @AL<<}",
+    );
+    assert!(
+        again
+            .lines()
+            .any(|l| l == "[^1]: Keep<br/>this<br>{++added++}{>>footnotes.r2 @AL<<}"),
+        "{again}"
+    );
+    assert!(again.contains("<!-- footnotes.p0-p1 -->"), "{again}");
+}
+
+#[test]
+fn a_note_whose_first_paragraph_holds_only_its_reference_keeps_it() {
+    let again = note_trip("footnotes.p0-p2", "<br>Body of the note.<br>Second line.");
+    assert!(
+        again.contains("[^1]:<br>Body of the note.<br>Second line."),
+        "{again}"
+    );
+}
+
+#[test]
+fn a_deleted_reference_leaves_its_live_note_its_own_marks() {
+    let view = "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n---\n\n\
+                <!-- p0 -->\nCut{--[^1]--}{>>r1 @AL<<}.\n\n<!-- footnotes.p0 -->\n\
+                [^1]: Still {++here++}{>>footnotes.r5 @AL<<}.\n";
+    let (again, _) = full_trip(view);
+    assert!(again.contains("Cut{--[^1]--}{>>r1 @AL<<}."), "{again}");
+    assert!(
+        again.contains("[^1]: Still {++here++}{>>footnotes.r5 @AL<<}."),
+        "{again}"
+    );
+}
+
+#[test]
+fn a_note_whose_breaks_disagree_with_its_id_line_warns() {
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nSee[^1].\n\n\
+                <!-- footnotes.p0-p2 -->\n[^1]: One<br>two.\n";
+    let out = markdown_to_docx(view, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        out.warnings.iter().any(|w| w
+            == "[^1]: its id line counts 3 paragraphs and its text 2 by its <br>s: \
+                the <br>s are written as line breaks"),
         "{:?}",
         out.warnings
     );

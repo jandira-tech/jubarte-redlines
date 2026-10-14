@@ -401,22 +401,51 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let Some(note) = notes.get(&key) else {
             continue;
         };
+        // Word inserts or deletes a note with its reference, its text in a
+        // mark of that kind. In the agent view a note whose text stays live
+        // is not wrapped: its own marks keep their ids there, and a wrap
+        // would claim text the reference's change never touched.
+        let changes = if !writer.agent || text_follows_reference(note, &changes) {
+            changes
+        } else {
+            Vec::new()
+        };
         let around = std::mem::replace(&mut writer.revisions, changes);
         writer.lead = Some(format!("[^{index}]: "));
         writer.story = note_stories.get(&key.0).cloned();
         // Every paragraph the id line counts, a table's cells' too: the
         // view has no table in a note, so they are the note's paragraphs.
-        let parts: Vec<critic::Part> = agent::paragraphs(note)
+        let paragraphs = agent::paragraphs(note);
+        let many = writer.agent && paragraphs.len() > 1;
+        let parts: Vec<critic::Part> = paragraphs
             .into_iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(at, p)| {
                 let inline = writer.paragraph_inline(p).0.into_inline();
-                // A line break is `<br>` in the agent view, as in a cell.
-                let line_break = if writer.agent { "<br>" } else { " " };
-                (
-                    inline.render(true).replace('\n', line_break),
-                    writer.note_mark(p),
-                    inline.edges(),
-                )
+                // A line break is `<br/>` in the agent view, as in a cell:
+                // `<br>` ends one of the note's paragraphs.
+                let line_break = if writer.agent { "<br/>" } else { " " };
+                let mut text = inline.render(true).replace('\n', line_break);
+                // A first paragraph holding the reference mark alone still
+                // opens the definition, so the label leads its `<br>`s.
+                if at == 0
+                    && many
+                    && let Some(lead) = writer.lead.take()
+                {
+                    text = format!("{}{text}", lead.trim_end());
+                }
+                // In a note wrapped in its reference's change, an untracked
+                // mark or one of that kind (Word's own, its tag on the
+                // clause) joins the wrap: resolving the reference resolves
+                // the whole note.
+                let mark = writer.note_mark(p).or_else(|| {
+                    writer
+                        .revisions
+                        .last()
+                        .filter(|(kind, _)| paragraph_mark_kind(p).is_none_or(|own| own == *kind))
+                        .cloned()
+                });
+                (text, mark, inline.edges())
             })
             .collect();
         writer.revisions = around;
@@ -1055,6 +1084,79 @@ fn majority(aligns: impl Iterator<Item = Option<&'static str>>) -> Option<&'stat
 
 /// Rows as a Markdown pipe table; the first row is the header, and the
 /// delimiter row aligns each column as `aligns` says.
+/// The agent view's cell `<br>`s: the table line names each paragraph's
+/// mark, so a `<br>` prints in a change only when its mark is tracked and a
+/// paragraph beside it (the next, else its own) is wholly a change of that
+/// kind, which the break then joins. An untracked mark's `<br>` stays out
+/// of every change.
+fn fold_tracked_breaks(parts: &mut [critic::Part]) {
+    for i in 0..parts.len() {
+        let fold = parts[i].1.take().and_then(|(kind, _)| {
+            let same = |change: &Change| change.0 == kind;
+            let next = parts
+                .get(i + 1)
+                .and_then(|next| critic::whole_change(&next.0))
+                .filter(same);
+            next.or_else(|| critic::whole_change(&parts[i].0).filter(same))
+        });
+        parts[i].1 = fold;
+    }
+}
+
+/// The tracked change on `p`'s own mark: `w:pPr/w:rPr/w:ins` or `w:del`.
+fn paragraph_mark_kind(p: &Element) -> Option<Mark> {
+    p.path(&["pPr", "rPr"])?
+        .elements()
+        .find_map(|e| match e.local() {
+            "ins" => Some(Mark::Insertion),
+            "del" => Some(Mark::Deletion),
+            _ => None,
+        })
+}
+
+/// Whether `note` goes with its reference's change (`changes`, innermost
+/// last): it holds no tracked change of its own (resolving the reference
+/// resolves the note), or every run of it that holds text sits in a mark
+/// of that kind, Word's shape for a note inserted or deleted with its
+/// reference.
+fn text_follows_reference(note: &Element, changes: &[Change]) -> bool {
+    fn tracked(e: &Element) -> bool {
+        e.elements().any(|child| {
+            matches!(child.local(), "ins" | "del" | "moveTo" | "moveFrom") || tracked(child)
+        })
+    }
+    fn walk(e: &Element, kind: &[&str], inside: bool, all: &mut bool) {
+        for child in e.elements() {
+            match child.local() {
+                "r" if !inside => {
+                    if child
+                        .elements()
+                        .any(|c| matches!(c.local(), "t" | "delText") && !c.text().is_empty())
+                    {
+                        *all = false;
+                    }
+                }
+                local => walk(child, kind, inside || kind.contains(&local), all),
+            }
+        }
+    }
+    let kind: &[&str] = match changes.iter().rev().find_map(|(mark, _)| match mark {
+        Mark::Insertion => Some(true),
+        Mark::Deletion => Some(false),
+        Mark::Highlight => None,
+    }) {
+        Some(true) => &["ins", "moveTo"],
+        Some(false) => &["del", "moveFrom"],
+        None => return true,
+    };
+    if !tracked(note) {
+        return true;
+    }
+    let mut all = true;
+    walk(note, kind, false, &mut all);
+    all
+}
+
 /// Whether `name` is a heading's bookmark for `slug`: the slug itself, or
 /// the slug and a number Word or the writer added to keep it unique.
 fn is_slug_of(name: &str, slug: &str) -> bool {
@@ -2751,7 +2853,13 @@ impl Writer<'_> {
         let mut parts = Vec::new();
         self.cell_parts(cell, &mut parts);
         self.revisions.truncate(depth);
-        critic::join_paragraphs(parts, "<br>", self.agent).replace('\n', "<br>")
+        if self.agent {
+            fold_tracked_breaks(&mut parts);
+        }
+        // The agent view tells a line break (`<br/>`) from a paragraph's
+        // end (`<br>`), which its table line counts.
+        let line_break = if self.agent { "<br/>" } else { "<br>" };
+        critic::join_paragraphs(parts, "<br>", self.agent).replace('\n', line_break)
     }
 
     /// Paragraph texts in a cell, each with the tracked change on its mark.
@@ -2760,7 +2868,14 @@ impl Writer<'_> {
             match child.local() {
                 "p" => {
                     let (inline, extra) = self.paragraph_inline(child);
-                    let mark = self.paragraph_mark(child).filter(|_| extra.is_empty());
+                    // The agent view keeps only the mark's kind here, for
+                    // `cell_text` to fold the `<br>` with.
+                    let mark = if self.agent {
+                        paragraph_mark_kind(child).map(|kind| (kind, None))
+                    } else {
+                        self.paragraph_mark(child)
+                    };
+                    let mark = mark.filter(|_| extra.is_empty());
                     let inline = inline.into_inline();
                     parts.push((inline.render(true), mark, inline.edges()));
                     parts.extend(extra.into_iter().map(|block| (block, None, (false, false))));

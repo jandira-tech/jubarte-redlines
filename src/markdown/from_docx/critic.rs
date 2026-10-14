@@ -778,7 +778,7 @@ pub(crate) fn splice(
 /// The change a rendered part is wholly inside, with its attribution:
 /// `{--gone--}{>>Ana<<}` is `(Deletion, Some("Ana"))`. Document text is
 /// escaped, so the first closer after the opener is the span's own.
-fn whole_change(part: &str) -> Option<Change> {
+pub(crate) fn whole_change(part: &str) -> Option<Change> {
     [Mark::Insertion, Mark::Deletion]
         .into_iter()
         .find_map(|mark| {
@@ -830,7 +830,9 @@ pub(crate) fn join_paragraphs(parts: Vec<Part>, separator: &str, keep_empty: boo
     let mut first = None;
     for (i, (part, mark, (leading, ends_in_space))) in parts.into_iter().enumerate() {
         if part.trim().is_empty() {
-            pending = None;
+            // The agent view keeps an empty paragraph, and its mark's change
+            // goes with the break after it.
+            pending = if keep_empty { mark } else { None };
             if keep_empty && i > 0 {
                 first = None;
                 out.push_str(separator);
@@ -846,8 +848,14 @@ pub(crate) fn join_paragraphs(parts: Vec<Part>, separator: &str, keep_empty: boo
         } else {
             // A break with no change of its own goes with a paragraph that is
             // wholly one change, which leaves no stray break once resolved.
+            // The agent view (`keep_empty`) prints the break as its caller
+            // marks it: in a change only when the paragraph's mark is.
             let first = first.take();
-            let change = pending.take().or_else(|| whole_change(&part)).or(first);
+            let change = if keep_empty {
+                pending.take()
+            } else {
+                pending.take().or_else(|| whole_change(&part)).or(first)
+            };
             let space = trailing || leading;
             splice(&mut out, separator, "", &part, change.as_ref(), space);
         }
