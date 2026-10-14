@@ -837,6 +837,8 @@ pub(super) struct IdLine {
     pub fmt: Vec<Tag>,
     /// The marks its text shows nothing of (`rev r9 @AL`).
     pub rev: Vec<Tag>,
+    /// A comment's range runs into it (`in c5`).
+    pub in_comment: bool,
 }
 
 /// The id line of one paragraph (`pN`, not a range); `None` for any
@@ -895,6 +897,7 @@ impl IdLine {
                     self.label = Some(Label::Bullet);
                 }
             }
+            Some(("in", ids)) if comment_numbers(ids) => self.in_comment = true,
             Some(("first-line", v)) => self.first_line = twips(v),
             Some(("hanging", v)) => self.hanging = twips(v),
             Some(("left", v)) => self.left = twips(v),

@@ -292,3 +292,83 @@ fn a_bulleted_heading_whose_text_begins_with_a_hyphen_keeps_it() {
         "{got}"
     );
 }
+
+/// A comment whose range ends between two blocks, its note opening the
+/// next paragraph, ends before that paragraph: the paragraph is not in the
+/// comment (no `in c0`), as Word wrote it. A paragraph that says `in c0`
+/// keeps the end inside it, before the note.
+#[test]
+fn a_range_ending_before_its_notes_paragraph_stays_out_of_it() {
+    for (p1, inside) in [("<!-- p1 -->", false), ("<!-- p1 in c0 -->", true)] {
+        let body =
+            format!("<!-- p0 in c0 -->\n{{==Some text==}}\n\n{p1}\n{{>>c0 @SW: Hi.<<}}After.\n");
+        let (got, docx) = round_trip(&body);
+        assert!(got.contains(&body), "{got}");
+        let document = part(&docx, "word/document.xml");
+        let end = document.find("<w:commentRangeEnd").unwrap();
+        let second = document.match_indices("<w:p>").nth(1).unwrap().0;
+        assert_eq!(end > second, inside, "{document}");
+    }
+    // Through a table, as in ids-table-changes: the table says `in c0`.
+    let body = "<!-- p0 in c0 -->\n{==Some text==}\n\n\
+                <!-- t0 1x1, cells p1-p1 by row, in c0 -->\n|{==a==}|\n|-|\n\n\
+                <!-- p2 -->\n{>>c0 @SW: Hi.<<}{>>c1 @SW re c0: Yes.<<}\n";
+    let (got, _) = round_trip(body);
+    assert!(got.contains(body), "{got}");
+}
+
+/// A comment note inside a tracked change (a reply at the start of an
+/// insertion, docx_lots_of_comments r125) keeps its reference in the
+/// change's mark, and the change keeps its text.
+#[test]
+fn a_note_inside_a_change_stays_in_its_mark() {
+    // A note numbered apart from its place (c7, the first comment) too.
+    let (got, _) = round_trip("<!-- p0 -->\nx {++{>>c7 @SW: New.<<}cap++}{>>r5 @SW<<}\n");
+    assert!(
+        got.contains("x {++{>>c7 @SW: New.<<}cap++}{>>r5 @SW<<}\n"),
+        "{got}"
+    );
+    let line =
+        "{==Plan==}{>>c0 @SW: Root.<<} and {++{>>c1 @SW re c0: Reply.<<}more text++}{>>r4 @SW<<}";
+    let (got, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
+    assert!(got.contains(&format!("{line}\n")), "{got}");
+    let document = part(&docx, "word/document.xml");
+    let ins = document.find("<w:ins ").unwrap();
+    let reference = document.rfind("<w:commentReference").unwrap();
+    assert!(reference > ins, "{document}");
+    assert_eq!(document.matches("<w:ins ").count(), 1, "{document}");
+}
+
+/// Bold or italic text whose delimiters CommonMark would not read (a
+/// bold `*` right after `0.081`, an italic letter inside a word) prints as
+/// `<b>`/`<i>`, which reads back the same; `**`/`_` stay wherever they
+/// read.
+#[test]
+fn emphasis_prints_as_a_tag_where_its_delimiters_would_not_read() {
+    for line in [
+        "{++0.081<b>\\*</b>++}{>>r1 @SW<<}",
+        "word<b>.</b> and x<b>,</b>y",
+        "in<i>side</i>out and **bold** and _it_.",
+    ] {
+        let (got, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
+        assert!(got.contains(&format!("{line}\n")), "{line}\n{got}");
+        let document = part(&docx, "word/document.xml");
+        assert!(
+            document.contains("<w:b/>") || document.contains("<w:i/>"),
+            "{document}"
+        );
+    }
+}
+
+/// A raised link Word splits into runs (`[\[2\]]`, the escapes parting
+/// its text) stays one link inside one `<sup>`.
+#[test]
+fn a_raised_link_of_several_runs_stays_one_link() {
+    for line in [
+        "x <sup>[\\[2\\]](#footnote-2)</sup>",
+        "x <sup>[a\\]](#f)</sup> and <sub>2</sub><sup>3</sup>",
+    ] {
+        let (got, _) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
+        assert!(got.contains(&format!("{line}\n")), "{line}\n{got}");
+    }
+}
