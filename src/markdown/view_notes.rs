@@ -488,6 +488,33 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
         .collect()
 }
 
+/// The header's `notes: {…, empty: [footnotes, endnotes]}`: the notes
+/// parts (`footnote`, `endnote`) that hold no note. The clause comes last,
+/// so a change tag quoted before it cannot pose as it.
+pub(super) fn empty_notes(value: &str) -> Vec<&'static str> {
+    let Some((_, list)) = value.rsplit_once("empty: [") else {
+        return Vec::new();
+    };
+    let Some((list, rest)) = list.split_once(']') else {
+        return Vec::new();
+    };
+    if !rest.trim_start().starts_with('}') {
+        return Vec::new();
+    }
+    let mut kinds = Vec::new();
+    for name in list.split(',').map(str::trim) {
+        let kind = match name {
+            "footnotes" => "footnote",
+            "endnotes" => "endnote",
+            _ => continue,
+        };
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    kinds
+}
+
 /// The most grid columns a table has, and rows one merged cell reaches: a
 /// bound on what a hand-edited table line can make the reader write (Word
 /// takes 63 columns).
@@ -1018,6 +1045,26 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn empty_notes_reads_the_last_clause_only() {
+        use super::empty_notes;
+        assert_eq!(
+            empty_notes("{empty: [footnotes, endnotes]}  # notes parts that hold no note"),
+            ["footnote", "endnote"]
+        );
+        assert_eq!(
+            empty_notes("{rev: \"r1 @AC\", empty: [endnotes]}"),
+            ["endnote"]
+        );
+        // A quoted tag that looks like the clause is not it.
+        assert!(empty_notes("{rev: \"empty: [footnotes] x\"}").is_empty());
+        assert!(empty_notes("{rev: \"r1 @AC\"}").is_empty());
+        assert_eq!(
+            empty_notes("{empty: [endnotes, sidenotes, endnotes]}"),
+            ["endnote"]
+        );
+    }
+
     use super::*;
 
     #[test]

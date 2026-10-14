@@ -194,7 +194,7 @@ pub(super) fn assemble(
     };
     let mut media = Media::default();
 
-    if !document.notes.is_empty() {
+    if !document.notes.is_empty() || !document.empty_notes.is_empty() {
         footnotes(&mut package, &main, &mut context, &mut media);
     }
     let body = {
@@ -896,6 +896,10 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
     context.note_ids = vec![0; document.notes.len()];
     for (kind, endnote) in [("footnote", false), ("endnote", true)] {
         if !document.notes.iter().any(|note| note.endnote == endnote) {
+            // A part the view names empty holds Word's separators only.
+            if document.empty_notes.contains(&kind) {
+                ensure_notes_part(package, main, kind);
+            }
             continue;
         }
         let part = ensure_notes_part(package, main, kind);

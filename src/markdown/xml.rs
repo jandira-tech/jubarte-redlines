@@ -250,6 +250,9 @@ pub(super) struct Document {
     pub body: Vec<Item>,
     /// Footnotes in reference order.
     pub notes: Vec<Note>,
+    /// Notes parts (`footnote`, `endnote`) to make though no note needs
+    /// them: the header's `notes: {empty: [footnotes]}`.
+    pub empty_notes: Vec<&'static str>,
     pub comments: Vec<Comment>,
     /// Comment slots: the comment each got, if any.
     pub slots: Vec<Option<u32>>,
