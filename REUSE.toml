@@ -140,12 +140,27 @@ precedence = "override"
 SPDX-FileCopyrightText = "2015 Microsoft Corporation"
 SPDX-License-Identifier = "OFL-1.1"
 
-# Third-party manuscripts used as Markdown round-trip inputs. Not licensed
-# by Jandira; provenance is in LICENSES/LicenseRef-Manuscript-Fixtures.txt.
+# Third-party manuscripts used as Markdown round-trip inputs, each under
+# the license its publisher states (checked 2026-10-14). Not licensed by
+# Jandira; attribution is in LICENSES/LicenseRef-Manuscript-Fixtures.txt.
 [[annotations]]
-path = ["tests/fixtures/md-roundtrip/dolphins.md", "tests/fixtures/md-roundtrip/eLife.00047.md", "tests/fixtures/md-roundtrip/git_manuscript.md", "tests/fixtures/md-roundtrip/list_of_figures.md"]
+path = "tests/fixtures/md-roundtrip/eLife.00047.md"
 precedence = "override"
-SPDX-FileCopyrightText = "NOASSERTION"
+SPDX-FileCopyrightText = "2012 Ferguson et al"
+SPDX-License-Identifier = "CC-BY-3.0"
+
+[[annotations]]
+path = ["tests/fixtures/md-roundtrip/git_manuscript.md", "tests/fixtures/md-roundtrip/list_of_figures.md"]
+precedence = "override"
+SPDX-FileCopyrightText = "2013 Ram; licensee BioMed Central Ltd."
+SPDX-License-Identifier = "CC-BY-2.0"
+
+# PLOS ONE names "the Creative Commons Attribution License" without a
+# version; the record says so rather than pick one.
+[[annotations]]
+path = "tests/fixtures/md-roundtrip/dolphins.md"
+precedence = "override"
+SPDX-FileCopyrightText = "2013 Thompson et al"
 SPDX-License-Identifier = "LicenseRef-Manuscript-Fixtures"
 
 # Test fixtures copied from neurotic_docx_bench (third-party documents and
