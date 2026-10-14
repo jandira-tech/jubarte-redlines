@@ -20,7 +20,8 @@ The names used at each boundary are intentional:
 
 - local source folder: `jubarte-redlines`
 - GitHub repository: `jandira-tech/jubarte-redlines` (crates.io: `jubarte-redlines`; Rust path: `jubarte::`)
-- Cargo package and CLI: `jubarte`
+- Cargo library target and CLI binary: `jubarte` (the Cargo package is
+  `jubarte-redlines`)
 - benchmark native vendor/method: `jubarte-rust`
 - benchmark WASM adapter: `jubarte-wasm`
 

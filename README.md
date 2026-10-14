@@ -88,7 +88,7 @@ nothing; `-o redline.pdf` renders it instead.
 ### Inspect and resolve tracked changes
 
 ```sh
-jubarte changes redline.docx          # one mark per line (a substitution is two): r12, kind, author, paragraph, text
+jubarte changes redline.docx          # one mark per line (a substitution is two): r12, kind, target, author, paragraph, text
 
 # Resolve one specific change and leave the others tracked:
 jubarte accept redline.docx \
@@ -186,13 +186,12 @@ uvx jubarte-redlines redline a.docx b.docx -o redline.docx
 npx jubarte-redlines redline a.docx b.docx -o redline.docx
 ```
 
-Both runners speak the shared command set — `compare`/`redline`,
+Both runners speak the shared command set — `compare`/`redline`, `diff`,
 `changes`, `accept`, `reject`, `read`, `edit`, `add`,
-`convert`, `capabilities` — but not the whole binary surface: the Python
-wheel and npm CLI now include `diff` and share the Rust clap parser for
-help, defaults, aliases and usage errors. Native-only tasks such as
-`debug` and `self-update` remain in the binary. The npm CLI renders no PNG
-pages
+`convert`, `capabilities` — and share the Rust clap parser for help,
+defaults, aliases and usage errors. The Python wheel also runs `comments`,
+`validate` and `visual-diff`; `append`, `scrub`, `debug` and `self-update`
+remain in the binary. The npm CLI renders no PNG pages
 ([`jubarte-wasm/cli/README.md`](jubarte-wasm/cli/README.md)).
 
 For a GitHub-style text review of two Word documents:
@@ -221,14 +220,11 @@ ALL changes in both inputs first, then produces fresh word-level CriticMarkup.
 70-character window around the first change; `--full-lines` shows everything.
 See [text diff details](docs/TEXT_DIFF.md).
 
-> **Unreleased (on main, ships with the next release).** The runner
-> one-liners above, plus a Markdown pipeline beside Word: `jubarte diff`
-> prints the changes between any two documents, Word or Markdown, as a
-> git-style patch; `jubarte convert draft.md` writes CommonMark (with
-> CriticMarkup as tracked changes) to DOCX/PDF/PNG; and `jubarte edit`
-> writes the redline's patch as `patch.diff`. See
-> [`docs/MARKDOWN.md`](docs/MARKDOWN.md) and
-> [`CHANGELOG.md`](CHANGELOG.md).
+Markdown sits beside Word: `jubarte diff` prints the changes between any
+two documents, Word or Markdown, as a git-style patch; `jubarte convert
+draft.md` writes CommonMark (with CriticMarkup as tracked changes) to
+DOCX/PDF/PNG; and `jubarte edit` writes the redline's patch as
+`patch.diff`. See [`docs/MARKDOWN.md`](docs/MARKDOWN.md).
 
 For a source checkout, the repository also contains installation scripts that
 can install supplemental fonts used by the renderer:
@@ -418,7 +414,7 @@ Common options:
 | `-m, --modified FILE` | Modified document |
 | `-o, --output FILE` | Write the redline; the extension picks the format (above) |
 | `-a, --author NAME` | Revision author (default: `Redline`) |
-| `-d, --date ISO8601` | Revision timestamp (default: now, UTC) |
+| `-d, --datetime ISO8601` | Revision timestamp (default: now, UTC) |
 | `--detail-threshold RATIO` | Comparison-detail tuning |
 | `--mode word|powertools` | Word-oriented or classic PowerTools comparison behavior |
 | `--force` | Replace an existing output |
@@ -454,7 +450,7 @@ jubarte reject FILE.docx -o OUTPUT.docx
 Optional selection filters:
 
 ```text
---id ID          r12, 12, r1+2, header1.r1, body:rev:12
+--id ID          r12, r1+2, header1.r1, body:rev:12
 --author NAME
 --kind insertion|deletion|move|formatting
 ```
@@ -487,6 +483,16 @@ jubarte convert FILE.docx [OPTIONS]
 
 Without `-o`, a `.docx` becomes `STEM.pdf` beside it and Markdown becomes
 `STEM.docx`; `-t md` prints to stdout.
+
+Markdown to Word: a change or comment that names no author or date (by its
+tag or the `authors:` table) takes `-a, --author` and `-d, --datetime`,
+else the front matter's `author:` and `last_modified:` (else `modified:`,
+`date:`, `created:`), else the `--reference-doc`'s `dc:creator` and
+`dcterms:created`, else `Redline` and now. Pin `-d 1970-01-01T00:00:00Z`
+for byte-identical output; the library calls keep `Redline` and that
+epoch as their default and read no reference document's metadata.
+`compare`, `edit`, `add` and `diff` never take the files' metadata: their
+changes carry `--author` and `--datetime` (default `Redline` and now).
 
 Examples:
 
