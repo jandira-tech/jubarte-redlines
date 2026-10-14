@@ -332,8 +332,12 @@ export function markdownStamp(text: string, reference?: Uint8Array | null): stri
  * `modified:`, `date:`, `created:`, which beat `"Redline"` and the fixed
  * epoch, so the same Markdown writes the same bytes; the CLI dates them now
  * instead), `critic` (`true`: CriticMarkup becomes tracked changes and
- * comments) and `track_changes` (or `trackChanges`: `"all"`,
- * `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
+ * comments), `track_changes` (or `trackChanges`: `"all"`,
+ * `"accept"`, `"reject"`), `tracking` (`true`/`false`: Word's Track
+ * Changes switch in the output, whatever the front matter's
+ * `track_changes:` says) and `scholar` (`true`: set as LaTeX's article
+ * class, page numbers from page 2, as `--scholar`). An unknown field is
+ * an error. `reference`, a
  * `.docx`, lends its styles and page setup, and then `page` is ignored.
  * Images are written as their alt text, and the engine's warnings are not
  * returned.
