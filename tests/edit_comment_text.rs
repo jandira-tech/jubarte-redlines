@@ -413,9 +413,22 @@ fn rewriting_c0_text_over_two_paragraphs_deletes_the_mark_between() {
     assert_word_valid_package(&edited.redline);
     assert_word_valid_package(&edited.clean);
     let xml = part_string(&edited.redline, "word/document.xml").unwrap();
+    // The mark between is the first paragraph's (the one holding "beta");
+    // the last paragraph keeps its mark.
+    let paragraphs: Vec<&str> = xml.split("</w:p>").collect();
+    let holding = |text: &str| {
+        paragraphs
+            .iter()
+            .find(|p| p.contains(text))
+            .unwrap_or_else(|| panic!("no paragraph holds {text}: {xml}"))
+    };
     assert!(
-        xml.contains("<w:pPr><w:rPr><w:del "),
+        holding(">beta<").contains("<w:pPr><w:rPr><w:del "),
         "the mark between is deleted: {xml}"
+    );
+    assert!(
+        !holding(" delta<").contains("<w:rPr><w:del "),
+        "the last mark stays: {xml}"
     );
     let order: Vec<String> = shape(&edited.redline)
         .into_iter()
@@ -508,10 +521,11 @@ fn note_definitions_carry_the_ids_edit_takes() {
     let read = jubarte(&["read", "notes.docx"], dir.path());
     assert!(read.status.success());
     let view = String::from_utf8(read.stdout).unwrap();
-    let tail: Vec<&str> = view.lines().rev().take(10).collect::<Vec<_>>();
-    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    // The id lines, whatever a definition's own line count.
     assert_eq!(
-        tail.iter().step_by(2).copied().collect::<Vec<_>>(),
+        view.lines()
+            .filter(|line| line.starts_with("<!-- footnotes.") || line.starts_with("<!-- endnotes."))
+            .collect::<Vec<_>>(),
         [
             "<!-- footnotes.p0 -->",
             "<!-- footnotes.p1 -->",
