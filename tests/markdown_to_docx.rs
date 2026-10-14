@@ -1114,3 +1114,53 @@ fn a_comment_in_a_header_is_dropped_with_its_text_kept() {
         written.warnings
     );
 }
+
+#[test]
+fn code_and_link_destinations_open_no_highlight_field_or_change() {
+    // Markdown reads a code span and a link destination literally, so
+    // `==`, `{CODE}…{/}` and CriticMarkup open nothing inside them. A fenced
+    // block keeps tracked changes (the reader prints them there) but not
+    // highlights or fields, which it never prints there.
+    let docx = write(
+        "See `==x==`, `{PAGE}1{/}` and `{++y++}` here.\n\n\
+         Run `==a` and `b==` now.\n\n\
+         Get [t](http://e.example/?q=ab==) then ==hl== end.\n\n\
+         ```\nkey ==x== {PAGE}1{/} {++z++}\n```\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight ").count(), 1, "{xml}");
+    assert!(!xml.contains("<w:fldChar"), "{xml}");
+    assert_eq!(xml.matches("<w:ins ").count(), 1, "{xml}");
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("http://e.example/?q=ab=="), "{rels}");
+    assert_eq!(
+        accepted(&docx),
+        [
+            "See ==x==, {PAGE}1{/} and {++y++} here.",
+            "Run ==a and b== now.",
+            "Get t then hl end.",
+            "key ==x== {PAGE}1{/} z",
+        ]
+    );
+}
+
+#[test]
+fn an_unclosed_backtick_autolinks_and_parenthesised_urls_keep_highlights_right() {
+    let docx = write(
+        "An `unclosed tick ==hl== and <https://a.example/==x==> ==two==.\n\n\
+         [p](https://a.example/(x==)) ==y==\n\n\
+         ~~~ text\n==z==\n~~~\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:highlight ").count(), 3, "{xml}");
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("https://a.example/(x==)"), "{rels}");
+    assert_eq!(
+        accepted(&docx),
+        [
+            "An `unclosed tick hl and https://a.example/==x== two.",
+            "p y",
+            "==z==",
+        ]
+    );
+}

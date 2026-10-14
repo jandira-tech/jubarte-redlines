@@ -158,8 +158,10 @@ const SUBSTITUTE: Allowed = 4;
 const HIGHLIGHT: Allowed = 8;
 const COMMENT: Allowed = 16;
 const FIELD: Allowed = 32;
+/// A `==highlight==` run.
+const MARK: Allowed = 64;
 const CHANGES: Allowed = INSERT | DELETE | SUBSTITUTE;
-const ALL: Allowed = CHANGES | HIGHLIGHT | COMMENT | FIELD;
+const ALL: Allowed = CHANGES | HIGHLIGHT | COMMENT | FIELD | MARK;
 
 fn kind_of(start: Token) -> Allowed {
     match start {
@@ -181,25 +183,29 @@ fn inside(kind: Allowed, allowed: Allowed) -> Allowed {
 }
 
 /// Where every unescaped closer and separator sits in the source, found once
-/// so that an opener without its closer does not scan the rest of the text.
+/// so that an opener without its closer does not scan the rest of the text,
+/// and the parts Markdown reads literally.
 struct Closers<'a> {
     patterns: [&'a str; 6],
     positions: [Vec<usize>; 6],
+    literal: Literal,
 }
 
 impl<'a> Closers<'a> {
     fn new(source: &str) -> Self {
+        let literal = Literal::new(source);
         let patterns = ["++}", "--}", "~~}", "==}", "<<}", "~>"];
         let positions = patterns.map(|pattern| {
             source
                 .match_indices(pattern)
                 .map(|(at, _)| at)
-                .filter(|&at| !escaped(source, at))
+                .filter(|&at| !escaped(source, at) && literal.verbatim_end(at).is_none())
                 .collect()
         });
         Self {
             patterns,
             positions,
+            literal,
         }
     }
 
@@ -210,6 +216,161 @@ impl<'a> Closers<'a> {
         let at = *positions.get(positions.partition_point(|&at| at < from))?;
         (at + pattern.len() <= until).then_some(at)
     }
+}
+
+/// The parts of a Markdown source that Markdown reads literally: code spans,
+/// link destinations and autolinks (`verbatim`), where nothing opens, and
+/// fenced code blocks (`fences`), where CriticMarkup still marks tracked
+/// changes (the reader prints them there) but `==` and `{CODE}` open
+/// nothing. Sorted, not overlapping.
+struct Literal {
+    verbatim: Vec<std::ops::Range<usize>>,
+    fences: Vec<std::ops::Range<usize>>,
+}
+
+impl Literal {
+    fn new(source: &str) -> Self {
+        let mut literal = Self {
+            verbatim: Vec::new(),
+            fences: Vec::new(),
+        };
+        let bytes = source.as_bytes();
+        let mut fence: Option<(u8, usize, usize)> = None;
+        let mut line_start = 0;
+        let mut at = 0;
+        while at < bytes.len() {
+            if at == line_start {
+                let line_end = source[at..].find('\n').map_or(bytes.len(), |n| at + n);
+                let line = &source[at..line_end];
+                let indent = line.len() - line.trim_start().len();
+                let run = |b: u8| line.bytes().skip(indent).take_while(|&c| c == b).count();
+                match fence {
+                    Some((b, width, start)) => {
+                        if run(b) >= width && line[indent + run(b)..].trim().is_empty() {
+                            literal.fences.push(start..line_end);
+                            fence = None;
+                        }
+                        at = line_end + 1;
+                        line_start = at;
+                        continue;
+                    }
+                    None => {
+                        for b in [b'`', b'~'] {
+                            let width = run(b);
+                            let info = &line[indent + width..];
+                            if width >= 3 && !(b == b'`' && info.contains('`')) {
+                                fence = Some((b, width, at));
+                            }
+                        }
+                        if fence.is_some() {
+                            at = line_end + 1;
+                            line_start = at;
+                            continue;
+                        }
+                    }
+                }
+            }
+            let from = at;
+            let end = match bytes[at] {
+                b'`' if !escaped(source, at) => code_span_end(source, at),
+                b'(' if at > 0 && bytes[at - 1] == b']' && !escaped(source, at - 1) => {
+                    destination_end(source, at + 1)
+                }
+                b'<' if !escaped(source, at) => autolink_end(source, at),
+                _ => None,
+            };
+            match end {
+                Some(end) => {
+                    literal.verbatim.push(at..end);
+                    at = end;
+                }
+                None if bytes[at] == b'`' => {
+                    at += bytes[at..].iter().take_while(|&&b| b == b'`').count();
+                }
+                None => at += source[at..].chars().next().map_or(1, char::len_utf8),
+            }
+            if let Some(n) = source[from..at].rfind('\n') {
+                line_start = from + n + 1;
+            }
+        }
+        if let Some((.., start)) = fence {
+            literal.fences.push(start..bytes.len());
+        }
+        literal
+    }
+
+    /// Where the code span, link destination or autolink that `at` lies in
+    /// ends, if it lies in one.
+    fn verbatim_end(&self, at: usize) -> Option<usize> {
+        let i = self.verbatim.partition_point(|r| r.end <= at);
+        self.verbatim
+            .get(i)
+            .filter(|r| r.start <= at)
+            .map(|r| r.end)
+    }
+
+    /// Whether `at` lies in a fenced code block.
+    fn in_fence(&self, at: usize) -> bool {
+        let i = self.fences.partition_point(|r| r.end <= at);
+        self.fences.get(i).is_some_and(|r| r.start <= at)
+    }
+}
+
+/// The end of the code span a backtick run at `at` opens: after the next
+/// run of as many backticks, in the same paragraph.
+fn code_span_end(source: &str, at: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let width = bytes[at..].iter().take_while(|&&b| b == b'`').count();
+    let mut i = at + width;
+    while i < bytes.len() {
+        if bytes[i] == b'`' {
+            let run = bytes[i..].iter().take_while(|&&b| b == b'`').count();
+            if run == width {
+                return Some(i + run);
+            }
+            i += run;
+        } else if bytes[i..].starts_with(b"\n\n") {
+            return None;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// The end of a link destination (and title) that starts at `at`, after
+/// `](`: its closing `)`, parentheses balanced, on one line.
+fn destination_end(source: &str, at: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in source[at..].char_indices() {
+        match c {
+            '\n' => return None,
+            '(' if !escaped(source, at + i) => depth += 1,
+            ')' if !escaped(source, at + i) => {
+                if depth == 0 {
+                    return Some(at + i);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The end of an autolink (`<https://a.example>`) at `at`: a scheme, `:`,
+/// then no space or `<` up to `>`.
+fn autolink_end(source: &str, at: usize) -> Option<usize> {
+    let rest = &source[at + 1..];
+    let scheme = rest
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'.' | b'-'))
+        .count();
+    if !(2..=32).contains(&scheme) || rest.as_bytes().get(scheme) != Some(&b':') {
+        return None;
+    }
+    let close = rest.find(|c: char| c == '>' || c == '<' || c.is_whitespace())?;
+    (rest.as_bytes()[close] == b'>').then_some(at + 1 + close + 1)
 }
 
 /// [`encode`], opening only the spans `allowed` names, and moving footnote
@@ -238,7 +399,21 @@ fn encode_range(
 ) {
     let mut at = range.start;
     while at < range.end {
+        if let Some(end) = closers
+            .literal
+            .verbatim_end(at)
+            .filter(|&end| end <= range.end)
+        {
+            push_escaped(out, &source[at..end]);
+            at = end;
+            continue;
+        }
         let rest = &source[at..range.end];
+        let here = if closers.literal.in_fence(at) {
+            allowed & !(MARK | FIELD)
+        } else {
+            allowed
+        };
         let span = SPANS
             .iter()
             .find(|(open, ..)| rest.starts_with(open))
@@ -278,8 +453,8 @@ fn encode_range(
                 at = after;
             }
             None => {
-                if allowed & FIELD != 0
-                    && let Some((code, end)) = field_at(source, at, range.end)
+                if here & FIELD != 0
+                    && let Some((code, end)) = field_at(source, &closers.literal, at, range.end)
                 {
                     out.push(stand_in(Token::FieldStart));
                     // The code is text to the end: no Markdown reads it.
@@ -295,8 +470,8 @@ fn encode_range(
                     at = end + FIELD_END.len();
                     continue;
                 }
-                if allowed != 0
-                    && let Some(close) = mark_close(source, at, range.end)
+                if here & MARK != 0
+                    && let Some(close) = mark_close(source, &closers.literal, at, range.end)
                 {
                     out.push(stand_in(Token::MarkStart));
                     encode_range(source, closers, at + 2..close, allowed, false, out);
@@ -419,7 +594,12 @@ fn field_code(source: &str, at: usize, until: usize) -> Option<std::ops::Range<u
 /// A body field opened at `at`: its code, and where the `{/}` that closes
 /// it sits, past any field nested in its result, in the same paragraph
 /// (before `until` and any blank line). Without that `{/}` it is text.
-fn field_at(source: &str, at: usize, until: usize) -> Option<(std::ops::Range<usize>, usize)> {
+fn field_at(
+    source: &str,
+    literal: &Literal,
+    at: usize,
+    until: usize,
+) -> Option<(std::ops::Range<usize>, usize)> {
     let code = field_code(source, at, until)?;
     let end = source[at..until]
         .find("\n\n")
@@ -427,7 +607,11 @@ fn field_at(source: &str, at: usize, until: usize) -> Option<(std::ops::Range<us
     let mut depth = 0usize;
     let mut i = code.end + 1;
     while i < end {
-        if source[i..end].starts_with(FIELD_END) && !escaped(source, i) {
+        if let Some(skip) = literal.verbatim_end(i) {
+            i = skip;
+        } else if literal.in_fence(i) {
+            return None;
+        } else if source[i..end].starts_with(FIELD_END) && !escaped(source, i) {
             if depth == 0 {
                 return Some((code, i));
             }
@@ -447,7 +631,7 @@ fn field_at(source: &str, at: usize, until: usize) -> Option<(std::ops::Range<us
 /// opens one: `==` touching text on its inner side and not part of `{==`,
 /// `==}` or a longer run of `=`, closed by such an `==` in the same
 /// paragraph (before `until` and any blank line).
-fn mark_close(source: &str, at: usize, until: usize) -> Option<usize> {
+fn mark_close(source: &str, literal: &Literal, at: usize, until: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     let is = |i: usize, b: u8| i < bytes.len() && bytes[i] == b;
     let blank = |i: usize| i >= bytes.len() || bytes[i].is_ascii_whitespace();
@@ -470,7 +654,9 @@ fn mark_close(source: &str, at: usize, until: usize) -> Option<usize> {
             && !is(close - 1, b'=')
             && !is(close + 2, b'=')
             && !is(close + 2, b'}')
-            && !escaped(source, close);
+            && !escaped(source, close)
+            && literal.verbatim_end(close).is_none()
+            && !literal.in_fence(close);
         if fits {
             return Some(close);
         }
