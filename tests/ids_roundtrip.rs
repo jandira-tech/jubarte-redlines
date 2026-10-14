@@ -645,11 +645,15 @@ fn view_text(block: &str) -> String {
     let refs = Regex::new(r"\[\^\d+\]").unwrap();
     let images = Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
-    let text = plain_anchor(block);
+    // `<mailto:a@b>` shows the address the document holds.
+    let text = plain_anchor(block).replace("<mailto:", "<");
     let text = refs.replace_all(&text, "");
     let text = images.replace_all(&text, "");
-    let tags = Regex::new(r"</?[a-z]+>").unwrap();
+    let tags = Regex::new(r#"</?[a-z]+(?:\s[^>]*)?>"#).unwrap();
     let text = tags.replace_all(&text, "");
+    // A field prints `{CODE}result{/}`: only its result is text.
+    let fields = Regex::new(r#"\{[A-Z]+(?:\s(?:[^{}"]|"[^"]*")*)?\}|\{/\}"#).unwrap();
+    let text = fields.replace_all(&text, "");
     letters(&links.replace_all(&text, "]"))
 }
 

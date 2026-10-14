@@ -1887,8 +1887,8 @@ headers:
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: footer2, text: \"{PAGE}\"}
-  even: {id: footer1, text: \"{PAGE}\", inactive}  # defined, but even/odd headers are off
+  default: {id: footer2, text: \"{PAGE}1{/}\"}
+  even: {id: footer1, text: \"{PAGE}1{/}\", inactive}  # defined, but even/odd headers are off
 ";
     assert!(header.ends_with(expected), "header:\n{header}");
 }
@@ -5390,12 +5390,15 @@ fn table_cells_preserve_adjacent_backslashes_pipes_and_unicode_in_both_views() {
 #[test]
 fn an_internal_link_does_not_read_as_underlined() {
     // Word's Hyperlink style underlines a link to a bookmark (a table of
-    // contents line) too: that is the link's look, not `<u>`.
+    // contents line) too: that is the link's look, not `<u>`. The link
+    // reads back as the Markdown link it was, and the heading's bookmark,
+    // which the writer makes from its slug, prints no `<a id>`.
     let md = "# Intro\n\nSee [the intro](#intro).\n";
     let docx = markdown_to_docx(md, &DocxOptions::default()).unwrap().docx;
     let full = agent(&docx);
     let view = body(&full);
-    assert!(view.contains("\nSee the intro.\n"), "{view}");
+    assert!(view.contains("\n# Intro\n"), "{view}");
+    assert!(view.contains("\nSee [the intro](#intro).\n"), "{view}");
 }
 
 #[test]
