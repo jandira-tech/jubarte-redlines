@@ -98,6 +98,8 @@ pub(crate) struct Facts<'a> {
     pub default_style: Option<&'a str>,
     /// (level, style id) for every heading level used, lowest first.
     pub heading_styles: Vec<(usize, String)>,
+    /// Every other paragraph style the body uses, in first-use order.
+    pub other_styles: Vec<String>,
     pub table_styles: Vec<String>,
     /// The body's sections in order; the first one is described in full.
     pub sections: Vec<SectionFact>,
@@ -704,6 +706,18 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     parts.join(", ")
 }
 
+/// `, named Text Heading 2`: the name of style `id` when it is not the one
+/// the writer would give it (`expected`).
+fn named(styles: Option<&Element>, id: &str, expected: &str) -> String {
+    styles
+        .and_then(|s| style_by_id(s, id))
+        .and_then(|s| s.child("name"))
+        .and_then(|n| n.attr("val"))
+        .filter(|name| *name != expected)
+        .map(|name| format!(", named {name}"))
+        .unwrap_or_default()
+}
+
 fn table_style_line(styles: Option<&Element>, id: &str) -> String {
     let borders = styles
         .and_then(|s| style_by_id(s, id))
@@ -935,11 +949,23 @@ fn part_two(out: &mut String, f: &Facts) {
         &format!(
             "  {}: {}",
             scalar(default, false),
-            scalar(&describe(&base, None), false)
+            scalar(
+                &format!(
+                    "{}{}",
+                    describe(&base, None),
+                    named(f.styles, default, default)
+                ),
+                false
+            )
         ),
         Some("default; unannotated paragraphs use it"),
     );
     for (level, style) in &f.heading_styles {
+        // The writer names a `HeadingN` style `heading N`, as Word does.
+        let expected = style
+            .strip_prefix("Heading")
+            .filter(|n| n.parse::<u32>().is_ok())
+            .map_or_else(|| style.clone(), |n| format!("heading {n}"));
         kv(
             out,
             &format!(
@@ -947,8 +973,27 @@ fn part_two(out: &mut String, f: &Facts) {
                 "#".repeat(*level),
                 scalar(
                     &format!(
-                        "{style}, {}",
-                        describe(&resolve(f.styles, f.theme, style), Some(&base))
+                        "{style}, {}{}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, &expected)
+                    ),
+                    false
+                )
+            ),
+            None,
+        );
+    }
+    for style in &f.other_styles {
+        kv(
+            out,
+            &format!(
+                "  {}: {}",
+                scalar(style, false),
+                scalar(
+                    &format!(
+                        "{}{}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, style)
                     ),
                     false
                 )

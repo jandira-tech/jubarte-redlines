@@ -496,6 +496,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         };
         let theme = package.xml("word/theme/theme1.xml").ok().flatten();
         let mut heading_styles: Vec<(usize, String)> = Vec::new();
+        let mut other_styles: Vec<String> = Vec::new();
         {
             let ps = agent::paragraphs(body);
             let mut uses: std::collections::BTreeMap<(usize, String), usize> =
@@ -515,6 +516,20 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     .max_by_key(|(_, n)| **n)
                 {
                     heading_styles.push((level, style.clone()));
+                }
+            }
+            // Every other paragraph style the body uses, in the order it
+            // first does: the legend describes each, so the docx the view
+            // writes defines it as the original did.
+            for p in &ps {
+                let Some(style) = p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) else {
+                    continue;
+                };
+                if style != default_style.as_deref().unwrap_or("Normal")
+                    && !heading_styles.iter().any(|(_, h)| h == style)
+                    && !other_styles.iter().any(|o| o == style)
+                {
+                    other_styles.push(style.to_string());
                 }
             }
         }
@@ -702,6 +717,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             theme: theme.as_ref(),
             default_style: default_style.as_deref(),
             heading_styles,
+            other_styles,
             table_styles,
             sections,
         };

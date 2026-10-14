@@ -15,7 +15,10 @@
 //! spacing (none printed is single) and alignment. A heading's line names
 //! its style, its font, size, bold and italic, and only the spacing,
 //! keep-next and alignment that differ from the default style's, which it
-//! is based on.
+//! is based on. Every other paragraph style the body uses follows, keyed by
+//! its id, described like a heading (`TOC2: Arial 12pt, after 6pt`). A line
+//! ends `, named Text Heading 2` when the style's name is not its id (for a
+//! heading `HeadingN`, not `heading N`).
 
 use super::xml::escape;
 
@@ -23,8 +26,12 @@ use super::xml::escape;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct StyleSpec {
     pub id: String,
-    /// The `#` count for a heading; `None` for the default style.
+    /// The style's name, when the legend gives one (`, named …`).
+    pub name: Option<String>,
+    /// The `#` count for a heading.
     pub heading: Option<u32>,
+    /// The default paragraph style, which the others are based on.
+    pub default: bool,
     pub font: String,
     pub bold: bool,
     pub italic: bool,
@@ -67,12 +74,18 @@ fn font_clause(clause: &str) -> Option<(String, bool, bool, u32)> {
 }
 
 /// The style a legend value describes; `heading` is the `#` count.
-fn spec(id: &str, heading: Option<u32>, value: &str) -> Option<StyleSpec> {
+fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<StyleSpec> {
+    let (value, name) = match value.rsplit_once(", named ") {
+        Some((value, name)) => (value, Some(name.to_string())),
+        None => (value, None),
+    };
     let mut clauses = value.split(", ");
     let (font, bold, italic, size) = font_clause(clauses.next()?)?;
     let mut spec = StyleSpec {
         id: id.to_string(),
+        name,
         heading,
+        default,
         font,
         bold,
         italic,
@@ -148,8 +161,9 @@ fn unquote(value: &str) -> Option<String> {
 }
 
 /// The styles the YAML header's `styles:` block describes: the default
-/// style's line (`Normal: …`, its id quoted when it must be) and each
-/// heading's (`"#": Heading1, …`). Lines that do not read are left out.
+/// style's line (`Normal: …`, its id quoted when it must be), each
+/// heading's (`"#": Heading1, …`) and each other style's (`TOC2: …`), after
+/// the default's. Lines that do not read are left out.
 pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {
     let mut specs = Vec::new();
     let mut inside = false;
@@ -175,14 +189,13 @@ pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {
                 .filter(|n| (1..=6).contains(n));
             level.and_then(|level| {
                 let (id, rest) = value.split_once(", ")?;
-                spec(&unquote(id)?, Some(level), rest)
+                spec(&unquote(id)?, Some(level), false, rest)
             })
-        } else if matches!(key.as_str(), "table" | "tables" | "changes")
-            || specs.iter().any(|s: &StyleSpec| s.heading.is_none())
-        {
+        } else if matches!(key.as_str(), "table" | "tables" | "changes") {
             None
         } else {
-            spec(&key, None, &value)
+            let default = !specs.iter().any(|s: &StyleSpec| s.default);
+            spec(&key, None, default, &value)
         };
         specs.extend(spec);
     }
@@ -194,7 +207,7 @@ pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {
 /// other than `Normal` takes the default from the part's own.
 pub(super) fn apply(styles: &str, specs: &[StyleSpec]) -> String {
     let mut out = styles.to_string();
-    let base = specs.iter().find(|s| s.heading.is_none());
+    let base = specs.iter().find(|s| s.default);
     if base.is_some() {
         out = out.replace(
             "w:type=\"paragraph\" w:default=\"1\"",
@@ -233,30 +246,32 @@ fn without_style(styles: &str, id: &str) -> String {
     out
 }
 
-/// The `w:style` element of `spec`, based on style `base` when a heading.
+/// The `w:style` element of `spec`, based on style `base` unless it is the
+/// default.
 fn definition(spec: &StyleSpec, base: Option<&str>) -> String {
     let id = escape(&spec.id);
-    let mut out = match spec.heading {
-        None => format!(
-            "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"{id}\"><w:name w:val=\"{id}\"/><w:qFormat/>"
-        ),
-        Some(_) => {
-            let name = match spec.id.strip_prefix("Heading") {
-                Some(n) if n.parse::<u32>().is_ok() => format!("heading {n}"),
-                _ => id.to_string(),
-            };
-            let mut out = format!(
-                "<w:style w:type=\"paragraph\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>"
-            );
-            if let Some(base) = base.filter(|b| *b != spec.id) {
-                out.push_str(&format!(
-                    "<w:basedOn w:val=\"{0}\"/><w:next w:val=\"{0}\"/>",
-                    escape(base)
-                ));
+    let name = match (&spec.name, spec.heading, spec.id.strip_prefix("Heading")) {
+        (Some(name), ..) => escape(name).to_string(),
+        (None, Some(_), Some(n)) if n.parse::<u32>().is_ok() => format!("heading {n}"),
+        _ => id.to_string(),
+    };
+    let mut out = if spec.default {
+        format!(
+            "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/><w:qFormat/>"
+        )
+    } else {
+        let mut out =
+            format!("<w:style w:type=\"paragraph\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>");
+        if let Some(base) = base.filter(|b| *b != spec.id) {
+            out.push_str(&format!("<w:basedOn w:val=\"{}\"/>", escape(base)));
+            if spec.heading.is_some() {
+                out.push_str(&format!("<w:next w:val=\"{}\"/>", escape(base)));
             }
-            out.push_str("<w:uiPriority w:val=\"9\"/><w:qFormat/>");
-            out
         }
+        if spec.heading.is_some() {
+            out.push_str("<w:uiPriority w:val=\"9\"/><w:qFormat/>");
+        }
+        out
     };
     // pPr children in schema order: keepNext, spacing, jc, outlineLvl.
     let mut ppr = String::new();
@@ -264,7 +279,7 @@ fn definition(spec: &StyleSpec, base: Option<&str>) -> String {
         ppr.push_str("<w:keepNext/>");
     }
     // The default style says all its spacing; a heading only what differs.
-    let explicit = spec.heading.is_none();
+    let explicit = spec.default;
     let before = spec.before.or(explicit.then_some(0));
     let after = spec.after.or(explicit.then_some(0));
     let line = spec.line.or(explicit.then_some((240, "auto")));
@@ -314,6 +329,45 @@ mod tests {
     use super::*;
 
     const YAML: &str = "view: tracked\nstyles:\n  Normal: Times New Roman 11pt, after 6pt, line 12pt atLeast, left  # default; unannotated paragraphs use it\n  \"#\": Heading1, Times New Roman bold 24pt, before 24pt, keep-next\n  \"##\": Heading2, Arial bold italic 13.5pt, line 1.08, center\n  table: TableGrid, all borders 0.5pt\nbody: p0-p2\n";
+
+    #[test]
+    fn every_other_style_and_its_name_read_and_are_defined() {
+        let specs = legend(
+            "styles:\n  Normal: Arial 12pt, left  # default\n  \
+             \"#\": Heading1, Arial bold 16pt, named Heading 1\n  \
+             TextHeading2: Times New Roman 12pt, after 6pt, named Text Heading 2\n  \
+             TOC2: Arial 11pt\n",
+        );
+        let ids: Vec<(&str, Option<&str>, bool)> = specs
+            .iter()
+            .map(|s| (s.id.as_str(), s.name.as_deref(), s.default))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("Normal", None, true),
+                ("Heading1", Some("Heading 1"), false),
+                ("TextHeading2", Some("Text Heading 2"), false),
+                ("TOC2", None, false),
+            ]
+        );
+        let styles = apply("<w:styles></w:styles>", &specs);
+        assert!(
+            styles.contains(
+                r#"<w:style w:type="paragraph" w:styleId="TextHeading2"><w:name w:val="Text Heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="120"/></w:pPr><w:rPr><w:rFonts w:ascii="Times New Roman""#
+            ),
+            "{styles}"
+        );
+        assert!(
+            styles.contains(r#"<w:name w:val="Heading 1"/>"#),
+            "{styles}"
+        );
+        assert!(
+            styles.contains(r#"w:styleId="TOC2"><w:name w:val="TOC2"/>"#),
+            "{styles}"
+        );
+        assert_eq!(styles.matches("w:default=\"1\"").count(), 1, "{styles}");
+    }
 
     #[test]
     fn the_legend_reads() {

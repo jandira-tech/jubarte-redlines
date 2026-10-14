@@ -298,6 +298,14 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 `comments c9 in p11`, and `in c5` for a comment range open across it.
 `tN` counts top-level body tables.
 
+`styles:` gives the default paragraph style's whole look (font, size,
+spacing, alignment), each heading level's style with what differs from
+it, then every other paragraph style the body uses, keyed by its id
+(`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
+ends `, named Text Heading 2` when the style's name is not its id (for a
+`HeadingN` heading, not `heading N`). Converting the view back defines
+each style as its line says.
+
 Each footnote and endnote definition follows the id line of its
 paragraphs: `<!-- footnotes.p0 -->`, or `<!-- endnotes.p0-p2 -->` for a note
 of three paragraphs. `edit -p footnotes.p0` edits that note's text.
