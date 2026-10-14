@@ -44,6 +44,12 @@ construct (`views.txt`): paragraphs, tables, revisions, comments, footnotes, end
 spacing with threaded comments, sections, a different first page, headers and footers with fields,
 authors, dates, changes inside tables, fonts, font sizes, and one mixed document.
 
+Follow-up (pi review of #463): the docx-side oracle sees only what `debug --check render` lists, so
+bookmarks, comment thread shape and note properties lost in the first docx → md step stay
+invisible. Extend `debug --check render` with bookmark, comment-thread and note lines (or compare
+`read --json` by dimension, as `scripts/md_roundtrip.py` does). `ci.yml` skips the strict test;
+`md-roundtrip.yml` is its only gate.
+
 ### 2. One set of id types (spec §2.1)
 
 Red: `tests/id_types.rs` parses every id the view prints for the fixtures of task 1 and requires

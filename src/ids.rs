@@ -30,6 +30,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer};
 
+mod short;
+pub use short::{SHORT_EXPECTED, ShortId, Step, Story};
+
 /// Why a change id was refused.
 pub const CHANGE_EXPECTED: &str = "expected a change id such as r12, header1.r1 or body:rev:12";
 /// Why a comment id was refused.
@@ -77,6 +80,9 @@ pub struct IdError {
     pub given: String,
     /// What the token should have been.
     pub expected: &'static str,
+    /// The settled spelling of an expired one (`12` → `p12, r12 or c12`),
+    /// when one is clear.
+    pub hint: Option<String>,
 }
 
 impl IdError {
@@ -84,13 +90,18 @@ impl IdError {
         Self {
             given: given.to_string(),
             expected,
+            hint: None,
         }
     }
 }
 
 impl fmt::Display for IdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.given, self.expected)
+        write!(f, "{}: {}", self.given, self.expected)?;
+        match &self.hint {
+            Some(hint) => write!(f, "; the settled spelling is {hint}"),
+            None => Ok(()),
+        }
     }
 }
 
