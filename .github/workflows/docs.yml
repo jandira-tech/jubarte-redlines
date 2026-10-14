@@ -34,6 +34,8 @@ on:
       - scripts/cli_locations.py
       - scripts/cli_id_sources.py
       - examples/cli_flags.rs
+      - Cargo.toml
+      - Cargo.lock
       - docs/flags_datetime.md
       - docs/locations.md
       - tests/fixtures/**
@@ -58,6 +60,8 @@ on:
       - scripts/cli_locations.py
       - scripts/cli_id_sources.py
       - examples/cli_flags.rs
+      - Cargo.toml
+      - Cargo.lock
       - docs/flags_datetime.md
       - docs/locations.md
       - tests/fixtures/**

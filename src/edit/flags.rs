@@ -193,13 +193,42 @@ fn comment_number(at: &str) -> Option<u32> {
 /// long ids it names. `None` for a group that is an operation. Only `edit`
 /// resolves revisions.
 /// On `-p` a bare number (`5`, `1+2`) names a paragraph (D7), so a
-/// revision or comment flag beside one is refused with the spelling that
-/// works: `r1+2`, `c5`.
-fn is_bare_number(at: &str) -> bool {
-    !at.is_empty()
-        && at
-            .split('+')
-            .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+/// revision flag beside one is refused with the revision it may have meant,
+/// `r1+2`, and a comment flag beside a single number with `c5`. Each number
+/// is written the way the id grammar (`crate::ids`) spells it (`01` → `1`),
+/// and a spelling the grammar would refuse (a number past `u32`) is never
+/// suggested.
+fn bare_numbers(at: &str) -> Option<Vec<u32>> {
+    at.split('+')
+        .map(|n| {
+            (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| n.parse::<u32>().ok())
+                .flatten()
+        })
+        .collect()
+}
+
+/// `r1+2` for `-p 1+02`, when the grammar takes it.
+fn bare_revision(at: &str) -> Option<String> {
+    let numbers = bare_numbers(at)?;
+    let id = format!(
+        "r{}",
+        numbers
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join("+")
+    );
+    crate::ids::parse_change_ids(&id).is_ok().then_some(id)
+}
+
+/// `c5` for `-p 05`, when the grammar takes it: one number only.
+fn bare_comment(at: &str) -> Option<String> {
+    let [number] = bare_numbers(at)?[..] else {
+        return None;
+    };
+    let id = format!("c{number}");
+    crate::ids::parse_comment_id(&id).is_ok().then_some(id)
 }
 
 const BARE_NUMBER: &str = "on -p a bare number names a paragraph";
@@ -226,15 +255,18 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         || op.comment
         || op.reply.is_some()
         || !op.styles.is_empty();
+    if ids.is_none()
+        && (op.accept || op.reject)
+        && let Some(id) = bare_revision(at)
+    {
+        let kind = if id.contains('+') {
+            "revisions are"
+        } else {
+            "revision is"
+        };
+        return bad(&format!("{BARE_NUMBER}; the {kind} {id}"));
+    }
     match ids {
-        None if (op.accept || op.reject) && is_bare_number(at) => {
-            let kind = if at.contains('+') {
-                "revisions are"
-            } else {
-                "revision is"
-            };
-            bad(&format!("{BARE_NUMBER}; the {kind} r{at}"))
-        }
         None if op.accept || op.reject => bad("--accept and --reject take a revision (-p r12)"),
         None => Ok(None),
         Some(_) if op.accept && op.reject => bad("--accept and --reject exclude each other"),
@@ -258,8 +290,8 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
     }
     if let Some(reply) = &op.reply {
         let Some(comment_id) = comment_number(at) else {
-            if is_bare_number(at) && !at.contains('+') {
-                return bad(&format!("{BARE_NUMBER}; the comment is c{at}"));
+            if let Some(id) = bare_comment(at) {
+                return bad(&format!("{BARE_NUMBER}; the comment is {id}"));
             }
             return bad("--reply is for a comment (-p c5)");
         };
@@ -375,8 +407,8 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
         (Verb::Add, None, _, None) => return bad("add needs --content"),
         // Edit.
         (Verb::Edit, None, _, _) if op.resolve => {
-            if is_bare_number(at) && !at.contains('+') {
-                return bad(&format!("{BARE_NUMBER}; the comment is c{at}"));
+            if let Some(id) = bare_comment(at) {
+                return bad(&format!("{BARE_NUMBER}; the comment is {id}"));
             }
             return bad("--resolve is for a comment (-p c5)");
         }

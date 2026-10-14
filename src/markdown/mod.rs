@@ -38,6 +38,7 @@ mod pages;
 mod patch;
 mod redline;
 mod unified;
+mod view_notes;
 mod write;
 pub(crate) mod xml;
 
