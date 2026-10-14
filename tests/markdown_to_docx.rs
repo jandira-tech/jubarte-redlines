@@ -139,10 +139,11 @@ fn every_block_kind_is_written() {
         "ListParagraph",
         "Quote",
         "SourceCode",
-        "TableGrid",
     ] {
         assert!(styles.contains(&format!("w:styleId=\"{id}\"")), "{id}");
     }
+    // A plain Markdown table is Word's Normal Table: no style is forced.
+    assert!(!styles.contains("w:styleId=\"TableGrid\""), "{styles}");
 }
 
 #[test]
@@ -907,8 +908,10 @@ fn attributions_name_the_author_and_date_of_the_change_before_them() {
         changes,
         [
             r#"w:author="Ana Lima" w:date="2026-01-02T03:04:00Z""#,
-            r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
+            // A substitution is written as Word writes one: the inserted
+            // side (Cy's) before the deleted side (Bo's).
             r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
+            r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
             r#"w:author="Redline" w:date="2026-04-05T06:07:08+01:00""#,
             r#"w:author="Redline" w:date="1970-01-01T00:00:00Z""#,
         ]
@@ -1027,6 +1030,101 @@ fn the_tracking_option_overrides_the_key() {
         true
     )));
     assert!(tracks(&with("Text.\n", true)));
+}
+
+#[test]
+fn a_table_takes_the_style_the_view_names_and_otherwise_none() {
+    // No style named: Word's Normal Table, no forced Table Grid.
+    let plain = document_xml(&write("|a|b|\n|-|-|\n|c|d|\n"));
+    assert!(!plain.contains("w:tblStyle"), "{plain}");
+    // The legend's `table:` styles every table.
+    let legend = markdown_to_docx(
+        "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt  # default\n  table: TableGrid, all borders 0.5pt\n---\n\n\
+         <!-- t0 1x2, cells p0-p1 by row -->\n|a|b|\n|-|-|\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&legend.docx);
+    assert!(xml.contains(r#"<w:tblStyle w:val="TableGrid"/>"#), "{xml}");
+    let styles = part_string(&legend.docx, "word/styles.xml").unwrap();
+    assert!(styles.contains(r#"w:styleId="TableGrid""#), "{styles}");
+    // Tables of several styles name theirs on their lines; one naming
+    // none has none. A style Word does not know is defined by its name.
+    let mixed = markdown_to_docx(
+        "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt  # default\n  tables: TableGrid, Ledger\n---\n\n\
+         <!-- t0 1x1, cells p0-p0 by row -->\n|a|\n|-|\n\n\
+         <!-- t1 1x1, cells p1-p1 by row, style TableGrid -->\n|b|\n|-|\n\n\
+         <!-- t2 1x1, cells p2-p2 by row, style Ledger -->\n|c|\n|-|\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    let xml = document_xml(&mixed.docx);
+    let styles_of: Vec<&str> = xml
+        .split("<w:tbl>")
+        .skip(1)
+        .map(|t| {
+            t.split_once(r#"<w:tblStyle w:val=""#)
+                .filter(|(before, _)| !before.contains("</w:tblPr>"))
+                .map_or("", |(_, rest)| rest.split('"').next().unwrap())
+        })
+        .collect();
+    assert_eq!(styles_of, ["", "TableGrid", "Ledger"], "{xml}");
+    let styles = part_string(&mixed.docx, "word/styles.xml").unwrap();
+    assert!(
+        styles.contains(r#"<w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/>"#),
+        "{styles}"
+    );
+    assert_word_valid_package(&mixed.docx);
+}
+
+#[test]
+fn the_document_owner_is_written_where_the_view_read_it() {
+    // `document_owner:` names dc:creator, or cp:lastModifiedBy when its
+    // note says the file had no creator; `none` writes neither, and its
+    // `no docProps/core.xml` note writes no core properties at all.
+    let core = |owner: &str| {
+        let written = markdown_to_docx(
+            &format!("---\nview: tracked\nauthors:\n  document_owner: {owner}\n---\n\nText.\n"),
+            &DocxOptions::default(),
+        )
+        .unwrap();
+        part_string(&written.docx, "docProps/core.xml")
+    };
+    let creator = core("\"Jones, SA\"        # dc:creator").unwrap();
+    assert!(
+        creator.contains("<dc:creator>Jones, SA</dc:creator>"),
+        "{creator}"
+    );
+    assert!(!creator.contains("lastModifiedBy"), "{creator}");
+    let plain = core("Ann Lee").unwrap();
+    assert!(
+        plain.contains("<dc:creator>Ann Lee</dc:creator>"),
+        "{plain}"
+    );
+    let editor = core("Last Editor      # cp:lastModifiedBy; no dc:creator").unwrap();
+    assert!(
+        editor.contains("<cp:lastModifiedBy>Last Editor</cp:lastModifiedBy>"),
+        "{editor}"
+    );
+    assert!(!editor.contains("dc:creator"), "{editor}");
+    let nobody =
+        core("none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy")
+            .unwrap();
+    assert!(
+        !nobody.contains("dc:creator") && !nobody.contains("lastModifiedBy"),
+        "{nobody}"
+    );
+    let written = markdown_to_docx(
+        "---\nview: tracked\nauthors:\n  document_owner: none             # no docProps/core.xml\n---\n\nText.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert!(part_string(&written.docx, "docProps/core.xml").is_none());
+    let types = part_string(&written.docx, "[Content_Types].xml").unwrap();
+    assert!(!types.contains("core.xml"), "{types}");
+    let rels = part_string(&written.docx, "_rels/.rels").unwrap();
+    assert!(!rels.contains("core-properties"), "{rels}");
+    assert_word_valid_package(&written.docx);
 }
 
 #[test]

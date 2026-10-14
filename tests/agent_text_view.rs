@@ -528,8 +528,8 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
     let p = format!(
         "<w:p>{}{}{}{}{}{}{}</w:p>",
         run("Pay within "),
-        del(3, "Ann Counsel", "thirty"),
         ins(4, "Ann Counsel", "forty-five"),
+        del(3, "Ann Counsel", "thirty"),
         run(" days, "),
         ins(5, "Ann Counsel", "quarterly"),
         run(" reports"),
@@ -560,8 +560,8 @@ fn a_substitution_by_two_authors_gets_two_notes_deleted_side_first() {
     let p = format!(
         "<w:p>{}{}{}{}</w:p>",
         run("x "),
-        del(1, "Ann Counsel", "old"),
         ins(2, "John Doe", "new"),
+        del(1, "Ann Counsel", "old"),
         ins(3, "Ann Counsel", "!")
     );
     assert_eq!(
@@ -1434,8 +1434,8 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
     let p1 = format!(
         "<w:p>{}{}{}</w:p>",
         run("Within "),
-        del(3, "Ann Counsel", "thirty"),
-        ins(4, "Ann Counsel", "forty-five")
+        ins(4, "Ann Counsel", "forty-five"),
+        del(3, "Ann Counsel", "thirty")
     );
     let bytes = docx(&format!("{p0}{p1}"));
     assert_eq!(
@@ -1693,8 +1693,8 @@ fn header_counts_revisions_comments_and_authors() {
     let p = format!(
         "<w:p>{}{}{}{}</w:p>",
         run("a "),
-        del(1, "Ann Counsel", "b"),
         ins(2, "Ann Counsel", "c"),
+        del(1, "Ann Counsel", "b"),
         ins(3, "John Doe", "d")
     );
     let bytes = common::docx::docx_with(
@@ -2330,11 +2330,11 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
     let text = edited(dir.path(), second, "two");
     captures(
         &text,
-        r"\{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.",
+        r"\{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @AC<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
     );
     assert!(
         text.contains(
-            "revisions: 4                       # 4 marks shown as 2 changes: 2 substitutions"
+            "revisions: 4                       # 4 marks shown as 3 changes: 1 insertion, 1 deletion, 1 substitution"
         ),
         "{text}"
     );
@@ -3026,7 +3026,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.",
+        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
     );
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(
@@ -3929,14 +3929,14 @@ fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
 }
 
 /// pi review av2 F10: `w:bdo`/`w:dir` are transparent to revisions as they
-/// are to the text: a deletion then an insertion across one pairs as the
+/// are to the text: an insertion then a deletion across one pairs as the
 /// substitution the tracked view shows, and the resolved `rev` agrees.
 #[test]
 fn a_bidi_wrapper_does_not_split_a_substitution() {
     let doc = docx(&format!(
         r#"<w:p>{}<w:bdo w:val="rtl">{}</w:bdo></w:p>"#,
-        del(1, "Ann Counsel", "a"),
-        ins(2, "Ann Counsel", "b")
+        ins(2, "Ann Counsel", "b"),
+        del(1, "Ann Counsel", "a")
     ));
     let tracked = agent(&doc);
     assert!(tracked.contains("{~~a~>b~~}{>>r1+2 @AC<<}"), "{tracked}");
@@ -4876,8 +4876,8 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
 fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers() {
     let bytes = docx(&format!(
         "<w:tbl><w:tr><w:tc><w:p>{}{}</w:p></w:tc></w:tr></w:tbl>{}",
-        del(1, "Ann Counsel", "old"),
         ins(2, "Ann Counsel", "new"),
+        del(1, "Ann Counsel", "old"),
         para("After")
     ));
     for (mode, text) in [(TrackChanges::Accept, "new"), (TrackChanges::Reject, "old")] {
