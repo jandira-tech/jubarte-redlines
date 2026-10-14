@@ -299,6 +299,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   … --changed-only` with a usage error, or `audit FILE --rules edits`
   without `--original`, printed the error alone. The note now leads the
   error on every host (npm's `audit`, which has no `validate`, included).
+- `audit FILE --rules …` was told to use `validate --rules
+  a11y,style,structure`, which drops the rules it asked for. With
+  `--rules` given, the note says `validate` alone.
 - `jubarte revisions x.docx` said only "reading revisions: No such file":
   the removed task's name reads as the first file to compare. A note now
   names `changes` first, on every host.

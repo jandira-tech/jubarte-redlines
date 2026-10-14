@@ -240,4 +240,4 @@ def test_a_retired_name_keeps_its_note_when_the_parse_fails(capsys):
         main(["audit", "missing.docx", "--rules", "edits"])
     assert exit.value.code == 2
     err = capsys.readouterr().err
-    assert err.startswith("note: audit is now validate --rules a11y,style,structure; audit is removed in 0.14\nerror: "), err
+    assert err.startswith("note: audit is now validate; audit is removed in 0.14\nerror: "), err

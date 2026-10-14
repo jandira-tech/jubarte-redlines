@@ -1969,6 +1969,19 @@ fn the_removed_revisions_task_names_changes() {
     assert!(stderr.starts_with(&format!("{note}\n")), "{stderr}");
 }
 
+/// A retired task name is the task while it lasts, not a file of that
+/// name: `text other.docx` reads other.docx (`read text` reads a file
+/// called `text`). Ledger review of #446, INFO-4.
+#[test]
+fn a_retired_task_name_is_the_task_not_a_file() {
+    let result = parse(&["text", "other.docx"], &[]);
+    assert_eq!(result["command"], "read", "{result}");
+    assert_eq!(result["args"]["file"], "other.docx", "{result}");
+    let result = parse(&["read", "text"], &[]);
+    assert_eq!(result["args"]["file"], "text", "{result}");
+    assert_eq!(result["notes"], serde_json::json!([]), "{result}");
+}
+
 /// A retired spelling's note goes with a usage error too: the run that
 /// fails is the one that needs to hear the new name (ledger reviews of
 /// #444, C1 and H2, and #446, 4 and 5). Hosts print `notes` before `text`.
@@ -1977,6 +1990,9 @@ fn a_retired_spelling_is_noted_when_the_parse_fails() {
     let changed = "note: --changed-only is now --changed-pages; --changed-only is removed in 0.14";
     let audit =
         "note: audit is now validate --rules a11y,style,structure; audit is removed in 0.14";
+    // With --rules, audit's own sets are not what runs (ledger review of
+    // #446, 3).
+    let audit_rules = "note: audit is now validate; audit is removed in 0.14";
     for (args, note) in [
         (
             &[
@@ -1993,8 +2009,9 @@ fn a_retired_spelling_is_noted_when_the_parse_fails() {
             &["convert", "a.docx", "-o", "out.docx", "--changed-only"][..],
             changed,
         ),
-        (&["audit", "a.docx", "--rules", "edits"][..], audit),
-        (&["audit", "a.docx", "--rules", "bogus"][..], audit),
+        (&["audit", "a.docx", "--rules", "edits"][..], audit_rules),
+        (&["audit", "a.docx", "--rules=bogus"][..], audit_rules),
+        (&["audit", "a.docx", "--original"][..], audit),
     ] {
         let result = parse(args, &[]);
         assert_eq!(result["exit_code"], 2, "{args:?}: {result}");

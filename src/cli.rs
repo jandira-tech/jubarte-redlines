@@ -2000,9 +2000,16 @@ pub fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
 /// retired spelling's note, then each removed task's.
 pub fn notes(argv: &[String]) -> Vec<String> {
     let argv = || argv.iter().map(String::as_str);
+    // `audit --rules …` runs the rules given, not audit's own sets.
+    let rules_given = argv()
+        .take_while(|token| *token != "--")
+        .any(|token| token == "--rules" || token.starts_with("--rules="));
     retired_spellings(argv())
         .into_iter()
-        .map(|(old, now)| retired_note(old, now))
+        .map(|(old, now)| match old {
+            "audit" if rules_given => retired_note(old, "validate"),
+            _ => retired_note(old, now),
+        })
         .chain(
             removed_tasks(argv())
                 .into_iter()
