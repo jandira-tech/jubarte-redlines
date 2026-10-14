@@ -225,7 +225,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   pages number on after the document's last page.
 - `-q`/`--quiet` is one global option, after the task
   (`jubarte compare a.docx b.docx -q`) or before it (`jubarte -q read
-  a.docx`); every other option goes after the task.
+  a.docx`); every other option goes after the task. Saying it twice
+  (`-q -q`, `-qq`) is still quiet, and `jubarte -q help` prints the help.
 - `validate` prints findings in one order every run (part, location, code,
   message); two findings at one location used to swap between runs.
 - `diff-render` is `visual-diff`.

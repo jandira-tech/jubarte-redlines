@@ -30,7 +30,13 @@ pub struct Cli {
 
     /// Print nothing on success (files are still written; warnings and
     /// errors still print).
-    #[arg(short = 'q', long, global = true, help_heading = None::<&str>)]
+    #[arg(
+        short = 'q',
+        long,
+        global = true,
+        overrides_with = "quiet",
+        help_heading = None::<&str>
+    )]
     pub quiet: bool,
 
     /// Inputs and settings of the shorthands: `jubarte A B` is `compare A
@@ -313,14 +319,27 @@ fn plan_path() -> impl clap::builder::TypedValueParser<Value = PathBuf> {
 
 /// `-q`/`--quiet` before the task moves after it, so `jubarte -q validate F`
 /// reads as `jubarte validate -q F` (D6 follow-up). Only the quiet flag
-/// moves: every other option still goes after the task.
+/// moves: every other option still goes after the task. Before `help` the
+/// flag is dropped, since clap's `help` takes task names only.
 fn hoist_quiet<T: AsRef<std::ffi::OsStr> + Clone>(
     command: &clap::Command,
     arguments: &[T],
 ) -> Vec<T> {
-    let is_quiet = |a: &T| matches!(a.as_ref().to_str(), Some("-q" | "--quiet"));
+    let is_quiet = |a: &T| match a.as_ref().to_str() {
+        Some("--quiet") => true,
+        Some(short) => {
+            short.len() > 1 && short.starts_with('-') && short[1..].bytes().all(|b| b == b'q')
+        }
+        None => false,
+    };
     let flags = arguments.iter().skip(1).take_while(|a| is_quiet(a)).count();
     let task = arguments.get(1 + flags).and_then(|a| a.as_ref().to_str());
+    if flags > 0 && task == Some("help") {
+        // clap's own `help` takes task names, not -q: help is printed anyway.
+        let mut help = vec![arguments[0].clone()];
+        help.extend_from_slice(&arguments[1 + flags..]);
+        return help;
+    }
     if flags == 0 || !task.is_some_and(|name| command.find_subcommand(name).is_some()) {
         return arguments.to_vec();
     }

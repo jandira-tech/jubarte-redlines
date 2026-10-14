@@ -1721,6 +1721,29 @@ fn quiet_is_global_before_or_after_the_task() {
     }
     let native = jubarte::cli::Cli::try_parse_from(["jubarte", "-q", "read", "a.docx"]).unwrap();
     assert!(native.quiet);
+    // The bare shorthand takes a leading -q too, and saying it twice
+    // (an alias plus an explicit -q) is still just quiet.
+    for argv in [
+        &["-q", "a.docx", "b.docx", "-o", "r.docx"][..],
+        &["-q", "-q", "read", "a.docx"],
+        &["-q", "--quiet", "read", "a.docx"],
+        &["-qq", "read", "a.docx"],
+        &["read", "a.docx", "-q", "-q"],
+    ] {
+        let parsed = parse(argv, &[]);
+        assert_eq!(parsed["exit_code"], 0, "{argv:?}: {parsed}");
+        assert_eq!(parsed["args"]["quiet"], true, "{argv:?}: {parsed}");
+    }
+    // -q before `help` prints the help, as `help` alone does, instead of
+    // advising `help -q`, which clap refuses.
+    for (quiet, plain) in [
+        (&["-q", "help"][..], &["help"][..]),
+        (&["-q", "help", "read"], &["help", "read"]),
+    ] {
+        let (quiet, plain) = (parse(quiet, &[]), parse(plain, &[]));
+        assert_eq!(quiet["exit_code"], 0, "{quiet}");
+        assert_eq!(quiet["text"], plain["text"], "{quiet}");
+    }
     // So does a facade without compare: one rule for every binding.
     let facade_early = parse(&["-q", "edit", "a", "--plan", "p"], &["edit"]);
     assert_eq!(facade_early["exit_code"], 0, "{facade_early}");
