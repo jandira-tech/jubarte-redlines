@@ -301,6 +301,32 @@ def test_compare_then_list_accept_and_reject(tmp_path: Path) -> None:
     assert remaining and all(c.kind != "insertion" for c in remaining)
 
 
+def test_changes_and_comments_carry_short_refs(tmp_path: Path) -> None:
+    """`Document.changes()`/`comments()` and MCP `docx_changes`/`docx_comments`
+    carry `ref` (`r0`, `c0`) beside the long `id`, as the CLI's JSON does."""
+    import jubarte_redlines as jubarte
+
+    original, modified = write_pair(tmp_path)
+    red = Document.read(original).compare(Document.read(modified), author="R")
+    (tmp_path / "red.docx").write_bytes(red.to_bytes())
+    commented = Document.read(original).edit(
+        jubarte.EditPlan(author="Ann").comment("body:p:0", find="fee", text="Check")
+    )
+    (tmp_path / "c.docx").write_bytes(commented.clean.to_bytes())
+    (listed, noted) = call(
+        tmp_path,
+        ("docx_changes", {"path": "red.docx"}),
+        ("docx_comments", {"path": "c.docx"}),
+    )
+    changes = listed.structured_content["result"]
+    assert changes and all(c["ref"].startswith("r") for c in changes), changes
+    assert [c["ref"] for c in changes] == [c.ref for c in red.changes()]
+    assert [c["id"] for c in changes] == [c.id for c in red.changes()]
+    comments = noted.structured_content["result"]
+    assert [c["ref"] for c in comments] == ["c0"]
+    assert [c["ref"] for c in comments] == [c.ref for c in commented.clean.comments()]
+
+
 def test_compare_without_a_date_dates_the_redline_now(tmp_path: Path) -> None:
     """D17: docx_compare follows the CLI, so a missing date is now (UTC)."""
     original, modified = write_pair(tmp_path)
@@ -375,7 +401,7 @@ def test_docx_validate_takes_rules_and_reports_one_shape(tmp_path: Path) -> None
     (tmp_path / "d.docx").write_bytes(make_document("\u2022 item"))
     (styled,) = call(tmp_path, ("docx_validate", {"path": "d.docx", "rules": ["style"]}))
     rows = styled.structured_content["result"]
-    assert {"code": "LITERAL_BULLET", "set": "style", "severity": "warning", "location": "body:p:0"}.items() <= rows[0].items(), rows
+    assert {"code": "LITERAL_BULLET", "set": "style", "severity": "warning", "location": "body:p:0", "ref": "p0"}.items() <= rows[0].items(), rows
 
 
 def test_feature_tools_still_contain_paths(tmp_path: Path) -> None:

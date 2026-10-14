@@ -207,7 +207,7 @@ test("read (alias text), inspect, capabilities and convert", () => {
   // The grids and a selected snapshot, as the binary prints them.
   const tables = run("read", untracked, "--tables");
   assert.equal(tables.code, 0, tables.err);
-  assert.match(tables.out, /^table 0: 2x2 header_rows=0 widths=4818,4820\nbody:p:4=Name\tbody:p:5=Value\n/);
+  assert.match(tables.out, /^table 0: 2x2 header_rows=0 widths=4818,4820\np4=Name\tp5=Value\n/);
   const headed = JSON.parse(run("read", untracked, "--json", "--head", "1").out);
   assert.equal(headed.paragraphs.length, 1);
   // The engine's writer: -o's extension picks the task's Word file, its

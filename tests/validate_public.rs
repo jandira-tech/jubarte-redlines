@@ -106,6 +106,7 @@ fn findings_are_json_with_stable_field_names() {
             "location",
             "message",
             "part",
+            "ref",
             "repairable",
             "set",
             "severity",

@@ -189,11 +189,8 @@ fn the_cli_prints_each_table_grid() {
         stdout.contains("table 0: 2x2 header_rows=1 widths=6000,3360"),
         "{stdout}"
     );
-    assert!(stdout.contains("body:p:1=Item\tbody:p:2=Qty"), "{stdout}");
-    assert!(
-        stdout.contains("body:p:3,body:p:4=Bolt\\nsteel\tbody:p:5=40"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("p1=Item\tp2=Qty"), "{stdout}");
+    assert!(stdout.contains("p3,p4=Bolt\\nsteel\tp5=40"), "{stdout}");
 }
 
 #[test]

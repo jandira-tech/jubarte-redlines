@@ -27,6 +27,7 @@ def test_validate_reports_and_repair_fixes_text_inside_a_deletion() -> None:
     assert findings[0].part == "word/document.xml"
     assert (findings[0].set, findings[0].severity) == ("word", "error")
     assert findings[0].location.startswith("w:body[0]/w:p[0]")
+    assert findings[0].ref == findings[0].location
     assert isinstance(findings[0], jubarte.Finding)
     repaired = doc.repair()
     assert isinstance(repaired, jubarte.Repaired)
@@ -47,6 +48,8 @@ def test_audit_tracked_names_an_untracked_edit_and_passes_a_tracked_one() -> Non
     findings = hand_edited.audit_tracked(original, author="Reviewer")
     assert [f.code for f in findings] == ["UNTRACKED_EDIT"]
     assert "body:p:1" in findings[0].message
+    assert findings[0].location == "body:p:1"
+    assert findings[0].ref == "p1"
     tracked = original.compare(hand_edited, author="Reviewer")
     assert tracked.audit_tracked(original.to_bytes(), author="Reviewer") == ()
     foreign = tracked.audit_tracked(original, author="Someone Else")
@@ -73,6 +76,7 @@ def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.C
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[0]["code"] == "TEXT_INSIDE_DELETION" and rows[0]["repairable"] is True
     assert (rows[0]["set"], rows[0]["severity"]) == ("word", "error") and "path" not in rows[0]
+    assert rows[0]["ref"] == rows[0]["location"]
     fixed = tmp_path / "fixed.docx"
     assert main(["validate", str(broken), "--repair", str(fixed)]) == 0
     captured = capsys.readouterr()
@@ -96,6 +100,8 @@ def test_validate_command_audits_against_an_original(tmp_path: Path, capsys: pyt
     assert main(["validate", str(edited), "--original", str(original), "--author", "Legal", "--json"]) == 2
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [r["code"] for r in rows] == ["UNTRACKED_EDIT"]
+    assert rows[0]["location"] == "body:p:0"
+    assert rows[0]["ref"] == "p0"
 
 
 def test_validate_command_rules_and_strict(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -103,7 +109,7 @@ def test_validate_command_rules_and_strict(tmp_path: Path, capsys: pytest.Captur
     bullets.write_bytes(docx(para("\u2022 item")))
     assert main(["validate", str(bullets), "--rules", "style"]) == 0
     out = capsys.readouterr().out
-    assert out.startswith("  LITERAL_BULLET\twarning\tbody:p:0\t"), out
+    assert out.startswith("  LITERAL_BULLET\twarning\tp0\t"), out
     assert out.endswith("1 finding(s): 0 error, 1 warning, 0 info\n"), out
     assert main(["validate", str(bullets), "--rules", "style", "--strict"]) == 2
     capsys.readouterr()
