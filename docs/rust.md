@@ -606,15 +606,16 @@ Options:
           directory]
 
   -a, --author <NAME>
-          Markdown to Word: author of the tracked changes and comments
-
-          [default: Redline]
+          Markdown to Word: author of the tracked changes and comments that name none
+          [default: the front matter's `author:`, else the --reference-doc's creator,
+          else Redline]
 
   -d, --datetime <ISO8601>
-          Markdown to Word: revision timestamp (ISO 8601); pin it for reproducible
+          Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments
+          that carry none [default: the front matter's
+          `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's
+          creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible
           output
-
-          [default: 1970-01-01T00:00:00Z]
 
       --page <SIZE>
           Markdown to Word: the page size when there is no --reference-doc (one-inch
@@ -625,6 +626,15 @@ Options:
           - a4:     ISO A4, 210 by 297 mm
 
           [default: letter]
+
+      --tracking <SWITCH>
+          Markdown to Word: turn Word's Track Changes on or off in the .docx written,
+          whatever the Markdown's `track_changes:` key says [default: the key; without
+          one, the --reference-doc's setting, else off]
+
+          Possible values:
+          - on:  New edits in Word are tracked
+          - off: New edits in Word are not tracked
 
       --no-page-markers
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
