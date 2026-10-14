@@ -147,6 +147,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .xml(&part("/styles", "word/styles.xml"))
         .ok()
         .flatten();
+    let styles = styles_root.as_ref().map(Styles::parse).unwrap_or_default();
     let mut handles = if options.ids {
         // An author whose only changes sit in a header or the styles gets a
         // handle too, so `--by` takes it; the styles' come after the comment
@@ -176,11 +177,27 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 .filter_map(|c| c.attr("id").map(str::to_string))
                 .collect();
         }
+        handles.hidden_styles = styles.hidden();
         handles.shown_bookmarks = bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
                 .chain(comments_root.as_ref()),
         );
+        // A heading's own slug bookmark prints no anchor (the link reaches
+        // the heading by its slug): it keeps no two marks apart.
+        let mut slugger = super::write::Slugger::default();
+        for p in body_headings(&document, &styles) {
+            let own = own_slug(&mut slugger, p);
+            let mut starts = Vec::new();
+            p.find_all("bookmarkStart", &mut starts);
+            for start in starts {
+                if let Some(name) = start.attr("name")
+                    && is_own_slug(name, own.as_deref())
+                {
+                    handles.shown_bookmarks.remove(name);
+                }
+            }
+        }
     }
     // Agent view: paragraphs and tables numbered before accept/reject
     // resolution, so indices match `inspect` and `edit`.
@@ -229,7 +246,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             .and_then(|s| s.attr("styleId"))
             .map(str::to_string)
     });
-    let styles = styles_root.as_ref().map(Styles::parse).unwrap_or_default();
     let numbering = package
         .xml(&part("/numbering", "word/numbering.xml"))
         .ok()
@@ -280,9 +296,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         &rels,
         options.media_dir.as_deref().map(media::Extracted::new),
     );
+    let hidden_styles = styles.hidden();
     let mut writer = Writer {
         rels: &rels,
         media,
+        hidden_styles,
         styles,
         numbering,
         counters: HashMap::new(),
@@ -292,6 +310,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         lead: None,
         flattening: 0,
         heading_slug: None,
+        slugger: super::write::Slugger::default(),
         tables_differ: {
             let (styles, unstyled) = table_styles(document.child("body").unwrap_or(&document));
             styles.len() > 1 || (!styles.is_empty() && unstyled)
@@ -330,25 +349,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         threads: threads.clone(),
         story: None,
     };
-    // A heading's own slug bookmark prints no anchor (the link reaches the
-    // heading by its slug): it keeps no two marks apart.
-    let body_paragraphs = agent::paragraphs(&document);
-    for p in body_paragraphs {
-        if writer.heading_of(p).is_none() {
-            continue;
-        }
-        let slug = super::write::github_slug(&shown_text(p));
-        for bookmark in p.children_named("bookmarkStart") {
-            if let Some(name) = bookmark.attr("name")
-                && is_slug_of(name, &slug)
-            {
-                writer.handles.shown_bookmarks.remove(name);
-            }
-        }
-    }
-    handles
-        .shown_bookmarks
-        .clone_from(&writer.handles.shown_bookmarks);
     if let Some(root) = &comments {
         writer.comments = root
             .children_named("comment")
@@ -543,18 +543,23 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let core = package.xml("docProps/core.xml").ok().flatten();
         let owner = match &core {
             None => header::Owner::None,
-            Some(core) => match (
-                core.child("creator")
-                    .map(Element::text)
-                    .filter(|t| !t.trim().is_empty()),
-                core.child("lastModifiedBy")
-                    .map(Element::text)
-                    .filter(|t| !t.trim().is_empty()),
-            ) {
-                (Some(name), _) => header::Owner::Creator(name.trim().to_string()),
-                (None, Some(name)) => header::Owner::LastModifiedBy(name.trim().to_string()),
-                (None, None) => header::Owner::Unnamed,
-            },
+            // The first element of each name that names someone: an empty
+            // `dc:creator` before a real one hides nobody. The name is kept
+            // as written, its spaces too; an edge holding a line break is
+            // the XML's indentation, not the name's.
+            Some(core) => {
+                let named = |local: &'static str| {
+                    core.children_named(local)
+                        .map(Element::text)
+                        .find(|t| !t.trim().is_empty())
+                        .map(|t| without_layout(&t).to_string())
+                };
+                match (named("creator"), named("lastModifiedBy")) {
+                    (Some(name), _) => header::Owner::Creator(name),
+                    (None, Some(name)) => header::Owner::LastModifiedBy(name),
+                    (None, None) => header::Owner::Unnamed,
+                }
+            }
         };
         // Anchors before resolution: a reject view drops a deleted range.
         let mut anchored = HashSet::new();
@@ -933,6 +938,47 @@ fn resolve_author(by: &str, handles: &agent::Handles) -> String {
         .map_or_else(|| bare.to_string(), |handle| format!("@{handle}"))
 }
 
+/// A `.docx`'s first non-empty `dc:creator` (its spaces kept, not the XML's
+/// indentation) and its `dcterms:created` when that is a timestamp; `None`
+/// for each the package does not tell.
+pub(crate) fn creator_created(docx: &[u8]) -> (Option<String>, Option<String>) {
+    let Some(core) = Package::open(docx, "DOCX")
+        .ok()
+        .and_then(|mut package| package.xml("docProps/core.xml").ok().flatten())
+    else {
+        return (None, None);
+    };
+    let creator = core
+        .children_named("creator")
+        .map(Element::text)
+        .find(|t| !t.trim().is_empty())
+        .map(|t| without_layout(&t).to_string());
+    let created = core
+        .children_named("created")
+        .map(Element::text)
+        .find_map(|t| crate::util::datetime::parse_datetime(t.trim()).ok());
+    (creator, created)
+}
+
+/// `text` without an edge of whitespace that holds a line break: the
+/// indentation of pretty-printed XML (`Un-named\n  `). Spaces alone are
+/// kept (`  Bob  `).
+fn without_layout(text: &str) -> &str {
+    let breaks = |edge: &str| edge.contains(['\n', '\r']);
+    let end = text.trim_end();
+    let text = if breaks(&text[end.len()..]) {
+        end
+    } else {
+        text
+    };
+    let start = text.trim_start();
+    if breaks(&text[..text.len() - start.len()]) {
+        start
+    } else {
+        text
+    }
+}
+
 /// A code block's text in a fence of backticks, longer than any run of
 /// backticks that opens one of its lines.
 fn fenced(code: &str) -> String {
@@ -1157,16 +1203,54 @@ fn text_follows_reference(note: &Element, changes: &[Change]) -> bool {
     all
 }
 
-/// Whether `name` is a heading's bookmark for `slug`: the slug itself, or
-/// the slug and a number Word or the writer added to keep it unique.
-fn is_slug_of(name: &str, slug: &str) -> bool {
-    !slug.is_empty()
-        && name.strip_prefix(slug).is_some_and(|rest| {
-            rest.is_empty()
-                || rest
-                    .strip_prefix('-')
-                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        })
+/// The paragraphs of `body` the view writes as blocks, in order, that are
+/// headings: not those in tables, which a cell writes as text.
+fn body_headings<'e>(body: &'e Element, styles: &Styles) -> Vec<&'e Element> {
+    fn walk<'e>(e: &'e Element, styles: &Styles, out: &mut Vec<&'e Element>) {
+        for child in e.elements() {
+            match child.local() {
+                "p" if heading_level(styles, child).is_some() => out.push(child),
+                "body" | "sdt" | "sdtContent" | "customXml" | "txbxContent" | "ins" | "moveTo"
+                | "del" | "moveFrom" => walk(child, styles, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(body, styles, &mut out);
+    out
+}
+
+/// The name the writer gives heading `p`'s bookmark (github-slugger's, a
+/// repeat suffixed by `slugger`); `None` for a heading of no slug.
+fn own_slug(slugger: &mut super::write::Slugger, p: &Element) -> Option<String> {
+    let slug = super::write::github_slug(&shown_text(p));
+    let name = slugger.name(&slug);
+    (!slug.is_empty()).then_some(name)
+}
+
+/// Whether bookmark `name` is a heading's `own` slug: that name, or the
+/// one Word takes for it (`_` before a slug of no first letter, cut to 40).
+fn is_own_slug(name: &str, own: Option<&str>) -> bool {
+    own.is_some_and(|own| name == own || name == super::write::bookmark_name(own, &HashSet::new()))
+}
+
+/// A paragraph's heading level: its own outline level, else its style's;
+/// `None` for body text.
+fn heading_level(styles: &Styles, p: &Element) -> Option<usize> {
+    let ppr = p.child("pPr");
+    let direct_outline = ppr
+        .and_then(|pr| pr.child("outlineLvl"))
+        .and_then(|o| o.attr("val"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|l| if l < 9 { Some((l + 1).min(6)) } else { None });
+    match direct_outline {
+        Some(level) => level,
+        None => ppr
+            .and_then(|pr| pr.child("pStyle"))
+            .and_then(|s| s.attr("val"))
+            .and_then(|s| styles.heading_level(s)),
+    }
 }
 
 fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) -> String {
@@ -1211,6 +1295,8 @@ struct Style {
     bold: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
+    /// `w:vanish`: its runs are hidden.
+    vanish: Option<bool>,
     /// `w:jc`, as Word writes it.
     jc: Option<String>,
     /// The `w:rFonts` face its runs are set in.
@@ -1255,6 +1341,7 @@ impl Styles {
                     bold: rpr.and_then(|r| r.toggle("b")),
                     italic: rpr.and_then(|r| r.toggle("i")),
                     underline: rpr.and_then(|r| r.child("u")).map(is_underlined),
+                    vanish: rpr.and_then(|r| r.toggle("vanish")),
                     jc: ppr
                         .and_then(|p| p.child("jc"))
                         .and_then(|j| j.attr("val"))
@@ -1357,6 +1444,16 @@ impl Styles {
             chain.iter().find_map(|s| s.bold),
             chain.iter().find_map(|s| s.italic),
         )
+    }
+
+    /// The character styles whose runs are hidden: the nearest `w:vanish`
+    /// in the style chain is on.
+    fn hidden(&self) -> HashSet<String> {
+        self.by_id
+            .keys()
+            .filter(|id| self.chain(id).iter().find_map(|s| s.vanish) == Some(true))
+            .cloned()
+            .collect()
     }
 
     /// Whether the style chain underlines, nearest style first.
@@ -1696,9 +1793,13 @@ struct Writer<'a> {
     /// The tables differ in style (two styles, or one and none): each
     /// table line names its own, `style Ledger`.
     tables_differ: bool,
-    /// In a heading: the slug a Markdown link names it by, whose bookmark
+    /// In a heading: the name a Markdown link names it by, whose bookmark
     /// the writer makes again and so prints no `<a id>`.
     heading_slug: Option<String>,
+    /// Character styles whose runs are hidden (`w:vanish`).
+    hidden_styles: HashSet<String>,
+    /// The names the writer gives the headings written so far.
+    slugger: super::write::Slugger,
     /// The paragraph being written is set in a monospace face.
     monospace_paragraph: bool,
     /// The `fldChar begin` of each field whose `end` lies in the paragraph
@@ -1851,27 +1952,13 @@ impl Writer<'_> {
     /// `name` is the bookmark the writer gives the heading being read: its
     /// slug, or the slug and `-1`, `-2`, … for a repeated heading.
     fn slug_of_heading(&self, name: &str) -> bool {
-        self.heading_slug
-            .as_deref()
-            .is_some_and(|slug| is_slug_of(name, slug))
+        is_own_slug(name, self.heading_slug.as_deref())
     }
 
     /// A paragraph's heading level: its own outline level, else its
     /// style's; `None` for body text.
     fn heading_of(&self, p: &Element) -> Option<usize> {
-        let ppr = p.child("pPr");
-        let direct_outline = ppr
-            .and_then(|pr| pr.child("outlineLvl"))
-            .and_then(|o| o.attr("val"))
-            .and_then(|v| v.parse::<usize>().ok())
-            .map(|l| if l < 9 { Some((l + 1).min(6)) } else { None });
-        match direct_outline {
-            Some(level) => level,
-            None => ppr
-                .and_then(|pr| pr.child("pStyle"))
-                .and_then(|s| s.attr("val"))
-                .and_then(|s| self.styles.heading_level(s)),
-        }
+        heading_level(&self.styles, p)
     }
 
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
@@ -1954,7 +2041,7 @@ impl Writer<'_> {
             .or_else(|| style.as_deref().and_then(|s| self.styles.num(s)));
 
         let open_before = self.open_ranges().to_vec();
-        self.heading_slug = heading.map(|_| super::write::github_slug(&shown_text(p)));
+        self.heading_slug = heading.and_then(|_| own_slug(&mut self.slugger, p));
         let (mut inline, extra) = self.paragraph_inline(p);
         self.heading_slug = None;
         let code_block = style.as_deref() == Some("SourceCode");
@@ -2467,7 +2554,7 @@ impl Writer<'_> {
         extra: &mut Vec<String>,
     ) {
         let rpr = run.child("rPr");
-        if rpr.and_then(|r| r.toggle("vanish")).unwrap_or(false) {
+        if agent::hidden_run(rpr, &self.hidden_styles) {
             return;
         }
         let (style_bold, style_italic) = rpr
@@ -3686,6 +3773,15 @@ mod tests {
     use std::io::Write;
 
     const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+
+    #[test]
+    fn a_name_loses_the_xml_indentation_and_keeps_its_spaces() {
+        assert_eq!(without_layout("Un-named\n  "), "Un-named");
+        assert_eq!(without_layout("\n    Ada\r\n"), "Ada");
+        assert_eq!(without_layout("  Bob  "), "  Bob  ");
+        assert_eq!(without_layout("  Bob\n"), "  Bob");
+        assert_eq!(without_layout("Ann Lee"), "Ann Lee");
+    }
 
     pub(crate) fn zip(parts: &[(&str, &str)]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));

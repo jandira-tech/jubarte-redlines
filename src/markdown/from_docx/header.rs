@@ -1246,6 +1246,14 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     }
                 }
                 "r" => {
+                    // A hidden run prints nothing, as in the body.
+                    let hidden = match s.view {
+                        StoryView::Tagged(handles, _) => &handles.hidden_styles,
+                        _ => &std::collections::HashSet::new(),
+                    };
+                    if super::agent::hidden_run(run.child("rPr"), hidden) {
+                        continue;
+                    }
                     for child in run.elements() {
                         match child.local() {
                             "fldChar" => match child.attr("fldCharType") {

@@ -37,6 +37,9 @@ pub(crate) struct Handles {
     /// apart, as the text shows them.
     pub shown_ranges: HashSet<String>,
     pub shown_bookmarks: HashSet<String>,
+    /// Character styles whose runs are hidden (`w:vanish`): such a run
+    /// prints nothing, as a directly hidden one.
+    pub hidden_styles: HashSet<String>,
 }
 
 impl Handles {
@@ -109,20 +112,56 @@ fn hollow(e: &Element) -> bool {
 /// A run the text prints nothing for: vanished, or holding only empty
 /// text and page breaks (the page break is the paragraph's id line). It
 /// keeps no two marks apart, as in the text.
-fn silent_run(e: &Element) -> bool {
+fn silent_run(e: &Element, handles: &Handles) -> bool {
     if e.local() != "r" {
         return false;
     }
-    let rpr = e.child("rPr");
-    if rpr.and_then(|r| r.toggle("vanish")).unwrap_or(false) {
+    if hidden_run(e.child("rPr"), &handles.hidden_styles) {
         return true;
     }
     e.elements().all(|c| match c.local() {
-        "rPr" | "lastRenderedPageBreak" => true,
+        // The text prints no soft hyphen and no symbol font's glyph.
+        "rPr" | "lastRenderedPageBreak" | "softHyphen" | "sym" => true,
         "t" | "delText" => c.text().is_empty(),
         "br" | "cr" => c.attr("type") == Some("page"),
         _ => false,
     })
+}
+
+/// Whether a run of properties `rpr` is hidden: its own `w:vanish`, else
+/// its character style's (one of `hidden`).
+pub(crate) fn hidden_run(rpr: Option<&Element>, hidden: &HashSet<String>) -> bool {
+    rpr.and_then(|r| r.toggle("vanish")).unwrap_or_else(|| {
+        rpr.and_then(|r| r.child("rStyle"))
+            .and_then(|s| s.attr("val"))
+            .is_some_and(|id| hidden.contains(id))
+    })
+}
+
+/// Whether `mark` holds the start of a shown comment range that ends past
+/// it, and the end of one that starts before it.
+fn half_ranges(mark: &Element, handles: &Handles) -> (bool, bool) {
+    fn walk(e: &Element, handles: &Handles, starts: &mut Vec<String>, ends: &mut Vec<String>) {
+        for child in e.elements() {
+            let shown = || {
+                child
+                    .attr("id")
+                    .filter(|id| handles.shown_ranges.contains(*id))
+                    .map(str::to_string)
+            };
+            match child.local() {
+                "commentRangeStart" => starts.extend(shown()),
+                "commentRangeEnd" => ends.extend(shown()),
+                _ => walk(child, handles, starts, ends),
+            }
+        }
+    }
+    let (mut starts, mut ends) = (Vec::new(), Vec::new());
+    walk(mark, handles, &mut starts, &mut ends);
+    (
+        starts.iter().any(|id| !ends.contains(id)),
+        ends.iter().any(|id| !starts.contains(id)),
+    )
 }
 
 /// `12@AC`: the element's `w:id` and its author's handle (`??` for an
@@ -291,9 +330,20 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
                 | "customXmlMoveToRangeStart"
                 | "customXmlMoveToRangeEnd"
         ) || hollow(e)
-            || silent_run(e)
+            || silent_run(e, handles)
         {
             continue;
+        }
+        // A mark holding one end of a shown comment range: the text
+        // prints the range across its edge, which parts it from the mark
+        // on that side.
+        let (opens, closes) = if kind_of(e.local()).is_some() {
+            half_ranges(e, handles)
+        } else {
+            (false, false)
+        };
+        if closes {
+            slots.push(None);
         }
         slots.push(kind_of(e.local()).map(|kind| RevTag {
             kind,
@@ -301,6 +351,9 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
             author: e.attr("author").map(str::to_string),
             date: e.attr("date").map(str::to_string),
         }));
+        if opens {
+            slots.push(None);
+        }
     }
     // 1. Join neighbours of one kind by one author.
     let mut joined: Vec<Option<RevTag>> = Vec::new();
@@ -642,6 +695,7 @@ pub(crate) fn handles(
         dates,
         shown_ranges: HashSet::new(),
         shown_bookmarks: HashSet::new(),
+        hidden_styles: HashSet::new(),
     }
 }
 
@@ -1521,6 +1575,13 @@ pub(crate) fn table_line(
             })
             .sum();
         let after = grid_skip("gridAfter");
+        // A row whose cells and gaps take more grid columns than the grid
+        // has, with a cell that prints nothing, holds a cell the view
+        // cannot tell from its padding: its paragraph count, per row,
+        // brings it back. Cells that all print text place themselves.
+        if column + filled + after > cols && super::row_cells(tr).any(|tc| !shows_text(tc)) {
+            uniform = false;
+        }
         let after = after.max(cols.saturating_sub(column + filled));
         let mut gap = Vec::new();
         if column > 0 {
