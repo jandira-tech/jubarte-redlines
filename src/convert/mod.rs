@@ -8,7 +8,7 @@
 //! same metric-compatible substitutes soffice embeds), Word `docDefaults`
 //! (Calibri 11 / line 276 / after 200 twips), and `sectPr` page geometry.
 
-mod altchunk;
+pub(crate) mod altchunk;
 mod diff_render;
 mod font;
 mod font_table;

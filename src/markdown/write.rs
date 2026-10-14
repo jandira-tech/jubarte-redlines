@@ -268,6 +268,142 @@ fn is_line_break(html: &str) -> bool {
     html_tag(html).is_some_and(|tag| !tag.closing && tag.name == "br")
 }
 
+/// The value of attribute `name` in the tag `html` (`<a href="u">`),
+/// quoted either way or bare, with its entities decoded.
+fn html_attribute(html: &str, name: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(name) {
+        let at = from + found;
+        from = at + name.len();
+        let before = lower[..at].chars().next_back();
+        if !before.is_some_and(char::is_whitespace) {
+            continue;
+        }
+        let Some(value) = html[from..].trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let value = value.trim_start();
+        let raw = match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => value[1..].split(quote).next()?,
+            _ => value
+                .split(|c: char| c.is_whitespace() || c == '>')
+                .next()?,
+        };
+        return Some(crate::convert::altchunk::decode_entities(raw));
+    }
+    None
+}
+
+/// Whether an HTML block is only comments (the view's id lines).
+fn comments_only(html: &str) -> bool {
+    html.lines()
+        .map(str::trim)
+        .all(|line| line.is_empty() || (line.starts_with("<!--") && line.ends_with("-->")))
+}
+
+/// The elements that start a paragraph of their own in HTML.
+const HTML_BLOCKS: [&str; 39] = [
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "br",
+    "caption",
+    "dd",
+    "details",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hr",
+    "li",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "pre",
+    "section",
+    "summary",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+];
+
+/// The first tag's name and the text of a raw HTML block: comments, tags
+/// and `<script>`/`<style>` bodies dropped, entities decoded, white space
+/// collapsed, a paragraph per block element.
+fn html_block_text(html: &str) -> (Option<String>, Vec<String>) {
+    let mut first = None;
+    let mut paragraphs = Vec::new();
+    let mut text = String::new();
+    let flush = |text: &mut String, paragraphs: &mut Vec<String>| {
+        let decoded = crate::convert::altchunk::decode_entities(text);
+        let words: Vec<&str> = decoded.split_whitespace().collect();
+        if !words.is_empty() {
+            paragraphs.push(words.join(" "));
+        }
+        text.clear();
+    };
+    let mut rest = html;
+    while let Some(lt) = rest.find('<') {
+        text.push_str(&rest[..lt]);
+        rest = &rest[lt..];
+        if let Some(comment) = rest.strip_prefix("<!--") {
+            rest = comment.find("-->").map_or("", |end| &comment[end + 3..]);
+            continue;
+        }
+        let Some(gt) = rest.find('>') else {
+            break;
+        };
+        let inner = rest[1..gt].trim();
+        rest = &rest[gt + 1..];
+        let name: String = inner
+            .trim_start_matches('/')
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        if first.is_none() {
+            first = Some(name.clone());
+        }
+        if (name == "script" || name == "style") && !inner.starts_with('/') && !inner.ends_with('/')
+        {
+            let close = format!("</{name}");
+            rest = rest
+                .to_ascii_lowercase()
+                .find(&close)
+                .and_then(|at| rest[at..].find('>').map(|gt| &rest[at + gt + 1..]))
+                .unwrap_or("");
+            continue;
+        }
+        if HTML_BLOCKS.contains(&name.as_str()) {
+            flush(&mut text, &mut paragraphs);
+        }
+    }
+    text.push_str(rest);
+    flush(&mut text, &mut paragraphs);
+    (first, paragraphs)
+}
+
 /// One inline HTML tag, as CommonMark names it.
 struct HtmlTag {
     /// Lowercase, hyphens and all (`code-of-conduct`).
@@ -450,6 +586,8 @@ struct Writer<'o, 'a> {
     dropped_html: Vec<String>,
     code: u32,
     link: u32,
+    /// The `<a href>` tags open in the block, which close with it.
+    html_links: u32,
 
     // CriticMarkup.
     pieces: Pieces,
@@ -529,6 +667,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             dropped_html: Vec::new(),
             code: 0,
             link: 0,
+            html_links: 0,
             pieces: Pieces::default(),
             change: None,
             serial: 0,
@@ -724,18 +863,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             Tag::Strikethrough => self.strike += 1,
             Tag::Superscript => self.superscript += 1,
             Tag::Subscript => self.subscript += 1,
-            Tag::Link { dest_url, .. } => {
-                if self.comment.is_none() && self.image.is_none() {
-                    self.ensure_paragraph();
-                    let url = critic::decode(&dest_url);
-                    let link = match url.strip_prefix('#') {
-                        Some(anchor) => Link::Anchor(anchor.to_string()),
-                        None => Link::External(url),
-                    };
-                    self.story().push(Item::LinkStart(link));
-                    self.document.styles.insert("Hyperlink");
-                    self.link += 1;
-                }
+            Tag::Link {
+                dest_url, title, ..
+            } => {
+                let title = (!title.is_empty()).then(|| critic::decode(&title));
+                self.link_start(&critic::decode(&dest_url), title);
             }
             Tag::Image { dest_url, .. } => {
                 if self.image.is_none() {
@@ -832,12 +964,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             TagEnd::Strikethrough => self.strike = self.strike.saturating_sub(1),
             TagEnd::Superscript => self.superscript = self.superscript.saturating_sub(1),
             TagEnd::Subscript => self.subscript = self.subscript.saturating_sub(1),
-            TagEnd::Link => {
-                if self.link > 0 && self.comment.is_none() && self.image.is_none() {
-                    self.link -= 1;
-                    self.story().push(Item::LinkEnd);
-                }
-            }
+            TagEnd::Link => self.link_end(),
             TagEnd::Image => self.picture(),
             TagEnd::MetadataBlock(_) => {
                 if let Some(text) = self.metadata.take() {
@@ -846,7 +973,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::HtmlBlock => {
                 if let Some(block) = self.html_block.take() {
-                    self.id_lines(&block);
+                    if comments_only(&block) {
+                        self.id_lines(&block);
+                    } else {
+                        self.html_text(&block);
+                    }
                 }
             }
             TagEnd::DefinitionList
@@ -933,11 +1064,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         // The view writes id lines as blocks of their own: a comment inside
         // other HTML (`<div>`) is the author's.
-        let comments_only = html
-            .lines()
-            .map(str::trim)
-            .all(|line| line.is_empty() || (line.starts_with("<!--") && line.ends_with("-->")));
-        if !comments_only {
+        if !comments_only(html) {
             return;
         }
         for line in html.lines() {
@@ -964,6 +1091,29 @@ impl<'o, 'a> Writer<'o, 'a> {
             } else {
                 self.id_line = view_notes::id_line(line);
             }
+        }
+    }
+
+    /// A raw HTML block's text, a paragraph per block element, with a
+    /// warning that its markup is dropped.
+    fn html_text(&mut self, html: &str) {
+        if self.comment.is_some() {
+            return;
+        }
+        let (name, paragraphs) = html_block_text(html);
+        if let Some(name) = name
+            && !self.dropped_html.contains(&name)
+        {
+            self.document.warnings.push(format!(
+                "HTML block <{name}> dropped: its text is kept, its markup is not"
+            ));
+            self.dropped_html.push(name);
+        }
+        for text in paragraphs {
+            self.end_paragraph();
+            self.begin_paragraph();
+            self.text(&text);
+            self.end_paragraph();
         }
     }
 
@@ -1648,6 +1798,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         if empty || self.comment.is_some() {
             return;
         }
+        // `<a href>` is a link; `<a>` without one (`<a name>`) is text.
+        if name == "a" {
+            if closing {
+                if self.html_links > 0 {
+                    self.html_links -= 1;
+                    self.link_end();
+                }
+            } else if let Some(href) = html_attribute(html, "href") {
+                let before = self.link;
+                let title = html_attribute(html, "title");
+                self.link_start(&href, title);
+                self.html_links += u32::from(self.link > before);
+            }
+            return;
+        }
         let counter = match name.as_str() {
             "b" | "strong" => &mut self.bold,
             "i" | "em" => &mut self.italic,
@@ -1675,7 +1840,33 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// Closes every inline formatting mark still open.
+    /// A link to `url` (`#anchor` for a heading) starts.
+    fn link_start(&mut self, url: &str, title: Option<String>) {
+        if self.comment.is_some() || self.image.is_some() {
+            return;
+        }
+        self.ensure_paragraph();
+        let link = match url.strip_prefix('#') {
+            Some(anchor) => Link::Anchor(anchor.to_string()),
+            None => Link::External(url.to_string()),
+        };
+        self.story().push(Item::LinkStart(link, title));
+        self.document.styles.insert("Hyperlink");
+        self.link += 1;
+    }
+
+    fn link_end(&mut self) {
+        if self.link > 0 && self.comment.is_none() && self.image.is_none() {
+            self.link -= 1;
+            self.story().push(Item::LinkEnd);
+        }
+    }
+
     fn close_inline_tags(&mut self) {
+        while self.html_links > 0 {
+            self.html_links -= 1;
+            self.link_end();
+        }
         for counter in [
             &mut self.bold,
             &mut self.italic,
@@ -1931,7 +2122,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             .iter()
             .chain(self.definitions.values().flatten())
             .filter_map(|item| match item {
-                Item::LinkStart(Link::Anchor(name)) => Some(name.as_str()),
+                Item::LinkStart(Link::Anchor(name), _) => Some(name.as_str()),
                 _ => None,
             })
             .collect();
@@ -1968,7 +2159,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .iter_mut()
                 .chain(self.definitions.values_mut().flatten())
             {
-                if let Item::LinkStart(Link::Anchor(anchor)) = item
+                if let Item::LinkStart(Link::Anchor(anchor), _) = item
                     && let Some(name) = renamed.get(anchor.as_str())
                 {
                     anchor.clone_from(name);
@@ -2673,7 +2864,7 @@ mod markdown_authored_boundary_tests {
                 document
                     .body
                     .iter()
-                    .filter(|item| matches!(item, Item::LinkStart(_) | Item::LinkEnd))
+                    .filter(|item| matches!(item, Item::LinkStart(..) | Item::LinkEnd))
                     .count(),
                 0
             );

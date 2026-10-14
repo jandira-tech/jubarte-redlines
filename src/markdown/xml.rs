@@ -133,7 +133,8 @@ pub(super) enum Item {
     RangeStart(usize),
     RangeEnd(u32),
     CommentReference(u32),
-    LinkStart(Link),
+    /// A link and its title (`w:tooltip`).
+    LinkStart(Link, Option<String>),
     LinkEnd,
     Table {
         columns: Vec<Option<&'static str>>,
@@ -515,16 +516,24 @@ pub(super) fn story(
                      <w:commentReference w:id=\"{id}\"/></w:r>"
                 );
             }
-            Item::LinkStart(Link::External(url)) => {
-                let id = relate.hyperlink(url);
-                let _ = write!(out, "<w:hyperlink r:id=\"{id}\" w:history=\"1\">");
-            }
-            Item::LinkStart(Link::Anchor(name)) => {
-                let _ = write!(
-                    out,
-                    "<w:hyperlink w:anchor=\"{}\" w:history=\"1\">",
-                    escape(name)
-                );
+            Item::LinkStart(link, title) => {
+                let tooltip = title
+                    .as_deref()
+                    .map(|t| format!(" w:tooltip=\"{}\"", escape(t)))
+                    .unwrap_or_default();
+                match link {
+                    Link::External(url) => {
+                        let id = relate.hyperlink(url);
+                        let _ = write!(out, "<w:hyperlink r:id=\"{id}\"{tooltip} w:history=\"1\">");
+                    }
+                    Link::Anchor(name) => {
+                        let _ = write!(
+                            out,
+                            "<w:hyperlink w:anchor=\"{}\"{tooltip} w:history=\"1\">",
+                            escape(name)
+                        );
+                    }
+                }
             }
             Item::LinkEnd => out.push_str("</w:hyperlink>"),
             Item::Table {

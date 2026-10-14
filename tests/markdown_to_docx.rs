@@ -1164,3 +1164,50 @@ fn an_unclosed_backtick_autolinks_and_parenthesised_urls_keep_highlights_right()
         ]
     );
 }
+
+#[test]
+fn an_html_block_keeps_its_text() {
+    // A raw HTML block (`<div>` up to a blank line) is not Markdown, but its
+    // text is the author's: it stays, a paragraph per block element, with
+    // a warning that the markup is gone. Script and style bodies are not text.
+    let out = markdown_to_docx(
+        "<div>\nDiv &amp; text\nhere.<!-- note -->\n<p>Second</p>\n<script>x()</script>\n</div>\n\nAfter.\n",
+        &DocxOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(texts(&out.docx), ["Div & text here.", "Second", "After."]);
+    assert!(
+        out.warnings.iter().any(|w| w.contains("HTML block <div>")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+#[test]
+fn an_html_anchor_with_href_is_a_link() {
+    // `<a href>` is a link like `[t](u)`; one without `href` is text, and
+    // one left open closes with its block.
+    let docx = write(
+        "See <a href=\"https://a.example/x?a=1&amp;b=2\">anchor <b>tag</b></a> and \
+         <a name=\"x\">no href</a> now.\n\nOpen <a href='https://b.example/'>unclosed\n\nPlain.\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:hyperlink ").count(), 2, "{xml}");
+    let rels = part_string(&docx, "word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains("https://a.example/x?a=1&amp;b=2"), "{rels}");
+    assert!(rels.contains("https://b.example/"), "{rels}");
+    assert_eq!(
+        texts(&docx),
+        ["See anchor tag and no href now.", "Open unclosed", "Plain."]
+    );
+}
+
+#[test]
+fn a_link_title_is_its_tooltip() {
+    let docx = write(
+        "# Intro\n\n[titled](https://a.example/t \"The & Title\") and [back](#intro 'Go up').\n",
+    );
+    let xml = document_xml(&docx);
+    assert!(xml.contains(r#"w:tooltip="The &amp; Title""#), "{xml}");
+    assert!(xml.contains(r#"w:tooltip="Go up""#), "{xml}");
+}
