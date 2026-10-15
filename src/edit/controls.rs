@@ -181,7 +181,7 @@ impl Transaction<'_> {
                     && record
                         .paragraph_ids
                         .iter()
-                        .any(|p| p == &format!("body:p:{local}"))
+                        .any(|p| p == &crate::ids::paragraph_id("body", local))
             })
             .map(|(g, _)| g)
             .collect();

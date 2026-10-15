@@ -56,7 +56,7 @@
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let contract = std::fs::read("contract.docx")?;
 //!     let plan = r#"{"schema_version": 1, "author": "Reviewer", "operations": [
-//!         {"kind": "replace", "paragraph": "body:p:4",
+//!         {"kind": "replace", "paragraph": "p4",
 //!          "find": "thirty (30) days", "replacement": "sixty (60) days"}
 //!     ]}"#;
 //!     let edited = jubarte::edit::apply_plan_json(&contract, plan)?;
