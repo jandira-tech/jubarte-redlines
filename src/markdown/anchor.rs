@@ -4,7 +4,7 @@
 //! An anchor copied out of the agent view, read as document text.
 
 /// The ASCII punctuation a backslash escapes in CommonMark.
-const ESCAPABLE: &str = r"\`*_{}[]()#+-.!|<>~=";
+const ESCAPABLE: &str = r"\`*_{}[]()#+-.!|<>~=&";
 
 /// A private-use stand-in for an escaped character, so mark stripping never
 /// sees it (Supplementary Private Use Area-A, U+F0000 onward).
@@ -325,6 +325,8 @@ mod tests {
             // CodeRabbit #484: a `&#32;` is a space to the emphasis rules too.
             ("2&#32;*&#32;3&#32;*&#32;4", "2 * 3 * 4"),
             ("a&#32;_b_&#32;c", "a b c"),
+            // The view escapes a literal reference the document holds.
+            ("Code \\&#32; and \\&amp; literal.", "Code &#32; and &amp; literal."),
         ] {
             assert_eq!(plain_anchor(anchor), plain, "{anchor}");
         }
@@ -378,5 +380,6 @@ mod tests {
         assert_eq!(unescape_markdown("\\*a\\_b\\\\ \\n \\é"), "*a_b\\ \\n \\é");
         assert_eq!(unescape_markdown("trailing \\"), "trailing \\");
         assert_eq!(unescape_markdown("&#32;lead and &#32"), " lead and &#32");
+        assert_eq!(unescape_markdown("\\&#32;"), "&#32;");
     }
 }
