@@ -111,7 +111,7 @@ fn json(args: &[&str]) -> serde_json::Value {
 fn read_json_prints_the_snapshot_with_changes_and_comments() {
     let snapshot = json(&["read", RECEIVED, "--json"]);
     assert_eq!(snapshot["schema_version"], 1);
-    assert_eq!(snapshot["paragraphs"][1]["id"], "body:p:1");
+    assert_eq!(snapshot["paragraphs"][1]["id"], "p1");
     assert_eq!(snapshot["changes"][0]["ref"], "r0");
     assert_eq!(snapshot["comments"][0]["ref"], "c5");
     let (_, inspect, _) = run(&["inspect", RECEIVED, "--json"]);
@@ -162,14 +162,14 @@ fn the_snapshot_lists_changes_and_comments_and_retains_by_paragraph() {
     snapshot.retain(&[5]);
     assert_eq!(snapshot.summary, summary);
     let ids: Vec<&str> = snapshot.paragraphs.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids, ["body:p:5"]);
+    assert_eq!(ids, ["p5"]);
     let refs: Vec<&str> = snapshot.comments.iter().map(|c| c.r#ref.as_str()).collect();
     assert_eq!(refs, ["c5", "c6"]);
     assert!(
         snapshot
             .changes
             .iter()
-            .all(|c| c.paragraph.as_deref() == Some("body:p:5"))
+            .all(|c| c.paragraph.as_deref() == Some("p5"))
     );
 }
 
@@ -185,26 +185,23 @@ fn read_json_keeps_what_the_selection_flags_select() {
         .iter()
         .map(|p| p["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["body:p:3"]);
+    assert_eq!(ids, ["p3"]);
     assert_eq!(one["summary"], whole["summary"]);
     let changes = one["changes"].as_array().unwrap();
     assert!(!changes.is_empty());
-    assert!(
-        changes.iter().all(|c| c["paragraph"] == "body:p:3"),
-        "{one}"
-    );
+    assert!(changes.iter().all(|c| c["paragraph"] == "p3"), "{one}");
     assert_eq!(one["comments"], serde_json::json!([]));
     assert_eq!(one["tables"], whole["tables"]);
     let changed = json(&["read", RECEIVED, "--json", "--changed"]);
     let kept = changed["paragraphs"].as_array().unwrap();
     assert!(kept.len() < whole["paragraphs"].as_array().unwrap().len());
-    assert!(kept.iter().all(|p| p["id"] != "body:p:0"), "{changed}");
+    assert!(kept.iter().all(|p| p["id"] != "p0"), "{changed}");
     assert_eq!(changed["changes"], whole["changes"]);
 }
 
 /// A Strict package keeps its shapes' text in `wne:txbxContent`. The view,
 /// the snapshot and `edit` all leave those paragraphs out, so `pN` names the
-/// same paragraph everywhere (the view's `p131` used to be `body:p:137`).
+/// same paragraph everywhere (the view's `p131` used to be `p137`).
 #[test]
 fn strict_text_boxes_leave_the_paragraph_ids_alone() {
     const STRICT: &str = concat!(
@@ -221,7 +218,7 @@ fn strict_text_boxes_leave_the_paragraph_ids_alone() {
     );
     let one = json(&["read", STRICT, "--json", "-p", "p131"]);
     let kept = &one["paragraphs"][0];
-    assert_eq!(kept["id"], "body:p:131");
+    assert_eq!(kept["id"], "p131");
     assert!(
         kept["text"].as_str().unwrap().starts_with("Video provides"),
         "{kept}"
@@ -235,7 +232,7 @@ fn strict_text_boxes_leave_the_paragraph_ids_alone() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|c| c["id"] == "body:rev:7"),
+            .any(|c| c["id"] == "r7"),
         "{one}"
     );
     let changed = json(&["read", STRICT, "--json", "--changed"]);
@@ -792,7 +789,7 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
     let (stdout, patch) = edit("review", false);
     assert!(
         patch.starts_with(
-            "--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [body:p:1] @@\n"
+            "--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [p1] @@\n"
         ),
         "{patch}"
     );
@@ -801,7 +798,7 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
     // the comment on it follows the change, never inside it.
     let unwrapped = patch.replace('\n', " ");
     assert!(
-        patch.contains("@@ [body:p:2] @@\n")
+        patch.contains("@@ [p2] @@\n")
             && unwrapped.contains("{>>Claude (2026-09-25T12:00:00Z): post-disclosure duty<<}")
             && !unwrapped.contains("{+{>>"),
         "{patch}"
@@ -851,9 +848,9 @@ fn read_json_keeps_a_comment_spanning_a_kept_paragraph() {
         .collect();
     assert_eq!(refs, ["c0"], "{one}");
     let comment = &one["comments"][0];
-    assert_eq!(comment["paragraph"], "body:p:4");
+    assert_eq!(comment["paragraph"], "p4");
     // c0 runs on through the table to p12.
-    assert_eq!(comment["last_paragraph"], "body:p:12");
+    assert_eq!(comment["last_paragraph"], "p12");
 }
 
 /// codex 4242942130: `--changed` keeps a header's changes: the view notes
@@ -890,10 +887,10 @@ fn read_json_changed_keeps_a_headers_changes() {
             .collect()
     };
     let changed = json(&["read", path, "--json", "--changed"]);
-    assert_eq!(ids(&changed), ["body:rev:1", "header1:rev:7"], "{changed}");
+    assert_eq!(ids(&changed), ["r1", "header1.r7"], "{changed}");
     let by_ann = json(&["read", path, "--json", "--changed", "--by", "AC"]);
-    assert_eq!(ids(&by_ann), ["header1:rev:7"], "{by_ann}");
+    assert_eq!(ids(&by_ann), ["header1.r7"], "{by_ann}");
     // A paragraph pick names body paragraphs only.
     let one = json(&["read", path, "--json", "-p", "p1"]);
-    assert_eq!(ids(&one), ["body:rev:1"], "{one}");
+    assert_eq!(ids(&one), ["r1"], "{one}");
 }

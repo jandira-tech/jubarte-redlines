@@ -49,18 +49,18 @@ fn list_changes_names_each_change_by_story_and_id() {
     assert_eq!(
         got,
         [
-            ("body:rev:1", ChangeKind::Insertion, Some("Ann"), "new"),
-            ("body:rev:2", ChangeKind::Deletion, Some("Bob"), "old"),
-            ("body:rev:3", ChangeKind::Formatting, Some("Ann"), "Centred"),
+            ("r1", ChangeKind::Insertion, Some("Ann"), "new"),
+            ("r2", ChangeKind::Deletion, Some("Bob"), "old"),
+            ("r3", ChangeKind::Formatting, Some("Ann"), "Centred"),
         ]
     );
 }
 
 #[test]
 fn accepting_one_insertion_leaves_the_others_tracked() {
-    let out = accept_changes(&three_changes(), &filter_ids(&["body:rev:1"])).unwrap();
+    let out = accept_changes(&three_changes(), &filter_ids(&["r1"])).unwrap();
     assert_word_valid_package(&out);
-    assert_eq!(ids(&out), ["body:rev:2", "body:rev:3"]);
+    assert_eq!(ids(&out), ["r2", "r3"]);
     let xml = part_string(&out, "word/document.xml").unwrap();
     assert!(
         xml.contains(">new</w:t>") && !xml.contains(r#"<w:ins w:id="1""#),
@@ -77,7 +77,7 @@ fn rejecting_by_author_leaves_the_other_authors_changes_tracked() {
     };
     let out = reject_changes(&three_changes(), &filter).unwrap();
     assert_word_valid_package(&out);
-    assert_eq!(ids(&out), ["body:rev:1", "body:rev:3"]);
+    assert_eq!(ids(&out), ["r1", "r3"]);
     let xml = part_string(&out, "word/document.xml").unwrap();
     assert!(
         xml.contains(">old</w:t>") && !xml.contains("delText"),
@@ -93,7 +93,7 @@ fn a_kind_filter_resolves_only_that_kind() {
     };
     let out = reject_changes(&three_changes(), &filter).unwrap();
     assert_word_valid_package(&out);
-    assert_eq!(ids(&out), ["body:rev:1", "body:rev:2"]);
+    assert_eq!(ids(&out), ["r1", "r2"]);
     let xml = part_string(&out, "word/document.xml").unwrap();
     assert!(!xml.contains("<w:jc"), "{xml}");
 }
@@ -106,7 +106,7 @@ fn filters_combine_as_and() {
         ..Default::default()
     };
     let out = accept_changes(&three_changes(), &filter).unwrap();
-    assert_eq!(ids(&out), ["body:rev:2", "body:rev:3"]);
+    assert_eq!(ids(&out), ["r2", "r3"]);
 }
 
 #[test]
@@ -125,9 +125,9 @@ fn selecting_every_change_is_accept_or_reject_all() {
 
 #[test]
 fn an_unknown_id_is_refused() {
-    let err = accept_changes(&three_changes(), &filter_ids(&["body:rev:9"])).unwrap_err();
+    let err = accept_changes(&three_changes(), &filter_ids(&["r9"])).unwrap_err();
     assert!(
-        matches!(&err, ChangeError::UnknownChange(id) if id == "body:rev:9"),
+        matches!(&err, ChangeError::UnknownChange(id) if id == "r9"),
         "{err:?}"
     );
 }
@@ -149,10 +149,10 @@ fn a_move_resolves_both_sides() {
         listed.iter().map(|c| c.move_side).collect::<Vec<_>>(),
         [Some(MoveSide::From), Some(MoveSide::To), None]
     );
-    for side in ["body:rev:11", "body:rev:13"] {
+    for side in ["r11", "r13"] {
         let out = accept_changes(&pkg, &filter_ids(&[side])).unwrap();
         assert_word_valid_package(&out);
-        assert_eq!(ids(&out), ["body:rev:14"], "accepting {side}");
+        assert_eq!(ids(&out), ["r14"], "accepting {side}");
         let xml = part_string(&out, "word/document.xml").unwrap();
         assert_eq!(xml.matches(">Moved<").count(), 1, "{xml}");
         assert!(
@@ -160,8 +160,8 @@ fn a_move_resolves_both_sides() {
             "{xml}"
         );
     }
-    let out = reject_changes(&pkg, &filter_ids(&["body:rev:13"])).unwrap();
-    assert_eq!(ids(&out), ["body:rev:14"]);
+    let out = reject_changes(&pkg, &filter_ids(&["r13"])).unwrap();
+    assert_eq!(ids(&out), ["r14"]);
 }
 
 /// A paragraph mark's own insertion is a change of its own.
@@ -174,9 +174,9 @@ fn an_inserted_paragraph_mark_is_its_own_change() {
     assert_eq!(listed.len(), 2);
     assert_eq!(listed[0].target, "paragraph_mark");
     assert_eq!(listed[1].target, "text");
-    let out = reject_changes(&pkg, &filter_ids(&["body:rev:6"])).unwrap();
+    let out = reject_changes(&pkg, &filter_ids(&["r6"])).unwrap();
     assert_word_valid_package(&out);
-    assert_eq!(ids(&out), ["body:rev:5"]);
+    assert_eq!(ids(&out), ["r5"]);
 }
 
 #[test]
@@ -196,20 +196,19 @@ fn header_changes_carry_their_story() {
         }],
         r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
     );
-    assert_eq!(ids(&pkg), ["body:rev:8", "header1:rev:7"]);
-    let out = reject_changes(&pkg, &filter_ids(&["header1:rev:7"])).unwrap();
+    assert_eq!(ids(&pkg), ["r8", "header1.r7"]);
+    let out = reject_changes(&pkg, &filter_ids(&["header1.r7"])).unwrap();
     assert_word_valid_package(&out);
-    assert_eq!(ids(&out), ["body:rev:8"]);
+    assert_eq!(ids(&out), ["r8"]);
     let hx = part_string(&out, "word/header1.xml").unwrap();
     assert!(!hx.contains("Head"), "{hx}");
 }
 
 #[test]
 fn a_filter_reads_from_json() {
-    let f: ChangeFilter = serde_json::from_str(
-        r#"{"ids":["body:rev:1"],"authors":["Ann"],"kinds":["insertion","move"]}"#,
-    )
-    .unwrap();
+    let f: ChangeFilter =
+        serde_json::from_str(r#"{"ids":["r1"],"authors":["Ann"],"kinds":["insertion","move"]}"#)
+            .unwrap();
     assert_eq!(f.kinds, Some(vec![ChangeKind::Insertion, ChangeKind::Move]));
     assert!(serde_json::from_str::<ChangeFilter>(r#"{"author":"Ann"}"#).is_err());
 }
@@ -392,9 +391,9 @@ fn a_comment_cut_by_a_resolved_row_keeps_its_range() {
             xml: comments,
         }],
     );
-    let out = reject_changes(&pkg, &filter_ids(&["body:rev:1"])).unwrap();
+    let out = reject_changes(&pkg, &filter_ids(&["r1"])).unwrap();
     assert_word_valid_package(&out);
-    assert_eq!(ids(&out), ["body:rev:2"]);
+    assert_eq!(ids(&out), ["r2"]);
     let xml = part_string(&out, "word/document.xml").unwrap();
     assert!(!xml.contains("Cell"), "{xml}");
     assert!(
@@ -429,11 +428,11 @@ fn a_kept_grid_change_keeps_its_table() {
         ),
     ));
     for out in [
-        accept_changes(&pkg, &filter_ids(&["body:rev:1"])).unwrap(),
-        reject_changes(&pkg, &filter_ids(&["body:rev:1"])).unwrap(),
+        accept_changes(&pkg, &filter_ids(&["r1"])).unwrap(),
+        reject_changes(&pkg, &filter_ids(&["r1"])).unwrap(),
     ] {
         assert_word_valid_package(&out);
-        assert_eq!(ids(&out), ["body:rev:2"]);
+        assert_eq!(ids(&out), ["r2"]);
     }
 }
 
@@ -458,10 +457,10 @@ fn a_moved_paragraph_mark_resolves_with_its_move() {
         "{listed:?}"
     );
     for resolve in [accept_changes, reject_changes] {
-        for side in ["body:rev:20", "body:rev:21", "body:rev:13"] {
+        for side in ["r20", "r21", "r13"] {
             let out = resolve(&pkg, &filter_ids(&[side])).unwrap();
             assert_word_valid_package(&out);
-            assert_eq!(ids(&out), ["body:rev:14"], "resolving {side}");
+            assert_eq!(ids(&out), ["r14"], "resolving {side}");
         }
     }
 }
@@ -479,20 +478,13 @@ fn recorded_marks_are_history_and_mark_formatting_goes_with_the_mark() {
         .iter()
         .map(|c| (c.id.as_str(), c.inside.as_deref()))
         .collect();
-    assert_eq!(
-        got,
-        [
-            ("body:rev:1", None),
-            ("body:rev:2", Some("body:rev:1")),
-            ("body:rev:4", Some("body:rev:1")),
-        ]
-    );
-    let out = accept_changes(&pkg, &filter_ids(&["body:rev:1"])).unwrap();
+    assert_eq!(got, [("r1", None), ("r2", Some("r1")), ("r4", Some("r1")),]);
+    let out = accept_changes(&pkg, &filter_ids(&["r1"])).unwrap();
     assert_word_valid_package(&out);
     assert!(ids(&out).is_empty(), "{:?}", ids(&out));
-    let out = reject_changes(&pkg, &filter_ids(&["body:rev:2"])).unwrap();
+    let out = reject_changes(&pkg, &filter_ids(&["r2"])).unwrap();
     assert_word_valid_package(&out);
-    assert_eq!(ids(&out), ["body:rev:1", "body:rev:4"]);
+    assert_eq!(ids(&out), ["r1", "r4"]);
 }
 
 /// Word records a deleted cell's properties with their own `w:cellDel` in
@@ -521,11 +513,11 @@ fn a_cell_deletion_recorded_in_its_formatting_history_stays_tracked() {
         .into_iter()
         .map(|c| c.id)
         .collect();
-    assert_eq!(listed, ["body:rev:1", "body:rev:2", "body:rev:3"]);
+    assert_eq!(listed, ["r1", "r2", "r3"]);
     for resolve in [accept_changes, reject_changes] {
-        let out = resolve(&pkg, &filter_ids(&["body:rev:1"])).unwrap();
+        let out = resolve(&pkg, &filter_ids(&["r1"])).unwrap();
         assert_word_valid_package(&out);
-        assert_eq!(ids(&out), ["body:rev:2", "body:rev:3"]);
+        assert_eq!(ids(&out), ["r2", "r3"]);
         let xml = part_string(&out, "word/document.xml").unwrap();
         assert_eq!(xml.matches("<w:tc>").count(), 2, "{xml}");
         assert!(xml.contains("Gone"), "{xml}");
@@ -547,14 +539,11 @@ fn formatting_history_inside_a_kept_change_stays_as_recorded() {
         .into_iter()
         .map(|c| c.id)
         .collect();
-    assert_eq!(
-        listed,
-        ["body:rev:1", "body:rev:3", "body:rev:5", "body:rev:7"]
-    );
+    assert_eq!(listed, ["r1", "r3", "r5", "r7"]);
     for resolve in [accept_changes, reject_changes] {
-        let out = resolve(&pkg, &filter_ids(&["body:rev:1"])).unwrap();
+        let out = resolve(&pkg, &filter_ids(&["r1"])).unwrap();
         assert_word_valid_package(&out);
-        assert_eq!(ids(&out), ["body:rev:3", "body:rev:5", "body:rev:7"]);
+        assert_eq!(ids(&out), ["r3", "r5", "r7"]);
         let xml = part_string(&out, "word/document.xml").unwrap();
         assert!(xml.contains(r#"<w:numberingChange w:id="4""#), "{xml}");
         assert!(xml.contains(r#"w:original="%1.""#), "{xml}");
@@ -568,15 +557,15 @@ fn formatting_history_inside_a_kept_change_stays_as_recorded() {
 #[test]
 fn every_spelling_of_a_change_id_selects_the_same_change() {
     let pkg = three_changes();
-    let want = accept_changes(&pkg, &filter_ids(&["body:rev:2"])).unwrap();
-    for spelling in ["r2", "body:rev:2"] {
+    let want = accept_changes(&pkg, &filter_ids(&["r2"])).unwrap();
+    for spelling in ["r2", "r2"] {
         assert_eq!(
             accept_changes(&pkg, &filter_ids(&[spelling])).unwrap(),
             want,
             "{spelling}"
         );
     }
-    let both = accept_changes(&pkg, &filter_ids(&["body:rev:1", "body:rev:2"])).unwrap();
+    let both = accept_changes(&pkg, &filter_ids(&["r1", "r2"])).unwrap();
     assert_eq!(accept_changes(&pkg, &filter_ids(&["r1+2"])).unwrap(), both);
     for (expired, settled) in [("2", "r2"), ("#2", "r2"), ("1+2", "r1+2"), ("#1+2", "r1+2")] {
         let err = accept_changes(&pkg, &filter_ids(&[expired])).unwrap_err();
@@ -598,7 +587,7 @@ fn every_spelling_of_a_change_id_selects_the_same_change() {
     assert!(matches!(err, ChangeError::InvalidId(_)), "{err:?}");
     let err = accept_changes(&pkg, &filter_ids(&["r9"])).unwrap_err();
     assert!(
-        matches!(&err, ChangeError::UnknownChange(id) if id == "body:rev:9"),
+        matches!(&err, ChangeError::UnknownChange(id) if id == "r9"),
         "{err:?}"
     );
     assert_eq!(err.to_string(), "no tracked change r9");
@@ -614,18 +603,11 @@ fn changes_carry_their_short_id_and_paragraph() {
         .collect();
     assert_eq!(
         got,
-        [
-            ("r1", Some("body:p:0")),
-            ("r2", Some("body:p:0")),
-            ("r3", Some("body:p:1")),
-        ]
+        [("r1", Some("p0")), ("r2", Some("p0")), ("r3", Some("p1")),]
     );
     let json = serde_json::to_string(&changes[0]).unwrap();
-    assert!(
-        json.starts_with(r#"{"id":"body:rev:1","ref":"r1","#),
-        "{json}"
-    );
-    assert!(json.contains(r#""paragraph":"body:p:0""#), "{json}");
+    assert!(json.starts_with(r#"{"id":"r1","ref":"r1","#), "{json}");
+    assert!(json.contains(r#""paragraph":"p0""#), "{json}");
 }
 
 #[test]
@@ -647,7 +629,7 @@ fn a_duplicate_insertion_id_is_ambiguous() {
     let pkg = docx(&format!(
         r#"<w:p><w:ins w:id="4" {A}><w:r><w:t>one</w:t></w:r></w:ins><w:ins w:id="4" {A}><w:r><w:t>two</w:t></w:r></w:ins></w:p>"#
     ));
-    for spelling in ["r4", "body:rev:4"] {
+    for spelling in ["r4", "r4"] {
         let err = accept_changes(&pkg, &filter_ids(&[spelling])).unwrap_err();
         assert!(matches!(&err, ChangeError::Ambiguous { candidates, .. } if candidates.len() == 2));
         assert_eq!(
@@ -754,9 +736,9 @@ fn a_header_change_resolves_by_its_short_id() {
         .into_iter()
         .map(|c| format!("{} {}", c.r#ref, c.paragraph.unwrap_or_default()))
         .collect();
-    assert_eq!(refs, ["r7 body:p:0", "header1.r7 header1:p:0"]);
+    assert_eq!(refs, ["r7 p0", "header1.r7 header1"]);
     let out = reject_changes(&pkg, &filter_ids(&["header1.r7"])).unwrap();
-    assert_eq!(ids(&out), ["body:rev:7"]);
+    assert_eq!(ids(&out), ["r7"]);
 }
 
 /// A text box Word stores twice: the `mc:Choice` copy and its `mc:Fallback`
@@ -780,7 +762,7 @@ fn boxed(extra: &str) -> Vec<u8> {
 /// stays listed.
 #[test]
 fn a_text_box_change_lists_once_and_resolves_in_both_copies() {
-    assert_eq!(ids(&boxed("")), ["body:rev:5"]);
+    assert_eq!(ids(&boxed("")), ["r5"]);
     let accepted = accept_changes(&boxed(""), &filter_ids(&["r5"])).unwrap();
     let xml = part_string(&accepted, "word/document.xml").unwrap();
     assert!(!xml.contains("<w:ins"), "{xml}");
@@ -790,7 +772,7 @@ fn a_text_box_change_lists_once_and_resolves_in_both_copies() {
     assert!(!xml.contains("Boxed"), "{xml}");
 
     let extra = format!(r#"<w:ins w:id="7" {A}><w:r><w:t>Extra</w:t></w:r></w:ins>"#);
-    assert_eq!(ids(&boxed(&extra)), ["body:rev:5", "body:rev:7"]);
+    assert_eq!(ids(&boxed(&extra)), ["r5", "r7"]);
 }
 
 /// Word's own redline of a text box: the Choice copy's deletions are
@@ -804,10 +786,10 @@ fn a_word_redlines_text_box_twins_list_once() {
     ))
     .unwrap();
     let listed = ids(&word);
-    for twin in ["body:rev:11", "body:rev:12"] {
+    for twin in ["r11", "r12"] {
         assert!(!listed.iter().any(|id| id == twin), "{twin}: {listed:?}");
     }
-    for own in ["body:rev:8", "body:rev:9", "body:rev:10"] {
+    for own in ["r8", "r9", "r10"] {
         assert!(listed.iter().any(|id| id == own), "{own}: {listed:?}");
     }
     let rejected = reject_changes(&word, &filter_ids(&["r10"])).unwrap();
@@ -853,7 +835,7 @@ fn a_fallback_only_change_between_twins_does_not_shift_the_pairs() {
         )
     );
     let pkg = docx(&body);
-    assert_eq!(ids(&pkg), ["body:rev:5", "body:rev:6", "body:rev:8"]);
+    assert_eq!(ids(&pkg), ["r5", "r6", "r8"]);
     let rejected = reject_changes(&pkg, &filter_ids(&["r6"])).unwrap();
     let xml = part_string(&rejected, "word/document.xml").unwrap();
     assert!(!xml.contains("<w:del "), "both copies of r6 resolve: {xml}");
@@ -870,7 +852,7 @@ fn nested_alternate_content_copies_join_one_change() {
         alternate(&format!("<w:r>{inner}</w:r>"), &boxed_text(&ins(7)))
     );
     let pkg = docx(&body);
-    assert_eq!(ids(&pkg), ["body:rev:5"]);
+    assert_eq!(ids(&pkg), ["r5"]);
     let accepted = accept_changes(&pkg, &filter_ids(&["r5"])).unwrap();
     let xml = part_string(&accepted, "word/document.xml").unwrap();
     assert!(!xml.contains("<w:ins "), "every copy resolves: {xml}");

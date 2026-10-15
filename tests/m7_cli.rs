@@ -425,7 +425,7 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         );
         assert!(line.contains("\"kind\":"));
         assert!(line.contains("\"author\":\"Tester\""));
-        assert!(line.contains("\"id\":\"body:rev:"));
+        assert!(line.contains("\"id\":\"r"));
     }
 }
 
