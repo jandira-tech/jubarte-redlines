@@ -9,7 +9,7 @@ body: p0-p2, 0 tables, 1 page      # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
 ---
 
 <!-- p0 -->

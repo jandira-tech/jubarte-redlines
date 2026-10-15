@@ -10,19 +10,19 @@ body: p0-p1112, 2 tables, 104 pages  # pages from Word's cached layout
 page: Letter portrait, margins top 1in, right 1.5in, bottom 1in, left 1.5in, header/footer 0.5in
 styles:
   Normal: Times New Roman 12pt, left  # default; unannotated paragraphs use it
-  "#": Heading1, Arial bold 16pt, after 18pt, line 20pt exact, keep-next, center
-  "##": Heading2, Arial bold 12pt, before 12pt, after 6pt, keep-next
-  "###": Heading3, Arial bold 12pt, before 6pt, after 6pt, keep-next
-  "####": Heading4, Arial bold 12pt, before 6pt, after 6pt, keep-next
-  DocumentTitle: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, center, named Document Title
-  TitlePage: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, center, named Title Page
+  "#": Heading1, Arial bold 16pt, after 18pt, line 20pt exact, keep-next, keep-lines, center
+  "##": Heading2, Arial bold 12pt, before 12pt, after 6pt, keep-next, keep-lines
+  "###": Heading3, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines
+  "####": Heading4, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines
+  DocumentTitle: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Document Title
+  TitlePage: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Title Page
   TitleDocument: Arial bold 18pt, line 20pt exact, center, named Title Document
-  DocumentTOC: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, center, named Document TOC
-  TOC1: Arial bold 12pt, before 18pt, after 3pt, keep-next, named toc 1
-  TOC2: Times New Roman 12pt, named toc 2
+  DocumentTOC: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Document TOC
+  TOC1: Arial bold 12pt, before 18pt, after 3pt, keep-next, indent 1.75in, hanging 1.75in, named toc 1
+  TOC2: Times New Roman 12pt, indent 1.75in, hanging 1.75in, named toc 2
   TextHeading2: Times New Roman 12pt, before 6pt, after 6pt, justify, named Text Heading 2
-  TextHeading3: Times New Roman 12pt, before 6pt, after 6pt, justify, named Text Heading 3
-  TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, justify, named Text Heading 4
+  TextHeading3: Times New Roman 12pt, before 6pt, after 6pt, indent 0.5in, justify, named Text Heading 3
+  TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, indent 1in, justify, named Text Heading 4
   table: TableGrid, all borders 0.5pt
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 sections:
