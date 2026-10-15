@@ -12,9 +12,9 @@
 //! resolves it through:
 //!
 //! 1. [`set_after_unids`] — stabilise the revised-side ancestor unids;
-//! 2. [`resolve_paragraph_window`] — Word's changed-paragraph driver
+//! 2. `resolve_paragraph_window` — Word's changed-paragraph driver
 //!    (carriers, paragraph-mark split, threshold-voided run, …);
-//! 3. [`process_correlated_hashes`] / [`process_correlated_hashes_in_story`]
+//! 3. [`process_correlated_hashes`] / `process_correlated_hashes_in_story`
 //!    — pair runs of groups by `pt:CorrelatedSHA1Hash`;
 //! 4. [`find_common_at_beginning_and_end`] — front / back common runs;
 //! 5. [`do_lcs_algorithm`] — paragraph-text LCS with all the C-step guards.
@@ -10006,7 +10006,7 @@ fn resolve_paragraph_window(
 ///
 /// 1. [`set_after_unids`] — stabilise the revised-side ancestor unids;
 /// 2. the paragraph-window resolver (Word's changed-paragraph driver);
-/// 3. [`process_correlated_hashes_in_story`] — pre-correlate runs of
+/// 3. `process_correlated_hashes_in_story` — pre-correlate runs of
 ///    groups by `pt:CorrelatedSHA1Hash`;
 /// 4. [`find_common_at_beginning_and_end`] — front / back common runs;
 /// 5. [`do_lcs_algorithm`] — paragraph-text LCS.

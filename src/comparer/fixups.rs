@@ -13,7 +13,7 @@
 //! facade [`fix_up_drawing_ids_in_package`] covers the IDENTICAL-INPUT
 //! short-circuit (empty redline still renumbers to avoid the collision).
 //!
-//! [`FixUpGroupIds`] is intentionally not wired into the produce path; the
+//! `FixUpGroupIds` is intentionally not wired into the produce path; the
 //! C# oracle only calls it from the consolidate path (:1524), and wiring
 //! it in here would diverge from upstream.
 

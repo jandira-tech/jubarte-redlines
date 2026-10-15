@@ -104,7 +104,7 @@ fn build_canonical_rpr(dst: &mut Dom, spec: &[CanonicalRprChild]) -> NodeId {
 /// children by local name, and sort each child's attributes the same way.
 ///
 /// For the cached per-rPr serialization path used by the format-change
-/// pass, see [`normalized_rpr_serialized`] — that path builds into a
+/// pass, see `normalized_rpr_serialized` — that path builds into a
 /// dedicated scratch arena so the persistent arena is never enlarged
 /// across thousands of distinct rPrs.
 pub fn normalize_run_properties(dom: &mut Dom, rpr: Option<NodeId>) -> NodeId {

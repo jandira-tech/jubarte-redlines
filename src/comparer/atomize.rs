@@ -14,7 +14,7 @@
 //! depths. The round-trip `coalesce(atomize(body))` reconstructs a
 //! structurally-equal body — the invariant the whole comparer relies on.
 //!
-//! [`salt_field_results`] rewrites each field's begin/code/separate/end
+//! `salt_field_results` rewrites each field's begin/code/separate/end
 //! hashes so a field whose code changed matches only as a whole (Word's
 //! shape, not docxodus's broken-pair shape). [`verify_no_invalid_content`]
 //! and [`move_last_sectpr_into_last_paragraph`] are the two pre-flight
@@ -296,7 +296,7 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
 /// derived from the nearest revision-tracking ancestor (`w:ins` /
 /// `w:del` / `w:moveFrom` / `w:moveTo`; a `w:pPr` content atom reads its
 /// track from `pPr/rPr` instead). Field results are then re-hashed by
-/// [`salt_field_results`] so a field whose code changed matches only as a
+/// `salt_field_results` so a field whose code changed matches only as a
 /// whole (Word's shape).
 ///
 /// # Panics

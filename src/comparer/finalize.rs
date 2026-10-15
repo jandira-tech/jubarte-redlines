@@ -696,7 +696,7 @@ fn conjoin_transform(dom: &mut Dom, node: NodeId, author: &str, date: &str) -> N
 /// A `w:p` carrying two or more `w:pPr` (Inserted + Deleted variants) is
 /// collapsed to one clean `pPr` plus the live runs; the dropped `pPr` is
 /// either recorded in `w:pPrChange` (M78) or kept live as a delete mark
-/// (M81b), per the rule baked into the [`crate::comparer::conjoin_transform`]
+/// (M81b), per the rule baked into the `crate::comparer::conjoin_transform`
 /// helper. Pass the comparer `author_for_revisions` and
 /// `date_time_for_revisions` via `settings`.
 pub fn conjoin_paragraph_marks(
@@ -11023,8 +11023,8 @@ fn pending_deletion_fingerprint(dom: &Dom, del: NodeId) -> String {
 /// `pt:PreDelete` (plus the original author / date) so
 /// [`convert_stamped_predeletes`] can restore attribution and, on the
 /// REVISED side, re-emit the span as a pending `w:del`. `side`
-/// selects between the [Original] (everything flattenable) and the
-/// [Revised] (only stamp / convertible) contract; `other_side_pending`
+/// selects between the Original (everything flattenable) and the
+/// Revised (only stamp / convertible) contract; `other_side_pending`
 /// is the corpus lookup against [`pending_deletion_texts`] that
 /// gates the S1 salt for A-only pre-dels.
 pub fn flatten_tracked_deletions(
@@ -11575,7 +11575,7 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
 ///
 /// Used to recognize a section identity across two inputs (or the
 /// original and the rebuilt live section) so the Word-mode lodgers
-/// ([`drop_sectpr_from_deleted_marks`], [`genuine_mid_sectprs`])
+/// ([`drop_sectpr_from_deleted_marks`], `genuine_mid_sectprs`)
 /// keep genuinely authored mid-section breaks and drop only the
 /// hoisted-final-sectPr artifacts. XML attribute order is normalized
 /// first; default-implicit `type=nextPage` / `cols equalWidth=1` /
@@ -12594,7 +12594,7 @@ pub fn fold_midstream_demo_title_into_numbered_heading_with_settings(
 /// survives the merge.
 ///
 /// `source_properties` is the snapshot from
-/// [`capture_deleted_demo_title_properties`]; an empty map keeps the
+/// `capture_deleted_demo_title_properties`; an empty map keeps the
 /// demo-default live spacing instead.
 pub fn fold_midstream_demo_title_into_numbered_heading_with_source_properties(
     dom: &mut Dom,
@@ -13285,7 +13285,7 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
 /// The trimmed text of every REVISED paragraph that does NOT set its
 /// own `w:jc`.
 ///
-/// Used as the [M449] gate (`promote_live_jc_from_pprchange_on_body_mix`):
+/// Used as the M449 gate (`promote_live_jc_from_pprchange_on_body_mix`):
 /// if a MIX paragraph's revised text is in this set, the MIX
 /// paragraph's `pPrChange` is preserved (Word records the old
 /// centering over the revision's bare properties), and the live `jc`
