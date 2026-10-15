@@ -9713,7 +9713,9 @@ fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
 /// A line's box on the docGrid `grid` (0 = none). A line whose face fits
 /// one grid line takes the multiple of the grid line itself: 00b37b14's
 /// TNR 12 at 1.5 on a 15.6pt grid steps 23.4, not 31.2. A taller face
-/// (its 14pt title) still snaps its multiplied height (31.2).
+/// takes the grid lines it needs, its multiple ignored: Word probe
+/// 2026-10-15 (Calibri Light, 15.6pt grid) steps 24pt at line 240, 278
+/// and 360 alike 31.2, and 28pt 46.8 (Demo.docx's Heading 1).
 fn grid_line_box(natural: f32, style: &ParaStyle, grid: f32) -> f32 {
     let multiple = style.line_exact.is_none() && style.line_at_least.is_none();
     if grid > 0.5 && multiple && natural <= grid + 0.01 {
@@ -9723,6 +9725,8 @@ fn grid_line_box(natural: f32, style: &ParaStyle, grid: f32) -> f32 {
             1.0
         };
         grid * m
+    } else if grid > 0.5 && multiple {
+        snap_doc_grid(natural, grid)
     } else {
         snap_doc_grid(line_box_from_natural(natural, style), grid)
     }
