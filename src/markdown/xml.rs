@@ -242,6 +242,9 @@ pub(super) struct Comment {
     pub parent: Option<u32>,
     /// Resolved (`c5 @AC resolved`).
     pub done: bool,
+    /// Its paragraphs' style when the `comments:` line names one for its
+    /// number (`c6 style Normal`).
+    pub style: Option<String>,
 }
 
 /// A Markdown document read into Word items.
@@ -1610,8 +1613,8 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
         // Word's CommentText unless the `comments:` line names another;
         // the document's default style needs no `w:pStyle`.
         let style = comment
-            .number
-            .and_then(|n| context.document.comment_styles.get(&n))
+            .style
+            .as_ref()
             .or(context.document.comment_style.as_ref())
             .map_or("CommentText", String::as_str);
         let ppr = if style == default_style {

@@ -2631,6 +2631,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             .and_then(|first| view_notes::comment_head(first.trim()))
             .map(|(head, text)| (head, text.to_string()));
         if let Some((head, text)) = head {
+            // By the view's number, before renumbering can move it.
+            comment.style = self.document.comment_styles.get(&head.number).cloned();
             comment.number = Some(head.number).filter(|&n| n <= view_notes::MOST_ID);
             comment.parent = head.reply_to.filter(|&n| n <= view_notes::MOST_ID);
             comment.done = head.resolved;

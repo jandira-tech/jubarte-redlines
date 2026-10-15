@@ -184,3 +184,61 @@ fn normal_is_described_once_when_no_style_is_marked_default() {
     assert_eq!(comment_styles(&again), ["-", "-"]);
     assert_eq!(view_again, view);
 }
+
+/// `docx` with `from` replaced by `to` in `part`.
+fn replaced(docx: &[u8], part: &str, from: &str, to: &str) -> Vec<u8> {
+    let xml = common::docx::part_string(docx, part)
+        .unwrap()
+        .replace(from, to);
+    common::docx::replace_entry(docx, part, xml.as_bytes())
+}
+
+#[test]
+fn a_comment_numbered_past_word_ids_keeps_its_style() {
+    // pi on #492: the writer renumbers a comment past Word's ids; its
+    // `c4000000000 style Normal` must still reach it.
+    let docx = docx(&[Some("CommentText"), None]);
+    let docx = replaced(
+        &docx,
+        "word/document.xml",
+        r#"w:id="1""#,
+        r#"w:id="4000000000""#,
+    );
+    let docx = replaced(
+        &docx,
+        "word/comments.xml",
+        r#"w:id="1""#,
+        r#"w:id="4000000000""#,
+    );
+    let (view, again, _) = round_trip(&docx);
+    assert!(
+        comments_line(&view).contains("c4000000000 style Normal"),
+        "{view}"
+    );
+    assert_eq!(comment_styles(&again), ["CommentText", "-"]);
+}
+
+#[test]
+fn a_style_name_with_a_comma_is_written_without_it() {
+    // pi on #492: the legend carried a comma name (`hostile A,B`) into
+    // `w:name`, whose pattern is `[^,]*`.
+    let docx = docx(&[Some("My Note"), Some("My Note")]);
+    let docx = replaced(
+        &docx,
+        "word/styles.xml",
+        r#"<w:name w:val="My Note"/>"#,
+        r#"<w:name w:val="My,Note"/>"#,
+    );
+    let (view, again, view_again) = round_trip(&docx);
+    assert_eq!(comment_styles(&again), ["My Note", "My Note"]);
+    let styles = part(&again, "word/styles.xml");
+    let definition = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"My Note\""))
+        .unwrap_or_else(|| panic!("no My Note: {styles}"));
+    assert!(
+        definition.contains("<w:name w:val=\"My Note\"/>"),
+        "{view}\n{definition}"
+    );
+    let _ = view_again;
+}
