@@ -104,7 +104,7 @@ pub struct ResolveRevisions {
 /// Where a source paragraph id went when the plan's revisions were settled.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParagraphMove {
-    /// The id in the source (`body:p:12`).
+    /// The id in the source (`p12`).
     pub from: String,
     /// The id in the output, or `null` when the paragraph is gone with its
     /// text. A paragraph merged with others maps to the merged one.
@@ -171,8 +171,12 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Formatting of the replacement on top of the replaced run's.
         format: Option<RunFormat>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Comment text anchored to the changed text.
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment text anchored to the changed text; blank is none.
         comment: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         /// Show the change as all of `find` deleted, then all of
@@ -203,8 +207,12 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Formatting of the new text on top of the neighbouring run's.
         format: Option<RunFormat>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Comment text anchored to the changed text.
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment text anchored to the changed text; blank is none.
         comment: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Which hit of a repeated anchor to use (1-based); required when
@@ -262,17 +270,25 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Paragraph style id to set instead of the anchor's.
         style: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Comment text anchored to the changed text.
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment text anchored to the changed text; blank is none.
         comment: Option<String>,
     },
     /// Delete a whole paragraph, mark included.
     DeleteParagraph {
         /// Paragraph to delete; must match exactly one.
         paragraph: Selector,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Comment on the deleted text. It is in the redline only: the clean
-        /// copy has no paragraph to hold it.
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment on the deleted text, blank is none. It is in the redline
+        /// only: the clean copy has no paragraph to hold it.
         comment: Option<String>,
     },
     /// Change a paragraph's style, alignment or spacing; the redline records
@@ -753,10 +769,10 @@ pub enum Side {
 }
 
 /// Paragraph selector; every form must match exactly one paragraph. Ids
-/// name their story (`body:p:3`, `header1:p:0`) or use the agent view's
-/// short forms (`p3` or `3`, `header1`, `header1.p1`, `footnotes.p2`,
-/// `t0.row1.cell2`, `t0.row1.cell2.p1`; 0.12's `t0.r1.c2` still reads); the
-/// report prints the long form. The other forms search
+/// are the agent view's (`p3`, `header1`, `header1.p1`, `footnotes.p2`,
+/// `t0.row1.cell2`, `t0.row1.cell2.p1`); the old `body:p:3` is refused,
+/// naming its settled spelling, and the report prints the same ids
+/// ([`crate::ids::paragraph_id`]). The other forms search
 /// the body unless they carry a `story` (`header1`, `footnotes`, ...).
 ///
 /// Ids, short ids and indexes name the source's paragraphs, the ones the
@@ -767,11 +783,11 @@ pub enum Side {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
-    /// `"body:p:12"`, the same as `{"id": "body:p:12"}`.
+    /// `"p12"`, the same as `{"id": "p12"}`.
     Name(String),
-    /// `{"id": "body:p:12"}`.
+    /// `{"id": "p12"}`.
     Id {
-        /// `{story}:p:N`.
+        /// `p12`, `header1.p1`, `t0.row1.cell2`.
         id: String,
     },
     /// `{"index": 12}`.
@@ -1290,18 +1306,15 @@ fn load_stories(opened: &mut Opened) -> Result<Loaded, EditError> {
     })
 }
 
-/// The long paragraph id each of `ids` names in `docx`, as `edit -p` reads
-/// it on a document without tracked changes to settle: `p3` → `body:p:3`,
-/// `header1.p1` → `header1:p:1`, `t0.row1.cell2[.p1]` (or 0.12's
-/// `t0.r1.c2`) → that cell's paragraph. A long id comes back as given. An
-/// id that names no table cell or story of `docx`, or is no paragraph id,
-/// gives its `Err` message, as `edit -p` does: a long id whose story is
-/// not the document's or whose index is no number too. A body or story
-/// index is not checked against the paragraph count.
-pub fn long_paragraph_ids(
-    docx: &[u8],
-    ids: &[&str],
-) -> Result<Vec<Result<String, String>>, EditError> {
+/// The paragraph id ([`crate::ids::paragraph_id`]) each of `ids` names in
+/// `docx`, as `edit -p` reads it on a document without tracked changes to
+/// settle: `p3` and `header1.p1` as given, `header1.p0` → `header1`,
+/// `t0.row1.cell2[.p1]` → that cell's paragraph (`p40`). An id that names
+/// no table cell or story of `docx`, or is no paragraph id, gives its `Err`
+/// message, as `edit -p` does; the old `body:p:3` gives its settled
+/// spelling. A body or story index is not checked against the paragraph
+/// count.
+pub fn paragraph_ids(docx: &[u8], ids: &[&str]) -> Result<Vec<Result<String, String>>, EditError> {
     let mut opened = Opened::open(docx).map_err(open_error)?;
     let Loaded {
         stories,
@@ -1317,7 +1330,7 @@ pub fn long_paragraph_ids(
     };
     Ok(ids
         .iter()
-        .map(|id| match resolver.long_id(id) {
+        .map(|id| match resolver.paragraph_id(id) {
             Some(found) => found,
             None => match id.rsplit_once(":p:") {
                 Some((story, n)) if n.parse::<usize>().is_ok() => {
@@ -1611,15 +1624,32 @@ fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
     Ok(())
 }
 
-/// Resolve every operation without producing documents.
-pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+/// Resolve every operation and run the plan's checks, without applying
+/// it: what `add --plan` runs on each recorded operation, so recording a
+/// long plan never re-applies it.
+pub fn check_plan(source: &[u8], plan: &EditPlan) -> Result<(), EditError> {
+    resolved(source, plan).map(|_| ())
+}
+
+fn resolved<'a>(source: &'a [u8], plan: &'a EditPlan) -> Result<Transaction<'a>, EditError> {
     check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
     tracked::check(&tx)?;
     tx.emits_directly()?;
+    Ok(tx)
+}
+
+/// Resolve every operation without producing documents.
+pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+    let tx = resolved(source, plan)?;
     let mut report = tx.report(true);
-    report.paragraphs.to = report.paragraphs.from;
+    // The summary is what applying reports: apply in memory and keep its
+    // counts, so a dry run never prints `0` revisions for an edit it makes.
+    let applied = apply_plan(source, plan)?.report;
+    report.paragraphs = applied.paragraphs;
+    report.revisions = applied.revisions;
+    report.comments_added = applied.comments_added;
     Ok(report)
 }
 
@@ -3744,10 +3774,10 @@ impl<'p> Transaction<'p> {
             .collect()
     }
 
-    /// `{story}:p:{index}` of a paragraph.
+    /// The id of a paragraph ([`crate::ids::paragraph_id`]).
     fn paragraph_id(&self, para: usize) -> String {
         let (story, local) = self.paragraph_story[para];
-        format!("{}:p:{local}", self.stories[story].id)
+        crate::ids::paragraph_id(&self.stories[story].id, local)
     }
 
     /// The body, header, footer or note a paragraph belongs to, for the
@@ -3848,7 +3878,7 @@ impl<'p> Transaction<'p> {
                 ("del", "deletion"),
             ] {
                 if dom.name_is(node, &W::name(local)) {
-                    let id = format!("{story}:rev:{}", attr("id"));
+                    let id = crate::ids::ChangeId::new(story, attr("id")).short();
                     return format!(
                         "{id}, a tracked {kind} by {:?}; settle it first (\"resolve_revisions\": {{\"accept\": {{\"ids\": [\"{id}\"]}}}}, or reject), or comment on it",
                         attr("author")
@@ -4229,8 +4259,22 @@ impl<'p> Transaction<'p> {
     /// New comments take ids after the source's highest; refuse a plan whose
     /// comments would not fit in `w:id`'s 32 bits.
     fn check_comment_ids_fit(&self) -> Result<(), EditError> {
-        let needed = self
-            .resolved
+        let needed = self.comments_planned() as u64;
+        if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
+            return Err(err(
+                "INVALID_DOCUMENT",
+                None,
+                "the source's comment ids leave no room for new comments",
+            ));
+        }
+        Ok(())
+    }
+
+    /// How many comments the resolved operations write: a comment on a
+    /// text edit, an inserted or deleted paragraph, a comment operation and
+    /// a reply each write one.
+    fn comments_planned(&self) -> usize {
+        self.resolved
             .iter()
             .filter(|(i, r)| match r {
                 Resolved::Text { comment, .. } | Resolved::InsertParagraph { comment, .. } => {
@@ -4249,15 +4293,7 @@ impl<'p> Transaction<'p> {
                 | Resolved::InsertImage { .. }
                 | Resolved::PageSetup { .. } => false,
             })
-            .count() as u64;
-        if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
-            return Err(err(
-                "INVALID_DOCUMENT",
-                None,
-                "the source's comment ids leave no room for new comments",
-            ));
-        }
-        Ok(())
+            .count()
     }
 
     /// Check a `settings` operation: something to write, no password, and
@@ -5260,6 +5296,13 @@ fn check_run_text(text: &str) -> Result<(), String> {
             u32::from(c)
         )),
     }
+}
+
+/// An optional comment as a plan gives it: blank text (`""`, spaces, line
+/// breaks) is no comment, as an agent with nothing to say writes it.
+fn blank_is_none<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<String>, D::Error> {
+    let text: Option<String> = serde::Deserialize::deserialize(de)?;
+    Ok(text.filter(|t| !t.trim().is_empty()))
 }
 
 /// Comment text: nonempty, and each line (`\n` starts a new comment
@@ -6415,7 +6458,7 @@ mod tests {
     fn plan_json_roundtrips_and_rejects_unknown_fields() {
         let json = r#"{"schema_version":1,"author":"A","operations":[
             {"kind":"replace","paragraph":{"index":0},"find":"a","replacement":"b"},
-            {"kind":"insert","paragraph":{"id":"body:p:1"},"after":"x","text":"y","comment":"c"},
+            {"kind":"insert","paragraph":{"id":"p1"},"after":"x","text":"y","comment":"c"},
             {"kind":"insert","paragraph":{"index":0},"position":"end","text":"z"},
             {"kind":"comment","paragraph":{"contains":"q"},"text":"note"},
             {"kind":"insert_paragraph","paragraph":{"starts_with":"s"},"runs":[{"text":"t","bold":true}]},
@@ -6663,21 +6706,21 @@ mod deeper_boundary_tests {
         }
         let selection = ResolveRevisions {
             accept: None,
-            reject: Some(ChangeFilter::ids(["body:rev:1"])),
+            reject: Some(ChangeFilter::ids(["r1"])),
         };
         let (bytes, resolved) = resolve_selected(&source, Some(&selection)).unwrap();
         assert_eq!(
             resolved,
             ResolvedRevisions {
                 accepted: vec![],
-                rejected: vec!["body:rev:1".into()]
+                rejected: vec!["r1".into()]
             }
         );
         let bytes = bytes.unwrap();
         let changes = crate::changes::list_changes(&bytes).unwrap();
         assert_eq!(
             changes.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
-            ["body:rev:2"]
+            ["r2"]
         );
         assert_eq!(crate::inspect::paragraphs(&bytes).unwrap()[0].text, "two");
     }
@@ -6737,19 +6780,19 @@ mod deeper_boundary_tests {
         let source = docx("<w:p/><w:p><w:r><w:t>tail</w:t></w:r></w:p>");
         for (ops, message) in [
             (
-                r#"[{"kind":"comment","paragraph":"body:p:0","find":"x","through":"body:p:1","text":"n"}]"#,
+                r#"[{"kind":"comment","paragraph":"p0","find":"x","through":"p1","text":"n"}]"#,
                 "find and through cannot be combined: through comments on whole paragraphs",
             ),
             (
-                r#"[{"kind":"insert_paragraph","paragraph":"body:p:0","runs":[]}]"#,
+                r#"[{"kind":"insert_paragraph","paragraph":"p0","runs":[]}]"#,
                 "runs must carry text",
             ),
             (
-                r#"[{"kind":"insert_paragraph","paragraph":"body:p:0","runs":[{"text":""},{"text":""}]}]"#,
+                r#"[{"kind":"insert_paragraph","paragraph":"p0","runs":[{"text":""},{"text":""}]}]"#,
                 "runs must carry text",
             ),
             (
-                r#"[{"kind":"insert_toc","paragraph":"body:p:0","title":""}]"#,
+                r#"[{"kind":"insert_toc","paragraph":"p0","title":""}]"#,
                 "title must carry text",
             ),
             (
@@ -6766,8 +6809,8 @@ mod deeper_boundary_tests {
             assert_eq!(e.outcomes[0].message.as_deref(), Some(message));
         }
         for ops in [
-            r#"[{"kind":"comment","paragraph":"body:p:0","text":"empty anchor"}]"#,
-            r#"[{"kind":"delete_paragraph","paragraph":"body:p:0","comment":"empty deletion"}]"#,
+            r#"[{"kind":"comment","paragraph":"p0","text":"empty anchor"}]"#,
+            r#"[{"kind":"delete_paragraph","paragraph":"p0","comment":"empty deletion"}]"#,
         ] {
             let p = plan(ops);
             let mut tx = Transaction::start(&source, &p).unwrap();
@@ -6808,16 +6851,16 @@ mod deeper_boundary_tests {
         );
         for (ops, message) in [
             (
-                r#"[{"kind":"insert_image","paragraph":"header1:p:0","image_base64":""}]"#,
+                r#"[{"kind":"insert_image","paragraph":"header1","image_base64":""}]"#,
                 "pictures can be inserted in the body only",
             ),
             (
-                r#"[{"kind":"insert_toc","paragraph":"header1:p:0"}]"#,
+                r#"[{"kind":"insert_toc","paragraph":"header1"}]"#,
                 "a table of contents goes in the body",
             ),
             (
-                r#"[{"kind":"list","paragraphs":["header1:p:0"],"kind_of_list":"bullet"}]"#,
-                "paragraphs[0]: list is supported in the body only, not header1:p:0",
+                r#"[{"kind":"list","paragraphs":["header1"],"kind_of_list":"bullet"}]"#,
+                "paragraphs[0]: list is supported in the body only, not header1",
             ),
         ] {
             let e = preview_plan(&source, &plan(ops)).unwrap_err();
@@ -7858,7 +7901,7 @@ mod deeper_boundary_tests {
     fn whole_deletion_builds_no_bookmark_and_keeps_surrounding_text() {
         let source = docx(&para("left middle right"));
         let p = plan(
-            r#"[{"kind":"replace","paragraph":"body:p:0","find":"middle","replacement":"","whole":true}]"#,
+            r#"[{"kind":"replace","paragraph":"p0","find":"middle","replacement":"","whole":true}]"#,
         );
         let mut tx = Transaction::start(&source, &p).unwrap();
         tx.resolve().unwrap();

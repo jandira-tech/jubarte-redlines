@@ -44,7 +44,7 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     # A selected snapshot keeps the selected paragraphs, as the binary's.
     assert main(["read", str(letter), "--json", "-p", "p1"]) == 0
     selected = json.loads(capsys.readouterr().out)
-    assert [p["id"] for p in selected["paragraphs"]] == ["body:p:1"]
+    assert [p["id"] for p in selected["paragraphs"]] == ["p1"]
     # The grid: a document without tables prints none.
     assert main(["read", str(letter), "--tables"]) == 0
     assert capsys.readouterr().out == "no tables\n"
@@ -438,8 +438,8 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     ]
     assert main(["changes", str(source), "--json"]) == 0
     assert capsys.readouterr().out.splitlines()[0] == (
-        '{"id":"body:rev:1","ref":"r1","kind":"deletion","target":"text","author":"a",'
-        '"date":"2020-01-01T00:00:00Z","text":"gone","paragraph":"body:p:0"}'
+        '{"id":"r1","ref":"r1","kind":"deletion","target":"text","author":"a",'
+        '"date":"2020-01-01T00:00:00Z","text":"gone","paragraph":"p0"}'
     )
     out = tmp_path / "out.docx"
     assert main(["reject", str(source), "-o", str(out), "--author", "b", "--kind", "insertion"]) == 0
@@ -447,7 +447,7 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     assert written.out == "" and written.err == f"wrote {out} (docx, {out.stat().st_size} bytes)\n"
     assert main(["changes", str(out)]) == 0
     assert capsys.readouterr().out.splitlines()[-2:] == ['r1\tdeletion\ttext\ta\tp0\t"gone"', "1 change(s)"]
-    assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "body:rev:9"]) == 1
+    assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "r9"]) == 1
     assert capsys.readouterr().err == "error: accept failed: no tracked change r9\n"
     # An id that is no change id is a usage error (exit 2), as the binary's.
     with pytest.raises(SystemExit) as usage:
@@ -470,7 +470,7 @@ def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter
     plan_path.write_text(json.dumps(plan))
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "review")]) == 0
     patch = (tmp_path / "review" / "patch.diff").read_text()
-    assert patch.startswith("--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [body:p:1] @@\n"), patch
+    assert patch.startswith("--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [p1] @@\n"), patch
     assert "[-his or her-]{+an+}" in patch
     stdout = capsys.readouterr().out
     # stdout carries the changed blocks as the agent view; the patch stays on disk.

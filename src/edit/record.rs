@@ -181,9 +181,9 @@ pub fn record(
         .transpose()
         .map_err(|e| RecordError::Plan(e.to_string()))?;
     let before = held.as_ref().map_or(0, |p| p.operations.len());
-    // Each id once and in long form, as `record_into` joins them: `r1+2`
-    // is two ids, `r1` and `body:rev:1` one, so a recording that names an
-    // id the plan already holds adds nothing.
+    // Each id once and in its short spelling, as `record_into` joins them:
+    // `r1+2` is two ids, `r1` and `r2`, so a recording that names an id the
+    // plan already holds adds nothing.
     let revisions = |plan: Option<&EditPlan>| -> std::collections::HashSet<String> {
         plan.and_then(|p| p.resolve_revisions.as_ref())
             .map(|r| {
@@ -387,7 +387,7 @@ mod tests {
         };
         let compound = once(&[accept("r3")], Some(&held(&["r1+2"]))).unwrap();
         assert_eq!(compound.added_revisions, 1);
-        let twice = once(&[accept("r1")], Some(&held(&["r1", "body:rev:1"]))).unwrap();
+        let twice = once(&[accept("r1")], Some(&held(&["r1", "r1"]))).unwrap();
         assert_eq!(twice.added_revisions, 0);
     }
 

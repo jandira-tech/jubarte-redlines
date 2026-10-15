@@ -436,8 +436,8 @@ jubarte changes FILE.docx --json
 `changes` is intended for individually addressable review operations and
 reports stable IDs while the corresponding tracked change remains present.
 The text listing prints short ids (`r12`, `header1.r1`, `footnotes.r3`);
-`--json` prints JSON Lines with the long `id` (`body:rev:12`) and the short
-`ref`. `--id` takes the short ids: `r12`, `r1+2` (both marks of one
+`--json` prints JSON Lines with the same short `id` (and `ref`). `--id`
+takes the short ids: `r12`, `r1+2` (both marks of one
 change), `header1.r1`.
 
 ### Accept or reject
@@ -450,7 +450,7 @@ jubarte reject FILE.docx -o OUTPUT.docx
 Optional selection filters:
 
 ```text
---id ID          r12, r1+2, header1.r1, body:rev:12
+--id ID          r12, r1+2, header1.r1
 --author NAME
 --kind insertion|deletion|move|formatting
 ```
@@ -532,9 +532,9 @@ jubarte read contract.docx -p p12,p40-p48 -o excerpt.md
 `read` prints the agent view: a YAML header (`sha256:` of the file, the
 revision and comment counts, authors and their handles, page setup,
 styles, headers, footers), then Markdown with an id line before every
-paragraph (`p12` is `body:p:12`) and an id on every
-tracked change and comment (`r3+4` is `body:rev:3` and `body:rev:4`, `c5` is
-comment 5, `header1.r1` a change in a header). A table cell's paragraph is
+paragraph (`p12`, the body's paragraph 12) and an id on every
+tracked change and comment (`r3+4` is the two marks with `w:id` 3 and 4, `c5`
+is comment 5, `header1.r1` a change in a header). A table cell's paragraph is
 `t0.row1.cell2`, a footnote's `footnotes.p0`, and `c5.text` the text comment
 5 covers. No id needs quoting in bash, zsh or csh.
 
@@ -675,7 +675,7 @@ Create `plan.json`:
     {
       "id": "term",
       "kind": "replace",
-      "paragraph": "body:p:12",
+      "paragraph": "p12",
       "find": "two years",
       "replacement": "three years"
     }
@@ -898,7 +898,7 @@ Selective resolution can be part of the plan, for example:
 {
   "resolve_revisions": {
     "accept": {
-      "ids": ["body:rev:12"]
+      "ids": ["r12"]
     },
     "reject": {
       "authors": ["Previous Reviewer"]

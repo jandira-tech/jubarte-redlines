@@ -78,14 +78,11 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// (`a11y`, `style`, `structure`). For `word` and `edits`, `location` is the
 /// element chain inside `part` (`w:body[0]/w:p[3]/w:r[2]`, each name indexed
 /// among its same-named siblings, root excluded), stable across runs, or a
-/// paragraph id (`body:p:3`); empty for a package-level finding. For the
-/// audit sets it is the paragraph id (`body:p:N`, `header1:p:0`) or, when
-/// no paragraph applies, the part name. `ref` is the short id the text
-/// listing prints for `location` (`body:p:5` → `p5`, `header1:p:0` →
-/// `header1`, `header1:p:1` → `header1.p1`), via
-/// [`crate::ids::short_paragraph`]; any other location (an element chain,
-/// a part name, empty) keeps its text there too. Messages name paragraphs
-/// by the same short ids.
+/// paragraph id (`p3`); empty for a package-level finding. For the audit
+/// sets it is the paragraph id (`p5`, `header1`, `header1.p1`:
+/// [`crate::ids::paragraph_id`]) or, when no paragraph applies, the part
+/// name. `ref` is the same text as `location`. Messages name paragraphs by
+/// the same ids.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     /// Stable code (`TEXT_INSIDE_DELETION`, `MC_UNBOUND_PREFIX`, ...).
@@ -126,7 +123,7 @@ impl Finding {
     ) -> Self {
         let (word_fatal, repairable) = traits(code);
         let location = location.into();
-        let r#ref = crate::ids::short_paragraph(&location);
+        let r#ref = location.clone();
         Finding {
             code: code.to_string(),
             set: "word".to_string(),
@@ -355,19 +352,17 @@ pub fn fails(findings: &[Finding], strict: bool) -> bool {
 /// One line per finding, then a summary. A line is `* CODE\tSEVERITY\t
 /// PART#REF\tMESSAGE` for `word` and `edits` (`*` marks Word-fatal, a
 /// space otherwise) and `  CODE\tSEVERITY\tREF\tMESSAGE` for the audit
-/// sets, where `REF` is the short id [`Finding::r#ref`] prints for the long
-/// [`Finding::location`] (a paragraph id `body:p:5` prints as `p5`; any
-/// other location keeps its text). The summary is `no findings` or
+/// sets, where `REF` is [`Finding::location`] (a paragraph id such as
+/// `p5`, an element chain or a part name). The summary is `no findings` or
 /// `N finding(s): E error, W warning, I info`.
 pub fn findings_text(findings: &[Finding]) -> String {
     let mut out = String::new();
     for f in findings {
         let star = if f.word_fatal { '*' } else { ' ' };
-        let short = crate::ids::short_paragraph(&f.location);
         let place = if matches!(f.set.as_str(), "word" | "edits") {
-            format!("{}#{short}", f.part)
+            format!("{}#{}", f.part, f.location)
         } else {
-            short
+            f.location.clone()
         };
         out.push_str(&format!(
             "{star} {}\t{}\t{place}\t{}\n",
@@ -391,15 +386,15 @@ pub fn findings_text(findings: &[Finding]) -> String {
 
 impl From<crate::audit::AuditFinding> for Finding {
     /// The audit's finding in the shared shape: its part is the story's
-    /// part for a paragraph id (`body:p:3` → `word/document.xml`), else the
+    /// part for a paragraph id (`p3` → `word/document.xml`), else the
     /// location itself (a part name); it is never Word-fatal or repairable.
     fn from(f: crate::audit::AuditFinding) -> Self {
-        let part = if f.location.contains(':') {
+        let part = if crate::ids::paragraph_place(&f.location).is_some() {
             story_part(&f.location)
         } else {
             f.location.clone()
         };
-        let r#ref = crate::ids::short_paragraph(&f.location);
+        let r#ref = f.location.clone();
         Finding {
             code: f.code,
             set: f.rule_set,
@@ -1972,7 +1967,7 @@ fn drop_orphan_comment_anchors(dom: &mut Dom, root: NodeId, defined: &HashSet<St
 
 // ── Tracked-edit audit ────────────────────────────────────────────────────
 
-/// The body's paragraphs followed by every story's (`header1:p:0`, ...).
+/// The body's paragraphs followed by every story's (`header1`, ...).
 fn all_paragraphs(docx: &[u8]) -> Result<Vec<crate::inspect::Paragraph>, ValidateError> {
     let mut all = crate::inspect::paragraphs(docx)?;
     for story in crate::inspect::stories(docx)? {
@@ -1981,10 +1976,14 @@ fn all_paragraphs(docx: &[u8]) -> Result<Vec<crate::inspect::Paragraph>, Validat
     Ok(all)
 }
 
-/// The part a `{story}:...` id lives in: `body` is the main document, any
-/// other story is `word/{story}.xml` (`header1`, `footnotes`, ...).
+/// The part a paragraph or change id lives in: the body's (`p3`, `r12`)
+/// is the main document, any other story's (`header1.p1`, `footnotes.r2`)
+/// `word/{story}.xml`.
 fn story_part(id: &str) -> String {
-    match id.split(':').next().unwrap_or("body") {
+    let story = crate::ids::paragraph_place(id)
+        .map(|(story, _)| story)
+        .or_else(|| crate::ids::change_id(id).map(|c| c.story));
+    match story.as_deref().unwrap_or("body") {
         "body" | "" => "word/document.xml".to_string(),
         story => format!("word/{story}.xml"),
     }
@@ -2054,9 +2053,7 @@ pub fn audit_tracked(
                 a.id.clone(),
                 format!(
                     "{} differs after rejecting {author}'s changes: {:?} vs {:?}",
-                    crate::ids::short_paragraph(&a.id),
-                    b.text,
-                    a.text
+                    a.id, b.text, a.text
                 ),
             ));
         }

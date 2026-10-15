@@ -678,7 +678,7 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
             Err(e) => fail(format!("printed change {token:?} does not parse: {e}")),
             Ok(ids) => {
                 for id in ids {
-                    let long = id.long();
+                    let long = id.short();
                     match by_id.get(long.as_str()) {
                         None => fail(format!("printed {token} names {long}, not a listed change")),
                         Some(change) if change.r#ref != id.short() => fail(format!(
@@ -719,14 +719,14 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
             change.id, change.kind, change.text
         ));
     }
-    // Every long id's short form reads back as that change.
+    // Every listed id is a short id that reads back as that change.
     for change in &listed {
-        let Some(id) = ChangeId::from_long(&change.id) else {
-            fail(format!("listed {} is no long id", change.id));
+        let Some(id) = jubarte::ids::change_id(&change.id) else {
+            fail(format!("listed {} does not read back", change.id));
             continue;
         };
-        if parse_change_ids(&id.short()) != Ok(vec![id.clone()]) {
-            fail(format!("{} → {} does not read back", change.id, id.short()));
+        if id.short() != change.id {
+            fail(format!("listed {} reads back as {}", change.id, id.short()));
         }
     }
 
@@ -767,13 +767,13 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
         tokens.push(format!("p{b}"));
     }
     let token_refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-    let longs = jubarte::edit::long_paragraph_ids(docx, &token_refs).expect("edit opens it");
+    let longs = jubarte::edit::paragraph_ids(docx, &token_refs).expect("edit opens it");
     for (i, &(a, b, ref text)) in printed.paragraphs.iter().enumerate() {
         for (token, n, long) in [
             (&tokens[2 * i], a, &longs[2 * i]),
             (&tokens[2 * i + 1], b, &longs[2 * i + 1]),
         ] {
-            if long.as_deref() != Ok(format!("body:p:{n}").as_str()) {
+            if long.as_deref() != Ok(format!("p{n}").as_str()) {
                 fail(format!("{token} resolves to {long:?}"));
             }
         }
@@ -825,13 +825,13 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
             }
         }
         let refs: Vec<&str> = settled.iter().map(String::as_str).collect();
-        let back = jubarte::edit::long_paragraph_ids(docx, &refs).unwrap();
+        let back = jubarte::edit::paragraph_ids(docx, &refs).unwrap();
         for ((token, long), back) in settled.iter().zip(&want).zip(&back) {
             if back.as_ref() != Ok(long) {
                 fail(format!("{token} resolves to {back:?}, not {long}"));
             }
         }
-        let range: Vec<String> = (a..=b).map(|n| format!("body:p:{n}")).collect();
+        let range: Vec<String> = (a..=b).map(|n| format!("p{n}")).collect();
         if want != range {
             fail(format!(
                 "t{t}'s cells hold {} paragraphs ({:?} … {:?}), the table line says p{a}-p{b}",
@@ -866,7 +866,7 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
         .collect();
     let shorts: Vec<String> = all.iter().map(|id| short_paragraph(id)).collect();
     let refs: Vec<&str> = shorts.iter().map(String::as_str).collect();
-    let back = jubarte::edit::long_paragraph_ids(docx, &refs).unwrap();
+    let back = jubarte::edit::paragraph_ids(docx, &refs).unwrap();
     for ((long, short), back) in all.iter().zip(&shorts).zip(&back) {
         if back.as_ref() != Ok(*long) {
             fail(format!("{long} → {short} reads back as {back:?}"));
@@ -876,15 +876,15 @@ fn round_trip(name: &str, docx: &[u8], fails: &mut Vec<String>) {
     // Stories: every id the header prints is a story, and reads back.
     // A header's paragraph prints as `header2` (its first) or `header2.p1`.
     for id in &printed.stories {
-        let back = jubarte::edit::long_paragraph_ids(docx, &[id.as_str()]).unwrap();
-        let found = back[0].as_ref().ok().and_then(|long| {
-            let (stem, _) = long.split_once(":p:")?;
+        let back = jubarte::edit::paragraph_ids(docx, &[id.as_str()]).unwrap();
+        let found = back[0].as_ref().ok().and_then(|printed| {
+            let (stem, _) = jubarte::ids::paragraph_place(printed)?;
             stories
                 .iter()
                 .find(|s| s.id == stem)
-                .and_then(|s| s.paragraphs.iter().find(|p| &p.id == long))
+                .and_then(|s| s.paragraphs.iter().find(|p| &p.id == printed))
         });
-        if found.is_none() || short_paragraph(back[0].as_ref().unwrap()) != *id {
+        if found.is_none() || back[0].as_ref() != Ok(id) {
             fail(format!(
                 "headers line names {id}, which resolves to {:?}",
                 back[0]
@@ -904,7 +904,7 @@ fn table_cells(
 ) -> Vec<(usize, usize, Vec<String>)> {
     let resolve = |tokens: &[String]| {
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-        jubarte::edit::long_paragraph_ids(docx, &refs).unwrap()
+        jubarte::edit::paragraph_ids(docx, &refs).unwrap()
     };
     let probe: Vec<(usize, usize)> = (0..=rows)
         .flat_map(|r| (0..=cols).map(move |c| (r, c)))
@@ -978,7 +978,7 @@ fn accept_by_cli(name: &str, docx: &[u8], token: &str, fails: &mut Vec<String>) 
     let named: BTreeSet<String> = parse_change_ids(token)
         .unwrap()
         .iter()
-        .map(ChangeId::long)
+        .map(ChangeId::short)
         .collect();
     if gone != named || !after.is_subset(&before) {
         fails.push(format!(
@@ -1090,9 +1090,9 @@ fn every_story_and_every_collision_round_trips() {
         .into_iter()
         .map(|c| c.id)
         .collect();
-    assert!(listed.iter().any(|id| id == "body:rev:40"), "{listed:?}");
+    assert!(listed.iter().any(|id| id == "r40"), "{listed:?}");
     assert!(
-        !listed.iter().any(|id| id == "body:rev:41"),
+        !listed.iter().any(|id| id == "r41"),
         "the Fallback twin folds into r40: {listed:?}"
     );
     assert!(!view.contains("unplaced:"), "{view}");
@@ -1152,9 +1152,9 @@ fn word_redlines_round_trip() {
 /// document's and its index a number, as `edit -p` reads it.
 #[test]
 fn a_long_id_reads_back_only_when_its_story_and_index_do() {
-    let back = jubarte::edit::long_paragraph_ids(
+    let back = jubarte::edit::paragraph_ids(
         stories(),
-        &["missing:p:0", "body:p:x", "Header_1:p:0", "body:p:0"],
+        &["missing:p:0", "body:p:x", "Header_1:p:0", "p0"],
     )
     .unwrap();
     assert!(
@@ -1162,13 +1162,11 @@ fn a_long_id_reads_back_only_when_its_story_and_index_do() {
         "{back:?}"
     );
     assert!(
-        back[1]
-            .as_ref()
-            .is_err_and(|e| e.contains("unknown paragraph id")),
+        back[1].as_ref().is_err_and(|e| e.contains("-p takes")),
         "{back:?}"
     );
     assert_eq!(back[2], Ok("Header_1:p:0".to_string()));
-    assert_eq!(back[3], Ok("body:p:0".to_string()));
+    assert_eq!(back[3], Ok("p0".to_string()));
 }
 
 /// codex 4242942149: a header part whose stem a shell would expand
@@ -1188,7 +1186,7 @@ fn a_shell_unsafe_part_stem_prints_a_safe_story_id() {
     assert_eq!(changes[0].r#ref, "hdr%21old:rev:1");
     let stories = jubarte::inspect::stories(&docx).unwrap();
     assert_eq!(stories[0].id, "hdr%21old");
-    let back = jubarte::edit::long_paragraph_ids(&docx, &["hdr%21old:p:0"]).unwrap();
+    let back = jubarte::edit::paragraph_ids(&docx, &["hdr%21old:p:0"]).unwrap();
     assert_eq!(back[0], Ok("hdr%21old:p:0".to_string()));
     let accepted = jubarte::changes::accept_changes(
         &docx,

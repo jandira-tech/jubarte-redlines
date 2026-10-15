@@ -684,7 +684,7 @@ fn png_only_edit_writes_owned_clean_and_redline_pages_without_pdf_artifacts() {
     let dir = tempfile::tempdir().unwrap();
     let original = docx(&para("Owned original clause"));
     std::fs::write(dir.path().join("original.docx"), &original).unwrap();
-    let plan = r#"{"schema_version":1,"author":"Page owner","date":"2026-10-01T00:00:00Z","operations":[{"id":"owned","kind":"replace","paragraph":"body:p:0","find":"original","replacement":"revised"}]}"#;
+    let plan = r#"{"schema_version":1,"author":"Page owner","date":"2026-10-01T00:00:00Z","operations":[{"id":"owned","kind":"replace","paragraph":"p0","find":"original","replacement":"revised"}]}"#;
     std::fs::write(dir.path().join("plan.json"), plan).unwrap();
     let out = run(
         dir.path(),

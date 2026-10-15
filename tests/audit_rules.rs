@@ -104,13 +104,13 @@ fn literal_bullet_and_heading_skip() {
     assert!(
         found
             .iter()
-            .any(|f| f.code == "HEADING_SKIP" && f.location == "body:p:1"),
+            .any(|f| f.code == "HEADING_SKIP" && f.location == "p1"),
         "{found:?}"
     );
     assert!(
         found
             .iter()
-            .any(|f| f.code == "LITERAL_BULLET" && f.location == "body:p:2"),
+            .any(|f| f.code == "LITERAL_BULLET" && f.location == "p2"),
         "{found:?}"
     );
 }
@@ -191,7 +191,7 @@ fn findings_carry_set_and_severity_from_the_table() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].rule_set, "a11y");
     assert_eq!(found[0].severity, "error");
-    assert_eq!(found[0].location, "body:p:0");
+    assert_eq!(found[0].location, "p0");
     assert!(!found[0].message.is_empty());
 }
 
@@ -216,7 +216,7 @@ fn heading_skip_fires_when_the_first_heading_is_not_level_one() {
         r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Start</w:t></w:r></w:p>"#;
     let found = audit(&docx(body), &["HEADING_SKIP"]).unwrap();
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].location, "body:p:0");
+    assert_eq!(found[0].location, "p0");
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn an_image_with_descr_or_marked_decorative_passes() {
     )
     .unwrap();
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].location, "body:p:2");
+    assert_eq!(found[0].location, "p2");
 }
 
 // ---- TABLE_NO_HEADER_ROW --------------------------------------------------
@@ -262,7 +262,7 @@ fn table_finding_points_at_the_first_cell_paragraph() {
     let body = format!("{}{}", para("before"), table(false));
     let found = audit(&docx(&body), &["TABLE_NO_HEADER_ROW"]).unwrap();
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].location, "body:p:1");
+    assert_eq!(found[0].location, "p1");
 }
 
 // ---- MISSING_LANG ---------------------------------------------------------
@@ -319,7 +319,7 @@ fn literal_bullet_markers_need_a_following_space() {
     let body = para("- a dash item") + &para("*bold claim*") + &para("·\tmiddle dot");
     let found = audit(&docx(&body), &["LITERAL_BULLET"]).unwrap();
     let locations: Vec<&str> = found.iter().map(|f| f.location.as_str()).collect();
-    assert_eq!(locations, ["body:p:0", "body:p:2"], "{found:?}");
+    assert_eq!(locations, ["p0", "p2"], "{found:?}");
 }
 
 #[test]
@@ -330,10 +330,7 @@ fn literal_bullets_in_a_footer_carry_the_story_id() {
     )
     .unwrap();
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(
-        found[0].location.ends_with(":p:0") && !found[0].location.starts_with("body"),
-        "{found:?}"
-    );
+    assert!(found[0].location == "footer1", "{found:?}");
 }
 
 // ---- EMPTY_SPACER_PARAGRAPH -----------------------------------------------
@@ -359,7 +356,7 @@ fn a_run_of_spacers_is_one_finding_at_its_first_paragraph() {
     let body = para("a") + "<w:p/><w:p/><w:p/>" + &para("b");
     let found = audit(&docx(&body), &["EMPTY_SPACER_PARAGRAPH"]).unwrap();
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].location, "body:p:1");
+    assert_eq!(found[0].location, "p1");
     assert_eq!(found[0].severity, "info");
 }
 
@@ -428,7 +425,7 @@ fn a_toc_without_separate_and_a_simple_toc_are_stale() {
     let simple = r#"<w:p><w:fldSimple w:instr=" toc \h "/></w:p>"#;
     let found = audit(&docx(&format!("{open}{simple}")), &["STALE_FIELD_CACHE"]).unwrap();
     let locations: Vec<&str> = found.iter().map(|f| f.location.as_str()).collect();
-    assert_eq!(locations, ["body:p:0", "body:p:1"], "{found:?}");
+    assert_eq!(locations, ["p0", "p1"], "{found:?}");
 }
 
 #[test]
@@ -441,7 +438,7 @@ fn a_numpages_cache_that_disagrees_with_the_layout_is_stale() {
     assert!(report.layout);
     assert_eq!(report.findings.len(), 1, "{report:?}");
     assert!(report.findings[0].message.contains("99"), "{report:?}");
-    assert!(report.findings[0].location.ends_with(":p:0"), "{report:?}");
+    assert_eq!(report.findings[0].location, "footer1", "{report:?}");
 }
 
 #[test]
@@ -552,7 +549,7 @@ fn cli_json_prints_one_finding_per_line_in_the_shared_shape() {
     assert_eq!(rows[0]["set"], "style");
     assert_eq!(rows[0]["severity"], "warning");
     assert_eq!(rows[0]["part"], "word/document.xml");
-    assert_eq!(rows[0]["location"], "body:p:0");
+    assert_eq!(rows[0]["location"], "p0");
     assert_eq!(rows[0]["ref"], "p0");
     assert_eq!(rows[0]["word_fatal"], false);
 }

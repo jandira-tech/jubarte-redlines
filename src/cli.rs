@@ -845,7 +845,7 @@ pub enum Command {
     /// Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
     ///
     /// A YAML header, then Markdown with an `<!-- pN -->` id line before every
-    /// paragraph (`pN` is `body:p:N`), tracked changes as CriticMarkup
+    /// paragraph, tracked changes as CriticMarkup
     /// followed by their ids (`{++text++}{>>r12 @AC<<}`) and comments with
     /// theirs (`{>>c5 @AC: …<<}`).
     #[command(aliases = ["text", "inspect"])]
@@ -885,8 +885,8 @@ pub enum Command {
         jubarte edit a.docx --plan plan.json -p p3 --content \"New.\"   record into plan.json\n  \
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
-        t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12\n\
-        (a revision), or a long id (body:p:12).")]
+        t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12\n\
+        (a revision).")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]

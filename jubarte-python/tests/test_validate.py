@@ -48,7 +48,7 @@ def test_audit_tracked_names_an_untracked_edit_and_passes_a_tracked_one() -> Non
     findings = hand_edited.audit_tracked(original, author="Reviewer")
     assert [f.code for f in findings] == ["UNTRACKED_EDIT"]
     assert findings[0].message.startswith("p1 differs") and ":p:" not in findings[0].message
-    assert findings[0].location == "body:p:1"
+    assert findings[0].location == "p1"
     assert findings[0].ref == "p1"
     tracked = original.compare(hand_edited, author="Reviewer")
     assert tracked.audit_tracked(original.to_bytes(), author="Reviewer") == ()
@@ -100,7 +100,7 @@ def test_validate_command_audits_against_an_original(tmp_path: Path, capsys: pyt
     assert main(["validate", str(edited), "--original", str(original), "--author", "Legal", "--json"]) == 2
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [r["code"] for r in rows] == ["UNTRACKED_EDIT"]
-    assert rows[0]["location"] == "body:p:0"
+    assert rows[0]["location"] == "p0"
     assert rows[0]["ref"] == "p0"
 
 

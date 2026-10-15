@@ -44,7 +44,7 @@ fn an_inserted_table_is_tracked_and_valid() {
     let out = apply_plan(
         &source,
         &plan(
-            r#"[{"kind":"insert_table","paragraph":"body:p:0","position":"after","header_row":true,
+            r#"[{"kind":"insert_table","paragraph":"p0","position":"after","header_row":true,
                  "rows":[["Item","Qty"],["Bolt","40"]],"widths_dxa":[6000,3360]}]"#,
         ),
     )
@@ -101,7 +101,7 @@ fn an_inserted_table_is_tracked_and_valid() {
     let report = &out.report.operations[0];
     assert_eq!(report.kind, "insert_table");
     assert_eq!(report.status, "ok");
-    assert_eq!(report.paragraph.as_deref(), Some("body:p:0"));
+    assert_eq!(report.paragraph.as_deref(), Some("p0"));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn widths_default_to_the_text_width_split_evenly() {
     let source = docx(&para("Intro."));
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a","b","c"]]}]"#),
+        &plan(r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a","b","c"]]}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -137,7 +137,7 @@ fn a_table_after_the_last_paragraph_is_closed_by_a_paragraph() {
     let source = docx(&para("Only."));
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["x"]]}]"#),
+        &plan(r#"[{"kind":"insert_table","paragraph":"p0","rows":[["x"]]}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -154,13 +154,11 @@ fn a_table_after_the_last_paragraph_is_closed_by_a_paragraph() {
 fn a_table_before_a_table_is_kept_apart_by_a_paragraph() {
     let existing = r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="9360"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="9360" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Old cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let source = docx(&(existing.to_string() + &para("After.")));
-    // body:p:0 is the old cell, body:p:1 is "After."; inserting before
+    // p0 is the old cell, p1 is "After."; inserting before
     // "After." would put the new table right after the old one.
     let out = apply_plan(
         &source,
-        &plan(
-            r#"[{"kind":"insert_table","paragraph":"body:p:1","position":"before","rows":[["New"]]}]"#,
-        ),
+        &plan(r#"[{"kind":"insert_table","paragraph":"p1","position":"before","rows":[["New"]]}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -188,9 +186,7 @@ fn an_existing_table_style_is_used_by_name() {
     );
     let out = apply_plan(
         &source,
-        &plan(
-            r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["x"]],"style":"fancy table"}]"#,
-        ),
+        &plan(r#"[{"kind":"insert_table","paragraph":"p0","rows":[["x"]],"style":"fancy table"}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -216,7 +212,7 @@ fn cells_take_the_anchors_paragraph_style_only() {
     );
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["x"]]}]"#),
+        &plan(r#"[{"kind":"insert_table","paragraph":"p0","rows":[["x"]]}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -236,8 +232,8 @@ fn a_table_and_a_paragraph_after_one_anchor_keep_plan_order() {
     let out = apply_plan(
         &source,
         &plan(
-            r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["cell"]]},
-                {"kind":"insert_paragraph","paragraph":"body:p:0","runs":[{"text":"Caption."}]}]"#,
+            r#"[{"kind":"insert_table","paragraph":"p0","rows":[["cell"]]},
+                {"kind":"insert_paragraph","paragraph":"p0","runs":[{"text":"Caption."}]}]"#,
         ),
     )
     .unwrap();
@@ -257,7 +253,7 @@ fn ragged_rows_are_refused() {
     let source = docx(&para("Intro."));
     let (code, message) = refusal(
         &source,
-        r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a","b"],["c"]]}]"#,
+        r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a","b"],["c"]]}]"#,
     );
     assert_eq!(code, "INVALID_EDIT");
     assert!(message.contains("row 1"), "{message}");
@@ -268,13 +264,13 @@ fn widths_must_match_the_column_count() {
     let source = docx(&para("Intro."));
     let (code, message) = refusal(
         &source,
-        r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a","b"]],"widths_dxa":[5000]}]"#,
+        r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a","b"]],"widths_dxa":[5000]}]"#,
     );
     assert_eq!(code, "INVALID_EDIT");
     assert!(message.contains("widths_dxa"), "{message}");
     let (code, _) = refusal(
         &source,
-        r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a","b"]],"widths_dxa":[5000,0]}]"#,
+        r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a","b"]],"widths_dxa":[5000,0]}]"#,
     );
     assert_eq!(code, "INVALID_EDIT");
 }
@@ -285,7 +281,7 @@ fn empty_tables_and_control_characters_are_refused() {
     for rows in [r#"[]"#, r#"[[]]"#, r#"[["a\tb"]]"#] {
         let (code, _) = refusal(
             &source,
-            &format!(r#"[{{"kind":"insert_table","paragraph":"body:p:0","rows":{rows}}}]"#),
+            &format!(r#"[{{"kind":"insert_table","paragraph":"p0","rows":{rows}}}]"#),
         );
         assert_eq!(code, "INVALID_EDIT", "{rows}");
     }
@@ -296,7 +292,7 @@ fn unknown_table_styles_are_refused() {
     let source = docx(&para("Intro."));
     let (code, _) = refusal(
         &source,
-        r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a"]],"style":"Nope"}]"#,
+        r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a"]],"style":"Nope"}]"#,
     );
     assert_eq!(code, "UNKNOWN_STYLE");
 }
@@ -307,7 +303,7 @@ fn a_table_inside_a_table_cell_is_refused() {
     let source = docx(&(table.to_string() + &para("After.")));
     let (code, _) = refusal(
         &source,
-        r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a"]]}]"#,
+        r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a"]]}]"#,
     );
     assert_eq!(code, "UNSUPPORTED_STRUCTURE");
 }
@@ -317,8 +313,8 @@ fn a_table_on_a_deleted_anchor_conflicts() {
     let source = docx(&(para("Intro.") + &para("Outro.")));
     let (code, _) = refusal(
         &source,
-        r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a"]]},
-            {"kind":"delete_paragraph","paragraph":"body:p:0"}]"#,
+        r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a"]]},
+            {"kind":"delete_paragraph","paragraph":"p0"}]"#,
     );
     assert_eq!(code, "OVERLAPPING_EDITS");
 }
@@ -326,7 +322,7 @@ fn a_table_on_a_deleted_anchor_conflicts() {
 #[test]
 fn misspelled_insert_table_keys_are_refused() {
     let error = EditPlan::from_json(
-        r#"{"schema_version":1,"author":"A","operations":[{"kind":"insert_table","paragraph":"body:p:0","rows":[["a"]],"header":true}]}"#,
+        r#"{"schema_version":1,"author":"A","operations":[{"kind":"insert_table","paragraph":"p0","rows":[["a"]],"header":true}]}"#,
     )
     .unwrap_err();
     assert_eq!(error.code, "INVALID_PLAN");
@@ -337,8 +333,8 @@ fn a_table_between_two_paragraphs_a_merge_joins_conflicts() {
     let source = docx(&(para("One.") + &para("Two.")));
     let (code, message) = refusal(
         &source,
-        r#"[{"kind":"merge_paragraphs","paragraph":"body:p:0"},
-            {"kind":"insert_table","paragraph":"body:p:0","rows":[["a"]]}]"#,
+        r#"[{"kind":"merge_paragraphs","paragraph":"p0"},
+            {"kind":"insert_table","paragraph":"p0","rows":[["a"]]}]"#,
     );
     assert_eq!(code, "OVERLAPPING_EDITS");
     assert!(message.contains("merge"), "{message}");
@@ -362,7 +358,7 @@ fn a_table_in_a_header_is_refused() {
     );
     let (code, message) = refusal(
         &source,
-        r#"[{"kind":"insert_table","paragraph":"header1:p:0","rows":[["a"]]}]"#,
+        r#"[{"kind":"insert_table","paragraph":"header1","rows":[["a"]]}]"#,
     );
     assert_eq!(code, "UNSUPPORTED_STRUCTURE");
     assert!(message.contains("body only"), "{message}");
@@ -374,7 +370,7 @@ fn cells_of_an_unstyled_anchor_have_no_paragraph_properties() {
     let source = docx(anchor);
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"insert_table","paragraph":"body:p:0","rows":[["x"]]}]"#),
+        &plan(r#"[{"kind":"insert_table","paragraph":"p0","rows":[["x"]]}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);

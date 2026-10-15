@@ -42,7 +42,7 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   assert.equal(JSON.parse(mod.getRevisions(mod.acceptRevisions(redline))).length, 0, `${name}: accept drains revisions`);
   assert.equal(JSON.parse(mod.getRevisions(mod.rejectRevisions(redline))).length, 0, `${name}: reject drains revisions`);
   const changes = JSON.parse(mod.listChanges(redline));
-  assert.ok(changes.length > 1 && changes[0].id.startsWith("body:rev:"), `${name}: changes listed by id`);
+  assert.ok(changes.length > 1 && /^r\d/.test(changes[0].id), `${name}: changes listed by id`);
   assert.match(changes[0].ref, /^r\d+$/, `${name}: the short ref`);
   assert.ok(mod.changesText(redline).startsWith(`${changes[0].ref}\t`), `${name}: the listing leads with the short ref`);
   const kept = JSON.parse(mod.listChanges(mod.acceptChanges(redline, JSON.stringify({ ids: [changes[0].id] }))));
@@ -55,7 +55,7 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   const snapshot = JSON.parse(mod.inspectDocument(original));
   assert.equal(snapshot.source_sha256, mod.sourceSha256(original), `${name}: snapshot hash`);
   assert.ok(snapshot.paragraphs.length > 0, `${name}: paragraphs inspected`);
-  assert.match(mod.documentMarkdown(original), /\[body:p:0\]/, `${name}: markdown carries ids`);
+  assert.match(mod.documentMarkdown(original), /\[p0\]/, `${name}: markdown carries ids`);
 
   const first = snapshot.paragraphs.find((p) => p.text.trim().length > 0);
   const plan = JSON.stringify({

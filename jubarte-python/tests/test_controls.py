@@ -56,7 +56,7 @@ def test_inspect_lists_controls_as_typed_records() -> None:
     assert isinstance(name, ContentControl)
     assert (name.tag, name.alias, name.kind, name.text) == ("Name", "Full name", "text", "Click here")
     assert name.placeholder and not name.locked
-    assert name.paragraph_ids == ("body:p:0",)
+    assert name.paragraph_ids == ("p0",)
     assert name.choices == () and name.checked is None
     assert country.kind == "drop_down" and country.choices == ("BR", "CL") and country.alias is None
     assert locked.locked
@@ -112,7 +112,7 @@ def test_fill_control_needs_exactly_one_value(kwargs: dict[str, object]) -> None
 
 @pytest.mark.parametrize(
     "control",
-    [3, True, {}, {"tag": "a", "alias": "b"}, {"paragraph": "body:p:0"}, {"tag": 1}, None],
+    [3, True, {}, {"tag": "a", "alias": "b"}, {"paragraph": "p0"}, {"tag": 1}, None],
 )
 def test_fill_control_rejects_bad_selectors(control: object) -> None:
     with pytest.raises(TypeError):
@@ -143,7 +143,7 @@ def test_fill_applies_and_keeps_the_controls() -> None:
     assert snapshot.controls[3].checked is True
     report = result.report
     assert [o.kind for o in report.operations] == ["fill_control"] * 4
-    assert report.operations[0].paragraph == "body:p:0"
+    assert report.operations[0].paragraph == "p0"
     assert report.revisions.total > 0
     accepted = [p.text for p in result.redline.accept().inspect().paragraphs]
     assert accepted == texts

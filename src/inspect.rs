@@ -30,7 +30,7 @@ pub use tables::{Table, TableCell};
 /// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// The story every document has; its paragraph ids are `body:p:N`, and a
+/// The story every document has; its paragraph ids are `pN`, and a
 /// selector without a `story` searches it.
 pub(crate) const BODY_STORY: &str = "body";
 
@@ -48,8 +48,8 @@ pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endn
 pub struct Paragraph {
     /// Zero-based order in its story, table-cell paragraphs included.
     pub index: usize,
-    /// `body:p:{index}` (or `header1:p:{index}`, ...); the edit plan's
-    /// paragraph selector.
+    /// `p{index}` (or `header1`, `header1.p{index}`, ...:
+    /// [`crate::ids::paragraph_id`]); the edit plan's paragraph selector.
     pub id: String,
     /// Visible text (see module docs for the projection rules).
     pub text: String,
@@ -146,7 +146,7 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Keep the body paragraphs numbered in `body_paragraphs` (`N` of
-    /// `body:p:N`), and the changes and comments sitting in one of them; a
+    /// `pN`), and the changes and comments sitting in one of them; a
     /// comment whose range spans a kept paragraph counts. `summary`,
     /// `stories`, `tables` and `controls` stay whole.
     pub fn retain(&mut self, body_paragraphs: &[usize]) {
@@ -162,8 +162,8 @@ impl Snapshot {
             .retain(|p| body_index(Some(&p.id)).is_some_and(|n| kept.contains(&n)));
         let in_story = |paragraph: Option<&String>| {
             paragraph
-                .and_then(|p| p.rsplit_once(":p:"))
-                .is_some_and(|(story, _)| stories.iter().any(|s| s == story))
+                .and_then(|p| crate::ids::paragraph_place(p))
+                .is_some_and(|(story, _)| stories.contains(&story))
         };
         self.changes.retain(|c| {
             body_index(c.paragraph.as_ref()).is_some_and(|n| kept.contains(&n))
@@ -180,13 +180,16 @@ impl Snapshot {
     }
 }
 
-/// `N` of a `body:p:N` id.
+/// `N` of a body paragraph's id `pN`.
 fn body_index(id: Option<&String>) -> Option<usize> {
-    id?.strip_prefix("body:p:")?.parse().ok()
+    crate::ids::paragraph_place(id?)
+        .filter(|(story, _)| story == "body")
+        .map(|(_, n)| n)
 }
 
 /// A header, footer or notes part an edit plan can address. Its paragraph
-/// ids are `{id}:p:{index}`.
+/// ids are `{id}` for the first and `{id}.p{index}` after it
+/// ([`crate::ids::paragraph_id`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Story {
     /// The part's file stem: `header1`, `footer2`, `footnotes`, `endnotes`.
@@ -218,7 +221,7 @@ pub struct ContentControl {
     pub kind: String,
     /// Visible text of the control's content; paragraphs joined by `\n`.
     pub text: String,
-    /// Paragraphs the control spans (`body:p:N`); a run-level control lists
+    /// Paragraphs the control spans (`pN`); a run-level control lists
     /// the paragraph that holds it.
     pub paragraph_ids: Vec<String>,
     /// `w:lock` is `contentLocked` or `sdtContentLocked`.
@@ -294,8 +297,8 @@ pub fn controls(docx: &[u8]) -> Result<Vec<ContentControl>, InspectError> {
 }
 
 /// Paragraphs prefixed with their ids and direct formatting as Markdown
-/// marks: `[body:p:12 Heading1] (a) **Confidentiality.** You will ...`.
-/// Story paragraphs (`[header1:p:0] ...`) follow the body's.
+/// marks: `[p12 Heading1] (a) **Confidentiality.** You will ...`.
+/// Story paragraphs (`[header1] ...`, `[header1.p1] ...`) follow the body's.
 pub fn markdown(docx: &[u8]) -> Result<String, InspectError> {
     let opened = Opened::open(docx)?;
     let mut all = body_paragraphs(&opened.dom, opened.body);
@@ -793,7 +796,7 @@ fn control_record(
         text,
         paragraph_ids: paragraph_ids
             .into_iter()
-            .map(|i| format!("body:p:{i}"))
+            .map(|i| crate::ids::paragraph_id("body", i))
             .collect(),
         locked,
         choices,
@@ -897,7 +900,7 @@ fn paragraphs_of(dom: &Dom, nodes: Vec<NodeId>, story: &str) -> Vec<Paragraph> {
             let numbered = ppr.is_some_and(|ppr| dom.element(ppr, &W::num_pr()).is_some());
             Paragraph {
                 index,
-                id: format!("{story}:p:{index}"),
+                id: crate::ids::paragraph_id(story, index),
                 text: projection.text,
                 style,
                 numbered,
@@ -1269,11 +1272,8 @@ mod tests {
             runs: Vec::new(),
             limitations: Vec::new(),
         };
-        let md = render_markdown(&[
-            p("body:p:0", "Scope", Some("Heading1")),
-            p("body:p:1", "", None),
-        ]);
-        assert_eq!(md, "[body:p:0 Heading1] Scope\n\n[body:p:1]\n");
+        let md = render_markdown(&[p("p0", "Scope", Some("Heading1")), p("p1", "", None)]);
+        assert_eq!(md, "[p0 Heading1] Scope\n\n[p1]\n");
         assert_eq!(render_markdown(&[]), "");
     }
 

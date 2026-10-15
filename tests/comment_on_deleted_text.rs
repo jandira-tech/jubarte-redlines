@@ -30,7 +30,7 @@ fn commented() -> Vec<u8> {
         &docx(&(para("The cap is 10.") + &para("Kept."))),
         &plan(
             "Ann",
-            r#"[{"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"}]"#,
+            r#"[{"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"}]"#,
         ),
     )
     .unwrap()
@@ -56,9 +56,9 @@ fn reference_in_deleted_text(redline: &[u8]) -> bool {
 #[test]
 fn a_deleted_paragraph_or_whole_text_takes_the_comment_only_on_accept() {
     for op in [
-        r#"{"kind":"delete_paragraph","paragraph":"body:p:0"}"#,
-        r#"{"kind":"delete","paragraph":"body:p:0","find":"The cap is 10."}"#,
-        r#"{"kind":"replace","paragraph":"body:p:0","find":"The cap is","replacement":"It is"}"#,
+        r#"{"kind":"delete_paragraph","paragraph":"p0"}"#,
+        r#"{"kind":"delete","paragraph":"p0","find":"The cap is 10."}"#,
+        r#"{"kind":"replace","paragraph":"p0","find":"The cap is","replacement":"It is"}"#,
     ] {
         let out = apply_plan(&commented(), &plan("Bob", &format!("[{op}]"))).unwrap();
         assert_word_valid_package(&out.clean);
@@ -88,7 +88,7 @@ fn deleting_only_the_commented_word_keeps_the_comment() {
         &commented(),
         &plan(
             "Bob",
-            r#"[{"kind":"delete","paragraph":"body:p:0","find":"cap"}]"#,
+            r#"[{"kind":"delete","paragraph":"p0","find":"cap"}]"#,
         ),
     )
     .unwrap();

@@ -25,10 +25,10 @@ def test_literal_bullet_and_heading_skip_are_located_by_paragraph_id() -> None:
     assert isinstance(found, tuple)
     assert all(isinstance(f, AuditFinding) for f in found)
     by_code = {f.code: f for f in found}
-    assert by_code["HEADING_SKIP"].location == "body:p:1"
+    assert by_code["HEADING_SKIP"].location == "p1"
     assert by_code["HEADING_SKIP"].rule_set == "a11y"
     assert by_code["HEADING_SKIP"].severity == "warning"
-    assert by_code["LITERAL_BULLET"].location == "body:p:2"
+    assert by_code["LITERAL_BULLET"].location == "p2"
     assert by_code["LITERAL_BULLET"].message
 
 

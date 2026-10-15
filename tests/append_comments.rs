@@ -49,7 +49,7 @@ fn commented(text: &str, author: &str, comment: &str) -> Vec<u8> {
     edited(
         &docx(&para(text)),
         author,
-        &format!(r#"{{"kind":"comment","paragraph":"body:p:0","text":"{comment}"}}"#),
+        &format!(r#"{{"kind":"comment","paragraph":"p0","text":"{comment}"}}"#),
     )
 }
 

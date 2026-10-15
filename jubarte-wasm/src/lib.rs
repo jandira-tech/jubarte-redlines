@@ -19,7 +19,7 @@
 //!
 //! ```js
 //! const snapshot = JSON.parse(inspectDocument(bytes));  // ids, text, spans
-//! const text = documentMarkdown(bytes);                 // [body:p:N] ids
+//! const text = documentMarkdown(bytes);                 // [pN] ids
 //! const out = applyEditPlan(bytes, JSON.stringify(plan));
 //! if (out.ok) { out.clean; out.redline; out.patch; JSON.parse(out.json) }  // report
 //! else { JSON.parse(out.json).code }                    // e.g. AMBIGUOUS_ANCHOR
@@ -179,8 +179,9 @@ fn change_filter_of(filter_json: &str) -> Result<String, String> {
 }
 
 /// `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
-/// in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
-/// change id throws `jubarte-wasm: c5: expected a change id …`, which the
+/// in its settled spelling (`r1+2` → `r1`, `r2`). An id that is no change
+/// id, the expired `body:rev:1` among them, throws `jubarte-wasm: c5:
+/// expected a change id …` (naming `r1` for `body:rev:1`), which the
 /// binary reports as a usage error before reading the document.
 ///
 /// Mirrors `jubarte::changes::ChangeFilter::normalized`.
@@ -300,7 +301,7 @@ pub fn inspect_document(docx: &[u8]) -> Result<String, JsValue> {
     jubarte::inspect::inspect_json(docx).map_err(js_err)
 }
 
-/// Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
+/// Body paragraphs as Markdown, each preceded by its `[pN]` id: the
 /// coordinates an edit plan uses.
 ///
 /// Mirrors `jubarte::inspect::markdown`.
@@ -949,7 +950,7 @@ pub fn redline_documents(
 /// The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 /// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 /// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
-/// `body:p:N` id in a Word document or `line:N` in Markdown.
+/// `pN` id in a Word document or `line:N` in Markdown.
 ///
 /// Each side is a `.docx` package or UTF-8 Markdown
 /// (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -1595,7 +1596,7 @@ mod tests {
     #[test]
     fn append_documents_carries_comments_when_asked() {
         let plan = jubarte::edit::EditPlan::from_json(
-            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"body:p:0","text":"keep"}]}"#,
+            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"p0","text":"keep"}]}"#,
         )
         .unwrap();
         let b = jubarte::edit::apply_plan(&word("B.\n"), &plan)
@@ -1621,7 +1622,7 @@ mod tests {
     #[test]
     fn docx_to_pdf_moves_comments_and_keeps_changed_pages() {
         let plan = jubarte::edit::EditPlan::from_json(
-            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"body:p:0","text":"Too low"}]}"#,
+            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"p0","text":"Too low"}]}"#,
         )
         .unwrap();
         let noted = jubarte::edit::apply_plan(&word("The cap is 10.\n"), &plan)
@@ -1755,7 +1756,7 @@ mod tests {
             .iter()
             .find(|f| f["code"] == "LITERAL_BULLET")
             .expect("a typed bullet is a finding");
-        assert_eq!(bullet["location"], "body:p:0");
+        assert_eq!(bullet["location"], "p0");
         assert_eq!(report["rules"].as_array().unwrap().len(), 7);
         let all: serde_json::Value =
             serde_json::from_str(&audit_document(&docx, None).unwrap()).unwrap();
@@ -1798,7 +1799,7 @@ mod tests {
         let text = out["text"].as_str().unwrap();
         assert!(text.starts_with("--- a/old.docx\n+++ b/new.md\t"), "{text}");
         assert!(
-            text.contains("@@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"),
+            text.contains("@@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"),
             "{text}"
         );
         let json = diff_documents(
@@ -1840,7 +1841,7 @@ mod tests {
         assert_eq!(
             out.patch().unwrap(),
             "--- a/document.docx\n+++ b/document.docx\tClaude\t2026-09-25T12:00:00Z\n\
-             @@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"
+             @@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"
         );
         // The bundle's patch names the edited file, as the binary's does.
         let named = apply_edit_plan(&source, plan, Some("terms.docx".into())).unwrap();
@@ -2138,7 +2139,7 @@ mod tests {
         assert!(wrote_line_of("r.x", "tiff", 1, None).is_err());
         assert_eq!(
             change_filter_of(r#"{"ids":["r1+2"],"authors":["A"]}"#).unwrap(),
-            r#"{"ids":["body:rev:1","body:rev:2"],"authors":["A"]}"#
+            r#"{"ids":["r1","r2"],"authors":["A"]}"#
         );
         let bad = change_filter_of(r#"{"ids":["c5"]}"#).unwrap_err();
         assert!(bad.starts_with("c5: expected a change id"), "{bad}");

@@ -1374,7 +1374,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Usage(m) => (EXIT_USAGE, m),
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
-    jubarte::edit::preview_plan(source, &recorded.plan).map_err(|e| refused(&e))?;
+    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| refused(&e))?;
     if !flags.quiet {
         for note in &recorded.notes {
             outln!("note: {note}");
@@ -3230,9 +3230,9 @@ mod tests {
             "-o",
             "out.docx",
             "--id",
-            "body:rev:1",
+            "r1",
             "--id",
-            "header1:rev:2",
+            "header1.r2",
             "--kind",
             "move",
         ])
@@ -3243,7 +3243,7 @@ mod tests {
         assert_eq!(
             selection.filter(),
             ChangeFilter {
-                ids: Some(vec!["body:rev:1".into(), "header1:rev:2".into()]),
+                ids: Some(vec!["r1".into(), "header1.r2".into()]),
                 authors: None,
                 kinds: Some(vec![ChangeKind::Move]),
             }

@@ -135,7 +135,7 @@ fn validate_audits_tracked_edits_against_an_original() {
     assert_eq!(row["code"], "UNTRACKED_EDIT");
     assert_eq!(row["set"], "edits");
     assert_eq!(row["severity"], "error");
-    assert_eq!(row["location"], "body:p:0");
+    assert_eq!(row["location"], "p0");
     assert_eq!(row["ref"], "p0");
     // The JSON location keeps the long id; the message prints the short one.
     assert!(

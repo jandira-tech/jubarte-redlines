@@ -21,8 +21,8 @@ def test_shared_aliases_defaults_and_selection_mapping():
         assert args.author == "Redline"
     args = parser.parse_args(["a.docx", "b.docx"])
     assert args.command == "compare"
-    args = parser.parse_args(["accept", "a.docx", "-o", "b.docx", "--id", "body:rev:1", "--author", "A"])
-    assert args.id == ["body:rev:1"] and args.author == ["A"]
+    args = parser.parse_args(["accept", "a.docx", "-o", "b.docx", "--id", "r1", "--author", "A"])
+    assert args.id == ["r1"] and args.author == ["A"]
 
 
 def test_help_and_version_are_shared_clap_text(capsys):

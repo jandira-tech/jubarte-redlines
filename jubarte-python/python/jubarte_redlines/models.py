@@ -195,15 +195,15 @@ ChangeKind = Literal["insertion", "deletion", "move", "formatting"]
 class Change:
     """One tracked change with the id ``Document.accept`` / ``reject`` select by.
 
-    ``id`` is ``{story}:rev:{w:id}`` (``body:rev:12``, ``header1:rev:3``);
-    resolving some changes never renumbers the rest. ``target`` is what the
+    ``id`` is the change's short id (``r12``, ``header1.r3``), built from
+    its ``w:id``, so resolving some changes never renumbers the rest. ``target`` is what the
     change applies to (``text``, ``paragraph_mark``, ``table_row``,
     ``table_cell``, ``properties``). Both sides of a move share
     ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
     ``inside`` names the change whose content holds this one: resolving that
-    one so its content goes takes this one along. ``ref`` is the short id the
-    CLI prints and ``-p``/``--id`` take (``r12``, ``header1.r3``);
-    ``paragraph`` is the id of the paragraph the change is in (``body:p:3``).
+    one so its content goes takes this one along. ``ref`` equals ``id``: the
+    short id the CLI prints and ``-p``/``--id`` take;
+    ``paragraph`` is the id of the paragraph the change is in (``p3``).
     """
 
     id: str
@@ -266,7 +266,7 @@ class Comment:
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
     ``parent`` is the id of the comment it replies to (Word threads are one
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
-    is the paragraph id where the range starts (``body:p:12``), and
+    is the paragraph id where the range starts (``p12``), and
     ``last_paragraph`` the one where it ends when that is a later one;
     ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
     up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
@@ -368,7 +368,7 @@ class Span:
 
 @dataclass(frozen=True, slots=True)
 class Paragraph:
-    """One paragraph (``body:p:N``, ``header1:p:N``...); ``index``/``id`` are valid for this snapshot only."""
+    """One paragraph (``p12``, ``header1``, ``header1.p2``...); ``index``/``id`` are valid for this snapshot only."""
 
     index: int
     id: str
@@ -488,7 +488,7 @@ class Snapshot:
         return hits[0]
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
-        """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
+        """The paragraph with this id (``p12``, ``header1``, ``header1.p2``) or body index."""
         for p in self.paragraphs:
             if p.id == id_or_index or p.index == id_or_index:
                 return p
@@ -606,7 +606,7 @@ def _decode_snapshot(payload: str) -> Snapshot:
 # ---------------------------------------------------------------------------
 
 Selector = str | int | dict[str, str | int]
-"""A paragraph id (``body:p:N``, ``header1:p:0``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
+"""A paragraph id (``p12``, ``header1``, ``header1.p2``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
 ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
@@ -1534,8 +1534,8 @@ def _decode_page_diffs(payload: str) -> tuple[PageDiff, ...]:
 class Hunk:
     """One changed paragraph of a ``Diff``.
 
-    ``at`` is where it is: ``body:p:N`` (or a header's, footer's or note's
-    ``header1:p:N``, ``footnotes:p:N``...) in a Word document, as
+    ``at`` is where it is: ``p12`` (or a header's, footer's or note's
+    ``header1``, ``header1.p2``, ``footnotes.p3``...) in a Word document, as
     ``Document.markdown`` and edit plans number paragraphs, or ``line:N`` in
     Markdown; in the new version, or the old one when ``removed``. ``text``
     is the paragraph with its changes, unwrapped.
@@ -1584,8 +1584,8 @@ class Finding:
     ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
     ``warning`` or ``info``. ``part`` is the package part and ``location``
     the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
-    id (``body:p:3``), or empty for a package-level finding. ``ref`` is the
-    short id the CLI prints for ``location`` (``p3`` for ``body:p:3``).
+    id (``p3``), or empty for a package-level finding. ``ref`` is the
+    short id the CLI prints for ``location`` (``p3`` for ``p3``).
     ``word_fatal`` is true when Word refuses or repairs the file for it,
     ``repairable`` when ``Document.repair`` fixes it.
     """
@@ -1653,7 +1653,7 @@ class AuditFinding:
     ``code`` is the rule (``HEADING_SKIP``, ``IMAGE_NO_DESCR``...),
     ``rule_set`` is ``a11y``, ``style`` or ``structure``, ``severity`` is
     ``error``, ``warning`` or ``info``, and ``location`` is the paragraph id
-    (``body:p:N``, ``footer1:p:N``...) an edit plan targets, or a part name
+    (``p12``, ``footer1``, ``footer1.p2``...) an edit plan targets, or a part name
     for a document-wide finding.
     """
 

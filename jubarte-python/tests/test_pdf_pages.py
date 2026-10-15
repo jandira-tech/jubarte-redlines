@@ -31,7 +31,7 @@ def three_pages() -> bytes:
 
 def commented() -> jubarte.Document:
     doc = jubarte.Document.from_bytes(docx(para("The cap is 10.")))
-    return doc.edit(jubarte.EditPlan(author="Ann").comment("body:p:0", find="cap", text="Too low")).clean
+    return doc.edit(jubarte.EditPlan(author="Ann").comment("p0", find="cap", text="Too low")).clean
 
 
 def pdf_pages(pdf: bytes) -> int:

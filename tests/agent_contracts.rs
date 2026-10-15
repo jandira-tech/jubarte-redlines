@@ -26,7 +26,7 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"edit_comment", "comment_id":1, "text":"reworded"}),
         json!({"kind":"delete_comment", "comment_id":1}),
         json!({"kind":"insert_table", "paragraph":{"index":0}, "position":"before", "rows":[["a","b"],["c","d"]], "header_row":true, "widths_dxa":[4680,4680], "style":"TableGrid"}),
-        json!({"kind":"list", "paragraphs":[{"index":0}, "body:p:1"], "kind_of_list":"lower_letter", "level":1, "restart":false}),
+        json!({"kind":"list", "paragraphs":[{"index":0}, "p1"], "kind_of_list":"lower_letter", "level":1, "restart":false}),
         json!({"kind":"watermark", "text":"DRAFT", "color":"C0C0C0", "diagonal":true, "font":"Calibri"}),
         json!({"kind":"fill_control", "control":{"tag":"Name"}, "text":"Ada"}),
         json!({"kind":"format_run", "paragraph":{"index":0}, "find":"a", "occurrence":2, "format":{"bold":true, "font":"Arial", "size_pt":10.5, "color":"FF0000", "strike":false, "caps":true}}),

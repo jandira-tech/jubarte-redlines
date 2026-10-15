@@ -20,10 +20,10 @@ from docx_fixture import docx, para
 
 def test_reply_and_resolve_round_trip() -> None:
     doc = jubarte.Document.from_bytes(docx(para("The cap is 10.")))
-    first = doc.edit(jubarte.EditPlan(author="Ann").comment("body:p:0", find="cap", text="Too low"))
+    first = doc.edit(jubarte.EditPlan(author="Ann").comment("p0", find="cap", text="Too low"))
     (root,) = first.clean.comments()
     assert (root.text, root.done, root.parent) == ("Too low", False, None)
-    assert (root.anchor_text, root.before, root.after, root.paragraph) == ("cap", "The ", " is 10.", "body:p:0")
+    assert (root.anchor_text, root.before, root.after, root.paragraph) == ("cap", "The ", " is 10.", "p0")
     assert root.last_paragraph is None
     second = first.clean.edit(
         jubarte.EditPlan(author="Bob").reply_comment(root.id, text="Agreed").resolve_comment(root.id)
@@ -35,10 +35,10 @@ def test_reply_and_resolve_round_trip() -> None:
 
 def test_edit_delete_through_and_filters() -> None:
     doc = jubarte.Document.from_bytes(docx(para("One.") + para("Two.")))
-    spanned = doc.edit(jubarte.EditPlan(author="Ann").comment("body:p:0", through="body:p:1", text="Both"))
+    spanned = doc.edit(jubarte.EditPlan(author="Ann").comment("p0", through="p1", text="Both"))
     (c,) = spanned.clean.comments()
     assert c.anchor_text == "One.\nTwo."
-    assert (c.paragraph, c.last_paragraph) == ("body:p:0", "body:p:1")
+    assert (c.paragraph, c.last_paragraph) == ("p0", "p1")
     edited = spanned.clean.edit(jubarte.EditPlan(author="Ann").edit_comment(c.id, text="Reworded", id="e"))
     assert [x.text for x in edited.clean.comments()] == ["Reworded"]
     assert edited.report.operations[0].id == "e"
@@ -67,7 +67,7 @@ def test_builders_write_the_wire_form() -> None:
         .resolve_comment(2, done=False)
         .edit_comment(1, text="e")
         .delete_comment(3, id="d")
-        .comment("body:p:0", through="body:p:2", text="span")
+        .comment("p0", through="p2", text="span")
     )
     assert plan.to_dict()["operations"] == [
         {"kind": "reply_comment", "comment_id": 1, "text": "r"},
@@ -75,13 +75,13 @@ def test_builders_write_the_wire_form() -> None:
         {"kind": "resolve_comment", "comment_id": 2, "done": False},
         {"kind": "edit_comment", "comment_id": 1, "text": "e"},
         {"id": "d", "kind": "delete_comment", "comment_id": 3},
-        {"kind": "comment", "paragraph": {"id": "body:p:0"}, "text": "span", "through": {"id": "body:p:2"}},
+        {"kind": "comment", "paragraph": {"id": "p0"}, "text": "span", "through": {"id": "p2"}},
     ]
 
 
 def test_cli_comments_matches_the_binary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     doc = jubarte.Document.from_bytes(docx(para("The cap is 10.")))
-    first = doc.edit(jubarte.EditPlan(author="Ann").comment("body:p:0", find="cap", text="Too low"))
+    first = doc.edit(jubarte.EditPlan(author="Ann").comment("p0", find="cap", text="Too low"))
     second = first.clean.edit(jubarte.EditPlan(author="Bob").reply_comment(0, text="Agreed"))
     path = tmp_path / "threaded.docx"
     path.write_bytes(second.clean.to_bytes())

@@ -68,7 +68,7 @@ fn insert_toc_with_update_fields_writes_the_entries() {
     assert!(xml.contains("w:val=\"TOCHeading\""), "{xml}");
     let op = &result.report.operations[0];
     assert_eq!((op.kind.as_str(), op.status.as_str()), ("insert_toc", "ok"));
-    assert_eq!(op.paragraph.as_deref(), Some("body:p:0"));
+    assert_eq!(op.paragraph.as_deref(), Some("p0"));
     let fields = &result.report.fields;
     assert_eq!(fields.iter().filter(|f| f.kind == "PAGEREF").count(), 2);
     assert!(fields.iter().any(|f| f.kind == "TOC"));

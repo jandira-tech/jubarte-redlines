@@ -17,7 +17,7 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
     python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
     python -m jubarte_redlines accept redline.docx -o clean.docx
     python -m jubarte_redlines changes redline.docx --json
-    python -m jubarte_redlines reject redline.docx -o out.docx --id body:rev:12
+    python -m jubarte_redlines reject redline.docx -o out.docx --id r12
     python -m jubarte_redlines capabilities --json
     python -m jubarte_redlines validate redline.docx --original a.docx --author Legal
 

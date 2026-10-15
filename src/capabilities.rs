@@ -226,7 +226,7 @@ pub struct Limits {
     /// Story kinds `read` and `edit` address: `body`, then the `kind` of
     /// each entry of the snapshot's `stories` (`header`, `footer`, `footnotes`,
     /// `endnotes`). A selector names a story by its id, the part's file stem
-    /// (`header1:p:0`, `{"story": "footnotes", "index": 0}`), which
+    /// (`header1`, `{"story": "footnotes", "index": 0}`), which
     /// `read --json` lists for the document at hand. Comments are counted in
     /// `summary` but are not stories; text boxes are not stories either, and
     /// their owner paragraph carries the `text_box_omitted` limitation.

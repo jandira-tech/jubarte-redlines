@@ -279,7 +279,7 @@ class Document:
         return _decode_snapshot(_native.inspect_json(self._data))
 
     def markdown(self) -> str:
-        """The body as Markdown with a ``[body:p:N]`` id before each paragraph."""
+        """The body as Markdown with a ``[pN]`` id before each paragraph."""
         return _native.markdown(self._data)
 
     def edit(self, plan: EditPlan | dict[str, object] | str) -> EditResult:
@@ -576,7 +576,7 @@ def diff(
     full_lines: bool = False,
 ) -> Diff:
     """The changes from ``old`` to ``new``: the changed paragraphs, each at
-    its ``body:p:N`` id in a Word document or ``line:N`` in Markdown, with
+    its ``pN`` id in a Word document or ``line:N`` in Markdown, with
     ``[-old-]{+new+}`` changes and CriticMarkup comments.
 
     Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),

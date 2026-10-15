@@ -80,11 +80,8 @@ fn a_table_reports_cell_text_ids_header_rows_and_widths() {
     assert_eq!(
         grid,
         vec![
-            vec![(vec!["body:p:1"], "Item"), (vec!["body:p:2"], "Qty")],
-            vec![
-                (vec!["body:p:3", "body:p:4"], "Bolt\nsteel"),
-                (vec!["body:p:5"], "40")
-            ],
+            vec![(vec!["p1"], "Item"), (vec!["p2"], "Qty")],
+            vec![(vec!["p3", "p4"], "Bolt\nsteel"), (vec!["p5"], "40")],
         ]
     );
     // The ids are the ones paragraphs() reports.
@@ -116,7 +113,7 @@ fn the_snapshot_carries_the_tables() {
     assert_eq!(t["rows"][0][1]["text"], "Qty");
     assert_eq!(
         t["rows"][1][0]["paragraph_ids"],
-        serde_json::json!(["body:p:3", "body:p:4"])
+        serde_json::json!(["p3", "p4"])
     );
     let plain: serde_json::Value =
         serde_json::from_str(&inspect_json(&docx(&para("No table."))).unwrap()).unwrap();
@@ -138,12 +135,12 @@ fn a_nested_table_is_its_own_entry() {
     assert_eq!(outer.header_rows, 0);
     // The outer cell keeps its own paragraphs; the nested ones are the
     // inner table's.
-    assert_eq!(outer.rows[0][0].paragraph_ids, ["body:p:0", "body:p:3"]);
+    assert_eq!(outer.rows[0][0].paragraph_ids, ["p0", "p3"]);
     assert_eq!(outer.rows[0][0].text, "Outer\n");
     assert_eq!(outer.rows[0][1].text, "Right");
     let inner = &found[1];
     assert_eq!(inner.index, 1);
-    assert_eq!(inner.rows[0][0].paragraph_ids, ["body:p:1"]);
+    assert_eq!(inner.rows[0][0].paragraph_ids, ["p1"]);
     assert_eq!(inner.rows[0][1].text, "Cell");
 }
 
@@ -211,4 +208,31 @@ fn the_cli_says_when_there_are_no_tables_and_refuses_json_with_tables() {
             .unwrap();
         assert_eq!(both.status.code(), Some(2), "{task}: {both:?}");
     }
+}
+
+#[test]
+fn read_json_of_a_cell_paragraph_holds_that_paragraph_only() {
+    // The view prints a table whole, but `read -p p5 --json` names one cell
+    // paragraph: its JSON must hold p5, not the table's first cell.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("table.docx");
+    std::fs::write(&path, two_by_two()).unwrap();
+    let ids = |pick: &str| -> Vec<String> {
+        let out = Command::new(BIN)
+            .args(["read", path.to_str().unwrap(), "-p", pick, "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        json["paragraphs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(ids("p5"), ["p5"]);
+    assert_eq!(ids("p2-p3"), ["p2", "p3"]);
+    assert_eq!(ids("p0-p1"), ["p0", "p1"]);
+    assert_eq!(ids("t0"), ["p1", "p2", "p3", "p4", "p5"]);
 }

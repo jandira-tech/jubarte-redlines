@@ -25,6 +25,11 @@ import cli_locations  # noqa: E402
 
 
 class Timeout(unittest.TestCase):
+    def test_an_html_character_reference_is_no_retired_id(self):
+        # The view writes a kept space as `&#32;`; that is no `#32`.
+        self.assertIsNone(cli_locations.RETIRED_ID.search("note&#32;joined"))
+        self.assertIsNotNone(cli_locations.RETIRED_ID.search("see #32 here"))
+
     def test_a_timed_out_probe_stops_the_run_instead_of_writing_into_the_catalogue(self):
         # pi review of #461 (6b): a timeout used to become the probe's "stderr",
         # so docs/locations.md held "timed out after 120s" on a loaded machine.

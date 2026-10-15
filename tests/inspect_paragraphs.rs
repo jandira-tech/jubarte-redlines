@@ -24,7 +24,7 @@ fn text_joins_runs_split_by_word() {
     assert_eq!(paras.len(), 1);
     assert_eq!(paras[0].text, "Third Parties.");
     assert_eq!(paras[0].index, 0);
-    assert_eq!(paras[0].id, "body:p:0");
+    assert_eq!(paras[0].id, "p0");
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn markdown_prefixes_paragraph_ids_and_marks_formatting() {
     let md = markdown(&docx(&body)).unwrap();
     assert_eq!(
         md,
-        "[body:p:0] (a) **Confidentiality.** Fill in\n\n[body:p:1] plain\tline\n"
+        "[p0] (a) **Confidentiality.** Fill in\n\n[p1] plain\tline\n"
     );
 }
 
@@ -223,7 +223,7 @@ fn inspect_json_carries_schema_hash_summary_and_paragraphs() {
     assert_eq!(v["schema_version"], 1);
     assert_eq!(v["source_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(v["summary"]["paragraphs"], 1);
-    assert_eq!(v["paragraphs"][0]["id"], "body:p:0");
+    assert_eq!(v["paragraphs"][0]["id"], "p0");
     assert_eq!(v["paragraphs"][0]["text"], "hello");
     assert_eq!(v["paragraphs"][0]["runs"][0]["end"], 5);
 }

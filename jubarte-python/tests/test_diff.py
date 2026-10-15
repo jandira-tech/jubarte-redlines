@@ -39,10 +39,10 @@ def test_two_word_documents_give_the_changed_paragraph_at_its_id() -> None:
     d = letter().diff(letter("an"), **OWNER)
     assert isinstance(d, Diff)
     assert d.text == (
-        f"--- a/old.docx\n+++ b/new.docx{HEADER}@@ [body:p:1] @@\n"
+        f"--- a/old.docx\n+++ b/new.docx{HEADER}@@ [p1] @@\n"
         "The individual signs in [-his or her-]{+an+} individual capacity.\n"
     )
-    assert d.hunks == (Hunk(at="body:p:1", removed=False, text=d.hunks[0].text),)
+    assert d.hunks == (Hunk(at="p1", removed=False, text=d.hunks[0].text),)
     assert "[-his or her-]{+an+}" in d.hunks[0].text
     assert str(d) == d.text
     assert d._repr_markdown_() == f"```diff\n{d.text}```\n"
@@ -51,10 +51,10 @@ def test_two_word_documents_give_the_changed_paragraph_at_its_id() -> None:
 def test_a_word_document_against_markdown_is_located_in_the_word_document() -> None:
     original = letter()
     edited = original.markdown()
-    # `markdown()` carries `[body:p:N]` ids; the edited text is plain Markdown.
-    plain = re.sub(r"^\[body:p:\d+\] ", "", edited, flags=re.M).replace("his or her", "an")
+    # `markdown()` carries `[pN]` ids; the edited text is plain Markdown.
+    plain = re.sub(r"^\[p\d+\] ", "", edited, flags=re.M).replace("his or her", "an")
     d = original.diff(plain, **OWNER)
-    assert d.text.startswith(f"--- a/old.docx\n+++ b/new.md{HEADER}@@ [body:p:1] @@\n"), d.text
+    assert d.text.startswith(f"--- a/old.docx\n+++ b/new.md{HEADER}@@ [p1] @@\n"), d.text
     assert "[-his or her-]{+an+}" in d.text
 
 
@@ -133,12 +133,12 @@ def test_an_edit_returns_the_patch_of_its_redline() -> None:
     result = letter().edit(plan)
     assert isinstance(result.diff, Diff)
     assert result.diff.text.startswith(
-        "--- a/document.docx\n+++ b/document.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [body:p:1] @@\n"
+        "--- a/document.docx\n+++ b/document.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [p1] @@\n"
     ), result.diff.text
     one_line = result.diff.text.replace("\n", " ")
     # The comment is on the inserted text, so the insertion is highlighted.
     assert "[-his or her-]{+{==an==}+}{>>Claude (2026-09-25T12:00:00Z): gender-neutral<<}" in one_line
-    assert [h.at for h in result.diff.hunks] == ["body:p:1"]
+    assert [h.at for h in result.diff.hunks] == ["p1"]
 
 
 def test_a_deleted_paragraph_carries_its_comment_into_the_redline_and_the_patch() -> None:
@@ -150,13 +150,13 @@ def test_a_deleted_paragraph_carries_its_comment_into_the_redline_and_the_patch(
     ]
     result = letter().edit(plan)
     assert result.report.comments_added == 1
-    header, hunk = result.diff.text.split("@@ -[body:p:2] @@\n")
+    header, hunk = result.diff.text.split("@@ -[p2] @@\n")
     assert header == "--- a/document.docx\n+++ b/document.docx\tClaude\t2026-09-25T12:00:00Z\n"
     # Wrapped at 72 columns.
     assert hunk.replace("\n", " ").strip() == (
         "[-{==Sections 1(g), 2(e), 3 survive.==}-]{>>Claude (2026-09-25T12:00:00Z): Duplicated in section 4.<<}"
     )
-    assert [(h.at, h.removed) for h in result.diff.hunks] == [("body:p:2", True)]
+    assert [(h.at, h.removed) for h in result.diff.hunks] == [("p2", True)]
 
 
 def test_arguments_are_checked() -> None:
@@ -172,7 +172,7 @@ def test_arguments_are_checked() -> None:
 
 def test_word_bytes_are_a_side_too() -> None:
     d = jubarte.diff(letter().to_bytes(), letter("an").to_bytes(), **OWNER)
-    assert d.text.startswith(f"--- a/old.docx\n+++ b/new.docx{HEADER}@@ [body:p:1] @@\n"), d.text
+    assert d.text.startswith(f"--- a/old.docx\n+++ b/new.docx{HEADER}@@ [p1] @@\n"), d.text
 
 
 def test_without_git_the_owner_is_redline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -45,7 +45,7 @@ fn paragraphs_become_a_tracked_bulleted_list() {
     let source = three();
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"list","paragraphs":["body:p:1","body:p:2"]}]"#),
+        &plan(r#"[{"kind":"list","paragraphs":["p1","p2"]}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -73,11 +73,11 @@ fn paragraphs_become_a_tracked_bulleted_list() {
     let formatting = list_changes(&out.redline)
         .unwrap()
         .into_iter()
-        .filter(|c| c.kind == ChangeKind::Formatting && c.id.starts_with("body:"))
+        .filter(|c| c.kind == ChangeKind::Formatting && !c.id.contains('.'))
         .map(|c| c.text)
         .collect::<Vec<_>>();
     // The comparer also tracks the ListParagraph definition it finds only
-    // in the clean copy (styles:rev:N); the body has one change per item.
+    // in the clean copy (styles.rN); the body has one change per item.
     assert_eq!(
         formatting,
         ["Apples.", "Pears."],
@@ -87,7 +87,7 @@ fn paragraphs_become_a_tracked_bulleted_list() {
     assert!(rejected.iter().all(|p| !p.numbered));
     let op = &out.report.operations[0];
     assert_eq!(op.kind, "list");
-    assert_eq!(op.paragraph.as_deref(), Some("body:p:1, body:p:2"));
+    assert_eq!(op.paragraph.as_deref(), Some("p1, p2"));
     assert_eq!(op.matches, 2);
 }
 
@@ -97,7 +97,7 @@ fn decimal_and_lettered_lists_at_a_level() {
     let out = apply_plan(
         &source,
         &plan(
-            r#"[{"kind":"list","paragraphs":["body:p:1"],"kind_of_list":"decimal"},
+            r#"[{"kind":"list","paragraphs":["p1"],"kind_of_list":"decimal"},
                 {"kind":"list","paragraphs":[{"starts_with":"Pears"}],"kind_of_list":"lower_letter","level":1}]"#,
         ),
     )
@@ -145,7 +145,7 @@ fn an_existing_numbering_part_keeps_its_lists_and_ids() {
     );
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"list","paragraphs":["body:p:2"],"kind_of_list":"decimal"}]"#),
+        &plan(r#"[{"kind":"list","paragraphs":["p2"],"kind_of_list":"decimal"}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -188,7 +188,7 @@ fn restart_false_continues_the_list_before() {
     );
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"list","paragraphs":["body:p:2"],"restart":false}]"#),
+        &plan(r#"[{"kind":"list","paragraphs":["p2"],"restart":false}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -210,7 +210,7 @@ fn restart_false_continues_the_list_before() {
 fn restart_false_without_a_list_before_is_refused() {
     let (code, _) = refusal(
         &three(),
-        r#"[{"kind":"list","paragraphs":["body:p:1"],"restart":false}]"#,
+        r#"[{"kind":"list","paragraphs":["p1"],"restart":false}]"#,
     );
     assert_eq!(code, "UNSUPPORTED_STRUCTURE");
 }
@@ -224,7 +224,7 @@ fn a_styled_paragraph_keeps_its_style() {
     let source = docx(&body);
     let out = apply_plan(
         &source,
-        &plan(r#"[{"kind":"list","paragraphs":["body:p:0"],"kind_of_list":"decimal"}]"#),
+        &plan(r#"[{"kind":"list","paragraphs":["p0"],"kind_of_list":"decimal"}]"#),
     )
     .unwrap();
     assert_word_valid_package(&out.clean);
@@ -247,31 +247,31 @@ fn bad_lists_are_refused() {
     for (ops, code) in [
         (r#"[{"kind":"list","paragraphs":[]}]"#, "INVALID_EDIT"),
         (
-            r#"[{"kind":"list","paragraphs":["body:p:1"],"level":9}]"#,
+            r#"[{"kind":"list","paragraphs":["p1"],"level":9}]"#,
             "INVALID_EDIT",
         ),
         (
-            r#"[{"kind":"list","paragraphs":["body:p:1",{"index":1}]}]"#,
+            r#"[{"kind":"list","paragraphs":["p1",{"index":1}]}]"#,
             "INVALID_EDIT",
         ),
         (
-            r#"[{"kind":"list","paragraphs":["body:p:9"]}]"#,
+            r#"[{"kind":"list","paragraphs":["p9"]}]"#,
             "ANCHOR_NOT_FOUND",
         ),
         (
-            r#"[{"kind":"list","paragraphs":["body:p:1"]},{"kind":"delete_paragraph","paragraph":"body:p:1"}]"#,
+            r#"[{"kind":"list","paragraphs":["p1"]},{"kind":"delete_paragraph","paragraph":"p1"}]"#,
             "OVERLAPPING_EDITS",
         ),
         (
-            r#"[{"kind":"list","paragraphs":["body:p:1"]},{"kind":"list","paragraphs":["body:p:1"]}]"#,
+            r#"[{"kind":"list","paragraphs":["p1"]},{"kind":"list","paragraphs":["p1"]}]"#,
             "OVERLAPPING_EDITS",
         ),
         (
-            r#"[{"kind":"list","paragraphs":["body:p:1"]},{"kind":"format_paragraph","paragraph":"body:p:1","alignment":"center"}]"#,
+            r#"[{"kind":"list","paragraphs":["p1"]},{"kind":"format_paragraph","paragraph":"p1","alignment":"center"}]"#,
             "OVERLAPPING_EDITS",
         ),
         (
-            r#"[{"kind":"list","paragraphs":["body:p:1"]},{"kind":"merge_paragraphs","paragraph":"body:p:1"}]"#,
+            r#"[{"kind":"list","paragraphs":["p1"]},{"kind":"merge_paragraphs","paragraph":"p1"}]"#,
             "OVERLAPPING_EDITS",
         ),
     ] {
@@ -283,9 +283,9 @@ fn bad_lists_are_refused() {
 #[test]
 fn list_keys_are_checked() {
     for ops in [
-        r#"[{"kind":"list","paragraph":"body:p:1","paragraphs":["body:p:1"]}]"#,
-        r#"[{"kind":"list","paragraphs":["body:p:1"],"style":"decimal"}]"#,
-        r#"[{"kind":"list","paragraphs":["body:p:1"],"kind_of_list":"roman"}]"#,
+        r#"[{"kind":"list","paragraph":"p1","paragraphs":["p1"]}]"#,
+        r#"[{"kind":"list","paragraphs":["p1"],"style":"decimal"}]"#,
+        r#"[{"kind":"list","paragraphs":["p1"],"kind_of_list":"roman"}]"#,
     ] {
         let error = EditPlan::from_json(&format!(
             r#"{{"schema_version":1,"author":"A","operations":{ops}}}"#
@@ -308,11 +308,7 @@ fn a_localized_list_paragraph_style_is_used_by_name() {
             xml: styles,
         }],
     );
-    let out = apply_plan(
-        &source,
-        &plan(r#"[{"kind":"list","paragraphs":["body:p:1"]}]"#),
-    )
-    .unwrap();
+    let out = apply_plan(&source, &plan(r#"[{"kind":"list","paragraphs":["p1"]}]"#)).unwrap();
     assert_word_valid_package(&out.clean);
     assert_word_valid_package(&out.redline);
     let item = &paragraphs(&out.clean).unwrap()[1];

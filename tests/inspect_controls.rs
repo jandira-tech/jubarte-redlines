@@ -51,7 +51,7 @@ fn records_carry_ids_alias_text_and_owner_paragraph() {
     );
     assert_eq!(list[0].alias.as_deref(), Some("Full name"));
     assert_eq!(list[0].text, "Click here");
-    assert_eq!(list[0].paragraph_ids, ["body:p:0"]);
+    assert_eq!(list[0].paragraph_ids, ["p0"]);
     assert_eq!(list[1].alias, None);
     assert!(!list[1].placeholder && !list[1].locked);
     assert_eq!(list[1].checked, None);
@@ -153,7 +153,7 @@ fn block_level_control_lists_its_paragraphs_and_joins_their_text() {
     let body = r#"<w:p><w:r><w:t>before</w:t></w:r></w:p><w:sdt><w:sdtPr><w:tag w:val="Terms"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:t>second</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>after</w:t></w:r></w:p>"#;
     let list = controls(&docx(body)).unwrap();
     assert_eq!(list.len(), 1);
-    assert_eq!(list[0].paragraph_ids, ["body:p:1", "body:p:2"]);
+    assert_eq!(list[0].paragraph_ids, ["p1", "p2"]);
     assert_eq!(list[0].text, "first\nsecond");
 }
 
@@ -163,8 +163,8 @@ fn nested_controls_are_both_listed_in_document_order() {
     let list = controls(&docx(body)).unwrap();
     let tags: Vec<_> = list.iter().map(|c| c.tag.as_deref().unwrap()).collect();
     assert_eq!(tags, ["Outer", "Inner"]);
-    assert_eq!(list[0].paragraph_ids, ["body:p:0"]);
-    assert_eq!(list[1].paragraph_ids, ["body:p:0"]);
+    assert_eq!(list[0].paragraph_ids, ["p0"]);
+    assert_eq!(list[1].paragraph_ids, ["p0"]);
 }
 
 #[test]

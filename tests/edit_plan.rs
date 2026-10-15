@@ -70,7 +70,7 @@ fn replace_unique_text_yields_clean_copy_and_tracked_redline() {
         (op.id.as_str(), op.status.as_str(), op.matches),
         ("op-1", "ok", 1)
     );
-    assert_eq!(op.paragraph.as_deref(), Some("body:p:1"));
+    assert_eq!(op.paragraph.as_deref(), Some("p1"));
     assert_eq!(
         op.context.as_deref(),
         Some("above also signs in {his or her→an} individual capacity")
@@ -205,7 +205,9 @@ fn comment_text_must_be_nonempty_xml_safe_text() {
         r#"[{"kind":"replace","paragraph":{"index":0},"find":"3","replacement":"4","comment":"bad\u0008"}]"#,
         r#"[{"kind":"insert","paragraph":{"index":0},"after":"1(g), ","text":"2(c), ","comment":"\u001f"}]"#,
         r#"[{"kind":"insert_paragraph","paragraph":{"index":0},"position":"after","runs":[{"text":"New"}],"comment":"x￿"}]"#,
-        r#"[{"kind":"replace","paragraph":{"index":0},"find":"3","replacement":"4","comment":"  "}]"#,
+        // A comment operation needs text; only an edit's optional comment
+        // may be blank (and then means none).
+        r#"[{"kind":"comment","paragraph":{"index":0},"text":"  "}]"#,
     ] {
         let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
         assert_eq!(err.code, "INVALID_EDIT", "{ops}");
@@ -235,7 +237,7 @@ fn missing_anchor_and_bad_selectors_are_reported_with_codes() {
             "ANCHOR_NOT_FOUND",
         ),
         (
-            r#"[{"kind":"delete","paragraph":{"id":"body:p:7"},"find":"one"}]"#,
+            r#"[{"kind":"delete","paragraph":{"id":"p7"},"find":"one"}]"#,
             "ANCHOR_NOT_FOUND",
         ),
         (
@@ -328,49 +330,42 @@ fn a_plan_resolves_selected_changes_before_it_edits() {
         )
     };
 
-    let json =
-        with(r#""resolve_revisions":{"accept":{"ids":["body:rev:1"]},"reject":{"authors":["b"]}}"#);
+    let json = with(r#""resolve_revisions":{"accept":{"ids":["r1"]},"reject":{"authors":["b"]}}"#);
     let result = apply_plan_json(&source, &json).unwrap();
     assert_eq!(texts(&result.clean)[0].trim_end(), "hold");
-    assert_eq!(result.report.resolved_revisions.accepted, ["body:rev:1"]);
-    assert_eq!(result.report.resolved_revisions.rejected, ["body:rev:2"]);
+    assert_eq!(result.report.resolved_revisions.accepted, ["r1"]);
+    assert_eq!(result.report.resolved_revisions.rejected, ["r2"]);
     assert_ne!(result.report.base_sha256, result.report.source_sha256);
     assert_word_valid_package(&result.redline);
 
     // A change left tracked is refused by default...
-    let json = with(r#""resolve_revisions":{"accept":{"ids":["body:rev:1"]}}"#);
+    let json = with(r#""resolve_revisions":{"accept":{"ids":["r1"]}}"#);
     let err = apply_plan_json(&source, &json).unwrap_err();
     assert_eq!(err.code, "EXISTING_REVISIONS");
     // ...or flattened as `existing_revisions` says.
-    let json = with(
-        r#""resolve_revisions":{"accept":{"ids":["body:rev:1"]}},"existing_revisions":"accept""#,
-    );
+    let json =
+        with(r#""resolve_revisions":{"accept":{"ids":["r1"]}},"existing_revisions":"accept""#);
     let result = apply_plan_json(&source, &json).unwrap();
     assert_eq!(texts(&result.clean)[0], "hold new");
-    assert_eq!(result.report.resolved_revisions.accepted, ["body:rev:1"]);
+    assert_eq!(result.report.resolved_revisions.accepted, ["r1"]);
 
     // One change accepted and rejected at once is a conflict.
-    let json =
-        with(r#""resolve_revisions":{"accept":{"authors":["a"]},"reject":{"ids":["body:rev:1"]}}"#);
+    let json = with(r#""resolve_revisions":{"accept":{"authors":["a"]},"reject":{"ids":["r1"]}}"#);
     let err = apply_plan_json(&source, &json).unwrap_err();
     assert_eq!(err.code, "REVISION_CONFLICT");
     // An id the document does not hold is refused.
-    let json = with(r#""resolve_revisions":{"accept":{"ids":["body:rev:9"]}}"#);
+    let json = with(r#""resolve_revisions":{"accept":{"ids":["r9"]}}"#);
     let err = apply_plan_json(&source, &json).unwrap_err();
     assert_eq!(err.code, "UNKNOWN_CHANGE");
 
-    // The view's short id and the long id select body:rev:1; the report
+    // The view's short id and the long id select r1; the report
     // keeps the long id.
-    for id in ["r1", "body:rev:1"] {
+    for id in ["r1", "r1"] {
         let json = with(&format!(
             r#""resolve_revisions":{{"accept":{{"ids":["{id}"]}},"reject":{{"authors":["b"]}}}}"#
         ));
         let result = apply_plan_json(&source, &json).unwrap();
-        assert_eq!(
-            result.report.resolved_revisions.accepted,
-            ["body:rev:1"],
-            "{id}"
-        );
+        assert_eq!(result.report.resolved_revisions.accepted, ["r1"], "{id}");
     }
     // A comment id is not a change id.
     let json = with(r#""resolve_revisions":{"accept":{"ids":["c1"]}}"#);
@@ -545,7 +540,7 @@ fn a_deleted_paragraphs_comment_is_checked_like_any_comment() {
         &source,
         &plan(
             &source,
-            r#"[{"id":"drop","kind":"delete_paragraph","paragraph":{"index":1},"comment":" "}]"#,
+            r#"[{"id":"drop","kind":"delete_paragraph","paragraph":{"index":1},"comment":"bad\u0001"}]"#,
         ),
     )
     .unwrap_err();
@@ -744,7 +739,8 @@ fn preview_reports_without_producing_documents() {
         report.operations[0].context.as_deref(),
         Some("alpha {beta→gamma}")
     );
-    assert_eq!(report.revisions.total, 0, "no compare ran");
+    // The counts are applying's: the replacement's deletion and insertion.
+    assert_eq!(report.revisions.total, 2, "{:?}", report.revisions);
 }
 
 #[test]
@@ -833,7 +829,7 @@ fn report_serializes_to_json_lines_an_agent_can_log() {
     assert_eq!(lines[0]["paras"], 1);
     assert_eq!(lines[1]["ev"], "op");
     assert_eq!(lines[1]["status"], "ok");
-    assert_eq!(lines[1]["at"], "body:p:0");
+    assert_eq!(lines[1]["at"], "p0");
     assert_eq!(lines.last().unwrap()["ev"], "summary");
     assert_eq!(lines.last().unwrap()["status"], "ok");
 }
@@ -2029,4 +2025,86 @@ fn the_report_counts_the_listed_changes() {
             .unwrap()
             .len()
     );
+}
+
+#[test]
+fn a_blank_optional_comment_means_no_comment() {
+    // An agent that has nothing to say writes "comment": "" (or spaces);
+    // that is no comment, not an invalid edit.
+    let source = docx(&(para("Heading") + &para(SIGNATURE)));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"op-1","kind":"replace","paragraph":"p1","find":"his or her","replacement":"an","comment":""},
+                {"id":"op-2","kind":"insert_paragraph","paragraph":"p1","runs":[{"text":"New."}],"comment":"   "},
+                {"id":"op-4","kind":"delete_paragraph","paragraph":"p0","comment":" \n "}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean),
+        [
+            "The individual signing above also signs in an individual capacity.",
+            "New."
+        ]
+    );
+    assert!(
+        jubarte::comments::list_comments(&result.redline)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_preview_counts_the_comments_the_plan_adds() {
+    // The dry run's summary is what applying the plan reports.
+    let source = docx(&(para("Heading") + &para(SIGNATURE)));
+    let plan = plan(
+        &source,
+        r#"[{"id":"op-1","kind":"replace","paragraph":"p1","find":"his or her","replacement":"an","comment":"Neutral."},
+            {"id":"op-2","kind":"comment","paragraph":"p0","text":"Rename?"},
+            {"id":"op-3","kind":"insert_paragraph","paragraph":"p1","runs":[{"text":"New."}]}]"#,
+    );
+    let applied = apply_plan(&source, &plan).unwrap();
+    assert_eq!(applied.report.comments_added, 2);
+    assert_eq!(preview_plan(&source, &plan).unwrap().comments_added, 2);
+}
+
+#[test]
+fn a_preview_counts_the_revisions_and_paragraphs_applying_makes() {
+    // bench 2026-10-15: one insert dry-ran as `revs: total 0` and
+    // `paras: 257 → 257`; applying it made a tracked insertion.
+    let source = docx(&(para("Heading") + &para(SIGNATURE)));
+    let plan = plan(
+        &source,
+        r#"[{"id":"op-1","kind":"insert","paragraph":"p0","position":"end","text":" One"},
+            {"id":"op-2","kind":"insert_paragraph","paragraph":"p1","runs":[{"text":"New."}]}]"#,
+    );
+    let applied = apply_plan(&source, &plan).unwrap().report;
+    let preview = preview_plan(&source, &plan).unwrap();
+    assert!(applied.revisions.inserted > 0, "{:?}", applied.revisions);
+    assert_eq!(preview.revisions, applied.revisions);
+    assert_eq!(preview.paragraphs, applied.paragraphs);
+    assert_eq!(preview.paragraphs.to, preview.paragraphs.from + 1);
+}
+
+#[test]
+fn check_plan_resolves_without_applying() {
+    // `add --plan` checks each recorded operation with it: the same
+    // refusals as a preview, without the preview's in-memory apply.
+    let source = docx(&para("alpha beta"));
+    let good = plan(
+        &source,
+        r#"[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"gamma"}]"#,
+    );
+    jubarte::edit::check_plan(&source, &good).unwrap();
+    let bad = plan(
+        &source,
+        r#"[{"kind":"replace","paragraph":"p0","find":"zzz","replacement":"gamma"}]"#,
+    );
+    let checked = jubarte::edit::check_plan(&source, &bad).unwrap_err();
+    let previewed = preview_plan(&source, &bad).unwrap_err();
+    assert_eq!(checked.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(checked.code, previewed.code);
 }

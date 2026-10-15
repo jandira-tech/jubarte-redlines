@@ -242,10 +242,8 @@ fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> Revi
     RevisionCounts::from_changes(changes.iter().filter(|c| {
         c.author.as_deref() == Some(author)
             && c.date.as_deref() == Some(date)
-            && c.id
-                .rsplit(':')
-                .next()
-                .and_then(|id| id.parse::<u64>().ok())
+            && crate::ids::change_id(&c.id)
+                .and_then(|id| id.wid.parse::<u64>().ok())
                 .is_some_and(|id| id >= floor)
     }))
 }
@@ -1442,7 +1440,7 @@ mod public_adjacent_run_replacement_owner_tests {
                 );
                 let source = docx(&body);
                 let frozen = source.clone();
-                let plan = r#"{"schema_version":1,"author":"Source owner","date":"2001-02-03T04:05:06Z","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"body:p:0","find":"firstpartsecond","replacement":"owned replacement"}]}"#;
+                let plan = r#"{"schema_version":1,"author":"Source owner","date":"2001-02-03T04:05:06Z","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"p0","find":"firstpartsecond","replacement":"owned replacement"}]}"#;
                 let out = crate::edit::apply_plan_json(&source, plan).unwrap();
                 let expected = docx(&format!(
                     "<w:p>{ppr}<w:r>{first}<w:t>αowned replacement</w:t></w:r><w:r>{second}<w:t>Ζ</w:t></w:r><w:r><w:rPr><w:u w:val='single'/></w:rPr><w:tab/><w:t>tail</w:t><w:br/></w:r></w:p>"

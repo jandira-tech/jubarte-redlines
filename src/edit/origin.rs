@@ -4,7 +4,7 @@
 
 //! Paragraph ids, and what they name once tracked changes are settled.
 //!
-//! A plan's positional ids (`body:p:3`, `p3`, `t0.row1.cell2`, `header1.p1`,
+//! A plan's positional ids (`p3`, `t0.row1.cell2`, `header1.p1`,
 //! `{"index": 3}`) name paragraphs of the document its author read. When
 //! `resolve_revisions` or `existing_revisions` settles tracked changes
 //! first, paragraphs merge and vanish and every later id shifts. [`Origin`]
@@ -37,16 +37,19 @@ pub(super) struct Ids<'a> {
 pub(super) type Miss = (String, String, usize);
 
 impl Ids<'_> {
-    /// The long id of a short one, as the agent view prints them: `p3` →
-    /// `body:p:3`; a story's stem and `{stem}.p1` (`header1`,
-    /// `footnotes.p1`) → `header1:p:0` and `footnotes:p:1` (the part stem,
-    /// Word's own numbering); `t0.row1.cell2[.p1]` → that cell's first (or
-    /// K-th) paragraph. `None` for a long id (`body:p:3`) and for a short id
-    /// that is no paragraph; an expired or malformed id is refused with its
-    /// settled spelling ([`ShortId`] is the grammar).
-    pub(super) fn long_id(&self, id: &str) -> Option<Result<String, String>> {
+    /// The paragraph id [`crate::ids::paragraph_id`] prints for what `id`
+    /// names, as the agent view prints them: `p3` and `header1.p1` as
+    /// given, `header1.p0` → `header1` (the part stem, Word's own
+    /// numbering), `t0.row1.cell2[.p1]` → that cell's first (or K-th)
+    /// paragraph (`p40`). `None` for a short id that is no paragraph and for
+    /// the id of a paragraph with no short spelling; an expired or malformed
+    /// id, the old `body:p:3` among them, is refused with its settled
+    /// spelling ([`ShortId`] is the grammar).
+    pub(super) fn paragraph_id(&self, id: &str) -> Option<Result<String, String>> {
         if id.contains(":p:") {
-            return None;
+            return crate::ids::parse_location(id)
+                .err()
+                .map(|e| Err(e.to_string()));
         }
         let (story, path) = match id.parse::<ShortId>() {
             Ok(ShortId::Block { story, path }) => (story, path),
@@ -59,7 +62,7 @@ impl Ids<'_> {
             _ => None,
         };
         match (&story, path.as_slice()) {
-            (Story::Body, [Step::Paragraph(n)]) => Some(Ok(format!("body:p:{n}"))),
+            (Story::Body, [Step::Paragraph(n)]) => Some(Ok(crate::ids::paragraph_id("body", *n))),
             (Story::Body, [Step::Table(n), Step::Row(row), Step::Cell(cell), rest @ ..]) => {
                 let index = paragraph(rest)?;
                 Some(self.table_paragraph(&format!("t{n}"), *n, *row, *cell, index))
@@ -72,7 +75,7 @@ impl Ids<'_> {
             (Story::Part(stem), rest) => {
                 let index = paragraph(rest)?;
                 Some(if self.story_ids.contains(&stem.as_str()) {
-                    Ok(format!("{stem}:p:{index}"))
+                    Ok(crate::ids::paragraph_id(stem, index))
                 } else {
                     Err(format!(
                         "{stem} is not a story of this document (stories: {})",
@@ -84,7 +87,7 @@ impl Ids<'_> {
         }
     }
 
-    /// Table `n`, row `row`, cell `cell`: the long id of that cell's
+    /// Table `n`, row `row`, cell `cell`: the id of that cell's
     /// `index`-th own paragraph. Tables are the body's top-level `w:tbl`
     /// elements outside text boxes, in document order (nested tables are
     /// not numbered, as in the agent view); rows and cells count as they
@@ -156,8 +159,7 @@ impl Ids<'_> {
             .ok_or_else(|| {
                 format!("{head}: that paragraph is inside a text box and cannot be edited")
             })?;
-        let (story, in_story) = self.paragraph_story[global];
-        Ok(format!("{}:p:{in_story}", self.story_ids[story]))
+        Ok(self.id(global))
     }
 
     /// The paragraph a positional selector names, as an index into
@@ -167,15 +169,12 @@ impl Ids<'_> {
         let not_found = |message: String| Err(("ANCHOR_NOT_FOUND".to_string(), message, 0));
         let (story, index) = match selector {
             Selector::Name(id) | Selector::Id { id } => {
-                let long = match self.long_id(id) {
-                    Some(Ok(long)) => long,
+                let printed = match self.paragraph_id(id) {
+                    Some(Ok(printed)) => printed,
                     Some(Err(message)) => return not_found(message),
                     None => id.clone(),
                 };
-                match long
-                    .rsplit_once(":p:")
-                    .and_then(|(story, n)| Some((story.to_string(), n.parse::<usize>().ok()?)))
-                {
+                match crate::ids::paragraph_place(&printed) {
                     Some((story, n)) => (story, Some(n)),
                     None => return not_found(format!("unknown paragraph id {id}")),
                 }
@@ -210,10 +209,10 @@ impl Ids<'_> {
         }
     }
 
-    /// `{story}:p:{index}` of a paragraph.
+    /// The id of a paragraph ([`crate::ids::paragraph_id`]).
     pub(super) fn id(&self, global: usize) -> String {
         let (story, local) = self.paragraph_story[global];
-        format!("{}:p:{local}", self.story_ids[story])
+        crate::ids::paragraph_id(self.story_ids[story], local)
     }
 }
 

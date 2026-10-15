@@ -193,7 +193,7 @@ fn insert_footnote_refusals() {
             "INVALID_EDIT",
         ),
         (
-            r#"[{"kind":"insert_footnote","paragraph":"footnotes:p:0","after":"Old","text":"x"}]"#,
+            r#"[{"kind":"insert_footnote","paragraph":"footnotes","after":"Old","text":"x"}]"#,
             "UNSUPPORTED_STRUCTURE",
         ),
         (

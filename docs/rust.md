@@ -97,7 +97,7 @@ use jubarte::changes::{self, ChangeFilter, ChangeKind};
 
 let filter = ChangeFilter {
     kinds: Some(vec![ChangeKind::Formatting]),
-    ..ChangeFilter::ids(["body:rev:12"])
+    ..ChangeFilter::ids(["r12"])
 };
 let resolved = changes::accept_changes(&redline, &filter)?;
 ```
@@ -862,9 +862,9 @@ GIT:
 $ jubarte read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
-A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
-is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
-@AC<<}`) and comments with theirs (`{>>c5 @AC: …<<}`).
+A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
+tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12 @AC<<}`) and
+comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte read [OPTIONS] <FILE>
 
@@ -1102,8 +1102,8 @@ Examples:
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
 WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
-t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12
-(a revision), or a long id (body:p:12).
+t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
+(a revision).
 ```
 
 #### `jubarte add`
