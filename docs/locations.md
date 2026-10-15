@@ -76,6 +76,7 @@ The shortest call chain from each function that reads the flag down to each id p
 | change | `r12`, `r1+2`, `header1.r1`, `footnotes.r3` |
 | comment | `c27` |
 | comment_text | `c27.text` |
+| control | `cc0`, `p12.cc0`, `t0.row1.cell2.cc0` |
 | paragraph | `p12`, `header1`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2`, `t0.row1.cell2.p1` |
 | table | `t0` |
 

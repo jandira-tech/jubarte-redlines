@@ -69,6 +69,10 @@ pub const PARAGRAPH_SPELLINGS: &[&str] = &[
 /// their table, as in [`PARAGRAPH_SPELLINGS`]).
 pub const TABLE_SPELLINGS: &[&str] = &["t0"];
 
+/// The content control spellings the manifest advertises: a block control,
+/// one in a paragraph, and one in a cell's first paragraph.
+pub const CONTROL_SPELLINGS: &[&str] = &["cc0", "p12.cc0", "t0.row1.cell2.cc0"];
+
 /// A refused id: what was given and what was expected.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdError {
@@ -843,6 +847,7 @@ mod tests {
             COMMENT_TEXT_SPELLINGS,
             PARAGRAPH_SPELLINGS,
             TABLE_SPELLINGS,
+            CONTROL_SPELLINGS,
         ]
         .concat()
         .iter()
