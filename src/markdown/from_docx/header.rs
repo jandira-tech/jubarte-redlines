@@ -1439,8 +1439,8 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                             }
                             // Only a printed field's result shows, and not
                             // the code of a field nested in it.
-                            _ if !s.fields.is_empty()
-                                && !(s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
+                            _ if !(s.fields.is_empty()
+                                || s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
                             "t" => s.push_text(&child.text()),
                             "delText" if s.deleting => s.push_text(&child.text()),
                             "tab" => s.out.push('\t'),
