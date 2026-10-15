@@ -397,6 +397,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     // The id line of each definition, by label: `footnotes.p2`, or
     // `footnotes.p2-p3` for a note of two paragraphs.
     let mut note_ids: HashMap<String, String> = HashMap::new();
+    // The style of each note whose first paragraph is not in Word's own
+    // (`footnote text`, `endnote text`), by label: its id line names it.
+    let mut note_styles: HashMap<String, String> = HashMap::new();
     // The notes a definition line shows.
     let mut defined: HashSet<(bool, String)> = HashSet::new();
     while index < writer.note_refs.len() {
@@ -423,6 +426,35 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         // Every paragraph the id line counts, a table's cells' too: the
         // view has no table in a note, so they are the note's paragraphs.
         let paragraphs = agent::paragraphs(note);
+        let note_style = {
+            let own = if key.0 { "EndnoteText" } else { "FootnoteText" };
+            let id = paragraphs
+                .first()
+                .and_then(|p| p.path(&["pPr", "pStyle"]))
+                .and_then(|s| s.attr("val"))
+                .filter(|id| Some(*id) != default_style.as_deref());
+            match id {
+                None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
+                // Word's own, under any id (`a5` in a localized document).
+                Some(id)
+                    if writer
+                        .styles
+                        .by_id
+                        .get(id)
+                        .map_or(id.eq_ignore_ascii_case(own), |s| {
+                            s.name
+                                == if key.0 {
+                                    "endnote text"
+                                } else {
+                                    "footnote text"
+                                }
+                        }) =>
+                {
+                    None
+                }
+                Some(id) => Some(id.to_string()),
+            }
+        };
         let many = writer.agent && paragraphs.len() > 1;
         let parts: Vec<critic::Part> = paragraphs
             .into_iter()
@@ -499,6 +531,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     _ => format!("{story}.p{first}-p{}", first + count - 1),
                 };
                 note_ids.insert(index.to_string(), id);
+                if let Some(style) = note_style {
+                    note_styles.insert(index.to_string(), style);
+                }
             }
             defs.push(def);
             defined.insert(key);
@@ -703,8 +738,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 }
             }
         }
-        // The comments' paragraph styles too, as the stories' below.
-        for style in comment_facts.iter().map(|c| c.style.as_str()) {
+        // The comments' and notes' paragraph styles too, as the stories'
+        // below.
+        let mut note_list: Vec<&String> = note_styles.values().collect();
+        note_list.sort();
+        for style in comment_facts
+            .iter()
+            .map(|c| c.style.as_str())
+            .chain(note_list.into_iter().map(String::as_str))
+        {
             if style != default_style.as_deref().unwrap_or("Normal")
                 && style != "CommentText"
                 && styles_root.as_ref().is_some_and(|root| {
@@ -1044,7 +1086,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     .and_then(|label| note_ids.get(label))
                     .filter(|_| options.ids)
                 {
-                    Some(id) => format!("<!-- {id} -->\n{def}"),
+                    Some(id) => {
+                        let style = agent::note_label(def)
+                            .and_then(|label| note_styles.get(label))
+                            .map(|style| {
+                                format!(" {}", crate::markdown::view_notes::style_token(style))
+                            })
+                            .unwrap_or_default();
+                        format!("<!-- {id}{style} -->\n{def}")
+                    }
                     None => def.clone(),
                 }
             })

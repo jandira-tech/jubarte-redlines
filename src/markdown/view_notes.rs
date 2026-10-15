@@ -825,6 +825,23 @@ pub(super) fn note_paragraphs(line: &str) -> Option<usize> {
     last.checked_sub(first)?.checked_add(1)
 }
 
+/// The style a note definition's id line names after its id
+/// (`<!-- endnotes.p0 Endnote -->`, `<!-- footnotes.p1 "My Note" -->`):
+/// the note's paragraphs are in it, not in Word's note style.
+pub(super) fn note_style(line: &str) -> Option<String> {
+    note_line(line, "footnotes").or_else(|| note_line(line, "endnotes"))?;
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let (id, rest) = inner.split_once(' ')?;
+    if id.ends_with(',') {
+        return None;
+    }
+    take_style(rest.trim()).map(|(style, _)| style)
+}
+
 /// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).
 pub(super) fn endnote_line(line: &str) -> bool {
     note_line(line, "endnotes").is_some()
