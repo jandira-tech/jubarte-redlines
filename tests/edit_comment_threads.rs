@@ -24,7 +24,7 @@ fn reply_and_resolve_round_trip() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"}]}"#,
+        {"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"}]}"#,
         ),
     )
     .unwrap();
@@ -44,7 +44,7 @@ fn reply_and_resolve_round_trip() {
     assert_eq!(root.anchor_text, "cap");
     assert_eq!(root.before, "The ");
     assert_eq!(root.after, " is 10.");
-    assert_eq!(root.paragraph.as_deref(), Some("body:p:0"));
+    assert_eq!(root.paragraph.as_deref(), Some("p0"));
 
     let second = apply_plan(
         &first.clean,
@@ -85,7 +85,7 @@ fn edit_and_delete_leave_a_valid_package() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"body:p:0","through":"body:p:1","text":"Both paragraphs"}]}"#,
+        {"kind":"comment","paragraph":"p0","through":"p1","text":"Both paragraphs"}]}"#,
         ),
     )
     .unwrap();
@@ -93,7 +93,7 @@ fn edit_and_delete_leave_a_valid_package() {
     let listed = list_comments(&with.clean).unwrap();
     let id = listed[0].id;
     assert_eq!(listed[0].anchor_text, "One.\nTwo.");
-    assert_eq!(listed[0].paragraph.as_deref(), Some("body:p:0"));
+    assert_eq!(listed[0].paragraph.as_deref(), Some("p0"));
 
     let edited = apply_plan(
         &with.clean,
@@ -155,7 +155,7 @@ fn unknown_ids_and_header_anchors_are_refused() {
         &two,
         &plan(
             r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"comment","paragraph":"body:p:1","through":"body:p:0","text":"?"}]}"#,
+        {"kind":"comment","paragraph":"p1","through":"p0","text":"?"}]}"#,
         ),
     )
     .unwrap_err();
@@ -169,7 +169,7 @@ fn a_new_comment_writes_the_whole_family_with_para_ids() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"body:p:0","find":"beta","text":"one\ntwo"}]}"#,
+        {"kind":"comment","paragraph":"p0","find":"beta","text":"one\ntwo"}]}"#,
         ),
     )
     .unwrap();
@@ -195,7 +195,7 @@ fn through_places_start_in_the_first_and_end_in_the_last_paragraph() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"body:p:0","through":"body:p:2","text":"span"}]}"#,
+        {"kind":"comment","paragraph":"p0","through":"p2","text":"span"}]}"#,
         ),
     )
     .unwrap();
@@ -298,7 +298,7 @@ fn replying_to_a_reply_threads_under_the_root_and_delete_takes_replies() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"}]}"#,
+        {"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"}]}"#,
         ),
     )
     .unwrap();
@@ -384,8 +384,8 @@ fn select_comments_filters_by_author_and_latest_per_thread() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"},
-        {"kind":"comment","paragraph":"body:p:1","text":"Fine"}]}"#,
+        {"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"},
+        {"kind":"comment","paragraph":"p1","text":"Fine"}]}"#,
         ),
     )
     .unwrap();
@@ -427,9 +427,9 @@ fn undated_plans_date_everything_they_write_now() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"},
-        {"kind":"replace","paragraph":"body:p:0","find":"10","replacement":"12"},
-        {"kind":"delete_paragraph","paragraph":"body:p:1","comment":"Not needed"}]}"#,
+        {"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"},
+        {"kind":"replace","paragraph":"p0","find":"10","replacement":"12"},
+        {"kind":"delete_paragraph","paragraph":"p1","comment":"Not needed"}]}"#,
         ),
     )
     .unwrap();
@@ -483,7 +483,7 @@ fn undated_plans_date_everything_they_write_now() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","date":"2026-01-02T03:04:05Z","operations":[
-        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"}]}"#,
+        {"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"}]}"#,
         ),
     )
     .unwrap();
@@ -501,7 +501,7 @@ fn a_comment_the_plans_settling_removes_is_refused_with_the_reason() {
         &docx(&(para("Drop this.") + &para("Kept."))),
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"delete_paragraph","paragraph":"body:p:0","comment":"Not needed"}]}"#,
+        {"kind":"delete_paragraph","paragraph":"p0","comment":"Not needed"}]}"#,
         ),
     )
     .unwrap();

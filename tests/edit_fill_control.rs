@@ -134,7 +134,7 @@ fn the_fill_drops_the_placeholder_style_and_reports_the_change() {
     assert_eq!(op.kind, "fill_control");
     assert_eq!(op.status, "ok");
     assert_eq!(op.matches, 1);
-    assert_eq!(op.paragraph.as_deref(), Some("body:p:0"));
+    assert_eq!(op.paragraph.as_deref(), Some("p0"));
     let context = op.context.as_deref().unwrap();
     assert!(
         context.contains("body:sdt:0") && context.contains("Ada Lovelace"),
@@ -261,7 +261,7 @@ fn block_level_rich_text_collapses_to_one_paragraph_keeping_the_first_ppr() {
     assert!(xml.contains(r#"<w:pStyle w:val="Heading2" />"#), "{xml}");
     assert!(xml.contains(r#"<w:tag w:val="Terms" />"#), "{xml}");
     let list = controls(&out.clean).unwrap();
-    assert_eq!(list[7].paragraph_ids, ["body:p:7"]);
+    assert_eq!(list[7].paragraph_ids, ["p7"]);
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn missing_and_ambiguous_controls_are_anchor_errors() {
     )
     .unwrap_err();
     assert_eq!(e.code, "ANCHOR_NOT_FOUND");
-    for bad in [r#""body:sdt:9""#, r#""body:p:0""#, r#""sdt""#] {
+    for bad in [r#""body:sdt:9""#, r#""p0""#, r#""sdt""#] {
         let e = apply_plan(
             &form(),
             &plan(&format!(
@@ -373,7 +373,7 @@ fn conflicting_fills_and_paragraph_operations_overlap() {
         &form(),
         &plan(
             r#"{"kind":"fill_control","control":{"tag":"Country"},"choice":"BR"},
-               {"kind":"delete_paragraph","paragraph":"body:p:1"}"#,
+               {"kind":"delete_paragraph","paragraph":"p1"}"#,
         ),
     )
     .unwrap_err();
@@ -382,7 +382,7 @@ fn conflicting_fills_and_paragraph_operations_overlap() {
         &wide_form(),
         &plan(
             r#"{"kind":"fill_control","control":{"tag":"Terms"},"text":"x"},
-               {"kind":"format_paragraph","paragraph":"body:p:8","alignment":"center"}"#,
+               {"kind":"format_paragraph","paragraph":"p8","alignment":"center"}"#,
         ),
     )
     .unwrap_err();
@@ -404,7 +404,7 @@ fn a_fill_and_a_replace_in_the_same_paragraph_both_apply() {
     let out = apply_plan(
         &form(),
         &plan(
-            r#"{"kind":"replace","paragraph":"body:p:0","find":"Name","replacement":"Full name"},
+            r#"{"kind":"replace","paragraph":"p0","find":"Name","replacement":"Full name"},
                {"kind":"fill_control","control":{"tag":"Name"},"text":"Ada"}"#,
         ),
     )
@@ -423,14 +423,14 @@ fn preview_resolves_a_fill_without_writing() {
     .unwrap();
     assert!(report.ok);
     assert_eq!(report.operations[0].kind, "fill_control");
-    assert_eq!(report.operations[0].paragraph.as_deref(), Some("body:p:0"));
+    assert_eq!(report.operations[0].paragraph.as_deref(), Some("p0"));
 }
 
 #[test]
 fn unknown_and_paragraph_keys_are_invalid_plans() {
     for op in [
         r#"{"kind":"fill_control","control":{"tag":"Name"},"text":"a","replacment":"b"}"#,
-        r#"{"kind":"fill_control","paragraph":"body:p:0","control":{"tag":"Name"},"text":"a"}"#,
+        r#"{"kind":"fill_control","paragraph":"p0","control":{"tag":"Name"},"text":"a"}"#,
     ] {
         let e = EditPlan::from_json(&format!(
             r#"{{"schema_version":1,"author":"A","operations":[{op}]}}"#
@@ -510,8 +510,8 @@ fn controls_holding_note_or_comment_references_are_refused() {
 #[test]
 fn tables_and_lists_on_a_filled_block_control_overlap() {
     for op in [
-        r#"{"kind":"list","paragraphs":["body:p:8"]}"#,
-        r#"{"kind":"insert_table","paragraph":"body:p:7","position":"after","rows":[["a"]]}"#,
+        r#"{"kind":"list","paragraphs":["p8"]}"#,
+        r#"{"kind":"insert_table","paragraph":"p7","position":"after","rows":[["a"]]}"#,
     ] {
         let e = apply_plan(
             &wide_form(),
@@ -527,7 +527,7 @@ fn tables_and_lists_on_a_filled_block_control_overlap() {
         &wide_form(),
         &plan(
             r#"{"kind":"fill_control","control":{"tag":"Terms"},"text":"x"},
-               {"kind":"list","paragraphs":["body:p:9"]}"#,
+               {"kind":"list","paragraphs":["p9"]}"#,
         ),
     )
     .unwrap();

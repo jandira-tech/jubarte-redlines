@@ -26,7 +26,7 @@ fn commented() -> Vec<u8> {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Ann","operations":[
-            {"kind":"comment","paragraph":"body:p:0","find":"ten dollars","text":"Check the rate"}]}"#,
+            {"kind":"comment","paragraph":"p0","find":"ten dollars","text":"Check the rate"}]}"#,
         ),
     )
     .unwrap()
@@ -84,7 +84,7 @@ fn replacing_the_whole_commented_text_keeps_the_deletion_inside_the_comment() {
         &source,
         &plan(
             r#"{"schema_version":1,"author":"Bob","date":"2026-10-12T00:00:00Z","operations":[
-            {"kind":"replace","paragraph":"body:p:0","find":"ten dollars","replacement":"twelve euros"}]}"#,
+            {"kind":"replace","paragraph":"p0","find":"ten dollars","replacement":"twelve euros"}]}"#,
         ),
     )
     .unwrap();
@@ -129,10 +129,7 @@ fn rewriting_c0_text_replaces_what_the_comment_covers() {
         covered(&reject_revisions(&edited.redline).unwrap()),
         "ten dollars"
     );
-    assert_eq!(
-        edited.report.operations[0].paragraph.as_deref(),
-        Some("body:p:0")
-    );
+    assert_eq!(edited.report.operations[0].paragraph.as_deref(), Some("p0"));
 }
 
 /// A plan that rewrites what a comment covers is emitted directly, and the
