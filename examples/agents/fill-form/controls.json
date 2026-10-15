@@ -1,24 +1,24 @@
 [
   {
-    "id": "body:sdt:0",
+    "id": "p1.cc0",
     "tag": "Name",
     "alias": "Full name",
     "kind": "text",
     "text": "Click or tap here to enter text.",
     "paragraph_ids": [
-      "body:p:1"
+      "p1"
     ],
     "locked": false,
     "placeholder": true
   },
   {
-    "id": "body:sdt:1",
+    "id": "p2.cc0",
     "tag": "Country",
     "alias": "Country",
     "kind": "drop_down",
     "text": "Choose an item.",
     "paragraph_ids": [
-      "body:p:2"
+      "p2"
     ],
     "locked": false,
     "choices": [
@@ -30,49 +30,49 @@
     "placeholder": true
   },
   {
-    "id": "body:sdt:2",
+    "id": "p3.cc0",
     "tag": "Consent",
     "kind": "checkbox",
     "text": "☐",
     "paragraph_ids": [
-      "body:p:3"
+      "p3"
     ],
     "locked": false,
     "checked": false,
     "placeholder": false
   },
   {
-    "id": "body:sdt:3",
+    "id": "p4.cc0",
     "tag": "Signed",
     "alias": "Signature date",
     "kind": "date",
     "text": "Click or tap to enter a date.",
     "paragraph_ids": [
-      "body:p:4"
+      "p4"
     ],
     "locked": false,
     "placeholder": true
   },
   {
-    "id": "body:sdt:4",
+    "id": "cc0",
     "tag": "Matter",
     "alias": "Matter",
     "kind": "rich_text",
     "text": "Describe the matter in a few sentences.\nAdd parties and deadlines.",
     "paragraph_ids": [
-      "body:p:6",
-      "body:p:7"
+      "p6",
+      "p7"
     ],
     "locked": false,
     "placeholder": true
   },
   {
-    "id": "body:sdt:5",
+    "id": "p8.cc0",
     "tag": "Ref",
     "kind": "text",
     "text": "INTAKE-2026-v3",
     "paragraph_ids": [
-      "body:p:8"
+      "p8"
     ],
     "locked": true,
     "placeholder": false

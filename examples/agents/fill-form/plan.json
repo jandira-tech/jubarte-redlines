@@ -8,7 +8,7 @@
     {"id": "country", "kind": "fill_control", "control": {"alias": "Country"}, "choice": "Brazil"},
     {"id": "consent", "kind": "fill_control", "control": {"tag": "Consent"}, "checked": true},
     {"id": "signed", "kind": "fill_control", "control": {"tag": "Signed"}, "date": "2026-10-02"},
-    {"id": "matter", "kind": "fill_control", "control": "body:sdt:4",
+    {"id": "matter", "kind": "fill_control", "control": "cc0",
      "text": "Review of a supplier agreement before renewal; counterparty Acme Ltd."}
   ]
 }
