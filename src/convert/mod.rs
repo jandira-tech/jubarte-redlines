@@ -1327,6 +1327,8 @@ struct PageSetup {
     col_w: [f32; 4],
     /// Space after each custom column (pt).
     col_gap: [f32; 4],
+    /// `w:cols/@w:sep`: a rule down the middle of each gap.
+    col_sep: bool,
     /// `w:lnNumType/@w:countBy`. 0 = line numbering off.
     ln_count_by: u32,
     /// `w:lnNumType/@w:start`. Word default 1.
@@ -1775,6 +1777,7 @@ impl Defaults {
                 col_custom: 0,
                 col_w: [0.0; 4],
                 col_gap: [0.0; 4],
+                col_sep: false,
                 ln_count_by: 0,
                 ln_start: 1,
                 ln_distance: 0.0,
@@ -5134,6 +5137,7 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
         if let Some(sp) = attr_any(dom, cols, "space").and_then(parse_len) {
             page.col_space = sp;
         }
+        page.col_sep = matches!(attr_any(dom, cols, "sep"), Some("1" | "true" | "on"));
         let equal = !matches!(
             attr_any(dom, cols, "equalWidth").unwrap_or("1"),
             "0" | "false" | "off"
@@ -9130,7 +9134,15 @@ fn walk_container(
                     apply_sect_pr(dom, here, base),
                     apply_sect_pr(dom, next, base),
                 );
-                let cols = |p: &PageSetup| (p.col_count.max(1), p.col_custom, p.col_w, p.col_gap);
+                let cols = |p: &PageSetup| {
+                    (
+                        p.col_count.max(1),
+                        p.col_custom,
+                        p.col_w,
+                        p.col_gap,
+                        p.col_sep,
+                    )
+                };
                 let moved = cols(&was) != cols(&page)
                     || (page.col_count > 1 && (was.col_space - page.col_space).abs() > 0.01)
                     || (was.margin_l - page.margin_l).abs() > 0.01
@@ -23358,6 +23370,7 @@ impl<'a> Layout<'a> {
     fn new_page(&mut self) {
         self.blank_below = None;
         self.close_rev_bar();
+        self.paint_col_rules();
         if self.pages.len() == 1 {
             self.center_first_page_body();
         }
@@ -23475,6 +23488,7 @@ impl<'a> Layout<'a> {
         let keep_empty_section =
             !self.page_has_body && next.is_some() && self.last_break_was_section;
         if self.page_has_body || keep_empty_section || skip_blank {
+            self.paint_col_rules();
             if self.pages.len() == 1 {
                 self.center_first_page_body();
             }
@@ -23833,6 +23847,7 @@ impl<'a> Layout<'a> {
     /// margins apply at once; its top/bottom wait for the next page (the
     /// floor is fixed when a page starts).
     fn start_continuous_section(&mut self, next: &PageSetup) {
+        self.paint_col_rules();
         // A continuous section opens under the tallest column of the one
         // before, not under whichever column it ended in (003329b5's
         // "NOS RESSOURCES" sits under column three's last line).
@@ -23844,6 +23859,7 @@ impl<'a> Layout<'a> {
         self.page.col_custom = next.col_custom;
         self.page.col_w = next.col_w;
         self.page.col_gap = next.col_gap;
+        self.page.col_sep = next.col_sep;
         self.page.margin_l = next.margin_l;
         self.page.margin_r = next.margin_r;
         self.top_pending |= (self.page.margin_t - next.margin_t).abs() > 0.01;
@@ -23853,6 +23869,40 @@ impl<'a> Layout<'a> {
         self.margin_r0 = next.margin_r;
         self.col_i = 0;
         self.col_top = (next.col_count > 1).then_some(self.y);
+    }
+
+    /// `w:cols/@w:sep`: a 0.75pt black rule down the middle of each gap,
+    /// from the columns' top to the bottom of the longest one (Word's PDF
+    /// of Demo.docx: 72.03 to 738.73 under the left column's last line,
+    /// not the bottom margin). Runs as the columns end: a page or a
+    /// section closing.
+    fn paint_col_rules(&mut self) {
+        let n = self.page.col_count;
+        if n <= 1 || !self.page.col_sep || !self.page_has_body {
+            return;
+        }
+        let top = self.col_top.unwrap_or(self.page.height - self.body_top);
+        let bottom = self
+            .col_floor
+            .map_or(self.y, |f| f.min(self.y))
+            .max(self.body_floor);
+        if top - bottom < 0.5 {
+            return;
+        }
+        const W: f32 = 0.75;
+        let mut x = self.page.margin_l;
+        for i in 0..n - 1 {
+            x += self.col_width_at(i);
+            let mid = x + self.col_gap_at(i) / 2.0;
+            x += self.col_gap_at(i);
+            self.current().ops.push(Op::FillRect {
+                x: mid - W / 2.0,
+                y: bottom,
+                w: W,
+                h: top - bottom,
+                color: [0.0, 0.0, 0.0],
+            });
+        }
     }
 
     fn column_break(&mut self) {
@@ -31170,9 +31220,15 @@ impl<'a> Layout<'a> {
         (self.y, self.para_top, self.page_has_body) = saved;
     }
 
+    /// The header and footer span the page's text area: columns divide
+    /// the body only (Word's PDF of Demo.docx centres the two-column
+    /// section's page number and header on the page).
     fn chrome(&mut self) {
         self.in_chrome = true;
+        let cols = (self.page.col_count, self.col_i);
+        (self.page.col_count, self.col_i) = (1, 0);
         self.chrome_parts();
+        (self.page.col_count, self.col_i) = cols;
         self.in_chrome = false;
     }
 
@@ -33941,6 +33997,7 @@ fn layout_with_facts(
             " ",
         ));
     }
+    lay.paint_col_rules();
     if lay.pages.len() == 1 {
         lay.center_first_page_body();
     }
