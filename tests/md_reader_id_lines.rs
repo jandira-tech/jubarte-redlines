@@ -1946,25 +1946,21 @@ fn bold_around_italic_does_not_print_empty_emphasis() {
     assert!(!xml.contains("****"), "{xml}");
 }
 
-/// `=  ` is two spaces, and a line break in a math run is a line break.
-/// Collapsing either onto one space moves the line Word draws. The break
-/// follows `λ`, not `\lambda`: LaTeX ends a control word on the space after
-/// it, so a break there is not math text.
+/// `=  ` is two spaces: collapsing them onto one moves the line Word draws.
+/// A line break in a math run reads as a space, since a break in the view
+/// would end the paragraph's line. The break follows `λ`, not `\lambda`:
+/// LaTeX ends a control word on the space after it.
 #[test]
-fn math_run_spaces_and_breaks_survive_the_view() {
+fn math_run_spaces_survive_the_view_and_a_break_reads_as_a_space() {
     let markdown = "$$\\textrm{logit}(\\pi_i) =  λ\n\\label{eq:one}$$\n";
     let (c, b, d) = idless_chain(markdown);
-    let equation = "$$\\text{logit}(π_i) =  λ\n\\backslash label\\lbrace eq:one\\rbrace$$";
+    let equation = "$$\\text{logit}(π_i) =  λ \\backslash label\\lbrace eq:one\\rbrace$$";
     assert!(c.contains(equation), "{c}");
     for (name, docx) in [("B", &b), ("D", &d)] {
         let xml = document_xml(docx);
         assert!(
             xml.contains(" =  "),
             "{name} collapsed the spaces after '=': {xml}"
-        );
-        assert!(
-            xml.contains("&#xA;"),
-            "{name} collapsed the line break in the equation: {xml}"
         );
     }
 }

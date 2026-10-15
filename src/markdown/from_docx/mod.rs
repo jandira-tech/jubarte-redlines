@@ -3354,11 +3354,16 @@ fn math(element: &Element) -> String {
     math_space(&math_inner(element, 0, false))
 }
 
-/// The equation's LaTeX with its edges trimmed. A run of spaces or a line
-/// break inside a run stays: Word draws it, and collapsing it onto one
-/// space moves the line.
+/// The equation's LaTeX with its edges trimmed. A run of spaces stays:
+/// collapsing it onto one moves the line. A line break reads as a space,
+/// since a break in the view would end the line (`- y` after it starts a
+/// list, and a heading or a table row ends there).
 fn math_space(latex: &str) -> String {
-    latex.trim().to_string()
+    latex
+        .trim()
+        .chars()
+        .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
+        .collect()
 }
 
 /// The LaTeX of `element`; `name` while inside a function's name, whose
@@ -3978,13 +3983,27 @@ mod tests {
     }
 
     #[test]
-    fn math_keeps_a_run_of_spaces_and_a_line_break() {
+    fn math_keeps_a_run_of_spaces_and_reads_a_line_break_as_one() {
         let spaced = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>logit</m:t></m:r><m:r><m:t xml:space="preserve"> =  </m:t></m:r><m:r><m:t>λ</m:t></m:r></m:oMath>"#;
         let element = super::ooxml::parse_xml(spaced.as_bytes()).expect("spaced math");
         assert_eq!(math(&element), "logit =  λ");
         let broken = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t xml:space="preserve">.&#xA;\label</m:t></m:r></m:oMath>"#;
         let element = super::ooxml::parse_xml(broken.as_bytes()).expect("broken math");
-        assert_eq!(math(&element), ".\n\\backslash label");
+        assert_eq!(math(&element), ". \\backslash label");
+        // A break in the view would end the line: `- y` would start a list,
+        // and a heading or a table row would end there.
+        for (text, latex) in [
+            ("x&#xA;- y", "x - y"),
+            ("x&#xA;# y", "x # y"),
+            ("x&#xA;&#xA;y", "x  y"),
+            ("x&#xD;&#xA;y", "x  y"),
+        ] {
+            let xml = format!(
+                r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t xml:space="preserve">{text}</m:t></m:r></m:oMath>"#
+            );
+            let element = super::ooxml::parse_xml(xml.as_bytes()).expect("math");
+            assert_eq!(math(&element), latex, "{text}");
+        }
     }
 
     #[test]
