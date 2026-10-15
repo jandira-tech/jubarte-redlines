@@ -425,7 +425,8 @@ another default too, writes one.
 A comment's paragraphs take Word's CommentText style unless the
 `comments:` line names theirs: `style Normal` for every comment, and
 `c6 style CommentText` for one that differs (a style id that is no plain
-word is quoted, as on id lines).
+word is quoted, as on id lines). A comment's style is its first
+paragraph's, and all its paragraphs take it.
 A table cell's paragraph has no id line, so the table line names its
 formatting changes: `fmt r6 @AC in p2`. Whatever change no other line
 shows (a change in a text box with no text to tag, or in Word's Fallback
