@@ -1434,9 +1434,16 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.note_count += 1;
                 let label = note_label(&label);
                 if counted > 1 && !self.note_paragraph_breaks {
+                    // One paragraph takes the first style; the rest go unused.
+                    let styles = match self.note_style.split_first() {
+                        Some((first, rest)) if !rest.is_empty() => {
+                            format!(", in style {first}; {} are not written", rest.join(", "))
+                        }
+                        _ => String::new(),
+                    };
                     self.document.warnings.push(format!(
                         "[^{label}]: its id line counts {counted} paragraphs and its text \
-                         {} by its <br>s: the <br>s are written as line breaks",
+                         {} by its <br>s: the <br>s are written as line breaks{styles}",
                         breaks + 1
                     ));
                 }
@@ -1763,9 +1770,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             // A note's id line says which part the definition after it is
             // in; it describes no body paragraph.
+            // Like the part, the styles are only the line's right before
+            // the definition.
             self.endnote_next = view_notes::endnote_line(line);
+            self.note_style_next = view_notes::note_styles(line).unwrap_or_default();
             if self.endnote_next || view_notes::footnote_line(line) {
-                self.note_style_next = view_notes::note_styles(line).unwrap_or_default();
                 continue;
             }
             self.textless_paragraph();

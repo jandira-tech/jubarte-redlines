@@ -14,14 +14,15 @@ use std::io::Read as _;
 const STYLES_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
 const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
-/// Normal, Word's note styles under their ids, LibreOffice's `Endnote`, a
+/// Normal, Word's note styles under their ids (EndnoteText 12pt),
+/// LibreOffice's `Endnote`, a
 /// localized `a5` named `footnote text`, `My Note`, and a `CommentText`
 /// whose size (7.5pt) is the document's own.
 fn styles_xml() -> String {
     let w = common::docx::W_NS;
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText"><w:name w:val="endnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Endnote"><w:name w:val="Endnote"/><w:basedOn w:val="Normal"/><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="a5"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="My Note"><w:name w:val="My Note"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="15"/></w:rPr></w:style></w:styles>"#
+<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText"><w:name w:val="endnote text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Endnote"><w:name w:val="Endnote"/><w:basedOn w:val="Normal"/><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="a5"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="My Note"><w:name w:val="My Note"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="15"/></w:rPr></w:style></w:styles>"#
     )
 }
 
@@ -268,4 +269,85 @@ fn a_note_in_comment_text_keeps_its_definition() {
         "{view}\n{definition}"
     );
     assert_eq!(view_again, view);
+}
+
+/// The docx a hand-written view writes, and its warnings.
+fn write(view: &str) -> (Vec<u8>, Vec<String>) {
+    let out = markdown_to_docx(view, &DocxOptions::default()).expect("the view reads");
+    common::validity::assert_word_valid_package(&out.docx);
+    (out.docx, out.warnings)
+}
+
+#[test]
+fn a_footnote_in_endnote_text_keeps_its_definition() {
+    // pi on #495 (F1): the legend left out every `EndnoteText` and
+    // `FootnoteText`, so a footnote in the endnote style lost its own.
+    let docx = docx("footnote", &[Some("EndnoteText")]);
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(view.contains(" EndnoteText -->"), "{view}");
+    assert_eq!(note_styles(&again, "footnote"), ["EndnoteText"]);
+    let styles = part(&again, "word/styles.xml");
+    let definition = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"EndnoteText\""))
+        .unwrap_or_else(|| panic!("no EndnoteText: {styles}"));
+    assert!(
+        definition.contains(r#"<w:sz w:val="24"/>"#),
+        "{view}\n{definition}"
+    );
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_note_id_lines_style_stays_with_its_note() {
+    // pi on #495 (F2): a body id line after an endnote's line made the
+    // next definition a footnote but kept the endnote's style for it.
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nSee[^1].\n\n\
+                <!-- endnotes.p0 Endnote -->\n\n<!-- p1 -->\nBody.\n\n[^1]: text\n";
+    let (docx, _) = write(view);
+    assert_eq!(note_styles(&docx, "footnote"), ["FootnoteText"]);
+}
+
+#[test]
+fn a_note_whose_breaks_disagree_names_the_styles_it_drops() {
+    // pi on #495 (F3): the one paragraph takes the first style; the
+    // warning names the others.
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nSee[^1].\n\n\
+                <!-- footnotes.p0-p2 A, B, C -->\n[^1]: One<br>two.\n";
+    let (docx, warnings) = write(view);
+    assert_eq!(note_styles(&docx, "footnote"), ["A"]);
+    assert!(
+        warnings.iter().any(|w| w
+            == "[^1]: its id line counts 3 paragraphs and its text 2 by its <br>s: \
+                the <br>s are written as line breaks, in style A; B, C are not written"),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_tab_after_a_note_id_reads_as_a_space() {
+    // pi on #495 (F4): the id line took the tab as whitespace, the style
+    // list did not.
+    let line = |styles: &str| {
+        format!(
+            "---\nview: tracked\n---\n\n<!-- p0 -->\nSee[^1].\n\n\
+             <!-- footnotes.p0\t{styles} -->\n[^1]: text\n"
+        )
+    };
+    let (docx, _) = write(&line("MyNote"));
+    assert_eq!(note_styles(&docx, "footnote"), ["MyNote"]);
+    let (docx, _) = write(&line("MyNote Other"));
+    assert_eq!(note_styles(&docx, "footnote"), ["MyNote"]);
+}
+
+#[test]
+fn an_empty_quoted_note_style_names_none() {
+    // pi on #495 (F5): `""` wrote `w:pStyle w:val=""` and a style without
+    // an id.
+    let view = "---\nview: tracked\n---\n\n<!-- p0 -->\nSee[^1].\n\n\
+                <!-- footnotes.p0 \"\" -->\n[^1]: text\n";
+    let (docx, _) = write(view);
+    assert_eq!(note_styles(&docx, "footnote"), ["FootnoteText"]);
+    let styles = part(&docx, "word/styles.xml");
+    assert!(!styles.contains(r#"w:styleId="""#), "{styles}");
 }

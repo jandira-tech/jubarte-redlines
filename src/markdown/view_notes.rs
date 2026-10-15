@@ -837,7 +837,8 @@ pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
         .strip_prefix("<!--")?
         .strip_suffix("-->")?
         .trim();
-    let (id, rest) = inner.split_once(' ')?;
+    // Any whitespace ends the id, as for `note_line`.
+    let (id, rest) = inner.split_once(char::is_whitespace)?;
     if id.ends_with(',') {
         return None;
     }
@@ -845,6 +846,10 @@ pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
     let mut rest = rest.trim();
     while !rest.is_empty() {
         let (style, after) = take_style(rest)?;
+        // `""` names no style a paragraph can be in.
+        if style.trim().is_empty() {
+            return None;
+        }
         styles.push(style);
         rest = after;
     }

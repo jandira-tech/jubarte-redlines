@@ -756,12 +756,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
         // The comments' and notes' paragraph styles too, as the stories'
         // below.
-        // Word's own note styles stand for themselves in a note's list.
-        let mut note_list: Vec<&String> = note_styles
-            .values()
-            .flatten()
-            .filter(|s| !matches!(s.as_str(), "FootnoteText" | "EndnoteText"))
-            .collect();
+        // A note's list names Word's own style under its English id only
+        // in a mixed note; the source's definition of it is kept like any
+        // other (a footnote can be in `EndnoteText`).
+        let mut note_list: Vec<&String> = note_styles.values().flatten().collect();
         note_list.sort();
         // CommentText is the comments' own, not a note's.
         for style in comment_facts
