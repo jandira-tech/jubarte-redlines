@@ -3188,7 +3188,7 @@ do eiusmod et et adipiscing sed et ipsum sit elit ipsum magna elit et consectetu
 <!-- p1059 TextHeading2 -->
 tempor adipiscing incididunt incididunt tempor magna.
 
-<!-- t0 1x3, cells p1060-p1062 by row, p1061 justify, p1060-p1062 TextHeading2 -->
+<!-- t0 1x3, cells p1060-p1062 by row, p1061 justify, p1060-p1062 TextHeading2, borders none, cell-borders bottom single 0.5pt in t0.row0.cell1 -->
 |ipsum||(dolore)|
 |:-|-|:-|
 
@@ -3239,7 +3239,7 @@ do eiusmod et et adipiscing sed et ipsum sit elit ipsum magna elit et consectetu
 <!-- p1108 TextHeading2 -->
 tempor adipiscing incididunt incididunt tempor magna.
 
-<!-- t1 1x3, cells p1109-p1111 by row, p1110 justify, p1109-p1111 TextHeading2 -->
+<!-- t1 1x3, cells p1109-p1111 by row, p1110 justify, p1109-p1111 TextHeading2, borders none, cell-borders bottom single 0.5pt in t1.row0.cell1 -->
 |ipsum||(dolore)|
 |:-|-|:-|
 
