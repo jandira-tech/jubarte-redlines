@@ -1624,13 +1624,25 @@ fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
     Ok(())
 }
 
-/// Resolve every operation without producing documents.
-pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+/// Resolve every operation and run the plan's checks, without applying
+/// it: what `add --plan` runs on each recorded operation, so recording a
+/// long plan never re-applies it.
+pub fn check_plan(source: &[u8], plan: &EditPlan) -> Result<(), EditError> {
+    resolved(source, plan).map(|_| ())
+}
+
+fn resolved<'a>(source: &'a [u8], plan: &'a EditPlan) -> Result<Transaction<'a>, EditError> {
     check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
     tracked::check(&tx)?;
     tx.emits_directly()?;
+    Ok(tx)
+}
+
+/// Resolve every operation without producing documents.
+pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+    let tx = resolved(source, plan)?;
     let mut report = tx.report(true);
     // The summary is what applying reports: apply in memory and keep its
     // counts, so a dry run never prints `0` revisions for an edit it makes.

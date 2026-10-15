@@ -2088,3 +2088,23 @@ fn a_preview_counts_the_revisions_and_paragraphs_applying_makes() {
     assert_eq!(preview.paragraphs, applied.paragraphs);
     assert_eq!(preview.paragraphs.to, preview.paragraphs.from + 1);
 }
+
+#[test]
+fn check_plan_resolves_without_applying() {
+    // `add --plan` checks each recorded operation with it: the same
+    // refusals as a preview, without the preview's in-memory apply.
+    let source = docx(&para("alpha beta"));
+    let good = plan(
+        &source,
+        r#"[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"gamma"}]"#,
+    );
+    jubarte::edit::check_plan(&source, &good).unwrap();
+    let bad = plan(
+        &source,
+        r#"[{"kind":"replace","paragraph":"p0","find":"zzz","replacement":"gamma"}]"#,
+    );
+    let checked = jubarte::edit::check_plan(&source, &bad).unwrap_err();
+    let previewed = preview_plan(&source, &bad).unwrap_err();
+    assert_eq!(checked.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(checked.code, previewed.code);
+}
