@@ -26,14 +26,14 @@ def texts(document: Document) -> list[str]:
 def test_keep_adds_my_changes_beside_theirs() -> None:
     source = Document.from_bytes(docx(OTHER + para("Governing law: Delaware.")))
     plan = EditPlan(author="Me", date="2026-10-02T00:00:00Z", existing_revisions="keep").replace(
-        "body:p:1", find="Delaware", replacement="New York"
+        "p1", find="Delaware", replacement="New York"
     )
     assert plan.to_dict()["existing_revisions"] == "keep"
     result = source.edit(plan)
     assert result.report.existing_revisions == "keep"
     assert result.report.base_sha256 == result.report.source_sha256 == source.sha256()
     changes = result.redline.changes()
-    assert [c.id for c in changes if c.author == "Other"] == ["body:rev:7", "body:rev:8"]
+    assert [c.id for c in changes if c.author == "Other"] == ["r7", "r8"]
     assert [(c.kind, c.text) for c in changes if c.author == "Me"] == [
         ("deletion", "Delaware"),
         ("insertion", "New York"),
@@ -42,7 +42,7 @@ def test_keep_adds_my_changes_beside_theirs() -> None:
     assert texts(result.redline.reject(authors=["Me"])) == texts(source)
     # The diff is the plan's own: their 30 -> 45 is not in it.
     assert "New York" in result.diff.text and "30" not in result.diff.text
-    assert [h.at for h in result.diff.hunks] == ["body:p:1"]
+    assert [h.at for h in result.diff.hunks] == ["p1"]
 
 
 def test_keep_is_the_only_new_policy() -> None:

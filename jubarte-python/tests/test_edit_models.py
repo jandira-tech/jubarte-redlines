@@ -77,12 +77,12 @@ def test_insert_keeps_explicit_location_for_engine_validation(location):
 def test_branching_a_builder_keeps_earlier_plans_unchanged():
     base = EditPlan(author="Zoë", date="2026-09-26T00:00:00Z", initials="Z", existing_revisions="reject")
     left = base.replace(0, find="é", replacement="茶", id="replace", comment="Review 😀")
-    right = base.delete_paragraph("body:p:1", id="delete")
+    right = base.delete_paragraph("p1", id="delete")
     bound = left.for_document("a" * 64)
     assert base.to_dict()["operations"] == []
     assert left.source_sha256 is None
     assert bound.source_sha256 == "a" * 64
-    assert right.to_dict()["operations"] == [{"id": "delete", "kind": "delete_paragraph", "paragraph": {"id": "body:p:1"}}]
+    assert right.to_dict()["operations"] == [{"id": "delete", "kind": "delete_paragraph", "paragraph": {"id": "p1"}}]
     wire = bound.to_dict()
     assert wire == {
         "schema_version": 1, "author": "Zoë", "date": "2026-09-26T00:00:00Z",
@@ -131,7 +131,7 @@ def snapshot():
     rows = []
     for index, text in enumerate(["Alpha unique", "Beta shared", "Gamma shared"]):
         rows.append({
-            "index": index, "id": f"body:p:{index}", "text": text, "style": None,
+            "index": index, "id": f"p{index}", "text": text, "style": None,
             "numbered": False, "in_table": False, "page_break": False,
             "runs": [{"start": 0, "end": len(text), "bold": False, "italic": False, "underline": False, "highlight": None}],
             "limitations": ["field"] if index == 2 else [],
@@ -140,7 +140,7 @@ def snapshot():
 
 
 def test_snapshot_selectors_return_the_same_immutable_paragraph(snapshot):
-    assert snapshot.paragraph(0) is snapshot.paragraph("body:p:0")
+    assert snapshot.paragraph(0) is snapshot.paragraph("p0")
     assert snapshot.unique(starts_with="Alpha") is snapshot.paragraph(0)
     assert snapshot.unique(contains="unique") is snapshot.paragraph(0)
     assert isinstance(snapshot.paragraphs, tuple)
@@ -152,7 +152,7 @@ def test_snapshot_selectors_return_the_same_immutable_paragraph(snapshot):
         snapshot.summary.paragraphs = 0
 
 
-@pytest.mark.parametrize("selector", [-1, 3, "0", "body:p:99", "header:p:0"])
+@pytest.mark.parametrize("selector", [-1, 3, "0", "p99", "header:p:0"])
 def test_snapshot_does_not_treat_unknown_ids_as_list_offsets(snapshot, selector):
     with pytest.raises(LookupError, match="no paragraph"):
         snapshot.paragraph(selector)
@@ -171,7 +171,7 @@ def test_report_decoding_preserves_optional_failure_details_and_nested_immutabil
         "paragraphs": {"from": 3, "to": 2}, "comments_added": 1,
         "revisions": {"inserted": 2, "deleted": 1, "moved": 0, "format_changed": 0, "total": 3},
         "operations": [
-            {"id": "ok", "kind": "comment", "status": "ok", "matches": 1, "paragraph": "body:p:0", "comment_id": 0},
+            {"id": "ok", "kind": "comment", "status": "ok", "matches": 1, "paragraph": "p0", "comment_id": 0},
             {"id": "bad", "kind": "delete", "status": "failed", "matches": 0, "code": "ANCHOR_NOT_FOUND", "message": "missing"},
             {"id": "later", "kind": "insert", "status": "skipped", "matches": 0},
         ],
@@ -216,14 +216,14 @@ def test_render_report_keeps_page_order_and_font_resolution_metadata():
 def test_insert_table_builder_copies_rows_and_omits_defaults():
     rows = [["Item", "Qty"], ["Bolt", "40"]]
     built = EditPlan(author="A").insert_table(
-        "body:p:0", rows=rows, header_row=True, widths_dxa=[6000, 3360], style="TableGrid", id="t"
+        "p0", rows=rows, header_row=True, widths_dxa=[6000, 3360], style="TableGrid", id="t"
     )
     rows[0][0] = "changed"
     rows.append(["x", "y"])
     assert built.operations[0] == {
         "id": "t",
         "kind": "insert_table",
-        "paragraph": {"id": "body:p:0"},
+        "paragraph": {"id": "p0"},
         "position": "after",
         "rows": [["Item", "Qty"], ["Bolt", "40"]],
         "header_row": True,
@@ -247,13 +247,13 @@ def test_insert_table_builder_rejects_non_integer_widths(widths):
 
 
 def test_list_paragraphs_builder_writes_the_list_kind():
-    selectors = ["body:p:1", {"contains": "Pears"}]
+    selectors = ["p1", {"contains": "Pears"}]
     built = EditPlan(author="A").list_paragraphs(selectors, kind_of_list="lower_letter", level=1, restart=False, id="l")
     selectors[1]["contains"] = "changed"
     assert built.operations[0] == {
         "id": "l",
         "kind": "list",
-        "paragraphs": [{"id": "body:p:1"}, {"contains": "Pears"}],
+        "paragraphs": [{"id": "p1"}, {"contains": "Pears"}],
         "kind_of_list": "lower_letter",
         "level": 1,
         "restart": False,
@@ -264,7 +264,7 @@ def test_list_paragraphs_builder_writes_the_list_kind():
     }
 
 
-@pytest.mark.parametrize("paragraphs", ["body:p:1", [True]])
+@pytest.mark.parametrize("paragraphs", ["p1", [True]])
 def test_list_paragraphs_builder_rejects_a_bare_selector(paragraphs):
     with pytest.raises(TypeError):
         EditPlan(author="A").list_paragraphs(paragraphs)
@@ -279,7 +279,7 @@ def test_snapshot_tables_decode_to_immutable_grids():
     summary.update(list_numbering=False, track_changes=False)
     table = {
         "index": 0,
-        "rows": [[{"paragraph_ids": ["body:p:1"], "text": "Item"}, {"paragraph_ids": [], "text": ""}]],
+        "rows": [[{"paragraph_ids": ["p1"], "text": "Item"}, {"paragraph_ids": [], "text": ""}]],
         "header_rows": 1,
         "widths_dxa": [6000, 3360],
     }
@@ -288,7 +288,7 @@ def test_snapshot_tables_decode_to_immutable_grids():
     assert decoded.index == 0
     assert decoded.header_rows == 1
     assert decoded.widths_dxa == (6000, 3360)
-    assert decoded.rows[0][0].paragraph_ids == ("body:p:1",)
+    assert decoded.rows[0][0].paragraph_ids == ("p1",)
     assert decoded.rows[0][0].text == "Item"
     assert decoded.rows[0][1] == TableCell(paragraph_ids=(), text="")
     assert isinstance(decoded, Table)
@@ -298,7 +298,7 @@ def test_snapshot_tables_decode_to_immutable_grids():
 
 def test_format_run_builds_the_wire_operation_with_extended_format_fields():
     plan = EditPlan(author="Reviewer").format_run(
-        "body:p:0",
+        "p0",
         find="ten dollars",
         format={"bold": True, "font": "Arial", "size_pt": 11, "color": "FF0000", "strike": False, "caps": True},
         occurrence=2,
@@ -308,7 +308,7 @@ def test_format_run_builds_the_wire_operation_with_extended_format_fields():
         {
             "id": "fmt",
             "kind": "format_run",
-            "paragraph": {"id": "body:p:0"},
+            "paragraph": {"id": "p0"},
             "find": "ten dollars",
             "format": {"bold": True, "font": "Arial", "size_pt": 11, "color": "FF0000", "strike": False, "caps": True},
             "occurrence": 2,
@@ -329,9 +329,9 @@ def test_insert_footnote_builds_the_wire_operation():
     assert plan.to_dict()["operations"] == [
         {"id": "fn", "kind": "insert_footnote", "paragraph": {"index": 1}, "after": "agree", "text": "See the agreement.", "occurrence": 2}
     ]
-    bare = EditPlan(author="Reviewer").insert_footnote("body:p:0", after="x", text="y")
+    bare = EditPlan(author="Reviewer").insert_footnote("p0", after="x", text="y")
     assert bare.to_dict()["operations"] == [
-        {"kind": "insert_footnote", "paragraph": {"id": "body:p:0"}, "after": "x", "text": "y"}
+        {"kind": "insert_footnote", "paragraph": {"id": "p0"}, "after": "x", "text": "y"}
     ]
 
 
@@ -352,9 +352,9 @@ def test_insert_image_encodes_bytes_and_builds_the_wire_operation():
             "alt": "Logo",
         }
     ]
-    bare = EditPlan(author="Reviewer").insert_image("body:p:2", image=png)
+    bare = EditPlan(author="Reviewer").insert_image("p2", image=png)
     assert bare.to_dict()["operations"] == [
-        {"kind": "insert_image", "paragraph": {"id": "body:p:2"}, "position": "after", "image_base64": "iVBORw0KGgo="}
+        {"kind": "insert_image", "paragraph": {"id": "p2"}, "position": "after", "image_base64": "iVBORw0KGgo="}
     ]
 
 

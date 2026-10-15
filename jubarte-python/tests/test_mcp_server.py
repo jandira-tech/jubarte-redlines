@@ -177,7 +177,7 @@ def test_inspect_returns_the_engine_snapshot(tmp_path: Path) -> None:
     assert not result.is_error
     snapshot = result.structured_content
     assert {"summary", "paragraphs"} <= set(snapshot)
-    assert snapshot["paragraphs"][0]["id"] == "body:p:0"
+    assert snapshot["paragraphs"][0]["id"] == "p0"
 
 
 def test_inspect_json_is_the_engine_json_unchanged(tmp_path: Path) -> None:
@@ -191,7 +191,7 @@ def test_inspect_json_is_the_engine_json_unchanged(tmp_path: Path) -> None:
 PLAN = {
     "schema_version": 1,
     "author": "Agent",
-    "operations": [{"kind": "replace", "paragraph": "body:p:0", "find": "ten", "replacement": "twelve"}],
+    "operations": [{"kind": "replace", "paragraph": "p0", "find": "ten", "replacement": "twelve"}],
 }
 
 
@@ -310,7 +310,7 @@ def test_changes_and_comments_carry_short_refs(tmp_path: Path) -> None:
     red = Document.read(original).compare(Document.read(modified), author="R")
     (tmp_path / "red.docx").write_bytes(red.to_bytes())
     commented = Document.read(original).edit(
-        jubarte.EditPlan(author="Ann").comment("body:p:0", find="fee", text="Check")
+        jubarte.EditPlan(author="Ann").comment("p0", find="fee", text="Check")
     )
     (tmp_path / "c.docx").write_bytes(commented.clean.to_bytes())
     (listed, noted) = call(
@@ -401,7 +401,7 @@ def test_docx_validate_takes_rules_and_reports_one_shape(tmp_path: Path) -> None
     (tmp_path / "d.docx").write_bytes(make_document("\u2022 item"))
     (styled,) = call(tmp_path, ("docx_validate", {"path": "d.docx", "rules": ["style"]}))
     rows = styled.structured_content["result"]
-    assert {"code": "LITERAL_BULLET", "set": "style", "severity": "warning", "location": "body:p:0", "ref": "p0"}.items() <= rows[0].items(), rows
+    assert {"code": "LITERAL_BULLET", "set": "style", "severity": "warning", "location": "p0", "ref": "p0"}.items() <= rows[0].items(), rows
 
 
 def test_feature_tools_still_contain_paths(tmp_path: Path) -> None:
@@ -598,7 +598,7 @@ def test_docx_audit_runs_the_engine_with_rule_names(tmp_path: Path) -> None:
         ("docx_audit", {"path": "d.docx", "rules": ["NOPE"]}),
     )
     found = styled.structured_content["result"]
-    assert {"code": "LITERAL_BULLET", "rule_set": "style", "severity": "warning", "location": "body:p:0"}.items() <= next(
+    assert {"code": "LITERAL_BULLET", "rule_set": "style", "severity": "warning", "location": "p0"}.items() <= next(
         f for f in found if f["code"] == "LITERAL_BULLET"
     ).items(), found
     assert "NOPE" in error_text(unknown)

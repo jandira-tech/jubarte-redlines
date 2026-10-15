@@ -38,7 +38,7 @@ def test_update_fields_returns_a_new_document_and_the_fields_written():
     assert texts(updated.document) == ["One", "", "2"]
     assert texts(source)[-1] == "9", "the source snapshot is unchanged"
     (field,) = updated.fields
-    assert field == jubarte.FieldUpdate(kind="NUMPAGES", code="NUMPAGES", paragraph="body:p:2", old="9", new="2")
+    assert field == jubarte.FieldUpdate(kind="NUMPAGES", code="NUMPAGES", paragraph="p2", old="9", new="2")
     with pytest.raises(AttributeError):
         field.new = "3"  # type: ignore[misc]
 
@@ -84,7 +84,7 @@ def test_convert_update_fields_writes_the_refreshed_docx_and_its_report(tmp_path
     out, report = tmp_path / "out.docx", tmp_path / "fields.json"
     assert main(["convert", str(source), "-o", str(out), "--update-fields", "--report", str(report)]) == 0
     captured = capsys.readouterr()
-    assert 'body:p:2\tNUMPAGES\t"9" -> "2"' in captured.out
+    assert 'p2\tNUMPAGES\t"9" -> "2"' in captured.out
     assert "1 field(s) written; 2 page(s)" in captured.err
     assert json.loads(report.read_text())["fields"][0]["new"] == "2"
     assert "2" in texts(jubarte.Document.read(out))
