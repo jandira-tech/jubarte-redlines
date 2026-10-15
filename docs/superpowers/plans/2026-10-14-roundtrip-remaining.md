@@ -71,10 +71,10 @@ Status: headers and footers done (#491); comments and notes open.
 - **Tests:** one per story kind. A source paragraph with no style, and one with a
   non-default style, keep their styles. A story whose paragraphs all use the
   default prints no clause, so today's views stay byte for byte.
-- **Open (headers and footers):** `styles:` stops at the last paragraph with
-  text. A paragraph a `rev` clause brings back past it (`break-del … in
-  header1.p1`) takes the entry's first style, and a shortened list falls back
-  without a warning. Both are older than #491 (pi on #491, finding 5).
+- **Open (headers and footers):** a hand-shortened `styles:` list falls back
+  to the story's style without a warning (older than #491; pi on #491,
+  finding 5). `styles:` reaches past the last paragraph with text to the last
+  one a `rev` clause brings back.
 
 ## 3. Page count (10 files)
 

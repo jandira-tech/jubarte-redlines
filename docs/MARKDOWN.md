@@ -417,7 +417,8 @@ note's own changes its text cannot show close its definition line:
 prints as `first: {…, inactive}` when different-first-page is off.
 A header's or footer's paragraphs take Word's Header or Footer style unless
 the entry names theirs: `style: Normal` for all, or `styles: [Footer,
-ListParagraph]`, one per paragraph from the part's first. A paragraph
+ListParagraph]`, one per paragraph from the part's first through the
+last with text or with a tracked mark a `rev` brings back. A paragraph
 with no style of its own prints the document's default style (`Normal` in
 most documents), which writes no `w:pStyle`; any other, `Normal` under
 another default too, writes one.
