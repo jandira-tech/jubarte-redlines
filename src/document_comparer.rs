@@ -6340,9 +6340,9 @@ pub fn get_revisions(
 }
 
 /// Serialize one revision to the stable JSON object shape of the wasm
-/// `getRevisions` and Python `get_revisions` bindings. Strings are fully
-/// escaped — backslash, quote, and every control char below U+0080 — so
-/// document text can carry `\t`, `\r`, vertical tabs, etc.
+/// `getRevisions` and Python `get_revisions` bindings. Strings escape
+/// backslash, quote and every control character below U+0020, so document
+/// text can carry `\t`, `\r`, vertical tabs, etc.; U+007F passes as is.
 pub fn revision_to_json(r: &crate::comparer::WmlComparerRevision) -> String {
     fn esc(s: &str) -> String {
         let mut o = String::with_capacity(s.len());

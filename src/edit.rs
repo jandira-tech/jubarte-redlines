@@ -1556,7 +1556,8 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
 /// `AMBIGUOUS_ANCHOR`, `INVALID_EDIT`, `UNKNOWN_STYLE`, `UNKNOWN_COMMENT`,
 /// `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`, `PARAGRAPH_RESOLVED`,
 /// `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and `UNSUPPORTED_IMAGE`
-/// while resolving and applying operations. `FIELDS_FAILED` when field
+/// while resolving and applying operations; `UNSUPPORTED` for a `settings`
+/// operation with a protection password. `FIELDS_FAILED` when field
 /// results cannot be refreshed, `COMPARE_FAILED` when the redline cannot be
 /// compared, `PACKAGE_WRITE` when it cannot be packaged, and
 /// `REDACTION_LEAK` when redacted text still occurs in an output.

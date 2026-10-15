@@ -696,6 +696,8 @@ fn selected_pages(
 ///
 /// # Errors
 ///
+/// [`ConvertError::OpenPackage`] when `docx` is not a readable package,
+/// [`ConvertError::MissingDocument`] when it has no main document part;
 /// [`ConvertError::Raster`] when `dpi` is outside `1.0..=MAX_PNG_DPI` or
 /// when a page is too large to rasterize at `dpi`.
 pub fn docx_to_png(

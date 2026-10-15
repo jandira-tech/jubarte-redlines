@@ -55,7 +55,8 @@ impl Default for DiffOptions {
 ///
 /// # Errors
 ///
-/// A message naming which file is not a readable zip.
+/// `debug diff needs at least two files` when `files` holds fewer than
+/// two; otherwise a message naming which file is not a readable zip.
 pub fn diff(files: &[(&str, &[u8])], opts: &DiffOptions) -> Result<String, String> {
     if files.len() < 2 {
         return Err("debug diff needs at least two files".to_string());

@@ -299,8 +299,8 @@ impl std::fmt::Debug for DocxOptions<'_> {
 }
 
 /// How [`docx_to_markdown`] reads a `.docx`. Defaults to the plain
-/// Markdown conversion with all revisions kept and `<!-- page N of M
-/// -->` lines emitted from Word's cached breaks.
+/// Markdown conversion with all revisions kept; `<!-- page N of M -->`
+/// lines from Word's cached breaks come only with `ids` (the agent view).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkdownOptions {
     /// `All` writes tracked changes and comments as CriticMarkup; `Accept`
