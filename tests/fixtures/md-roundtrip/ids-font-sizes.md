@@ -10,7 +10,7 @@ body: p0-p172, 5 tables, 2 pages   # pages from Word's cached layout
 page: 8.264x11.6806in portrait, margins top 1.2035in, right 0.764in, bottom 0.616in, left 0.903in, header 0.193in, footer 0.5in
 styles:
   Normal: Calibri 12pt, left       # default; unannotated paragraphs use it
-  "##": Heading2, Arial 9pt
+  "##": Heading2, Arial 9pt, indent 0.37in
   BodyText: Arial 8.5pt, named Body Text
   tables: TableGrid
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note

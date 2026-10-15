@@ -10,7 +10,7 @@ body: p0-p378, 0 tables, 15 pages  # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Aptos 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it
-  ListParagraph: Aptos 12pt, named List Paragraph
+  ListParagraph: Aptos 12pt, indent 0.5in, contextual spacing, named List Paragraph
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 ---
 
