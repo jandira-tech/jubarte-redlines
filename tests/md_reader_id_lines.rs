@@ -2013,3 +2013,69 @@ fn a_cell_paragraphs_style_comes_back_from_the_table_line() {
               |A|B|\n|-|-|\n|C|D|\n\n<!-- p4 -->\nAfter.\n";
     assert_eq!(round_trip(md), md.trim());
 }
+
+#[test]
+fn a_style_id_that_is_no_plain_word_is_quoted() {
+    // pi on #490: a style id spelled like a clause word (`center`), with a
+    // space, or holding `, ` was read back as an alignment, a cut style or
+    // a style that never existed. Such an id prints quoted, `\` and `"`
+    // escaped, on the table line and on a paragraph's id line alike.
+    let md = "<!-- p0 \"center\" -->\nCentred by style\n\n\
+              <!-- p1 \"My Style\" justify -->\nSpaced\n\n\
+              <!-- t0 2x2, cells p2-p5 by row, p3 \"center\", p4 \"A, B\", p5 \"say \\\"hi\\\"\" -->\n\
+              |A|B|\n|-|-|\n|C|D|\n\n<!-- p6 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+    let docx = markdown_to_docx(&as_view(md), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    let document = part_string(&docx, "word/document.xml").expect("a body");
+    for style in ["center", "My Style", "A, B", "say &quot;hi&quot;"] {
+        assert!(
+            document.contains(&format!("<w:pStyle w:val=\"{style}\"/>")),
+            "{style}: {document}"
+        );
+    }
+    assert!(!document.contains("<w:jc w:val=\"center\"/>"), "{document}");
+}
+
+#[test]
+fn a_nested_tables_paragraph_style_comes_back() {
+    // pi on #490: the cells range numbers a nested table's paragraphs; the
+    // style clause names them too.
+    let p = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let cell = |inner: &str| {
+        format!(r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{inner}</w:tc>"#)
+    };
+    let nested = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1500"/></w:tblGrid><w:tr>{}</w:tr></w:tbl><w:p/>"#,
+        cell(&p("N"))
+    );
+    let body = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+        cell("<w:p><w:r><w:t>A</w:t></w:r></w:p>"),
+        cell(&format!("{}{nested}", p("B")))
+    );
+    let source = common::docx::docx(&body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let docx = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    let document = part_string(&docx, "word/document.xml").expect("a body");
+    assert_eq!(
+        document.matches("<w:pStyle w:val=\"Caption\"/>").count(),
+        2,
+        "{view}\n{document}"
+    );
+}

@@ -64,7 +64,9 @@ break-ins TAGS in pN, rev …, fmt … -->` (`cells tN.row0 pA-pB tN.row1 …` w
 a cell holds other than one paragraph).
 `pN center|right|left|justify` is a cell paragraph aligned against its column's
 `:-`/`:-:`/`-:` (most of the column decides); `pN Style` (`pA-pB Style` for
-consecutive ones) is a cell paragraph in a style other than the default;
+consecutive ones) is a cell paragraph in a style other than the default (a
+style id that is a clause word or holds a space, `,`, `"` or `\` prints
+quoted, `"My Style"`, on table and paragraph id lines alike);
 `tN center` places the table. Notes: `<!-- footnotes.p0 -->`. Pages: `<!-- page 2 of 5 -->`.
 
 **YAML header**

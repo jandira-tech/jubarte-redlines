@@ -3054,7 +3054,10 @@ impl Writer<'_> {
         let mut runs: Vec<(usize, usize, &str)> = Vec::new();
         for tr in table_rows(table) {
             for tc in row_cells(tr) {
-                for p in tc.children_named("p") {
+                // As the cells range numbers them: a nested table's too.
+                let mut ps = Vec::new();
+                tc.find_all("p", &mut ps);
+                for p in ps {
                     let (Some(index), Some(style)) = (
                         p.attr(agent::INDEX).and_then(|i| i.parse::<usize>().ok()),
                         p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")),
@@ -3075,6 +3078,7 @@ impl Writer<'_> {
         }
         runs.into_iter()
             .map(|(first, last, style)| {
+                let style = crate::markdown::view_notes::style_token(style);
                 if first == last {
                     format!("p{first} {style}")
                 } else {

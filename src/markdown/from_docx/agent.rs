@@ -1406,7 +1406,7 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         };
         if !implied {
             head.push(' ');
-            head.push_str(style);
+            head.push_str(&crate::markdown::view_notes::style_token(style));
         }
     }
     let ppr = p.child("pPr");
@@ -1811,7 +1811,10 @@ pub(crate) fn table_line(
         clauses.push("header row repeats".to_string());
     }
     if let Some(style) = style {
-        clauses.push(format!("style {style}"));
+        clauses.push(format!(
+            "style {}",
+            crate::markdown::view_notes::style_token(style)
+        ));
     }
     let merged = merged_cells(t, &grid);
     if !merged.is_empty() {
