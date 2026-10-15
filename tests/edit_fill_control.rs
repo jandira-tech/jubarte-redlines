@@ -137,7 +137,7 @@ fn the_fill_drops_the_placeholder_style_and_reports_the_change() {
     assert_eq!(op.paragraph.as_deref(), Some("p0"));
     let context = op.context.as_deref().unwrap();
     assert!(
-        context.contains("body:sdt:0") && context.contains("Ada Lovelace"),
+        context.contains("p0.cc0") && context.contains("Ada Lovelace"),
         "{context}"
     );
     assert!(out.report.revisions.total > 0, "{:?}", out.report.revisions);
@@ -150,7 +150,7 @@ fn the_fill_drops_the_placeholder_style_and_reports_the_change() {
 fn choice_matches_the_display_text_too_and_alias_selects() {
     let out = apply_plan(
         &form(),
-        &plan(r#"{"kind":"fill_control","control":"body:sdt:1","choice":"Chile"}"#),
+        &plan(r#"{"kind":"fill_control","control":"p1.cc0","choice":"Chile"}"#),
     )
     .unwrap();
     assert_eq!(texts(&out.clean)[1], "Chile");
@@ -162,7 +162,7 @@ fn choice_matches_the_display_text_too_and_alias_selects() {
     assert_eq!(texts(&out.clean)[0], "Name: Grace");
     let out = apply_plan(
         &form(),
-        &plan(r#"{"kind":"fill_control","control":{"id":"body:sdt:0"},"text":"Id form"}"#),
+        &plan(r#"{"kind":"fill_control","control":{"id":"p0.cc0"},"text":"Id form"}"#),
     )
     .unwrap();
     assert_eq!(texts(&out.clean)[0], "Name: Id form");
@@ -272,7 +272,13 @@ fn missing_and_ambiguous_controls_are_anchor_errors() {
     )
     .unwrap_err();
     assert_eq!(e.code, "ANCHOR_NOT_FOUND");
-    for bad in [r#""body:sdt:9""#, r#""p0""#, r#""sdt""#] {
+    for bad in [
+        r#""body:sdt:9""#,
+        r#""p0""#,
+        r#""sdt""#,
+        r#""p9.cc0""#,
+        r#""cc0""#,
+    ] {
         let e = apply_plan(
             &form(),
             &plan(&format!(
@@ -290,7 +296,7 @@ fn missing_and_ambiguous_controls_are_anchor_errors() {
     .unwrap_err();
     assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
     assert!(
-        e.message.contains("body:sdt:0") && e.message.contains("body:sdt:1"),
+        e.message.contains("p0.cc0") && e.message.contains("p1.cc0"),
         "{}",
         e.message
     );
@@ -364,7 +370,7 @@ fn conflicting_fills_and_paragraph_operations_overlap() {
         &form(),
         &plan(
             r#"{"kind":"fill_control","control":{"tag":"Name"},"text":"a"},
-               {"kind":"fill_control","control":"body:sdt:0","text":"b"}"#,
+               {"kind":"fill_control","control":"p0.cc0","text":"b"}"#,
         ),
     )
     .unwrap_err();
@@ -450,7 +456,7 @@ fn plans_round_trip_through_json() {
     let p = plan(r#"{"kind":"fill_control","control":{"tag":"Name"},"text":"Ada"}"#);
     let again = EditPlan::from_json(&p.to_json()).unwrap();
     assert_eq!(p, again);
-    let p = plan(r#"{"kind":"fill_control","control":"body:sdt:2","checked":true}"#);
+    let p = plan(r#"{"kind":"fill_control","control":"p2.cc0","checked":true}"#);
     assert_eq!(EditPlan::from_json(&p.to_json()).unwrap(), p);
 }
 
@@ -546,4 +552,54 @@ fn fills_are_refused_under_keep_until_the_emitter_tracks_them() {
     .unwrap_err();
     assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
     assert!(e.message.contains("keep"), "{}", e.message);
+}
+
+#[test]
+fn the_expired_control_id_is_refused_naming_its_short_id() {
+    // Only two id types: `body:sdt:N` is refused, naming `pN.ccK` / `ccN`.
+    let e = apply_plan(
+        &form(),
+        &plan(r#"{"kind":"fill_control","control":"body:sdt:1","choice":"Chile"}"#),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "ANCHOR_NOT_FOUND");
+    assert!(e.message.contains("p1.cc0"), "{}", e.message);
+}
+
+#[test]
+fn a_cell_spelling_names_the_control_of_the_cells_first_paragraph() {
+    // Spec: a cell's first paragraph's controls are `t0.row1.cell2.cc0`,
+    // the same controls as that paragraph's `pN.ccK`.
+    let cell = |tag: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{tag}</w:t></w:r></w:sdtContent></w:sdt></w:p><w:p><w:sdt><w:sdtPr><w:tag w:val="{tag}2"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>more</w:t></w:r></w:sdtContent></w:sdt></w:p></w:tc>"#
+        )
+    };
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl><w:p/>"#,
+        cell("A"),
+        cell("B")
+    ));
+    let ids: Vec<String> = controls(&source)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids, ["p1.cc0", "p2.cc0", "p3.cc0", "p4.cc0"]);
+    let out = apply_plan(
+        &source,
+        &plan(
+            r#"{"kind":"fill_control","control":"t0.row0.cell1.cc0","text":"b"},
+               {"kind":"fill_control","control":{"id":"t0.row0.cell0.p1.cc0"},"text":"a2"}"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&out.clean), ["Intro", "A", "a2", "b", "more", ""]);
+    let e = apply_plan(
+        &source,
+        &plan(r#"{"kind":"fill_control","control":"t0.row0.cell0.cc1","text":"x"}"#),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "ANCHOR_NOT_FOUND");
+    assert!(e.message.contains("first p1.cc0, last p4.cc0"), "{e}");
 }

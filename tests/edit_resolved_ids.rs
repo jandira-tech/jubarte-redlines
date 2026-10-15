@@ -207,3 +207,134 @@ fn a_whole_paragraph_edit_of_a_merged_or_removed_paragraph_is_refused_by_name() 
         assert!(e.message.contains("revisions"), "{op}: {e}");
     }
 }
+
+#[test]
+fn a_control_id_names_the_source_control_after_settling() {
+    // CodeRabbit on #488: accepting the deletions before the controls moves
+    // `p3.cc0` to `p1.cc0`; the plan's id still names the control its
+    // author read.
+    let control = |tag: &str, text: &str| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{text}</w:t></w:r></w:sdtContent></w:sdt>"#
+        )
+    };
+    let source = docx(&[
+        format!(r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>"#),
+        "<w:p><w:r><w:t>Beta</w:t></w:r></w:p>".to_string(),
+        format!(r#"<w:p><w:pPr><w:rPr><w:del w:id="2" {REV}/></w:rPr></w:pPr><w:del w:id="3" {REV}><w:r><w:delText>Gamma</w:delText></w:r></w:del></w:p>"#),
+        format!(r#"<w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r>{}</w:p>"#, control("Name", "Click")),
+        format!(r#"<w:p><w:r><w:t xml:space="preserve">Town: </w:t></w:r>{}</w:p>"#, control("Town", "Pick")),
+    ]
+    .concat());
+    let ids: Vec<String> = jubarte::inspect::controls(&source)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids, ["p3.cc0", "p4.cc0"]);
+    for settle in [ACCEPT, RESOLVE] {
+        let out = apply_plan(
+            &source,
+            &plan(
+                settle,
+                r#"[{"kind":"fill_control","control":"p3.cc0","text":"Ada"},
+                    {"kind":"fill_control","control":{"id":"p4.cc0"},"text":"Lyon"}]"#,
+            ),
+        )
+        .unwrap();
+        let texts: Vec<String> = paragraphs(&out.clean)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.text)
+            .collect();
+        assert_eq!(texts, ["AlphaBeta", "Name: Ada", "Town: Lyon"], "{settle}");
+    }
+}
+
+#[test]
+fn settled_control_errors_name_the_source_ids() {
+    // Two controls share a tag after a deletion moved them: the ambiguity
+    // names the ids the author read, and a control whose text settling
+    // removes is gone, not silently another control.
+    let control = |tag: &str, text: &str| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{text}</w:t></w:r></w:sdtContent></w:sdt>"#
+        )
+    };
+    let source = docx(&[
+        format!(r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:del w:id="2" {REV}><w:r><w:delText>Gone</w:delText></w:r></w:del></w:p>"#),
+        format!(r#"<w:p><w:r><w:t xml:space="preserve">A: </w:t></w:r>{}</w:p>"#, control("Same", "x")),
+        format!(r#"<w:p><w:r><w:t xml:space="preserve">B: </w:t></w:r>{}</w:p>"#, control("Same", "y")),
+    ]
+    .concat());
+    let e = apply_plan(
+        &source,
+        &plan(
+            ACCEPT,
+            r#"[{"kind":"fill_control","control":{"tag":"Same"},"text":"z"}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert!(e.message.contains("p1.cc0, p2.cc0"), "{e}");
+    let e = apply_plan(
+        &source,
+        &plan(
+            ACCEPT,
+            r#"[{"kind":"fill_control","control":"p0.cc0","text":"z"}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert!(e.message.contains("(first p1.cc0, last p2.cc0)"), "{e}");
+}
+
+#[test]
+fn controls_in_a_settled_paragraph_keep_their_source_ids() {
+    // pi on #488: X sits in a deleted paragraph, Y after it. After
+    // accepting, `p2.cc0` still names Y and `p1.cc0` X, and the expired
+    // `body:sdt:0` hints X's id, never Y's.
+    let source = docx(&[
+        "<w:p><w:r><w:t>keep</w:t></w:r></w:p>".to_string(),
+        format!(r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:sdt><w:sdtPr><w:tag w:val="X"/><w:text/></w:sdtPr><w:sdtContent><w:del w:id="2" {REV}><w:r><w:delText>xx</w:delText></w:r></w:del></w:sdtContent></w:sdt></w:p>"#),
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="Y"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>yy</w:t></w:r></w:sdtContent></w:sdt></w:p>"#.to_string(),
+    ]
+    .concat());
+    let out = apply_plan(
+        &source,
+        &plan(
+            ACCEPT,
+            r#"[{"kind":"fill_control","control":"p2.cc0","text":"Y!"}]"#,
+        ),
+    )
+    .unwrap();
+    let texts: Vec<String> = paragraphs(&out.clean)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.text)
+        .collect();
+    assert_eq!(texts, ["keep", "Y!"]);
+    // Accepting keeps X's control, emptied, in the paragraph Y's took
+    // over: `p1.cc0` still names X.
+    let out = apply_plan(
+        &source,
+        &plan(
+            ACCEPT,
+            r#"[{"kind":"fill_control","control":"p1.cc0","text":"X!"}]"#,
+        ),
+    )
+    .unwrap();
+    let texts: Vec<String> = paragraphs(&out.clean)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.text)
+        .collect();
+    assert_eq!(texts, ["keep", "X!yy"]);
+    let e = apply_plan(
+        &source,
+        &plan(
+            ACCEPT,
+            r#"[{"kind":"fill_control","control":"body:sdt:0","text":"z"}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert!(e.message.contains("the settled spelling is p1.cc0"), "{e}");
+}

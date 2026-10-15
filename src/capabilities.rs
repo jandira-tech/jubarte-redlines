@@ -70,6 +70,10 @@ pub struct Ids {
     /// Tables: `read -p tN` selects one; `edit`/`add -p` address a cell as
     /// `tN.rowR.cellC`.
     pub table: Vec<String>,
+    /// Content controls (a plan's `fill_control`): `ccN` for a block
+    /// control, `pN.ccK` for one in a paragraph.
+    #[serde(default)]
+    pub control: Vec<String>,
     /// How ids print.
     pub note: String,
 }
@@ -404,6 +408,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             comment_text: strings(crate::ids::COMMENT_TEXT_SPELLINGS),
             paragraph: strings(crate::ids::PARAGRAPH_SPELLINGS),
             table: strings(crate::ids::TABLE_SPELLINGS),
+            control: strings(crate::ids::CONTROL_SPELLINGS),
             note: IDS_NOTE.to_string(),
         },
     }
@@ -466,12 +471,13 @@ pub fn capabilities_text(c: &Capabilities) -> String {
         .collect();
     out.push_str(&format!("formats: {}\n", formats.join("; ")));
     out.push_str(&format!(
-        "ids: revisions {}; comments {}; comment text {}; paragraphs {}; tables {}\n",
+        "ids: revisions {}; comments {}; comment text {}; paragraphs {}; tables {}; controls {}\n",
         c.ids.change.join(", "),
         c.ids.comment.join(", "),
         c.ids.comment_text.join(", "),
         c.ids.paragraph.join(", "),
-        c.ids.table.join(", ")
+        c.ids.table.join(", "),
+        c.ids.control.join(", ")
     ));
     out.push_str(&format!("ids note: {}\n", c.ids.note));
     out.push_str("run with --json for the manifest\n");

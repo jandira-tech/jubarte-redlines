@@ -602,6 +602,10 @@ fn capabilities_describe_the_built_binary() {
     );
     assert_eq!(v["ids"]["comment_text"], serde_json::json!(["c27.text"]));
     assert_eq!(v["ids"]["table"], serde_json::json!(["t0"]));
+    assert_eq!(
+        v["ids"]["control"],
+        serde_json::json!(["cc0", "p12.cc0", "t0.row1.cell2.cc0"])
+    );
     assert!(v["ids"]["note"].as_str().unwrap().contains("safe unquoted"));
 }
 

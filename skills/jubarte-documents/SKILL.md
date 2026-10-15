@@ -47,7 +47,7 @@ an id line:
 **Confidentiality.** You will {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days ...
 ```
 
-`p12` is `body:p:12`, the coordinate an edit uses. A bare `12` is refused, with
+`p12` is the coordinate an edit uses. A bare `12` is refused, with
 the settled spelling named (`p12`, `r12` or `c12`, by what the option takes).
 A tracked change carries its id: `{++…++}{>>r12 @AC<<}` is `r12` for
 `accept --id`, `reject --id` and `edit -p r12 --accept`, and `r3+4` is two
@@ -77,10 +77,10 @@ author's, `--latest` the newest of each thread.
 `tables` reads each body table as a grid: `rows` of cells, each cell with
 its `paragraph_ids` and `text`, plus `header_rows` and `widths_dxa`. Edit a
 cell through its paragraph id, or as `t0.row1.cell2`.
-`jubarte read contract.docx --tables` prints the same grids with short
-ids (`p8`, not the JSON's `body:p:8`).
+`jubarte read contract.docx --tables` prints the same grids with the same
+short ids (`p8`).
 `read --json` also lists the body's content controls under `controls`: `id`
-(`body:sdt:N`), `tag`, `alias`, `kind` (`text`, `rich_text`, `drop_down`,
+(`cc0` for a block control, `p3.cc0` for one inside paragraph `p3`), `tag`, `alias`, `kind` (`text`, `rich_text`, `drop_down`,
 `combo_box`, `date`, `checkbox`, `picture`, ...), `text`, `paragraph_ids`,
 `locked`, `choices` (list values), `checked` and `placeholder`.
 
@@ -103,8 +103,8 @@ Gotchas:
   mark or properties they changed; resolve those changes first with
   `resolve_revisions`.
 - To keep some of them, list them with `jubarte changes FILE` (one change
-  per line: `r12`, kind, target, author, paragraph, text; `--json` adds the
-  long `id` such as `body:rev:12` beside `ref`, plus `inside`) and resolve a
+  per line: `r12`, kind, target, author, paragraph, text; `--json` prints the
+  same short `id` (also in `ref`), plus `inside`) and resolve a
   selection: one change with `jubarte edit FILE -p r12 --accept` (or
   `--reject`), several with `jubarte accept FILE -o OUT --id r12 --author
   "Ann"` (flags repeat, a change must match every flag), or in the plan:
@@ -132,7 +132,7 @@ the whole plan and nothing is written.
     {"id": "recipients", "kind": "insert", "paragraph": {"starts_with": "(a) Confidentiality."},
      "after": "retained experts, ", "text": "court reporters, ",
      "comment": "Former 4(d) folded in here."},
-    {"id": "survival", "kind": "comment", "paragraph": "body:p:88", "find": "Sections 1(g), ",
+    {"id": "survival", "kind": "comment", "paragraph": "p88", "find": "Sections 1(g), ",
      "text": "Added 2(c) so the deletion duty survives termination."},
     {"kind": "delete_paragraph", "paragraph": {"starts_with": "(d) Onward Disclosure."}},
     {"kind": "insert_paragraph", "paragraph": {"starts_with": "(f) Notice of Inability"},
@@ -207,7 +207,7 @@ jubarte's results now). `replace` and
 applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
 Paragraph selectors: an id as `read` prints it (`"p12"`, `"header1.p0"`,
-`"footnotes.p2"`, `"t0.row1.cell2"`, `"c5.text"`) or long (`"body:p:12"`),
+`"footnotes.p2"`, `"t0.row1.cell2"`, `"c5.text"`; the expired `"body:p:12"` is refused),
 `{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two
 must match exactly one paragraph. Those three search the body unless they
 name a story: `{"story": "footer1", "contains": "Page"}`.
@@ -311,7 +311,7 @@ control instead of a paragraph and takes exactly one value:
 ```json
 {"kind": "fill_control", "control": {"tag": "Name"}, "text": "Ada Lovelace"}
 {"kind": "fill_control", "control": {"alias": "Country"}, "choice": "Brazil"}
-{"kind": "fill_control", "control": "body:sdt:3", "checked": true}
+{"kind": "fill_control", "control": "p3.cc0", "checked": true}
 {"kind": "fill_control", "control": {"tag": "Signed"}, "date": "2026-10-02"}
 ```
 
@@ -408,7 +408,7 @@ edited.md -o redline.docx` applies the Markdown's edits to the Word document
 and redlines only those, keeping empty paragraphs, fields and formatting.
 `jubarte diff old new` prints the changes as a patch in the style of git
 diff: only the changed paragraphs, each at its `[line:N]` (Markdown) or
-`[body:p:N]` (Word) locator, with `[-old-]{+new+}` and CriticMarkup comments;
+`[p12]` (Word) locator, with `[-old-]{+new+}` and CriticMarkup comments;
 `--columns 0` stops the wrapping and `--format critic` prints two Markdown
 documents as CriticMarkup (`{~~old~>new~~}`); `-o changes.patch` writes the
 patch to a file. `jubarte compare old.md new.md -o changes.docx` writes the

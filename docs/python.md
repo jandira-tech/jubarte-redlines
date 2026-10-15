@@ -2392,7 +2392,7 @@ prints them.
 Snapshot.control(self, id: 'str | None' = None, *, tag: 'str | None' = None, alias: 'str | None' = None) -> 'ContentControl'
 ```
 
-The one control with this id (``body:sdt:N``), tag or alias; give exactly one.
+The one control with this id (``p3.cc0``, ``cc1``), tag or alias; give exactly one.
 
 #### `Snapshot.paragraph`
 

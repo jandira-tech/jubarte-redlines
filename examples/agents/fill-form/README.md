@@ -28,7 +28,7 @@ Files:
 - `plan.json`: five `fill_control` operations, one per value form (`text`,
   `choice` by display text, `checked`, `date`, and `text` into the
   block-level control by id).
-- `report.jsonl`: the run's actual output (5 ok, 12 revision records, the
+- `report.jsonl`: the run's actual output (5 ok, 13 revision records, the
   matter control's two paragraphs folded into one).
 - `clean.docx` and `clean-page-01.png`: the filled form. Every control
   keeps its tag, alias and lock; the placeholder styling is gone.

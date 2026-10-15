@@ -206,7 +206,7 @@ pub struct Story {
 /// inside text boxes are not listed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ContentControl {
-    /// `body:sdt:N`.
+    /// `ccN` for a block control, `pN.ccK` for one in paragraph `pN`.
     pub id: String,
     /// `w:tag`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -705,7 +705,7 @@ pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
 }
 
 /// The body's content controls (`w:sdt` outside text boxes) in document
-/// order; index N is `body:sdt:N`.
+/// order, the order [`collect_controls`] numbers them in.
 pub(crate) fn body_control_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::sdt()))
         .into_iter()
@@ -721,17 +721,37 @@ pub(crate) fn collect_controls(dom: &Dom, body: NodeId) -> Vec<ContentControl> {
         .enumerate()
         .map(|(i, &p)| (p, i))
         .collect();
+    // A block control is `ccN`, counting the body's block controls; one in
+    // a paragraph is `pN.ccK`, counting that paragraph's controls.
+    let mut blocks = 0usize;
+    let mut inline: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     body_control_nodes(dom, body)
         .into_iter()
-        .enumerate()
-        .map(|(n, sdt)| control_record(dom, sdt, n, &index))
+        .map(|sdt| {
+            let owner = dom
+                .ancestors(sdt, Some(&W::p()))
+                .first()
+                .and_then(|p| index.get(p).copied());
+            let id = match owner {
+                Some(i) => {
+                    let k = inline.entry(i).or_default();
+                    *k += 1;
+                    format!("{}.cc{}", crate::ids::paragraph_id("body", i), *k - 1)
+                }
+                None => {
+                    blocks += 1;
+                    format!("cc{}", blocks - 1)
+                }
+            };
+            control_record(dom, sdt, id, &index)
+        })
         .collect()
 }
 
 fn control_record(
     dom: &Dom,
     sdt: NodeId,
-    n: usize,
+    id: String,
     index: &std::collections::HashMap<NodeId, usize>,
 ) -> ContentControl {
     let pr = dom.element(sdt, &W::sdt_pr());
@@ -789,7 +809,7 @@ fn control_record(
         (None, None) => (Vec::new(), String::new()),
     };
     ContentControl {
-        id: format!("body:sdt:{n}"),
+        id,
         tag: val(&W::name("tag")),
         alias: val(&W::name("alias")),
         kind: kind.to_string(),

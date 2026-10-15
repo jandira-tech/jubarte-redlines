@@ -235,6 +235,11 @@ pub(super) struct Origin {
     paragraph_nodes: Vec<NodeId>,
     paragraph_story: Vec<(usize, usize)>,
     fates: Vec<Fate>,
+    /// The source's body content controls, by id (`p3.cc0`, `cc1`).
+    control_ids: Vec<String>,
+    /// Where each became, by its index in the settled body's controls;
+    /// `None` when it went with its text.
+    control_fates: Vec<Option<usize>>,
 }
 
 impl Origin {
@@ -280,6 +285,18 @@ impl Origin {
                 .dom
                 .set_attribute_value(p, &para_id, Some(&format!("{:08X}", g + 1)));
         }
+        // The body's controls are tagged the same way, in their `w:id`
+        // (control n gets n + 1, every other control 0).
+        let tagged_controls = crate::inspect::body_control_nodes(&tagged.dom, tagged.body);
+        for story in &tagged_stories {
+            for sdt in tagged.dom.descendants(story.root, Some(&W::sdt())) {
+                let tag = tagged_controls
+                    .iter()
+                    .position(|&c| c == sdt)
+                    .map_or(0, |n| n + 1);
+                tag_control(&mut tagged.dom, sdt, tag);
+            }
+        }
         for story in &tagged_stories {
             let xml = tagged.dom.serialize_document(story.document);
             tagged.pkg.set_part(&story.part, xml.into_bytes());
@@ -314,6 +331,28 @@ impl Origin {
                 (g < paragraph_nodes.len()).then_some(g)
             })
             .collect();
+        let control_ids: Vec<String> = crate::inspect::collect_controls(&opened.dom, opened.body)
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        let mut control_fates = vec![None; control_ids.len()];
+        for (post, sdt) in crate::inspect::body_control_nodes(&settled.dom, settled.body)
+            .into_iter()
+            .enumerate()
+        {
+            let tag = settled
+                .dom
+                .element(sdt, &W::sdt_pr())
+                .and_then(|pr| settled.dom.element(pr, &W::name("id")))
+                .and_then(|id| settled.dom.attribute(id, &W::val()))
+                .and_then(|v| v.parse::<usize>().ok());
+            if let Some(slot) = tag
+                .and_then(|t| t.checked_sub(1))
+                .and_then(|n| control_fates.get_mut(n))
+            {
+                *slot = Some(post);
+            }
+        }
         let story_ids: Vec<String> = stories.iter().map(|s| s.id.clone()).collect();
         let fates = fates(
             &tags,
@@ -329,7 +368,30 @@ impl Origin {
             paragraph_nodes,
             paragraph_story,
             fates,
+            control_ids,
+            control_fates,
         })
+    }
+
+    /// The source's body content control ids, in document order.
+    pub(super) fn control_ids(&self) -> &[String] {
+        &self.control_ids
+    }
+
+    /// The source id of settled control `post`, when it came from one.
+    pub(super) fn control_source(&self, post: usize) -> Option<&str> {
+        let n = self.control_fates.iter().position(|&f| f == Some(post))?;
+        Some(self.control_ids[n].as_str())
+    }
+
+    /// The settled control (its index among the settled body's controls)
+    /// the source control `id` became; `None` when the source has no
+    /// control `id`.
+    pub(super) fn control(&self, id: &str) -> Option<Result<usize, String>> {
+        let n = self.control_ids.iter().position(|c| c == id)?;
+        Some(self.control_fates[n].ok_or_else(|| {
+            format!("content control {id} is gone once the plan's revisions are settled: its text was removed")
+        }))
     }
 
     pub(super) fn ids(&self) -> Ids<'_> {
@@ -461,6 +523,27 @@ fn fates(
         }
     }
     fates
+}
+
+/// Write `tag` into the control's `w:sdtPr/w:id`, creating them if needed.
+fn tag_control(dom: &mut Dom, sdt: NodeId, tag: usize) {
+    let pr = match dom.element(sdt, &W::sdt_pr()) {
+        Some(pr) => pr,
+        None => {
+            let pr = dom.new_element(W::sdt_pr());
+            dom.add_first(sdt, pr);
+            pr
+        }
+    };
+    let id = match dom.element(pr, &W::name("id")) {
+        Some(id) => id,
+        None => {
+            let id = dom.new_element(W::name("id"));
+            dom.add_first(pr, id);
+            id
+        }
+    };
+    dom.set_attribute_value(id, &W::val(), Some(&tag.to_string()));
 }
 
 #[cfg(test)]

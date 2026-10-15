@@ -21,11 +21,12 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ControlSelector {
-    /// `"body:sdt:3"`, the same as `{"id": "body:sdt:3"}`.
+    /// `"p3.cc0"` or `"cc1"`, the same as `{"id": "p3.cc0"}`.
     Name(String),
-    /// `{"id": "body:sdt:3"}`.
+    /// `{"id": "p3.cc0"}`.
     Id {
-        /// `body:sdt:N` from `inspect`'s `controls`.
+        /// `ccN` (a block control) or `pN.ccK` (one in paragraph `pN`)
+        /// from `inspect`'s `controls`.
         id: String,
     },
     /// `{"tag": "Name"}`: the control's `w:tag`.
@@ -202,22 +203,56 @@ impl Transaction<'_> {
         selector: &ControlSelector,
     ) -> Result<usize, (&'static str, String, usize)> {
         let records = &self.control_records;
+        let origin = self.origin.as_ref();
+        // Ids are the source's: once the plan's revisions are settled, a
+        // control id names the source control the author read.
+        let ids: Vec<&str> = match origin {
+            Some(origin) => origin.control_ids().iter().map(String::as_str).collect(),
+            None => records.iter().map(|r| r.id.as_str()).collect(),
+        };
+        let name_of = |n: usize| -> &str {
+            origin
+                .and_then(|o| o.control_source(n))
+                .unwrap_or(records[n].id.as_str())
+        };
         let (what, hits): (String, Vec<usize>) = match selector {
-            ControlSelector::Name(id) | ControlSelector::Id { id } => {
-                let n = id
+            ControlSelector::Name(given) | ControlSelector::Id { id: given } => {
+                // The spec's cell spelling `t0.row1.cell2.cc0` names a
+                // control of the cell's first paragraph, `p40.cc0`.
+                let spelled = self.cell_control(given);
+                let id = spelled.as_ref().unwrap_or(given);
+                match origin {
+                    Some(origin) => match origin.control(id) {
+                        Some(Ok(n)) => return Ok(n),
+                        Some(Err(gone)) => return Err(("ANCHOR_NOT_FOUND", gone, 0)),
+                        None => {}
+                    },
+                    None => {
+                        if let Some(n) = ids.iter().position(|c| c == id) {
+                            return Ok(n);
+                        }
+                    }
+                }
+                // The expired `body:sdt:N` names the Nth control: refused,
+                // with the id it now has.
+                let settled = id
                     .strip_prefix("body:sdt:")
                     .and_then(|n| n.parse::<usize>().ok())
-                    .filter(|&n| n < records.len());
-                return n.ok_or_else(|| {
-                    (
-                        "ANCHOR_NOT_FOUND",
-                        format!(
-                            "no content control {id:?}; the body has {} (body:sdt:0 to body:sdt:N)",
-                            records.len()
-                        ),
-                        0,
-                    )
-                });
+                    .and_then(|n| ids.get(n))
+                    .map(|c| format!("; the settled spelling is {c}"))
+                    .unwrap_or_default();
+                let known = match ids.as_slice() {
+                    [] => "the body has none".to_string(),
+                    [only] => format!("the body has {only}"),
+                    [first, .., last] => {
+                        format!("the body has {} (first {first}, last {last})", ids.len())
+                    }
+                };
+                return Err((
+                    "ANCHOR_NOT_FOUND",
+                    format!("no content control {given:?}; {known}{settled}"),
+                    0,
+                ));
             }
             ControlSelector::Tag { tag } => (
                 format!("tag {tag:?}"),
@@ -245,13 +280,29 @@ impl Transaction<'_> {
                     "{} content controls have {what}: {}; select one by id",
                     many.len(),
                     many.iter()
-                        .map(|&n| records[n].id.as_str())
+                        .map(|&n| name_of(n))
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
                 many.len(),
             )),
         }
+    }
+
+    /// `t0.row1.cell2[.pK].ccN` as the `pM.ccN` of the paragraph its
+    /// cell spelling names; `None` for any other id.
+    fn cell_control(&self, id: &str) -> Option<String> {
+        let (paragraph, n) = id.rsplit_once(".cc")?;
+        n.parse::<usize>().ok()?;
+        if !paragraph.starts_with('t') {
+            return None;
+        }
+        let ids = match &self.origin {
+            Some(origin) => origin.ids(),
+            None => self.ids(),
+        };
+        let p = ids.paragraph_id(paragraph)?.ok()?;
+        Some(format!("{p}.cc{n}"))
     }
 
     /// Check the value form against the control and compute what to write.

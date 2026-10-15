@@ -128,7 +128,7 @@ PROBE_TEXT = "PROBE"
 # Long ids (`body:p:12`, `header1:rev:3`) and 0.12's retired spellings
 # (`#12`, `#c5`, `t0.r1.c2`): each place the CLI still prints or accepts one
 # is listed under "Deprecated ids", and every run warns until none is left.
-LONG_ID = re.compile(r"(?<![\w.#])[A-Za-z][\w]*:(?:p|rev):\d+")
+LONG_ID = re.compile(r"(?<![\w.#])[A-Za-z][\w]*:(?:p|rev|sdt):\d+")
 RETIRED_ID = re.compile(r"(?<![\w&])#c?\d+(?:\+\d+)*|\bt\d+\.r\d+\.c\d+\b")
 
 
