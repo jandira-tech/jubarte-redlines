@@ -551,15 +551,21 @@ Options:
           - on:  New edits in Word are tracked
           - off: New edits in Word are not tracked
 
-      --no-page-markers
-          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
-          pass that places them
-
   -q, --quiet
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
           read, and warnings and errors still print
+
+      --scholar
+          Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern
+          Roman 10pt on 12pt lines, justified, bold headings) and number its pages from
+          page 2, centered in the footer. The front matter's own `styles:` entries,
+          headers and footers win
+
+      --no-page-markers
+          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
+          pass that places them
 
   -h, --help
           Print help (see a summary with '-h')
@@ -761,9 +767,9 @@ GIT:
 $ jubarte-redlines read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
-A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
-is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
-@AC<<}`) and comments with theirs (`{>>c5 @AC: …<<}`).
+A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
+tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12 @AC<<}`) and
+comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte-redlines read [OPTIONS] <FILE>
 
@@ -1001,8 +1007,8 @@ Examples:
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
 WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
-t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12
-(a revision), or a long id (body:p:12).
+t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
+(a revision).
 ```
 
 #### `jubarte-redlines add`
@@ -1296,7 +1302,7 @@ to override. Errors raise `jubarte_redlines.JubarteError`.
 from jubarte_redlines import read
 
 doc = read("contract.docx")
-doc.markdown()    # the body as Markdown with [body:p:N] ids
+doc.markdown()    # the body as Markdown with [pN] ids
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations)
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change with its stable id
@@ -1317,9 +1323,9 @@ doc = read("contract.docx")
 plan = (
     EditPlan(author="Reviewer")
     .for_document(doc)             # bind to this snapshot; STALE_SOURCE if it changed
-    .replace("body:p:3", find="30 days", replacement="45 days", format={"bold": True})
-    .comment("body:p:3", text="Check with the client", find="45 days")
-    .insert_paragraph("body:p:3", runs=["New sentence."], like="body:p:3")
+    .replace("p3", find="30 days", replacement="45 days", format={"bold": True})
+    .comment("p3", text="Check with the client", find="45 days")
+    .insert_paragraph("p3", runs=["New sentence."], like="p3")
 )
 out = doc.edit(plan)               # EditResult: clean, redline, report, diff
 ```
@@ -1569,7 +1575,7 @@ Body paragraphs with ids, formatting spans and limitations, plus package facts.
 Document.markdown(self) -> 'str'
 ```
 
-The body as Markdown with a ``[body:p:N]`` id before each paragraph.
+The body as Markdown with a ``[pN]`` id before each paragraph.
 
 #### `Document.edit`
 
@@ -1724,7 +1730,7 @@ diff(old: 'Document | bytes | str | os.PathLike[str]', new: 'Document | bytes | 
 ```
 
 The changes from ``old`` to ``new``: the changed paragraphs, each at
-its ``body:p:N`` id in a Word document or ``line:N`` in Markdown, with
+its ``pN`` id in a Word document or ``line:N`` in Markdown, with
 ``[-old-]{+new+}`` changes and CriticMarkup comments.
 
 Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
@@ -1771,8 +1777,8 @@ Hunk(
 
 One changed paragraph of a ``Diff``.
 
-``at`` is where it is: ``body:p:N`` (or a header's, footer's or note's
-``header1:p:N``, ``footnotes:p:N``...) in a Word document, as
+``at`` is where it is: ``p12`` (or a header's, footer's or note's
+``header1``, ``header1.p2``, ``footnotes.p3``...) in a Word document, as
 ``Document.markdown`` and edit plans number paragraphs, or ``line:N`` in
 Markdown; in the new version, or the old one when ``removed``. ``text``
 is the paragraph with its changes, unwrapped.
@@ -1805,15 +1811,15 @@ Change(
 
 One tracked change with the id ``Document.accept`` / ``reject`` select by.
 
-``id`` is ``{story}:rev:{w:id}`` (``body:rev:12``, ``header1:rev:3``);
-resolving some changes never renumbers the rest. ``target`` is what the
+``id`` is the change's short id (``r12``, ``header1.r3``), built from
+its ``w:id``, so resolving some changes never renumbers the rest. ``target`` is what the
 change applies to (``text``, ``paragraph_mark``, ``table_row``,
 ``table_cell``, ``properties``). Both sides of a move share
 ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
 ``inside`` names the change whose content holds this one: resolving that
-one so its content goes takes this one along. ``ref`` is the short id the
-CLI prints and ``-p``/``--id`` take (``r12``, ``header1.r3``);
-``paragraph`` is the id of the paragraph the change is in (``body:p:3``).
+one so its content goes takes this one along. ``ref`` equals ``id``: the
+short id the CLI prints and ``-p``/``--id`` take;
+``paragraph`` is the id of the paragraph the change is in (``p3``).
 
 ### `Comment`
 
@@ -1841,7 +1847,7 @@ One comment with its thread position and the text it is anchored to.
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
     ``parent`` is the id of the comment it replies to (Word threads are one
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
-    is the paragraph id where the range starts (``body:p:12``), and
+    is the paragraph id where the range starts (``p12``), and
     ``last_paragraph`` the one where it ends when that is a later one;
     ``anchor_text`` is the commented text, paragraphs joined by ``
 ``, with
@@ -2394,7 +2400,7 @@ The one control with this id (``body:sdt:N``), tag or alias; give exactly one.
 Snapshot.paragraph(self, id_or_index: 'str | int') -> 'Paragraph'
 ```
 
-The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index.
+The paragraph with this id (``p12``, ``header1``, ``header1.p2``) or body index.
 
 #### `Snapshot.unique`
 
@@ -2509,7 +2515,7 @@ Paragraph(
 )
 ```
 
-One paragraph (``body:p:N``, ``header1:p:N``...); ``index``/``id`` are valid for this snapshot only.
+One paragraph (``p12``, ``header1``, ``header1.p2``...); ``index``/``id`` are valid for this snapshot only.
 
 ### `Span`
 
@@ -2661,8 +2667,8 @@ One thing wrong with a package, from ``Document.validate``.
 ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
 ``warning`` or ``info``. ``part`` is the package part and ``location``
 the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
-id (``body:p:3``), or empty for a package-level finding. ``ref`` is the
-short id the CLI prints for ``location`` (``p3`` for ``body:p:3``).
+id (``p3``), or empty for a package-level finding. ``ref`` is the
+short id the CLI prints for ``location`` (``p3`` for ``p3``).
 ``word_fatal`` is true when Word refuses or repairs the file for it,
 ``repairable`` when ``Document.repair`` fixes it.
 
@@ -2747,7 +2753,7 @@ One ``Document.audit`` finding.
 ``code`` is the rule (``HEADING_SKIP``, ``IMAGE_NO_DESCR``...),
 ``rule_set`` is ``a11y``, ``style`` or ``structure``, ``severity`` is
 ``error``, ``warning`` or ``info``, and ``location`` is the paragraph id
-(``body:p:N``, ``footer1:p:N``...) an edit plan targets, or a part name
+(``p12``, ``footer1``, ``footer1.p2``...) an edit plan targets, or a part name
 for a document-wide finding.
 <!-- gen:python-api:end -->
 
