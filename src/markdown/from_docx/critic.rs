@@ -712,11 +712,13 @@ pub(crate) fn escape(text: &str) -> String {
 }
 
 /// Breaks every CriticMarkup delimiter in Markdown the converter built
-/// (equations, image descriptions) with a space. A backslash would change the
-/// LaTeX; a space does not, since LaTeX ignores spaces in math, and an image
-/// description reads the same.
+/// (equations, image descriptions). Outside an equation a space does it, and
+/// an image description reads the same. Inside one, a space would be part of
+/// the equation's text and the next write would draw it. An empty group
+/// breaks the delimiter and the writer drops it (`$x_{--}$` is `$x_{{}--{}}$`,
+/// still the text `--`).
 fn defuse(markdown: &str) -> String {
-    const DELIMITERS: [(&str, &str); 11] = [
+    const SPACED: [(&str, &str); 11] = [
         ("{++", "{ ++"),
         ("{--", "{ --"),
         ("{~~", "{ ~~"),
@@ -729,11 +731,52 @@ fn defuse(markdown: &str) -> String {
         ("==}", "== }"),
         ("~>", "~ >"),
     ];
-    DELIMITERS
+    // Openers before closers, so `{--` broken as `{{}--` still has a `--}`
+    // for the closer to break.
+    const GROUPED: [(&str, &str); 11] = [
+        ("{++", "{{}++"),
+        ("{--", "{{}--"),
+        ("{~~", "{{}~~"),
+        ("{>>", "{{}>>"),
+        ("{==", "{{}=="),
+        ("++}", "++{}"),
+        ("--}", "--{}"),
+        ("~~}", "~~{}"),
+        ("<<}", "<<{}"),
+        ("==}", "=={}"),
+        ("~>", "~{}>"),
+    ];
+    let mut out = String::with_capacity(markdown.len());
+    let mut rest = markdown;
+    while !rest.is_empty() {
+        let Some(start) = super::unescaped_dollar(rest) else {
+            out.push_str(&break_delimiters(rest, &SPACED));
+            break;
+        };
+        out.push_str(&break_delimiters(&rest[..start], &SPACED));
+        let fence = if rest[start..].starts_with("$$") {
+            "$$"
+        } else {
+            "$"
+        };
+        let body = start + fence.len();
+        let Some(len) = super::math_body(&rest[body..], fence) else {
+            out.push_str(&break_delimiters(&rest[start..], &SPACED));
+            break;
+        };
+        let end = body + len + fence.len();
+        out.push_str(fence);
+        out.push_str(&break_delimiters(&rest[body..body + len], &GROUPED));
+        out.push_str(fence);
+        rest = &rest[end..];
+    }
+    out
+}
+
+fn break_delimiters(text: &str, marks: &[(&str, &str)]) -> String {
+    marks
         .iter()
-        .fold(markdown.to_string(), |text, (from, to)| {
-            text.replace(from, to)
-        })
+        .fold(text.to_string(), |text, (from, to)| text.replace(from, to))
 }
 
 /// An equation's changes (`$A={--π--}r^2$`), which the converter marks
@@ -1168,8 +1211,9 @@ mod tests {
 
     #[test]
     fn raw_markdown_is_content_whose_delimiters_are_spaced_apart() {
-        // A backslash would change the LaTeX; a space does not, and it keeps a
-        // `--}` inside an equation from closing the deletion around it.
+        // A backslash would change the LaTeX. Outside an equation a space
+        // keeps a delimiter from closing the deletion around it; inside one
+        // an empty group does, and the writer drops it.
         assert_eq!(
             script(&[
                 ("open", "-"),
@@ -1177,9 +1221,23 @@ mod tests {
                 ("close", "-"),
                 ("raw", "")
             ]),
-            "{--$x_{ -- }$ { ++ ++ } ~ > { == == } { >> << } { ~~ ~~ }--}"
+            "{--$x_{{}--{}}$ { ++ ++ } ~ > { == == } { >> << } { ~~ ~~ }--}"
         );
         assert_eq!(defuse("$a+b$"), "$a+b$");
+    }
+
+    #[test]
+    fn an_equation_breaks_delimiters_on_an_empty_group() {
+        assert_eq!(defuse("$x_{--}$"), "$x_{{}--{}}$");
+        assert_eq!(defuse("$y^{++}$"), "$y^{{}++{}}$");
+        assert_eq!(defuse("$$x_{--}$$"), "$$x_{{}--{}}$$");
+        assert_eq!(defuse("$a~>$"), "$a~{}>$");
+        // The broken form has no delimiter left, so a second pass keeps it.
+        assert_eq!(defuse("$x_{{}--{}}$"), "$x_{{}--{}}$");
+        // A backslash before `$` is the character, not a fence.
+        assert_eq!(defuse(r"cost \$5 $x_{--}$"), r"cost \$5 $x_{{}--{}}$");
+        // An unclosed dollar is text, and stays broken with a space.
+        assert_eq!(defuse("cost $5 and {--x--}"), "cost $5 and { --x-- }");
     }
 
     #[test]
@@ -1198,7 +1256,7 @@ mod tests {
             Some(&(Del, Some("Ana".into()))),
             false,
         );
-        assert_eq!(out, "{--A\n\n$x_{ -- }$--}{>>Ana<<}");
+        assert_eq!(out, "{--A\n\n$x_{{}--{}}$--}{>>Ana<<}");
     }
 
     #[test]
