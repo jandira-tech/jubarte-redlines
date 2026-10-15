@@ -416,7 +416,10 @@ r9 @AC`) or as `fmt:` in its `sections:` entry; style changes as
 `style_changes: {Normal: styles.r3 @AS}`, a key of its own beside
 `styles:`, so no style id can collide with it; a header's or footer's
 changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
-notes no definition shows (Word's separators) as `notes: {fmt: …}`. A
+notes no definition shows (Word's separators) as `notes: {fmt: …}`;
+converting back puts a part's `fmt` changes on its separator, then its
+continuation separator (the view does not say which a lone one was on;
+its tag, author and date come back). A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
