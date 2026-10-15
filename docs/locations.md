@@ -59,7 +59,7 @@ Every non-test function that calls an id parser directly: the places the source 
 | `ids::parse_change_ids` | `changes::ChangeFilter::normalized`, `ids::change_id`, `ids::parse_location`, `markdown::from_docx::agent::printed_change_ids`, `markdown::from_docx::agent::printed_wids`, `markdown::view_notes::markdown::view_notes::revision_tags`, `markdown::view_notes::markdown::view_notes::table_line` |
 | `ids::parse_comment_id` | `ids::comment_id_de`, `markdown::view_notes::markdown::view_notes::comment_head` |
 | `ids::parse_location` | `edit::flags::comment_number`, `edit::flags::expired`, `edit::flags::revision_group`, `edit::origin::Ids::paragraph_id` |
-| `ids::short_number` | `markdown::view_notes::IdLine::clause`, `markdown::view_notes::comment_numbers`, `markdown::view_notes::empty_paragraphs`, `markdown::view_notes::markdown::view_notes::id_line`, `markdown::view_notes::markdown::view_notes::table_line`, `markdown::view_notes::note_paragraphs`, `markdown::view_notes::unplaced` |
+| `ids::short_number` | `markdown::view_notes::IdLine::clause`, `markdown::view_notes::comment_numbers`, `markdown::view_notes::empty_paragraphs`, `markdown::view_notes::markdown::view_notes::id_line`, `markdown::view_notes::markdown::view_notes::table_line`, `markdown::view_notes::note_paragraphs`, `markdown::view_notes::paragraph_range`, `markdown::view_notes::unplaced` |
 
 ### From each id flag to its parsers
 

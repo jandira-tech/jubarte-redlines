@@ -178,7 +178,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 22] = [
+const RING1_CODES: [&str; 23] = [
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
     "MALFORMED_XML",
@@ -201,6 +201,7 @@ const RING1_CODES: [&str; 22] = [
     "COMMENT_UNANCHORED",
     "COMMENT_ID_REPEATED",
     "COMMENT_METADATA_MISMATCH",
+    "STYLE_NAME_COMMA",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -454,7 +455,40 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_comment_graph(pkg, &mut out);
     check_namespace_qname_contexts(pkg, &mut out);
     check_runs_inside_paragraphs(pkg, &mut out);
+    check_style_names(pkg, &mut out);
     out
+}
+
+/// A style's `w:name` holds no comma: the schema's pattern is `[^,]*`
+/// (Word reads a comma there as the start of an alias list), while its
+/// `w:styleId` may hold one. The OOXML validator refuses the part; Word
+/// opens it (`List,Para`, probed 2026-10-15), so it is no Word-fatal.
+fn check_style_names(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for part in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        if dom.name(root).is_none_or(|n| n.local_name() != "styles") {
+            continue;
+        }
+        for name in dom.descendants(root, Some(&W::name("name"))) {
+            let in_style = dom
+                .parent(name)
+                .and_then(|p| dom.name(p))
+                .is_some_and(|p| p.local_name() == "style");
+            if let Some(value) = dom.attribute(name, &W::val())
+                && in_style
+                && value.contains(',')
+            {
+                out.push(Finding::new(
+                    "STYLE_NAME_COMMA",
+                    &part,
+                    element_path(&dom, name),
+                    format!("style name '{value}' holds a comma, which w:name forbids"),
+                ));
+            }
+        }
+    }
 }
 
 /// A run outside any paragraph: Word loads the document empty. Probed

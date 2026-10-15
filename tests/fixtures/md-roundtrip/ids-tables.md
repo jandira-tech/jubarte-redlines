@@ -15,7 +15,7 @@ notes: {fmt: footnotes.r1 @LW; footnotes.r2 @LW; endnotes.r3 @LW; endnotes.r4 @L
 headers:
   default: {id: header1, text: ""}
 footers:
-  default: {id: footer1, text: "", fmt: footer1.r903 @LW}
+  default: {id: footer1, text: "", style: LineNumber, fmt: footer1.r903 @LW}
 sections:
   2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.4924in, fmt: r1650 @LW, headers: {first: none}, footers: {first: none, default: {id: footer2, text: "{--{PAGE   \\* MERGEFORMAT}5{/}--}{>>footer2.r1648 @LW<<}", right, rev: break-del footer2.r1647 @LW in footer2, fmt: footer2.r1649 @LW}}}
 ---

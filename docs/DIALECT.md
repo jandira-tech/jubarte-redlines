@@ -84,6 +84,7 @@ headers:
   default: {id: header1, text: Smith & Co, right}
 footers:                             # the same keys; even: turns on even/odd
   default: {id: footer2, text: "Page {PAGE}"}
+  even: {id: footer1, text: [A, B], styles: [Footer, Normal]}  # Header/Footer unless style:/styles: says
 sections:
   2: {p11-p40, page: A4 landscape, headers: {first: none}}
 ```

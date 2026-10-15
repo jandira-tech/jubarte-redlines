@@ -46,7 +46,7 @@ Status: next.
 
 ## 2. Paragraph styles of headers, footers, comments and notes (≈25 files)
 
-Status: after 1. O5 and O11.
+Status: headers and footers done (#491); comments and notes open.
 - **Cause.** The writer stamps each story's default style on all its paragraphs:
   `header`, `footer`, `annotation text`, `footnote text`, `endnote text`. The view
   never prints a story paragraph's style.
@@ -60,7 +60,9 @@ Status: after 1. O5 and O11.
   silent.
   - A header or footer entry gains `style: X` when all its paragraphs share
     style X. When they differ, it gains `styles: [X, Y]`, aligned with `text`.
-    Normal is written `Normal`.
+    A paragraph with no style is written with the document's default style
+    (`Normal` in most documents); an explicit `Normal` under another default
+    stays `Normal`.
   - Comments: the `comments:` header line gains a document-wide `style X` clause
     when the comment paragraphs are not `CommentText` (a document's comments
     come from one tool). One comment that differs gets a `cN style X` exception
@@ -69,6 +71,10 @@ Status: after 1. O5 and O11.
 - **Tests:** one per story kind. A source paragraph with no style, and one with a
   non-default style, keep their styles. A story whose paragraphs all use the
   default prints no clause, so today's views stay byte for byte.
+- **Open (headers and footers):** a hand-shortened `styles:` list falls back
+  to the story's style without a warning (older than #491; pi on #491,
+  finding 5). `styles:` reaches past the last paragraph with text to the last
+  one a `rev` clause brings back.
 
 ## 3. Page count (10 files)
 

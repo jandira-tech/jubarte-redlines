@@ -709,7 +709,9 @@ fn a_header_change_is_visible_on_the_headers_line() {
     let out = agent(&bytes);
     let lines = header_lines(&out);
     assert!(
-        lines.contains(&"  default: {id: header1, text: \"{++DRAFT++}{>>header1.r1 @AC<<}\"}"),
+        lines.contains(
+            &"  default: {id: header1, text: \"{++DRAFT++}{>>header1.r1 @AC<<}\", style: Normal}"
+        ),
         "{out}"
     );
     assert!(
@@ -731,7 +733,7 @@ fn a_header_change_is_visible_on_the_headers_line() {
     // The resolved views print the plain text, without tags.
     let accepted = agent_with(&bytes, TrackChanges::Accept, true);
     assert!(
-        accepted.contains("  default: {id: header1, text: DRAFT}"),
+        accepted.contains("  default: {id: header1, text: DRAFT, style: Normal}"),
         "{accepted}"
     );
 }
@@ -799,7 +801,8 @@ fn changes_without_text_name_their_ids() {
         "{out}"
     );
     assert!(
-        lines.contains(&"  default: {id: header1, text: Title, fmt: header1.r4 @AC}"),
+        lines
+            .contains(&"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC}"),
         "{out}"
     );
     assert!(
@@ -873,9 +876,9 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     );
     let lines = header_lines(&out);
     assert!(
-        lines.iter().any(|l| l
-            .starts_with("  first: {id: header1, text: Cover, inactive, fmt: header1.r4 @AC}")
-            && l.ends_with("# defined, but different first page is off")),
+        lines.iter().any(|l| l.starts_with(
+            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC}"
+        ) && l.ends_with("# defined, but different first page is off")),
         "{out}"
     );
     assert!(
@@ -1158,15 +1161,15 @@ fn header_text_follows_each_view() {
     };
     assert_eq!(
         text(&agent(&bytes)),
-        r#"  default: {id: header1, text: "Status: {~~FINAL~>DRAFT~~}{>>header1.r2+1 @AC<<} {\\>>x<<\\} Page {~~7~>2~~}{>>header1.r8+9 @AC<<} of 3"}"#
+        r#"  default: {id: header1, text: "Status: {~~FINAL~>DRAFT~~}{>>header1.r2+1 @AC<<} {\\>>x<<\\} Page {~~7~>2~~}{>>header1.r8+9 @AC<<} of 3", style: Normal}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Accept, true)),
-        r#"  default: {id: header1, text: "Status: DRAFT {>>x<<} Page 2 of 3"}"#
+        r#"  default: {id: header1, text: "Status: DRAFT {>>x<<} Page 2 of 3", style: Normal}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Reject, true)),
-        r#"  default: {id: header1, text: "Status: FINAL {>>x<<} Page 7 of 3"}"#
+        r#"  default: {id: header1, text: "Status: FINAL {>>x<<} Page 7 of 3", style: Normal}"#
     );
 }
 
@@ -1901,12 +1904,12 @@ styles:
   \"#\": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
   table: TableGrid, all borders 0.5pt
 headers:
-  first: {id: header2, text: DRAFT}  # page 1 only (different first page)
-  default: {id: header1, text: SIGNATURE PAGE, right}
+  first: {id: header2, text: DRAFT, style: Normal}  # page 1 only (different first page)
+  default: {id: header1, text: SIGNATURE PAGE, right, style: Normal}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: footer2, text: \"{PAGE}1{/}\"}
-  even: {id: footer1, text: \"{PAGE}1{/}\", inactive}  # defined, but even/odd headers are off
+  default: {id: footer2, text: \"{PAGE}1{/}\", style: Normal}
+  even: {id: footer1, text: \"{PAGE}1{/}\", style: Normal, inactive}  # defined, but even/odd headers are off
 ";
     assert!(header.ends_with(expected), "header:\n{header}");
 }
@@ -1952,7 +1955,7 @@ fn later_sections_list_their_range_and_what_differs_from_the_first() {
     );
     let out = agent(&bytes);
     let header = out.split("---\n").nth(1).unwrap();
-    assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, page: Letter portrait, margins 1in, header/footer 0.5in, columns 2, headers: {default: {id: header2, text: SCHEDULE A}}}\n"), "header:\n{header}");
+    assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN, style: Normal}\nsections:\n  2: {p2-p3, page: Letter portrait, margins 1in, header/footer 0.5in, columns 2, headers: {default: {id: header2, text: SCHEDULE A, style: Normal}}}\n"), "header:\n{header}");
     assert!(
         body(&out).contains("<!-- p1 section-break -->\nEnd of part one\n"),
         "{out}"
@@ -5621,7 +5624,10 @@ fn a_long_story_id_is_quoted_in_the_header() {
         r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
     );
     let out = agent(&bytes);
-    assert!(out.contains(r#"{id: "Header_1:p:0", text: Head}"#), "{out}");
+    assert!(
+        out.contains(r#"{id: "Header_1:p:0", text: Head, style: Normal}"#),
+        "{out}"
+    );
     let yaml = header_yaml(&out);
     assert_eq!(
         yaml["headers"]["default"]["id"].as_str(),

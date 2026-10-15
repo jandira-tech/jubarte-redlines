@@ -129,10 +129,27 @@ pub(super) fn assemble(
         } else {
             "Footer"
         });
+        // A header in the Footer style, or the reverse, takes that one too.
+        for style in &story.styles {
+            if let Some(own) = ["Header", "Footer"].into_iter().find(|own| style == own) {
+                wanted.insert(own);
+            }
+        }
     }
+    // And the styles they name (`style: ListParagraph`), as id lines do.
+    let mut named = document.named_styles.clone();
+    named.extend(
+        document
+            .stories
+            .values()
+            .flat_map(|s| &s.stories)
+            .flat_map(|story| &story.styles)
+            .filter(|id| !matches!(id.as_str(), "Normal" | "Header" | "Footer"))
+            .cloned(),
+    );
     if let Some(styles) = package.part_string(&styles_part) {
         let styles = with_styles(&styles, &wanted);
-        let styles = with_named_styles(&styles, &document.named_styles);
+        let styles = with_named_styles(&styles, &named);
         let styles = super::view_styles::apply(&styles, &document.style_specs);
         let theme = related(&package, &main, "/theme")
             .and_then(|part| package.part_string(&part))
@@ -169,6 +186,11 @@ pub(super) fn assemble(
         next_revision
             .saturating_add(1_000_000)
             .min(super::view_notes::MOST_ID / 2),
+        document
+            .style_specs
+            .iter()
+            .find(|s| s.default)
+            .map_or("Normal", |s| s.id.as_str()),
     );
     let default_section = section.clone();
     let section = section_stories.apply(sections, &document.section(sections, &section));

@@ -42,9 +42,9 @@ sections:
   15: {p624-p733, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer14.p1, text: [Smith Family Trust, "{PAGE}13-1{/}"], center}}}
   16: {p734-p919, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer15.p1, text: [Smith Family Trust, "{PAGE}14-1{/}"], center}}}
   17: {p920-p1063, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer16.p1, text: [Smith Family Trust, "{PAGE}15-1{/}"], center}}}
-  18: {p1064-p1078, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer17.p1, text: [Smith Family Trust, "C - {PAGE}1{/}"], center}}}
-  19: {p1079-p1090, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer18.p1, text: [Smith Family Trust, "G-1 - {PAGE}1{/}"], center}}}
-  20: {p1091-p1102, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer19.p1, text: [Smith Family Trust, "G-2 - {PAGE}1{/}"], center}}}
+  18: {p1064-p1078, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer17.p1, text: [Smith Family Trust, "C - {PAGE}1{/}"], center, styles: [Footer, Footer, TextHeading2]}}}
+  19: {p1079-p1090, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer18.p1, text: [Smith Family Trust, "G-1 - {PAGE}1{/}"], center, styles: [Footer, Footer, TextHeading2]}}}
+  20: {p1091-p1102, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer19.p1, text: [Smith Family Trust, "G-2 - {PAGE}1{/}"], center, styles: [Footer, Footer, TextHeading2]}}}
   21: {p1103-p1112, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer20.p1, text: [Smith Family Trust, "{PAGE}15-1{/}"], center}}}
 ---
 

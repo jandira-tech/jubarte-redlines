@@ -1779,10 +1779,14 @@ pub(super) fn label_numbering(
 /// A paragraph style an id line names and the reader has no definition
 /// for: on Normal, named by its id, so the view prints the id back.
 pub(super) fn named_style_definition(id: &str) -> String {
+    // A style id may hold a comma; its name may not (`w:name` is
+    // `[^,]*`: Word reads a comma there as an alias list).
+    let name = id.replace(',', " ");
+    let name = escape(&name);
     let id = escape(id);
     format!(
         "<w:style w:type=\"paragraph\" w:customStyle=\"1\" w:styleId=\"{id}\">\
-         <w:name w:val=\"{id}\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/></w:style>"
+         <w:name w:val=\"{name}\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/></w:style>"
     )
 }
 

@@ -44,6 +44,10 @@ pub(crate) struct StoryFact {
     pub more: Vec<String>,
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
+    /// The paragraphs' styles when not all are the story's own
+    /// ([`story_style`]): one for all (`style: Normal`), or one per
+    /// paragraph from the part's first (`styles: [Header, ListParagraph]`).
+    pub styles: Vec<String>,
     pub active: bool,
     /// Tracked view: the part's insertions, deletions and moves `text` prints
     /// no tag for (`header1.r3 @AC`), then its formatting changes.
@@ -814,6 +818,12 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
     }
 }
 
+/// The style the writer gives a `header` or `footer` paragraph the view
+/// names no style for: Word's own.
+pub(crate) fn story_style(kind: &str) -> &'static str {
+    if kind == "header" { "Header" } else { "Footer" }
+}
+
 fn entry(s: &StoryFact) -> String {
     let text = if s.more.is_empty() {
         scalar(&s.text, true)
@@ -827,6 +837,14 @@ fn entry(s: &StoryFact) -> String {
     let mut inner = format!("id: {}, text: {text}", scalar(&s.id, true));
     if let Some(align) = s.align {
         inner.push_str(&format!(", {align}"));
+    }
+    match s.styles.as_slice() {
+        [] => {}
+        [style] => inner.push_str(&format!(", style: {}", scalar(style, true))),
+        styles => {
+            let all: Vec<String> = styles.iter().map(|s| scalar(s, true)).collect();
+            inner.push_str(&format!(", styles: [{}]", all.join(", ")));
+        }
     }
     if !s.active {
         inner.push_str(", inactive");

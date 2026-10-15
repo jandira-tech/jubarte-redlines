@@ -46,6 +46,10 @@ pub(super) struct Story {
     pub more: Vec<String>,
     /// `center` or `right`; `None` for left.
     pub align: Option<&'static str>,
+    /// The paragraphs' style ids when not Word's for the story: one for
+    /// all (`style: Normal`), or one per paragraph from the part's first
+    /// (`styles: [Header, ListParagraph]`). `Normal` writes no `w:pStyle`.
+    pub styles: Vec<String>,
     pub active: bool,
     /// The marks the text shows no tag for (`rev: footer1.r24 @BC;
     /// break-del footer1.r25 @BC in footer1.p1`), and the formatting
@@ -310,6 +314,12 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
         more,
         rev: tags("rev"),
         fmt: tags("fmt"),
+        styles: match entries.iter().find(|(k, _)| k == "styles") {
+            Some((_, Value::List(items))) => items.clone(),
+            _ => text_of("style")
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default(),
+        },
         align: if flag("center") {
             Some("center")
         } else if flag("right") {
@@ -806,6 +816,7 @@ pub(super) fn write(
     count: usize,
     people: &People,
     first_id: u32,
+    default_style: &str,
 ) -> SectionStories {
     if sections
         .values()
@@ -848,7 +859,7 @@ pub(super) fn write(
                 let id = match parts.get(&story.part) {
                     Some(id) => id.clone(),
                     None => {
-                        let id = story_part(package, main, story, &mut marks);
+                        let id = story_part(package, main, story, default_style, &mut marks);
                         parts.insert(story.part.clone(), id.clone());
                         id
                     }
@@ -895,7 +906,13 @@ fn reference_rank(kind: &str, ty: &str) -> usize {
 /// does not reach; one mark may hold an insertion and a deletion. A mark
 /// it names no more of (`footer1.r9 @AC`) is an empty insertion at the
 /// end.
-fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks<'_>) -> String {
+fn story_part(
+    package: &mut PartFs,
+    main: &str,
+    story: &Story,
+    default_style: &str,
+    marks: &mut Marks<'_>,
+) -> String {
     let root = if story.kind == "header" { "hdr" } else { "ftr" };
     let style = if story.kind == "header" {
         "Header"
@@ -947,7 +964,17 @@ fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks
     let mut body = String::new();
     let last = texts.len() - 1;
     for (index, text) in texts.iter().enumerate() {
-        let mut base = format!("<w:pStyle w:val=\"{style}\"/>");
+        let style = match story.styles.as_slice() {
+            [one] => one.as_str(),
+            many => many.get(index).map_or(style, String::as_str),
+        };
+        // The document's default style needs no `w:pStyle`; any other,
+        // `Normal` too when it is not the default, does.
+        let mut base = if style == default_style {
+            String::new()
+        } else {
+            format!("<w:pStyle w:val=\"{}\"/>", super::xml::escape(style))
+        };
         if let Some(align) = story.align.filter(|_| index >= story.paragraph) {
             let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
         }

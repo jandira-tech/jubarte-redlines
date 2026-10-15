@@ -17,7 +17,7 @@ headers:
   even: {id: header1, text: ["{PAGE}2{/}", "Even page header, page numbers at the right"]}
 footers:
   first: {id: footer3, text: ["{PAGE}1{/}", "This Is my first page footer, page numbers at the left"]}  # page 1 only (different first page)
-  default: {id: footer2, text: ["{PAGE}1{/}", "Odd page footer, page numbers at the left"]}
+  default: {id: footer2, text: ["{PAGE}1{/}", "Odd page footer, page numbers at the left"], styles: [Footer, Header]}
   even: {id: footer1, text: ["{PAGE}2{/}", "Even page footer, page numbers at the right"]}
 ---
 
