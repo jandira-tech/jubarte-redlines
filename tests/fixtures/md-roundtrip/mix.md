@@ -2,7 +2,7 @@
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
 revisions: 226                     # 213 marks shown as 211 changes: 2 insertions, 85 deletions, 2 substitutions, 109 paragraph marks, 13 table rows; 5 formatting; 2 in header1; 2 in footer1; 2 in endnotes; 2 in footnotes
-comments: 1 thread open            # 1 comment: c73
+comments: 1 thread open, style Normal  # 1 comment: c73
 authors:
   document_owner: Un-named         # dc:creator
   ASR: Arthur Souza Rodrigues      # 226 revisions, 2026-09-26T14:54:00Z

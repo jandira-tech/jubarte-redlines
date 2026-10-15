@@ -2,7 +2,7 @@
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
 revisions: 64                      # 63 marks shown as 60 changes: 27 insertions, 27 deletions, 2 substitutions, 4 paragraph marks; 1 in footnotes
-comments: 30 threads open          # 30 comments: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29
+comments: 30 threads open, style Normal  # 30 comments: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
   AL: Ana Lima                     # 20 revisions, 11 comments, 2026-09-01..2026-09-01
