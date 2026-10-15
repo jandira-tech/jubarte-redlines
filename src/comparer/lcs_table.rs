@@ -205,9 +205,25 @@ pub(crate) fn align_rows_by_shared_words(
 /// The joined `w:t` text of a row as lowercase alphanumeric word tokens.
 fn row_word_tokens(dom: &Dom, row: &ComparisonUnit) -> std::collections::HashSet<String> {
     let mut text = String::new();
+    let mut previous_paragraph = None;
     for atom in row.descendant_atoms() {
         if dom.name_is(atom.content_element, &W::t()) {
+            let paragraph = atom
+                .ancestor_elements
+                .iter()
+                .rev()
+                .copied()
+                .find(|&node| dom.name_is(node, &W::p()));
+            if previous_paragraph.is_some() && previous_paragraph != paragraph {
+                text.push(' ');
+            }
             text.push_str(&dom.value_str(atom.content_element));
+            previous_paragraph = paragraph;
+        } else if dom.name_is(atom.content_element, &W::name("tab"))
+            || dom.name_is(atom.content_element, &W::name("br"))
+            || dom.name_is(atom.content_element, &W::name("cr"))
+        {
+            text.push(' ');
         }
     }
     text.split(|c: char| !c.is_alphanumeric())
@@ -1951,6 +1967,24 @@ mod shared_word_alignment_tests {
         assert_eq!(
             align_rows_by_shared_words(&old, &new),
             vec![Pair(0, 0), Pair(1, 1)]
+        );
+    }
+    #[test]
+    fn row_tokens_keep_cell_paragraph_and_tab_boundaries_but_join_run_fragments() {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{}"><w:body><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Al</w:t></w:r><w:r><w:t>pha</w:t></w:r></w:p><w:p><w:r><w:t>Beta</w:t><w:tab/><w:t>Gamma</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Delta</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#, W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let settings = WmlComparerSettings::default();
+        let atoms =
+            super::super::atomize::create_comparison_unit_atom_list(&mut dom, body, &settings);
+        let units = super::super::units::get_comparison_unit_list(&dom, &atoms, &settings);
+        let table = as_group(&units[0]).unwrap();
+        assert_eq!(
+            row_word_tokens(&dom, &table.contents[0]),
+            toks(&["alpha", "beta", "gamma", "delta"])
         );
     }
 }
