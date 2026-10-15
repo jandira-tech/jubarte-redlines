@@ -271,12 +271,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     // Notes with no surviving reference are pruned from the settled file
     // (`prune_orphan_notes`), so settled numbering skips them too. In the
     // tracked view every reference survives.
-    let referenced: HashSet<(bool, String)> = if accept.is_none() {
-        HashSet::new()
-    } else {
+    let referenced: HashSet<(bool, String)> = if let Some(accept) = accept {
+        // Headers and footers must be settled too: a rejected insertion
+        // (or accepted deletion) there no longer keeps its note alive.
+        let settled_stories: Vec<_> = story_roots
+            .iter()
+            .map(|root| revise::resolve(root, accept))
+            .collect();
         let mut out = HashSet::new();
         let mut stack: Vec<&Element> = vec![&document];
-        stack.extend(story_roots.iter());
+        stack.extend(settled_stories.iter());
         stack.extend(notes.values());
         while let Some(next) = stack.pop() {
             for child in next.elements() {
@@ -289,6 +293,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             }
         }
         out
+    } else {
+        HashSet::new()
     };
     // Each note's paragraphs as `edit` numbers its story
     // (`inspect::story_paragraph_nodes`): the first index and how many;

@@ -640,3 +640,67 @@ fn note_definitions_carry_the_ids_edit_takes() {
     assert!(text.contains("[^3]: Still here."), "{text}");
     assert!(!text.contains("<!-- footnotes"), "{text}");
 }
+
+#[test]
+fn settled_note_numbering_ignores_references_removed_from_headers() {
+    use common::docx::{Part, W_NS, docx_with_sect};
+    use jubarte::markdown::{ReadOptions, TrackChanges, read};
+    for kind in ["footnote", "endnote"] {
+        let notes = format!(
+            r#"<w:{kind}s xmlns:w="{W_NS}"><w:{kind} w:id="1"><w:p><w:r><w:t>Header note.</w:t></w:r></w:p></w:{kind}><w:{kind} w:id="2"><w:p><w:r><w:t>Body note.</w:t></w:r></w:p></w:{kind}></w:{kind}s>"#
+        );
+        let header = format!(
+            r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:ins w:id="9" w:author="Ann"><w:r><w:{kind}Reference w:id="1"/></w:r></w:ins></w:p></w:hdr>"#
+        );
+        let note_part = format!("word/{kind}s.xml");
+        let content_type =
+            format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}s+xml");
+        let rel_type =
+            format!("http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}s");
+        let source = docx_with_sect(
+            &format!(
+                r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:{kind}Reference w:id="2"/></w:r></w:p>"#
+            ),
+            &[
+                Part {
+                    name: &note_part,
+                    content_type: &content_type,
+                    rel_type: &rel_type,
+                    xml: &notes,
+                },
+                Part {
+                    name: "word/header1.xml",
+                    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                    rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                    xml: &header,
+                },
+            ],
+            r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+        );
+        let ids = |bytes: &[u8], track_changes| -> Vec<String> {
+            read(
+                bytes,
+                &ReadOptions {
+                    page_markers: false,
+                    track_changes,
+                    ..ReadOptions::default()
+                },
+            )
+            .unwrap()
+            .markdown
+            .lines()
+            .filter(|line| line.starts_with(&format!("<!-- {kind}s.")))
+            .map(str::to_string)
+            .collect()
+        };
+        for track in [TrackChanges::Accept, TrackChanges::Reject] {
+            let settled = match track {
+                TrackChanges::Accept => accept_revisions(&source).unwrap(),
+                _ => reject_revisions(&source).unwrap(),
+            };
+            let expected = ids(&settled, TrackChanges::All);
+            assert!(!expected.is_empty());
+            assert_eq!(ids(&source, track), expected, "{kind} {track:?}");
+        }
+    }
+}
