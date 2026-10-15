@@ -19,6 +19,16 @@ fn reveal(c: char) -> char {
     }
 }
 
+/// Whether `&` (just read) starts `&#32;`, the agent view's leading space;
+/// the reference is consumed when it does.
+fn space_reference(rest: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    let found = rest.clone().take(4).eq("#32;".chars());
+    if found {
+        rest.nth(3);
+    }
+    found
+}
+
 /// Removes a backslash escape before a Markdown punctuation character
 /// (`\*` → `*`), as CommonMark reads it; other backslashes stay.
 pub fn unescape_markdown(text: &str) -> String {
@@ -31,6 +41,11 @@ pub fn unescape_markdown(text: &str) -> String {
         {
             out.push(next);
             chars.next();
+            continue;
+        }
+        // A line copied from the agent view: its leading space.
+        if c == '&' && space_reference(&mut chars) {
+            out.push(' ');
             continue;
         }
         out.push(c);
@@ -220,6 +235,11 @@ pub fn plain_anchor(text: &str) -> String {
             chars.next();
             continue;
         }
+        // Hidden, so no block mark or edge trim takes it for the view's.
+        if c == '&' && space_reference(&mut chars) {
+            hidden.push(hide(' '));
+            continue;
+        }
         hidden.push(c);
     }
     // The agent view writes a block mark at the start of its line, ahead
@@ -294,6 +314,12 @@ mod tests {
             ("_foo___", "foo__"),
             ("unclosed {++ insert", "unclosed {++ insert"),
             ("\\# 1", "# 1"),
+            // The agent view writes a paragraph's leading space as `&#32;`.
+            ("alpha\\\n&#32;beta", "alpha\n beta"),
+            ("&#32;lead", " lead"),
+            ("&#32;- item", " - item"),
+            ("a &#32;b", "a  b"),
+            ("&#32", "&#32"),
         ] {
             assert_eq!(plain_anchor(anchor), plain, "{anchor}");
         }
@@ -346,5 +372,6 @@ mod tests {
     fn unescape_markdown_resolves_punctuation_escapes_only() {
         assert_eq!(unescape_markdown("\\*a\\_b\\\\ \\n \\é"), "*a_b\\ \\n \\é");
         assert_eq!(unescape_markdown("trailing \\"), "trailing \\");
+        assert_eq!(unescape_markdown("&#32;lead and &#32"), " lead and &#32");
     }
 }
