@@ -45,7 +45,8 @@ pub const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12), a story or its 
 pub const LOCATION_NOT_YET: &str = "a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet";
 /// Why a table id without its row and cell was refused.
 pub const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row1.cell2";
-/// Why a row or cell without its table was refused.
+/// Message returned for a `-p` value that names a row or cell without its
+/// table.
 pub const CELL_NEEDS_TABLE: &str = "a row or cell needs its table, as t0.row1.cell2";
 
 /// The change spellings the manifest advertises: the settled ones only
@@ -65,8 +66,9 @@ pub const PARAGRAPH_SPELLINGS: &[&str] = &[
     "t0.row1.cell2.p1",
 ];
 
-/// The table spellings the manifest advertises (rows and cells sit under
-/// their table, as in [`PARAGRAPH_SPELLINGS`]).
+/// Sample table-id spellings the capabilities manifest advertises
+/// ([`crate::capabilities::Ids::table`]); rows and cells sit under the
+/// table, as in [`PARAGRAPH_SPELLINGS`].
 pub const TABLE_SPELLINGS: &[&str] = &["t0"];
 
 /// The content control spellings the manifest advertises: a block control,
@@ -76,9 +78,12 @@ pub const CONTROL_SPELLINGS: &[&str] = &["cc0", "p12.cc0", "t0.row1.cell2.cc0"];
 /// A refused id: what was given and what was expected.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdError {
-    /// The token as given.
+    /// The token as it was given to the parser.
     pub given: String,
-    /// What the token should have been.
+    /// Human-readable hint naming the form the token should have taken
+    /// (one of the [`CHANGE_EXPECTED`] / [`COMMENT_EXPECTED`] /
+    /// [`LOCATION_EXPECTED`] / [`TABLE_NEEDS_CELL`] / [`CELL_NEEDS_TABLE`]
+    /// constants).
     pub expected: &'static str,
     /// The settled spelling of an expired one (`12` → `p12, r12 or c12`),
     /// when one is clear.
@@ -86,6 +91,8 @@ pub struct IdError {
 }
 
 impl IdError {
+    /// Builds an [`IdError`] with the given token and the matching
+    /// `expected` message constant.
     fn new(given: &str, expected: &'static str) -> Self {
         Self {
             given: given.to_string(),
@@ -107,18 +114,24 @@ impl fmt::Display for IdError {
 
 impl std::error::Error for IdError {}
 
-/// One tracked change: its story (`body`, `header1`, `footnotes`, …) and
-/// its `w:id`.
+/// One tracked change, addressed by story and the change's `w:id` value.
+/// The grammar of [`short`] / [`long`] is safe unquoted in bash, csh and
+/// zsh and never collides with another change when its `w:id` is canonical.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ChangeId {
-    /// The story: `body`, or the part's file stem.
+    /// The owning story: `body` for body changes, otherwise the part's file
+    /// stem (`header1`, `footnotes`, `endnotes`, …).
     pub story: String,
-    /// The change's `w:id`, as the document spells it.
+    /// The change's `w:id`, as the document spells it. A canonical
+    /// `u32` (`12`) prints and parses back unchanged; values that do not fit
+    /// the short form (`007`, `4294967296`, `x9`) travel as strings so the
+    /// short/long round-trip stays exact.
     pub wid: String,
 }
 
 impl ChangeId {
-    /// The change `wid` of `story`.
+    /// Builds a [`ChangeId`] from its story and `w:id`. Both strings are
+    /// stored verbatim; no canonicalisation is performed here.
     pub fn new(story: impl Into<String>, wid: impl Into<String>) -> Self {
         Self {
             story: story.into(),
@@ -175,7 +188,7 @@ pub enum Location {
     /// A paragraph, in a form `edit` resolves (`p12`, `header1.p2`,
     /// `t0.row1.cell2`; the long id of a part with no short spelling).
     Paragraph(String),
-    /// A comment, by `w:id`.
+    /// A comment, addressed by its `w:id`.
     Comment(u32),
     /// The text a comment covers (`c5.text`), by the comment's `w:id`.
     CommentText(u32),
@@ -401,9 +414,11 @@ pub fn paragraph_place(id: &str) -> Option<(String, usize)> {
     (paragraph_id(story, n) == id).then(|| (story.to_string(), n))
 }
 
-/// The short form of a long paragraph id: `body:p:12` → `p12`,
-/// `header1:p:0` → `header1`, `header1:p:2` → `header1.p2`; the long id
-/// itself when its story or number has no short spelling.
+/// The short form of a long paragraph id (`body:p:N` → `pN`,
+/// `header1:p:0` → `header1`, `header1:p:N` → `header1.pN`); the input is
+/// returned verbatim when it does not have one `:p:` separator, when the
+/// story does not fit the short grammar, or when the digit run cannot be
+/// canonicalised.
 pub fn short_paragraph(long: &str) -> String {
     let Some((story, n)) = long.split_once(":p:") else {
         return long.to_string();

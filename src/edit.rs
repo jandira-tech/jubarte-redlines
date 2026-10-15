@@ -16,6 +16,12 @@
 //! `jubarte read --json` prints is what a plan anchors to. Replacement text is
 //! inserted into the run that held the anchor, so it inherits that run's
 //! formatting; the plan never carries raw OOXML.
+//!
+//! The CLI subcommand is `jubarte edit FILE [--plan PLAN.json]`; the bindings
+//! drive [`apply_plan`] / [`apply_plan_json`] directly. [`preview_plan`]
+//! resolves every operation and returns a report without producing the
+//! documents, for dry-run checks. Recording an edit from operation flags is
+//! in [`flags`] / [`record`].
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -33,10 +39,12 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod anchor;
 mod controls;
+/// Build an [`EditPlan`] from `edit`/`add` operation flags, for the CLI.
 pub mod flags;
 mod images;
 mod notes;
 mod origin;
+/// Record operation flags into PLAN.json, for the CLI's `--plan` mode.
 pub mod record;
 mod rewrite;
 mod runs;
@@ -46,7 +54,10 @@ mod tracked;
 mod watermark;
 mod whole;
 
+/// Which content control a `fill_control` operation fills.
 pub use controls::ControlSelector;
+/// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
+/// `section` values.
 pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
 
 /// A versioned, portable set of operations against one document snapshot.
@@ -123,7 +134,7 @@ pub struct ResolvedRevisions {
 }
 
 impl ResolvedRevisions {
-    /// Nothing resolved.
+    /// Whether no change was accepted or rejected.
     pub fn is_empty(&self) -> bool {
         self.accepted.is_empty() && self.rejected.is_empty()
     }
@@ -867,7 +878,6 @@ pub struct EditOutcome {
     pub matches: usize,
     /// `before {old→new} after`, `{+inserted}`, `{-deleted}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// `before {old→new} after`, `{+inserted}`, `{-deleted}`.
     pub context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Comment id written for this operation.
@@ -1360,7 +1370,13 @@ fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditE
 }
 
 impl EditPlan {
-    /// Parse and validate a plan's JSON (`INVALID_PLAN`, `UNSUPPORTED_SCHEMA`).
+    /// Parse and validate a plan's JSON.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_PLAN` when the JSON is malformed or names an unknown field
+    /// or operation kind; `UNSUPPORTED_SCHEMA` when `schema_version` differs
+    /// from [`SCHEMA_VERSION`].
     pub fn from_json(json: &str) -> Result<Self, EditError> {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| err("INVALID_PLAN", None, e.to_string()))?;
@@ -1514,12 +1530,38 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
     Ok(())
 }
 
-/// Apply a plan given as JSON.
+/// Apply a plan given as JSON: [`EditPlan::from_json`], then [`apply_plan`].
+///
+/// # Errors
+///
+/// `INVALID_PLAN` and `UNSUPPORTED_SCHEMA` from parsing the plan, and every
+/// error [`apply_plan`] reports.
 pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, EditError> {
     apply_plan(source, &EditPlan::from_json(plan_json)?)
 }
 
 /// Resolve and apply the plan; compare source and copy into a redline.
+///
+/// Nothing is written: the clean copy, the redline and the report are
+/// returned in memory for the caller (the CLI) to write.
+///
+/// # Errors
+///
+/// `STALE_SOURCE` when `source` mismatches the plan's `source_sha256`, and
+/// `UNSUPPORTED_SCHEMA` when its `schema_version` differs; `INVALID_PLAN`
+/// when the plan itself is invalid (an empty author, `update_fields` with
+/// kept revisions); `UNSUPPORTED_PACKAGE` for a signed or macro-bearing
+/// source. `INVALID_DOCUMENT` when the source cannot be read; the admission
+/// code (`INPUT_LIMIT`, …) when it is refused before parsing.
+/// `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE` and
+/// `AMBIGUOUS_CHANGE` while settling revisions; `ANCHOR_NOT_FOUND`,
+/// `AMBIGUOUS_ANCHOR`, `INVALID_EDIT`, `UNKNOWN_STYLE`, `UNKNOWN_COMMENT`,
+/// `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`, `PARAGRAPH_RESOLVED`,
+/// `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and `UNSUPPORTED_IMAGE`
+/// while resolving and applying operations. `FIELDS_FAILED` when field
+/// results cannot be refreshed, `COMPARE_FAILED` when the redline cannot be
+/// compared, `PACKAGE_WRITE` when it cannot be packaged, and
+/// `REDACTION_LEAK` when redacted text still occurs in an output.
 pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {
     check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;

@@ -10,41 +10,44 @@
     deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
 )]
 
-//! Word 97-2003 (`.doc`) to `.docx`: the text, paragraphs, headings and
-//! tables of the main document.
+//! Word 97-2003 (`.doc`) to text, paragraphs, headings, lists and tables:
+//! the main story, no headers or footers.
 //!
 //! A `.doc` is an OLE compound file holding a `WordDocument` stream, whose
 //! File Information Block (FIB) points at the piece table (`Clx`) in the
 //! `0Table` or `1Table` stream ([MS-DOC] 2.5, 2.9.38). The piece table
 //! names where each run of characters lives and whether it is stored as
-//! UTF-16 or as 8-bit (Windows-1252) text. Paragraph properties come from
-//! the PAPX formatted disk pages (2.9.177): the style (`istd`, mapped to a
-//! heading level through the style sheet), the table marks
-//! (`sprmPFInTable`, `sprmPFTtp`) that turn cell and row ends into a table,
-//! and the list override and level (`sprmPIlfo`, `sprmPIlvl`) whose number
-//! format (`PlfLfo` to `PlfLst` to `LVLF.nfc`) makes a bullet or a number.
-//! Bold and italic come from the CHPX pages (`sprmCFBold`, `sprmCFItalic`),
+//! UTF-16 or as Windows-1252. Paragraph properties come from the PAPX
+//! formatted disk pages (2.9.177): the style (`istd`, mapped through the
+//! style sheet to a heading level), the table marks (`sprmPFInTable`,
+//! `sprmPFTtp`) that turn cell and row ends into a table, and the list
+//! override and level (`sprmPIlfo`, `sprmPIlvl`) whose number format
+//! (`PlfLfo` to `PlfLst` to `LVLF.nfc`) makes a bullet or a number. Bold
+//! and italic come from the CHPX pages (`sprmCFBold`, `sprmCFItalic`),
 //! then from each piece's property modifier (a `Prm0`, or a `Prm1` naming
-//! one of the Clx's `Prc`s), which [MS-DOC] 2.4.6.2 applies after the CHPX.
+//! one of the Clx's `Prc`s) per [MS-DOC] 2.4.6.2.
 //!
-//! What is read: the main story's text, its paragraphs (empty ones too),
+//! Read: the main story text, its paragraphs (empty ones too),
 //! Heading 1-9 and Title styles, bulleted and numbered lists with their
-//! levels, bold and italic, tables (one level; nested tables are
-//! flattened, cell text is plain) and which leading rows repeat as a
-//! header (`sprmTTableHeader`), field results (codes dropped), line
-//! breaks. What is not: other
-//! character formatting (font, size, colour, underline), list start
-//! numbers and number styles beyond "numbered", headers and footers, notes,
-//! comments, tracked changes, pictures, page setup (the output is US
-//! Letter), Word 6/95 files (`nFib` below 193) and encrypted or obfuscated
-//! files, which are refused with `LEGACY_DOC`. `docs/adoption/plans.md`
+//! levels, bold and italic, one-level tables whose cell text is plain,
+//! the leading rows that repeat as a header (`sprmTTableHeader`), field
+//! results (codes dropped) and line breaks. Not read: other character
+//! formatting (font, size, colour, underline), list start numbers and
+//! custom number styles beyond `decimal`, headers and footers, notes,
+//! comments, tracked changes, pictures, page setup (the `.docx` is US
+//! Letter), Word 6/95 files (`nFib` below 193) and encrypted or
+//! obfuscated files — refused with `LEGACY_DOC`. `docs/adoption/plans.md`
 //! lists the steps past this minimum.
 //!
-//! The text becomes escaped Markdown, and [`crate::markdown::markdown_to_docx`]
-//! writes the package, so the `.docx` is the same Word-valid output that
-//! `jubarte convert draft.md` writes. What Markdown cannot say is put back
-//! in the package afterwards: Title and Heading 7-9, empty paragraphs, and
-//! tables whose rows do not repeat as a header.
+//! The text becomes escaped Markdown, and
+//! [`crate::markdown::markdown_to_docx`] writes the package, so the `.docx`
+//! is the same Word-valid output that `jubarte convert draft.md` writes.
+//! What Markdown cannot say is put back afterwards: Title and Heading
+//! 7-9, empty paragraphs, and which rows repeat as a header.
+//!
+//! Entry points: [`is_compound_file`] for the cheap check; [`read`] for
+//! the structured [`LegacyDocument`]; [`doc_to_markdown`] and
+//! [`doc_to_docx`] for the two written outputs.
 
 use std::fmt;
 
@@ -63,7 +66,7 @@ const END_OF_CHAIN: u32 = 0xFFFF_FFFE;
 /// No sector, or no directory entry.
 const NO_STREAM: u32 = 0xFFFF_FFFF;
 
-/// Why a `.doc` could not be read.
+/// Why a `.doc` could not be read, formatted as `LEGACY_DOC: …` on the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyDocError {
     message: String,
@@ -99,10 +102,10 @@ pub enum Block {
 /// A table of the main story.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Table {
-    /// Rows of cells, each cell's paragraphs as plain text joined by
-    /// spaces.
+    /// Rows of cells; each cell's paragraphs are joined by a single space.
+    /// Cell text is plain (no bold/italic split, no nested tables).
     pub rows: Vec<Vec<String>>,
-    /// How many leading rows Word repeats as a header on each page
+    /// Leading rows Word repeats as a header on each page
     /// (`sprmTTableHeader`); 0 when the first row is data.
     pub header_rows: usize,
 }
@@ -111,16 +114,19 @@ pub struct Table {
 /// empty paragraph Word keeps, often to space the text out.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Paragraph {
-    /// 1-9 for Heading 1-9, 0 for Title.
+    /// `Some(1..=9)` for Heading 1-9, `Some(0)` for Title, `None` for a
+    /// non-heading paragraph.
     pub heading: Option<u8>,
     /// The list level, when the paragraph is numbered or bulleted.
     pub list: Option<ListItem>,
-    /// The text in runs of one formatting; `\n` is a line break.
+    /// Runs of text, one (bold, italic) pair each. A literal `\n` is a line
+    /// break (`w:br` / `0x0B`).
     pub spans: Vec<Span>,
 }
 
 impl Paragraph {
-    /// The paragraph's text, without formatting.
+    /// The paragraph's text, without formatting: the spans concatenated in
+    /// order, including line breaks.
     #[must_use]
     pub fn text(&self) -> String {
         self.spans.iter().map(|span| span.text.as_str()).collect()
@@ -147,15 +153,15 @@ pub struct ListItem {
     pub level: u8,
 }
 
-/// The main story of a `.doc`.
+/// The main story of a `.doc`, the only place this module reads from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LegacyDocument {
-    /// Paragraphs and tables, in order.
+    /// Paragraphs and tables, in document order.
     pub blocks: Vec<Block>,
 }
 
-/// Whether `bytes` start like an OLE compound file (`.doc`, or an encrypted
-/// document of any Word version).
+/// Whether `bytes` start with the OLE compound-file magic (`.doc`, or an
+/// encrypted document of any Word version).
 #[must_use]
 pub fn is_compound_file(bytes: &[u8]) -> bool {
     bytes.starts_with(OLE_MAGIC)
@@ -165,12 +171,12 @@ pub fn is_compound_file(bytes: &[u8]) -> bool {
 ///
 /// # Errors
 ///
-/// [`LegacyDocError`] when the file is not a compound file, holds no
-/// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predates
-/// Word 97, is encrypted, or its tables point outside their streams (the
-/// piece table, the style sheet, the property bin tables and their pages,
-/// the list tables, the section table) or contradict themselves (pieces
-/// that do not cover the main story or run backwards).
+/// [`LegacyDocError`] when the bytes are not a compound file, hold no
+/// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predate
+/// Word 97, are encrypted, or whose tables point outside their streams
+/// (the piece table, the style sheet, the property bin tables and their
+/// pages, the list tables, the section table) or contradict themselves
+/// (pieces that do not cover the main story, or that run backwards).
 pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
     let file = CompoundFile::open(bytes)?;
     let word = file.stream("WordDocument").ok_or_else(|| {
@@ -224,7 +230,8 @@ pub fn doc_to_markdown(bytes: &[u8]) -> Result<String> {
 ///
 /// # Errors
 ///
-/// As [`read`], or when the package cannot be written.
+/// As [`read`], or when the rewritten package cannot be
+/// serialized to bytes.
 pub fn doc_to_docx(bytes: &[u8]) -> Result<Vec<u8>> {
     document_to_docx(&read(bytes)?)
 }
