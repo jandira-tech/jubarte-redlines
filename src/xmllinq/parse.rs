@@ -2,18 +2,40 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Port of `parseXDocument` from `lib/xml-linq.ts` — a small, non-validating,
-//! namespace-aware recursive-descent XML parser sufficient for OOXML parts.
+//! XML parser for the arena DOM, ported from `parseXDocument` in
+//! `lib/xml-linq.ts`.
 //!
-//! Transcribed directly (char-by-char) from the TS rather than driven by
-//! quick-xml, so the parse/serialize pair round-trips byte-identically to the
-//! TypeScript oracle (the basis of the M1.8 round-trip gate).
+//! The parser is small, non-validating, and namespace-aware — sufficient
+//! for OOXML parts, which is all the engine needs. It is transcribed
+//! directly from the TypeScript rather than driven by `quick-xml`, so the
+//! parse / serialize pair round-trips byte-identically to the TS oracle
+//! (the basis of the M1.8 round-trip gate).
+//!
+//! # Entry points
+//!
+//! - [`parse_xdocument`] — string → DOM (`Document` node in the supplied
+//!   arena). The permissive path used by every code that reads an OOXML
+//!   part: tolerates missing closing tags, unquoted / mixed-quote
+//!   attributes, and similar WW-isms in real-world .docx files.
+//! - [`unescape_xml_text`] — decode XML entities / character references
+//!   in attribute / text bodies.
+//! - [`validate_xml`] — structural admission for a part *before* the
+//!   permissive parser reads it: well-formed nesting, a single root, no
+//!   DTD, only the five predefined or numeric entities, and nesting no
+//!   deeper than 256. This is not a schema validator.
 
 use std::collections::HashMap;
 
 use super::{Dom, NodeId, XDeclaration, XName, XNamespace};
 
-/// Parse a full XML document (with optional prolog) into a Document node in `dom`.
+/// Parse an XML string into a Document node allocated into `dom`. The
+/// parser is permissive on real-world OOXML inputs (truncated closing
+/// tags, missing `?>` terminators, mixed-quote attribute values) — see
+/// the module-level docs. A leading UTF-8 BOM is stripped before parsing
+/// so a BOM-prefixed input still yields a document with a root.
+///
+/// `xml` may be a complete document (prolog + root + children) or a
+/// fragment; the result is wrapped in a fresh Document node.
 pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId {
     // Strip a leading UTF-8 BOM (U+FEFF): char::is_whitespace() excludes it,
     // so skip_ws() cannot, and an unstripped BOM leaves the document with no root.
@@ -355,7 +377,16 @@ fn extract_pseudo_attr(s: &str, key: &str) -> Option<String> {
     Some(after[1..1 + end].to_string())
 }
 
-/// Port of `unescapeXmlText` — decode entity / character references.
+/// Decode XML entity and character references in attribute and text
+/// payloads (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&#nnn;`,
+/// `&#xhh;`). Port of `unescapeXmlText`.
+///
+/// An unknown name reference, a numeric reference that does not decode
+/// to a valid Unicode scalar, or a reference with no terminating `;`
+/// is preserved verbatim: the `&` and trailing characters are copied
+/// through. ASCII-only names (matching the TS regex `[a-zA-Z]+`) are
+/// recognized; names with non-ASCII letters (e.g. `&eacute;`) are left
+/// literal. Input with no `&` short-circuits to a clone of `s`.
 pub fn unescape_xml_text(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
@@ -411,10 +442,39 @@ fn decode_entity(body: &str) -> Option<String> {
     }
 }
 
-/// Structural admission for a part before the permissive DOM parser reads it:
-/// well-formed nesting, a single root, no DTD, only the five predefined or
-/// numeric entities, and nesting no deeper than 256. This is not an OOXML
-/// schema check and not a ZIP resource budget.
+/// Structural admission for a part before the permissive DOM parser reads
+/// it: well-formed nesting, a single root, no DTD, only the five
+/// predefined or numeric entities, and nesting no deeper than 256. This is
+/// not an OOXML schema check and not a ZIP resource budget.
+///
+/// Used to reject malformed parts up-front (so the permissive parser does
+/// not silently misrender them) and in `jubarte validate`'s XML-shape
+/// checks. `validate_xml` does NOT itself produce a DOM; it only checks
+/// structure.
+///
+/// # Errors
+///
+/// Returns `Err(String)` describing the first problem found. The
+/// possible conditions:
+///
+/// - a `quick-xml` reader error (invalid UTF-8, attribute parse failure
+///   on the structural pass) is forwarded verbatim;
+/// - `"multiple XML roots"` when a second top-level start or empty
+///   element appears after a root has been opened;
+/// - `"XML nesting exceeds {{N}} elements"` when nesting goes beyond 256
+///   elements deep;
+/// - `"unmatched XML end tag"` when an end tag fires without a matching
+///   open (`End` at depth 0);
+/// - `"DTD declarations are unsupported"` when a `<!DOCTYPE>` arrives;
+/// - `"unsupported XML entity reference: {{name}}"` when an entity
+///   reference is seen at the top level or names a value other than the
+///   five predefined or a numeric character reference;
+/// - `"text outside XML root"` when non-whitespace text appears before
+///   the first element;
+/// - `"CDATA outside XML root"` when a CDATA section appears before
+///   the first element;
+/// - `"missing or incomplete XML root"` when no root was opened by EOF
+///   or depth was non-zero at EOF.
 pub fn validate_xml(xml: &str) -> Result<(), String> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
