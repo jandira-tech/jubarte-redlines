@@ -98,8 +98,8 @@ pub struct Comment {
     pub author: String,
     /// `YYYY-MM-DDTHH:MM:SSZ`, the date Word writes.
     pub date: String,
-    /// The comment text (everything after `Name (date):`, or `Name (date)`
-    /// alone).
+    /// The comment text: everything after `Name (date):`, or empty for an
+    /// attribution alone (`{>>Name (date)<<}`).
     pub text: String,
     /// The highlighted text the comment is on (when the comment was on a
     /// `{==…==}` highlight), or `None` for a comment on a tracked change

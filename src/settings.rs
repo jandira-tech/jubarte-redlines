@@ -209,9 +209,9 @@ pub struct SettingsRequest {
 }
 
 impl SettingsRequest {
-    /// A short human-readable description of what this request writes (no
-    /// password, no enforcement detail beyond the edit value), suitable
-    /// for a report line.
+    /// A short human-readable description of what this request writes,
+    /// for a report line: never the password; protection prints its edit
+    /// value and whether it is enforced.
     #[must_use]
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();

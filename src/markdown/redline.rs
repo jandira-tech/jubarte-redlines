@@ -37,7 +37,8 @@ pub enum Source<'a> {
 
 /// How [`redline`] reads and compares two [`Source`] documents.
 ///
-/// Defaults: a Word-faithful settings preset (author "Redline",
+/// Defaults: [`WmlComparerSettings::default`] (author
+/// `"Open-Xml-PowerTools"`; the CLI and bindings pass `Redline`,
 /// `DATE "1970-01-01T00:00:00Z"` for reproducible output, Word's own
 /// detail threshold); no reference document, no CriticMarkup recognition,
 /// no image loader.
@@ -87,11 +88,11 @@ impl std::fmt::Debug for RedlineOptions<'_> {
 ///
 /// # Errors
 ///
-/// [`MarkdownError::Docx`] when one side is Markdown and the underlying
-/// package cannot be admitted (a budget, a duplicate or unsafe part name,
-/// an encrypted `.docx`, an unsupported XML encoding, the bytes are not
-/// a `.docx`). [`MarkdownError::Package`] when the comparer's
-/// `compare_documents_with_settings` call fails.
+/// [`MarkdownError::Package`] when a Word side paired with Markdown cannot
+/// be admitted or read by [`apply_markdown`], or when the comparer's
+/// `compare_documents_with_settings` call fails; what [`markdown_to_docx`]
+/// returns (a bad reference document is [`MarkdownError::Reference`]) when
+/// both sides are Markdown.
 ///
 /// ```
 /// use jubarte::markdown::{RedlineOptions, Source, redline};

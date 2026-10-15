@@ -104,8 +104,10 @@ struct Paragraph {
 ///   body paragraphs (covered by `InspectError`);
 /// - the edit-plan engine refuses an edit the engine cannot represent
 ///   after four retries at falling back to whole-paragraph replacements
-///   and dropping the failing edits;
-/// - the Markdown has footnote text the body-only editor does not apply.
+///   and dropping the failing edits.
+///
+/// Footnote text, which the body-only editor does not apply, is a warning
+/// in [`Patched::warnings`], not an error.
 ///
 /// ```
 /// use jubarte::markdown::{DocxOptions, apply_markdown, markdown_to_docx};

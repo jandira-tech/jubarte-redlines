@@ -56,9 +56,9 @@ pub struct Options {
     pub check: bool,
     /// Install without the interactive prompt (`--yes`).
     pub yes: bool,
-    /// Install this release (`0.10.0` or `v0.10.0`); without a leading
-    /// `v` allowed (`--version`). A request downgrades or re-installs the
-    /// same version too.
+    /// Install this release (`0.10.0` or `v0.10.0`; `--version`). A
+    /// request may downgrade; the installed version itself is up to date
+    /// and is not installed again.
     pub version: Option<String>,
 }
 
@@ -135,7 +135,7 @@ fn bare(version: &str) -> &str {
 ///
 /// Without a requested version only a strictly newer release installs; a
 /// requested version installs whenever it differs from the installed one
-/// (downgrades and re-installs included). A leading `v` is stripped, so
+/// (downgrades included); the installed version is [`Plan::UpToDate`]. A leading `v` is stripped, so
 /// `v0.10.0` and `0.10.0` name the same release.
 ///
 /// # Errors
@@ -161,8 +161,10 @@ pub fn plan(current: &str, target: &str, requested: bool) -> Result<Plan, String
     })
 }
 
-/// `jubarte self-update`. On success the binary on disk is the target
-/// release; on failure the installed binary is unchanged. Writes progress to
+/// `jubarte self-update`. `Ok` means the run finished without error: the
+/// binary is replaced only when an install completes, and `--check`, an
+/// up-to-date release or a declined prompt leave it as it was. On failure
+/// the installed binary is unchanged. Writes progress to
 /// stdout, the prompt to stderr, and reads the answer from stdin.
 ///
 /// The flow is: [`preflight`] → resolve the release for this platform
