@@ -17,9 +17,9 @@ notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   default: {id: header1, text: "", rev: header1.r1654 @AB}
 footers:
-  first: {id: footer3, text: ["{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer3.r1664 @AB<<}", "{++ ++}{>>footer3.r1666 @AB<<}"], center, inactive, rev: break-ins footer3.r1663 @AB in footer3, fmt: footer3.r1665 @AB}  # defined, but different first page is off
-  default: {id: footer2, text: ["{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer2.r1660 @AB<<}", "{++ ++}{>>footer2.r1662 @AB<<}"], center, rev: break-ins footer2.r1659 @AB in footer2, fmt: footer2.r1661 @AB}
-  even: {id: footer1, text: ["{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer1.r1656 @AB<<}", "{++ ++}{>>footer1.r1658 @AB<<}"], center, inactive, rev: break-ins footer1.r1655 @AB in footer1, fmt: footer1.r1657 @AB}  # defined, but even/odd headers are off
+  first: {id: footer3, text: ["{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer3.r1664 @AB<<}", "{++ ++}{>>footer3.r1666 @AB<<}"], center, style: Normal, inactive, rev: break-ins footer3.r1663 @AB in footer3, fmt: footer3.r1665 @AB}  # defined, but different first page is off
+  default: {id: footer2, text: ["{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer2.r1660 @AB<<}", "{++ ++}{>>footer2.r1662 @AB<<}"], center, style: Normal, rev: break-ins footer2.r1659 @AB in footer2, fmt: footer2.r1661 @AB}
+  even: {id: footer1, text: ["{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer1.r1656 @AB<<}", "{++ ++}{>>footer1.r1658 @AB<<}"], center, style: Normal, inactive, rev: break-ins footer1.r1655 @AB in footer1, fmt: footer1.r1657 @AB}  # defined, but even/odd headers are off
 ---
 
 <!-- p0 center, left 0.007in, right -0.0104in, break-ins r1 @AB -->
