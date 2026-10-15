@@ -1964,3 +1964,42 @@ fn math_run_spaces_survive_the_view_and_a_break_reads_as_a_space() {
         );
     }
 }
+
+#[test]
+fn section_references_come_in_words_order() {
+    // Every section Word wrote in the bench corpus (30 with three or more
+    // references) lists them even, default header, even, default footer,
+    // then the first header and footer.
+    let header = "---\nheaders:\n  \
+                  first: {id: header3, text: F}\n  \
+                  default: {id: header2, text: D}\n  \
+                  even: {id: header1, text: E}\n\
+                  footers:\n  \
+                  first: {id: footer3, text: f}\n  \
+                  default: {id: footer2, text: d}\n  \
+                  even: {id: footer1, text: e}\n---\n\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{header}<!-- p0 -->\nOne.\n")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    let document = part_string(&docx, "word/document.xml").expect("a body");
+    let order: Vec<String> = document
+        .split("Reference w:type=\"")
+        .skip(1)
+        .zip(document.match_indices("<w:").filter_map(|(at, _)| {
+            let rest = &document[at + 3..];
+            ["headerReference", "footerReference"]
+                .into_iter()
+                .find(|k| rest.starts_with(k))
+                .map(|k| &k[..1])
+        }))
+        .map(|(rest, kind)| format!("{kind}{}", &rest[..rest.find('"').unwrap()]))
+        .collect();
+    assert_eq!(
+        order,
+        ["heven", "hdefault", "feven", "fdefault", "hfirst", "ffirst"],
+        "{document}"
+    );
+}

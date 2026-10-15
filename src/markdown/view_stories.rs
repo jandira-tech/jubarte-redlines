@@ -841,7 +841,7 @@ pub(super) fn write(
             continue;
         };
         let title_page = stories.title_page.unwrap_or(false);
-        let mut refs = String::new();
+        let mut refs = Vec::new();
         for kind in ["header", "footer"] {
             for story in stories.stories.iter().filter(|s| s.kind == kind) {
                 even |= story.ty == "even" && story.active;
@@ -853,12 +853,14 @@ pub(super) fn write(
                         id
                     }
                 };
-                refs.push_str(&format!(
-                    "<w:{kind}Reference w:type=\"{}\" r:id=\"{id}\"/>",
-                    story.ty
+                refs.push((
+                    reference_rank(kind, &story.ty),
+                    format!("<w:{kind}Reference w:type=\"{}\" r:id=\"{id}\"/>", story.ty),
                 ));
             }
         }
+        refs.sort_by_key(|(rank, _)| *rank);
+        let refs = refs.into_iter().map(|(_, r)| r).collect();
         by_section.insert(number, (refs, title_page));
     }
     if even {
@@ -867,6 +869,20 @@ pub(super) fn write(
     SectionStories {
         by_section,
         named: true,
+    }
+}
+
+/// Where Word writes a `kind` reference of type `ty` in a `w:sectPr`: even
+/// and default headers, even and default footers, then the first header
+/// and footer (every section Word wrote in the bench corpus).
+fn reference_rank(kind: &str, ty: &str) -> usize {
+    match (kind, ty) {
+        ("header", "even") => 0,
+        ("header", "default") => 1,
+        ("footer", "even") => 2,
+        ("footer", "default") => 3,
+        ("header", _) => 4,
+        _ => 5,
     }
 }
 
