@@ -14,7 +14,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
@@ -1521,10 +1521,21 @@ impl<'o, 'a> Writer<'o, 'a> {
             Tag::Superscript => self.superscript += 1,
             Tag::Subscript => self.subscript += 1,
             Tag::Link {
-                dest_url, title, ..
+                link_type,
+                dest_url,
+                title,
+                ..
             } => {
                 let title = (!title.is_empty()).then(|| critic::decode(&title));
-                self.link_start(&critic::decode(&dest_url), title);
+                let dest = critic::decode(&dest_url);
+                // `<ann@x.test>` is an email autolink: its destination is the
+                // address, and the link Word stores is `mailto:` plus that address.
+                let dest = if link_type == LinkType::Email && !dest.starts_with("mailto:") {
+                    format!("mailto:{dest}")
+                } else {
+                    dest
+                };
+                self.link_start(&dest, title);
             }
             Tag::Image { dest_url, .. } => {
                 if self.image.is_none() {
