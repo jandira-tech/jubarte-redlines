@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Bookmark carryover.
+//! Bookmark carryover into the redline body (and headers/footers/notes).
 //!
 //! Word's Compare keeps the body bookmarks of both documents — the union by
 //! name — so a TOC's `PAGEREF` fields, `REF` cross-references and internal
@@ -23,6 +23,12 @@
 //! control, an end after it. B's body-level `_Toc` bookmarks around a
 //! data-bound title control otherwise land inside it, and Word refuses a
 //! bookmark in a plain-text or dropdown control (en 7b649361, 57c181da).
+//!
+//! Public entry points:
+//! - [`carry_bookmarks`] — body-level carryover, used after the diff but
+//!   before serialization;
+//! - [`carry_matching_bookmarks`] — same, with a name predicate and applied
+//!   to one part root at a time (body, header, footer, notes).
 
 use std::collections::{HashMap, HashSet};
 
@@ -317,9 +323,16 @@ fn settle_present_bookmarks(dom: &mut Dom, result_root: NodeId) -> (HashSet<Stri
     (present, next_id)
 }
 
-/// Entry point — run on the finished result body, before it is serialized.
-/// Bookmark ids start above every `w:id` already in the body, so they never
-/// share a value with a revision or comment id (Word keeps them disjoint).
+/// Carry both source documents' bookmarks into the redline body, then
+/// renumber ids above every `w:id` already present so they do not collide
+/// with revisions or comments (Word keeps bookmark and revision ids
+/// disjoint).
+///
+/// Word's Compare keeps the union of both documents' body bookmarks by
+/// name so a redline's `PAGEREF`/`REF`/`HYPERLINK` fields still resolve.
+/// Call after the diff produced `result_root` and before it is serialized.
+/// Backs the `--keep-bookmarks` CLI flag path (the comparer post-process
+/// step that wires `[`super::comments`]-style anchors into the merged body).
 pub fn carry_bookmarks(
     dom: &mut Dom,
     result_root: NodeId,
@@ -337,9 +350,12 @@ pub fn carry_bookmarks(
     );
 }
 
-/// [`carry_bookmarks`] for the bookmarks whose name passes `keep`, in the
-/// body or in one header, footer or notes part (`result_root` is then that
-/// part's root and `main1`/`main2` its name in each source).
+/// [`carry_bookmarks`] for the bookmarks whose name passes `keep`, applied
+/// to one part root (the body, or a single header, footer or notes part).
+///
+/// `result_root` is that part's root in the diff result; `main1`/`main2` are
+/// the same part's name in each source package. `keep` is the name predicate
+/// the caller supplies (e.g. drop `_GoBack` for opaque text-box content).
 pub fn carry_matching_bookmarks(
     dom: &mut Dom,
     result_root: NodeId,

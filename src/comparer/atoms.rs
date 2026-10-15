@@ -3,6 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Comparison-unit types (M4.0/M4.2). Port of the `ComparisonUnit*` hierarchy.
+//!
+//! Public surface:
+//! - [`AtomHash`] — inline, `Copy` 20-byte SHA-1 digest that replaces the
+//!   hex-string hash of the legacy C# port.
+//! - [`FormatChangeInfo`], [`AtomBlock`], [`ComparisonUnitAtom`],
+//!   [`ComparisonUnitWord`], [`ComparisonUnitGroup`], [`ComparisonUnit`],
+//!   [`CorrelatedSequence`], [`WmlComparerRevision`] — the comparator's
+//!   run, word, group and revision data shapes.
+//!
+//! The types here back the [`super::revisions`] GetRevisions list and are
+//! produced by [`super::atomize`]/[`super::lcs`] and consumed by
+//! [`super::produce`] / [`super::finalize`]. They carry no `Dom` borrows so
+//! they can be moved between pipeline stages without cloning the document.
 
 use std::sync::Arc;
 
@@ -30,16 +43,19 @@ use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerRevisionType}
 pub struct AtomHash([u8; 20]);
 
 impl AtomHash {
-    /// SHA-1 digest of `bytes` — the fresh-atom path (`localName + text`, or a
-    /// salted variant). Equal to `hex_decode(sha1_hex(bytes))`.
+    /// SHA-1 digest of `bytes` — the fresh-atom path (`localName + text`,
+    /// or a salted variant). Bit-identical to
+    /// `hex_decode(sha1_hex(bytes))`.
     pub fn of_bytes(bytes: &[u8]) -> Self {
         Self(sha1_digest(bytes))
     }
-    /// Decode a stamped `pt:SHA1Hash` hex attribute (40 hex chars) into the raw
-    /// digest, so a precomputed atom lands on the SAME value as a fresh
-    /// `of_bytes` of identical content. Falls back to hashing the string bytes
-    /// if the input is not 40 hex chars — never happens for a real stamp; keeps
-    /// the value deterministic rather than panicking.
+    /// Decode a stamped `pt:SHA1Hash` hex attribute (40 hex chars) into the
+    /// raw digest, so a precomputed atom lands on the same value as a fresh
+    /// `of_bytes` of identical content.
+    ///
+    /// Falls back to hashing the input bytes verbatim when the string is
+    /// not 40 hex chars. Real stamps always match the 40-hex format; the
+    /// fallback keeps the value deterministic rather than panicking.
     pub fn from_hex(s: &str) -> Self {
         match hex_decode_20(s) {
             Some(d) => Self(d),
@@ -69,9 +85,10 @@ impl std::fmt::Debug for AtomHash {
 }
 
 impl From<&str> for AtomHash {
-    /// Opaque-sentinel convenience (tests build atoms with sentinels like `"h"`
-    /// whose only contract is equality). This HASHES the string; it is NOT a hex
-    /// decoder — use [`AtomHash::from_hex`] for stamped `pt:SHA1Hash` attributes.
+    /// Opaque-sentinel convenience (tests build atoms with sentinels like
+    /// `"h"` whose only contract is equality). Hashes the input bytes; it
+    /// is NOT a hex decoder — use [`AtomHash::from_hex`] for stamped
+    /// `pt:SHA1Hash` attributes.
     fn from(s: &str) -> Self {
         Self::of_bytes(s.as_bytes())
     }
@@ -87,76 +104,97 @@ impl From<&String> for AtomHash {
     }
 }
 
-/// Port of `FormatChangeInfo` — old/new run or paragraph properties (as DOM
-/// nodes) and the friendly names of properties that changed. Populated by M4.G
-/// format-change detection; consumed when emitting `w:rPrChange` / `w:pPrChange`.
+/// Old/new run or paragraph properties (as DOM nodes) and the friendly
+/// names of properties that changed.
+///
+/// Populated by the format-change detection in `M4.G`
+/// ([`super::formatchg`], [`super::revisions::get_format_change_revisions`])
+/// and consumed when emitting `w:rPrChange` / `w:pPrChange`.
 #[derive(Clone, Debug, Default)]
 pub struct FormatChangeInfo {
-    /// `old_run_properties`.
+    /// The projected old `w:rPr` (the `w:rPr` carried by `w:rPrChange`).
     pub old_run_properties: Option<NodeId>,
-    /// `new_run_properties`.
+    /// The projected new `w:rPr` (the live run's properties on the carrier).
     pub new_run_properties: Option<NodeId>,
     /// Projected old `w:pPr` for body pilcrow format changes (M81 / file_69).
     pub old_para_properties: Option<NodeId>,
-    /// `changed_properties`.
+    /// Friendly property names (from
+    /// [`super::formatchg::friendly_property_name`]) that changed.
     pub changed_properties: Vec<String>,
 }
 
-/// Port of `AtomBlock` — a maximal run of same-status atoms (by index into the
-/// flattened atom list). Used by M4.G move detection.
+/// A maximal run of same-status atoms (by index into the flattened atom
+/// list). Used by `M4.G` move detection ([`super::moves`]).
 #[derive(Clone, Debug)]
 pub struct AtomBlock {
-    /// `atoms`.
+    /// Indices into the flattened atom list that belong to this block.
     pub atoms: Vec<usize>,
-    /// `start_index`.
+    /// Start index in the flattened atom list where this block begins.
     pub start_index: usize,
 }
 
-/// Port of `ComparisonUnitAtom` — one single-character run / content leaf, with
-/// its ancestor chain (outermost → leaf, excluding body) and content hash.
+/// One single-character run / content leaf, with its ancestor chain
+/// (outermost → leaf, excluding body) and content hash.
 ///
-/// PATH-01: `ancestor_elements` is an `Arc` so sibling characters under the same
-/// `w:t` (and other multi-atom leaves sharing a chain) share one path allocation.
+/// `ancestor_elements` is an `Arc<[NodeId]>` so sibling characters under the
+/// same `w:t` (and other multi-atom leaves sharing a chain) share one path
+/// allocation (PATH-01).
+///
+/// Built by [`super::atomize::create_comparison_unit_atom_list`] and
+/// consumed across the LCS, format-change and move-detection passes. Most
+/// fields are written once during atomization and read-only thereafter.
 #[derive(Clone, Debug)]
 pub struct ComparisonUnitAtom {
-    /// `correlation_status`.
+    /// Current correlation status; defaults to [`CorrelationStatus::Nil`]
+    /// until atomization finishes.
     pub correlation_status: CorrelationStatus,
-    /// `sha1_hash` — inline, `Copy` digest (see [`AtomHash`]); cloning an atom no
-    /// longer allocates for its hash.
+    /// Content hash; see [`AtomHash`].
     pub sha1_hash: AtomHash,
-    /// `content_element`.
+    /// The DOM leaf this atom was carved from (a `w:t`, `w:delText`,
+    /// `w:instrText` or `w:pPr`).
     pub content_element: NodeId,
-    /// `ancestor_elements`.
+    /// Ancestor chain from outer (paragraph) to leaf, as an `Arc`-shared
+    /// slice.
     pub ancestor_elements: Arc<[NodeId]>,
-    /// `correlated_sha1_hash`.
+    /// Stamped `pt:CorrelatedSHA1Hash` paired with this atom's source, when one
+    /// was set by the cross-projection hash projection.
     pub correlated_sha1_hash: Option<String>,
 
     // ── M4.0 additions (faithful engine) ──────────────────────────────────────
-    /// The corresponding "before" content element on an Equal pair (`:4170`).
+    /// The corresponding "before" content element on an `Equal` pair
+    /// (WmlComparer.ts:4170).
     pub content_element_before: Option<NodeId>,
-    /// The corresponding "before" atom on an Equal pair (carries its own ancestor
-    /// chain — used by AssembleAncestorUnids Phase A and format-change detection).
-    /// Arc, not Box: the before-atom is write-once and read-only; cloning an
-    /// atom must not deep-copy its whole before-chain.
+    /// The corresponding "before" atom on an `Equal` pair — carries its
+    /// own ancestor chain and is used by `AssembleAncestorUnids` Phase A
+    /// and format-change detection.
+    ///
+    /// Stored as `Arc<ComparisonUnitAtom>` (not `Box`): the before-atom is
+    /// write-once and read-only, and cloning must not deep-copy its whole
+    /// before-chain.
     pub comparison_unit_atom_before: Option<std::sync::Arc<ComparisonUnitAtom>>,
     /// Reconciled ancestor Unids, parallel to `ancestor_elements` (M4.E.2).
-    /// PRODUCE-UNID-01: shared, immutable — every atom of a run points at one
-    /// allocation, and atom clones are pointer bumps instead of `Vec<String>`
-    /// deep copies.
+    ///
+    /// PRODUCE-UNID-01: shared and immutable — every atom of a run points
+    /// at one allocation, so atom clones are pointer bumps instead of
+    /// `Vec<String>` deep copies.
     pub ancestor_unids: Option<std::sync::Arc<[String]>>,
-    /// The `w:del`/`w:ins`/`w:moveFrom`/`w:moveTo` (or `pPr/rPr/{del|ins}`)
-    /// element that gave this atom its initial status (`GetRevisionTracking…`).
+    /// The `w:del` / `w:ins` / `w:moveFrom` / `w:moveTo` (or
+    /// `w:pPr/w:rPr/{w:del|w:ins}`) element that gave this atom its
+    /// initial status (`GetRevisionTracking…`).
     pub rev_track_element: Option<NodeId>,
-    /// Move detection bookkeeping (M4.G).
+    /// Move-group id (FNV-1a of the move's `w:name`) once move detection
+    /// claims this atom; `M4.G` bookkeeping.
     pub move_group_id: Option<u32>,
-    /// `move_name`.
+    /// The `w:moveFrom`/`w:moveTo` `@w:name` this atom belongs to, if any.
     pub move_name: Option<String>,
-    /// Format-change detection bookkeeping (M4.G).
+    /// Format-change detection result (`M4.G`); see [`FormatChangeInfo`].
     pub format_change: Option<FormatChangeInfo>,
 }
 
 impl ComparisonUnitAtom {
-    /// `new`.
+    /// Construct an atom with `Nil` correlation status and all bookkeeping
+    /// fields unset. `sha1_hash` may be a fresh [`AtomHash::of_bytes`] digest
+    /// or a hex-decoded [`AtomHash::from_hex`] stamp.
     pub fn new(
         content_element: NodeId,
         ancestor_elements: impl Into<Arc<[NodeId]>>,
@@ -195,7 +233,7 @@ pub struct Sha1Keyed {
 }
 
 impl Sha1Keyed {
-    /// Wraps `hash`, deriving both keys from it.
+    /// Wrap `hash`, deriving both keys from it.
     pub fn new(hash: String) -> Self {
         Self {
             key: fnv1a_64(&hash),
@@ -204,7 +242,8 @@ impl Sha1Keyed {
         }
     }
 
-    /// Replaces the hash and rederives both keys in the same step.
+    /// Replace the hash; re-derives both keys in the same step so they
+    /// cannot drift from the stored hash.
     pub fn set_hash(&mut self, hash: String) {
         *self = Self::new(hash);
     }
@@ -237,13 +276,13 @@ impl Sha1Keyed {
     }
 }
 
-/// Port of `ComparisonUnitWord` — a word is a run of atoms; its hash is the
-/// SHA-1 of the concatenation of its atoms' hashes.
+/// Port of `ComparisonUnitWord` — a word is a run of atoms; its hash is
+/// the SHA-1 of the concatenation of its atoms' hashes (hex digests).
 #[derive(Clone, Debug)]
 pub struct ComparisonUnitWord {
-    /// `correlation_status`.
+    /// Correlation status; `Nil` until the LCS or related passes set it.
     pub correlation_status: CorrelationStatus,
-    /// `contents`.
+    /// The atoms the word is composed of, in source order.
     pub contents: Vec<ComparisonUnitAtom>,
     /// Content hash and its cached LCS keys; see [`Sha1Keyed`]. The 128-bit
     /// key lets `extend_common_run` test equality with one integer compare
@@ -252,7 +291,10 @@ pub struct ComparisonUnitWord {
 }
 
 impl ComparisonUnitWord {
-    /// `new`.
+    /// Build a word from its atoms. The word's hash is the SHA-1 of each
+    /// atom's 40-char hex digest, fed in source order — byte-identical to
+    /// concatenating the hex digests first and matching the legacy
+    /// `String`-hash path, without keeping a heap `String` per atom.
     pub fn new(contents: Vec<ComparisonUnitAtom>) -> Self {
         // HASH-02 / ATOM-HASH-INLINE-01: stream each atom's 40-char hex digest
         // into SHA-1 — same bytes as concatenating the hex digests first, and
@@ -267,40 +309,44 @@ impl ComparisonUnitWord {
     }
 }
 
-/// Port of `ComparisonUnitGroup` — paragraph/table/row/cell/textbox. Its hashes
-/// are read from the ancestor element's stamped `pt:SHA1Hash` /
-/// `pt:CorrelatedSHA1Hash` / `pt:StructureSHA1Hash` (WmlComparer.ts:9445), so
-/// they are supplied explicitly. `structure_sha1_hash` is present only for
-/// tables and rows.
+/// Port of `ComparisonUnitGroup` — paragraph/table/row/cell/textbox.
+///
+/// Hashes are read from the ancestor element's stamped `pt:SHA1Hash` /
+/// `pt:CorrelatedSHA1Hash` / `pt:StructureSHA1Hash`
+/// (WmlComparer.ts:9445), so they are supplied explicitly.
+/// `structure_sha1_hash` is present only for tables and rows.
 #[derive(Clone, Debug)]
 pub struct ComparisonUnitGroup {
-    /// `correlation_status`.
+    /// Correlation status; `Nil` until the LCS or related passes set it.
     pub correlation_status: CorrelationStatus,
-    /// `group_type`.
+    /// Whether this is a paragraph, table, row, cell or textbox.
     pub group_type: ComparisonUnitGroupType,
-    /// `contents`.
+    /// The units the group contains, in source order.
     pub contents: Vec<ComparisonUnit>,
-    /// `level`.
+    /// Nesting depth inside the body (paragraph level is `0`; textbox content
+    /// is one or more levels above its carrier paragraph).
     pub level: usize,
     /// Stamped `pt:SHA1Hash` and its cached LCS keys; see [`Sha1Keyed`].
     pub sha1: Sha1Keyed,
-    /// `correlated_sha1_hash`.
+    /// Stamped `pt:CorrelatedSHA1Hash` paired with this group, if any.
     pub correlated_sha1_hash: Option<String>,
-    /// `pt:StructureSHA1Hash` — only stamped on `w:tbl`/`w:tr` (M4.0/M4.D).
+    /// `pt:StructureSHA1Hash` — only stamped on `w:tbl` / `w:tr` (M4.0/M4.D).
     pub structure_sha1_hash: Option<String>,
-    /// Lazily memoized [`ComparisonUnit::descendant_content_atoms_count`] —
-    /// `usize::MAX` = not yet computed. `contents` never mutates after
-    /// construction, so the count is stable. ~19% of a pdense run was spent
-    /// recomputing this recursively in LCS threshold checks.
+    /// Lazily memoized [`ComparisonUnit::descendant_content_atoms_count`]
+    /// result. `usize::MAX` means "not yet computed". `contents` never
+    /// mutates after construction, so the count is stable. ~19% of a
+    /// pdense run was spent recomputing this recursively in LCS
+    /// threshold checks; the memo keeps it O(1).
     pub atom_count_memo: std::cell::Cell<usize>,
 }
 
 /// A comparison unit — a word or a group (atoms live inside words).
 #[derive(Clone, Debug)]
 pub enum ComparisonUnit {
-    /// Public API item.
+    /// A run-of-atoms word unit produced by [`super::units`].
     Word(ComparisonUnitWord),
-    /// Public API item.
+    /// A paragraph/table/row/cell/textbox group produced by
+    /// [`super::units`].
     Group(ComparisonUnitGroup),
 }
 
@@ -435,19 +481,27 @@ impl ComparisonUnit {
     }
 }
 
-/// Port of `CorrelatedSequence` — a run of comparison units with a shared status.
+/// Port of `CorrelatedSequence` — a run of comparison units that share a
+/// correlation status, as emitted by
+/// [`super::lcs_table::mark_rows_as_deleted_or_inserted`] and consumed by
+/// [`super::produce::produce_new_wml_markup_from_correlated_sequence`].
+///
+/// `com_units_1` and `com_units_2` are populated according to `status`:
+/// `Some`/`Some` for `Equal`-class statuses, only one side set for
+/// `Deleted`/`Inserted`/`MovedSource`/`MovedDestination`.
 #[derive(Clone, Debug)]
 pub struct CorrelatedSequence {
-    /// `correlation_status`.
+    /// The shared status for every unit in this sequence.
     pub correlation_status: CorrelationStatus,
-    /// `com_units_1`.
+    /// Original (A / body1) units; set when `status` keeps the left side.
     pub com_units_1: Option<Vec<ComparisonUnit>>,
-    /// `com_units_2`.
+    /// Revised (B / body2) units; set when `status` keeps the right side.
     pub com_units_2: Option<Vec<ComparisonUnit>>,
 }
 
 impl CorrelatedSequence {
-    /// `Equal`/`Unknown` → both arrays set.
+    /// Build an `Equal` (or `Unknown`/`Group`) sequence: both sides set,
+    /// the two unit arrays matched by position.
     pub fn paired(
         status: CorrelationStatus,
         a1: Vec<ComparisonUnit>,
@@ -459,7 +513,8 @@ impl CorrelatedSequence {
             com_units_2: Some(a2),
         }
     }
-    /// `Deleted` → array1 set, array2 = None.
+    /// Build a `Deleted` sequence: the original-side units are kept; the
+    /// revised side is empty.
     pub fn deleted(a1: Vec<ComparisonUnit>) -> Self {
         CorrelatedSequence {
             correlation_status: CorrelationStatus::Deleted,
@@ -467,7 +522,8 @@ impl CorrelatedSequence {
             com_units_2: None,
         }
     }
-    /// `Inserted` → array1 = None, array2 set.
+    /// Build an `Inserted` sequence: the revised-side units are kept; the
+    /// original side is empty.
     pub fn inserted(a2: Vec<ComparisonUnit>) -> Self {
         CorrelatedSequence {
             correlation_status: CorrelationStatus::Inserted,
@@ -478,32 +534,39 @@ impl CorrelatedSequence {
 }
 
 /// Port of `WmlComparerRevision` (full shape — D.2). `author`/`date` mirror
-/// C#'s nullable `(string)attr` casts; `text` is None for the
+/// C#'s nullable `(string)attr` casts; `text` is `None` for the
 /// `RevElementsWithNoText` content kinds (math, drawing). `move_group_id`
-/// links a move's source and destination revisions (FNV-1a of the move name —
-/// .NET GetHashCode is runtime-unstable, so only linkage equality is
+/// links a move's source and destination revisions (FNV-1a of the move name
+/// — .NET `GetHashCode` is runtime-unstable, so only linkage equality is
 /// contractual, never the value).
+///
+/// Emitted by [`super::revisions`] (`D.2` and `D.4`) and surfaced through
+/// the CLI `--revisions` listing and the Python/WASM
+/// `revision_list` binding.
 #[derive(Clone, Debug)]
 pub struct WmlComparerRevision {
-    /// `revision_type`.
+    /// Inserted, Deleted, Moved, or FormatChanged.
     pub revision_type: WmlComparerRevisionType,
-    /// `text`.
+    /// Concatenated content text (no text for math or drawings), `None`
+    /// when the content kind has no text to show.
     pub text: Option<String>,
-    /// `author`.
+    /// The `w:author` on the revision element.
     pub author: Option<String>,
-    /// `date`.
+    /// The `w:date` on the revision element.
     pub date: Option<String>,
-    /// `content_element`.
+    /// The first content element that caused the revision grouping.
     pub content_element: Option<NodeId>,
-    /// `revision_element`.
+    /// The revision carrier element (`w:ins`, `w:del`, `w:rPrChange`, …).
     pub revision_element: Option<NodeId>,
-    /// `part_name`.
+    /// OPC part the revision lives in (`"word/document.xml"` etc.).
     pub part_name: String,
-    /// `move_group_id`.
+    /// Move group id linking source and destination halves; `None` when
+    /// the revision is not a move. Only linkage equality is contractual.
     pub move_group_id: Option<i32>,
-    /// `is_move_source`.
+    /// `Some(true)` for the source half of a move, `Some(false)` for the
+    /// destination, `None` when the revision is not a move.
     pub is_move_source: Option<bool>,
-    /// `format_change`.
+    /// Old/new property carve-out, set for `FormatChanged` revisions.
     pub format_change: Option<FormatChangeInfo>,
 }
 
