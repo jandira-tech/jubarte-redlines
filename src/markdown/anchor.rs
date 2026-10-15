@@ -326,7 +326,10 @@ mod tests {
             ("2&#32;*&#32;3&#32;*&#32;4", "2 * 3 * 4"),
             ("a&#32;_b_&#32;c", "a b c"),
             // The view escapes a literal reference the document holds.
-            ("Code \\&#32; and \\&amp; literal.", "Code &#32; and &amp; literal."),
+            (
+                "Code \\&#32; and \\&amp; literal.",
+                "Code &#32; and &amp; literal.",
+            ),
         ] {
             assert_eq!(plain_anchor(anchor), plain, "{anchor}");
         }
