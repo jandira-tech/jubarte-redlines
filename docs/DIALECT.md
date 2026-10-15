@@ -67,7 +67,7 @@ a cell holds other than one paragraph).
 consecutive ones) is a cell paragraph in a style other than the default (a
 style id that is a clause word or holds a space, `,`, `"` or `\` prints
 quoted, `"My Style"`, on table and paragraph id lines alike);
-`tN center` places the table. Notes: `<!-- footnotes.p0 -->`. Pages: `<!-- page 2 of 5 -->`.
+`tN center` places the table. Notes: `<!-- footnotes.p0 -->`, `<!-- endnotes.p0 Endnote -->` (paragraph styles other than Word's own, one per paragraph). Pages: `<!-- page 2 of 5 -->`.
 
 **YAML header**
 

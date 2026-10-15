@@ -387,7 +387,12 @@ Each footnote and endnote definition follows the id line of its
 paragraphs: `<!-- footnotes.p0 -->`, or `<!-- endnotes.p0-p2 -->` for a note
 of three paragraphs, which the definition joins with `<br>` (a table in a
 note reads as its cells' paragraphs), and a line break inside one of them
-reads `<br/>`. A table cell does the same: `<br>` ends one of the cell's
+reads `<br/>`. A note whose paragraphs are not in Word's own footnote or
+endnote text names their styles after the id, one per paragraph, the last
+for every paragraph after it: `<!-- endnotes.p0 Endnote -->` for a note in
+LibreOffice's `Endnote`, `<!-- footnotes.p1-p2 FootnoteText, "My Note" -->`
+for one whose second paragraph is in `My Note` (an id that is no plain word
+is quoted). A silent line is Word's own style. A table cell does the same: `<br>` ends one of the cell's
 paragraphs, `<br/>` is a line break (`w:br`) within one. A view written
 before that distinction still converts: when the id or table line's
 paragraph count and the `<br>`s disagree, the writer reads every `<br>`
