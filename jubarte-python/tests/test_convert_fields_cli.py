@@ -38,9 +38,9 @@ def refreshed():
     document = Mock(spec=Document)
     document.to_bytes.return_value = b"refreshed document bytes"
     fields = (
-        FieldUpdate(kind="REF", code="REF section", paragraph="body:p:0",
+        FieldUpdate(kind="REF", code="REF section", paragraph="p0",
                     old='Ancien "titre"\n', new="Seção\t一"),
-        FieldUpdate(kind="NUMPAGES", code="NUMPAGES", paragraph="body:p:1",
+        FieldUpdate(kind="NUMPAGES", code="NUMPAGES", paragraph="p1",
                     old="99", new="2"),
     )
     return UpdatedFields(document=document, fields=fields, page_count=2)
