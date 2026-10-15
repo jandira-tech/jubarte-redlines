@@ -1943,6 +1943,39 @@ fn a_multiple_on_a_line_grid_multiplies_the_grid_line() {
 }
 
 #[test]
+fn a_face_taller_than_the_grid_line_snaps_without_its_multiple() {
+    // Demo.docx's 24pt Heading 1 (line=278) on a 15.6pt grid: Word steps
+    // 31.2, two grid lines; we multiplied the face (29.3 × 1.158 = 33.9)
+    // and snapped it to three (46.8), dropping every heading. Word probe
+    // 2026-10-15 (Calibri Light, compat 15): 14, 20 and 24pt take two
+    // lines and 28 and 36pt three, at line 240, 278 and 360 alike.
+    let step = |size: u32, line: u32| {
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{line}\" w:lineRule=\"auto\"/></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"{}\"/></w:rPr><w:t>TallA</w:t><w:br/><w:t>TallB</w:t></w:r></w:p>\
+             <w:sectPr><w:docGrid w:type=\"lines\" w:linePitch=\"312\"/></w:sectPr>",
+            size * 2
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("tall grid line");
+        pdf_glyph_text_xy(&pdf, "TallA").expect("a").1
+            - pdf_glyph_text_xy(&pdf, "TallB").expect("b").1
+    };
+    for (size, line, want) in [
+        (24, 240, 31.2),
+        (24, 278, 31.2),
+        (24, 360, 31.2),
+        (28, 278, 46.8),
+        (36, 360, 46.8),
+    ] {
+        let got = step(size, line);
+        assert!(
+            (got - want).abs() < 0.2,
+            "{size}pt at line {line}: {want}; step={got}"
+        );
+    }
+}
+
+#[test]
 fn a_float_paragraph_moved_to_the_next_page_wraps_there() {
     // fixtures_500 00c975b8: a paragraph anchoring a 158pt top-and-bottom
     // picture does not fit at the foot of page 1. Word starts it on page 2
@@ -28625,6 +28658,191 @@ fn two_column_section_with_column_break_paints_side_by_side() {
     assert!(
         xs.iter().any(|x| (300.0..360.0).contains(x)),
         "column 2 starts at 324pt (72+216+36); xs={xs:?}"
+    );
+}
+
+/// A Letter page (1in margins) whose two columns (`cols`) hold `body`,
+/// under a default header holding `header` and a default footer holding
+/// `footer`, 720 twips from their edges.
+fn columns_with_chrome_docx(header: &str, footer: &str, body: &str, cols: &str) -> Vec<u8> {
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"{W}\" xmlns:r=\"{R}\"><w:body>{body}\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH\"/>\
+         <w:footerReference w:type=\"default\" r:id=\"rIdF\"/>\
+         <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+           w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/>{cols}</w:sectPr>\
+         </w:body></w:document>"
+    );
+    let part = |root: &str, inner: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:{root} xmlns:w=\"{W}\" xmlns:r=\"{R}\">{inner}</w:{root}>"
+        )
+    };
+    let types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/header1.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>\
+        <Override PartName=\"/word/footer1.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>\
+        </Types>";
+    let pkg_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/></Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdH\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" \
+          Target=\"header1.xml\"/>\
+        <Relationship Id=\"rIdF\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" \
+          Target=\"footer1.xml\"/></Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for (name, data) in [
+        ("[Content_Types].xml", types.to_string()),
+        ("_rels/.rels", pkg_rels.to_string()),
+        ("word/document.xml", document),
+        ("word/_rels/document.xml.rels", doc_rels.to_string()),
+        ("word/header1.xml", part("hdr", header)),
+        ("word/footer1.xml", part("ftr", footer)),
+    ] {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(data.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+/// Demo.docx (docen's showcase) in jubarte's PDF: in its two-column
+/// section the header wrapped at the first column's width and the page
+/// number sat under the first column. Columns divide the body only; Word
+/// lays the header and footer across the page, and starts every column at
+/// the body's top.
+#[test]
+fn columns_divide_the_body_not_its_header_and_footer() {
+    let centred = |text: &str| {
+        format!("<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>")
+    };
+    // The second header line is ~330pt: one line across the 468pt text
+    // area, two in a 216pt column.
+    let header = format!(
+        "{}<w:p><w:r><w:t>WrapStart runs on across the page, never down a column, WrapEnd</w:t></w:r></w:p>",
+        centred("HdrMid")
+    );
+    let docx = columns_with_chrome_docx(
+        &header,
+        &centred("FtrMid"),
+        "<w:p><w:r><w:t>LeftTop</w:t></w:r><w:r><w:br w:type=\"column\"/></w:r>\
+         <w:r><w:t>RightTop</w:t></w:r></w:p>",
+        "<w:cols w:num=\"2\" w:space=\"720\" w:sep=\"1\"/>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("columns");
+    // The text area is 72..540pt: centred text starts left of 306, well
+    // right of the first column's centre (180).
+    for needle in ["HdrMid", "FtrMid"] {
+        let (x, _) = pdf_glyph_text_xy(&pdf, needle).expect(needle);
+        assert!(
+            x > 270.0 && x < 306.0,
+            "{needle} centres on the page's text area, not a column; x={x}"
+        );
+    }
+    let (_, start) = pdf_glyph_text_xy(&pdf, "WrapStart").expect("WrapStart");
+    let (_, end) = pdf_glyph_text_xy(&pdf, "WrapEnd").expect("WrapEnd");
+    assert!(
+        (start - end).abs() < 0.5,
+        "the header line does not wrap at the column; {start} vs {end}"
+    );
+    let (left_x, left_y) = pdf_glyph_text_xy(&pdf, "LeftTop").expect("LeftTop");
+    let (right_x, right_y) = pdf_glyph_text_xy(&pdf, "RightTop").expect("RightTop");
+    assert!(
+        (left_x - 72.0).abs() < 1.0,
+        "column one at the margin; x={left_x}"
+    );
+    assert!(
+        (right_x - 324.0).abs() < 1.0,
+        "column two after a 216pt column and a 36pt gap; x={right_x}"
+    );
+    assert!(
+        (right_y - left_y).abs() < 0.5,
+        "both columns start at the body's top; left y={left_y}, right y={right_y}"
+    );
+}
+
+/// The black filled rects of `pdf`'s first page as (x, y, w, h), PDF
+/// coordinates.
+fn pdf_black_rects(pdf: &[u8]) -> Vec<(f32, f32, f32, f32)> {
+    let needle = "0.000 0.000 0.000 rg ";
+    let hay = pdf_content_streams(pdf).concat();
+    hay.match_indices(needle)
+        .filter_map(|(at, _)| {
+            let rest = &hay[at + needle.len()..];
+            let end = rest.find(" re f")?;
+            let parts: Vec<f32> = rest[..end]
+                .split_whitespace()
+                .filter_map(|p| p.parse().ok())
+                .collect();
+            match parts[..] {
+                [x, y, w, h] => Some((x, y, w, h)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// `w:sep`: Word draws a 0.75pt black rule down the middle of each gap,
+/// from the body's top to the bottom of the longest column (Word's PDF of
+/// Demo.docx: x 297.38..298.13, top 72.03, bottom 738.73 under the left
+/// column's last line), not to the bottom margin.
+#[test]
+fn a_column_separator_runs_down_the_gap_to_the_longest_column() {
+    let line = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let body = format!(
+        "{}{}{}<w:p><w:r><w:br w:type=\"column\"/></w:r></w:p>{}",
+        line("LeftOne"),
+        line("LeftTwo"),
+        line("LeftThree"),
+        line("RightOne")
+    );
+    let rules = |cols: &str| {
+        let pdf = docx_to_pdf(&columns_with_chrome_docx("", "", &body, cols)).expect("columns");
+        let last = pdf_glyph_text_xy(&pdf, "LeftThree").expect("LeftThree").1;
+        let rules: Vec<_> = pdf_black_rects(&pdf)
+            .into_iter()
+            .filter(|&(_, _, w, h)| w < 2.0 && h > 20.0)
+            .collect();
+        (rules, last)
+    };
+    let (found, last) = rules("<w:cols w:num=\"2\" w:space=\"720\" w:sep=\"1\"/>");
+    let [(x, y, w, h)] = found[..] else {
+        panic!("one separator; {found:?}")
+    };
+    assert!(
+        (x + w / 2.0 - 306.0).abs() < 0.5,
+        "centred in the gap; x={x} w={w}"
+    );
+    assert!((w - 0.75).abs() < 0.01, "Word's 0.75pt rule; w={w}");
+    assert!(
+        (y + h - 720.0).abs() < 0.5,
+        "from the body's top; top={}",
+        y + h
+    );
+    assert!(
+        y < last && y > last - 20.0,
+        "down to the longest column's last line ({last}), not the margin; bottom={y}"
+    );
+    assert!(
+        rules("<w:cols w:num=\"2\" w:space=\"720\"/>").0.is_empty(),
+        "no rule without w:sep"
     );
 }
 
