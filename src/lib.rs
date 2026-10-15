@@ -93,13 +93,8 @@
 //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
 //! upstream attribution texts without changing the repository license.
 
-/// Resource admission for untrusted DOCX input: bound the package before
-/// anything inflates it without limits ([`admission::admit`]).
 pub mod admission;
-/// Append one document after another ([`append::append_documents`]).
 pub mod append;
-/// Accessibility, style and structure findings by paragraph id
-/// ([`audit::audit_report`]).
 pub mod audit;
 /// Word's built-in style names.
 mod builtin_styles;
@@ -108,11 +103,7 @@ pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
 pub mod changes;
 #[cfg(feature = "cli")]
-/// Shared, platform-neutral command declarations and parsing for the
-/// `jubarte` CLI.
 pub mod cli;
-/// Comment threads: list, query and operate on them
-/// ([`comments::list_comments`]).
 pub mod comments;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;
@@ -122,27 +113,15 @@ pub mod comparison_log;
 pub mod convert;
 /// `jubarte debug`: short Word-validity triage of a package, or two compared.
 pub mod debug;
-/// Byte-level package API: compare, list, accept and reject revisions
-/// ([`document_comparer::compare_documents`] and friends).
+/// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
-/// Edit a document as tracked changes ([`edit::apply_plan`],
-/// [`edit::EditPlan`], [`edit::apply_plan_json`]).
 pub mod edit;
-/// Refresh PAGEREF, REF, NUMPAGES, SEQ and TOC results from jubarte's
-/// layout ([`fields::update_fields`]).
 pub mod fields;
 /// The one grammar of change, comment and paragraph ids (`r12`, `c5`, `p12`).
 pub mod ids;
-/// Read-only paragraph/package views and the Markdown projection for agents
-/// ([`inspect::paragraphs`], [`inspect::summary`], [`inspect::markdown`]).
+/// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
-/// Convert a Word 97-2003 `.doc` to `.docx` or Markdown ([`legacy_doc::doc_to_docx`],
-/// [`legacy_doc::doc_to_markdown`]).
 pub mod legacy_doc;
-/// Markdown → DOCX (CriticMarkup as tracked changes and comments) and
-/// DOCX → Markdown ([`markdown::markdown_to_docx`],
-/// [`markdown::docx_to_markdown`], [`markdown::redline`],
-/// [`markdown::diff_markdown`]).
 pub mod markdown;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
@@ -154,25 +133,17 @@ pub mod opc;
 pub mod perf;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
-/// Remove authors, rsids, document properties and comments before sharing
-/// ([`scrub::scrub`], [`scrub::ScrubOptions`], [`scrub::leaks`]).
 pub mod scrub;
-/// Document settings an edit plan writes into `word/settings.xml`.
 pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
-/// Git/GitHub unified patches of document text snapshots.
 pub mod text_diff;
-/// Unique-id generation helper, port of PowerTools' `UnidHelper`.
 pub mod unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
 #[cfg(feature = "self-update")]
 pub mod update;
-/// Small shared utilities (FNV hashing, word tokenisation, group-adjacent).
+/// Shared small utilities.
 pub mod util;
-/// Check that Word will open the package, audit tracked edits, repair
-/// repairable findings ([`validate::validate`], [`validate::repair`],
-/// [`validate::audit_tracked`]).
 pub mod validate;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;

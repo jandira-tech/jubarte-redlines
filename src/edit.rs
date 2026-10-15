@@ -39,12 +39,10 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod anchor;
 mod controls;
-/// Build an [`EditPlan`] from `edit`/`add` operation flags, for the CLI.
 pub mod flags;
 mod images;
 mod notes;
 mod origin;
-/// Record operation flags into PLAN.json, for the CLI's `--plan` mode.
 pub mod record;
 mod rewrite;
 mod runs;
