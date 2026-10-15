@@ -1800,7 +1800,7 @@ fn header_view_lines_for_hidden_comments_accept_and_reject() {
     );
     assert_eq!(
         header_lines(&agent(&bytes))[5],
-        "comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11"
+        "comments: 2 threads open, style Normal  # 3 comments: c5 (+ reply c6), c11"
     );
 }
 
@@ -2197,7 +2197,7 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
         "{text}"
     );
     assert!(
-        text.contains("comments: 1 thread open            # 1 comment: c0"),
+        text.contains("comments: 1 thread open, style Normal  # 1 comment: c0"),
         "{text}"
     );
     assert!(
@@ -2338,7 +2338,9 @@ fn a_reply_and_a_resolution_by_a_second_author_thread_under_the_root() {
         "{text}"
     );
     assert!(
-        text.contains("comments: 0 threads open, 1 resolved  # 2 comments: c0 (+ reply c1)"),
+        text.contains(
+            "comments: 0 threads open, 1 resolved, style Normal  # 2 comments: c0 (+ reply c1)"
+        ),
         "{text}"
     );
     assert!(
@@ -4184,7 +4186,7 @@ fn an_unanchored_comment_is_not_an_open_thread() {
         .find(|l| l.starts_with("comments: "))
         .unwrap_or_default();
     assert!(
-        line.starts_with("comments: 1 thread open, 1 unanchored ")
+        line.starts_with("comments: 1 thread open, 1 unanchored, style Normal ")
             && line
                 .contains("# 2 comments: c9, c54 (unanchored: not in the body or a note, Word shows no balloon)"),
         "{line}"
@@ -4352,7 +4354,7 @@ fn a_comment_anchored_in_a_header_is_unanchored() {
         .find(|l| l.starts_with("comments: "))
         .unwrap_or_default();
     assert!(
-        line.starts_with("comments: 0 threads open, 2 unanchored ")
+        line.starts_with("comments: 0 threads open, 2 unanchored, style Normal ")
             && line.contains("c5 (unanchored: not in the body or a note")
             && line.contains("c7 (unanchored"),
         "{line}"
