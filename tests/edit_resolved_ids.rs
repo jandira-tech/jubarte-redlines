@@ -82,7 +82,7 @@ fn ids_name_the_paragraphs_of_the_source_once_revisions_are_settled() {
             &plan(
                 settle,
                 r#"[{"kind":"rewrite","paragraph":"p3","text":"Delta clause, amended."},
-                    {"kind":"replace","paragraph":"body:p:4","find":"Epsilon","replacement":"Eta"},
+                    {"kind":"replace","paragraph":"p4","find":"Epsilon","replacement":"Eta"},
                     {"kind":"replace","paragraph":"t1.row0.cell0","find":"Cell","replacement":"Box"},
                     {"kind":"comment","paragraph":{"index":8},"text":"Last."}]"#,
             ),
@@ -108,11 +108,7 @@ fn ids_name_the_paragraphs_of_the_source_once_revisions_are_settled() {
             .iter()
             .map(|op| op.paragraph.clone().unwrap())
             .collect();
-        assert_eq!(
-            at,
-            ["body:p:1", "body:p:2", "body:p:4", "body:p:5"],
-            "{settle}"
-        );
+        assert_eq!(at, ["p1", "p2", "p4", "p5"], "{settle}");
     }
 }
 
@@ -133,14 +129,14 @@ fn the_report_maps_every_id_that_moved() {
     assert_eq!(
         out.report.paragraph_ids,
         [
-            moved("body:p:1", Some("body:p:0")),
-            moved("body:p:2", None),
-            moved("body:p:3", Some("body:p:1")),
-            moved("body:p:4", Some("body:p:2")),
-            moved("body:p:5", None),
-            moved("body:p:6", Some("body:p:3")),
-            moved("body:p:7", Some("body:p:4")),
-            moved("body:p:8", Some("body:p:5")),
+            moved("p1", Some("p0")),
+            moved("p2", None),
+            moved("p3", Some("p1")),
+            moved("p4", Some("p2")),
+            moved("p5", None),
+            moved("p6", Some("p3")),
+            moved("p7", Some("p4")),
+            moved("p8", Some("p5")),
         ]
     );
     // The JSONL `load` line carries the same map.
@@ -148,7 +144,7 @@ fn the_report_maps_every_id_that_moved() {
         serde_json::from_str(out.report.to_jsonl().lines().next().unwrap()).unwrap();
     assert_eq!(
         load["paragraph_ids"][1],
-        serde_json::json!({"from": "body:p:2", "to": null})
+        serde_json::json!({"from": "p2", "to": null})
     );
     assert_eq!(load["paragraph_ids"].as_array().unwrap().len(), 8);
     // Nothing settled, nothing moved.
@@ -178,10 +174,7 @@ fn an_anchored_edit_follows_a_paragraph_into_the_one_it_merged_with() {
     .unwrap();
     ok(&out);
     assert_eq!(texts(&out.clean)[0], "AlphaBravo");
-    assert_eq!(
-        out.report.operations[0].paragraph.as_deref(),
-        Some("body:p:0")
-    );
+    assert_eq!(out.report.operations[0].paragraph.as_deref(), Some("p0"));
 }
 
 #[test]
@@ -189,23 +182,23 @@ fn a_whole_paragraph_edit_of_a_merged_or_removed_paragraph_is_refused_by_name() 
     for (op, says) in [
         (
             r#"{"kind":"rewrite","paragraph":"p1","text":"Bravo"}"#,
-            "body:p:1 merged into body:p:0",
+            "p1 merged into p0",
         ),
         (
             r#"{"kind":"delete_paragraph","paragraph":"p0"}"#,
-            "body:p:0 merged into body:p:0",
+            "p0 merged into p0",
         ),
         (
             r#"{"kind":"rewrite","paragraph":"p2","text":"Gamma"}"#,
-            "body:p:2 is gone",
+            "p2 is gone",
         ),
         (
             r#"{"kind":"replace","paragraph":"p2","find":"Gamma","replacement":"G"}"#,
-            "body:p:2 is gone",
+            "p2 is gone",
         ),
         (
             r#"{"kind":"replace","paragraph":"t0.row0.cell0","find":"Gone","replacement":"G"}"#,
-            "body:p:5 is gone",
+            "p5 is gone",
         ),
     ] {
         let e = apply_plan(&source(), &plan(RESOLVE, &format!("[{op}]"))).unwrap_err();

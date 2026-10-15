@@ -683,7 +683,7 @@ fn a_footnote_change_names_its_story() {
         jubarte::changes::list_changes(&bytes)
             .unwrap()
             .iter()
-            .any(|c| c.id == "footnotes:rev:3"),
+            .any(|c| c.id == "footnotes.r3"),
         "the printed id names a listed change"
     );
 }
@@ -811,12 +811,7 @@ fn changes_without_text_name_their_ids() {
         .into_iter()
         .map(|c| c.id)
         .collect();
-    for id in [
-        "body:rev:2",
-        "styles:rev:9",
-        "header1:rev:4",
-        "footnotes:rev:7",
-    ] {
+    for id in ["r2", "styles.r9", "header1.r4", "footnotes.r7"] {
         assert!(listed.iter().any(|l| l == id), "{id} not in {listed:?}");
     }
     for view in [TrackChanges::Accept, TrackChanges::Reject] {
@@ -926,8 +921,8 @@ fn history_numbering_and_fallback_rows_follow_the_listing() {
         .into_iter()
         .map(|c| c.id)
         .collect();
-    assert!(!listed.iter().any(|l| l == "body:rev:11"), "{listed:?}");
-    assert!(listed.iter().any(|l| l == "body:rev:5"), "{listed:?}");
+    assert!(!listed.iter().any(|l| l == "r11"), "{listed:?}");
+    assert!(listed.iter().any(|l| l == "r5"), "{listed:?}");
     let r11 = regex::Regex::new(r"\b(r|\+)11\b").unwrap();
     assert!(!r11.is_match(&out), "{out}");
     let p0 = out
@@ -998,7 +993,7 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .into_iter()
         .map(|c| c.id)
         .collect();
-    for id in ["body:rev:3", "body:rev:21", "body:rev:22"] {
+    for id in ["r3", "r21", "r22"] {
         assert!(listed.iter().any(|l| l == id), "{id} not in {listed:?}");
     }
     let lines = header_lines(&out);
@@ -2216,8 +2211,8 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
         .collect();
     let by_id = |id: &str| {
         rows.iter()
-            .find(|r| r["id"] == format!("body:rev:{id}"))
-            .unwrap_or_else(|| panic!("no change body:rev:{id} in {changes}"))
+            .find(|r| r["id"] == format!("r{id}"))
+            .unwrap_or_else(|| panic!("no change r{id} in {changes}"))
     };
     assert_eq!(by_id(del_id)["kind"], "deletion");
     assert_eq!(by_id(del_id)["text"], "thirty");
@@ -2226,27 +2221,40 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     assert_eq!(by_id(del_id)["ref"], format!("r{del_id}"));
     assert_eq!(by_id(ins_id)["ref"], format!("r{ins_id}"));
 
-    // The short id the view prints selects the same change as the long id
-    // the JSON prints.
-    for (one, other) in [
-        (format!("r{del_id}"), format!("body:rev:{ins_id}")),
-        (format!("body:rev:{del_id}"), format!("r{ins_id}")),
-    ] {
-        ok(
-            &[
-                "reject",
-                "review/redline.docx",
-                "-o",
-                "rejected.docx",
-                "--force",
-                "--id",
-                &one,
-                "--id",
-                &other,
-            ],
-            dir.path(),
-        );
-    }
+    // The JSON prints the id the view prints, and that id selects it.
+    ok(
+        &[
+            "reject",
+            "review/redline.docx",
+            "-o",
+            "rejected.docx",
+            "--force",
+            "--id",
+            &format!("r{del_id}"),
+            "--id",
+            &format!("r{ins_id}"),
+        ],
+        dir.path(),
+    );
+    // The expired long id is refused, naming the id to use.
+    let expired = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args([
+            "reject",
+            "review/redline.docx",
+            "-o",
+            "expired.docx",
+            "--id",
+        ])
+        .arg(format!("body:rev:{del_id}"))
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(expired.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&expired.stderr);
+    assert!(
+        stderr.contains(&format!("the settled spelling is r{del_id}")),
+        "{stderr}"
+    );
     let bad = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
         .args([
             "reject",

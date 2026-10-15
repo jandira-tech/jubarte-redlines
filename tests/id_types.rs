@@ -24,7 +24,7 @@ static NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{>>(.*?)<<\}")
 /// An HTML comment anywhere on a line: an id line, or the ` <!-- rev … -->`
 /// a note definition ends with (pi review of #464).
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!-- (.*?) -->").unwrap());
-/// An expired spelling (`#12`, `#c27`, `body:rev:12`, `header1:p:2`): the
+/// An expired spelling (`#12`, `#c27`, `r12`, `header1.p2`): the
 /// split below would cut it apart, so it is looked for whole.
 static EXPIRED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[\s,;(\[{])(#c?[0-9][0-9+]*|[a-z][a-z0-9_]*:(?:rev|p):[0-9]+)").unwrap()
