@@ -1283,6 +1283,22 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         printed: bool,
         /// A field nested in its instruction, which a code cannot print.
         nested: bool,
+        /// Where its result starts in the text, once its code is printed.
+        at: usize,
+    }
+    /// A printed field's end: `{/}`, or nothing when it has no result and
+    /// its code is a bare name, which the writer reads as `{PAGE}`.
+    fn field_end(out: &str, at: usize, instr: &str) -> &'static str {
+        let bare = !instr.trim().is_empty()
+            && instr
+                .trim()
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+        if bare && out.len() == at {
+            ""
+        } else {
+            super::FIELD_END
+        }
     }
     /// `ins`/`moveTo` → `Some(true)`, `del`/`moveFrom` → `Some(false)`.
     fn inserting(local: &str) -> Option<bool> {
@@ -1308,8 +1324,9 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     match super::printed_code(instr).filter(|_| s.fields.is_empty()) {
                         Some(code) => {
                             s.out.push_str(&code);
+                            let at = s.out.len();
                             walk(run, s);
-                            s.out.push_str(super::FIELD_END);
+                            s.out.push_str(field_end(&s.out, at, instr));
                         }
                         None if s.fields.is_empty() => s.out.push_str(&code(instr)),
                         None => walk(run, s),
@@ -1384,6 +1401,7 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                                         {
                                             field.printed = true;
                                             s.out.push_str(&code);
+                                            field.at = s.out.len();
                                         }
                                     }
                                 }
@@ -1392,7 +1410,7 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                                         && s.fields.is_empty()
                                     {
                                         s.out.push_str(&if field.printed {
-                                            super::FIELD_END.to_string()
+                                            field_end(&s.out, field.at, &field.instr).to_string()
                                         } else {
                                             code(&field.instr)
                                         });
@@ -1606,6 +1624,22 @@ mod tests {
                 StoryView::Accept(&Default::default())
             ),
             r#"Page {PAGE}1{/} · {HYPERLINK "https://x.example"}site{/}"#
+        );
+    }
+
+    #[test]
+    fn a_story_field_without_a_result_prints_its_bare_code() {
+        // The writer's `{PAGE}`: no result, so none is printed; a field
+        // with switches keeps the coded form.
+        let root = ftr(
+            r#"<w:p><w:fldSimple w:instr=" PAGE "/><w:r><w:t> of </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t> </w:t></w:r><w:fldSimple w:instr=" PAGE \* roman "/></w:p>"#,
+        );
+        assert_eq!(
+            story_text(
+                story_paragraphs(&root)[0],
+                StoryView::Accept(&Default::default())
+            ),
+            r#"{PAGE} of {NUMPAGES} {PAGE \* roman}{/}"#
         );
     }
 
