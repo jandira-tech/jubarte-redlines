@@ -434,6 +434,9 @@ pub(super) struct TableLine {
     /// Cell paragraphs aligned against their column (`p5 center`), as
     /// Word's `jc` value, by paragraph.
     pub aligns: HashMap<usize, &'static str>,
+    /// Cell paragraphs in a style of their own (`p5 ListParagraph`,
+    /// `p6-p9 Caption`), by paragraph.
+    pub styles: HashMap<usize, String>,
     /// The table's style (`style Ledger`) when tables differ in theirs.
     pub style: Option<String>,
     /// A comment's range runs through the table (`in c5`).
@@ -566,6 +569,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         align: None,
         merges: HashMap::new(),
         aligns: HashMap::new(),
+        styles: HashMap::new(),
         style: None,
         in_comment: false,
         fmt: None,
@@ -577,7 +581,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         cell_marks: HashMap::new(),
         gaps: HashMap::new(),
     };
-    for (i, clause) in rest.split(", ").enumerate() {
+    for (i, clause) in split_clauses(rest).into_iter().enumerate() {
         // `p5 center`: a cell paragraph aligned against its column.
         if let Some((at, word)) = clause.split_once(' ')
             && let Some(at) = crate::ids::short_number(at, 'p')
@@ -590,6 +594,17 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             }
         {
             parsed.aligns.insert(at, jc);
+            continue;
+        }
+        // `p5 ListParagraph`, `p6-p9 Caption`, `p7 "My Style"`: cell
+        // paragraphs in a style.
+        if let Some((at, tail)) = clause.split_once(' ')
+            && let Some((first, count)) = paragraph_range(at)
+            && let Some((style, "")) = take_style(tail)
+        {
+            for n in first..first + count {
+                parsed.styles.insert(n, style.clone());
+            }
             continue;
         }
         if clause == "header row repeats" {
@@ -679,8 +694,8 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                 }
             }
         }
-        if let Some(style) = clause.strip_prefix("style ").filter(|s| !s.is_empty()) {
-            parsed.style = Some(style.to_string());
+        if let Some((style, "")) = clause.strip_prefix("style ").and_then(take_style) {
+            parsed.style = Some(style);
         }
         // The size opens the clauses, after the alignment: `center 3x2`.
         if i == 0
@@ -751,6 +766,15 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             .collect();
     }
     Some(parsed)
+}
+
+/// The first paragraph and count of `p5` or `p6-p9`.
+fn paragraph_range(id: &str) -> Option<(usize, usize)> {
+    let (first, last) = id.split_once('-').unwrap_or((id, id));
+    let first = crate::ids::short_number(first, 'p')?;
+    let last = crate::ids::short_number(last, 'p')?;
+    let count = last.checked_sub(first)?.checked_add(1)?;
+    (count <= MOST_EMPTY).then_some((first, count))
 }
 
 /// The row and cell of `t0.row2.cell1`.
@@ -831,15 +855,10 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
             1
         }
     };
-    // `empty` is a clause of its own, or the first clause after the style
-    // name (`BodyText empty`).
-    let empty = rest.split(", ").enumerate().any(|(i, clause)| {
-        clause == "empty"
-            || (i == 0
-                && clause
-                    .split_once(' ')
-                    .is_some_and(|(_, tail)| tail == "empty"))
-    });
+    // `empty` is a clause of its own, also the first after the style
+    // (`BodyText empty`, `"My Style" empty`).
+    let rest = take_style(rest).map_or(rest, |(_, after)| after);
+    let empty = split_clauses(rest).contains(&"empty");
     (empty && count <= MOST_EMPTY).then_some(count)
 }
 
@@ -865,6 +884,90 @@ const CLAUSE_WORDS: [&str; 18] = [
     "comments",
     "in",
 ];
+
+/// The words that open a table line's own clauses (`cells p0-p3 by row`,
+/// `merged …`): beside [`CLAUSE_WORDS`], what a style id must not read as.
+const TABLE_WORDS: [&str; 7] = [
+    "cells",
+    "merged",
+    "gaps",
+    "style",
+    "header",
+    "rev-del",
+    "rev-merge",
+];
+
+/// Whether `word` opens a clause, so a style of that id needs quotes.
+fn reserved(word: &str) -> bool {
+    CLAUSE_WORDS.contains(&word) || TABLE_WORDS.contains(&word)
+}
+
+/// A style id as id lines and table lines print it: as is when it reads
+/// back as one word, quoted otherwise (`"My Style"`, `"center"`, `"A, B"`),
+/// with `\` and `"` escaped.
+pub(crate) fn style_token(style: &str) -> String {
+    let plain = !style.is_empty()
+        && !reserved(style)
+        && !style
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, ',' | '"' | '\\'));
+    if plain {
+        style.to_string()
+    } else {
+        format!("\"{}\"", style.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+/// The style id opening `text` (`TitlePage center` or `"My Style" center`)
+/// and the text after it; `None` when `text` opens with a clause word or an
+/// unclosed quote.
+fn take_style(text: &str) -> Option<(String, &str)> {
+    if let Some(quoted) = text.strip_prefix('"') {
+        let mut style = String::new();
+        let mut chars = quoted.char_indices();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '\\' => style.push(chars.next()?.1),
+                '"' => {
+                    let rest = quoted[i + 1..].trim_start_matches(',').trim_start();
+                    return Some((style, rest));
+                }
+                c => style.push(c),
+            }
+        }
+        return None;
+    }
+    let end = text.find([' ', ',']).unwrap_or(text.len());
+    let word = &text[..end];
+    if word.is_empty() || reserved(word) {
+        return None;
+    }
+    Some((
+        word.to_string(),
+        text[end..].trim_start_matches(',').trim_start(),
+    ))
+}
+
+/// `text` split at each `, ` outside a quoted style or label.
+fn split_clauses(text: &str) -> Vec<&str> {
+    let mut clauses = Vec::new();
+    let (mut start, mut quoted, mut escaped) = (0, false, false);
+    for (i, c) in text.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ',' if !quoted && text[i + 1..].starts_with(' ') => {
+                clauses.push(&text[start..i]);
+                start = i + 2;
+            }
+            _ => {}
+        }
+    }
+    clauses.push(&text[start..]);
+    clauses.retain(|c| !c.is_empty());
+    clauses
+}
 
 /// What a paragraph's id line says about it (`<!-- p5 TitlePage center,
 /// first-line 0.5in -->`): its style, alignment (`w:jc`) and indents in
@@ -908,23 +1011,19 @@ pub(super) fn id_line(line: &str) -> Option<IdLine> {
     let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
     crate::ids::short_number(id, 'p')?;
     let mut parsed = IdLine::default();
-    // The label first: its quotes may hold `, `.
+    // The style is the head's second word, quoted when it is no plain
+    // word: `p5 TitlePage[ clause]`, `p5 "My Style"[ clause]`.
+    let rest = match take_style(rest) {
+        Some((style, after)) => {
+            parsed.style = Some(style);
+            after
+        }
+        None => rest,
+    };
+    // Then the label: its quotes may hold `, `.
     let (rest, label) = take_label(rest);
     parsed.label = label.map(Label::Text);
-    let rest = rest.as_str();
-    let mut clauses = rest.split(", ").filter(|c| !c.is_empty()).peekable();
-    // The style is the head's second word: `p5 TitlePage[ clause]`.
-    if let Some(first) = clauses.peek().copied() {
-        let (word, tail) = first.split_once(' ').unwrap_or((first, ""));
-        if !CLAUSE_WORDS.contains(&word) {
-            parsed.style = Some(word.to_string());
-            clauses.next();
-            if !tail.is_empty() {
-                parsed.clause(tail);
-            }
-        }
-    }
-    for clause in clauses {
+    for clause in split_clauses(&rest) {
         parsed.clause(clause);
     }
     Some(parsed)

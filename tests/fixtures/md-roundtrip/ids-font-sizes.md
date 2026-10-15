@@ -140,7 +140,7 @@ Director/a del …….…………………………………………………�
 
 <!-- p115 empty -->
 
-<!-- t4 6x4, cells p116-p139 by row, style TableGrid -->
+<!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText, style TableGrid -->
 |NOMBRE|APELLIDOS|NIF|COORDINADOR/ PARTICIPANTE|
 |-|-|-|-|
 |||||

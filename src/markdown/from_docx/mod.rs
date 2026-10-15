@@ -2047,7 +2047,7 @@ impl Writer<'_> {
                             self.tables_differ
                                 .then(|| child.path(&["tblPr", "tblStyle"])?.attr("val"))
                                 .flatten(),
-                            &self.column_alignments(child).1,
+                            &[self.column_alignments(child).1, self.cell_styles(child)].concat(),
                             self.resolved,
                             (!self.comments_inline).then_some(&self.comments),
                             &spans,
@@ -3046,6 +3046,48 @@ impl Writer<'_> {
     /// it ([`majority`]), and the cell paragraphs aligned against their
     /// column, as the table line names them (`p5 center`). Left and no
     /// alignment look alike: neither is an exception to the other.
+    /// The table line's `p5 ListParagraph`, `p6-p9 Caption`: the cell
+    /// paragraphs in a style other than the default, consecutive ones in
+    /// one style as a range.
+    fn cell_styles(&self, table: &Element) -> Vec<String> {
+        let default = self.default_style.as_deref().unwrap_or("Normal");
+        let mut runs: Vec<(usize, usize, &str)> = Vec::new();
+        for tr in table_rows(table) {
+            for tc in row_cells(tr) {
+                // As the cells range numbers them: a nested table's too.
+                let mut ps = Vec::new();
+                tc.find_all("p", &mut ps);
+                for p in ps {
+                    let (Some(index), Some(style)) = (
+                        p.attr(agent::INDEX).and_then(|i| i.parse::<usize>().ok()),
+                        p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")),
+                    ) else {
+                        continue;
+                    };
+                    if style == default || style == "Normal" {
+                        continue;
+                    }
+                    match runs.last_mut() {
+                        Some((_, last, said)) if *last + 1 == index && *said == style => {
+                            *last = index;
+                        }
+                        _ => runs.push((index, index, style)),
+                    }
+                }
+            }
+        }
+        runs.into_iter()
+            .map(|(first, last, style)| {
+                let style = crate::markdown::view_notes::style_token(style);
+                if first == last {
+                    format!("p{first} {style}")
+                } else {
+                    format!("p{first}-p{last} {style}")
+                }
+            })
+            .collect()
+    }
+
     fn column_alignments(&self, table: &Element) -> (Vec<Option<&'static str>>, Vec<String>) {
         let mut columns: Vec<Vec<(Option<&str>, Option<&'static str>)>> = Vec::new();
         for tr in table_rows(table) {
