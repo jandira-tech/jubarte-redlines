@@ -109,3 +109,4 @@ Claude outputs/
 .empryo
 .dirac-cache/
 report.json
+.probe/
