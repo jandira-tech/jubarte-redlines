@@ -3,6 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Markdown events to Word items, CriticMarkup to tracked changes.
+//!
+//! The internal pipeline that
+//! [`markdown_to_docx`](super::markdown_to_docx) and the redline task
+//! use to convert one Markdown document to a Word document package.
+//! Backs `jubarte convert FILE.md`, the Markdown side of
+//! [`crate::markdown::redline`], and the Python / WASM
+//! `markdown_to_docx` binding.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -20,7 +27,21 @@ use super::{math, view_notes, view_stories, view_styles};
 
 /// Writes Markdown as a `.docx`: CommonMark with GitHub's tables,
 /// strikethrough, task lists and footnotes, and CriticMarkup as tracked
-/// changes and comments (see the [module docs](super)).
+/// changes and comments (see the [module docs](super)). Backs
+/// `jubarte convert FILE.md` and the redline task's Markdown side.
+///
+/// # Errors
+///
+/// [`MarkdownError::Reference`] when the reference document is not a
+/// readable `.docx`. [`MarkdownError::Package`] when the package
+/// cannot be assembled, or when `track_changes` is `Accept` or
+/// `Reject` and accepting or rejecting every revision of the freshly
+/// written package fails.
+///
+/// # Side effects
+///
+/// None on disk. The `docx` bytes of the [`WrittenDocx`] are returned
+/// to the caller; everything else lives only on the stack.
 ///
 /// ```
 /// use jubarte::markdown::{DocxOptions, markdown_to_docx};
