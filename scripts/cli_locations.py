@@ -129,7 +129,7 @@ PROBE_TEXT = "PROBE"
 # (`#12`, `#c5`, `t0.r1.c2`): each place the CLI still prints or accepts one
 # is listed under "Deprecated ids", and every run warns until none is left.
 LONG_ID = re.compile(r"(?<![\w.#])[A-Za-z][\w]*:(?:p|rev):\d+")
-RETIRED_ID = re.compile(r"(?<![\w])#c?\d+(?:\+\d+)*|\bt\d+\.r\d+\.c\d+\b")
+RETIRED_ID = re.compile(r"(?<![\w&])#c?\d+(?:\+\d+)*|\bt\d+\.r\d+\.c\d+\b")
 
 
 class Deprecated:
