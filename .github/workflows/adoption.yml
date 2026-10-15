@@ -31,6 +31,13 @@ on:
       - ".github/workflows/adoption.yml"
   workflow_dispatch:
 
+# One run per PR (or branch): a new push cancels the PR's older run, and
+# on main a newer commit replaces any run still waiting. The self-hosted
+# runners are few, so superseded runs must not hold the queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
