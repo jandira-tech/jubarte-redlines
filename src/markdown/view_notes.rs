@@ -948,6 +948,28 @@ fn take_style(text: &str) -> Option<(String, &str)> {
     ))
 }
 
+/// The comment paragraph styles a `comments:` line names: the one for
+/// every comment (`style Normal`) and each comment's own (`c6 style
+/// Normal`), by the comment's number. Other clauses are counts.
+pub(super) fn comment_styles(value: &str) -> (Option<String>, HashMap<u32, String>) {
+    let (mut all, mut each) = (None, HashMap::new());
+    for clause in split_clauses(value) {
+        if let Some(rest) = clause.strip_prefix("style ") {
+            if let Some((style, "")) = take_style(rest) {
+                all = Some(style);
+            }
+        } else if let Some((number, rest)) = clause
+            .strip_prefix('c')
+            .and_then(|c| c.split_once(" style "))
+            && let Ok(number) = number.parse()
+            && let Some((style, "")) = take_style(rest)
+        {
+            each.insert(number, style);
+        }
+    }
+    (all, each)
+}
+
 /// `text` split at each `, ` outside a quoted style or label.
 fn split_clauses(text: &str) -> Vec<&str> {
     let mut clauses = Vec::new();

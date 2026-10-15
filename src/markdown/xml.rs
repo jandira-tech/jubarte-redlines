@@ -253,6 +253,11 @@ pub(super) struct Document {
     /// Notes parts (`footnote`, `endnote`) to make though no note needs
     /// them: the header's `notes: {empty: [footnotes]}`.
     pub empty_notes: Vec<&'static str>,
+    /// The style of every comment's paragraphs, when not CommentText: the
+    /// header's `comments: …, style Normal`.
+    pub comment_style: Option<String>,
+    /// One comment's own style, by its number: `comments: …, c6 style X`.
+    pub comment_styles: HashMap<u32, String>,
     pub comments: Vec<Comment>,
     /// Comment slots: the comment each got, if any.
     pub slots: Vec<Option<u32>>,
@@ -1561,6 +1566,12 @@ pub(crate) fn drawing_xml(picture: &Picture, rel: &str, id: u32, out: &mut Strin
 
 /// A comments part holding `comments`.
 pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> String {
+    let default_style = context
+        .document
+        .style_specs
+        .iter()
+        .find(|s| s.default)
+        .map_or("Normal", |s| s.id.as_str());
     let mut out = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
          <w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
@@ -1596,11 +1607,23 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
                 );
             }
         }
+        // Word's CommentText unless the `comments:` line names another;
+        // the document's default style needs no `w:pStyle`.
+        let style = comment
+            .number
+            .and_then(|n| context.document.comment_styles.get(&n))
+            .or(context.document.comment_style.as_ref())
+            .map_or("CommentText", String::as_str);
+        let ppr = if style == default_style {
+            String::new()
+        } else {
+            format!("<w:pPr><w:pStyle w:val=\"{}\"/></w:pPr>", escape(style))
+        };
         let mut paragraphs = comment.paragraphs.iter().map(|p| p.trim());
         let first = paragraphs.next().unwrap_or_default();
         let _ = write!(
             out,
-            "<w:p><w:pPr><w:pStyle w:val=\"CommentText\"/></w:pPr>\
+            "<w:p>{ppr}\
              <w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r>\
              <w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
             escape(first)
@@ -1608,8 +1631,7 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
         for paragraph in paragraphs.filter(|p| !p.is_empty()) {
             let _ = write!(
                 out,
-                "<w:p><w:pPr><w:pStyle w:val=\"CommentText\"/></w:pPr>\
-                 <w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+                "<w:p>{ppr}<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
                 escape(paragraph)
             );
         }

@@ -3104,6 +3104,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                         "notes: {why}, so the notes parts it names are not made"
                     )),
                 },
+                "comments" => {
+                    let value = view_notes::scalar_and_comment(text).0;
+                    let (all, each) = view_notes::comment_styles(&value);
+                    self.document.comment_style = all;
+                    self.document.comment_styles = each;
+                }
                 "unplaced" => {
                     for (at, tag) in view_notes::unplaced(text) {
                         self.unplaced.entry(at).or_default().push(tag);
