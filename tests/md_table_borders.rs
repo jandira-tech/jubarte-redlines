@@ -78,7 +78,8 @@ fn table(props: &str) -> String {
     format!(
         "<w:tbl><w:tblPr>{props}</w:tblPr><w:tblGrid><w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
          <w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>\
-         <w:tr><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+         <w:tr><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p/>"
     )
 }
 
@@ -140,7 +141,14 @@ fn a_grid_and_a_borderless_table_keep_their_own() {
         table("")
     );
     let (first, again, second) = round_trip(&docx(&body));
-    assert!(first.contains("<!-- t1 TableNormal"), "{first}");
+    assert!(
+        first.contains("<!-- t1 2x2, cells p6-p9 by row, style TableNormal -->"),
+        "{first}"
+    );
+    assert!(
+        first.contains("<!-- t0 2x2, cells p0-p3 by row -->"),
+        "{first}"
+    );
     assert_eq!(
         table_styles(&part(&again, "word/document.xml")),
         [

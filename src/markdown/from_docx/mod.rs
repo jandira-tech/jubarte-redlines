@@ -2230,7 +2230,7 @@ impl Writer<'_> {
                         && let Some(line) = agent::table_line(
                             child,
                             self.tables_differ
-                                .then(|| child.path(&["tblPr", "tblStyle"])?.attr("val"))
+                                .then(|| view_table_style(child))
                                 .flatten(),
                             &[self.column_alignments(child).1, self.cell_styles(child)].concat(),
                             self.resolved,
@@ -4050,13 +4050,32 @@ fn hyperlink_instruction(instruction: &str) -> Option<String> {
     link_target(url, anchor).map(|t| ooxml::titled(&t, title))
 }
 
-/// The table styles of `body`'s tables, in the order they first come, and
-/// whether a table has none.
+/// The table style the view names for `t`. Table Grid, the writer's
+/// default (Word's Insert Table), is none, as is no style over borders of
+/// the table's own (Demo.docx's thin grid); no style and no borders is
+/// Word's Normal Table, which the view names so the writer adds none.
+fn view_table_style(t: &Element) -> Option<&str> {
+    match t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
+        Some("TableGrid") => None,
+        Some(style) => Some(style),
+        None => {
+            let bordered = t.path(&["tblPr", "tblBorders"]).is_some_and(|borders| {
+                borders
+                    .elements()
+                    .any(|side| !matches!(side.attr("val"), Some("nil" | "none") | None))
+            });
+            (!bordered).then_some("TableNormal")
+        }
+    }
+}
+
+/// The table styles of `body`'s tables the view names, in the order they
+/// first come, and whether a table has none (the writer's Table Grid).
 fn table_styles(body: &Element) -> (Vec<String>, bool) {
     let mut styles: Vec<String> = Vec::new();
     let mut unstyled = false;
     for t in agent::tables(body) {
-        match t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
+        match view_table_style(t) {
             Some(s) => {
                 if !styles.iter().any(|x| x == s) {
                     styles.push(s.to_string());
