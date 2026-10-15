@@ -565,3 +565,41 @@ fn the_expired_control_id_is_refused_naming_its_short_id() {
     assert_eq!(e.code, "ANCHOR_NOT_FOUND");
     assert!(e.message.contains("p1.cc0"), "{}", e.message);
 }
+
+#[test]
+fn a_cell_spelling_names_the_control_of_the_cells_first_paragraph() {
+    // Spec: a cell's first paragraph's controls are `t0.row1.cell2.cc0`,
+    // the same controls as that paragraph's `pN.ccK`.
+    let cell = |tag: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{tag}</w:t></w:r></w:sdtContent></w:sdt></w:p><w:p><w:sdt><w:sdtPr><w:tag w:val="{tag}2"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>more</w:t></w:r></w:sdtContent></w:sdt></w:p></w:tc>"#
+        )
+    };
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl><w:p/>"#,
+        cell("A"),
+        cell("B")
+    ));
+    let ids: Vec<String> = controls(&source)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids, ["p1.cc0", "p2.cc0", "p3.cc0", "p4.cc0"]);
+    let out = apply_plan(
+        &source,
+        &plan(
+            r#"{"kind":"fill_control","control":"t0.row0.cell1.cc0","text":"b"},
+               {"kind":"fill_control","control":{"id":"t0.row0.cell0.p1.cc0"},"text":"a2"}"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&out.clean), ["Intro", "A", "a2", "b", "more", ""]);
+    let e = apply_plan(
+        &source,
+        &plan(r#"{"kind":"fill_control","control":"t0.row0.cell0.cc1","text":"x"}"#),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "ANCHOR_NOT_FOUND");
+    assert!(e.message.contains("first p1.cc0, last p4.cc0"), "{e}");
+}
