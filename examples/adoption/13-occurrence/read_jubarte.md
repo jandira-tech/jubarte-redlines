@@ -11,9 +11,9 @@ body: p0-p8, 0 tables, 1 page      # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
-  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
-  ListParagraph: Calibri 11pt, named List Paragraph
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
+  ListParagraph: Calibri 11pt, indent 0.5in, contextual spacing, named List Paragraph
 ---
 
 <!-- page 1 of 1 -->

@@ -11,9 +11,9 @@ body: p0-p30, 1 table, 2 pages     # pages from layout
 page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in
 styles:
   Normal: Cambria 11pt, after 10pt, line 1.15, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 14pt, before 24pt, keep-next
-  "##": Heading2, Calibri bold 13pt, before 10pt, keep-next
-  ListBullet: Cambria 11pt, named List Bullet
+  "#": Heading1, Calibri bold 14pt, before 24pt, keep-next, keep-lines
+  "##": Heading2, Calibri bold 13pt, before 10pt, keep-next, keep-lines
+  ListBullet: Cambria 11pt, contextual spacing, named List Bullet
   table: TableGrid, all borders 0.5pt
 headers:
   default: {id: header1, text: "Jandira Technologies, LLC - Professional Services Agreement (Draft 3)"}
