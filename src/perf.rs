@@ -15,34 +15,35 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Stage {
-    /// Public API item.
+    /// ZIP opening of the two packages.
     PackageOpen = 0,
-    /// Public API item.
+    /// Pre-compare XML normalisation (whitespace, fixes).
     Preprocess = 1,
-    /// Public API item.
+    /// Atomization (splitting parts into comparison atoms).
     Atomize = 2,
-    /// Public API item.
+    /// Unitization (grouping atoms into comparison units).
     Unitize = 3,
-    /// Public API item.
+    /// Longest-common-subsequence pass over units.
     Lcs = 4,
-    /// Public API item.
+    /// Revision production (the output document).
     Produce = 5,
-    /// Public API item.
+    /// Output serialization (final XML round-trip).
     Serialize = 6,
-    /// Public API item.
+    /// ZIP package write of the redline bytes.
     Zip = 7,
 }
 
 const STAGE_COUNT: usize = 8;
 
-/// Reset all counters and stage timers to zero. Safe to call mid-process for
-/// isolation between trials when the feature is on.
+/// Resets all counters and stage timers to zero. Safe to call mid-process for
+/// isolation between trials when the feature is on; no-op otherwise.
 pub fn reset() {
     #[cfg(feature = "perf-profile")]
     active::reset();
 }
 
-/// Add `nanos` to the cumulative time for `stage`.
+/// Adds `nanos` to the cumulative wall-time of `stage`. No-op without
+/// `perf-profile`.
 #[inline]
 pub fn record_stage_ns(stage: Stage, nanos: u64) {
     #[cfg(feature = "perf-profile")]
@@ -53,7 +54,9 @@ pub fn record_stage_ns(stage: Stage, nanos: u64) {
     }
 }
 
-/// Run `f` and, when profiling, accumulate its wall duration into `stage`.
+/// Runs `f` and, when profiling, accumulates its wall duration into
+/// `stage`; otherwise returns `f()` directly. The closure is always called
+/// exactly once.
 #[inline]
 pub fn time_stage<R>(stage: Stage, f: impl FnOnce() -> R) -> R {
     #[cfg(feature = "perf-profile")]
@@ -69,14 +72,15 @@ pub fn time_stage<R>(stage: Stage, f: impl FnOnce() -> R) -> R {
         f()
     }
 }
-/// Increment the LCS-call counter (no-op without `perf-profile`).
+/// Increments the LCS-call counter. No-op without `perf-profile`.
 #[inline]
 pub fn inc_lcs_calls() {
     #[cfg(feature = "perf-profile")]
     active::inc_lcs_calls();
 }
 
-/// Accumulate LCS window area `n × m` (no-op without `perf-profile`).
+/// Accumulates LCS window area `n * m` (a saturation-safe product). No-op
+/// without `perf-profile`.
 #[inline]
 pub fn add_lcs_window_area(n: u64, m: u64) {
     #[cfg(feature = "perf-profile")]
@@ -87,21 +91,23 @@ pub fn add_lcs_window_area(n: u64, m: u64) {
     }
 }
 
-/// Increment correlation-run scan counter (no-op without `perf-profile`).
+/// Increments the correlation-run scan counter. No-op without
+/// `perf-profile`.
 #[inline]
 pub fn inc_corr_run_scans() {
     #[cfg(feature = "perf-profile")]
     active::inc_corr_run_scans();
 }
 
-/// Increment correlation-run hit counter (no-op without `perf-profile`).
+/// Increments the correlation-run hit counter (a scan whose result was used).
+/// No-op without `perf-profile`.
 #[inline]
 pub fn inc_corr_run_hits() {
     #[cfg(feature = "perf-profile")]
     active::inc_corr_run_hits();
 }
 
-/// Add `n` unit clones to the clone counter (no-op without `perf-profile`).
+/// Adds `n` to the unit-clone counter. No-op without `perf-profile`.
 #[inline]
 pub fn add_unit_clones(n: u64) {
     #[cfg(feature = "perf-profile")]
@@ -112,7 +118,8 @@ pub fn add_unit_clones(n: u64) {
     }
 }
 
-/// Record the atom count for this compare (no-op without `perf-profile`).
+/// Records the atom count of the current compare, overwriting any earlier
+/// value. No-op without `perf-profile`.
 #[inline]
 pub fn set_atom_count(n: u64) {
     #[cfg(feature = "perf-profile")]
@@ -123,7 +130,8 @@ pub fn set_atom_count(n: u64) {
     }
 }
 
-/// Record the unit count for this compare (no-op without `perf-profile`).
+/// Records the unit count of the current compare, overwriting any earlier
+/// value. No-op without `perf-profile`.
 #[inline]
 pub fn set_unit_count(n: u64) {
     #[cfg(feature = "perf-profile")]
@@ -134,30 +142,33 @@ pub fn set_unit_count(n: u64) {
     }
 }
 
-/// Snapshot of counters/timers. Always available so tests can assert the
-/// no-op path returns zeros when the feature is off.
+/// Snapshot of counters and stage timers. Always available so tests can
+/// assert that the no-op path returns zeros when the feature is off.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
-    /// `stage_ns`.
+    /// Cumulative wall time in nanoseconds per [`Stage`], indexed by the
+    /// enum's discriminant.
     pub stage_ns: [u64; STAGE_COUNT],
-    /// `lcs_calls`.
+    /// Number of LCS invocations across the snapshot window.
     pub lcs_calls: u64,
-    /// `lcs_window_area`.
+    /// Sum of LCS window areas (`n * m`) across all invocations.
     pub lcs_window_area: u64,
-    /// `corr_run_scans`.
+    /// Number of correlation-run scans executed.
     pub corr_run_scans: u64,
-    /// `corr_run_hits`.
+    /// Number of correlation-run scans that produced a hit (a matched run).
     pub corr_run_hits: u64,
-    /// `unit_clones`.
+    /// Number of unit clones recorded by the comparer.
     pub unit_clones: u64,
-    /// `atoms`.
+    /// Atom count for the most recent compare (0 if none yet).
     pub atoms: u64,
-    /// `units`.
+    /// Unit count for the most recent compare (0 if none yet).
     pub units: u64,
 }
 
 impl Snapshot {
-    /// Emit a single-line JSON object (no trailing newline dependency).
+    /// Emits a single-line JSON object that names each stage in plain text
+    /// (`package_open`, `preprocess`, `atomize`, `unitize`, `lcs`, `produce`,
+    /// `serialize`, `zip`); no trailing newline.
     pub fn to_json(&self) -> String {
         format!(
             concat!(
@@ -187,7 +198,7 @@ impl Snapshot {
     }
 }
 
-/// Capture the current counters without resetting.
+/// Captures the current counters and stage timers without resetting them.
 pub fn snapshot() -> Snapshot {
     #[cfg(feature = "perf-profile")]
     {
@@ -199,7 +210,8 @@ pub fn snapshot() -> Snapshot {
     }
 }
 
-/// Whether this build has the `perf-profile` feature compiled in.
+/// Whether this build has the `perf-profile` Cargo feature compiled in;
+/// `false` in the default build.
 pub const ENABLED: bool = cfg!(feature = "perf-profile");
 
 #[cfg(feature = "perf-profile")]

@@ -2,87 +2,188 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Namespace + name constants ported from `PtOpenXmlUtil.ts` (the subset the
-//! comparer references) — M1.7.
+//! WordprocessingML and related namespace / `XName` constants ported from
+//! `PtOpenXmlUtil.ts` (the subset the comparer references) — M1.7.
 //!
-//! Each namespace is exposed as a unit struct with `ns()` (the `XNamespace`) and
-//! `name(local)` (an `XName` in that namespace). The hottest element/attribute
-//! names are predefined; anything else is reachable via `name("local")`.
+//! Each namespace is exposed as a unit struct with three associated
+//! items:
+//!
+//! - `Ns::ns()` returns the [`XNamespace`] for the URI;
+//! - `Ns::name(local)` returns an [`XName`] for `local` in that namespace;
+//! - `Ns::URI` is the namespace URI string (a `const` for switch arms).
+//!
+//! The hottest element and attribute names — those hit on most documents
+//! during hash-cloning, finalize, and the LCS walks — are predefined
+//! on [`W`] and [`PT`] as `OnceLock`-cached methods (e.g. [`W::p`],
+//! [`PT::unid`]). Anything else is reachable via
+//! `Ns::name("local")`, which still benefits from the thread-local
+//! intern pool.
+//!
+//! Used by every code path that touches WML/DML/MC names: the comparer,
+//! edit pipeline, accept / reject, inspect, audit, markdown projection,
+//! `revision_processor`. CLI: these constants back every comparison the
+//! `jubarte` subcommands perform.
 
 use crate::xmllinq::{XName, XNamespace};
 
 macro_rules! ns_struct {
-    ($name:ident, $uri:literal) => {
-        #[doc = concat!("Open XML namespace marker for `", $uri, "`.")]
+    ($(#[$meta:meta])* $name:ident, $uri:literal) => {
+        $(#[$meta])*
+        #[doc = ""]
+        #[doc = concat!("Marker for the namespace `", $uri, "`. ")]
+        #[doc = "All three associated items are generated:"]
+        #[doc = " [`Self::ns`] for the [`XNamespace`], [`Self::name`] for an"]
+        #[doc = " [`XName`] in it, and [`Self::URI`] as a `&'static str`."]
         pub struct $name;
         impl $name {
-            /// The namespace.
+            /// The namespace, as an [`XNamespace`] rooted at this URI.
             pub fn ns() -> XNamespace {
                 XNamespace::get($uri)
             }
-            /// An `XName` for `local` in this namespace.
+            /// An [`XName`] for `local` in this namespace.
             pub fn name(local: &str) -> XName {
                 XName::get(local, $uri)
             }
-            /// The namespace URI.
+            /// The namespace URI as a `&'static str`. Use it in `match` arms
+            /// and other places that need a string constant.
             pub const URI: &'static str = $uri;
         }
     };
 }
 
 ns_struct!(
+    /// WordprocessingML (`w:`) — the main namespace for Word body, paragraph,
+    /// run, table, and property elements and attributes. The hottest element
+    /// and attribute constants are predefined on this struct ([`W::p`],
+    /// [`W::r`], [`W::sect_pr`], …) as `OnceLock`-cached methods.
     W,
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 );
 ns_struct!(
+    /// Office relationships namespace (`r:`) — `r:id` references between
+    /// parts (`word/_rels/document.xml.rels`).
     R,
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 );
 ns_struct!(
+    /// Office Math (`m:`) — equations embedded in a paragraph.
     M,
     "http://schemas.openxmlformats.org/officeDocument/2006/math"
 );
 ns_struct!(
+    /// Markup compatibility (`mc:`) — `mc:AlternateContent`, `mc:Choice`,
+    /// `mc:Fallback`, `mc:Ignorable`, and the prefix-list attributes
+    /// (`Ignorable`, `PreserveAttributes`, `PreserveElements`,
+    /// `ProcessContent`, `MustUnderstand`, and the unqualified `Requires`
+    /// on `mc:Choice`) that the serializer must rewrite when prefixes are
+    /// rebound.
     MC,
     "http://schemas.openxmlformats.org/markup-compatibility/2006"
 );
-ns_struct!(O, "urn:schemas-microsoft-com:office:office");
-ns_struct!(VML, "urn:schemas-microsoft-com:vml");
-ns_struct!(A, "http://schemas.openxmlformats.org/drawingml/2006/main");
-ns_struct!(C, "http://schemas.openxmlformats.org/drawingml/2006/chart");
-ns_struct!(W14, "http://schemas.microsoft.com/office/word/2010/wordml");
-ns_struct!(W15, "http://schemas.microsoft.com/office/word/2012/wordml");
 ns_struct!(
+    /// Microsoft `office:o` (VML / Office compatibility markup).
+    O,
+    "urn:schemas-microsoft-com:office:office"
+);
+ns_struct!(
+    /// VML (`v:`) — legacy vector markup still used by text boxes, shapes,
+    /// and some legacy drawings.
+    VML,
+    "urn:schemas-microsoft-com:vml"
+);
+ns_struct!(
+    /// DrawingML main (`a:`) — the shared shape / drawing element vocabulary.
+    A,
+    "http://schemas.openxmlformats.org/drawingml/2006/main"
+);
+ns_struct!(
+    /// DrawingML chart (`c:`) — chart parts referenced from `w:drawing` /
+    /// `wp:inline` / `wp:anchor`.
+    C,
+    "http://schemas.openxmlformats.org/drawingml/2006/chart"
+);
+ns_struct!(
+    /// Microsoft Word 2010 wordml (`w14:`) — paragraph / run extensions
+    /// (e.g. `w14:paraId`, `w14:textId`) introduced in Word 2010.
+    W14,
+    "http://schemas.microsoft.com/office/word/2010/wordml"
+);
+ns_struct!(
+    /// Microsoft Word 2012 wordml (`w15:`) — the Word 2013 extensions
+    /// (`w15:commentEx`, `w15:person`, `w15:dataBinding`, …).
+    W15,
+    "http://schemas.microsoft.com/office/word/2012/wordml"
+);
+ns_struct!(
+    /// DrawingML wordprocessingDrawing (`wp:`) — drawing anchors and inlines
+    /// inside a run; the parent namespace for inline and anchor wrapper
+    /// elements.
     WP,
     "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 );
 // PowerTools correlation namespace (`PtOpenXml.pt`). NOTE: the actual URI is
 // `http://powertools.codeplex.com/2011` (verified in PtOpenXmlUtil.ts:3846) —
-// NOT the value the implementation plan claimed.
-ns_struct!(PT, "http://powertools.codeplex.com/2011");
+// NOT the value the implementation plan claimed. Stamped on every
+// comparison unit and read back to keep the LCS / move detection
+// deterministic; stripped from the output before the package is written.
+ns_struct!(
+    /// PowerTools correlation namespace — `pt:Unid`, `pt:SHA1Hash`,
+    /// `pt:CorrelatedSHA1Hash`, `pt:StructureSHA1Hash`, `pt:Status`,
+    /// `pt:UniqueId`, `pt:RunIds`, and the Word-mode stamps `pt:DefaultLine`,
+    /// `pt:HasDefaultTableStyle`. Attributes stamped on every comparison
+    /// unit and read back to keep the LCS / move detection deterministic;
+    /// stripped from the output before the package is written.
+    PT,
+    "http://powertools.codeplex.com/2011"
+);
 // PowerTools "Insert" namespace (`PtOpenXml.ptOpenXml`).
 ns_struct!(
+    /// PowerTools `ptOpenXml` "Insert" namespace — used by the original
+    /// `DocumentBuilder` to carry `dataBinding` / build traces.
     PTInsert,
     "http://powertools.codeplex.com/documentbuilder/2011/insert"
 );
-ns_struct!(W10, "urn:schemas-microsoft-com:office:word");
-ns_struct!(A14, "http://schemas.microsoft.com/office/drawing/2010/main");
 ns_struct!(
+    /// Microsoft `office:word` (`w10:`) — Word's VML extensions (`w10:wrap`,
+    /// `w10:anchorlock`), distinct from `w14` / `w15`.
+    W10,
+    "urn:schemas-microsoft-com:office:word"
+);
+ns_struct!(
+    /// Microsoft drawing 2010 (`a14:`) — DrawingML shape extensions
+    /// (line / fill / effect extras).
+    A14,
+    "http://schemas.microsoft.com/office/drawing/2010/main"
+);
+ns_struct!(
+    /// Microsoft Word 2010 wordprocessingDrawing (`wp14:`) — drawing
+    /// extensions co-namespaced with `wp:` for the 2010 wordprocessing
+    /// surface.
     WP14,
     "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
 );
 ns_struct!(
+    /// DrawingML diagram (`dgm:`) — SmartArt diagrams.
     DGM,
     "http://schemas.openxmlformats.org/drawingml/2006/diagram"
 );
-ns_struct!(WNE, "http://schemas.microsoft.com/office/word/2006/wordml");
+ns_struct!(
+    /// Microsoft `wne:` namespace — Word-specific extension attributes
+    /// (notably used by `w:noProof`, `w:dataBinding`, and notification
+    /// helpers).
+    WNE,
+    "http://schemas.microsoft.com/office/word/2006/wordml"
+);
 
 // ── hottest WML names (extend as needed) ──────────────────────────────────────
 // NAME-01: cache the hottest XNames in process-wide OnceLocks so every compare
 // does not re-enter the interning table for the same syntactic names.
 macro_rules! cached_xname {
     ($ns_uri:expr, $method:ident, $local:literal) => {
-        #[doc = concat!("Cached `XName` for the local name `", $local, "`.")]
+        #[doc = concat!("Cached [`XName`] for the local name `", $local, "`.")]
+        #[doc = " Stored in a process-wide `OnceLock` so every compare avoids"]
+        #[doc = " re-entering the interning table for the same syntactic name"]
+        #[doc = " (NAME-01)."]
         pub fn $method() -> XName {
             static N: std::sync::OnceLock<XName> = std::sync::OnceLock::new();
             N.get_or_init(|| XName::get($local, $ns_uri)).clone()

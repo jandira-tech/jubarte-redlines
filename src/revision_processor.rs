@@ -2,10 +2,20 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Port of `RevisionProcessor.ts` — accept-revisions pipeline (M3).
+//! Revision accept / reject pipeline (M3).
 //!
-//! Scope (per the implementation plan): the ACCEPT path only. Reject,
-//! consolidate, and the HTML/markdown surfaces are out of scope.
+//! Port of `RevisionProcessor.ts` — the byte-level accept / reject facade
+//! ([`accept_revisions_package`], [`accept_revisions_package_keeping_ids`],
+//! [`reject_revisions_package`]) and the A.0–A.11 transforms that compose
+//! them: paragraph / block-content iteration, paragraph-mark and
+//! content-control re-wrap, moveFrom / moveTo, deleted-cell merging,
+//! adjacent-table merging, and the reject path (revert → reverse →
+//! remove rsid → accept).
+//!
+//! The element-scope helpers ([`accept_revisions_document`],
+//! [`reject_revisions_document`], [`accept_revisions_for_element`]) are
+//! the per-subtree entry the M4 compare pipeline calls to hash the
+//! accepted / rejected projections before correlating them.
 
 mod annotation_ids;
 mod bookmarks;
@@ -63,17 +73,20 @@ const TRACKED_REVISION_LOCALS: &[&str] = &[
 static TRACKED_REVISION_LOCAL_SET: LazyLock<HashSet<&'static str>> =
     LazyLock::new(|| TRACKED_REVISION_LOCALS.iter().copied().collect());
 
-/// `RevisionProcessor.TrackedRevisionsElements` — the element names whose
-/// presence indicates the document carries tracked revisions.
+/// The element names whose presence indicates the document carries
+/// tracked revisions (one per local name in the `w:` namespace). The
+/// `has_tracked_revisions` check below is the constant-time local-name
+/// lookup the byte-level pipeline uses.
 pub fn tracked_revisions_elements() -> Vec<XName> {
     TRACKED_REVISION_LOCALS.iter().map(|l| W::name(l)).collect()
 }
 
-/// True if any descendant (or `root` itself) is a tracked-revision element.
-/// Port of `PartHasTrackedRevisions` applied to a single element tree.
+/// True if `root` (or any descendant) is a tracked-revision element. The
+/// element-scope equivalent of `RevisionProcessor.PartHasTrackedRevisions`.
 ///
-/// ACCEPT-SCAN-01: non-allocating DFS + static local-name set (no per-call
-/// `Vec<XName>` / full `descendants_and_self` materialization).
+/// The check is a non-allocating DFS against the static local-name set
+/// (ACCEPT-SCAN-01): no `Vec<XName>` / `descendants_and_self` allocation,
+/// so the byte-level pipeline can call it on every part without GC churn.
 pub fn element_has_tracked_revisions(dom: &Dom, root: NodeId) -> bool {
     fn walk(dom: &Dom, id: NodeId) -> bool {
         if let Some(name) = dom.name(id)
@@ -104,11 +117,15 @@ fn has_path(dom: &Dom, el: NodeId, a: &XName, b: &XName) -> bool {
         .any(|ae| has_child(dom, ae, b))
 }
 
-/// Port of `AcceptMoveFromMoveToTransform` — unwrap `w:moveTo`, drop `w:moveFrom`.
+/// Port of `AcceptMoveFromMoveToTransform` — unwrap `w:moveTo`, drop
+/// `w:moveFrom`. A moved-from paragraph mark (`pPr/rPr/moveFrom`) is kept
+/// (A.5a joins that paragraph with the next, so the join the witness
+/// expects needs to be visible). Otherwise the whole `w:moveFrom` is hoisted
+/// into range markers.
 ///
-/// ACCEPT-REUSE-CLEAN: subtrees with no moveFrom/moveTo (and no other tracked
-/// revision markers) are detached and returned as-is — `Dom::add` then reuses
-/// them without `clone_subtree`.
+/// Subtrees with no moveFrom / moveTo (and no other tracked revision
+/// markers) are detached and returned as-is — `Dom::add` reuses them
+/// without `clone_subtree`.
 pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     // No move/revision markers in this subtree → transfer ownership.
     if !element_has_tracked_revisions(dom, node) {
@@ -197,13 +214,18 @@ fn has_run_content(dom: &Dom, element: NodeId) -> bool {
         .any(|e| dom.name(e).is_some_and(|n| content_names.contains(&n)))
 }
 
-/// Port of `AcceptAllOtherRevisionsTransform` — accept inserts (unwrap `w:ins`),
-/// drop deletions and revision-range markers, accept formatting-change markers,
-/// handle deleted rows/tables, cell merges, and empty hyperlink shells.
+/// Port of `AcceptAllOtherRevisionsTransform` — accept inserts (unwrap
+/// `w:ins`), drop deletions and revision-range markers, accept formatting-
+/// change markers, handle deleted rows/tables, cell merges, and empty
+/// hyperlink shells.
 ///
-/// ACCEPT-REUSE-CLEAN: when a subtree has no tracked-revision elements, detach
-/// and return it instead of `clone_subtree` + identity rebuild. Callers reparent
-/// via `Dom::add`, which reuses unparented nodes.
+/// A wholly-revised equation (every `m:r` / `m:ctrlPr` deleted) is
+/// removed entirely; a wholly-revised oMath inside a surviving paragraph
+/// goes with it (so the paragraph never carries an empty math shell).
+///
+/// Subtrees with no tracked-revision elements are detached and returned
+/// as-is (ACCEPT-REUSE-CLEAN); callers reparent via `Dom::add`, which
+/// reuses unparented nodes.
 pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     // Clean subtree (incl. plain text leaves): transfer, do not rebuild.
     if !element_has_tracked_revisions(dom, node) {
@@ -697,9 +719,13 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
 /// the sense of every remaining revision, strip rsids, then accept. The net
 /// effect is the document's *original* (pre-revision) projection.
 ///
-/// REJECT-SKIP-01: when the subtree has no tracked-revision elements, the
-/// reject/reverse/accept rebuilds are identity — only RemoveRsid is needed
-/// (in-place). Dirty trees take the full faithful path.
+/// `RejectRevisionsDocument` at element scope — reject every tracked
+/// revision in `root`'s subtree (revert → reverse → remove rsid → accept),
+/// returning the new root.
+///
+/// When the subtree has no tracked-revision elements the full reject
+/// path is identity; only `RemoveRsid` is needed (in-place). The return
+/// value is the same `root` `NodeId`.
 pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
     if !element_has_tracked_revisions(dom, root) {
         return remove_rsid_transform(dom, root).expect("reject clean: root not dropped by rsid");
@@ -717,28 +743,32 @@ pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
 /// doc-order tag stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagType {
-    /// Public API item.
+    /// An element open tag (one or more children follow).
     Element,
-    /// Public API item.
+    /// An element that carries no children of any kind (no elements and no
+    /// text); serializes as a self-closing tag in XML.
     EmptyElement,
-    /// Public API item.
+    /// An element close tag (its children are exhausted).
     EndElement,
 }
 
 /// `Tag` (RevisionProcessor.cs :2393): one open/empty/close event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tag {
-    /// `element`.
+    /// The element this tag event names.
     pub element: NodeId,
-    /// `tag_type`.
+    /// Whether this is an open / empty / close event.
     pub tag_type: TagType,
 }
 
-/// A.0 — `DescendantAndSelfTags` (:2397): stream the element and its
-/// descendants as open/empty/close tags in document order. FAITHFUL: a child
-/// with no nodes AT ALL (no elements, no text) is `EmptyElement`; a child
-/// with only text still opens and closes; the root element itself always
-/// gets an open/close pair, never `EmptyElement`.
+/// A.0 — `DescendantAndSelfTags` (RevisionProcessor.cs :2397): stream
+/// `element` and its descendants as open / empty / close tags in document
+/// order.
+///
+/// Faithful to C#: a child with no nodes AT ALL (no elements and no
+/// text) is `EmptyElement`; a child with only text still opens and closes;
+/// the root element itself always gets an open/close pair, never
+/// `EmptyElement`.
 pub fn descendant_and_self_tags(dom: &Dom, element: NodeId) -> Vec<Tag> {
     let mut out = vec![Tag {
         element,
@@ -796,17 +826,19 @@ fn element_children_vec(dom: &Dom, id: NodeId) -> Vec<NodeId> {
     out
 }
 
-/// `BlockContentInfo` (RevisionProcessor.cs :52): prev/this/next links for
-/// block-level content. `iterate_block_content_elements` fills all three
-/// (`this` always `Some`); `get_paragraph_info` fills `previous` (= previous
-/// element sibling) and `this` only.
+/// `BlockContentInfo` (RevisionProcessor.cs :52): prev / this / next links
+/// for block-level content. [`iterate_block_content_elements`] fills all
+/// three (`this_block_content_element` always `Some`);
+/// [`get_paragraph_info`] fills only the previous sibling and `this`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockContentInfo {
-    /// `previous_block_content_element`.
+    /// Previous block-content element in document order (`Some` after the
+    /// first chain element).
     pub previous_block_content_element: Option<NodeId>,
-    /// `this_block_content_element`.
+    /// The chain element itself (always `Some` from
+    /// [`iterate_block_content_elements`]).
     pub this_block_content_element: Option<NodeId>,
-    /// `next_block_content_element`.
+    /// Next block-content element in document order (`None` at the end).
     pub next_block_content_element: Option<NodeId>,
 }
 
@@ -1763,7 +1795,7 @@ fn has_deleted_or_moved_from_paragraph_mark(dom: &Dom, root: NodeId) -> bool {
 /// deleted, its last member's mark is deleted or moved away (C#: deleted
 /// only), and it is the container's last block content (or a table follows)
 /// (:2276). Tables (and m:* block content)
-/// bound groups and reset the state. FAITHFUL: the container rebuild keeps
+/// bound groups and reset the state. FAITHful: the container rebuild keeps
 /// only `w:tcPr` children + the chain elements + the body-level `sectPr`
 /// (re-appended last); other non-chain children are dropped, and merged
 /// paragraphs lose the original `w:p` attributes — exactly like the C#.
