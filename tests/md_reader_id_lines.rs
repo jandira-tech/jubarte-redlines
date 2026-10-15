@@ -8,8 +8,14 @@
 
 mod common;
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use common::docx::part_string;
 use common::validity::assert_word_valid_package;
 use jubarte::markdown::{DocxOptions, ReadOptions, markdown_to_docx, read};
+use jubarte::namespaces::W;
+use jubarte::xmllinq::{Dom, NodeId};
 
 /// `markdown` under the view's YAML header (`view: tracked`), which makes
 /// the reader read its id lines.
@@ -1497,4 +1503,201 @@ fn a_notes_clause_that_does_not_read_is_a_warning() {
         out.warnings
     );
     assert!(!has_part(&out.docx, "word/footnotes.xml"));
+}
+
+/// Indent, label text and font of the numbering level one list paragraph uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ListLevel {
+    format: String,
+    text: String,
+    left: String,
+    hanging: String,
+    /// `w:rFonts` `ascii` and `hAnsi`, when the level sets a font.
+    font: Option<(String, String)>,
+}
+
+fn fixture(path: &str) -> String {
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    std::fs::read_to_string(&file).unwrap_or_else(|err| panic!("{}: {err}", file.display()))
+}
+
+/// A without id lines, then D written from the view of that docx.
+fn list_round_trip(markdown: &str) -> (Vec<u8>, Vec<u8>) {
+    let from_markdown = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("the Markdown reads")
+        .docx;
+    assert_word_valid_package(&from_markdown);
+    let view = read(
+        &from_markdown,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let from_view = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&from_view);
+    (from_markdown, from_view)
+}
+
+fn attr(dom: &Dom, node: NodeId, name: &str) -> String {
+    dom.attribute(node, &W::name(name))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn level_of(dom: &Dom, lvl: NodeId) -> ListLevel {
+    let ind = dom
+        .element(lvl, &W::p_pr())
+        .and_then(|props| dom.element(props, &W::name("ind")));
+    let font = dom
+        .element(lvl, &W::r_pr())
+        .and_then(|props| dom.element(props, &W::name("rFonts")))
+        .map(|fonts| (attr(dom, fonts, "ascii"), attr(dom, fonts, "hAnsi")));
+    ListLevel {
+        format: dom
+            .element(lvl, &W::name("numFmt"))
+            .map(|node| attr(dom, node, "val"))
+            .unwrap_or_default(),
+        text: dom
+            .element(lvl, &W::name("lvlText"))
+            .map(|node| attr(dom, node, "val"))
+            .unwrap_or_default(),
+        left: ind.map(|node| attr(dom, node, "left")).unwrap_or_default(),
+        hanging: ind
+            .map(|node| attr(dom, node, "hanging"))
+            .unwrap_or_default(),
+        font,
+    }
+}
+
+/// The numbering level of each list paragraph, in document order.
+fn list_levels(docx: &[u8]) -> Vec<ListLevel> {
+    let document = part_string(docx, "word/document.xml").expect("document.xml");
+    let numbering = part_string(docx, "word/numbering.xml").expect("numbering.xml");
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&document);
+    let nums = dom.parse_xdocument(&numbering);
+    let doc_root = dom.root(doc).expect("document root");
+    let num_root = dom.root(nums).expect("numbering root");
+    let mut by_abstract: HashMap<(String, String), NodeId> = HashMap::new();
+    for abs in dom.descendants(num_root, Some(&W::name("abstractNum"))) {
+        let Some(id) = dom
+            .attribute(abs, &W::name("abstractNumId"))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        for lvl in dom.elements(abs, Some(&W::name("lvl"))) {
+            let Some(ilvl) = dom.attribute(lvl, &W::name("ilvl")).map(str::to_string) else {
+                continue;
+            };
+            by_abstract.insert((id.clone(), ilvl), lvl);
+        }
+    }
+    let mut abstract_of: HashMap<String, String> = HashMap::new();
+    let mut overridden: HashMap<(String, String), NodeId> = HashMap::new();
+    for num in dom.elements(num_root, Some(&W::name("num"))) {
+        let Some(id) = dom.attribute(num, &W::name("numId")).map(str::to_string) else {
+            continue;
+        };
+        let Some(abs) = dom
+            .element(num, &W::name("abstractNumId"))
+            .and_then(|node| dom.attribute(node, &W::val()))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        abstract_of.insert(id.clone(), abs);
+        for over in dom.elements(num, Some(&W::name("lvlOverride"))) {
+            let Some(ilvl) = dom.attribute(over, &W::name("ilvl")).map(str::to_string) else {
+                continue;
+            };
+            if let Some(lvl) = dom.element(over, &W::name("lvl")) {
+                overridden.insert((id.clone(), ilvl), lvl);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for paragraph in dom.descendants(doc_root, Some(&W::p())) {
+        let Some(props) = dom.element(paragraph, &W::p_pr()) else {
+            continue;
+        };
+        let Some(numpr) = dom.element(props, &W::num_pr()) else {
+            continue;
+        };
+        let ilvl = dom
+            .element(numpr, &W::name("ilvl"))
+            .and_then(|node| dom.attribute(node, &W::val()))
+            .unwrap_or("0")
+            .to_string();
+        let num_id = dom
+            .element(numpr, &W::name("numId"))
+            .and_then(|node| dom.attribute(node, &W::val()))
+            .unwrap_or("0")
+            .to_string();
+        if num_id == "0" {
+            continue;
+        }
+        let lvl = overridden
+            .get(&(num_id.clone(), ilvl.clone()))
+            .copied()
+            .or_else(|| {
+                abstract_of
+                    .get(&num_id)
+                    .and_then(|abs| by_abstract.get(&(abs.clone(), ilvl.clone())).copied())
+            })
+            .unwrap_or_else(|| panic!("num {num_id} level {ilvl} has no definition"));
+        out.push(level_of(&dom, lvl));
+    }
+    out
+}
+
+#[test]
+fn bullet_and_numbered_levels_match_after_the_id_line_round_trip() {
+    // (left, hanging, lvlText) Word's list definition gives that level.
+    let cases: &[(&str, &[(&str, &str, &str)])] = &[
+        (
+            "tests/fixtures/legacy/services.md",
+            &[
+                ("720", "360", "\u{2022}"),
+                ("1440", "360", "\u{25E6}"),
+                ("720", "360", "%1."),
+            ],
+        ),
+        (
+            "tests/fixtures/from-docx/critic/synthetic/hard-lists.accept.md",
+            &[
+                ("720", "360", "%1."),
+                ("1440", "360", "%2."),
+                ("720", "360", "\u{2022}"),
+            ],
+        ),
+        (
+            "tests/fixtures/from-docx/critic/synthetic/hard-lists.critic.md",
+            &[("720", "360", "%1."), ("1440", "360", "%2.")],
+        ),
+        (
+            "tests/fixtures/from-docx/critic/synthetic/hard-lists.reject.md",
+            &[("720", "360", "%1."), ("1440", "360", "%2.")],
+        ),
+    ];
+    for (path, expect) in cases {
+        let (from_markdown, from_view) = list_round_trip(&fixture(path));
+        let plain = list_levels(&from_markdown);
+        let viewed = list_levels(&from_view);
+        assert_eq!(viewed, plain, "{path}");
+        assert!(!plain.is_empty(), "{path}");
+        for (left, hanging, text) in *expect {
+            assert!(
+                plain.iter().any(|level| {
+                    level.left == *left && level.hanging == *hanging && level.text == *text
+                }),
+                "{path}: missing left {left} hanging {hanging} text {text:?} in {plain:?}"
+            );
+        }
+    }
 }

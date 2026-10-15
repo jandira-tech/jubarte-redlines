@@ -1633,26 +1633,46 @@ pub(crate) enum ListFormat {
 /// A `w:abstractNum` with nine levels of `format`, each indented a
 /// further half inch.
 pub(crate) fn abstract_num(id: u32, format: ListFormat) -> String {
-    const GLYPHS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"];
     let mut out = format!(
         "<w:abstractNum w:abstractNumId=\"{id}\"><w:multiLevelType w:val=\"hybridMultilevel\"/>"
     );
     for level in 0..9u32 {
-        let (format, text) = match format {
-            ListFormat::Bullet => ("bullet", GLYPHS[level as usize % GLYPHS.len()].to_string()),
-            ListFormat::Decimal => ("decimal", format!("%{}.", level + 1)),
-            ListFormat::LowerLetter => ("lowerLetter", format!("%{}.", level + 1)),
-        };
-        let _ = write!(
-            out,
-            "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{format}\"/>\
-             <w:lvlText w:val=\"{text}\"/><w:lvlJc w:val=\"left\"/>\
-             <w:pPr><w:ind w:left=\"{}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
-            720 * (level + 1)
-        );
+        write_list_level(&mut out, level, format);
     }
     out.push_str("</w:abstractNum>");
     out
+}
+
+/// One level, as [`abstract_num`] writes it: `left` half an inch further
+/// each level, hanging 360, and the glyph or `%n.` of `format`. No font
+/// when `format` sets none.
+fn write_list_level(out: &mut String, level: u32, format: ListFormat) {
+    const GLYPHS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"];
+    let (format, text) = match format {
+        ListFormat::Bullet => ("bullet", GLYPHS[level as usize % GLYPHS.len()].to_string()),
+        ListFormat::Decimal => ("decimal", format!("%{}.", level + 1)),
+        ListFormat::LowerLetter => ("lowerLetter", format!("%{}.", level + 1)),
+    };
+    let _ = write!(
+        out,
+        "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{format}\"/>\
+         <w:lvlText w:val=\"{text}\"/><w:lvlJc w:val=\"left\"/>\
+         <w:pPr><w:ind w:left=\"{}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
+        720 * (level + 1)
+    );
+}
+
+/// `1.`, `12.`: the number a decimal level prints. `01.` is not, because
+/// that level never pads.
+fn plain_decimal(text: &str) -> Option<u32> {
+    let number = text.strip_suffix('.')?;
+    if number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if number.len() > 1 && number.starts_with('0') {
+        return None;
+    }
+    number.parse().ok()
 }
 
 /// A `w:num` instance of `abstract_id`, optionally starting `level` at
@@ -1698,9 +1718,10 @@ pub(super) fn numbering(
     (abstracts, nums)
 }
 
-/// One list per label, every level's text the label itself (no `%1`),
-/// so Word prints it as written; and one `w:num` per use, restarting its
-/// level at the number the view gives it.
+/// One list per label. A bullet or a plain `1.` is the level
+/// [`abstract_num`] writes for that kind, indent and font included; any
+/// other label is printed as written, with that same indent. One `w:num`
+/// per use, restarting its level at the number the view gives it.
 pub(super) fn label_numbering(
     labels: &[Label],
     uses: &[LabelUse],
@@ -1709,29 +1730,46 @@ pub(super) fn label_numbering(
 ) -> (String, String) {
     let mut abstracts = String::new();
     for (index, label) in (0u32..).zip(labels) {
-        let (format, text) = match label {
-            Label::Bullet => ("bullet", "\u{2022}"),
-            Label::Text(text) => ("decimal", text.as_str()),
-        };
         let _ = write!(
             abstracts,
             "<w:abstractNum w:abstractNumId=\"{}\"><w:multiLevelType w:val=\"multilevel\"/>",
             first_abstract + index
         );
-        for level in 0..9 {
-            let _ = write!(
-                abstracts,
-                "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{format}\"/>\
-                 <w:lvlText w:val=\"{}\"/><w:lvlJc w:val=\"left\"/></w:lvl>",
-                escape(text)
-            );
+        match label {
+            Label::Bullet => {
+                for level in 0..9 {
+                    write_list_level(&mut abstracts, level, ListFormat::Bullet);
+                }
+            }
+            Label::Text(text) if plain_decimal(text).is_some() => {
+                for level in 0..9 {
+                    write_list_level(&mut abstracts, level, ListFormat::Decimal);
+                }
+            }
+            Label::Text(text) => {
+                for level in 0..9u32 {
+                    let _ = write!(
+                        abstracts,
+                        "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+                         <w:lvlText w:val=\"{}\"/><w:lvlJc w:val=\"left\"/>\
+                         <w:pPr><w:ind w:left=\"{}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
+                        escape(text),
+                        720 * (level + 1)
+                    );
+                }
+            }
         }
         abstracts.push_str("</w:abstractNum>");
     }
     let mut nums = String::new();
     for (index, using) in (0u32..).zip(uses) {
         let abstract_id = first_abstract + u32::try_from(using.label).unwrap_or(0);
-        let start = using.start.map(|start| (using.level, start));
+        let start = match labels.get(using.label) {
+            Some(Label::Text(text)) => plain_decimal(text)
+                .map(|number| (using.level, number))
+                .or_else(|| using.start.map(|start| (using.level, start))),
+            _ => using.start.map(|start| (using.level, start)),
+        };
         nums.push_str(&num(first_num + index, abstract_id, start));
     }
     (abstracts, nums)
@@ -1999,6 +2037,97 @@ mod tests {
         }
         assert!(style_definition("Heading10").is_none());
         assert!(style_definition("Unknown").is_none());
+    }
+
+    /// The `<w:lvl>` of abstract `index` at `level`, tags included.
+    fn level_xml(markup: &str, index: usize, level: u32) -> String {
+        let abs = markup
+            .split("<w:abstractNum ")
+            .nth(index + 1)
+            .unwrap_or_else(|| panic!("abstract {index}"));
+        let abs = abs.split("</w:abstractNum>").next().unwrap_or(abs);
+        let open = format!("<w:lvl w:ilvl=\"{level}\">");
+        let start = abs
+            .find(&open)
+            .unwrap_or_else(|| panic!("level {level} in {abs}"));
+        let end = abs[start..]
+            .find("</w:lvl>")
+            .map(|at| start + at + "</w:lvl>".len())
+            .unwrap_or(abs.len());
+        abs[start..end].to_string()
+    }
+
+    #[test]
+    fn label_levels_match_abstract_num_for_the_same_kind() {
+        let bullets = abstract_num(9, ListFormat::Bullet);
+        let decimal = abstract_num(9, ListFormat::Decimal);
+        let labels = [
+            Label::Bullet,
+            Label::Text("1.".to_string()),
+            Label::Text("2.".to_string()),
+            Label::Text("(a)".to_string()),
+            Label::Text("Article One".to_string()),
+        ];
+        // "2." names 2 even when the Markdown list that holds it starts at 1.
+        let uses = [
+            LabelUse {
+                label: 0,
+                level: 1,
+                start: None,
+            },
+            LabelUse {
+                label: 1,
+                level: 0,
+                start: Some(1),
+            },
+            LabelUse {
+                label: 2,
+                level: 1,
+                start: Some(1),
+            },
+            LabelUse {
+                label: 3,
+                level: 2,
+                start: None,
+            },
+        ];
+        let (abstracts, nums) = label_numbering(&labels, &uses, 1, 10);
+        for level in 0..9 {
+            assert_eq!(
+                level_xml(&abstracts, 0, level),
+                level_xml(&bullets, 0, level),
+                "bullet {level}"
+            );
+            assert_eq!(
+                level_xml(&abstracts, 1, level),
+                level_xml(&decimal, 0, level),
+                "1. {level}"
+            );
+            assert_eq!(
+                level_xml(&abstracts, 2, level),
+                level_xml(&decimal, 0, level),
+                "2. {level}"
+            );
+        }
+        assert!(
+            level_xml(&bullets, 0, 1).contains("w:lvlText w:val=\"\u{25E6}\""),
+            "level 1 bullet is the hollow glyph"
+        );
+        assert!(level_xml(&bullets, 0, 1).contains("w:ind w:left=\"1440\" w:hanging=\"360\""));
+        assert!(level_xml(&decimal, 0, 0).contains("w:lvlText w:val=\"%1.\""));
+        assert!(level_xml(&decimal, 0, 1).contains("w:lvlText w:val=\"%2.\""));
+        assert!(nums.contains(
+            "<w:num w:numId=\"12\"><w:abstractNumId w:val=\"3\"/>\
+             <w:lvlOverride w:ilvl=\"1\"><w:startOverride w:val=\"2\"/></w:lvlOverride></w:num>"
+        ));
+        let custom = level_xml(&abstracts, 3, 2);
+        assert!(custom.contains("w:lvlText w:val=\"(a)\""));
+        assert!(custom.contains("<w:pPr><w:ind w:left=\"2160\" w:hanging=\"360\"/></w:pPr>"));
+        assert!(!custom.contains("%3."), "{custom}");
+        let article = level_xml(&abstracts, 4, 0);
+        assert!(article.contains("w:lvlText w:val=\"Article One\""));
+        assert!(article.contains("<w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>"));
+        assert!(!article.contains("%1."), "{article}");
     }
 
     #[test]
