@@ -113,12 +113,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
-- **A Markdown table takes Word's thin grid.** With no style named, the
-  writer gives a table Table Grid (single 0.5pt borders all round, as Word's
-  Insert Table makes it) instead of the borderless Normal Table. The view
-  leaves Table Grid unnamed and names `TableNormal` for a table with neither a
-  style nor borders, which the writer writes with no `tblStyle`; a table with
-  its own borders and no style (Demo.docx's) comes back bordered.
+- **Tables keep the borders Word passes; a Markdown table takes Word's thin
+  grid.** The agent view prints a table's own borders (`borders single 0.5pt
+  000000`) and its cells' (`cell-borders … in all`, a row, or a cell), and the
+  writer writes them back as they were. A table without a style is
+  `TableNormal` (written with no `tblStyle`); a table that names nothing, as a
+  plain Markdown table, takes Table Grid (single 0.5pt borders all round, as
+  Word's Insert Table makes it) instead of the borderless Normal Table.
+  `debug --check render` reports both kinds of border.
 
 - **The view nests list items by indentation.** An item past its list's
   first level is indented to the content column of the item it nests
