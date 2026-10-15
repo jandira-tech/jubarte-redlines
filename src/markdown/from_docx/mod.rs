@@ -657,8 +657,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 }
             }
             // Every other paragraph style the body uses, in the order it
-            // first does: the legend describes each, so the docx the view
-            // writes defines it as the original did.
+            // first does (the stories' follow): the legend describes each,
+            // so the docx the view writes defines it as the original did.
             for p in &ps {
                 let Some(style) = p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) else {
                     continue;
@@ -763,8 +763,18 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     // The styles of the paragraphs the writer makes again,
                     // the empty ones before the text too: none when all
                     // are Word's for the story (`header`, by name).
-                    let written = match last {
-                        Some(last) => &paragraphs[..=last],
+                    // And past them, through the last one the view's `rev`
+                    // brings back for its tracked mark.
+                    let marked = (accept.is_none() && options.ids)
+                        .then(|| {
+                            paragraphs.iter().rposition(|p| {
+                                p.path(&["pPr", "rPr"])
+                                    .is_some_and(|r| r.child("ins").or(r.child("del")).is_some())
+                            })
+                        })
+                        .flatten();
+                    let written = match last.max(marked) {
+                        Some(end) => &paragraphs[..=end],
                         None => &paragraphs[..paragraphs.len().min(1)],
                     };
                     let styles: Vec<String> = written
@@ -788,6 +798,24 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             },
                         )
                         .collect();
+                    // The legend describes the paragraph styles the stories
+                    // use, as the body's, so the view writes them as the
+                    // original did (a character style's id stays bare).
+                    for style in &styles {
+                        if Some(style.as_str()) != default_style.as_deref()
+                            && !matches!(style.as_str(), "Header" | "Footer")
+                            && styles_root.as_ref().is_some_and(|root| {
+                                root.children_named("style").any(|s| {
+                                    s.attr("type") == Some("paragraph")
+                                        && s.attr("styleId") == Some(style.as_str())
+                                })
+                            })
+                            && !heading_styles.iter().any(|(_, h)| h == style)
+                            && !other_styles.contains(style)
+                        {
+                            other_styles.push(style.clone());
+                        }
+                    }
                     let styles = if styles.iter().all(|s| s == header::story_style(kind)) {
                         Vec::new()
                     } else if styles.iter().all(|s| *s == styles[0]) {

@@ -320,3 +320,66 @@ fn a_header_in_the_footer_style_gets_its_definition() {
         styles_of(&again)
     );
 }
+
+#[test]
+fn a_trailing_paragraph_a_mark_brings_back_keeps_its_style() {
+    // Codex on #491: an empty last paragraph kept for its tracked mark is
+    // made again; the visible ones' `style: Normal` must not reach it.
+    let mark = r#"<w:p><w:pPr><w:pStyle w:val="Header"/><w:rPr><w:ins w:id="7" w:author="A" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr></w:p>"#;
+    let docx = docx(
+        &format!("{}{mark}", styled(Some("Normal"), "Draft")),
+        &styled(Some("Footer"), "Page"),
+        &styles_xml("Header", "Footer"),
+    );
+    let (view, again, view_again) = round_trip(&docx);
+    assert_eq!(
+        part_styles(&again, "word/header"),
+        ["-", "Header"],
+        "{view}"
+    );
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_style_only_a_header_uses_keeps_its_look() {
+    // Codex on #491: the legend describes the styles stories use too, so
+    // a header-only style is not rebuilt bare on Normal.
+    let styles = styles_xml("Header", "Footer").replace(
+        "</w:styles>",
+        r#"<w:style w:type="paragraph" w:customStyle="1" w:styleId="BrandHeader"><w:name w:val="Brand Header"/><w:basedOn w:val="Header"/><w:rPr><w:b/></w:rPr></w:style></w:styles>"#,
+    );
+    let docx = docx(
+        &styled(Some("BrandHeader"), "Draft"),
+        &styled(Some("Footer"), "Page"),
+        &styles,
+    );
+    let (view, again, view_again) = round_trip(&docx);
+    assert_eq!(part_styles(&again, "word/header"), ["BrandHeader"]);
+    let styles = styles_of(&again);
+    let definition = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"BrandHeader\""))
+        .unwrap_or_else(|| panic!("no BrandHeader: {styles}"));
+    assert!(definition.contains("<w:b/>"), "{view}\n{definition}");
+    assert!(definition.contains("Brand Header"), "{definition}");
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_character_style_a_header_paragraph_names_stays_out_of_the_legend() {
+    // `LineNumber` is a character style a header paragraph names (a real
+    // corpus shape): the legend describes paragraph styles only, so the
+    // view writes no paragraph style named Word's `line number`.
+    let styles = styles_xml("Header", "Footer").replace(
+        "</w:styles>",
+        r#"<w:style w:type="character" w:styleId="LineNumber"><w:name w:val="line number"/></w:style></w:styles>"#,
+    );
+    let docx = docx(
+        &styled(Some("LineNumber"), "Draft"),
+        &styled(Some("Footer"), "Page"),
+        &styles,
+    );
+    let (view, again, _) = round_trip(&docx);
+    assert_eq!(part_styles(&again, "word/header"), ["LineNumber"]);
+    assert!(!view.contains("  LineNumber:"), "{view}");
+}
