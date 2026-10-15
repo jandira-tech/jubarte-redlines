@@ -2,17 +2,21 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Produce tracked-revision markup (M4.4). Core of
-//! `ProduceDocumentWithTrackedRevisions` for the paragraph-text case.
+//! Produce tracked-revision markup (M4.4 / E).
 //!
-//! Consumes the LCS-tagged atom stream and rebuilds a `<w:document>` where
-//! inserted content is wrapped in `<w:ins>` and deleted content in `<w:del>`
-//! (with `<w:t>` → `<w:delText>`), each carrying `w:id`/`w:author`/`w:date`.
+//! [`produce_document`] is the atom-level shortcut producer — a tagged
+//! [`super::lcs::TaggedAtom`] stream in, a `<w:document>` out. The
+//! production pipeline calls [`flatten_to_comparison_unit_atom_list`]
+//! instead, then [`assemble_ancestor_unids`] (stabilises A.4
+//! `w:sdt` boundaries), [`coalesce_recurse`] (regroup atoms on
+//! ancestor `pt:Unid` and emit WML), [`convert_outer_math_wraps_to_internal`]
+//! (Word's internal-marked-math shape), and
+//! [`produce_new_wml_markup_from_correlated_sequence`] (the top-level
+//! dispatch).
 //!
-//! NOTE: the full TS producer additionally handles inserted/deleted paragraph
-//! marks (paragraph merge/split), tables, footnotes, moves, and format changes
-//! (WmlComparer.ts:2222+, plus fixups). This core covers runs of text within
-//! paragraphs — the common case — and is the base those refinements extend.
+//! Every revision id minted here is taken from a shared atomic counter so
+//! the same id never collides with the move / row-group ids the LCS and
+//! `mark_rows_as_deleted_or_inserted` paths also mint.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -50,6 +54,14 @@ fn next_rev_id() -> String {
 }
 
 /// Build the redline `<w:document>` node from the tagged atom stream.
+///
+/// A `w:pPr` atom ends a paragraph; consecutive atoms of the same status
+/// are concatenated into one run wrapped in `w:ins` / `w:del` (or emitted
+/// as a plain `w:r` for `Equal`); paragraph marks keep their own `w:pPr`.
+///
+/// Returns the new document node. Trailing content with no paragraph mark
+/// gets a synthetic `Equal`-status pilcrow so the document still closes
+/// cleanly.
 pub fn produce_document(
     dom: &mut Dom,
     tagged: &[TaggedAtom],
@@ -201,13 +213,15 @@ fn atom_has_predelete_orig(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
         .any(|&a| dom.attribute(a, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG))
 }
 
-/// M4.E.1 — `FlattenToComparisonUnitAtomList` (:4141): nested correlated tree →
-/// flat status-tagged atom list. Equal carries content/ancestors from the AFTER
-/// atom and a link to the BEFORE atom; zip truncates to the shorter side.
+/// M4.E.1 — `FlattenToComparisonUnitAtomList` (WmlComparer.ts :4141):
+/// nested correlated tree → flat status-tagged atom list. `Equal` carries
+/// content/ancestors from the AFTER atom and a link to the BEFORE atom;
+/// zip truncates to the shorter side.
 ///
-/// M-MOVE S1 exception: when the BEFORE atom is a PreDelete-orig span, emit
-/// Deleted(before)+Inserted(after) instead of Equal so history survives even
-/// if an upstream correlation path lost the salt (m36 / fresh-p4).
+/// M-MOVE S1 exception: when the BEFORE atom is a `pt:PreDelete="orig"`
+/// span (a word-mode flattened A-only pre-existing deletion), emit
+/// `Deleted(before)+Inserted(after)` instead of `Equal` so the history
+/// survives even when an upstream correlation path lost the salt.
 pub fn flatten_to_comparison_unit_atom_list(
     dom: &Dom,
     seqs: &[CorrelatedSequence],
@@ -444,13 +458,15 @@ fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
 }
 
-/// M4.E.2 — `AssembleAncestorUnidsInOrderToRebuildXmlTreeProperly` (:3974).
-/// Three phases (see WmlComparer.ts): A copy before→after pPr ancestor Unids;
 /// PRODUCE-UNID-01: (ancestor-elements chain, its minted unid chain) memo.
 type UnidChainMemo = Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)>;
 
-/// B seed ancestor_unids from the paragraph mark (reverse walk, minting missing);
-/// C fix text boxes in a second reverse pass.
+/// M4.E.2 — `AssembleAncestorUnidsInOrderToRebuildXmlTreeProperly`
+/// (WmlComparer.ts :3974). Three phases: A copy before→after `pPr`
+/// ancestor unids; B seed `ancestor_unids` from the paragraph mark
+/// (reverse walk, minting missing); C fix text boxes in a second reverse
+/// pass. Aligns unmatched `w:sdt` ancestry first so a `w:sdt` whose body
+/// doesn't match stays out of every atom's ancestor chain.
 pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) {
     align_content_control_ancestry(dom, atoms);
     let unid = PT::unid();
@@ -750,16 +766,15 @@ fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> boo
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
 }
 
-/// M463 — final-serialization pass: every `w:ins`/`w:del` whose element
-/// content is exactly OMML math (`m:oMath`/`m:oMathPara`) is unwrapped, and
-/// the revision state is rewritten INSIDE the math the way Word Compare
-/// writes it. Runs AFTER all mesh/finalize passes, which reason about the
-/// outer-wrapped shape.
+/// M463 — final-serialization pass: every `w:ins` / `w:del` whose element
+/// content is exactly OMML math (`m:oMath` / `m:oMathPara`) is unwrapped,
+/// and the revision state is rewritten INSIDE the math the way Word Compare
+/// writes it. Runs AFTER every mesh / finalize pass, which reason about
+/// the outer-wrapped shape.
 ///
-/// LibreOffice renders Word's internal-marked math as placeholder boxes; the
-/// outer wrap rendered the live formula instead — every formula's ink
-/// diverged from the oracle (math family n=28, mean ≈58; math_func ×
-/// math_groupchr 54.6).
+/// LibreOffice renders Word's internal-marked math as placeholder boxes;
+/// the outer wrap rendered the live formula instead, so every formula's
+/// ink diverged from the oracle.
 pub fn convert_outer_math_wraps_to_internal(
     dom: &mut Dom,
     root: NodeId,
@@ -890,8 +905,10 @@ fn mark_math_revisions_internally(
     }
 }
 
-/// M4.E.3-E.7 — `CoalesceRecurse` (:6024). Returns the constructed nodes for this
-/// level. `id_gen` is the `s_MaxId` analog (oMath revision ids).
+/// M4.E.3–E.7 — `CoalesceRecurse` (WmlComparer.ts :6024). Regroup atoms on
+/// ancestor `Unid` at `level`, rebuild each ancestor element, recurse one
+/// level deeper. Returns the constructed nodes for this level. `id_gen` is
+/// the `s_MaxId` analog used for math revision ids.
 pub fn coalesce_recurse(
     dom: &mut Dom,
     atoms: &[&ComparisonUnitAtom],
@@ -1745,8 +1762,10 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     }
 }
 
-/// M4.E.8 — `ProduceNewWmlMarkupFromCorrelatedSequence` (:5926): reset the id
-/// counter and coalesce at level 0.
+/// M4.E.8 — `ProduceNewWmlMarkupFromCorrelatedSequence` (WmlComparer.ts
+/// :5926): coalesce at level 0 and return the top-level children of the
+/// rebuilt `<w:body>`. `id_gen` is the shared `s_MaxId`-style counter
+/// (math revision ids minted here).
 pub fn produce_new_wml_markup_from_correlated_sequence(
     dom: &mut Dom,
     atoms: &[ComparisonUnitAtom],

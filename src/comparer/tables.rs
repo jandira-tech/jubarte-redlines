@@ -2,11 +2,23 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.A.1 — the static element-name tables that drive atomization.
-//! Faithful to WmlComparer.ts: WordBreakElements (:8469), AllowableRunChildren
-//! (:8998), ElementsToThrowAway (:9023), ElementsToHaveSha1Hash (:9045),
-//! InvalidElements (:9055), ComparisonGroupingElements (:9071), and
-//! RecursionElements (:9074).
+//! Element-name tables that drive atomization, hashing, and cloning.
+//!
+//! Faithful to `WmlComparer.ts`: `WordBreakElements` (:8469),
+//! `AllowableRunChildren` (:8998), `ElementsToThrowAway` (:9023),
+//! `ElementsToHaveSha1Hash` (:9045), `InvalidElements` (:9055),
+//! `ComparisonGroupingElements` (:9071), `RecursionElements` (:9074),
+//! `AttributesToTrimWhenCloning` (:5133), `s_RelationshipAttributeNames`
+//! (:9218), `s_ElementsWithRelationshipIds` (:9182). The compare pipeline
+//! in [`super::atomize`], [`super::units`], and [`super::preprocess`]
+//! reads these tables at every call; the redline writer at
+//! [`super::parts`] and [`super::fixups`] reads the relationship-id sets.
+//!
+//! Every entry mirrors the C# TS port. Add a name here when a Word feature
+//! shows up in tests as "stuck on the atom itself" / "thrown away when it
+//! should be hashed" / "tagged by its rel id" — the schema-consistency
+//! oracle in `tests/schema_consistency.rs` only checks the rank tables in
+//! [`super::order_tables`].
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -18,8 +30,11 @@ fn set(names: &[XName]) -> HashSet<XName> {
     names.iter().cloned().collect()
 }
 
-/// `WordBreakElements` (:8469) — a non-`w:t` content atom whose name is here
-/// forces a word boundary.
+/// `WordBreakElements` (WmlComparer.ts :8469) — a non-`w:t` content atom whose
+/// name is in this set forces a word boundary during atomization. The
+/// comparer uses this set inside [`super::atomize::atom_hash`]
+/// (via [`super::units::is_word_break_element`]) so a tab, break, drawing,
+/// or footnote/endnote reference starts a new word atom even mid-run.
 pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::p_pr(),
@@ -49,8 +64,10 @@ pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     ])
 });
 
-/// `AllowableRunChildren` (:8998) — run-level leaves emitted as single verbatim
-/// atoms. NOTE: `w:object` is NOT here (handled by an explicit dispatch arm).
+/// `AllowableRunChildren` (WmlComparer.ts :8998) — run-level leaves emitted
+/// as a single verbatim atom by [`super::atomize::recurse`]. `w:object`
+/// is intentionally absent; the atomizer has an explicit dispatch arm for
+/// it.
 pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::name("br"),
@@ -77,7 +94,10 @@ pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     ])
 });
 
-/// `ElementsToThrowAway` (:9023) — produce no atoms.
+/// `ElementsToThrowAway` (WmlComparer.ts :9023) — the atomizer descends
+/// into these elements (or skips over them) but never emits an atom for
+/// them: bookmarks, proofErr, table/section properties, move-range markers,
+/// and the legacy separator/continuationSeparator inside a notes part.
 pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::bookmark_start(),
@@ -101,7 +121,9 @@ pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     ])
 });
 
-/// `ElementsToHaveSha1Hash` (:9045) — get `pt:SHA1Hash` stamped.
+/// `ElementsToHaveSha1Hash` (WmlComparer.ts :9045) — block-level elements
+/// that [`super::preprocess::add_sha1_hash_to_block_level_content`]
+/// stamps `pt:SHA1Hash` (and `pt:StructureSHA1Hash` for tables/rows) onto.
 pub static ELEMENTS_TO_HAVE_SHA1: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::p(),
@@ -114,8 +136,10 @@ pub static ELEMENTS_TO_HAVE_SHA1: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     ])
 });
 
-/// `InvalidElements` (:9055) — cause `VerifyNoInvalidContent` to throw. NOTE:
-/// `w:moveFrom`/`w:moveTo` are explicitly NOT invalid.
+/// `InvalidElements` (WmlComparer.ts :9055) — names that
+/// [`super::atomize::verify_no_invalid_content`] rejects before atomizing.
+/// `w:moveFrom` / `w:moveTo` are deliberately NOT invalid: the redline
+/// keeps moves as their own output shape.
 pub static INVALID_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::name("altChunk"),
@@ -132,20 +156,27 @@ pub static INVALID_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     ])
 });
 
-/// `ComparisonGroupingElements` (:9071) — ancestors used for hierarchical keys.
+/// `ComparisonGroupingElements` (WmlComparer.ts :9071) — the ancestors
+/// [`super::units::get_comparison_unit_list`] walks to build hierarchical
+/// keys for paragraph / table / row / cell / text-box groups.
 pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> =
     LazyLock::new(|| set(&[W::p(), W::tbl(), W::tr(), W::tc(), W::txbx_content()]));
 
-/// One `RecursionElements` (:9074) entry: an element that recurses into children
-/// while skipping the named property children (rebuilt structurally in Coalesce).
+/// One `RecursionElements` (WmlComparer.ts :9074) entry: an element the
+/// atomizer recurses into, plus the property children that
+/// [`super::atomize::coalesce_recurse`] re-attaches structurally after
+/// atomization.
 pub struct RecursionInfo {
-    /// `element_name`.
+    /// The element the atomizer recurses into.
     pub element_name: XName,
-    /// `child_property_names`.
+    /// Property children to skip during recursion (rebuilt by Coalesce).
+    /// `None` means no skip; a table's `w:tblPr` / `w:tblGrid` / `w:tblPrEx`,
+    /// for example, are skipped and reconstructed from the cloned attributes.
     pub child_property_names: Option<Vec<XName>>,
 }
 
-/// `RecursionElements` (:9074), verbatim order.
+/// `RecursionElements` (WmlComparer.ts :9074), in the verbatim C# order the
+/// atomizer walks. Look up an element with [`recursion_info`].
 pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
     let mk = |n: XName, props: Option<Vec<XName>>| RecursionInfo {
         element_name: n,
@@ -180,15 +211,17 @@ pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
     ]
 });
 
-/// Look up a `RecursionInfo` by element name.
+/// Find the [`RecursionInfo`] entry for an atomizer element name, if any.
 pub fn recursion_info(name: &XName) -> Option<&'static RecursionInfo> {
     RECURSION_ELEMENTS
         .iter()
         .find(|ri| &ri.element_name == name)
 }
 
-/// `AttributesToTrimWhenCloning` (:5133) — attributes dropped by the default and
-/// rel-id clone branches.
+/// `AttributesToTrimWhenCloning` (WmlComparer.ts :5133) — attributes the
+/// hashing clone drops by default and in the rel-id branch. Word-instance
+/// ids and shape ids: they survive one compare, but two compares see two
+/// `wp:editId` strings and break content correlation.
 pub static ATTRIBUTES_TO_TRIM_WHEN_CLONING: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         WP14::name("anchorId"),
@@ -200,7 +233,10 @@ pub static ATTRIBUTES_TO_TRIM_WHEN_CLONING: LazyLock<HashSet<XName>> = LazyLock:
     ])
 });
 
-/// `s_RelationshipAttributeNames` (:9218) — attributes that carry an rId.
+/// `s_RelationshipAttributeNames` (WmlComparer.ts :9218) — every attribute
+/// that carries a relationship id. Read by [`super::parts`] when it
+/// reconciles dangling rIds and by the rel-id clone branch in
+/// [`super::preprocess`].
 pub static S_RELATIONSHIP_ATTRIBUTE_NAMES: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         R::name("embed"),
@@ -215,8 +251,10 @@ pub static S_RELATIONSHIP_ATTRIBUTE_NAMES: LazyLock<HashSet<XName>> = LazyLock::
     ])
 });
 
-/// `s_ElementsWithRelationshipIds` (:9182) — elements whose rId attributes are
-/// hashed (replaced by the referenced part's content hash) during diffing.
+/// `s_ElementsWithRelationshipIds` (WmlComparer.ts :9182) — elements
+/// whose rId attributes the hashing clone replaces with the referenced
+/// part's content hash (so identical media and embedded charts correlate
+/// equal across the two documents).
 pub static S_ELEMENTS_WITH_RELATIONSHIP_IDS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         A::name("blip"),
