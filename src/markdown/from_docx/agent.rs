@@ -964,7 +964,7 @@ fn split_story_text(line: &str) -> (String, Vec<String>) {
                 .find(|&(_, c)| {
                     let done = c == stop && !quoted;
                     if quoted {
-                        quoted = !(c == '"' && !escaped);
+                        quoted = c != '"' || escaped;
                         escaped = c == '\\' && !escaped;
                     } else {
                         quoted = c == '"';
