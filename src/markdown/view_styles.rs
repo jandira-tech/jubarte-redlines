@@ -408,10 +408,14 @@ fn document_defaults(styles: &str) -> Given {
         return given;
     };
     if let Some(rpr) = defaults.path(&["rPrDefault", "rPr"]) {
+        // A theme font wins over the named one, so the named one is not
+        // what the style inherits.
         if let Some(fonts) = rpr.child("rFonts") {
             given.font = fonts
-                .attr("ascii")
-                .or_else(|| fonts.attr("hAnsi"))
+                .attr("asciiTheme")
+                .is_none()
+                .then(|| fonts.attr("ascii").or_else(|| fonts.attr("hAnsi")))
+                .flatten()
                 .map(str::to_string);
         }
         if let Some(size) = rpr.child("sz").and_then(|sz| whole(sz, "val")) {
@@ -844,6 +848,18 @@ mod tests {
             normal.contains("<w:ind w:left=\"-5\" w:hanging=\"10\"/>"),
             "{normal}"
         );
+    }
+
+    #[test]
+    fn a_theme_font_in_the_defaults_is_not_the_named_font() {
+        // Word draws the theme's font where `asciiTheme` is set, whatever
+        // `ascii` says, so a legend naming the `ascii` font still writes it.
+        let styles = "<w:styles><w:docDefaults><w:rPrDefault><w:rPr>\
+            <w:rFonts w:ascii=\"Aptos\" w:hAnsi=\"Aptos\" w:asciiTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\"/>\
+            <w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>";
+        let out = apply(styles, &legend("styles:\n  Normal: Aptos 11pt, left\n"));
+        let normal = style_element(&out, "Normal");
+        assert!(normal.contains("<w:rFonts w:ascii=\"Aptos\""), "{normal}");
     }
 
     #[test]
