@@ -1947,10 +1947,12 @@ fn bold_around_italic_does_not_print_empty_emphasis() {
 }
 
 /// `=  ` is two spaces, and a line break in a math run is a line break.
-/// Collapsing either onto one space moves the line Word draws.
+/// Collapsing either onto one space moves the line Word draws. The break
+/// follows `λ`, not `\lambda`: LaTeX ends a control word on the space after
+/// it, so a break there is not math text.
 #[test]
 fn math_run_spaces_and_breaks_survive_the_view() {
-    let markdown = "$$\\textrm{logit}(\\pi_i) =  \\lambda\n\\label{eq:one}$$\n";
+    let markdown = "$$\\textrm{logit}(\\pi_i) =  λ\n\\label{eq:one}$$\n";
     let (c, b, d) = idless_chain(markdown);
     let equation = "$$\\text{logit}(π_i) =  λ\n\\backslash label\\lbrace eq:one\\rbrace$$";
     assert!(c.contains(equation), "{c}");
