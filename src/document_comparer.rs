@@ -4976,9 +4976,21 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
 /// part `{dir}/redlineB[_{n}]_{base}`. Byte-based on purpose — `part_string`
 /// returns None for binary parts and would treat existing images as absent.
 fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
+    unique_part_name_where(out, want, bytes, &|_| true)
+}
+
+/// [`unique_part_name`], reusing an identical part only when `same` also
+/// holds for it (a header's relationships, so identical XML that shows
+/// another image is another part).
+fn unique_part_name_where(
+    out: &PartFs,
+    want: &str,
+    bytes: &[u8],
+    same: &dyn Fn(&str) -> bool,
+) -> String {
     match out.part_bytes(want) {
         None => want.to_string(),
-        Some(existing) if existing == bytes => want.to_string(),
+        Some(existing) if existing == bytes && same(want) => want.to_string(),
         Some(_) => {
             let (dir, base) = want.rsplit_once('/').unwrap_or(("word", want));
             let story = ["header", "footer"].into_iter().find(|kind| {
@@ -4991,7 +5003,9 @@ fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
                     let candidate = format!("{dir}/{kind}{n}.xml");
                     match out.part_bytes(&candidate) {
                         None => return candidate,
-                        Some(existing) if existing == bytes => return candidate,
+                        Some(existing) if existing == bytes && same(&candidate) => {
+                            return candidate;
+                        }
                         Some(_) => {}
                     }
                 }
@@ -5005,7 +5019,7 @@ fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
                 };
                 match out.part_bytes(&candidate) {
                     None => return candidate,
-                    Some(existing) if existing == bytes => return candidate,
+                    Some(existing) if existing == bytes && same(&candidate) => return candidate,
                     Some(_) => n += 1,
                 }
             }
@@ -5286,7 +5300,19 @@ fn adopt_revised_header_footer(
         // name collision with an existing (different) part: copy B's content
         // under a fresh name instead of dropping or clobbering it — byte-safe
         // existence check (part_string is None for binary parts)
-        let part = unique_part_name(out, &src_part, &bytes);
+        // The part's relationships by type, target and mode (ids aside).
+        let rels_of = |pkg: &PartFs, part: &str| {
+            pkg.read_rels_for(part).map(|rels| {
+                rels.items
+                    .iter()
+                    .map(|r| (r.rel_type.clone(), r.target.clone(), r.target_mode.clone()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let src_rels = rels_of(pkg2, &src_part);
+        let part = unique_part_name_where(out, &src_part, &bytes, &|candidate| {
+            rels_of(out, candidate) == src_rels
+        });
         if part != src_part {
             renamed.insert(part.clone(), basename.to_string());
         }
@@ -10485,6 +10511,44 @@ mod coverage_boundary_tests {
             Some(&W::name("headerReference")),
         );
         assert_eq!(final_refs.len(), 2);
+    }
+
+    #[test]
+    fn a_reused_header_keeps_its_own_relationships() {
+        // pi review of #487: B's header1 is byte-identical to A's header2
+        // but its image is another; reusing header2 rebound A's header to
+        // B's image. Identical XML with other relationships is another part.
+        let hdr = xml("hdr", "<w:p><w:r><w:t>Logo</w:t></w:r></w:p>").into_bytes();
+        let mut out = package("<w:body><w:sectPr/></w:body>");
+        out.set_part(
+            "word/header1.xml",
+            xml("hdr", "<w:p><w:r><w:t>A</w:t></w:r></w:p>").into_bytes(),
+        );
+        out.set_part("word/header2.xml", hdr.clone());
+        out.set_part("word/media/a.png", vec![1]);
+        out.add_document_relationship("word/header2.xml", &format!("{REL}image"), "media/a.png");
+        let mut b = package("<w:body/>");
+        b.set_part("word/header1.xml", hdr);
+        b.set_part("word/media/b.png", vec![2]);
+        b.add_document_relationship("word/header1.xml", &format!("{REL}image"), "media/b.png");
+        let id = b.add_document_relationship(MAIN, &format!("{REL}header"), "header1.xml");
+        b.set_part(
+            MAIN,
+            xml(
+                "document",
+                &format!("<w:body><w:sectPr><w:headerReference r:id='{id}'/></w:sectPr></w:body>"),
+            )
+            .into_bytes(),
+        );
+        let mut dom = Dom::new();
+        let r = root(&mut dom, &out.part_string(MAIN).unwrap());
+        adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+        let image = |part: &str| {
+            let rels = out.read_rels_for(part).unwrap();
+            out.resolve_rel_target(part, &rels.items[0].target)
+        };
+        assert_eq!(image("word/header2.xml"), "word/media/a.png");
+        assert_eq!(image("word/header3.xml"), "word/media/b.png");
     }
 
     #[test]
