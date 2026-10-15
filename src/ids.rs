@@ -410,8 +410,12 @@ pub fn short_paragraph(long: &str) -> String {
         Some(n) => format!("{story}.p{n}"),
         None => return long.to_string(),
     };
+    // Only a story (`header1`) or its paragraph (`p12`, `header1.p2`):
+    // `cc0:p:0` must not shorten to the content control `cc0`.
     match short.parse::<ShortId>() {
-        Ok(ShortId::Block { .. }) => short,
+        Ok(ShortId::Block { path, .. }) if matches!(path.as_slice(), [] | [Step::Paragraph(_)]) => {
+            short
+        }
         _ => long.to_string(),
     }
 }
@@ -419,6 +423,31 @@ pub fn short_paragraph(long: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_story_or_its_paragraph_is_a_paragraph_place() {
+        // pi review of #487: `cc0` read as story "cc0", paragraph 0.
+        // A cell's paragraph prints as its `pN`, so `t0.row1.cell2` is no
+        // paragraph place either.
+        for id in [
+            "cc0",
+            "t0",
+            "p3.cc0",
+            "t0.row1",
+            "t0.row1.cell2",
+            "p14.box0",
+        ] {
+            assert_eq!(paragraph_place(id), None, "{id}");
+        }
+        assert_eq!(short_paragraph("cc0:p:0"), "cc0:p:0");
+        for (id, story, n) in [
+            ("p12", "body", 12),
+            ("header1", "header1", 0),
+            ("header1.p2", "header1", 2),
+        ] {
+            assert_eq!(paragraph_place(id), Some((story.to_string(), n)), "{id}");
+        }
+    }
 
     #[test]
     fn hints_keep_only_what_the_option_takes() {
