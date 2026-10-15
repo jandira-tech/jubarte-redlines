@@ -709,7 +709,9 @@ fn a_header_change_is_visible_on_the_headers_line() {
     let out = agent(&bytes);
     let lines = header_lines(&out);
     assert!(
-        lines.contains(&"  default: {id: header1, text: \"{++DRAFT++}{>>header1.r1 @AC<<}\", style: Normal}"),
+        lines.contains(
+            &"  default: {id: header1, text: \"{++DRAFT++}{>>header1.r1 @AC<<}\", style: Normal}"
+        ),
         "{out}"
     );
     assert!(
@@ -799,7 +801,8 @@ fn changes_without_text_name_their_ids() {
         "{out}"
     );
     assert!(
-        lines.contains(&"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC}"),
+        lines
+            .contains(&"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC}"),
         "{out}"
     );
     assert!(
@@ -873,9 +876,9 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     );
     let lines = header_lines(&out);
     assert!(
-        lines.iter().any(|l| l
-            .starts_with("  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC}")
-            && l.ends_with("# defined, but different first page is off")),
+        lines.iter().any(|l| l.starts_with(
+            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC}"
+        ) && l.ends_with("# defined, but different first page is off")),
         "{out}"
     );
     assert!(
@@ -5621,7 +5624,10 @@ fn a_long_story_id_is_quoted_in_the_header() {
         r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
     );
     let out = agent(&bytes);
-    assert!(out.contains(r#"{id: "Header_1:p:0", text: Head, style: Normal}"#), "{out}");
+    assert!(
+        out.contains(r#"{id: "Header_1:p:0", text: Head, style: Normal}"#),
+        "{out}"
+    );
     let yaml = header_yaml(&out);
     assert_eq!(
         yaml["headers"]["default"]["id"].as_str(),
