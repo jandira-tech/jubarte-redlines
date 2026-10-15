@@ -9,22 +9,22 @@
 //! faces (the same metric-compatible substitutes soffice embeds),
 //! Word's `docDefaults` (Calibri 11 / line 276 / after 200 twips) and
 //! `sectPr` page geometry. A page-by-page visual diff against a Word PDF
-//! is the [`diff_render`] family; per-page font resolutions and the page
-//! text are in [`RenderReport`].
+//! is the `diff_render` family; per-page font resolutions and the page
+//! text are in `RenderReport`.
 //!
 //! Entry points:
 //!
-//! - [`docx_to_pdf`], [`docx_to_pdf_with`], [`docx_to_pdf_report`] for the
+//! - `docx_to_pdf`, `docx_to_pdf_with`, `docx_to_pdf_report` for the
 //!   PDF;
-//! - [`docx_to_png`], [`docx_render_report`], [`render`] for PNG pages
+//! - `docx_to_png`, `docx_render_report`, `render` for PNG pages
 //!   and the page report;
-//! - [`pdf_page_count`] to count pages of a PDF;
-//! - [`DiffOptions`] / [`RenderDiff`] / [`PageDiff`] (re-exported from
-//!   [`diff_render`]) for the visual diff;
-//! - [`FontStep`] / [`FontReportEntry`] / [`font_report_json`] (re-exported
-//!   from [`font`]) for the conversion's font-resolution report.
+//! - `pdf_page_count` to count pages of a PDF;
+//! - `DiffOptions` / `RenderDiff` / `PageDiff` (re-exported from
+//!   `diff_render`) for the visual diff;
+//! - `FontStep` / `FontReportEntry` / `font_report_json` (re-exported
+//!   from `font`) for the conversion's font-resolution report.
 //!
-//! [`RevisionStyle`] / [`RevisionPalette`] back the `--revisions` CLI flag
+//! `RevisionStyle` / `RevisionPalette` back the `--revisions` CLI flag
 //! and the `RevisionStyle::Word` mode the fidelity benchmarks measure
 //! against Word's own Save as PDF.
 

@@ -4,7 +4,7 @@
 
 //! Port of `ComparisonLog.ts` — diagnostic log emitted during comparison.
 //!
-//! A [`ComparisonLog`] accumulates entries at three severity levels; the
+//! A `ComparisonLog` accumulates entries at three severity levels; the
 //! module itself just stores them in insertion order, and consumers
 //! (the host, the `error_count` helper) interpret the severities.
 //! Severity is therefore purely a tag the caller chooses when it appends.

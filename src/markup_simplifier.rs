@@ -4,12 +4,12 @@
 
 //! `MarkupSimplifier` comparison subset (M2).
 //!
-//! Port of [`SingleCharacterRunTransform`] (MarkupSimplifier.ts), the
-//! rsid-stripper [`remove_rsid_transform`], and the entry point that runs
-//! it on a non-run container ([`transform_element_to_single_character_runs`]).
+//! Port of `SingleCharacterRunTransform` (MarkupSimplifier.ts), the
+//! rsid-stripper `remove_rsid_transform`, and the entry point that runs
+//! it on a non-run container (`transform_element_to_single_character_runs`).
 //! These are tree-rebuild transforms in the TS source; in the arena we
 //! build fresh nodes and return them. The comparer calls
-//! [`remove_rsid_transform`] from every accept / reject pass; the
+//! `remove_rsid_transform` from every accept / reject pass; the
 //! single-character-run transform is exposed for the WASM bindings and
 //! for the corpus reconciliation tests.
 

@@ -115,7 +115,7 @@ impl fmt::Display for IdError {
 impl std::error::Error for IdError {}
 
 /// One tracked change, addressed by story and the change's `w:id` value.
-/// The grammar of [`short`] / [`long`] is safe unquoted in bash, csh and
+/// The grammar of `short` / `long` is safe unquoted in bash, csh and
 /// zsh and never collides with another change when its `w:id` is canonical.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ChangeId {

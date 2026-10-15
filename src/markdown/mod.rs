@@ -904,7 +904,7 @@ pub fn changed_view(
 ///   conventional red/blue/green redline, the Word-style marks, or a
 ///   [`crate::convert::RevisionPalette`]). The bench suite measures
 ///   against `RevisionStyle::Word`; call sites that compare a `jubarte`
-///   PDF against a Word one must pass [`RevisionStyle::Word`].
+///   PDF against a Word one must pass `RevisionStyle::Word`.
 ///
 /// # Errors
 ///
