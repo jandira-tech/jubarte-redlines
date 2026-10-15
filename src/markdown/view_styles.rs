@@ -469,6 +469,33 @@ fn indent_attr(spec: Option<i64>, inherited: Option<i64>) -> Option<i64> {
     spec.filter(|value| Some(*value) != inherited)
 }
 
+/// The gallery flags (`uiPriority`, `semiHidden`, `unhideWhenUsed`,
+/// `qFormat`) Word gives built-in style `id` named `name`, in schema order;
+/// none for a style Word does not know.
+fn gallery_flags(id: &str, name: &str) -> String {
+    let Some(builtin) = super::xml::style_definition(id) else {
+        return String::new();
+    };
+    if !builtin.contains(&format!("<w:name w:val=\"{name}\"/>")) {
+        return String::new();
+    }
+    let mut out = String::new();
+    for flag in [
+        "<w:uiPriority ",
+        "<w:semiHidden/>",
+        "<w:unhideWhenUsed/>",
+        "<w:qFormat/>",
+    ] {
+        if let Some(at) = builtin.find(flag) {
+            let end = builtin[at..]
+                .find("/>")
+                .map_or(builtin.len(), |e| at + e + 2);
+            out.push_str(&builtin[at..end]);
+        }
+    }
+    out
+}
+
 /// The `w:style` element of `spec`, based on style `base` unless it is the
 /// default. `inherited` is what the style already has, and a property equal
 /// to it is left out.
@@ -494,6 +521,8 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
         }
         if spec.heading.is_some() {
             out.push_str("<w:uiPriority w:val=\"9\"/><w:qFormat/>");
+        } else {
+            out.push_str(&gallery_flags(&spec.id, &name));
         }
         out
     };
@@ -846,6 +875,18 @@ mod tests {
         assert!(
             list.contains("<w:name w:val=\"List Paragraph\"/>"),
             "{list}"
+        );
+        // A built-in style keeps Word's gallery flags: List Paragraph is
+        // priority 34 and quick-format, as Word itself writes it.
+        assert!(
+            list.contains(
+                "<w:basedOn w:val=\"Normal\"/><w:uiPriority w:val=\"34\"/><w:qFormat/><w:pPr>"
+            ),
+            "{list}"
+        );
+        assert!(
+            style_element(&out, "Quote").contains("<w:uiPriority w:val=\"29\"/><w:qFormat/>"),
+            "{out}"
         );
         let heading = style_element(&out, "Heading1");
         assert!(
