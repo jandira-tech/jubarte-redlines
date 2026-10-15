@@ -1688,7 +1688,10 @@ mod tests {
             line("HeadingPlain"),
             "Calibri bold 16pt, before 12pt, after 4pt, keep-next"
         );
-        assert_eq!(line("First"), "Calibri 11pt, indent 0.5in, first-line 0.25in");
+        assert_eq!(
+            line("First"),
+            "Calibri 11pt, indent 0.5in, first-line 0.25in"
+        );
         assert_eq!(line("Hang"), "Calibri 11pt, indent 0.5in, hanging 0.25in");
         assert_eq!(line("Both"), "Calibri 11pt, indent 1.75in, hanging 1.75in");
         assert_eq!(line("Zero"), "Calibri 11pt, indent 0in");

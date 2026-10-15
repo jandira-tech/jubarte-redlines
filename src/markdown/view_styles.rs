@@ -508,8 +508,16 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
     if spec.keep_lines && !inherited.keep_lines {
         ppr.push_str("<w:keepLines/>");
     }
-    let before = if spec.default { spec.before.or(Some(0)) } else { spec.before };
-    let after = if spec.default { spec.after.or(Some(0)) } else { spec.after };
+    let before = if spec.default {
+        spec.before.or(Some(0))
+    } else {
+        spec.before
+    };
+    let after = if spec.default {
+        spec.after.or(Some(0))
+    } else {
+        spec.after
+    };
     let line = if spec.default {
         spec.line.or(Some((240, "auto")))
     } else {
@@ -517,9 +525,8 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
     };
     let write_before = before.is_some_and(|value| value != inherited.before);
     let write_after = after.is_some_and(|value| value != inherited.after);
-    let write_line = line.is_some_and(|(twips, rule)| {
-        twips != inherited.line_twips || rule != inherited.line_rule
-    });
+    let write_line = line
+        .is_some_and(|(twips, rule)| twips != inherited.line_twips || rule != inherited.line_rule);
     if write_before || write_after || write_line {
         ppr.push_str("<w:spacing");
         if write_before {
@@ -553,7 +560,11 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
     if spec.contextual_spacing && !inherited.contextual {
         ppr.push_str("<w:contextualSpacing/>");
     }
-    let align = if spec.default { spec.align.or(Some("left")) } else { spec.align };
+    let align = if spec.default {
+        spec.align.or(Some("left"))
+    } else {
+        spec.align
+    };
     if let Some(align) = align.filter(|value| *value != inherited.align) {
         ppr.push_str(&format!("<w:jc w:val=\"{align}\"/>"));
     }
@@ -763,7 +774,9 @@ mod tests {
 
     fn style_element(styles: &str, id: &str) -> String {
         let key = format!("w:styleId=\"{id}\"");
-        let at = styles.find(&key).unwrap_or_else(|| panic!("no {id} in {styles}"));
+        let at = styles
+            .find(&key)
+            .unwrap_or_else(|| panic!("no {id} in {styles}"));
         let start = styles[..at].rfind("<w:style ").unwrap_or(at);
         let end = styles[at..]
             .find("</w:style>")
@@ -796,10 +809,7 @@ mod tests {
         assert!(list.contains("<w:contextualSpacing/>"), "{list}");
         assert!(!list.contains("<w:rPr"), "{list}");
         let heading = style_element(&out, "Heading1");
-        assert!(
-            heading.contains("<w:keepNext/><w:keepLines/>"),
-            "{heading}"
-        );
+        assert!(heading.contains("<w:keepNext/><w:keepLines/>"), "{heading}");
         let normal = style_element(&out, "Normal");
         assert!(
             normal.contains("<w:ind w:left=\"-5\" w:hanging=\"10\"/>"),
@@ -859,9 +869,8 @@ mod tests {
 
     #[test]
     fn a_run_property_is_written_when_it_differs_from_the_base() {
-        let specs = legend(
-            "styles:\n  Normal: Calibri bold 11pt, left\n  Quote: Calibri 11pt, left\n",
-        );
+        let specs =
+            legend("styles:\n  Normal: Calibri bold 11pt, left\n  Quote: Calibri 11pt, left\n");
         let out = apply("<w:styles></w:styles>", &specs);
         let quote = style_element(&out, "Quote");
         assert!(
