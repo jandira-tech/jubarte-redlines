@@ -2,9 +2,17 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Port of `SHA1HashStringForUTF8String` / `SHA1HashStringForByteArray` /
-//! `HexStringFromBytes` from `PtUtil.ts`, plus the FNV-1a fingerprints
-//! ([`fnv1a_64`], [`fnv1a_128`]) the LCS derives from those SHA-1 hex strings.
+//! SHA-1 hex helpers, FNV-1a fingerprints, and hex encode / decode helpers.
+//!
+//! Ports of `SHA1HashStringForUTF8String` / `SHA1HashStringForByteArray` /
+//! `HexStringFromBytes` from `PtUtil.ts`, plus the FNV-1a 64-bit / 128-bit
+//! hashes ([`fnv1a_64`], [`fnv1a_128`]) the LCS derives from those SHA-1 hex
+//! strings as content-bucketing keys.
+//!
+//! Used by the comparer's LCS hot path (atom hashes), the inline-atom-hash
+//! path (`AtomHash`), the comparison-unit word hash, and the JSON block
+//! hash. CLI: every `jubarte` subcommand that hashes a block of text uses
+//! [`sha1_hex`].
 
 use sha1::{Digest, Sha1};
 
@@ -22,14 +30,16 @@ pub(crate) fn hex_string_from_bytes(bytes: &[u8]) -> String {
     String::from_utf8(out).expect("hex digits are ASCII")
 }
 
-/// `SHA1HashStringForUTF8String(s)` — lowercase hex SHA-1 of the UTF-8 bytes.
+/// Lowercase-hex SHA-1 of `s`'s UTF-8 bytes. Port of
+/// `SHA1HashStringForUTF8String`.
 pub fn sha1_hex(s: &str) -> String {
     sha1_hex_bytes(s.as_bytes())
 }
 
-/// Raw 20-byte SHA-1 digest of `bytes` (the binary digest, not hex). Equal to
-/// `hex_decode(sha1_hex_bytes(bytes))`. The inline-atom-hash path (`AtomHash`)
-/// stores this directly instead of the 40-char hex `String`.
+/// Raw 20-byte SHA-1 digest of `bytes`. Equal to
+/// `hex_decode_20(sha1_hex_bytes(bytes))` once the hex is decoded. The
+/// inline-atom-hash path (`AtomHash`) stores this directly instead of the
+/// 40-char hex `String`.
 pub fn sha1_digest(bytes: &[u8]) -> [u8; 20] {
     let mut hasher = Sha1::new();
     hasher.update(bytes);
@@ -37,7 +47,9 @@ pub fn sha1_digest(bytes: &[u8]) -> [u8; 20] {
 }
 
 /// Lowercase-hex-encode 20 digest bytes into a fixed 40-byte ASCII buffer
-/// (no heap allocation). Byte-identical to `hex_string_from_bytes(digest)`.
+/// (no heap allocation). Byte-identical to
+/// `hex_string_from_bytes(digest).into_bytes()`. Used by
+/// [`sha1_hex_of_digest_hexes`] and the inline-atom-hash `to_hex` path.
 pub fn hex_encode_20(digest: &[u8; 20]) -> [u8; 40] {
     let mut out = [0u8; 40];
     for (i, &b) in digest.iter().enumerate() {
@@ -57,9 +69,11 @@ fn hex_val(c: u8) -> Option<u8> {
     }
 }
 
-/// Decode exactly 40 hex characters into the 20-byte digest they encode; `None`
-/// for any other length or a non-hex character. Inverse of [`hex_encode_20`] on
-/// well-formed input, so `hex_decode_20(sha1_hex(x)) == Some(sha1_digest(x))`.
+/// Decode exactly 40 hex characters into the 20-byte digest they encode;
+/// `None` for any other length or any non-hex character. Inverse of
+/// [`hex_encode_20`] on well-formed input, so
+/// `hex_decode_20(sha1_hex(x)) == Some(sha1_digest(x))` for any `x`.
+/// Case-insensitive: `0-9a-fA-F` are all accepted.
 pub fn hex_decode_20(s: &str) -> Option<[u8; 20]> {
     let bytes = s.as_bytes();
     if bytes.len() != 40 {
@@ -74,10 +88,12 @@ pub fn hex_decode_20(s: &str) -> Option<[u8; 20]> {
     Some(out)
 }
 
-/// SHA-1 of the concatenation of the 40-char lowercase-hex encodings of each
-/// digest. Byte-identical to `sha1_hex_parts(digests.map(|d| hex(d)))` — used by
-/// [`crate::comparer::atoms::ComparisonUnitWord::new`] to hash a word from its
-/// atoms' inline digests without a per-atom heap `String`.
+/// SHA-1 of the concatenation of the 40-char lowercase hex encodings of
+/// each digest. Byte-identical to
+/// `sha1_hex_parts(digests.map(|d| hex(d)))`. Used by
+/// [`crate::comparer::atoms::ComparisonUnitWord::new`] to hash a word
+/// from its atoms' 20-byte digests without allocating a per-atom heap
+/// `String`.
 pub fn sha1_hex_of_digest_hexes<'a, I>(digests: I) -> String
 where
     I: IntoIterator<Item = &'a [u8; 20]>,
@@ -89,16 +105,18 @@ where
     hex_string_from_bytes(&hasher.finalize())
 }
 
-/// `SHA1HashStringForByteArray(bytes)`.
+/// Lowercase-hex SHA-1 of `bytes`. Port of
+/// `SHA1HashStringForByteArray`.
 pub fn sha1_hex_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha1::new();
     hasher.update(bytes);
     hex_string_from_bytes(&hasher.finalize())
 }
 
-/// SHA-1 of the concatenation of `parts`, without allocating the concatenated
-/// string. Byte-identical to `sha1_hex(&parts.concat())` for any sequence of
-/// UTF-8 pieces (used by `ComparisonUnitWord::new` to hash atom digests).
+/// SHA-1 of the concatenation of `parts`, without allocating the
+/// concatenated string. Byte-identical to `sha1_hex(&parts.concat())`
+/// for any iterator of UTF-8 pieces. Used by `ComparisonUnitWord::new`
+/// to hash atom digests streamed straight into SHA-1.
 pub fn sha1_hex_parts<'a, I>(parts: I) -> String
 where
     I: IntoIterator<Item = &'a str>,
@@ -110,16 +128,18 @@ where
     hex_string_from_bytes(&hasher.finalize())
 }
 
-/// 64-bit FNV-1a of the string's bytes (offset basis `0xcbf29ce484222325`,
-/// prime `0x100000001b3`). Not SHA-1 and not cryptographic.
+/// 64-bit FNV-1a of the string's bytes (offset basis
+/// `0xcbf29ce484222325`, prime `0x100000001b3`). Not SHA-1 and not
+/// cryptographic.
 ///
-/// Used as the `u64` bucket key of the comparison-unit index in the LCS hot
-/// path (`longest_common_run`): units whose keys differ are never compared,
-/// and units sharing a bucket go on to the 128-bit key, [`fnv1a_128`]. It is a
-/// pure deterministic function of the string, so equal strings always share a
-/// key and the pre-filter never drops a real match; a `u64` collision only
-/// costs an extra probe. The input is already a SHA-1 hex digest of document
-/// content, so a caller cannot choose the FNV input bytes directly.
+/// Used as the `u64` bucket key of the comparison-unit index in the LCS
+/// hot path (`longest_common_run`): units whose keys differ are never
+/// compared, and units sharing a bucket go on to the 128-bit key,
+/// [`fnv1a_128`]. It is a pure deterministic function of the string, so
+/// equal strings always share a key and the pre-filter never drops a
+/// real match; a `u64` collision only costs an extra probe. The input
+/// is already a SHA-1 hex digest of document content, so a caller
+/// cannot choose the FNV input bytes directly.
 pub fn fnv1a_64(s: &str) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -132,18 +152,19 @@ pub fn fnv1a_64(s: &str) -> u64 {
 }
 
 /// 128-bit FNV-1a of the string's bytes (offset basis
-/// `0x6c62272e07bb014262b821756295c58d`, prime `0x1000000000000000000013b`).
-/// Not SHA-1 and not cryptographic.
+/// `0x6c62272e07bb014262b821756295c58d`, prime
+/// `0x1000000000000000000013b`). Not SHA-1 and not cryptographic.
 ///
 /// In the LCS hot path (`extend_common_run` and the interior-run skip in
-/// `longest_common_run`) this key *alone* decides comparison-unit equality:
-/// two units correlate when their 128-bit keys are equal, with no further
-/// comparison of the 40-byte SHA-1 hex strings. Equal strings always share a
-/// key; distinct strings that collide would wrongly correlate. That is
-/// accepted because the input is already a SHA-1 hex digest of the content,
-/// so an attacker cannot choose the FNV input bytes directly and a generic
-/// collision costs about 2^64 work, far beyond any document pair. Same
-/// construction as [`fnv1a_64`], widened to 128 bits.
+/// `longest_common_run`) this key alone decides comparison-unit
+/// equality: two units correlate when their 128-bit keys are equal,
+/// with no further comparison of the 40-byte SHA-1 hex strings. Equal
+/// strings always share a key; distinct strings that collide would
+/// wrongly correlate. That is accepted because the input is already a
+/// SHA-1 hex digest of the content, so an attacker cannot choose the
+/// FNV input bytes directly and a generic collision costs about 2^64
+/// work, far beyond any document pair. Same construction as
+/// [`fnv1a_64`], widened to 128 bits.
 pub fn fnv1a_128(s: &str) -> u128 {
     const OFFSET_BASIS: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
     const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
