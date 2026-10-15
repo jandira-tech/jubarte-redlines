@@ -48,21 +48,21 @@ def test_inspect_returns_typed_snapshot_with_ids_spans_and_summary() -> None:
     assert snap.summary.tables == 0
     p = snap.paragraphs[1]
     assert isinstance(p, Paragraph)
-    assert p.id == "body:p:1"
+    assert p.id == "p1"
     assert p.text.startswith("(a) Confidentiality. You may")
     assert p.runs[1].bold and p.runs[1].start == 4
     assert p.limitations == ()
-    assert snap.paragraph("body:p:2").text.startswith("The individual")
+    assert snap.paragraph("p2").text.startswith("The individual")
     assert snap.unique(starts_with="Sections").index == 3
     with pytest.raises(LookupError):
         snap.unique(contains="nowhere")
     with pytest.raises(LookupError):
-        snap.paragraph("body:p:99")
+        snap.paragraph("p99")
 
 
 def test_markdown_carries_paragraph_ids_and_formatting() -> None:
     md = letter().markdown()
-    assert md.startswith("[body:p:0] Heading\n\n[body:p:1] (a) **Confidentiality.** You may")
+    assert md.startswith("[p0] Heading\n\n[p1] (a) **Confidentiality.** You may")
 
 
 def test_sha256_matches_the_snapshot_guard() -> None:
@@ -73,7 +73,7 @@ def test_sha256_matches_the_snapshot_guard() -> None:
 def test_edit_plan_builder_serializes_the_wire_schema() -> None:
     plan = (
         EditPlan(author="Claude", date="2026-09-25T12:00:00Z")
-        .replace("body:p:2", find="his or her", replacement="an", id="pronoun")
+        .replace("p2", find="his or her", replacement="an", id="pronoun")
         .insert({"starts_with": "Sections 1(g), "}, after="1(g), ", text="2(c), ", comment="survival")
         .delete(3, find="2(e), ")
         .comment(0, text="Heading note")
@@ -85,7 +85,7 @@ def test_edit_plan_builder_serializes_the_wire_schema() -> None:
     assert wire["author"] == "Claude"
     assert "source_sha256" not in wire
     ops = wire["operations"]
-    assert ops[0] == {"id": "pronoun", "kind": "replace", "paragraph": {"id": "body:p:2"}, "find": "his or her", "replacement": "an"}
+    assert ops[0] == {"id": "pronoun", "kind": "replace", "paragraph": {"id": "p2"}, "find": "his or her", "replacement": "an"}
     assert ops[1]["paragraph"] == {"starts_with": "Sections 1(g), "}
     assert ops[1]["comment"] == "survival"
     assert ops[2] == {"kind": "delete", "paragraph": {"index": 3}, "find": "2(e), "}
@@ -110,7 +110,7 @@ def test_edit_applies_plan_and_returns_clean_redline_and_report() -> None:
     plan = (
         EditPlan(author="Claude", date="2026-09-25T12:00:00Z")
         .for_document(doc)
-        .replace("body:p:2", find="his or her", replacement="an")
+        .replace("p2", find="his or her", replacement="an")
         .insert({"starts_with": "Sections 1(g), "}, after="1(g), ", text="2(c), ", comment="post-disclosure duty")
     )
     result = doc.edit(plan)
@@ -132,7 +132,7 @@ def test_edit_applies_plan_and_returns_clean_redline_and_report() -> None:
     assert result.redline.inspect().summary.comments == 1
     lines = [json.loads(line) for line in report.to_jsonl().splitlines()]
     assert lines[0]["ev"] == "load" and lines[-1]["ev"] == "summary"
-    assert lines[1]["at"] == "body:p:2"
+    assert lines[1]["at"] == "p2"
     # The source is untouched.
     assert doc.sha256() == report.source_sha256
 
@@ -280,22 +280,22 @@ def test_header_story_is_inspected_and_edited_as_a_tracked_change() -> None:
     snap = doc.inspect()
     (story,) = snap.stories
     assert (story.id, story.kind, story.part) == ("header1", "header", "word/header1.xml")
-    assert snap.paragraph("header1:p:0").text == "Confidential draft"
+    assert snap.paragraph("header1").text == "Confidential draft"
     plan = (
         EditPlan(author="Claude", date="2026-09-28T12:00:00Z")
         .for_document(doc)
-        .replace("header1:p:0", find="Confidential", replacement="Privileged")
+        .replace("header1", find="Confidential", replacement="Privileged")
         .insert({"story": "header1", "index": 0}, position="end", text=" v2")
     )
     assert plan.operations[1]["paragraph"] == {"index": 0, "story": "header1"}
     result = doc.edit(plan)
     assert result.report.ok, result.report.operations
-    assert [op.paragraph for op in result.report.operations] == ["header1:p:0", "header1:p:0"]
+    assert [op.paragraph for op in result.report.operations] == ["header1", "header1"]
     assert result.clean.inspect().stories[0].paragraphs[0].text == "Privileged draft v2"
     assert result.redline.accept().inspect().stories[0].paragraphs[0].text == "Privileged draft v2"
     assert result.redline.reject().inspect().stories[0].paragraphs[0].text == "Confidential draft"
     with pytest.raises(TypeError):
-        EditPlan(author="A").delete_paragraph({"story": "header1", "id": "header1:p:0"})
+        EditPlan(author="A").delete_paragraph({"story": "header1", "id": "header1"})
 
 
 def test_watermark_builder_writes_word_watermark_into_a_new_header() -> None:
@@ -343,7 +343,7 @@ def test_plan_builder_validates_selectors_runs_and_options() -> None:
     p = (
         plan.insert({"contains": "x"}, before="y", text="z")
         .insert({"index": 2}, position="start", text="q")
-        .comment({"id": "body:p:1"}, text="n", find="f")
+        .comment({"id": "p1"}, text="n", find="f")
         .insert_paragraph(0, runs=["plain", {"text": "b", "bold": True}], style="Sub")
     )
     ops = p.to_dict()["operations"]
@@ -389,26 +389,26 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     changes = doc.changes()
     assert all(isinstance(c, jubarte.Change) for c in changes)
     assert [(c.id, c.kind, c.target, c.author, c.text) for c in changes] == [
-        ("body:rev:1", "deletion", "text", "a", "gone"),
-        ("body:rev:2", "insertion", "text", "b", "new"),
+        ("r1", "deletion", "text", "a", "gone"),
+        ("r2", "insertion", "text", "b", "new"),
     ]
     # `ref` is the short id the CLI prints; `paragraph` the paragraph it is in.
-    assert [(c.ref, c.paragraph) for c in changes] == [("r1", "body:p:0"), ("r2", "body:p:0")]
+    assert [(c.ref, c.paragraph) for c in changes] == [("r1", "p0"), ("r2", "p0")]
     # The snapshot carries them too, as `read --json` does.
     assert doc.inspect().changes == changes and doc.inspect().comments == ()
-    accepted = doc.accept(ids=["body:rev:1"])
-    assert [c.id for c in accepted.changes()] == ["body:rev:2"]
+    accepted = doc.accept(ids=["r1"])
+    assert [c.id for c in accepted.changes()] == ["r2"]
     assert [p.text for p in accepted.accept().inspect().paragraphs] == ["keep new"]
     rejected = doc.reject(authors=["b"])
-    assert [c.id for c in rejected.changes()] == ["body:rev:1"]
-    assert [c.id for c in doc.accept(kinds=["insertion"]).changes()] == ["body:rev:1"]
+    assert [c.id for c in rejected.changes()] == ["r1"]
+    assert [c.id for c in doc.accept(kinds=["insertion"]).changes()] == ["r1"]
     # No selection resolves every change; an empty list selects none.
     assert doc.accept().changes() == ()
     assert doc.reject(ids=[]).to_bytes() == doc.to_bytes()
     with pytest.raises(TypeError):
-        doc.accept(ids="body:rev:1")  # type: ignore[arg-type]
+        doc.accept(ids="r1")  # type: ignore[arg-type]
     with pytest.raises(jubarte.JubarteError, match="no tracked change r9"):
-        doc.accept(ids=["body:rev:9"])
+        doc.accept(ids=["r9"])
     # An id that is no change id is a bad argument.
     with pytest.raises(ValueError, match="expected a change id"):
         doc.accept(ids=["c5"])
@@ -419,26 +419,26 @@ def test_a_plan_resolves_selected_changes_before_it_edits() -> None:
     plan = (
         EditPlan(author="Claude", date="2026-09-25T12:00:00Z")
         .for_document(doc)
-        .resolving(accept={"ids": ["body:rev:1"]}, reject={"authors": ["b"]})
-        .replace("body:p:0", find="keep", replacement="hold")
+        .resolving(accept={"ids": ["r1"]}, reject={"authors": ["b"]})
+        .replace("p0", find="keep", replacement="hold")
     )
     assert plan.to_dict()["resolve_revisions"] == {
-        "accept": {"ids": ["body:rev:1"]},
+        "accept": {"ids": ["r1"]},
         "reject": {"authors": ["b"]},
     }
     result = doc.edit(plan)
     assert [p.text for p in result.clean.inspect().paragraphs] == ["hold "]
     assert result.report.resolved_revisions == jubarte.ResolvedRevisions(
-        accepted=("body:rev:1",), rejected=("body:rev:2",)
+        accepted=("r1",), rejected=("r2",)
     )
     load = json.loads(result.report.to_jsonl().splitlines()[0])
-    assert load["resolved_revisions"] == {"accepted": ["body:rev:1"], "rejected": ["body:rev:2"]}
-    conflict = EditPlan(author="Claude").resolving(accept={"authors": ["a"]}, reject={"ids": ["body:rev:1"]})
+    assert load["resolved_revisions"] == {"accepted": ["r1"], "rejected": ["r2"]}
+    conflict = EditPlan(author="Claude").resolving(accept={"authors": ["a"]}, reject={"ids": ["r1"]})
     with pytest.raises(EditPlanError) as refused:
-        doc.edit(conflict.replace("body:p:0", find="keep", replacement="hold"))
+        doc.edit(conflict.replace("p0", find="keep", replacement="hold"))
     assert refused.value.code == "REVISION_CONFLICT"
     with pytest.raises(ValueError):
-        EditPlan(author="A").resolving(accept={"id": ["body:rev:1"]})
+        EditPlan(author="A").resolving(accept={"id": ["r1"]})
 
 
 def test_insert_table_is_tracked_in_the_redline() -> None:
@@ -471,7 +471,7 @@ def test_list_paragraphs_numbers_them_as_tracked_changes() -> None:
     plan = EditPlan(author="Claude", date="2026-10-02T12:00:00Z").for_document(doc).list_paragraphs([2, 3], kind_of_list="decimal")
     result = doc.edit(plan)
     assert result.report.ok, result.report.operations
-    assert result.report.operations[0].paragraph == "body:p:2, body:p:3"
+    assert result.report.operations[0].paragraph == "p2, p3"
     paragraphs = result.clean.inspect().paragraphs
     assert [(p.numbered, p.style) for p in paragraphs[2:]] == [(True, "ListParagraph"), (True, "ListParagraph")]
     assert not any(p.numbered for p in result.redline.reject().inspect().paragraphs)

@@ -195,7 +195,7 @@ ChangeKind = Literal["insertion", "deletion", "move", "formatting"]
 class Change:
     """One tracked change with the id ``Document.accept`` / ``reject`` select by.
 
-    ``id`` is ``{story}:rev:{w:id}`` (``body:rev:12``, ``header1:rev:3``);
+    ``id`` is ``{story}:rev:{w:id}`` (``r12``, ``header1.r3``);
     resolving some changes never renumbers the rest. ``target`` is what the
     change applies to (``text``, ``paragraph_mark``, ``table_row``,
     ``table_cell``, ``properties``). Both sides of a move share
@@ -203,7 +203,7 @@ class Change:
     ``inside`` names the change whose content holds this one: resolving that
     one so its content goes takes this one along. ``ref`` is the short id the
     CLI prints and ``-p``/``--id`` take (``r12``, ``header1.r3``);
-    ``paragraph`` is the id of the paragraph the change is in (``body:p:3``).
+    ``paragraph`` is the id of the paragraph the change is in (``p3``).
     """
 
     id: str
@@ -266,7 +266,7 @@ class Comment:
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
     ``parent`` is the id of the comment it replies to (Word threads are one
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
-    is the paragraph id where the range starts (``body:p:12``), and
+    is the paragraph id where the range starts (``p12``), and
     ``last_paragraph`` the one where it ends when that is a later one;
     ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
     up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
@@ -488,7 +488,7 @@ class Snapshot:
         return hits[0]
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
-        """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
+        """The paragraph with this id (``body:p:N``, ``header1``) or body index."""
         for p in self.paragraphs:
             if p.id == id_or_index or p.index == id_or_index:
                 return p
@@ -606,7 +606,7 @@ def _decode_snapshot(payload: str) -> Snapshot:
 # ---------------------------------------------------------------------------
 
 Selector = str | int | dict[str, str | int]
-"""A paragraph id (``body:p:N``, ``header1:p:0``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
+"""A paragraph id (``body:p:N``, ``header1``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
 ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
@@ -1584,8 +1584,8 @@ class Finding:
     ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
     ``warning`` or ``info``. ``part`` is the package part and ``location``
     the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
-    id (``body:p:3``), or empty for a package-level finding. ``ref`` is the
-    short id the CLI prints for ``location`` (``p3`` for ``body:p:3``).
+    id (``p3``), or empty for a package-level finding. ``ref`` is the
+    short id the CLI prints for ``location`` (``p3`` for ``p3``).
     ``word_fatal`` is true when Word refuses or repairs the file for it,
     ``repairable`` when ``Document.repair`` fixes it.
     """

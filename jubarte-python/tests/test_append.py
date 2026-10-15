@@ -51,7 +51,7 @@ def test_comments_of_b_are_dropped_with_a_warning():
         {
             "schema_version": 1,
             "author": "X",
-            "operations": [{"kind": "comment", "paragraph": "body:p:0", "text": "note"}],
+            "operations": [{"kind": "comment", "paragraph": "p0", "text": "note"}],
         }
     ).clean
     appended = a.append(b)
@@ -65,7 +65,7 @@ def test_comments_of_b_are_carried_on_request():
             {
                 "schema_version": 1,
                 "author": author,
-                "operations": [{"kind": "comment", "paragraph": "body:p:0", "text": note}],
+                "operations": [{"kind": "comment", "paragraph": "p0", "text": note}],
             }
         ).clean
 
