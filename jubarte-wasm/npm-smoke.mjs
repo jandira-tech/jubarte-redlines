@@ -55,7 +55,7 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   const snapshot = JSON.parse(mod.inspectDocument(original));
   assert.equal(snapshot.source_sha256, mod.sourceSha256(original), `${name}: snapshot hash`);
   assert.ok(snapshot.paragraphs.length > 0, `${name}: paragraphs inspected`);
-  assert.match(mod.documentMarkdown(original), /\[body:p:0\]/, `${name}: markdown carries ids`);
+  assert.match(mod.documentMarkdown(original), /\[p0\]/, `${name}: markdown carries ids`);
 
   const first = snapshot.paragraphs.find((p) => p.text.trim().length > 0);
   const plan = JSON.stringify({

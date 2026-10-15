@@ -4970,15 +4970,32 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
 
 /// Collision-proof target name for copying `want` (with `bytes`) into `out`:
 /// free name or byte-identical existing part → `want` unchanged; an existing
-/// part with DIFFERENT content → `{dir}/redlineB[_{n}]_{base}` (first free or
-/// identical candidate). Byte-based on purpose — `part_string` returns None
-/// for binary parts and would treat existing images as absent.
+/// part with DIFFERENT content → the first free or identical candidate: a
+/// header or footer (`header1.xml`) takes the next number of its kind
+/// (`header3.xml`), a name the short ids spell (`header3.p1`); any other
+/// part `{dir}/redlineB[_{n}]_{base}`. Byte-based on purpose — `part_string`
+/// returns None for binary parts and would treat existing images as absent.
 fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
     match out.part_bytes(want) {
         None => want.to_string(),
         Some(existing) if existing == bytes => want.to_string(),
         Some(_) => {
             let (dir, base) = want.rsplit_once('/').unwrap_or(("word", want));
+            let story = ["header", "footer"].into_iter().find(|kind| {
+                base.strip_prefix(kind)
+                    .and_then(|rest| rest.strip_suffix(".xml"))
+                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            });
+            if let Some(kind) = story {
+                for n in 1usize.. {
+                    let candidate = format!("{dir}/{kind}{n}.xml");
+                    match out.part_bytes(&candidate) {
+                        None => return candidate,
+                        Some(existing) if existing == bytes => return candidate,
+                        Some(_) => {}
+                    }
+                }
+            }
             let mut n = 0usize;
             loop {
                 let candidate = if n == 0 {
@@ -9544,6 +9561,32 @@ mod coverage_boundary_tests {
         );
         b.set_part("word/b2.xml", b"original".to_vec());
         assert_eq!(pair_header_footer(&a, &b, &refs, slot, 0, None), None);
+    }
+
+    #[test]
+    fn a_colliding_header_or_footer_takes_the_first_free_number() {
+        // The copy keeps a name the short ids spell (`header3`, `footer2`),
+        // never `redlineB_header1`, which no id names.
+        let mut pkg = package("<w:body/>");
+        pkg.set_part("word/header1.xml", vec![1]);
+        pkg.set_part("word/header2.xml", vec![2]);
+        pkg.set_part("word/footer1.xml", vec![1]);
+        assert_eq!(
+            unique_part_name(&pkg, "word/header1.xml", &[9]),
+            "word/header3.xml"
+        );
+        assert_eq!(
+            unique_part_name(&pkg, "word/header1.xml", &[2]),
+            "word/header2.xml"
+        );
+        assert_eq!(
+            unique_part_name(&pkg, "word/footer1.xml", &[9]),
+            "word/footer2.xml"
+        );
+        assert_eq!(
+            unique_part_name(&pkg, "word/header1.xml", &[1]),
+            "word/header1.xml"
+        );
     }
 
     #[test]

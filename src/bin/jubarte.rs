@@ -3230,9 +3230,9 @@ mod tests {
             "-o",
             "out.docx",
             "--id",
-            "body:rev:1",
+            "r1",
             "--id",
-            "header1:rev:2",
+            "header1.r2",
             "--kind",
             "move",
         ])
@@ -3243,7 +3243,7 @@ mod tests {
         assert_eq!(
             selection.filter(),
             ChangeFilter {
-                ids: Some(vec!["body:rev:1".into(), "header1:rev:2".into()]),
+                ids: Some(vec!["r1".into(), "header1.r2".into()]),
                 authors: None,
                 kinds: Some(vec![ChangeKind::Move]),
             }
