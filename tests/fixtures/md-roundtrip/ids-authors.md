@@ -61,7 +61,7 @@ After them.
 An empty paragraph above
 
 <!-- p15 left -->
-and a joined one.
+&#32;and a joined one.
 
 <!-- p16 left -->
 Last{++ words++}{>>r21 @AL<<}
