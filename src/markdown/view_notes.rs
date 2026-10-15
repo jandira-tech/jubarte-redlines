@@ -825,10 +825,12 @@ pub(super) fn note_paragraphs(line: &str) -> Option<usize> {
     last.checked_sub(first)?.checked_add(1)
 }
 
-/// The style a note definition's id line names after its id
-/// (`<!-- endnotes.p0 Endnote -->`, `<!-- footnotes.p1 "My Note" -->`):
-/// the note's paragraphs are in it, not in Word's note style.
-pub(super) fn note_style(line: &str) -> Option<String> {
+/// The styles a note definition's id line names after its id, one per
+/// paragraph, the last for every paragraph after it
+/// (`<!-- endnotes.p0 Endnote -->`, `<!-- footnotes.p1-p2 FootnoteText,
+/// "My Note" -->`): the note's paragraphs are in them, not in Word's note
+/// style. `None` for a line that names none, or a malformed list.
+pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
     note_line(line, "footnotes").or_else(|| note_line(line, "endnotes"))?;
     let inner = line
         .trim()
@@ -839,7 +841,14 @@ pub(super) fn note_style(line: &str) -> Option<String> {
     if id.ends_with(',') {
         return None;
     }
-    take_style(rest.trim()).map(|(style, _)| style)
+    let mut styles = Vec::new();
+    let mut rest = rest.trim();
+    while !rest.is_empty() {
+        let (style, after) = take_style(rest)?;
+        styles.push(style);
+        rest = after;
+    }
+    (!styles.is_empty()).then_some(styles)
 }
 
 /// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).

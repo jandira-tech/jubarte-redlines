@@ -399,7 +399,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let mut note_ids: HashMap<String, String> = HashMap::new();
     // The style of each note whose first paragraph is not in Word's own
     // (`footnote text`, `endnote text`), by label: its id line names it.
-    let mut note_styles: HashMap<String, String> = HashMap::new();
+    let mut note_styles: HashMap<String, Vec<String>> = HashMap::new();
     // The notes a definition line shows.
     let mut defined: HashSet<(bool, String)> = HashSet::new();
     while index < writer.note_refs.len() {
@@ -426,33 +426,49 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         // Every paragraph the id line counts, a table's cells' too: the
         // view has no table in a note, so they are the note's paragraphs.
         let paragraphs = agent::paragraphs(note);
+        // Each paragraph's style, Word's own as `own`; `None` when every
+        // paragraph is in Word's own, a run of the last style left out.
         let note_style = {
             let own = if key.0 { "EndnoteText" } else { "FootnoteText" };
-            let id = paragraphs
-                .first()
-                .and_then(|p| p.path(&["pPr", "pStyle"]))
-                .and_then(|s| s.attr("val"))
-                .filter(|id| Some(*id) != default_style.as_deref());
-            match id {
-                None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
-                // Word's own, under any id (`a5` in a localized document).
-                Some(id)
-                    if writer
-                        .styles
-                        .by_id
-                        .get(id)
-                        .map_or(id.eq_ignore_ascii_case(own), |s| {
-                            s.name
-                                == if key.0 {
-                                    "endnote text"
-                                } else {
-                                    "footnote text"
-                                }
-                        }) =>
-                {
-                    None
+            let own_name = if key.0 {
+                "endnote text"
+            } else {
+                "footnote text"
+            };
+            let styles: Vec<Option<String>> = paragraphs
+                .iter()
+                .map(|p| {
+                    let id = p
+                        .path(&["pPr", "pStyle"])
+                        .and_then(|s| s.attr("val"))
+                        .filter(|id| Some(*id) != default_style.as_deref());
+                    match id {
+                        None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
+                        // Word's own, under any id (`a5` in a localized document).
+                        Some(id)
+                            if writer
+                                .styles
+                                .by_id
+                                .get(id)
+                                .map_or(id.eq_ignore_ascii_case(own), |s| s.name == own_name) =>
+                        {
+                            None
+                        }
+                        Some(id) => Some(id.to_string()),
+                    }
+                })
+                .collect();
+            if styles.iter().all(Option::is_none) {
+                None
+            } else {
+                let mut list: Vec<String> = styles
+                    .into_iter()
+                    .map(|s| s.unwrap_or_else(|| own.to_string()))
+                    .collect();
+                while list.len() > 1 && list[list.len() - 1] == list[list.len() - 2] {
+                    list.pop();
                 }
-                Some(id) => Some(id.to_string()),
+                Some(list)
             }
         };
         let many = writer.agent && paragraphs.len() > 1;
@@ -740,15 +756,21 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
         // The comments' and notes' paragraph styles too, as the stories'
         // below.
-        let mut note_list: Vec<&String> = note_styles.values().collect();
+        // Word's own note styles stand for themselves in a note's list.
+        let mut note_list: Vec<&String> = note_styles
+            .values()
+            .flatten()
+            .filter(|s| !matches!(s.as_str(), "FootnoteText" | "EndnoteText"))
+            .collect();
         note_list.sort();
+        // CommentText is the comments' own, not a note's.
         for style in comment_facts
             .iter()
             .map(|c| c.style.as_str())
+            .filter(|s| *s != "CommentText")
             .chain(note_list.into_iter().map(String::as_str))
         {
             if style != default_style.as_deref().unwrap_or("Normal")
-                && style != "CommentText"
                 && styles_root.as_ref().is_some_and(|root| {
                     root.children_named("style").any(|s| {
                         s.attr("type") == Some("paragraph") && s.attr("styleId") == Some(style)
@@ -1089,8 +1111,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     Some(id) => {
                         let style = agent::note_label(def)
                             .and_then(|label| note_styles.get(label))
-                            .map(|style| {
-                                format!(" {}", crate::markdown::view_notes::style_token(style))
+                            .map(|styles| {
+                                let tokens: Vec<String> = styles
+                                    .iter()
+                                    .map(|s| crate::markdown::view_notes::style_token(s))
+                                    .collect();
+                                format!(" {}", tokens.join(", "))
                             })
                             .unwrap_or_default();
                         format!("<!-- {id}{style} -->\n{def}")

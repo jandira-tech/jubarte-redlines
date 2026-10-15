@@ -15,34 +15,51 @@ const STYLES_CT: &str = "application/vnd.openxmlformats-officedocument.wordproce
 const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 /// Normal, Word's note styles under their ids, LibreOffice's `Endnote`, a
-/// localized `a5` named `footnote text`, and `My Note`.
+/// localized `a5` named `footnote text`, `My Note`, and a `CommentText`
+/// whose size (7.5pt) is the document's own.
 fn styles_xml() -> String {
     let w = common::docx::W_NS;
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText"><w:name w:val="endnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Endnote"><w:name w:val="Endnote"/><w:basedOn w:val="Normal"/><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="a5"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="My Note"><w:name w:val="My Note"/><w:basedOn w:val="Normal"/></w:style></w:styles>"#
+<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText"><w:name w:val="endnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Endnote"><w:name w:val="Endnote"/><w:basedOn w:val="Normal"/><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="a5"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="My Note"><w:name w:val="My Note"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="15"/></w:rPr></w:style></w:styles>"#
     )
 }
 
 /// A docx whose body references one note of `kind` (`footnote` or
 /// `endnote`) per entry of `styles` (`None`: no `w:pStyle`).
 fn docx(kind: &str, styles: &[Option<&str>]) -> Vec<u8> {
+    let notes: Vec<Vec<Option<&str>>> = styles.iter().map(|s| vec![*s]).collect();
+    docx_paragraphs(kind, &notes)
+}
+
+/// A docx with one note of `kind` per entry of `notes`, a paragraph per
+/// entry of that note (its `w:pStyle`, `None` for none).
+fn docx_paragraphs(kind: &str, notes_styles: &[Vec<Option<&str>>]) -> Vec<u8> {
     let (w, r) = (common::docx::W_NS, common::docx::R_NS);
     let mut body = String::new();
     let mut notes = format!(
         r#"<w:{kind} w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:{kind}><w:{kind} w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:{kind}>"#
     );
-    for (i, style) in styles.iter().enumerate() {
+    for (i, styles) in notes_styles.iter().enumerate() {
         let id = i + 1;
         body.push_str(&format!(
             r#"<w:p><w:r><w:t>Clause {id}.</w:t></w:r><w:r><w:{kind}Reference w:id="{id}"/></w:r></w:p>"#
         ));
-        let ppr = style
-            .map(|s| format!(r#"<w:pPr><w:pStyle w:val="{s}"/></w:pPr>"#))
-            .unwrap_or_default();
-        notes.push_str(&format!(
-            r#"<w:{kind} w:id="{id}"><w:p>{ppr}<w:r><w:{kind}Ref/></w:r><w:r><w:t xml:space="preserve"> Note {id}.</w:t></w:r></w:p></w:{kind}>"#
-        ));
+        let mut paragraphs = String::new();
+        for (at, style) in styles.iter().enumerate() {
+            let ppr = style
+                .map(|s| format!(r#"<w:pPr><w:pStyle w:val="{s}"/></w:pPr>"#))
+                .unwrap_or_default();
+            let mark = if at == 0 {
+                format!("<w:r><w:{kind}Ref/></w:r>")
+            } else {
+                String::new()
+            };
+            paragraphs.push_str(&format!(
+                r#"<w:p>{ppr}{mark}<w:r><w:t xml:space="preserve"> Note {id}, part {at}.</w:t></w:r></w:p>"#
+            ));
+        }
+        notes.push_str(&format!(r#"<w:{kind} w:id="{id}">{paragraphs}</w:{kind}>"#));
     }
     let notes = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -118,6 +135,30 @@ fn note_styles(docx: &[u8], kind: &str) -> Vec<String> {
         .collect()
 }
 
+/// Every paragraph's `w:pStyle` of each real note in `kind`s.xml, `-` for
+/// none; separators left out.
+fn paragraph_styles(docx: &[u8], kind: &str) -> Vec<Vec<String>> {
+    part(docx, &format!("word/{kind}s.xml"))
+        .split(&format!("<w:{kind} "))
+        .skip(1)
+        .filter(|n| !n.contains("w:type="))
+        .map(|n| {
+            n.split("<w:p>")
+                .chain(n.split("<w:p ").skip(1))
+                .skip(1)
+                .map(|p| {
+                    let p = &p[..p.find("</w:p>").unwrap_or(p.len())];
+                    p.split("<w:pStyle w:val=\"")
+                        .nth(1)
+                        .and_then(|s| s.split('"').next())
+                        .unwrap_or("-")
+                        .to_string()
+                })
+                .collect()
+        })
+        .collect()
+}
+
 #[test]
 fn notes_in_word_style_print_no_style() {
     let docx = docx("footnote", &[Some("FootnoteText")]);
@@ -168,5 +209,63 @@ fn a_note_style_id_with_a_space_is_quoted() {
     let (view, again, view_again) = round_trip(&docx);
     assert!(view.contains(r#" "My Note" -->"#), "{view}");
     assert_eq!(note_styles(&again, "endnote"), ["My Note"]);
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_note_keeps_each_paragraphs_style() {
+    // Codex on #495: the first paragraph's style overwrote the others'.
+    let docx = docx_paragraphs(
+        "endnote",
+        &[vec![Some("Endnote"), Some("EndnoteText"), None]],
+    );
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(view.contains(" Endnote, EndnoteText, Normal -->"), "{view}");
+    assert_eq!(
+        paragraph_styles(&again, "endnote"),
+        [["Endnote", "EndnoteText", "-"]]
+    );
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_note_in_one_style_names_it_once() {
+    let docx = docx_paragraphs("endnote", &[vec![Some("Endnote"), Some("Endnote")]]);
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(view.contains(" Endnote -->"), "{view}");
+    assert_eq!(
+        paragraph_styles(&again, "endnote"),
+        [["Endnote", "Endnote"]]
+    );
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_note_whose_later_paragraph_has_a_style_names_words_own_first() {
+    let docx = docx_paragraphs("footnote", &[vec![Some("FootnoteText"), Some("My Note")]]);
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(view.contains(r#" FootnoteText, "My Note" -->"#), "{view}");
+    assert_eq!(
+        paragraph_styles(&again, "footnote"),
+        [["FootnoteText", "My Note"]]
+    );
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_note_in_comment_text_keeps_its_definition() {
+    // Codex on #495: CommentText was left out of the legend for notes too.
+    let docx = docx("footnote", &[Some("CommentText")]);
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(view.contains(" CommentText -->"), "{view}");
+    let styles = part(&again, "word/styles.xml");
+    let definition = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"CommentText\""))
+        .unwrap_or_else(|| panic!("no CommentText: {styles}"));
+    assert!(
+        definition.contains(r#"<w:sz w:val="15"/>"#),
+        "{view}\n{definition}"
+    );
     assert_eq!(view_again, view);
 }
