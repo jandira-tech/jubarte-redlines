@@ -15,7 +15,7 @@ styles:
 headers:
   default: {id: header1, text: "Sub {~~old~>new~~}{>>header1.r91+90 @AL<<}. Runs {~~CD~>AB~~}{>>header1.r94+95+92+93 @AL<<}. Keep {++mine++}{>>header1.r3 @??<<}"}
 footers:
-  default: {id: footer1, text: "Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<} \\{PAGE}", rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; break-del footer1.r40 @BC in footer1.p1}
+  default: {id: footer1, text: ["Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<} \\{PAGE}", ""], rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; break-del footer1.r40 @BC in footer1.p1}
 ---
 
 <!-- p0 -->
