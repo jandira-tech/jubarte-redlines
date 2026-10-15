@@ -9,20 +9,20 @@ body: p0-p12, 3 tables, 1 page     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  tables: TableGrid, Ledger
+  tables: TableNormal, Ledger
 ---
 
 <!-- p0 -->
 No style:
 
-<!-- t0 1x3, cells p1-p3 by row -->
+<!-- t0 1x3, cells p1-p3 by row, style TableNormal -->
 |x|y|z|
 |-|-|-|
 
 <!-- p4 -->
 Table Grid:
 
-<!-- t1 1x3, cells p5-p7 by row, style TableGrid -->
+<!-- t1 1x3, cells p5-p7 by row -->
 |x|y|z|
 |-|-|-|
 
