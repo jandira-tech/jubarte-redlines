@@ -28,6 +28,12 @@
 //! and pandoc's for code (`SourceCode`, `VerbatimChar`), so a reference
 //! document made by Word or by pandoc styles the output
 //! ([`DocxOptions::reference`]).
+//!
+//! Backs `jubarte convert FILE.md`, `jubarte convert FILE.docx -t md`,
+//! `jubarte read`, the redline task's Markdown side
+//! ([`crate::markdown::RedlineOptions`], [`crate::markdown::redline`]) and
+//! the patch task ([`crate::markdown::Patch`]), plus the Python and WASM
+//! bindings over them.
 
 mod anchor;
 mod critic;
@@ -60,10 +66,12 @@ pub(crate) use package::{ensure_footnotes_part, max_drawing_id};
 pub(crate) use write::read_picture;
 pub(crate) use xml::{Picture, drawing_xml};
 
-/// What happens to the tracked changes a document describes.
+/// What happens to the tracked changes a Markdown / `.docx` document
+/// describes. Backs the `convert`, `read`, and `diff` CLI flags of the
+/// same names and pandoc's `--track-changes`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TrackChanges {
-    /// Keep them as tracked changes (the default).
+    /// Keep tracked changes as tracked changes (the default).
     #[default]
     All,
     /// Accept every change, as Word's Accept All does.
@@ -73,7 +81,8 @@ pub enum TrackChanges {
 }
 
 impl TrackChanges {
-    /// `all`, `accept` or `reject`, the values of pandoc's `--track-changes`.
+    /// Parses `"all"`, `"accept"` or `"reject"`, the values of pandoc's
+    /// `--track-changes`. Returns `None` for any other input.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "all" => Some(Self::All),
@@ -84,9 +93,11 @@ impl TrackChanges {
     }
 }
 
-/// The page a Markdown document is written on when no reference document
-/// gives one. Both sizes keep one-inch margins: Word's own A4 template uses
-/// 2 cm margins, but jubarte changes only the page size the user asks for.
+/// The page a Markdown document is written on when no reference
+/// document gives one. Backs the `convert --page` CLI flag and the
+/// Markdown path of the redline. Both sizes use one-inch margins;
+/// Word's own A4 template uses 2 cm margins, but jubarte changes only
+/// the page size the user asks for.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -100,7 +111,8 @@ pub enum PageSize {
 }
 
 impl PageSize {
-    /// `letter` or `a4`, the values of the CLI's `--page`.
+    /// Parses `"letter"` or `"a4"`, the values of the CLI's `--page`.
+    /// Returns `None` for any other input.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "letter" => Some(Self::Letter),
@@ -109,7 +121,7 @@ impl PageSize {
         }
     }
 
-    /// The name [`PageSize::parse`] reads.
+    /// Returns the name [`Self::parse`] reads (`"letter"` or `"a4"`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Letter => "letter",
@@ -118,9 +130,10 @@ impl PageSize {
     }
 }
 
-/// The Markdown with its CriticMarkup resolved: `Accept` keeps insertions
-/// and drops deletions, `Reject` the other way round, and both keep
-/// highlighted text and drop comments. `All` returns the Markdown as it is.
+/// Resolves the CriticMarkup in `markdown` as `track_changes` says:
+/// `Accept` keeps insertions and drops deletions, `Reject` the other way
+/// round; both keep highlighted text (`{==…==}`) and drop comments
+/// (`{>>…<<}`). `All` returns the Markdown as it is.
 ///
 /// ```
 /// use jubarte::markdown::{TrackChanges, resolve_critic};
@@ -142,10 +155,18 @@ pub(crate) fn accepted_clauses(markdown: &str) -> String {
     critic::accept_clauses(markdown)
 }
 
-/// Reads an image a Markdown document names, by the path it names.
+/// Callback that, given the path an image in a Markdown document
+/// names, returns the image bytes. Backs `convert --resource-path`
+/// and the Python / WASM image-loader binding; `None` falls back to the
+/// image's alt text.
 pub type ImageLoader<'a> = &'a dyn Fn(&str) -> Option<Vec<u8>>;
 
-/// How [`markdown_to_docx`] writes a document.
+/// How [`markdown_to_docx`] writes a Markdown document to a `.docx`.
+/// Defaults to Word-faithful settings: no reference document,
+/// `critic = true` (CriticMarkup is read as tracked changes),
+/// `track_changes = All`, author `"Redline"`, date pinned to
+/// `1970-01-01T00:00:00Z` (so the same Markdown writes the same bytes),
+/// no image loader, US Letter page size.
 #[derive(Clone)]
 pub struct DocxOptions<'a> {
     /// A `.docx` whose styles, numbering, page setup, headers and footers
@@ -277,7 +298,9 @@ impl std::fmt::Debug for DocxOptions<'_> {
     }
 }
 
-/// How [`docx_to_markdown`] reads a document.
+/// How [`docx_to_markdown`] reads a `.docx`. Defaults to the plain
+/// Markdown conversion with all revisions kept and `<!-- page N of M
+/// -->` lines emitted from Word's cached breaks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkdownOptions {
     /// `All` writes tracked changes and comments as CriticMarkup; `Accept`
@@ -328,26 +351,28 @@ impl Default for MarkdownOptions {
     }
 }
 
-/// Which blocks of the agent view to print (`-p`, `--head`, `--tail`,
-/// `--changed`).
+/// Which blocks of the agent view to print. Backs the `read` and
+/// `edit` CLI flags `-p`, `--head`, `--tail`, and `--changed` (with
+/// `--by`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Select {
-    /// The first `n` blocks (a table is one block).
+    /// The first `n` blocks (`--head N`); a table is one block.
     Head(usize),
-    /// The last `n` blocks.
+    /// The last `n` blocks (`--tail N`).
     Tail(usize),
-    /// Paragraphs and tables by id, in document order.
+    /// Paragraphs and tables by id, in document order (`-p`).
     Picks(Vec<Pick>),
-    /// The blocks that carry a tracked change or a comment; with `by`, only
-    /// those with that author's marks (`by` is a handle such as `AC`, with
-    /// or without the `@`, or the author's full name).
+    /// The blocks that carry a tracked change or a comment (`--changed`);
+    /// with `by`, only those with that author's marks (`by` is a handle
+    /// such as `AC`, with or without the `@`, or the author's full name).
     Changed {
         /// The author whose marks a block must hold.
         by: Option<String>,
     },
 }
 
-/// One item of a `-p` selection.
+/// One item of a `-p` selection: a contiguous paragraph range (`pN`,
+/// `pN-pM`, `pN-`, `-pM`) or a whole table (`tN`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pick {
     /// `pN`, `pN-pM`, `pN-` (to the end, `to: None`), `-pM` (`from: 0`).
@@ -361,9 +386,12 @@ pub enum Pick {
     Table(usize),
 }
 
-/// The author `--changed --by` names, its padding cut: a handle such as `AC`
-/// or `@AC` (one `@`, the handle right after it), or the full name. The CLI
-/// and the bindings both check it here.
+/// Validates the author `--changed --by` names: a handle such as `AC` or
+/// `@AC` (one `@`, the handle right after it), or the full name. The CLI
+/// and the Python / WASM bindings route their check through here.
+///
+/// Returns the original (untrimmed outer whitespace removed) handle on
+/// success; an error string otherwise.
 pub fn author(by: &str) -> Result<&str, String> {
     let by = by.trim();
     let name = by.strip_prefix('@').unwrap_or(by);
@@ -375,9 +403,20 @@ pub fn author(by: &str) -> Result<&str, String> {
 }
 
 impl Select {
-    /// The selection of `read`'s `-p`, `--head` and `--tail` (in that order
-    /// of precedence), or of `--changed` with its `--by`; `None` when none is
-    /// given. `--changed` excludes the other three, and `--by` needs it.
+    /// Selects the right [`Select`] variant from `read`'s CLI flags:
+    /// `-p` (`paragraphs`), `--head`, `--tail`, `--changed` with
+    /// `--by`, in that order of precedence. Returns `Ok(None)` when none
+    /// is given.
+    ///
+    /// # Errors
+    ///
+    /// An error string when:
+    /// - `--by` is set without `--changed`;
+    /// - `--changed` is set with any of `-p` / `--head` / `--tail`;
+    /// - the `--by` value does not parse as an author
+    ///   ([`author`]);
+    /// - the `-p` spec does not parse as a paragraph / table selection
+    ///   ([`Self::parse`]).
     pub fn from_flags(
         paragraphs: Option<&str>,
         head: Option<usize>,
@@ -573,10 +612,20 @@ pub struct ReadDocx {
     pub selected_stories: Vec<String>,
 }
 
-/// A `.docx` as Markdown: headings, emphasis, links, lists, tables,
-/// footnotes and equations (as LaTeX), with tracked changes and comments as
-/// CriticMarkup (`{++new++}`, `{--old--}`, `{==text==}{>>note<<}`), each
-/// change followed by its author and date.
+/// Reads a `.docx` as Markdown: headings, emphasis, links, lists,
+/// tables, footnotes and equations (as LaTeX), with tracked changes and
+/// comments as CriticMarkup (`{++new++}`, `{--old--}`, `{~~old~>new~~}`,
+/// `{==text==}{>>note<<}`), each change followed by its author and
+/// date. Backs the Markdown output of `jubarte convert FILE.docx -t md`
+/// and the Python / WASM `docx_to_markdown` binding.
+///
+/// # Errors
+///
+/// [`MarkdownError::Docx`] when the bytes are not a `.docx` (a `.doc`,
+/// an encrypted document, or RTF is named for what it is rather than
+/// read as a bad ZIP), or when the document cannot be read by
+/// `from_docx` (an OPC read failure, a malformed part, or a missing
+/// main document part).
 ///
 /// ```
 /// use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
@@ -618,7 +667,10 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     })
 }
 
-/// How [`read`] prints the agent view (`jubarte read`).
+/// How [`read`] (and `jubarte read`) prints the agent view. Defaults
+/// to all tracked changes as CriticMarkup, comments inline, no inline
+/// timestamps on notes, `<!-- page N of M -->` lines from the layout
+/// pass, no selection, and no source name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadOptions {
     /// Keep the changes as CriticMarkup (`All`), or print the document
@@ -649,12 +701,13 @@ impl Default for ReadOptions {
     }
 }
 
-/// The agent view of a document and what it could not show.
+/// A document's agent view and what [`read`] could not show (always
+/// populated, even empty).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReadView {
     /// The YAML header and the Markdown with id lines.
     pub markdown: String,
-    /// Why the page markers are missing (the layout pass failed), and the
+    /// Why the page markers are missing (the layout pass failed) and the
     /// like. The view is complete otherwise.
     pub warnings: Vec<String>,
     /// The body paragraphs [`ReadOptions::select`] kept (`N` of `pN`,
@@ -665,10 +718,22 @@ pub struct ReadView {
     pub selected_stories: Vec<String>,
 }
 
-/// The agent view every surface prints for `read` (alias `text`): a YAML
-/// header, then Markdown with an `<!-- pN -->` id line before every
-/// paragraph, tracked changes and comments with their ids, and page markers
-/// from the layout pass. See `docs/MARKDOWN.md`, "Agent view".
+/// Reads a `.docx` as the agent view every surface prints for `read`
+/// (alias `text`): a YAML header, then Markdown with an `<!-- pN -->`
+/// id line before every paragraph, tracked changes and comments with
+/// their ids, and `<!-- page N of M -->` markers from the layout pass.
+/// Backs `jubarte read`, `jubarte text`, and the Python / WASM `read`
+/// binding. See `docs/MARKDOWN.md`, "Agent view".
+///
+/// The view is built with [`docx_to_markdown`] and, when `page_markers`
+/// is on, [`page_texts`] feeds [`paginate`] the per-page painted text;
+/// the converter failure (if any) is recorded as a warning and the
+/// markers come from the document's own breaks instead.
+///
+/// # Errors
+///
+/// [`MarkdownError::Docx`] when [`docx_to_markdown`] cannot read the
+/// document.
 ///
 /// ```
 /// use jubarte::markdown::{DocxOptions, ReadOptions, markdown_to_docx, read};
@@ -775,11 +840,26 @@ pub fn read_snapshot(
     Ok(snapshot)
 }
 
-/// What `edit` and `add` print after applying: the blocks of `docx` (the
-/// redline, or with `accepted` its accepted text with `rev` tags on the id
-/// lines) that carry `author`'s marks, as the agent view without page
-/// markers. When none does, as after resolving another author's comment,
-/// the blocks changed by anyone.
+/// The view `jubarte edit` and `jubarte add` print after applying:
+/// the blocks of `docx` (the redline, or with `accepted` its accepted
+/// text with `rev` tags on the id lines) that carry `author`'s marks,
+/// as the agent view without page markers. When none does, as after
+/// resolving another author's comment, the blocks changed by anyone.
+///
+/// # Inputs
+///
+/// - `docx` — the document to read.
+/// - `author` — the author whose marks select the blocks.
+/// - `accepted` — `false` keeps the tracked changes as CriticMarkup;
+///   `true` reads the accepted text with `rev` clauses on the id
+///   lines.
+/// - `source` — the `source:` line written into the header; `None`
+///   leaves it as `(bytes)`.
+///
+/// # Errors
+///
+/// [`MarkdownError::Docx`] when [`docx_to_markdown`] cannot read the
+/// document.
 pub fn changed_view(
     docx: &[u8],
     author: &str,
@@ -810,8 +890,27 @@ pub fn changed_view(
 }
 
 /// The text the layout pass paints on each page, with the document's
-/// changes kept, accepted or rejected: what [`paginate`] matches blocks
-/// against for `<!-- page N of M -->` lines.
+/// changes kept (`TrackChanges::All`), accepted (`TrackChanges::Accept`)
+/// or rejected (`TrackChanges::Reject`). What [`paginate`] matches body
+/// blocks against to place `<!-- page N of M -->` lines, and what [`read`]
+/// feeds to its markdown converter.
+///
+/// # Inputs
+///
+/// - `docx` — the document to lay out.
+/// - `track_changes` — accept or reject its revisions before laying out,
+///   or keep them.
+/// - `revisions` — how the layout pass paints revision marks (the
+///   conventional red/blue/green redline, the Word-style marks, or a
+///   [`crate::convert::RevisionPalette`]). The bench suite measures
+///   against `RevisionStyle::Word`; call sites that compare a `jubarte`
+///   PDF against a Word one must pass [`RevisionStyle::Word`].
+///
+/// # Errors
+///
+/// An error string when accepting or rejecting every revision fails, or
+/// the layout pass fails to admit the package, find its main document
+/// part, or emit its PDF object stream.
 pub fn page_texts(
     docx: &[u8],
     track_changes: TrackChanges,
@@ -870,7 +969,10 @@ pub struct WrittenDocx {
     pub warnings: Vec<String>,
 }
 
-/// Why a document could not be written.
+/// Why a Markdown / `.docx` document could not be read or written. The
+/// variants name which side failed: the reference document the caller
+/// gave, the assembled package, or the document the caller asked to
+/// read.
 #[derive(Debug)]
 pub enum MarkdownError {
     /// The reference document is not a readable `.docx`.

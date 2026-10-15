@@ -4,16 +4,21 @@
 
 //! A Markdown edit of a Word document, applied to the document itself.
 //!
-//! The Markdown is read as the document's text after an edit: however it
-//! was made (pandoc, `jubarte text`, a converter, an agent), its blocks are
-//! aligned with the body's paragraphs by their text, and only what differs
-//! is edited, through an [edit plan](crate::edit): a paragraph whose text
-//! changed is rewritten word by word, so its runs, formatting, fields and
-//! properties stay; a block the document lacks becomes a paragraph next to
-//! its neighbours, taking the properties of a neighbour of its kind; a
-//! paragraph the Markdown lacks is deleted. Empty paragraphs, which Markdown
-//! cannot hold, are left alone, and typed numbering (`1.`, `(a)`) that the
-//! Markdown writes as a list marker is kept.
+//! The Markdown is read as the document's text after an edit, however it
+//! was made (pandoc, `jubarte text`, a converter, an agent). Its blocks
+//! are aligned with the body's paragraphs by their text, and only what
+//! differs is edited, through an [edit plan](crate::edit): a paragraph
+//! whose text changed is rewritten word by word, so its runs,
+//! formatting, fields and properties stay; a block the document lacks
+//! becomes a paragraph next to its neighbours, taking the properties of
+//! a neighbour of its kind; a paragraph the Markdown lacks is deleted.
+//! Empty paragraphs, which Markdown cannot hold, are left alone, and
+//! typed numbering (`1.`, `(a)`) that the Markdown writes as a list
+//! marker is kept.
+//!
+//! Backs `jubarte edit FILE EDITIONS.md`, the `PATCH.md` edit-plan
+//! companion path (a Markdown sketch of the same edits), and the
+//! Python / WASM [`apply_markdown`] binding.
 
 use std::collections::HashSet;
 
@@ -34,12 +39,21 @@ const PAIR_SIMILARITY: f64 = 0.3;
 /// of it; above this many comparisons they pair by position.
 const MAX_PAIRINGS: usize = 2_500;
 
-/// A document edited as Markdown.
+/// A Word document the Markdown edits landed on.
+///
+/// Returned by [`apply_markdown`]; writes a clean `.docx` (no tracked
+/// changes) where the Markdown rewrote, inserted or deleted body
+/// paragraphs, with anything the document could not take reported in
+/// [`Self::warnings`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Patched {
     /// The edited `.docx`, without tracked changes.
     pub docx: Vec<u8>,
-    /// What the Markdown changed that the document could not take.
+    /// What the Markdown changed that the document could not take: a
+    /// footnote whose text is on the Markdown side but not applied, a
+    /// table cell that would have needed row and column work the engine
+    /// does not attempt, a paragraph the engine could not edit for the
+    /// reason the first failure gave.
     pub warnings: Vec<String>,
 }
 
@@ -74,8 +88,24 @@ struct Paragraph {
     kind: Kind,
 }
 
-/// `docx` edited to read as `markdown`. A document with tracked changes is
-/// read with them accepted.
+/// Edits `docx` so its body reads as `markdown`, keeping the
+/// paragraphs' own runs, formatting, fields and properties, and
+/// reporting what the document could not take in
+/// [`Patched::warnings`]. A document with tracked changes is read with
+/// them accepted; the result is a clean `.docx`.
+///
+/// Backs `jubarte edit FILE EDITIONS.md` and the Python / WASM
+/// `apply_markdown` binding.
+///
+/// # Errors
+///
+/// [`MarkdownError::Package`] when:
+/// - the source fails to admit, list its tracked changes, or list its
+///   body paragraphs (covered by `InspectError`);
+/// - the edit-plan engine refuses an edit the engine cannot represent
+///   after four retries at falling back to whole-paragraph replacements
+///   and dropping the failing edits;
+/// - the Markdown has footnote text the body-only editor does not apply.
 ///
 /// ```
 /// use jubarte::markdown::{DocxOptions, apply_markdown, markdown_to_docx};

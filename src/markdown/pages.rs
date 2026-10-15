@@ -34,13 +34,27 @@ const SHORT_KEY_CHARS: usize = 12;
 /// a field whose result differs) keeps the page of the block before it.
 const SEARCH_WINDOW: usize = 20_000;
 
-/// `markdown` with a `<!-- page N of M -->` line before the first block that
-/// starts on each page, and `<!-- page 1 of M -->` first. `pages` holds the
-/// text painted on each page, in order (`convert::RenderReport::pages`).
-/// Markers go only before a block (a line after a blank line), never inside
-/// a table, a list (tight or loose) or a code fence, so a page that starts
-/// mid-block is named at the next block. With no pages, `markdown` is
-/// returned as it is.
+/// Returns `markdown` with a `<!-- page N of M -->` HTML comment line
+/// before the first block that starts on each page, plus a
+/// `<!-- page 1 of M -->` line at the start.
+///
+/// # Inputs
+///
+/// - `markdown` — the agent-view Markdown
+///   ([`super::read`], [`super::docx_to_markdown`], or anything with the
+///   same id and table lines).
+/// - `pages` — text painted on each page, in order, as
+///   [`crate::convert::RenderReport::pages`] reports them. The CLIs and
+///   agents build this with the layout pass.
+///
+/// # Behaviour
+///
+/// Markers appear only before a block (a non-empty line after a blank
+/// line), never inside a table, a tight or loose list, or a fenced code
+/// block; a page that starts mid-block is named at the next block, never
+/// inside it. Agent-view id and table lines (`<!-- pN -->`, `<!-- tN -->`)
+/// at a block's start are held above the marker so the marker lands ahead
+/// of them. Without `pages`, `markdown` is returned unchanged.
 #[must_use]
 pub fn paginate(markdown: &str, pages: &[&str]) -> String {
     let total = pages.len();
