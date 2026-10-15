@@ -19,36 +19,44 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Machine-readable capability manifest (`schema_version` 1).
+/// Machine-readable capability manifest reported by
+/// `jubarte capabilities --json` and `capabilities::capabilities_json`.
+/// `schema_version` is `1`; the schema is intentionally narrow so an agent
+/// can detect an old build without parsing every field.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capabilities {
-    /// Manifest schema version.
+    /// Manifest schema version; `1` for this build.
     pub schema_version: u32,
-    /// Engine crate version.
+    /// Engine crate version, as `CARGO_PKG_VERSION`.
     pub engine_version: String,
-    /// `cli`, `python`, `rust`, ...: the surface reporting.
+    /// The surface reporting (`cli`, `python`, `rust`, `wasm`, …); the
+    /// value a host passes to [`capabilities`].
     pub runtime: String,
     /// Operation name to availability in this build.
     pub operations: Operations,
-    /// Edit plan schema versions this build accepts.
+    /// Edit plan schema versions this build accepts (currently `1`).
     pub edit_plan_versions: Vec<u32>,
-    /// Operation kinds an edit plan may contain.
+    /// Operation kinds an edit plan may contain
+    /// ([`crate::edit::OperationKind`] variants, in a stable order).
     pub edit_operations: Vec<String>,
-    /// Scope limits an agent must plan around.
+    /// Scope limits an agent must plan around (story kinds, opaque ranges,
+    /// legacy `.doc` support, and the package budgets).
     pub limits: Limits,
-    /// Audit codes `validate --rules` takes ([`crate::audit::RULES`]
-    /// order).
+    /// Audit codes `validate --rules` accepts, in
+    /// [`crate::audit::RULES`] order.
     #[serde(default)]
     pub audit_rules: Vec<String>,
-    /// Rule sets `validate --rules` takes, `word` (the default) first
-    /// ([`crate::validate::RULE_SETS`]).
+    /// Rule sets `validate --rules` accepts, with `word` (the default)
+    /// first ([`crate::validate::RULE_SETS`]).
     #[serde(default)]
     pub validate_rules: Vec<String>,
-    /// The extensions each task's `-o` writes, by task
-    /// ([`OUTPUT_FORMATS`]; `diff` writes text under five).
+    /// The file extensions each task's `-o` writes, indexed by task name
+    /// ([`OUTPUT_FORMATS`]; `diff` writes text under `.md`, `.markdown`,
+    /// `.txt`, `.patch`, `.diff`).
     #[serde(default)]
     pub formats: BTreeMap<String, Vec<String>>,
-    /// The id spellings each kind of target takes.
+    /// The id spellings each kind of target takes, as sample tokens plus a
+    /// shell-safety note ([`crate::ids`]).
     #[serde(default)]
     pub ids: Ids,
 }
@@ -57,9 +65,12 @@ pub struct Capabilities {
 /// ([`crate::ids`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ids {
-    /// Tracked changes (`accept`/`reject --id`, `edit -p … --accept`).
+    /// Sample change-id spellings (`r12`, `r1+2`, `header1.r1`, …)
+    /// used by `accept` / `reject --id` and `edit -p … --accept` /
+    /// `--reject`.
     pub change: Vec<String>,
-    /// Comments (`edit`/`add -p`, a plan's `comment_id`).
+    /// Sample comment-id spellings (`c27`) used by `edit` / `add
+    /// -p` and an edit plan's `comment_id`.
     pub comment: Vec<String>,
     /// The text a comment covers (`edit -p`, a plan's `paragraph`).
     #[serde(default)]
@@ -78,55 +89,68 @@ pub struct Ids {
     pub note: String,
 }
 
-/// Availability per operation.
+/// Per-operation availability in this build. Every operation is compiled
+/// unconditionally; features do not gate an operation, so each field is
+/// `true` in the default build. A wrapper that compiles an operation out
+/// (for example jubarte-wasm drops `pdf` and `png`) overrides the
+/// matching field in its own manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operations {
-    /// Two documents into a Word tracked-changes document.
+    /// Two documents into a Word tracked-changes document
+    /// ([`crate::document_comparer::compare_documents`]).
     pub compare: bool,
-    /// Accept every revision.
+    /// Accept every revision
+    /// ([`crate::document_comparer::accept_revisions`]).
     pub accept_revisions: bool,
-    /// Reject every revision.
+    /// Reject every revision
+    /// ([`crate::document_comparer::reject_revisions`]).
     pub reject_revisions: bool,
     /// List tracked changes by id and accept or reject a selection of them
-    /// (also in edit plans, as `resolve_revisions`).
+    /// ([`crate::changes`]); also the edit-plan `resolve_revisions` entry.
     #[serde(default)]
     pub selective_revisions: bool,
     /// List revision records.
     pub revision_records: bool,
-    /// DOCX to PDF.
+    /// DOCX to PDF ([`crate::convert::docx_to_pdf`]).
     pub pdf: bool,
-    /// DOCX pages to PNG.
+    /// DOCX pages to PNG ([`crate::convert::docx_to_png`]).
     pub png: bool,
-    /// Body paragraph inspection.
+    /// Body paragraph inspection ([`crate::inspect::paragraphs`],
+    /// [`crate::inspect::summary`]).
     pub inspect_body: bool,
-    /// Markdown projection with paragraph ids.
+    /// Markdown projection with paragraph ids ([`crate::inspect::markdown`]).
     pub markdown: bool,
-    /// Edit plans (clean copy, redline, report).
+    /// Edit plans (clean copy, redline, report; [`crate::edit::apply_plan`]).
     pub edit: bool,
-    /// Comments authored by an edit plan.
+    /// Comments authored by an edit plan (`comment`, `reply_comment`,
+    /// `resolve_comment`, `edit_comment`, `delete_comment`).
     pub comments: bool,
-    /// Markdown to DOCX, CriticMarkup as tracked changes and comments.
+    /// Markdown → DOCX, CriticMarkup as tracked changes and comments
+    /// ([`crate::markdown::markdown_to_docx`]).
     #[serde(default)]
     pub markdown_to_docx: bool,
-    /// Two Markdown documents as CriticMarkup, and Word or Markdown
-    /// documents as a Word redline.
+    /// Two Markdown documents as CriticMarkup, or Word / Markdown as a
+    /// Word redline ([`crate::markdown::diff_markdown`],
+    /// [`crate::markdown::redline`]).
     #[serde(default)]
     pub markdown_diff: bool,
-    /// The changes between two documents, Word or Markdown, as a patch of
-    /// the changed paragraphs at their ids (`jubarte diff`); an applied edit
-    /// plan carries its redline's.
+    /// The changes between two documents, Word or Markdown, as a patch
+    /// over the changed paragraphs at their ids
+    /// ([`crate::markdown::diff_markdown`] at the patch level; `jubarte
+    /// diff`).
     #[serde(default)]
     pub patch: bool,
     /// Which pages of two documents differ, pixel for pixel, with overlays
-    /// of the changed region (`jubarte visual-diff`).
+    /// of the changed region ([`crate::convert::diff_render`]; `jubarte
+    /// visual-diff`).
     #[serde(default)]
     pub diff_render: bool,
     /// Rasterize selected pages after one layout pass of the whole
     /// document (`convert --pages`).
     #[serde(default)]
     pub page_ranges: bool,
-    /// Comment threads: `jubarte comments` lists them, and edit plans reply
-    /// to, resolve, edit and delete comments.
+    /// Comment threads: `jubarte comments` lists them, and edit plans
+    /// reply, resolve, edit and delete comments.
     #[serde(default)]
     pub comment_threads: bool,
     /// Edit plans accept `existing_revisions: "keep"`: another party's
@@ -135,37 +159,41 @@ pub struct Operations {
     #[serde(default)]
     pub edit_keeps_revisions: bool,
     /// One document after another, carrying images, links, styles, lists
-    /// and notes (`jubarte append`).
+    /// and notes ([`crate::append::append_documents`]; `jubarte append`).
     #[serde(default)]
     pub append: bool,
     /// `read --json` lists the body's content controls and edit plans fill
     /// them (`fill_control`).
     #[serde(default)]
     pub content_controls: bool,
-    /// Word-validity findings beyond the schema (`jubarte validate`),
-    /// with the tracked-edit audit (`--original --author`).
+    /// Word-validity findings and the tracked-edit audit
+    /// ([`crate::validate::validate`]; `jubarte validate` with
+    /// `--original` / `--author`).
     #[serde(default)]
     pub validate: bool,
-    /// The repairable findings fixed (`jubarte validate --repair`).
+    /// Repairable findings fixed ([`crate::validate::repair`]; `jubarte
+    /// validate --repair`).
     #[serde(default)]
     pub repair: bool,
     /// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results from
-    /// jubarte's layout (`jubarte fields update`, an edit plan's
-    /// `update_fields`).
+    /// jubarte's layout ([`crate::fields::update_fields`]; `jubarte fields
+    /// update`, the edit-plan `update_fields`).
     #[serde(default)]
     pub fields: bool,
     /// Remove authors, rsids, document properties and comments
-    /// (`jubarte scrub`); edit plans take `redact`.
+    /// ([`crate::scrub::scrub`]; `jubarte scrub`); edit plans take `redact`.
     #[serde(default)]
     pub scrub: bool,
     /// Accessibility, style and structure findings by paragraph id
-    /// (`jubarte validate --rules a11y,style,structure`).
+    /// ([`crate::audit::audit_report`]; `jubarte validate --rules
+    /// a11y,style,structure`).
     #[serde(default)]
     pub audit: bool,
 }
 
 impl Operations {
-    /// Each operation and whether this build has it, in declaration order.
+    /// Each operation and whether this build has it, in declaration order
+    /// (the same order as the field list). Used by [`capabilities_text`].
     pub fn entries(&self) -> Vec<(&'static str, bool)> {
         let Self {
             compare,
@@ -224,7 +252,7 @@ impl Operations {
     }
 }
 
-/// Documented scope limits.
+/// Documented scope limits an agent must plan around.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
     /// Story kinds `read` and `edit` address: `body`, then the `kind` of
@@ -235,43 +263,48 @@ pub struct Limits {
     /// `summary` but are not stories; text boxes are not stories either, and
     /// their owner paragraph carries the `text_box_omitted` limitation.
     pub stories: Vec<String>,
-    /// Inserted run text is plain: false since a `\t` or a `\n` in edit
-    /// text writes a tab or a line break; other control characters and the
-    /// symbol placeholder U+FFFC are refused.
+    /// `false`: an inserted run is plain text, so a `\t` or `\n` writes a
+    /// tab or line break; other control characters and the symbol
+    /// placeholder U+FFFC are refused.
     pub plain_text_runs: bool,
-    /// Edits refuse ranges crossing fields, hyperlinks, content controls,
-    /// revisions and symbols. A range over a tab, a line break or a
-    /// non-breaking hyphen removes it; a page or column break stays. A
-    /// comment edits nothing and may cover any of them; its anchor text is
-    /// the paragraph as it reads, so it cannot start or end in deleted text.
+    /// `true`: edit ranges crossing fields, hyperlinks, content controls,
+    /// revisions and symbols are refused. A range over a tab, a line
+    /// break or a non-breaking hyphen removes it; a page or column break
+    /// stays. A comment edits nothing and may cover any of them; its
+    /// anchor text is the paragraph as it reads, so it cannot start or
+    /// end in deleted text.
     pub refuses_opaque_ranges: bool,
-    /// Legacy `.doc` input is not read: an OLE compound file (a Word
-    /// 97-2003 `.doc`, or an encrypted document of any Word version) is
-    /// refused with `LEGACY_DOC` on every entry point, and RTF with
+    /// `false`: legacy `.doc` input is not read. An OLE compound file (a
+    /// Word 97-2003 `.doc`, or an encrypted document of any Word version)
+    /// is refused with `LEGACY_DOC` on every entry point, and RTF with
     /// `UNSUPPORTED_PACKAGE`.
     pub reads_legacy_doc: bool,
-    /// Package budgets `read` and `edit` admit (larger input is refused
-    /// with `INPUT_LIMIT`).
+    /// Package budgets [`crate::admission::admit`] enforces (`read` and
+    /// `edit` use these defaults; the redline comparer uses the roomier
+    /// `compare`). Larger input is refused with `INPUT_LIMIT`.
     #[serde(default)]
     pub input: InputBudget,
 }
 
-/// [`crate::admission::InputLimits`] as the manifest reports them.
+/// Package budgets as the manifest reports them, in the same units
+/// [`crate::admission::InputLimits`] uses.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputBudget {
-    /// Size of the .docx file.
+    /// Maximum compressed (.docx) size in bytes.
     pub max_compressed_bytes: u64,
-    /// ZIP entries.
+    /// Maximum number of ZIP entries the package may contain.
     pub max_entries: usize,
-    /// Inflated size of any one part.
+    /// Maximum inflated size of any one part, in bytes.
     pub max_part_bytes: u64,
-    /// Inflated size of all parts together.
+    /// Maximum total inflated size of all parts, in bytes.
     pub max_uncompressed_bytes: u64,
-    /// Element nesting in any XML part.
+    /// Maximum element nesting depth in any XML part.
     pub max_xml_depth: usize,
 }
 
 impl From<crate::admission::InputLimits> for InputBudget {
+    /// Converts an [`crate::admission::InputLimits`] budget into the
+    /// manifest-facing [`InputBudget`] (same fields, different struct).
     fn from(l: crate::admission::InputLimits) -> Self {
         Self {
             max_compressed_bytes: l.max_compressed_bytes,
@@ -300,15 +333,21 @@ pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
     ("add", &["docx"]),
 ];
 
-/// What `diff -o` writes: text, under any of these extensions.
+/// File extensions `diff -o` writes as text output: Markdown, plain text,
+/// and the two patch file extensions (`patch` and `diff`). Replaces the
+/// `md` row of [`OUTPUT_FORMATS`] for the `diff` task.
 pub const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"];
 
-/// How ids print, for [`Ids::note`].
+/// One-line note describing how ids print, used as [`Ids::note`] in the
+/// manifest. Records the body vs. story prefix and the shell-safety rule.
 pub const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \
      {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under their table \
      (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh";
 
-/// The manifest for `runtime`.
+/// Builds a [`Capabilities`] manifest for `runtime` (typically `cli`,
+/// `python`, `rust`, `wasm`). Every operation in the default build is
+/// `true`; a wrapper overrides fields in its own manifest when it
+/// compiles an operation out.
 #[must_use]
 pub fn capabilities(runtime: &str) -> Capabilities {
     Capabilities {
@@ -418,9 +457,11 @@ fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
 }
 
-/// The manifest as text: `engine:`, one `NAME: yes|no` line per operation,
-/// then the plan versions and kinds, stories, limits, validate rules, audit
-/// codes, `-o` formats and id spellings, and a pointer to `--json`.
+/// Renders a [`Capabilities`] as text, one line per field: an `engine:`
+/// header, `NAME: yes|no` per operation, plan versions and operations,
+/// stories, limits, validate rules, audit codes, `-o` formats and id
+/// spellings, ending with `run with --json for the manifest`. The format
+/// `jubarte capabilities` prints without `--json`.
 #[must_use]
 pub fn capabilities_text(c: &Capabilities) -> String {
     let yes = |b: bool| if b { "yes" } else { "no" };
@@ -484,7 +525,8 @@ pub fn capabilities_text(c: &Capabilities) -> String {
     out
 }
 
-/// [`capabilities`] as JSON.
+/// The manifest serialized as pretty-printed JSON; the body
+/// `jubarte capabilities --json` prints and the form a host stores.
 #[must_use]
 pub fn capabilities_json(runtime: &str) -> String {
     serde_json::to_string_pretty(&capabilities(runtime)).expect("manifest serializes")
