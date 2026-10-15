@@ -119,12 +119,34 @@ fn edit_accept_of_an_unknown_id_keeps_its_error() {
     assert_eq!(out.status.code(), Some(3), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(
-        stdout.contains("UNKNOWN_CHANGE") && stdout.contains("no tracked change body:rev:999"),
+        stdout.contains("UNKNOWN_CHANGE") && stdout.contains("no tracked change r999"),
         "{stdout}"
     );
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(
         stderr.contains("error: plan refused: UNKNOWN_CHANGE"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn unchanged_text_between_resolved_changes_prevents_a_substitution() {
+    let source = common::docx::docx(
+        r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:t> kept </w:t></w:r><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#,
+    );
+    let lines = jubarte::edit::resolution::resolution_lines(
+        &source,
+        &jubarte::edit::ResolvedRevisions {
+            accepted: vec!["r1".into(), "r2".into()],
+            rejected: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        lines,
+        [
+            "accepted r1 in p0: \"{--old--}\" > \"\"",
+            "accepted r2 in p0: \"{++new++}\" > \"new\"",
+        ]
     );
 }

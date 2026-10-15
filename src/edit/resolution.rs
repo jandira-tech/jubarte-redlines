@@ -49,37 +49,29 @@ fn quoted(text: &str) -> String {
 /// The short paragraph (or story) a line names.
 fn short_place(change: &Change) -> String {
     change.paragraph.as_deref().map_or_else(
-        || {
-            crate::ids::ChangeId::from_long(&change.id)
-                .map_or_else(|| "-".to_string(), |id| id.story)
-        },
+        || crate::ids::change_id(&change.id).map_or_else(|| "-".to_string(), |id| id.story),
         crate::ids::short_paragraph,
     )
-}
-
-/// Whether `wid` has a short spelling (`rN`): ASCII digits, no leading
-/// zeros (`0` itself is fine).
-fn is_short_wid(wid: &str) -> bool {
-    wid == "0"
-        || (!wid.is_empty() && wid.bytes().all(|b| b.is_ascii_digit()) && !wid.starts_with('0'))
 }
 
 /// The combined ref for a substitution pair in one story, or `None` when
 /// either half has no short spelling (then the halves print separately).
 fn pair_ref(first: &Change, second: &Change) -> Option<String> {
-    let a = crate::ids::ChangeId::from_long(&first.id)?;
-    let b = crate::ids::ChangeId::from_long(&second.id)?;
-    if a.story != b.story || !is_short_wid(&a.wid) || !is_short_wid(&b.wid) {
+    let a = crate::ids::change_id(&first.id)?;
+    let b = crate::ids::change_id(&second.id)?;
+    if a.story != b.story {
         return None;
     }
-    if !crate::ids::is_story(&a.story) && a.story != "body" {
-        return None;
-    }
-    if a.story == "body" {
-        Some(format!("r{}+{}", a.wid, b.wid))
+    let combined = if a.story == "body" {
+        format!("r{}+{}", a.wid, b.wid)
     } else {
-        Some(format!("{}.r{}+{}", a.story, a.wid, b.wid))
-    }
+        format!("{}.r{}+{}", a.story, a.wid, b.wid)
+    };
+    matches!(
+        combined.parse::<crate::ids::ShortId>(),
+        Ok(crate::ids::ShortId::Change { .. })
+    )
+    .then_some(combined)
 }
 
 /// The CriticMarkup and the replacement text for one text change.
@@ -158,12 +150,78 @@ fn is_substitution_pair(first: &Change, second: &Change) -> bool {
         return false;
     }
     let (Some(a), Some(b)) = (
-        crate::ids::ChangeId::from_long(&first.id),
-        crate::ids::ChangeId::from_long(&second.id),
+        crate::ids::change_id(&first.id),
+        crate::ids::change_id(&second.id),
     ) else {
         return false;
     };
     a.story == b.story
+}
+
+/// Adjacent revision elements, including across the inline containers that
+/// the view treats as transparent. Consecutive entries in `list_changes`
+/// alone are insufficient: unchanged runs can sit between them.
+fn adjacent_changes(source: &[u8]) -> Result<HashSet<(String, String)>, ChangeError> {
+    use crate::namespaces::W;
+    use crate::xmllinq::{Dom, NodeId};
+
+    fn flatten(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
+        for child in dom.elements(node, None) {
+            let name = dom.name(child);
+            match name.as_ref().map(|n| n.local_name()) {
+                Some("hyperlink" | "smartTag" | "customXml" | "fldSimple" | "bdo" | "dir") => {
+                    flatten(dom, child, out);
+                }
+                Some("sdt") => {
+                    if let Some(content) = dom.element(child, &W::name("sdtContent")) {
+                        flatten(dom, content, out);
+                    }
+                }
+                Some("pPr" | "proofErr") => {}
+                _ => out.push(child),
+            }
+        }
+    }
+
+    let normalized = crate::strict_translation::strict_to_transitional_docx(source);
+    let package =
+        crate::opc::PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
+    let main = package
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".into());
+    let mut adjacent = HashSet::new();
+    for part in package.parts().iter().filter(|part| part.ends_with(".xml")) {
+        let Some(xml) = package.part_string(part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else { continue };
+        let story = if *part == main {
+            "body".into()
+        } else {
+            crate::ids::part_story(part)
+        };
+        for paragraph in dom.descendants(root, Some(&W::p())) {
+            let mut children = Vec::new();
+            flatten(&dom, paragraph, &mut children);
+            for pair in children.windows(2) {
+                if ((dom.name_is(pair[0], &W::ins()) && dom.name_is(pair[1], &W::del()))
+                    || (dom.name_is(pair[0], &W::del()) && dom.name_is(pair[1], &W::ins())))
+                    && let (Some(a), Some(b)) = (
+                        dom.attribute(pair[0], &W::id()),
+                        dom.attribute(pair[1], &W::id()),
+                    )
+                {
+                    adjacent.insert((
+                        crate::ids::ChangeId::new(&story, a).short(),
+                        crate::ids::ChangeId::new(&story, b).short(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(adjacent)
 }
 
 /// Build the stdout lines for a pure accept/reject: `source` is the bytes
@@ -175,6 +233,7 @@ pub fn resolution_lines(
     resolved: &ResolvedRevisions,
 ) -> Result<Vec<String>, ChangeError> {
     let listed = crate::changes::list_changes(source)?;
+    let adjacent = adjacent_changes(source)?;
     let accepted: HashSet<&str> = resolved.accepted.iter().map(String::as_str).collect();
     let rejected: HashSet<&str> = resolved.rejected.iter().map(String::as_str).collect();
     // Document order, with the action each change resolved with.
@@ -196,6 +255,7 @@ pub fn resolution_lines(
             let (second, accepted_second) = ordered[i + 1];
             if accepted_first == accepted_second
                 && is_substitution_pair(first, second)
+                && adjacent.contains(&(first.id.clone(), second.id.clone()))
                 && let Some(combined) = pair_ref(first, second)
             {
                 // Consecutive in the source, not only among the resolved:

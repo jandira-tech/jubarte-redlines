@@ -477,6 +477,7 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     # document (FILE_modified.docx by default), ``out_dir`` for the bundle.
     out_dir: Path | None = args.out_dir
     source_bytes = doc.to_bytes()
+    parsed = json.loads(plan_text)
     if out_dir is None:
         return _write_edited(args, args.output, result, notes, source_bytes, parsed)
     if out_dir.exists() and not args.force:

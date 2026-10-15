@@ -571,7 +571,7 @@ pub fn changed_view(
 
 /// The lines `edit -p rN --accept/--reject` prints for a pure resolution:
 /// one per resolved change from `source` (the bytes before resolution) and
-/// `resolvedJson` (`{"accepted": [...], "rejected": [...]}` long ids).
+/// `resolvedJson` (`{"accepted": [...], "rejected": [...]}` short ids).
 ///
 /// Mirrors `jubarte::edit::resolution::resolution_text`.
 #[wasm_bindgen(js_name = resolutionText)]

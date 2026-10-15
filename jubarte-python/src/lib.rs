@@ -966,7 +966,7 @@ fn changed_view(
 
 /// The lines `edit -p rN --accept/--reject` prints for a pure resolution:
 /// one per resolved change from `source` (the bytes before resolution) and
-/// `resolved_json` (`{"accepted": [...], "rejected": [...]}` long ids).
+/// `resolved_json` (`{"accepted": [...], "rejected": [...]}` short ids).
 /// Mirrors `jubarte::edit::resolution::resolution_text`.
 #[pyfunction]
 fn resolution_text(py: Python<'_>, source: &[u8], resolved_json: &str) -> PyResult<String> {
