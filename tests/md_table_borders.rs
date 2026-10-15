@@ -116,8 +116,9 @@ fn a_table_with_its_own_thin_borders_comes_back_with_borders() {
 fn a_table_without_borders_stays_without() {
     let (first, again, second) = round_trip(&docx(&table("")));
     assert!(first.contains("  table: TableNormal"), "{first}");
+    // No tblStyle is Word's Normal Table, as the source had it.
     let document = part(&again, "word/document.xml");
-    assert_eq!(table_styles(&document), [Some("TableNormal".to_string())]);
+    assert_eq!(table_styles(&document), [None]);
     assert!(!document.contains("tblBorders"), "{document}");
     assert_eq!(second, first);
 }
@@ -151,10 +152,7 @@ fn a_grid_and_a_borderless_table_keep_their_own() {
     );
     assert_eq!(
         table_styles(&part(&again, "word/document.xml")),
-        [
-            Some("TableGrid".to_string()),
-            Some("TableNormal".to_string())
-        ]
+        [Some("TableGrid".to_string()), None]
     );
     assert_eq!(second, first);
 }

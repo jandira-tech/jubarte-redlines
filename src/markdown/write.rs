@@ -1480,13 +1480,15 @@ impl<'o, 'a> Writer<'o, 'a> {
                 // The style the table's line names, else the legend's for
                 // every table, else Word's thin grid, as Insert Table makes
                 // (Arthur, 2026-10-15). A view names Normal Table for a
-                // table without borders.
+                // table without borders: no tblStyle, Word's default table
+                // style, as the source had it.
                 let style = self
                     .table_plan
                     .as_ref()
                     .and_then(|plan| plan.style.clone())
                     .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()))
-                    .or_else(|| Some("TableGrid".to_string()));
+                    .or_else(|| Some("TableGrid".to_string()))
+                    .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
                     if id == "TableGrid" {
                         self.document.styles.insert("TableGrid");
