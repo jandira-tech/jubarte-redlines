@@ -2,14 +2,19 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Hand order tables for property containers (Ring 1½ schema oracle).
+//! Schema-order ranks for property-container children.
 //!
-//! These ranks must stay in sync with the tables inside
-//! `super::finalize::wml_order_elements_per_standard`. The schema-consistency
-//! test (`tests/schema_consistency.rs`) fails if they drift from the WML XSD
-//! particle order (except allowlisted PowerTools divergences).
+//! These constants back [`super::finalize::wml_order_elements_per_standard`]
+//! (which uses them to resort `w:pPr`, `w:numPr`, `w:rPr`, `w:tblPr`
+//! children) and are pinned by the schema-consistency test in
+//! `tests/schema_consistency.rs`. The test fails if they drift from the
+//! WML XSD particle order; the divergences in `RPR_ORDER` (the
+//! `moveFrom`/`moveTo`/`ins`/`del` allowlist) are also enforced there.
+//!
 
-/// `w:pPr` child ranks (PtOpenXmlUtil Order_pPr).
+/// Schema ranks for `w:pPr` children (PtOpenXmlUtil `Order_pPr`). Used by
+/// [`super::finalize::wml_order_elements_per_standard`] to sort paragraph
+/// property children into OOXML XSD order.
 pub const PPR_ORDER: &[(&str, i32)] = &[
     ("pStyle", 10),
     ("keepNext", 20),
@@ -49,13 +54,12 @@ pub const PPR_ORDER: &[(&str, i32)] = &[
     ("pPrChange", 370),
 ];
 
-/// `w:numPr` child ranks (`CT_NumPr` sequence).
+/// Schema ranks for `w:numPr` children (`CT_NumPr` sequence).
 ///
-/// Not a PowerTools table — `WmlOrderElementsPerStandard` has no `numPr`
-/// container, so a source writing `numId` before `ilvl` was copied through and
-/// the output failed schema validation. Word normalises the order when it
-/// writes a comparison (0 occurrences across 504 corpus oracles against 10 of
-/// ours), so matching Word means normalising.
+/// `WmlOrderElementsPerStandard` has no `numPr` container, so the original
+/// `numId`/`ilvl` order was copied through and the output failed schema
+/// validation. Word always normalises the order in its redline, so the
+/// pipeline does too.
 pub const NUMPR_ORDER: &[(&str, i32)] = &[
     ("ilvl", 10),
     ("numId", 20),
@@ -63,8 +67,9 @@ pub const NUMPR_ORDER: &[(&str, i32)] = &[
     ("ins", 40),
 ];
 
-/// `w:rPr` child ranks (PtOpenXmlUtil Order_rPr), including moveFrom/moveTo
-/// PowerTools divergences allowlisted in the schema oracle.
+/// Schema ranks for `w:rPr` children (PtOpenXmlUtil `Order_rPr`), with
+/// the `moveFrom`/`moveTo`/`ins`/`del`/`numberingChange` PowerTools
+/// divergences allowlisted in the schema oracle.
 pub const RPR_ORDER: &[(&str, i32)] = &[
     ("moveFrom", 5),
     ("moveTo", 7),
@@ -111,7 +116,7 @@ pub const RPR_ORDER: &[(&str, i32)] = &[
     ("oMath", 460),
 ];
 
-/// `w:tblPr` child ranks (PtOpenXmlUtil Order_tblPr).
+/// Schema ranks for `w:tblPr` children (PtOpenXmlUtil `Order_tblPr`).
 pub const TBLPR_ORDER: &[(&str, i32)] = &[
     ("tblStyle", 10),
     ("tblpPr", 20),

@@ -2,26 +2,45 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.H.1 — relationship parsing helpers for footnotes/related-part relocation.
-//! Port of ParseRelationshipRows (:6945), DecodeXmlAttribute (:6967),
-//! RequiredRelTypeSuffix (:6914), IsExternalRelationship (:6678). The rel-name
-//! tables (s_RelationshipAttributeNames, s_ElementsWithRelationshipIds,
-//! AttributesToTrimWhenCloning) live in `tables.rs`.
+//! Relationship parsing and the package-level reconciliation pass.
+//!
+//! The compare pipeline splices content from two source packages into one
+//! redline, which leaves the destination `.rels` parts missing rIds the
+//! spliced content uses. [`reconcile_dangling_relationships`] (the main
+//! document) and [`reconcile_part_relationships`] (every other `word/*.xml`
+//! part) carry each missing relationship over from the source, copy the
+//! target part under a collision-proof URI, and mint a fresh rId. References
+//! no source can resolve lose their attribute (the Word-equivalent of
+//! silently rendering an empty shape).
+//!
+//! [`RelationshipRow`], [`decode_xml_attribute`], and the package-file
+//! helpers ([`required_rel_type_suffix`], [`is_external_relationship`],
+//! [`parse_relationship_rows`]) are the parse-and-classify primitives the
+//! reconciler uses. The rel-name tables
+//! ([`super::tables::S_RELATIONSHIP_ATTRIBUTE_NAMES`],
+//! [`super::tables::S_ELEMENTS_WITH_RELATIONSHIP_IDS`],
+//! [`super::tables::ATTRIBUTES_TO_TRIM_WHEN_CLONING`]) live in
+//! [`super::tables`].
+//!
 
-/// A parsed `<Relationship>` row from a `.rels` part.
+/// One `<Relationship>` row from an OPC `.rels` part.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationshipRow {
-    /// `id`.
+    /// `Id` attribute (the rId callers reference).
     pub id: String,
-    /// `rel_type`.
+    /// `Type` attribute (relationship kind URI).
     pub rel_type: String,
-    /// `target`.
+    /// `Target` attribute (URI relative to the owning part).
     pub target: String,
-    /// `external`.
+    /// `true` for `TargetMode="External"` rels OR for absolute-URI / hyperlink
+    /// rels that resolve to no part (see [`is_external_relationship`]).
     pub external: bool,
 }
 
-/// `DecodeXmlAttribute` (:6967) — undo entity escaping (order: quot, gt, lt, amp).
+/// Undo the four entity escapes in an OPC attribute value (the C#
+/// `DecodeXmlAttribute` at WmlComparer.ts :6967). Replacement order is
+/// `quot` → `gt` → `lt` → `amp` so each pass cannot re-escape the entity
+/// references of a later one.
 pub fn decode_xml_attribute(value: &str) -> String {
     value
         .replace("&quot;", "\"")
@@ -53,7 +72,11 @@ fn attr_of(tag: &str, name: &str) -> Option<String> {
     None
 }
 
-/// `ParseRelationshipRows` (:6945) — extract `<Relationship …>` rows.
+/// Parse every `<Relationship …>` row out of a `.rels` XML document,
+/// running [`decode_xml_attribute`] on each `Target` and applying
+/// [`is_external_relationship`] to set the [`RelationshipRow::external`]
+/// flag (because hyperlink rels and absolute-URI targets have no part
+/// behind them and would otherwise be misclassified internal).
 pub fn parse_relationship_rows(rels_xml: &str) -> Vec<RelationshipRow> {
     let mut rows = Vec::new();
     let mut from = 0;
@@ -96,8 +119,11 @@ pub fn parse_relationship_rows(rels_xml: &str) -> Vec<RelationshipRow> {
     rows
 }
 
-/// `RequiredRelTypeSuffix` (:6914) — the rel-type suffix an element's rId must
-/// resolve to (by local name), or None.
+/// The relationship-type suffix an element's rId must resolve to (by its
+/// element local name), or `None` when the element accepts any rel type.
+/// `w:hyperlink` and `a:hlinkClick` only take `/hyperlink` rels, `w:blip`
+/// and `v:imagedata` only `/image`, and so on; mismatched types are not
+/// safe to substitute even when the strings match.
 pub fn required_rel_type_suffix(local_name: &str) -> Option<&'static str> {
     match local_name {
         "hyperlink" | "hlinkClick" => Some("/hyperlink"),
@@ -110,8 +136,9 @@ pub fn required_rel_type_suffix(local_name: &str) -> Option<&'static str> {
     }
 }
 
-/// `IsExternalRelationship` (:6678) — hyperlink rel type, or an absolute-URI
-/// target (has a scheme and doesn't start with `/`).
+/// True when a relationship has no internal target part: hyperlink rel
+/// types, or any absolute-URI target whose scheme is alphanumeric plus
+/// `+.-` (RFC 3986 grammar).
 pub fn is_external_relationship(rel_type: &str, target: &str) -> bool {
     if rel_type.ends_with("/hyperlink") {
         return true;
@@ -230,13 +257,17 @@ fn dest_rid_part_bytes(dest: &PartFs, doc_part: &str, rid: &str) -> Option<Vec<u
     dest.part_bytes(&part).map(|b| b.to_vec())
 }
 
-/// M4.H.3 — `ReconcileDanglingRelationships` (:6711), conservative form: ensure
-/// every rId referenced by the result document resolves in the destination
-/// package. rIds already present are left as-is; rIds missing from the
-/// destination but found in a source package are carried over (internal media
-/// copied + a fresh rel minted, the referencing attribute rewired); rIds found
-/// nowhere have their attribute dropped (which is what prevents Word's
-/// "unreadable content" repair). Text documents reference no rIds → no-op.
+/// Ensure every rId the redline's main document references resolves in
+/// the destination package. rIds already present are left as-is; rIds
+/// missing from the destination but found in a source package are carried
+/// over (internal media is copied under a fresh part name, a fresh rel is
+/// minted, the referencing attribute is rewired); rIds found nowhere have
+/// their attribute dropped (the Word-equivalent of the empty shape and
+/// what suppresses its "unreadable content" repair dialog). Text
+/// documents reference no rIds and this is a no-op. Images are stored
+/// under `word/media/P{sha256}.{ext}` so two compares of the same pair
+/// give identical bytes; headers / footers / numbering / notes keep their
+/// `word/*` paths so OPC-conventional relationships survive.
 pub fn reconcile_dangling_relationships(
     dom: &mut Dom,
     root: NodeId,
@@ -437,14 +468,12 @@ fn revised_part_name(part: &str) -> Option<String> {
     })
 }
 
-/// Every non-main XML part must resolve its own `r:*` references in its own
-/// `.rels`: comments, notes, headers/footers and numbering picture bullets
-/// copied from the revised document otherwise keep B's ids without B's
-/// relationships, and Word refuses the whole package ("document loaded
-/// empty"). Per-part counterpart of [`reconcile_dangling_relationships`]
-/// (which covers the main document): missing relationships are carried from
-/// the part's source (external targets verbatim, internal parts copied), and
-/// references no source can resolve lose the attribute.
+/// Reconcile the `r:*` references every non-main `word/*.xml` part of the
+/// destination package makes in its own `.rels`. Comments, notes,
+/// headers/footers and numbering picture bullets copied from the revised
+/// document otherwise keep B's ids without B's relationships and refuses
+/// the whole package ("document loaded empty"). Per-part counterpart of
+/// [`reconcile_dangling_relationships`] (which covers the main document).
 pub fn reconcile_part_relationships(dest: &mut PartFs, main_part: &str, a: &PartFs, b: &PartFs) {
     let mut parts: Vec<String> = dest
         .parts()
@@ -476,11 +505,13 @@ fn has_relationship_attribute(xml: &str) -> bool {
     })
 }
 
-/// Carry `src_part`'s relationship `rid` (when its type `fits`) onto `part` of
-/// `dest` under a fresh id: external targets verbatim, internal targets copied
-/// under a collision-proof name. Images reuse an existing internal relationship
-/// when its target has the same bytes and content type. Returns the id, or `None` when the source
-/// has no such relationship or its target part.
+/// Carry `src_part`'s relationship `rid` (when its type passes `fits`) onto
+/// `part` of `dest` under a fresh id: external targets verbatim, internal
+/// targets copied under a collision-proof name. Images reuse an existing
+/// internal relationship when its target has the same bytes and content
+/// type (distinct picture bullets can share one source image). Returns
+/// the carried id, or `None` when the source has no such relationship or
+/// its target part.
 pub fn carry_relationship(
     dest: &mut PartFs,
     part: &str,
@@ -533,11 +564,13 @@ pub fn carry_relationship(
     ))
 }
 
-/// Carry every relationship the subtree `root` names (`r:id`, `r:embed`,
-/// `r:link`, ...) from `src_part` of `src` onto `dest_part` of `dest` through
-/// [`carry_relationship`], and rewrite each attribute to the carried id. A
-/// reference `src` cannot resolve loses its attribute. An XML part copied
-/// this way (a header, a chart) gets its own relationships carried too.
+/// Walk the subtree `root` and carry every relationship it names
+/// (`r:id`, `r:embed`, `r:link`, …) from `src_part` of `src` onto
+/// `dest_part` of `dest` via [`carry_relationship`], rewriting each
+/// attribute to the carried id. A reference `src` cannot resolve loses its
+/// attribute. An XML part copied this way (a header, a chart) has its own
+/// relationships carried in turn, with a fixed nesting depth so an
+/// accidental cycle cannot recurse forever.
 pub fn carry_part_relationships(
     dest: &mut PartFs,
     dest_part: &str,
