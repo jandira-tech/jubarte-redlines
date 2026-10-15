@@ -47,7 +47,7 @@ uvx jubarte-redlines --help
 `redline` is an alias of `compare`; `python -m jubarte_redlines` runs the same
 commands. `changes` lists what a document tracks, one change per line with
 its short id (`r12`; `--json` for one object per line); `accept` and `reject`
-take repeatable `--id` (`r12`, `r1+2`, `header1.r1` or `body:rev:12`),
+take repeatable `--id` (`r12`, `r1+2`, `header1.r1`),
 `--author` and `--kind` to resolve a selection and keep the rest tracked, or
 everything when none is given; `read` prints the agent view with the
 `<!-- p12 -->` ids edits use (`--json` the snapshot); `edit` and `add` write
@@ -110,7 +110,7 @@ operation mutating it or writing files:
 from jubarte_redlines import read, EditPlan, diff
 
 doc = read("contract.docx")
-doc.markdown()    # body and every header/footer/notes story, [body:p:N] ids
+doc.markdown()    # body and every header/footer/notes story, [pN] ids
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations) + tables
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change, with the id accept/reject and plans take
@@ -131,9 +131,9 @@ failed operation, every operation's outcome) and produces nothing.
 plan = (
     EditPlan(author="Reviewer")
     .for_document(doc)             # bind to this snapshot; STALE_SOURCE if it changed
-    .replace("body:p:3", find="30 days", replacement="45 days", format={"bold": True})
-    .comment("body:p:3", text="Check with the client", find="45 days")
-    .insert_paragraph("body:p:3", runs=["New sentence."], like="body:p:3")
+    .replace("p3", find="30 days", replacement="45 days", format={"bold": True})
+    .comment("p3", text="Check with the client", find="45 days")
+    .insert_paragraph("p3", runs=["New sentence."], like="p3")
 )
 out = doc.edit(plan)               # EditResult: clean, redline, report, diff
 ```

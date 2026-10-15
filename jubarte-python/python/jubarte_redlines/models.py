@@ -195,14 +195,14 @@ ChangeKind = Literal["insertion", "deletion", "move", "formatting"]
 class Change:
     """One tracked change with the id ``Document.accept`` / ``reject`` select by.
 
-    ``id`` is ``{story}:rev:{w:id}`` (``r12``, ``header1.r3``);
-    resolving some changes never renumbers the rest. ``target`` is what the
+    ``id`` is the change's short id (``r12``, ``header1.r3``), built from
+    its ``w:id``, so resolving some changes never renumbers the rest. ``target`` is what the
     change applies to (``text``, ``paragraph_mark``, ``table_row``,
     ``table_cell``, ``properties``). Both sides of a move share
     ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
     ``inside`` names the change whose content holds this one: resolving that
-    one so its content goes takes this one along. ``ref`` is the short id the
-    CLI prints and ``-p``/``--id`` take (``r12``, ``header1.r3``);
+    one so its content goes takes this one along. ``ref`` equals ``id``: the
+    short id the CLI prints and ``-p``/``--id`` take;
     ``paragraph`` is the id of the paragraph the change is in (``p3``).
     """
 
@@ -368,7 +368,7 @@ class Span:
 
 @dataclass(frozen=True, slots=True)
 class Paragraph:
-    """One paragraph (``body:p:N``, ``header1:p:N``...); ``index``/``id`` are valid for this snapshot only."""
+    """One paragraph (``p12``, ``header1``, ``header1.p2``...); ``index``/``id`` are valid for this snapshot only."""
 
     index: int
     id: str
@@ -488,7 +488,7 @@ class Snapshot:
         return hits[0]
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
-        """The paragraph with this id (``body:p:N``, ``header1``) or body index."""
+        """The paragraph with this id (``p12``, ``header1``, ``header1.p2``) or body index."""
         for p in self.paragraphs:
             if p.id == id_or_index or p.index == id_or_index:
                 return p
@@ -606,7 +606,7 @@ def _decode_snapshot(payload: str) -> Snapshot:
 # ---------------------------------------------------------------------------
 
 Selector = str | int | dict[str, str | int]
-"""A paragraph id (``body:p:N``, ``header1``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
+"""A paragraph id (``p12``, ``header1``, ``header1.p2``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
 ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
@@ -1534,8 +1534,8 @@ def _decode_page_diffs(payload: str) -> tuple[PageDiff, ...]:
 class Hunk:
     """One changed paragraph of a ``Diff``.
 
-    ``at`` is where it is: ``body:p:N`` (or a header's, footer's or note's
-    ``header1:p:N``, ``footnotes:p:N``...) in a Word document, as
+    ``at`` is where it is: ``p12`` (or a header's, footer's or note's
+    ``header1``, ``header1.p2``, ``footnotes.p3``...) in a Word document, as
     ``Document.markdown`` and edit plans number paragraphs, or ``line:N`` in
     Markdown; in the new version, or the old one when ``removed``. ``text``
     is the paragraph with its changes, unwrapped.
@@ -1653,7 +1653,7 @@ class AuditFinding:
     ``code`` is the rule (``HEADING_SKIP``, ``IMAGE_NO_DESCR``...),
     ``rule_set`` is ``a11y``, ``style`` or ``structure``, ``severity`` is
     ``error``, ``warning`` or ``info``, and ``location`` is the paragraph id
-    (``body:p:N``, ``footer1:p:N``...) an edit plan targets, or a part name
+    (``p12``, ``footer1``, ``footer1.p2``...) an edit plan targets, or a part name
     for a document-wide finding.
     """
 
