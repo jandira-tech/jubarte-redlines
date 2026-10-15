@@ -232,7 +232,7 @@ sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
 revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
-comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11
+comments: 2 threads open, c6 style Normal  # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
@@ -422,6 +422,10 @@ last with text or with a tracked mark a `rev` brings back. A paragraph
 with no style of its own prints the document's default style (`Normal` in
 most documents), which writes no `w:pStyle`; any other, `Normal` under
 another default too, writes one.
+A comment's paragraphs take Word's CommentText style unless the
+`comments:` line names theirs: `style Normal` for every comment, and
+`c6 style CommentText` for one that differs (a style id that is no plain
+word is quoted, as on id lines).
 A table cell's paragraph has no id line, so the table line names its
 formatting changes: `fmt r6 @AC in p2`. Whatever change no other line
 shows (a change in a text box with no text to tag, or in Word's Fallback

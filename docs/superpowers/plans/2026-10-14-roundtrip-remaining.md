@@ -46,7 +46,11 @@ Status: next.
 
 ## 2. Paragraph styles of headers, footers, comments and notes (≈25 files)
 
-Status: headers and footers done (#491); comments and notes open.
+Status: headers and footers done (#491), comments done (`comments: …,
+style X, cN style Y`); notes open. Follow-up: `edit`/`add` write comment
+paragraphs without CommentText (and the annotation reference without
+CommentReference), which Word stamps on its own; views now say
+`style Normal` for them.
 - **Cause.** The writer stamps each story's default style on all its paragraphs:
   `header`, `footer`, `annotation text`, `footnote text`, `endnote text`. The view
   never prints a story paragraph's style.
