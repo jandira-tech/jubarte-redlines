@@ -94,6 +94,12 @@ has no way to say "Word's own, under this id".
   finding 5). `styles:` reaches past the last paragraph with text to the last
   one a `rev` clause brings back.
 
+- **Open (story fields, pi on #502):** a tracked change inside a complex
+  field's result prints without its mark (`tagged` needs no open complex
+  field, `header.rs`), while the same change in a `fldSimple` keeps it;
+  a field with two `separate`s prints its code twice. Both are older than
+  #502.
+
 ## 3. Page count (10 files)
 
 Status: measure after 2, 7 and 9. A page count that differs after the round trip
