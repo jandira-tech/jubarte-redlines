@@ -23,7 +23,7 @@ headers:
 footers:
   first: none                      # page 1 shows no page number
   default: {id: footer2, text: "{PAGE}1{/}"}
-  even: {id: footer1, text: "{PAGE}{/}", inactive}  # defined, but even/odd headers are off
+  even: {id: footer1, text: "{PAGE}", inactive}  # defined, but even/odd headers are off
 ---
 
 <!-- page 1 of 2 -->
