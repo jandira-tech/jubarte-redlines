@@ -1099,6 +1099,12 @@ struct Writer<'o, 'a> {
     label_uses: HashMap<String, usize>,
     note_count: usize,
     note_paragraph_breaks: bool,
+    /// The style the next note's id line names (`<!-- endnotes.p0
+    /// Endnote -->`), then the open note's.
+    note_style_next: Vec<String>,
+    note_style: Vec<String>,
+    /// The note paragraph `begin_paragraph` styles next, from 0.
+    note_paragraph: usize,
     /// The number of the next cell paragraph, when the table line counts
     /// the open row's paragraphs one by one.
     cell_paragraph: Option<usize>,
@@ -1229,6 +1235,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             label_uses: HashMap::new(),
             note_count: 0,
             note_paragraph_breaks: false,
+            note_style_next: Vec::new(),
+            note_style: Vec::new(),
+            note_paragraph: 0,
             cell_paragraph: None,
             row_shapes: Vec::new(),
             row_pad: Vec::new(),
@@ -1420,12 +1429,21 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .copied()
                     .unwrap_or_default();
                 self.note_paragraph_breaks = counted > 1 && breaks + 1 == counted;
+                self.note_style = std::mem::take(&mut self.note_style_next);
+                self.note_paragraph = 0;
                 self.note_count += 1;
                 let label = note_label(&label);
                 if counted > 1 && !self.note_paragraph_breaks {
+                    // One paragraph takes the first style; the rest go unused.
+                    let styles = match self.note_style.split_first() {
+                        Some((first, rest)) if !rest.is_empty() => {
+                            format!(", in style {first}; {} are not written", rest.join(", "))
+                        }
+                        _ => String::new(),
+                    };
                     self.document.warnings.push(format!(
                         "[^{label}]: its id line counts {counted} paragraphs and its text \
-                         {} by its <br>s: the <br>s are written as line breaks",
+                         {} by its <br>s: the <br>s are written as line breaks{styles}",
                         breaks + 1
                     ));
                 }
@@ -1579,6 +1597,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             TagEnd::FootnoteDefinition => {
                 self.end_paragraph();
                 self.target = None;
+                self.note_style.clear();
                 self.note_paragraph_breaks = false;
             }
             TagEnd::Table => {
@@ -1751,7 +1770,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             // A note's id line says which part the definition after it is
             // in; it describes no body paragraph.
+            // Like the part, the styles are only the line's right before
+            // the definition.
             self.endnote_next = view_notes::endnote_line(line);
+            self.note_style_next = view_notes::note_styles(line).unwrap_or_default();
             if self.endnote_next || view_notes::footnote_line(line) {
                 continue;
             }
@@ -1843,11 +1865,25 @@ impl<'o, 'a> Writer<'o, 'a> {
                 paragraph.indent = Some(720 * self.quote);
             }
         } else if let Some(target) = &self.target {
-            paragraph.style = Some(if self.endnotes.contains(target) {
-                "EndnoteText".into()
-            } else {
-                "FootnoteText".into()
-            });
+            // Word's note style unless the id line names another; the
+            // document's default needs no `w:pStyle`.
+            let default = self
+                .document
+                .style_specs
+                .iter()
+                .find(|s| s.default)
+                .map_or("Normal", |s| s.id.as_str());
+            // A note paragraph takes its own entry, past the list the last.
+            let at = self
+                .note_paragraph
+                .min(self.note_style.len().saturating_sub(1));
+            self.note_paragraph += 1;
+            paragraph.style = match self.note_style.get(at) {
+                Some(style) if style == default => None,
+                Some(style) => Some(style.clone().into()),
+                None if self.endnotes.contains(target) => Some("EndnoteText".into()),
+                None => Some("FootnoteText".into()),
+            };
         }
         if let Some(align) = self.cell {
             paragraph.align = align;
