@@ -616,6 +616,29 @@ fn probe_undefined_picture_bullet_fails() {
     );
 }
 
+/// `w:name` may not hold a comma (`ST_String` with pattern `[^,]*`;
+/// Word reads a comma there as the start of an alias); `w:styleId` may.
+#[test]
+fn probe_style_name_with_a_comma_fails() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="List,Para"><w:name w:val="List,Para"/></w:style>
+  <w:style w:type="paragraph" w:styleId="Fine,Id"><w:name w:val="Fine Id"/></w:style>
+</w:styles>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/styles.xml", styles),
+    ]);
+    let report = check_word_valid_package(&bytes);
+    let named: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.code == "STYLE_NAME_COMMA")
+        .collect();
+    assert_eq!(named.len(), 1, "{:?}", report.findings);
+    assert!(named[0].message.contains("List,Para"), "{named:?}");
+}
+
 #[test]
 fn probe_paraid_overflow_is_a_repairable_lead() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
