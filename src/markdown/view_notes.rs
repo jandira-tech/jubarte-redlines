@@ -434,6 +434,9 @@ pub(super) struct TableLine {
     /// Cell paragraphs aligned against their column (`p5 center`), as
     /// Word's `jc` value, by paragraph.
     pub aligns: HashMap<usize, &'static str>,
+    /// Cell paragraphs in a style of their own (`p5 ListParagraph`,
+    /// `p6-p9 Caption`), by paragraph.
+    pub styles: HashMap<usize, String>,
     /// The table's style (`style Ledger`) when tables differ in theirs.
     pub style: Option<String>,
     /// A comment's range runs through the table (`in c5`).
@@ -566,6 +569,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         align: None,
         merges: HashMap::new(),
         aligns: HashMap::new(),
+        styles: HashMap::new(),
         style: None,
         in_comment: false,
         fmt: None,
@@ -590,6 +594,17 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             }
         {
             parsed.aligns.insert(at, jc);
+            continue;
+        }
+        // `p5 ListParagraph`, `p6-p9 Caption`: cell paragraphs in a style.
+        if let Some((at, style)) = clause.split_once(' ')
+            && !style.is_empty()
+            && !style.contains(' ')
+            && let Some((first, count)) = paragraph_range(at)
+        {
+            for n in first..first + count {
+                parsed.styles.insert(n, style.to_string());
+            }
             continue;
         }
         if clause == "header row repeats" {
@@ -751,6 +766,15 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             .collect();
     }
     Some(parsed)
+}
+
+/// The first paragraph and count of `p5` or `p6-p9`.
+fn paragraph_range(id: &str) -> Option<(usize, usize)> {
+    let (first, last) = id.split_once('-').unwrap_or((id, id));
+    let first = crate::ids::short_number(first, 'p')?;
+    let last = crate::ids::short_number(last, 'p')?;
+    let count = last.checked_sub(first)?.checked_add(1)?;
+    (count <= MOST_EMPTY).then_some((first, count))
 }
 
 /// The row and cell of `t0.row2.cell1`.

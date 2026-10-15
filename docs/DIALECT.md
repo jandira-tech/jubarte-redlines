@@ -58,12 +58,14 @@ inserted or deleted row.
 `break-ins|break-del TAGS` · `fmt TAGS` · `rev TAGS` · `comments cN` ·
 `in cN` · `empty` (`<!-- p4-p7 empty -->`)
 
-Table: `<!-- tN [center|right] RxC, cells pA-pB by row, pN center, header row repeats,
+Table: `<!-- tN [center|right] RxC, cells pA-pB by row, pN center, pN Style, header row repeats,
 style S, merged tN.rowR.cellC across N down N, gaps tN.rowR before N after N,
 break-ins TAGS in pN, rev …, fmt … -->` (`cells tN.row0 pA-pB tN.row1 …` when
 a cell holds other than one paragraph).
 `pN center|right|left|justify` is a cell paragraph aligned against its column's
-`:-`/`:-:`/`-:` (most of the column decides); `tN center` places the table. Notes: `<!-- footnotes.p0 -->`. Pages: `<!-- page 2 of 5 -->`.
+`:-`/`:-:`/`-:` (most of the column decides); `pN Style` (`pA-pB Style` for
+consecutive ones) is a cell paragraph in a style other than the default;
+`tN center` places the table. Notes: `<!-- footnotes.p0 -->`. Pages: `<!-- page 2 of 5 -->`.
 
 **YAML header**
 

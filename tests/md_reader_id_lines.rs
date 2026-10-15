@@ -2003,3 +2003,13 @@ fn section_references_come_in_words_order() {
         "{document}"
     );
 }
+
+#[test]
+fn a_cell_paragraphs_style_comes_back_from_the_table_line() {
+    // `pN Style` names a cell paragraph's style; consecutive paragraphs in
+    // one style share a range (`p2-p3 Caption`), as the 18 List Paragraph
+    // cell lines of 3c920d5996_rejected_tracking.docx need.
+    let md = "<!-- t0 2x2, cells p0-p3 by row, p1 center, p1 ListParagraph, p2-p3 Caption -->\n\
+              |A|B|\n|-|-|\n|C|D|\n\n<!-- p4 -->\nAfter.\n";
+    assert_eq!(round_trip(md), md.trim());
+}

@@ -304,6 +304,8 @@ struct TablePlan {
     aligns: HashMap<usize, &'static str>,
     /// The style the table's line names (`style Ledger`).
     style: Option<String>,
+    /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
+    styles: HashMap<usize, String>,
     /// A comment's range runs through the table (`in c5`).
     in_comment: bool,
     /// The formatting changes the line names.
@@ -728,6 +730,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         rows,
         marks: line.marks,
         aligns: line.aligns,
+        styles: line.styles,
         style: line.style,
         in_comment: line.in_comment,
         fmt: line.fmt,
@@ -1898,6 +1901,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .and_then(|plan| plan.aligns.get(&at).copied())
             {
                 paragraph.align = Some(align);
+            }
+            if let Some(style) = self
+                .table_plan
+                .as_ref()
+                .and_then(|plan| plan.styles.get(&at).cloned())
+            {
+                paragraph.style = Some(style.into());
             }
             let formats = self
                 .table_plan
