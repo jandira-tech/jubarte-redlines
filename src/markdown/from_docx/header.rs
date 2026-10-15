@@ -550,6 +550,12 @@ struct Resolved {
     after: Option<f64>,
     line: Option<(f64, String)>,
     keep_next: bool,
+    keep_lines: bool,
+    contextual_spacing: bool,
+    /// Twips.
+    left: Option<f64>,
+    first_line: Option<f64>,
+    hanging: Option<f64>,
     align: Option<String>,
 }
 
@@ -610,6 +616,19 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             }
         }
         r.keep_next |= ppr.child("keepNext").is_some();
+        r.keep_lines |= ppr.child("keepLines").is_some();
+        r.contextual_spacing |= ppr.child("contextualSpacing").is_some();
+        if let Some(ind) = ppr.child("ind") {
+            if r.left.is_none() {
+                r.left = twips(ind, "left").or_else(|| twips(ind, "start"));
+            }
+            if r.first_line.is_none() {
+                r.first_line = twips(ind, "firstLine");
+            }
+            if r.hanging.is_none() {
+                r.hanging = twips(ind, "hanging");
+            }
+        }
         if r.align.is_none() {
             r.align = ppr
                 .child("jc")
@@ -665,7 +684,9 @@ fn align_word(align: Option<&str>) -> &'static str {
 
 /// The default style's line prints everything; a heading line always prints
 /// its font and size, then only what differs from `base` (the default
-/// style), so the legend reads as deviations.
+/// style), so the legend reads as deviations. Indent, keep-lines and
+/// contextual spacing follow keep-next. A zero indent is named only when
+/// it differs from the base.
 fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     let differs = |pick: fn(&Resolved) -> String| base.is_none_or(|b| pick(b) != pick(r));
     let mut parts = Vec::new();
@@ -710,6 +731,31 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     }
     if r.keep_next && differs(|x| x.keep_next.to_string()) {
         parts.push("keep-next".to_string());
+    }
+    if r.keep_lines && differs(|x| x.keep_lines.to_string()) {
+        parts.push("keep-lines".to_string());
+    }
+    // Left, then first-line, then hanging: the order the writer reads back.
+    if differs(|x| format!("{:?}", x.left))
+        && let Some(left) = r.left
+        && (base.is_some() || left != 0.0)
+    {
+        parts.push(format!("indent {}", super::agent::inches(left)));
+    }
+    if differs(|x| format!("{:?}", x.first_line))
+        && let Some(first) = r.first_line
+        && (base.is_some() || first != 0.0)
+    {
+        parts.push(format!("first-line {}", super::agent::inches(first)));
+    }
+    if differs(|x| format!("{:?}", x.hanging))
+        && let Some(hanging) = r.hanging
+        && (base.is_some() || hanging != 0.0)
+    {
+        parts.push(format!("hanging {}", super::agent::inches(hanging)));
+    }
+    if r.contextual_spacing && differs(|x| x.contextual_spacing.to_string()) {
+        parts.push("contextual spacing".to_string());
     }
     match base {
         None => parts.push(align_word(r.align.as_deref()).to_string()),
@@ -1614,5 +1660,45 @@ mod tests {
             ),
             "Page {IF} end"
         );
+    }
+
+    /// A paragraph indent, contextual spacing and keep-lines are named;
+    /// a style with none of them keeps today's line.
+    #[test]
+    fn the_legend_names_an_indent_contextual_spacing_and_keep_lines() {
+        let xml = format!(
+            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:styleId="Heading1"><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="240" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:styleId="HeadingPlain"><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:styleId="ListParagraph"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:styleId="First"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720" w:firstLine="360"/></w:pPr></w:style><w:style w:styleId="Hang"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:style><w:style w:styleId="Both"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="2520" w:hanging="2520"/></w:pPr></w:style><w:style w:styleId="Zero"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="0"/></w:pPr></w:style><w:style w:styleId="Plain"><w:basedOn w:val="Normal"/></w:style></w:styles>"#
+        );
+        let styles = parse_xml(xml.as_bytes()).unwrap();
+        let base = resolve(Some(&styles), None, "Normal");
+        let line = |id: &str| describe(&resolve(Some(&styles), None, id), Some(&base));
+        assert_eq!(
+            describe(&base, None),
+            "Calibri 11pt, after 8pt, line 1.08, left"
+        );
+        assert_eq!(
+            line("ListParagraph"),
+            "Calibri 11pt, indent 0.5in, contextual spacing"
+        );
+        assert_eq!(
+            line("Heading1"),
+            "Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines"
+        );
+        assert_eq!(
+            line("HeadingPlain"),
+            "Calibri bold 16pt, before 12pt, after 4pt, keep-next"
+        );
+        assert_eq!(line("First"), "Calibri 11pt, indent 0.5in, first-line 0.25in");
+        assert_eq!(line("Hang"), "Calibri 11pt, indent 0.5in, hanging 0.25in");
+        assert_eq!(line("Both"), "Calibri 11pt, indent 1.75in, hanging 1.75in");
+        assert_eq!(line("Zero"), "Calibri 11pt, indent 0in");
+        assert_eq!(line("Plain"), "Calibri 11pt");
+        let flat = Resolved {
+            font: Some("Calibri".to_string()),
+            size_half_points: Some(22.0),
+            left: Some(0.0),
+            ..Resolved::default()
+        };
+        assert_eq!(describe(&flat, None), "Calibri 11pt, left");
     }
 }

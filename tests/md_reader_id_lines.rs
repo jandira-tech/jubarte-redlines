@@ -1799,3 +1799,71 @@ fn a_leading_space_after_a_line_break_round_trips() {
     assert_eq!(d, b, "D dropped the space after the break\n{c}");
     assert_eq!(without_sha(&again), without_sha(&c), "read(D):\n{again}");
 }
+
+/// The `w:style` element whose `w:styleId` is `id`.
+fn style_element(styles: &str, id: &str) -> String {
+    let key = format!("w:styleId=\"{id}\"");
+    let at = styles
+        .find(&key)
+        .unwrap_or_else(|| panic!("no {id} in {styles}"));
+    let start = styles[..at].rfind("<w:style ").unwrap_or(at);
+    let end = styles[at..]
+        .find("</w:style>")
+        .map(|i| at + i + "</w:style>".len())
+        .unwrap_or(styles.len());
+    styles[start..end].to_string()
+}
+
+/// A → B → C → D for id-less Markdown. D's list style keeps its indent and
+/// contextual spacing, its heading keeps keep-lines, and D's Normal carries
+/// no `rPr` or `pPr` that B's lacks.
+fn keeps_list_indent_keep_lines_and_a_bare_normal(markdown: &str) {
+    let first = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("A reads")
+        .docx;
+    let view = read(
+        &first,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("B reads")
+    .markdown;
+    let second = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("C reads")
+        .docx;
+    let before = common::docx::part_string(&first, "word/styles.xml").expect("B styles");
+    let after = common::docx::part_string(&second, "word/styles.xml").expect("D styles");
+    let list = style_element(&after, "ListParagraph");
+    assert!(list.contains("w:left=\"720\""), "{list}");
+    assert!(list.contains("contextualSpacing"), "{list}");
+    let heading = style_element(&after, "Heading1");
+    assert!(heading.contains("keepLines"), "{heading}");
+    let normal_b = style_element(&before, "Normal");
+    let normal_d = style_element(&after, "Normal");
+    for tag in ["<w:rPr", "<w:pPr"] {
+        if normal_d.contains(tag) {
+            assert!(
+                normal_b.contains(tag),
+                "D's Normal has {tag} and B's does not\nB: {normal_b}\nD: {normal_d}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_idless_file_keeps_list_indent_keep_lines_and_a_bare_normal() {
+    keeps_list_indent_keep_lines_and_a_bare_normal(include_str!(
+        "fixtures/from-docx/critic/synthetic/all.accept.md"
+    ));
+    keeps_list_indent_keep_lines_and_a_bare_normal(include_str!(
+        "fixtures/from-docx/critic/synthetic/hard-lists.accept.md"
+    ));
+    keeps_list_indent_keep_lines_and_a_bare_normal(include_str!(
+        "fixtures/from-docx/critic/synthetic/hard-lists.critic.md"
+    ));
+    keeps_list_indent_keep_lines_and_a_bare_normal(include_str!(
+        "fixtures/from-docx/critic/synthetic/hard-lists.reject.md"
+    ));
+}
