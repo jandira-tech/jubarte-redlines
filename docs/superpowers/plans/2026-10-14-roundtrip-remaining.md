@@ -46,7 +46,11 @@ Status: next.
 
 ## 2. Paragraph styles of headers, footers, comments and notes (≈25 files)
 
-Status: headers and footers done (#491); comments and notes open.
+Status: headers and footers done (#491), comments done (`comments: …,
+style X, cN style Y`); notes open. Follow-up: `edit`/`add` write comment
+paragraphs without CommentText (and the annotation reference without
+CommentReference), which Word stamps on its own; views now say
+`style Normal` for them.
 - **Cause.** The writer stamps each story's default style on all its paragraphs:
   `header`, `footer`, `annotation text`, `footnote text`, `endnote text`. The view
   never prints a story paragraph's style.
@@ -71,6 +75,14 @@ Status: headers and footers done (#491); comments and notes open.
 - **Tests:** one per story kind. A source paragraph with no style, and one with a
   non-default style, keep their styles. A story whose paragraphs all use the
   default prints no clause, so today's views stay byte for byte.
+- **Open (comments, older than #492; pi's sweep of 143 corpus files):**
+  unanchored comments are dropped on write (`super_editor…769ed131`); a
+  thread list in Google Docs order comes back in body order
+  (`gdocs_comments_export`); revision-tag notes (`{>>r25 @S<<}`) become
+  extra comments on write (`file_176` 6 → 9, `file_146` 4 → 7). A
+  comment's paragraphs print joined on one line (`{>>c0 @A: first para
+  second para<<}`), so a multi-paragraph comment comes back as one
+  paragraph; per-paragraph comment styles wait on that.
 - **Open (headers and footers):** a hand-shortened `styles:` list falls back
   to the story's style without a warning (older than #491; pi on #491,
   finding 5). `styles:` reaches past the last paragraph with text to the last

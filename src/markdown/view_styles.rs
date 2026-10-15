@@ -510,6 +510,8 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
         (None, Some(_), Some(n)) if n.parse::<u32>().is_ok() => format!("heading {n}"),
         _ => id.to_string(),
     };
+    // `w:name` holds no comma (pattern `[^,]*`); a style id may.
+    let name = name.replace(',', " ");
     let mut out = if spec.default {
         format!(
             "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/><w:qFormat/>"

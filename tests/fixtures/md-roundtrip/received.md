@@ -2,7 +2,7 @@
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
 revisions: 9                       # 9 marks shown as 9 changes: 5 insertions, 4 deletions
-comments: 2 threads open           # 3 comments: c5 (+ reply c6), c11
+comments: 2 threads open, c6 style Normal  # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z

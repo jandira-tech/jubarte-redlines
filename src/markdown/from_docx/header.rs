@@ -72,6 +72,9 @@ pub(crate) struct CommentFact {
     /// A range or reference to it sits in the body or a note. Without one
     /// Word draws no balloon, so it is no open thread.
     pub anchored: bool,
+    /// Its first paragraph's style: `CommentText` for Word's own
+    /// (`annotation text`), the document default's id for none.
+    pub style: String,
 }
 
 pub(crate) struct Facts<'a> {
@@ -343,6 +346,36 @@ pub(crate) fn render(f: &Facts) -> String {
         if !unanchored.is_empty() {
             key.push_str(&format!(", {} unanchored", unanchored.len()));
         }
+        // Comment paragraphs in another style than Word's: the most
+        // comments' style for all (`style Normal`), and each other one's
+        // (`c6 style Normal`).
+        let mut counts: Vec<(&str, usize)> = Vec::new();
+        for comment in &f.comments {
+            match counts.iter_mut().find(|(s, _)| *s == comment.style) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((&comment.style, 1)),
+            }
+        }
+        let most = counts
+            .iter()
+            .fold(None::<(&str, usize)>, |best, &(s, n)| match best {
+                Some((_, m)) if m >= n => best,
+                _ => Some((s, n)),
+            })
+            .map_or("CommentText", |(s, _)| s);
+        if most != "CommentText" {
+            key.push_str(&format!(
+                ", style {}",
+                crate::markdown::view_notes::style_token(most)
+            ));
+        }
+        for comment in f.comments.iter().filter(|c| c.style != most) {
+            key.push_str(&format!(
+                ", c{} style {}",
+                comment.id,
+                crate::markdown::view_notes::style_token(&comment.style)
+            ));
+        }
         let mut list: Vec<String> = threads
             .iter()
             .map(|t| {
@@ -365,6 +398,11 @@ pub(crate) fn render(f: &Facts) -> String {
                 c.id
             )
         }));
+        // A quoted style id may hold `: ` or ` #`: the value is quoted then.
+        let key = match key.split_once(": ") {
+            Some((name, value)) => format!("{name}: {}", scalar(value, false)),
+            None => key,
+        };
         kv(
             &mut out,
             &key,

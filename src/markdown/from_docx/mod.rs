@@ -590,17 +590,49 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         // Word shows a comment only from a reference in a main-story
         // paragraph (probe 2026-10-10): one anchored in a header or footer
         // is no anchored comment.
+        let style_name = |id: &str| {
+            styles_root.as_ref().and_then(|root| {
+                root.children_named("style")
+                    .find(|s| s.attr("styleId") == Some(id))
+                    .and_then(|s| s.child("name"))
+                    .and_then(|n| n.attr("val"))
+            })
+        };
         let comment_facts: Vec<header::CommentFact> = comments_root
             .as_ref()
             .map(|root| {
                 root.children_named("comment")
                     .filter_map(|c| {
                         let id = c.attr("id")?.to_string();
+                        let style = {
+                            let mut ps = Vec::new();
+                            c.find_all("p", &mut ps);
+                            let id = ps
+                                .first()
+                                .and_then(|p| p.path(&["pPr", "pStyle"]))
+                                .and_then(|s| s.attr("val"))
+                                .filter(|id| Some(*id) != default_style.as_deref());
+                            match id {
+                                None => default_style.as_deref().unwrap_or("Normal").to_string(),
+                                // Word's own, under any id (`a6` in a
+                                // localized document): by name.
+                                Some(id)
+                                    if style_name(id).map_or(
+                                        id.eq_ignore_ascii_case("CommentText"),
+                                        |name| name.eq_ignore_ascii_case("annotation text"),
+                                    ) =>
+                                {
+                                    "CommentText".to_string()
+                                }
+                                Some(id) => id.to_string(),
+                            }
+                        };
                         Some(header::CommentFact {
                             parent: threads.reply_of.get(&id).cloned(),
                             author: c.attr("author").map(str::to_string),
                             anchored: anchored.contains(id.as_str()),
                             id,
+                            style,
                         })
                     })
                     .collect()
@@ -669,6 +701,21 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 {
                     other_styles.push(style.to_string());
                 }
+            }
+        }
+        // The comments' paragraph styles too, as the stories' below.
+        for style in comment_facts.iter().map(|c| c.style.as_str()) {
+            if style != default_style.as_deref().unwrap_or("Normal")
+                && style != "CommentText"
+                && styles_root.as_ref().is_some_and(|root| {
+                    root.children_named("style").any(|s| {
+                        s.attr("type") == Some("paragraph") && s.attr("styleId") == Some(style)
+                    })
+                })
+                && !heading_styles.iter().any(|(_, h)| h == style)
+                && !other_styles.iter().any(|o| o == style)
+            {
+                other_styles.push(style.to_string());
             }
         }
         let (table_styles, _) = table_styles(body);
@@ -802,7 +849,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     // use, as the body's, so the view writes them as the
                     // original did (a character style's id stays bare).
                     for style in &styles {
-                        if Some(style.as_str()) != default_style.as_deref()
+                        if style != default_style.as_deref().unwrap_or("Normal")
                             && !matches!(style.as_str(), "Header" | "Footer")
                             && styles_root.as_ref().is_some_and(|root| {
                                 root.children_named("style").any(|s| {

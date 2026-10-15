@@ -2631,6 +2631,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             .and_then(|first| view_notes::comment_head(first.trim()))
             .map(|(head, text)| (head, text.to_string()));
         if let Some((head, text)) = head {
+            // By the view's number, before renumbering can move it.
+            comment.style = self.document.comment_styles.get(&head.number).cloned();
             comment.number = Some(head.number).filter(|&n| n <= view_notes::MOST_ID);
             comment.parent = head.reply_to.filter(|&n| n <= view_notes::MOST_ID);
             comment.done = head.resolved;
@@ -3104,6 +3106,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                         "notes: {why}, so the notes parts it names are not made"
                     )),
                 },
+                "comments" => {
+                    let value = view_notes::scalar_and_comment(text).0;
+                    let (all, each) = view_notes::comment_styles(&value);
+                    self.document.comment_style = all;
+                    self.document.comment_styles = each;
+                }
                 "unplaced" => {
                     for (at, tag) in view_notes::unplaced(text) {
                         self.unplaced.entry(at).or_default().push(tag);

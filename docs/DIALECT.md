@@ -72,6 +72,7 @@ quoted, `"My Style"`, on table and paragraph id lines alike);
 **YAML header**
 
 ```yaml
+comments: 2 threads open, style Normal, c6 style CommentText   # paragraph styles; CommentText unless named
 authors:
   AC: Ann Counsel                    # the handle tags name
 page:      Letter portrait, margins 1in, header/footer 0.5in   # columns 2, column gap 0.25in
@@ -89,8 +90,8 @@ sections:
   2: {p11-p40, page: A4 landscape, headers: {first: none}}
 ```
 
-Read back: `page:`, `styles:`, `headers:`/`footers:` and `sections:` are
-honoured in any YAML header; id lines and tags only under `view:`. A
+Read back: `page:`, `styles:`, `headers:`/`footers:`, `sections:` and the
+`comments:` line's style clauses are honoured in any YAML header; id lines and tags only under `view:`. A
 change or comment naming no author or date takes `-a`/`-d`, else the front
 matter's `author:` and `last_modified:` (or `modified:`, `date:`,
 `created:`), else the `--reference-doc`'s `dc:creator` and

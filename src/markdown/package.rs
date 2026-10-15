@@ -147,6 +147,15 @@ pub(super) fn assemble(
             .filter(|id| !matches!(id.as_str(), "Normal" | "Header" | "Footer"))
             .cloned(),
     );
+    // And the comments' (`comments: …, style X`), CommentText aside.
+    named.extend(
+        document
+            .comment_style
+            .iter()
+            .chain(document.comment_styles.values())
+            .filter(|id| !matches!(id.as_str(), "Normal" | "CommentText"))
+            .cloned(),
+    );
     if let Some(styles) = package.part_string(&styles_part) {
         let styles = with_styles(&styles, &wanted);
         let styles = with_named_styles(&styles, &named);
