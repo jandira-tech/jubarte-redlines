@@ -1190,6 +1190,13 @@ fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMa
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
     for (at, item) in items.iter().enumerate() {
+        if let Some(change) = note_change(notes, item) {
+            if open != Some(change) {
+                *marks.entry(change.1).or_default() += 1;
+            }
+            open = Some(change);
+            continue;
+        }
         match item {
             Item::Bookmark(_) => {}
             Item::LinkStart(..) => {
@@ -1209,12 +1216,6 @@ fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMa
                 if fields.pop().flatten().is_none() {
                     open = None;
                 }
-            }
-            _ if let Some(change) = note_change(notes, item) => {
-                if open != Some(change) {
-                    *marks.entry(change.1).or_default() += 1;
-                }
-                open = Some(change);
             }
             Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
                 if continues(&items[at + 1..], open) => {}
