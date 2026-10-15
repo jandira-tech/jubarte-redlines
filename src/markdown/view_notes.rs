@@ -552,47 +552,8 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
 /// kind (`footnote`, `endnote`), in the order the view lists them; none
 /// without the clause. An entry that names no notes part is skipped.
 pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
-    // The `fmt:` clause outside quotes, up to a YAML comment (` # …`).
-    let (mut quoted, mut escaped) = (false, false);
-    let mut clause = None;
-    for (at, c) in value.char_indices() {
-        if quoted {
-            match c {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => quoted = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            '"' => quoted = true,
-            '#' if value[..at].ends_with([' ', '\t']) => break,
-            _ if value[at..].starts_with("fmt:") && value[..at].ends_with([' ', '{', ',']) => {
-                clause = Some(at + "fmt:".len());
-                break;
-            }
-            _ => {}
-        }
-    }
-    let Some(at) = clause else {
+    let Some(tags) = super::view_stories::flow_text(value, "fmt") else {
         return Vec::new();
-    };
-    let rest = value[at..].trim_start();
-    let tags = match rest.strip_prefix('"') {
-        Some(inner) => {
-            let mut out = String::new();
-            let mut chars = inner.chars();
-            while let Some(c) = chars.next() {
-                match c {
-                    '\\' => out.extend(chars.next()),
-                    '"' => break,
-                    c => out.push(c),
-                }
-            }
-            out
-        }
-        None => rest[..rest.find([',', '}']).unwrap_or(rest.len())].to_string(),
     };
     tags.split("; ")
         .filter_map(|entry| {
@@ -1309,6 +1270,9 @@ mod tests {
             [("endnote", vec![7])]
         );
         assert_eq!(kinds("{rev: \"fmt: footnotes.r1 @AS\"}"), []);
+        assert_eq!(kinds("{rev: 'fmt: footnotes.r1 @AS'}"), []);
+        assert_eq!(kinds("{rev: 'author''s fmt: footnotes.r1 @AS'}"), []);
+        assert_eq!(kinds("{fmt: 'footnotes.r7 @AS'}"), [("footnote", vec![7])]);
         assert_eq!(kinds("{fmt: header1.r1 @AS}"), []);
         assert_eq!(kinds("{empty: [footnotes]}"), []);
     }

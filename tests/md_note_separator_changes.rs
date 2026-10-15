@@ -87,10 +87,15 @@ fn part(docx: &[u8], name: &str) -> String {
 
 /// The `w:id`s of the formatting changes in `xml`, in order.
 fn format_change_ids(xml: &str) -> Vec<String> {
-    xml.split("<w:pPrChange w:id=\"")
-        .skip(1)
-        .filter_map(|rest| rest.split('"').next())
-        .map(str::to_string)
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&jubarte::namespaces::W::name("pPrChange")))
+        .iter()
+        .filter_map(|&node| {
+            dom.attribute(node, &jubarte::namespaces::W::id())
+                .map(str::to_string)
+        })
         .collect()
 }
 
@@ -182,4 +187,82 @@ fn more_changes_than_separators_warn() {
     );
     let footnotes = part(&written.docx, "word/footnotes.xml");
     assert_eq!(format_change_ids(&footnotes), ["0", "1"], "{footnotes}");
+}
+
+#[test]
+fn single_quoted_separator_tags_preserve_unknown_author_and_date() {
+    let markdown = "---\nnotes: {fmt: 'footnotes.r7 @ZZ 2026-09-26T14:55:00Z', empty: [footnotes]}\n---\n\nBody.\n";
+    let written = markdown_to_docx(markdown, &DocxOptions::default()).unwrap();
+    let xml = part(&written.docx, "word/footnotes.xml");
+    assert_eq!(format_change_ids(&xml), ["7"], "{xml}");
+    assert!(xml.contains(r#"w:author="ZZ""#), "{xml}");
+    assert!(xml.contains(r#"w:date="2026-09-26T14:55:00Z""#), "{xml}");
+}
+
+#[test]
+fn fresh_note_revisions_cannot_reuse_a_separator_id() {
+    let markdown =
+        "---\nnotes: {fmt: footnotes.r1 @AS}\n---\n\nBody[^1].\n\n[^1]: {++new note++}\n";
+    let written = markdown_to_docx(markdown, &DocxOptions::default()).unwrap();
+    let xml = part(&written.docx, "word/footnotes.xml");
+    let changes = jubarte::changes::list_changes(&written.docx).unwrap();
+    let ids: Vec<_> = changes
+        .iter()
+        .filter(|c| c.id.starts_with("footnotes."))
+        .map(|c| &c.id)
+        .collect();
+    assert!(ids.len() >= 2, "{xml}");
+    assert_eq!(
+        ids.iter().collect::<std::collections::HashSet<_>>().len(),
+        ids.len(),
+        "{xml}"
+    );
+    common::validity::assert_word_valid_package(&written.docx);
+}
+
+#[test]
+fn a_reference_separators_changes_follow_the_edited_view() {
+    let reference = source(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &notes("footnote", [Some(0), Some(1)], ""),
+        &notes("endnote", [None, None], ""),
+    );
+    for (clause, expected) in [
+        ("fmt: footnotes.r9 @ZZ 2026-09-26T14:55:00Z, ", vec!["9"]),
+        ("", vec![]),
+    ] {
+        let markdown = format!("---\nnotes: {{{clause}empty: [footnotes]}}\n---\n\nBody.\n");
+        let written = markdown_to_docx(
+            &markdown,
+            &DocxOptions {
+                reference: Some(&reference),
+                ..DocxOptions::default()
+            },
+        )
+        .unwrap();
+        let xml = part(&written.docx, "word/footnotes.xml");
+        assert_eq!(format_change_ids(&xml), expected, "{xml}");
+        common::validity::assert_word_valid_package(&written.docx);
+    }
+}
+
+#[test]
+fn a_formatting_clause_alone_creates_the_notes_part() {
+    let markdown = "---\nnotes: {fmt: footnotes.r7 @AS}\n---\n\nBody.\n";
+    let written = markdown_to_docx(markdown, &DocxOptions::default()).unwrap();
+    let xml = part(&written.docx, "word/footnotes.xml");
+    assert_eq!(format_change_ids(&xml), ["7"], "{xml}");
+}
+
+#[test]
+fn fresh_separator_ids_stay_in_words_integer_range() {
+    let markdown =
+        "---\nnotes: {fmt: footnotes.r2147483647 @AS; footnotes.noid @AS}\n---\n\nBody.\n";
+    let written = markdown_to_docx(markdown, &DocxOptions::default()).unwrap();
+    let xml = part(&written.docx, "word/footnotes.xml");
+    let ids = format_change_ids(&xml);
+    assert_eq!(ids.len(), 2, "{xml}");
+    assert_eq!(ids[0], "2147483647");
+    assert_ne!(ids[0], ids[1]);
+    assert!(ids.iter().all(|id| id.parse::<i32>().is_ok()), "{xml}");
 }

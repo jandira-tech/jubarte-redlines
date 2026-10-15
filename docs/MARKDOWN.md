@@ -419,7 +419,9 @@ changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
 notes no definition shows (Word's separators) as `notes: {fmt: …}`;
 converting back puts a part's `fmt` changes on its separator, then its
 continuation separator (the view does not say which a lone one was on;
-its tag, author and date come back). A
+its tag, author and date come back). The clause also updates a reference
+file's separators; removing it removes their old formatting-change marks.
+A `fmt` clause alone creates the notes part it names. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
