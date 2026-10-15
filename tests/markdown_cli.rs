@@ -524,7 +524,7 @@ fn diff_with_a_word_side_prints_paragraph_ids_and_writes_nothing() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("@@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"),
+        stdout.contains("@@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"),
         "{stdout}"
     );
     assert!(!stdout.contains("{>>Arthur Rodrigues ("), "{stdout}");

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! `jubarte::markdown::patch_redline` and `patch_documents`: the patch of a
-//! Word redline, each hunk at the `body:p:N` id `jubarte text` and edit plans
+//! Word redline, each hunk at the `pN` id `jubarte text` and edit plans
 //! use, in the new version (or the old one, for a removed paragraph).
 
 mod common;
@@ -142,7 +142,7 @@ fn changes_by_others_name_them_and_the_owners_do_not() {
     let text = patch.render(0);
     assert!(
         text.starts_with(
-            "--- a/a.docx\n+++ b/b.docx\tArthur Rodrigues\t2026-09-30T14:05:00Z\n@@ [body:p:"
+            "--- a/a.docx\n+++ b/b.docx\tArthur Rodrigues\t2026-09-30T14:05:00Z\n@@ [p"
         ),
         "{text}"
     );
