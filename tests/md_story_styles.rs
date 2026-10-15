@@ -383,3 +383,19 @@ fn a_character_style_a_header_paragraph_names_stays_out_of_the_legend() {
     assert_eq!(part_styles(&again, "word/header"), ["LineNumber"]);
     assert!(!view.contains("  LineNumber:"), "{view}");
 }
+
+#[test]
+fn normal_is_described_once_when_no_style_is_marked_default() {
+    // A header paragraph with no style under a styles part that marks no
+    // default: `Normal` is the legend's default line, not a second one.
+    let styles = styles_xml("Header", "Footer").replace(r#" w:default="1""#, "");
+    let docx = docx(
+        &format!("{}{}", styled(Some("Header"), "Draft"), styled(None, "Two")),
+        &styled(Some("Footer"), "Page"),
+        &styles,
+    );
+    let (view, again, view_again) = round_trip(&docx);
+    assert_eq!(view.matches("\n  Normal:").count(), 1, "{view}");
+    assert_eq!(part_styles(&again, "word/header"), ["Header", "-"]);
+    assert_eq!(view_again, view);
+}
