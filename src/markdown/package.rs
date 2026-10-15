@@ -129,6 +129,12 @@ pub(super) fn assemble(
         } else {
             "Footer"
         });
+        // A header in the Footer style, or the reverse, takes that one too.
+        for style in &story.styles {
+            if let Some(own) = ["Header", "Footer"].into_iter().find(|own| style == own) {
+                wanted.insert(own);
+            }
+        }
     }
     // And the styles they name (`style: ListParagraph`), as id lines do.
     let mut named = document.named_styles.clone();
@@ -180,6 +186,11 @@ pub(super) fn assemble(
         next_revision
             .saturating_add(1_000_000)
             .min(super::view_notes::MOST_ID / 2),
+        document
+            .style_specs
+            .iter()
+            .find(|s| s.default)
+            .map_or("Normal", |s| s.id.as_str()),
     );
     let default_section = section.clone();
     let section = section_stories.apply(sections, &document.section(sections, &section));

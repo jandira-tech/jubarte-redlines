@@ -206,3 +206,117 @@ fn a_localized_header_style_is_the_default() {
     assert_eq!(part_styles(&again, "word/header"), ["Header"]);
     assert_eq!(part_styles(&again, "word/footer"), ["Footer"]);
 }
+
+/// A docx with only a default header holding `header`, with `styles`.
+fn header_only(header: &str, styles: &str) -> Vec<u8> {
+    let (w, r) = (common::docx::W_NS, common::docx::R_NS);
+    let hdr = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="{w}" xmlns:r="{r}">{header}</w:hdr>"#
+    );
+    let header_rel = format!("{RELS}/header");
+    let styles_rel = format!("{RELS}/styles");
+    let parts = [
+        common::docx::Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: &header_rel,
+            xml: &hdr,
+        },
+        common::docx::Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: &styles_rel,
+            xml: styles,
+        },
+    ];
+    common::docx::docx_with_sect(
+        &common::docx::para("Body."),
+        &parts,
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    )
+}
+
+/// The styles part of `docx`.
+fn styles_of(docx: &[u8]) -> String {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
+    let mut xml = String::new();
+    zip.by_name("word/styles.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    xml
+}
+
+#[test]
+fn a_style_the_view_defines_has_a_name_without_commas() {
+    // pi on #491: `w:name` may hold no comma (Word reads one as an alias
+    // list; the schema's pattern is `[^,]*`), `w:styleId` may.
+    let styles = styles_xml("Header", "Footer").replace(
+        "</w:styles>",
+        r#"<w:style w:type="paragraph" w:styleId="List,Para"><w:name w:val="List Para"/></w:style></w:styles>"#,
+    );
+    let docx = docx(
+        &format!(
+            "{}{}",
+            styled(Some("Header"), "Draft"),
+            styled(Some("List,Para"), "Item")
+        ),
+        &styled(Some("Footer"), "Page"),
+        &styles,
+    );
+    let (_, again, _) = round_trip(&docx);
+    assert_eq!(part_styles(&again, "word/header"), ["Header", "List,Para"]);
+    let styles = styles_of(&again);
+    let definition = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"List,Para\""))
+        .unwrap_or_else(|| panic!("no List,Para: {styles}"));
+    let name = definition
+        .split("<w:name w:val=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap_or_else(|| panic!("{definition}"));
+    assert!(!name.contains(','), "{definition}");
+}
+
+#[test]
+fn normal_names_normal_when_another_style_is_the_default() {
+    // pi on #491: with BodyText the default, an explicit Normal must stay
+    // Normal, and a paragraph without a style must stay without one.
+    let w = common::docx::W_NS;
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="BodyText"><w:name w:val="Body Text"/></w:style><w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header"/></w:style><w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/></w:style></w:styles>"#
+    );
+    let docx = docx(
+        &format!(
+            "{}{}",
+            styled(Some("Header"), "Draft"),
+            styled(Some("Normal"), "Second")
+        ),
+        &styled(None, "Page"),
+        &styles,
+    );
+    let (view, again, view_again) = round_trip(&docx);
+    assert_eq!(part_styles(&again, "word/header"), ["Header", "Normal"]);
+    assert_eq!(part_styles(&again, "word/footer"), ["-"]);
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_header_in_the_footer_style_gets_its_definition() {
+    // pi on #491: a header-only document whose header paragraph is in
+    // Footer: the output must define Footer.
+    let docx = header_only(
+        &styled(Some("Footer"), "Draft"),
+        &styles_xml("Header", "Footer"),
+    );
+    let (_, again, _) = round_trip(&docx);
+    assert_eq!(part_styles(&again, "word/header"), ["Footer"]);
+    assert!(
+        styles_of(&again).contains("w:styleId=\"Footer\""),
+        "{}",
+        styles_of(&again)
+    );
+}

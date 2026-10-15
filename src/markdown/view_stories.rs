@@ -816,6 +816,7 @@ pub(super) fn write(
     count: usize,
     people: &People,
     first_id: u32,
+    default_style: &str,
 ) -> SectionStories {
     if sections
         .values()
@@ -858,7 +859,7 @@ pub(super) fn write(
                 let id = match parts.get(&story.part) {
                     Some(id) => id.clone(),
                     None => {
-                        let id = story_part(package, main, story, &mut marks);
+                        let id = story_part(package, main, story, default_style, &mut marks);
                         parts.insert(story.part.clone(), id.clone());
                         id
                     }
@@ -905,7 +906,13 @@ fn reference_rank(kind: &str, ty: &str) -> usize {
 /// does not reach; one mark may hold an insertion and a deletion. A mark
 /// it names no more of (`footer1.r9 @AC`) is an empty insertion at the
 /// end.
-fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks<'_>) -> String {
+fn story_part(
+    package: &mut PartFs,
+    main: &str,
+    story: &Story,
+    default_style: &str,
+    marks: &mut Marks<'_>,
+) -> String {
     let root = if story.kind == "header" { "hdr" } else { "ftr" };
     let style = if story.kind == "header" {
         "Header"
@@ -961,7 +968,9 @@ fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks
             [one] => one.as_str(),
             many => many.get(index).map_or(style, String::as_str),
         };
-        let mut base = if style == "Normal" {
+        // The document's default style needs no `w:pStyle`; any other,
+        // `Normal` too when it is not the default, does.
+        let mut base = if style == default_style {
             String::new()
         } else {
             format!("<w:pStyle w:val=\"{}\"/>", super::xml::escape(style))

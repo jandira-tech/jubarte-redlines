@@ -783,7 +783,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                         id.to_string()
                                     }
                                 }
-                                _ => "Normal".to_string(),
+                                // No style is the default's, named by its id.
+                                _ => default_style.as_deref().unwrap_or("Normal").to_string(),
                             },
                         )
                         .collect();
