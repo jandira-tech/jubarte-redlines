@@ -4,7 +4,7 @@
 
 //! Schema-order ranks for property-container children.
 //!
-//! These constants back [`super::finalize::wml_order_elements_per_standard`]
+//! These constants back `super::finalize::wml_order_elements_per_standard`
 //! (which uses them to resort `w:pPr`, `w:numPr`, `w:rPr`, `w:tblPr`
 //! children) and are pinned by the schema-consistency test in
 //! `tests/schema_consistency.rs`. The test fails if they drift from the

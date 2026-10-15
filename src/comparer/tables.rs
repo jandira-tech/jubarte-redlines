@@ -32,8 +32,8 @@ fn set(names: &[XName]) -> HashSet<XName> {
 
 /// `WordBreakElements` (WmlComparer.ts :8469) — a non-`w:t` content atom whose
 /// name is in this set forces a word boundary during atomization. The
-/// comparer uses this set inside [`super::atomize::atom_hash`]
-/// (via [`super::units::is_word_break_element`]) so a tab, break, drawing,
+/// comparer uses this set inside `super::atomize::atom_hash`
+/// (via `super::units::is_word_break_element`) so a tab, break, drawing,
 /// or footnote/endnote reference starts a new word atom even mid-run.
 pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
@@ -65,7 +65,7 @@ pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 });
 
 /// `AllowableRunChildren` (WmlComparer.ts :8998) — run-level leaves emitted
-/// as a single verbatim atom by [`super::atomize::recurse`]. `w:object`
+/// as a single verbatim atom by `super::atomize::recurse`. `w:object`
 /// is intentionally absent; the atomizer has an explicit dispatch arm for
 /// it.
 pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
@@ -164,7 +164,7 @@ pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> =
 
 /// One `RecursionElements` (WmlComparer.ts :9074) entry: an element the
 /// atomizer recurses into, plus the property children that
-/// [`super::atomize::coalesce_recurse`] re-attaches structurally after
+/// `super::atomize::coalesce_recurse` re-attaches structurally after
 /// atomization.
 pub struct RecursionInfo {
     /// The element the atomizer recurses into.

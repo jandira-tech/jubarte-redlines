@@ -19,7 +19,7 @@
 //!   size ratio ≥ 2).
 //!
 //! [`detect_moves_in_atom_list`] is the public entry the compare pipeline
-//! calls once; [`promote_skip_ahead_equals`] / [`promote_skip_ahead_equals_with_source`]
+//! calls once; [`promote_skip_ahead_equals`] / `promote_skip_ahead_equals_with_source`
 //! rearrange LCS so a `moveTo`-before-gap / `moveFrom`-after-gap shape is
 //! possible before the move pass runs.
 
@@ -54,7 +54,7 @@ pub fn split_by_chars(text: &str, seps: &[char]) -> Vec<String> {
 
 /// Unique non-empty words from `text`, split on [`WmlComparerSettings::word_separators`]
 /// and uppercased when [`WmlComparerSettings::case_insensitive`] is set.
-/// Powers the Jaccard similarity test in [`jaccard`] / [`jaccard_precomputed`].
+/// Powers the Jaccard similarity test in [`jaccard`] / `jaccard_precomputed`.
 pub fn tokenize(text: &str, settings: &WmlComparerSettings) -> HashSet<String> {
     split_by_chars(text, &settings.word_separators)
         .into_iter()

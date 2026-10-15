@@ -39,7 +39,7 @@ pub type RelHashResolver<'a> = dyn Fn(&str) -> Option<String> + 'a;
 /// Default resolver when no OPC package is available: every rId is treated
 /// as unresolvable and replaced with the C# fallback string
 /// `"NULL Relationship"`. Real part-hashing is wired in
-/// [`crate::document_comparer::compare_documents_impl`] via a package-
+/// `crate::document_comparer::compare_documents_impl` via a package-
 /// backed resolver.
 pub fn null_rel_resolver(_r_id: &str) -> Option<String> {
     Some("NULL Relationship".to_string())

@@ -11,16 +11,16 @@
 //!
 //! Public surface:
 //!
-//! - Entry points: [`compare_bodies`] (text-only), [`compare_bodies_faithful`]
-//!   (full M4.I pipeline), [`compare_bodies_faithful_with_notes`] and the
-//!   non-panicking [`try_compare_bodies_faithful_with_notes`].
-//! - Types: [`NotesContext`], [`CorrelationStatus`], [`ComparisonUnitGroupType`],
-//!   [`WmlComparerRevisionType`], [`WmlComparerSettings`], [`CompareMode`],
-//!   [`CompareContext`].
-//! - Re-exports: [`WmlComparerRevision`] from [`atoms`].
-//! - Constants: [`PREDELETE_STAMP_ORIG`], [`PREDELETE_STAMP_REV`],
-//!   [`DEFAULT_AUTHOR_FOR_REVISIONS`], [`DEFAULT_DETAIL_THRESHOLD`],
-//!   [`WORD_LEVEL_KEPT_RATIO`].
+//! - Entry points: `compare_bodies` (text-only), `compare_bodies_faithful`
+//!   (full M4.I pipeline), `compare_bodies_faithful_with_notes` and the
+//!   non-panicking `try_compare_bodies_faithful_with_notes`.
+//! - Types: `NotesContext`, `CorrelationStatus`, `ComparisonUnitGroupType`,
+//!   `WmlComparerRevisionType`, `WmlComparerSettings`, `CompareMode`,
+//!   `CompareContext`.
+//! - Re-exports: `WmlComparerRevision` from `atoms`.
+//! - Constants: `PREDELETE_STAMP_ORIG`, `PREDELETE_STAMP_REV`,
+//!   `DEFAULT_AUTHOR_FOR_REVISIONS`, `DEFAULT_DETAIL_THRESHOLD`,
+//!   `WORD_LEVEL_KEPT_RATIO`.
 //!
 //! The package-level command-line `jubarte compare A B` runs through this
 //! module; the public host APIs (`compare_documents`,
@@ -131,14 +131,14 @@ pub fn compare_bodies_faithful(
 /// All six fields are in the same `Dom` as the bodies; `*_before` / `*_after`
 /// are the inputs (both source documents' parts, as loaded by
 /// `ProcessFootnoteEndnote` in C#), and `*_with_revisions` are the OUTPUT
-/// package's parts that [`super::footnotes::rectify_footnote_endnote_ids`]
+/// package's parts that `super::footnotes::rectify_footnote_endnote_ids`
 /// rebuilds (separators + referenced definitions renumbered `1..n` with
 /// finalized revision markup).
 ///
 /// The pipeline runs only when the four source fields are populated; a
 /// half-populated layout returns
-/// [`super::footnotes::RectifyError::MissingSourcePart`] /
-/// [`super::footnotes::RectifyError::MissingTargetPart`] without rewriting
+/// `super::footnotes::RectifyError::MissingSourcePart` /
+/// `super::footnotes::RectifyError::MissingTargetPart` without rewriting
 /// any notes part (every lookup completes before any definition is mutated).
 #[derive(Debug, Default)]
 pub struct NotesContext {
@@ -169,7 +169,7 @@ pub struct NotesContext {
 /// reference whose definition or notes part is missing, or references
 /// with no `with_revisions` part to write into); use
 /// [`try_compare_bodies_faithful_with_notes`] to recover that as an
-/// [`super::footnotes::RectifyError`] instead.
+/// `super::footnotes::RectifyError` instead.
 pub fn compare_bodies_faithful_with_notes(
     dom: &mut Dom,
     source_root1: NodeId,
@@ -192,15 +192,15 @@ pub fn compare_bodies_faithful_with_notes(
 }
 
 /// [`compare_bodies_faithful_with_notes`] that returns the notes-layout
-/// failure as a [`super::footnotes::RectifyError`] instead of panicking;
+/// failure as a `super::footnotes::RectifyError` instead of panicking;
 /// the package-level comparer uses this so a malformed notes part is an
 /// `Err`, never an abort of the host.
 ///
 /// # Errors
 ///
-/// [`super::footnotes::RectifyError`] variants from
-/// [`super::footnotes::process_footnote_endnote`] or
-/// [`super::footnotes::rectify_footnote_endnote_ids`]. Each makes its
+/// `super::footnotes::RectifyError` variants from
+/// `super::footnotes::process_footnote_endnote` or
+/// `super::footnotes::rectify_footnote_endnote_ids`. Each makes its
 /// lookups before it rewrites a definition, so a missing part or definition
 /// leaves the notes parts as they were.
 ///
@@ -1253,8 +1253,8 @@ pub fn try_compare_bodies_faithful_with_notes(
 
 use crate::comparison_log::ComparisonLog;
 
-/// Port of `CorrelationStatus`. Tracks the relationship of a [`super::atoms::ComparisonUnit`]
-/// or [`super::atoms::CorrelatedSequence`] to its counterpart on the other
+/// Port of `CorrelationStatus`. Tracks the relationship of a `super::atoms::ComparisonUnit`
+/// or `super::atoms::CorrelatedSequence` to its counterpart on the other
 /// side of the diff.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CorrelationStatus {
@@ -1284,7 +1284,7 @@ pub enum CorrelationStatus {
     FormatChanged,
 }
 
-/// Which structural container a [`super::atoms::ComparisonUnitGroup`] came
+/// Which structural container a `super::atoms::ComparisonUnitGroup` came
 /// from. Drives which OOXML element the produce layer wraps the group in
 /// (`w:p`, `w:tbl`, `w:tr`, `w:tc`, `w:txbxContent`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -1301,7 +1301,7 @@ pub enum ComparisonUnitGroupType {
     Textbox,
 }
 
-/// Revisions surfaced by [`super::revisions`]. Mirrors the C# enum value
+/// Revisions surfaced by `super::revisions`. Mirrors the C# enum value
 /// names so the JSON-serialized revision list the Python/WASM bindings
 /// expose stays stable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1623,7 +1623,7 @@ pub struct CompareContext {
     /// The settings the comparison ran under.
     pub settings: WmlComparerSettings,
     /// Diagnostic log the pipeline populates with codes from
-    /// [`ComparisonLogCode`].
+    /// `ComparisonLogCode`.
     pub log: ComparisonLog,
 }
 
