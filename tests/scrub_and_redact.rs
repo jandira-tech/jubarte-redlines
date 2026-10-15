@@ -288,7 +288,7 @@ fn redact_leaves_blocks_and_no_copy_of_the_text() {
     let source = docx(&para("Account 12345678 is closed."));
     let plan = EditPlan::from_json(
         r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"redact","paragraph":"body:p:0","find":"12345678"}]}"#,
+        {"kind":"redact","paragraph":"p0","find":"12345678"}]}"#,
     )
     .unwrap();
     let out = apply_plan(&source, &plan).unwrap();
@@ -309,7 +309,7 @@ fn a_redaction_that_survives_in_a_comment_is_refused() {
         &source,
         &EditPlan::from_json(
             r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"comment","paragraph":"body:p:0","text":"12345678 again"}]}"#,
+        {"kind":"comment","paragraph":"p0","text":"12345678 again"}]}"#,
         )
         .unwrap(),
     )
@@ -319,7 +319,7 @@ fn a_redaction_that_survives_in_a_comment_is_refused() {
         &commented,
         &EditPlan::from_json(
             r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"redact","paragraph":"body:p:0","find":"12345678"}]}"#,
+        {"kind":"redact","paragraph":"p0","find":"12345678"}]}"#,
         )
         .unwrap(),
     )
@@ -333,7 +333,7 @@ fn the_redaction_is_no_tracked_change_and_the_report_never_echoes_the_text() {
     let source = docx(&para("Account 12345678 is closed."));
     let out = apply_plan(
         &source,
-        &plan(r#"{"kind":"redact","paragraph":"body:p:0","find":"12345678"}"#),
+        &plan(r#"{"kind":"redact","paragraph":"p0","find":"12345678"}"#),
     )
     .unwrap();
     assert!(
@@ -353,8 +353,8 @@ fn a_redaction_beside_another_edit_of_the_paragraph_keeps_both() {
     let out = apply_plan(
         &source,
         &plan(
-            r#"{"kind":"redact","paragraph":"body:p:0","find":"12345678"},
-               {"kind":"replace","paragraph":"body:p:0","find":"closed","replacement":"open"}"#,
+            r#"{"kind":"redact","paragraph":"p0","find":"12345678"},
+               {"kind":"replace","paragraph":"p0","find":"closed","replacement":"open"}"#,
         ),
     )
     .unwrap();
@@ -381,7 +381,7 @@ fn the_same_text_left_in_another_paragraph_is_a_leak() {
     ));
     let e = apply_plan(
         &source,
-        &plan(r#"{"kind":"redact","paragraph":"body:p:0","find":"12345678"}"#),
+        &plan(r#"{"kind":"redact","paragraph":"p0","find":"12345678"}"#),
     )
     .unwrap_err();
     assert_eq!(e.code, "REDACTION_LEAK", "{e:?}");
@@ -397,8 +397,8 @@ fn the_same_text_left_in_another_paragraph_is_a_leak() {
             para("Ref 12345678.")
         )),
         &plan(
-            r#"{"kind":"redact","paragraph":"body:p:0","find":"12345678"},
-               {"kind":"redact","paragraph":"body:p:1","find":"12345678"}"#,
+            r#"{"kind":"redact","paragraph":"p0","find":"12345678"},
+               {"kind":"redact","paragraph":"p1","find":"12345678"}"#,
         ),
     )
     .unwrap();
@@ -410,19 +410,18 @@ fn occurrence_redacts_each_copy_in_one_paragraph() {
     let source = docx(&para("Ref 1234 and again 1234."));
     let one = |ops: &str| apply_plan(&source, &plan(ops));
     // One copy left is a leak, and the refusal does not repeat the text.
-    let e = one(r#"{"kind":"redact","paragraph":"body:p:0","find":"1234","occurrence":2}"#)
-        .unwrap_err();
+    let e = one(r#"{"kind":"redact","paragraph":"p0","find":"1234","occurrence":2}"#).unwrap_err();
     assert_eq!(e.code, "REDACTION_LEAK", "{e:?}");
     assert!(!e.message.contains("1234"), "{}", e.message);
     // Without occurrence the repeated text is ambiguous; the refusal names
     // the count, not the text.
-    let e = one(r#"{"kind":"redact","paragraph":"body:p:0","find":"1234"}"#).unwrap_err();
+    let e = one(r#"{"kind":"redact","paragraph":"p0","find":"1234"}"#).unwrap_err();
     assert_eq!(e.code, "AMBIGUOUS_ANCHOR", "{e:?}");
     assert!(!format!("{e:?}").contains("1234"), "{e:?}");
     // Both copies, one op each.
     let out = one(
-        r#"{"kind":"redact","paragraph":"body:p:0","find":"1234","occurrence":1},
-           {"kind":"redact","paragraph":"body:p:0","find":"1234","occurrence":2}"#,
+        r#"{"kind":"redact","paragraph":"p0","find":"1234","occurrence":1},
+           {"kind":"redact","paragraph":"p0","find":"1234","occurrence":2}"#,
     )
     .unwrap();
     for doc in [&out.clean, &out.redline] {
@@ -489,8 +488,8 @@ fn a_redaction_under_keep_leaves_the_other_partys_changes_and_tracks_nothing_of_
     .unwrap();
     let plan = EditPlan::from_json(
         r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
-        {"kind":"redact","paragraph":"body:p:1","find":"12345678"},
-        {"kind":"replace","paragraph":"body:p:1","find":"closed","replacement":"open"}]}"#,
+        {"kind":"redact","paragraph":"p1","find":"12345678"},
+        {"kind":"replace","paragraph":"p1","find":"closed","replacement":"open"}]}"#,
     )
     .unwrap();
     let out = apply_plan(&theirs, &plan).unwrap();
@@ -520,7 +519,7 @@ fn a_redaction_that_finds_nothing_never_repeats_the_text() {
         let e = apply_plan(
             &source,
             &plan(&format!(
-                r#"{{"kind":"redact","paragraph":"body:p:0","find":"{find}"}}"#
+                r#"{{"kind":"redact","paragraph":"p0","find":"{find}"}}"#
             )),
         )
         .unwrap_err();

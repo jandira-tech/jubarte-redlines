@@ -118,7 +118,7 @@ fn b_comments_are_dropped_with_a_warning() {
     let b = jubarte::edit::apply_plan(
         &docx(&para("B.")),
         &jubarte::edit::EditPlan::from_json(
-            r#"{"schema_version":1,"author":"X","operations":[{"kind":"comment","paragraph":"body:p:0","text":"note"}]}"#,
+            r#"{"schema_version":1,"author":"X","operations":[{"kind":"comment","paragraph":"p0","text":"note"}]}"#,
         )
         .unwrap(),
     )

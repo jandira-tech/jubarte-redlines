@@ -432,13 +432,13 @@ fn facade_serializes_native_names_canonical_enums_and_nested_subcommands() {
             "-o",
             "out.docx",
             "--id",
-            "body:rev:12",
+            "r12",
             "--kind",
             "insertion",
         ],
         &[],
     );
-    assert_eq!(accept["args"]["ids"][0], "body:rev:12");
+    assert_eq!(accept["args"]["ids"][0], "r12");
     assert_eq!(accept["args"]["kinds"][0], "insertion");
     let fields = parse(&["convert", "a", "-o", "b.docx", "--update-fields"], &[]);
     assert_eq!(fields["args"]["update_fields"], true);
