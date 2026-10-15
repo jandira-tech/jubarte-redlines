@@ -9713,9 +9713,10 @@ fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
 /// A line's box on the docGrid `grid` (0 = none). A line whose face fits
 /// one grid line takes the multiple of the grid line itself: 00b37b14's
 /// TNR 12 at 1.5 on a 15.6pt grid steps 23.4, not 31.2. A taller face
-/// takes the grid lines it needs, its multiple ignored: Word probe
-/// 2026-10-15 (Calibri Light, 15.6pt grid) steps 24pt at line 240, 278
-/// and 360 alike 31.2, and 28pt 46.8 (Demo.docx's Heading 1).
+/// takes the grid lines it needs, or the multiple of one grid line when
+/// that is more: Word probes 2026-10-15 (Calibri Light, 15.6pt grid) step
+/// 24pt 31.2 at line 240, 278, 360 and 480 and 46.8 at 720, and 36pt 46.8
+/// at 480 and 720 (Demo.docx's Heading 1: 31.2, not the multiplied 46.8).
 fn grid_line_box(natural: f32, style: &ParaStyle, grid: f32) -> f32 {
     let multiple = style.line_exact.is_none() && style.line_at_least.is_none();
     if grid > 0.5 && multiple && natural <= grid + 0.01 {
@@ -9726,7 +9727,12 @@ fn grid_line_box(natural: f32, style: &ParaStyle, grid: f32) -> f32 {
         };
         grid * m
     } else if grid > 0.5 && multiple {
-        snap_doc_grid(natural, grid)
+        let m = if style.line_mult > 0.0 {
+            style.line_mult
+        } else {
+            1.0
+        };
+        snap_doc_grid(natural, grid).max(grid * m)
     } else {
         snap_doc_grid(line_box_from_natural(natural, style), grid)
     }
@@ -47469,6 +47475,10 @@ mod coverage_boundary_tests {
         assert_eq!(line_box_from_natural(12.0, &style), 24.0);
         assert_eq!(grid_line_box(12.0, &style, 18.0), 36.0);
         assert_eq!(line_fit_need(12.0, 8.0, &style, 24.0), 12.0);
+        // A face over one grid line: the lines it needs or the multiple's,
+        // the more (Word probe 2026-10-15), not its multiplied face snapped.
+        assert_eq!(grid_line_box(20.0, &style, 18.0), 36.0);
+        style.line_mult = 3.0;
         assert_eq!(grid_line_box(20.0, &style, 18.0), 54.0);
         style.line_mult = 0.0;
         assert_eq!(line_box_from_natural(12.0, &style), 12.0);
