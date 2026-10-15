@@ -949,6 +949,15 @@ fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str, changes: &[St
                 },
             };
             package.set_part(&part, filled.into_bytes());
+        } else if !changes.is_empty()
+            && let Some(xml) = package.part_string(&part)
+        {
+            // A reference's separators: the view's changes go on them.
+            let mut xml = xml;
+            for (ty, change) in ["separator", "continuationSeparator"].iter().zip(changes) {
+                xml = with_separator_change(&xml, kind, ty, change);
+            }
+            package.set_part(&part, xml.into_bytes());
         }
         return part;
     }
@@ -974,6 +983,89 @@ fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str, changes: &[St
         );
         part
     }
+}
+
+/// `xml` (a notes part) with the first paragraph of its `ty` note
+/// (`separator`, `continuationSeparator`) carrying the formatting change
+/// whose start tag is `change`, in place of any it had; its formatting
+/// before the change is its own.
+fn with_separator_change(xml: &str, kind: &str, ty: &str, change: &str) -> String {
+    let type_attr = format!("w:type=\"{ty}\"");
+    let open = format!("<w:{kind} ");
+    let Some(note) = xml.match_indices(&open).map(|(at, _)| at).find(|&at| {
+        xml[at..]
+            .find('>')
+            .is_some_and(|end| xml[at..at + end].contains(&type_attr))
+    }) else {
+        return xml.to_string();
+    };
+    let close = format!("</w:{kind}>");
+    let Some(note_end) = xml[note..].find(&close).map(|end| note + end) else {
+        return xml.to_string();
+    };
+    let body = &xml[note..note_end];
+    let Some(p) = body.find("<w:p>").or_else(|| body.find("<w:p ")) else {
+        return xml.to_string();
+    };
+    let Some(p_open) = body[p..].find('>').map(|end| p + end + 1) else {
+        return xml.to_string();
+    };
+    let after = &body[p_open..];
+    let (own, rest) = if let Some(rest) = after.strip_prefix("<w:pPr/>") {
+        (String::new(), rest)
+    } else if after.starts_with("<w:pPr>") || after.starts_with("<w:pPr ") {
+        let Some(end) = after.find("</w:pPr>") else {
+            return xml.to_string();
+        };
+        let start = after.find('>').map_or(0, |end| end + 1);
+        (
+            after[start..end].to_string(),
+            &after[end + "</w:pPr>".len()..],
+        )
+    } else {
+        (String::new(), after)
+    };
+    let own = without_element(&own, "w:pPrChange");
+    // The formatting before the change: the paragraph's own, without its
+    // mark's run properties or a section's.
+    let base = without_element(&without_element(&own, "w:rPr"), "w:sectPr");
+    let paragraph = format!("{own}<{change}><w:pPr>{base}</w:pPr></w:pPrChange>");
+    format!(
+        "{}{}<w:pPr>{paragraph}</w:pPr>{rest}{}",
+        &xml[..note],
+        &body[..p_open],
+        &xml[note_end..]
+    )
+}
+
+/// `xml` without its `name` elements (`<w:rPr>…</w:rPr>`, `<w:rPr/>`).
+fn without_element(xml: &str, name: &str) -> String {
+    let mut out = String::new();
+    let mut rest = xml;
+    let open = format!("<{name}");
+    let close = format!("</{name}>");
+    while let Some(at) = rest.find(&open) {
+        let tail = &rest[at + open.len()..];
+        if !tail.starts_with(['>', ' ', '/']) {
+            out.push_str(&rest[..at + open.len()]);
+            rest = tail;
+            continue;
+        }
+        out.push_str(&rest[..at]);
+        let Some(tag_end) = tail.find('>') else {
+            return out;
+        };
+        rest = if tail[..tag_end].ends_with('/') {
+            &tail[tag_end + 1..]
+        } else {
+            match tail.find(&close) {
+                Some(end) => &tail[end + close.len()..],
+                None => "",
+            }
+        };
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Writes the footnotes and the endnotes into their notes parts, making

@@ -183,3 +183,82 @@ fn more_changes_than_separators_warn() {
     let footnotes = part(&written.docx, "word/footnotes.xml");
     assert_eq!(format_change_ids(&footnotes), ["0", "1"], "{footnotes}");
 }
+
+#[test]
+fn a_reference_documents_separators_take_the_changes() {
+    // pi on #504, F1: a reference brings its own separators, which the
+    // writer kept as they were, dropping the view's changes.
+    let reference = source(
+        "<w:p/>",
+        &notes("footnote", [None, Some(40)], ""),
+        &notes("endnote", [None, None], ""),
+    );
+    let view = "---\nview: tracked\nauthors:\n  AS: A Smith                      # 2026-09-26T14:55:00Z\n\
+                notes: {fmt: footnotes.r0 @AS; footnotes.r1 @AS, empty: [footnotes]}\n\
+                ---\n\n<!-- p0 -->\nBody.\n";
+    let written = markdown_to_docx(
+        view,
+        &DocxOptions {
+            reference: Some(&reference),
+            ..DocxOptions::default()
+        },
+    )
+    .expect("the view reads")
+    .docx;
+    common::validity::assert_word_valid_package(&written);
+    let footnotes = part(&written, "word/footnotes.xml");
+    // The reference's own change (40) gives way to the view's.
+    assert_eq!(format_change_ids(&footnotes), ["0", "1"], "{footnotes}");
+    assert!(footnotes.contains(r#"w:author="A Smith""#), "{footnotes}");
+}
+
+#[test]
+fn a_separator_changes_id_is_never_given_to_another_change() {
+    // pi on #504, F5: fresh ids started at 1, below the separator's 5.
+    let view = "---\nview: tracked\nauthors:\n  AS: A Smith                      # 2026-09-26T14:55:00Z\n\
+                notes: {fmt: footnotes.r5 @AS, empty: [footnotes]}\n\
+                ---\n\n<!-- p0 -->\n\
+                {++a++}{>>noid @AS<<} {++b++}{>>noid @AS<<} {++c++}{>>noid @AS<<} \
+                {++d++}{>>noid @AS<<} {++e++}{>>noid @AS<<} {++f++}{>>noid @AS<<}\n";
+    let written = markdown_to_docx(view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    let document = part(&written, "word/document.xml");
+    assert!(!document.contains(r#"w:id="5""#), "{document}");
+    assert_eq!(
+        format_change_ids(&part(&written, "word/footnotes.xml")),
+        ["5"]
+    );
+}
+
+#[test]
+fn changes_for_a_part_never_made_warn() {
+    // pi on #504, F6 and F9: no note and no `empty:` makes no part.
+    let view = "---\nview: tracked\nnotes: {fmt: endnotes.r2 @AS, empty: [footnotes]}\n\
+                ---\n\n<!-- p0 -->\nBody.\n";
+    let written = markdown_to_docx(view, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("endnotes.r2") && w.contains("not written")),
+        "{:?}",
+        written.warnings
+    );
+}
+
+#[test]
+fn separator_insertions_and_deletions_warn() {
+    // pi on #504, F7: `rev:` was dropped without a word.
+    let view = "---\nview: tracked\nnotes: {rev: footnotes.r4 @AS, empty: [footnotes]}\n\
+                ---\n\n<!-- p0 -->\nBody.\n";
+    let written = markdown_to_docx(view, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("rev: footnotes.r4 @AS") && w.contains("not written")),
+        "{:?}",
+        written.warnings
+    );
+}

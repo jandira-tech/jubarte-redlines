@@ -3164,7 +3164,17 @@ impl<'o, 'a> Writer<'o, 'a> {
                             "notes: {why}, so the notes parts it names are not made"
                         )),
                     }
+                    if let Some(tags) = view_notes::note_revisions(text) {
+                        self.document.warnings.push(format!(
+                            "notes: rev: {tags}: insertions and deletions in the \
+                             separators are not written"
+                        ));
+                    }
                     let formats = view_notes::note_formats(text);
+                    // Their ids are taken: no fresh mark may reuse one.
+                    self.document
+                        .reserved_ids
+                        .extend(formats.iter().flat_map(|(_, tag)| tag.ids.iter().copied()));
                     for kind in ["footnote", "endnote"] {
                         let count = formats.iter().filter(|(k, _)| *k == kind).count();
                         if count > 2 {
@@ -3535,6 +3545,30 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.range_ends();
         self.comments_out_of_notes();
         renumber_comments(&mut self.document);
+        // A separator change for a part neither a note nor `empty:` makes.
+        let lost: Vec<String> = self
+            .document
+            .note_formats
+            .iter()
+            .filter(|(kind, _)| {
+                !self.document.empty_notes.contains(kind)
+                    && !self
+                        .document
+                        .notes
+                        .iter()
+                        .any(|note| note.endnote == (*kind == "endnote"))
+            })
+            .map(|(kind, tag)| match tag.ids.first() {
+                Some(id) => format!("{kind}s.r{id} @{}", tag.handle),
+                None => format!("{kind}s.noid @{}", tag.handle),
+            })
+            .collect();
+        if !lost.is_empty() {
+            self.document.warnings.push(format!(
+                "notes: fmt: {} names a notes part the view does not make; not written",
+                lost.join("; ")
+            ));
+        }
         self.document
     }
 

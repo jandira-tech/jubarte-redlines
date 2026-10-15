@@ -547,14 +547,13 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
     Ok(kinds)
 }
 
-/// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
-/// each formatting change on a notes part's separators, with its part's
-/// kind (`footnote`, `endnote`), in the order the view lists them; none
-/// without the clause. An entry that names no notes part is skipped.
-pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
-    // The `fmt:` clause outside quotes, up to a YAML comment (` # …`).
+/// The value of the `notes:` map's clause `key` (`fmt`, `rev`), outside
+/// quotes and unquoted; `None` without the clause.
+fn note_clause(value: &str, key: &str) -> Option<String> {
+    // The clause outside quotes, up to a YAML comment (` # …`).
     let (mut quoted, mut escaped) = (false, false);
     let mut clause = None;
+    let opener = format!("{key}:");
     for (at, c) in value.char_indices() {
         if quoted {
             match c {
@@ -568,18 +567,15 @@ pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
         match c {
             '"' => quoted = true,
             '#' if value[..at].ends_with([' ', '\t']) => break,
-            _ if value[at..].starts_with("fmt:") && value[..at].ends_with([' ', '{', ',']) => {
-                clause = Some(at + "fmt:".len());
+            _ if value[at..].starts_with(&opener) && value[..at].ends_with([' ', '{', ',']) => {
+                clause = Some(at + opener.len());
                 break;
             }
             _ => {}
         }
     }
-    let Some(at) = clause else {
-        return Vec::new();
-    };
-    let rest = value[at..].trim_start();
-    let tags = match rest.strip_prefix('"') {
+    let rest = value[clause?..].trim_start();
+    Some(match rest.strip_prefix('"') {
         Some(inner) => {
             let mut out = String::new();
             let mut chars = inner.chars();
@@ -592,7 +588,25 @@ pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
             }
             out
         }
-        None => rest[..rest.find([',', '}']).unwrap_or(rest.len())].to_string(),
+        None => rest[..rest.find([',', '}']).unwrap_or(rest.len())]
+            .trim_end()
+            .to_string(),
+    })
+}
+
+/// The header's `notes: {rev: …}`: insertions and deletions in notes no
+/// definition shows (the separators), which the writer does not make.
+pub(super) fn note_revisions(value: &str) -> Option<String> {
+    note_clause(value, "rev").filter(|tags| !tags.is_empty())
+}
+
+/// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
+/// each formatting change on a notes part's separators, with its part's
+/// kind (`footnote`, `endnote`), in the order the view lists them; none
+/// without the clause. An entry that names no notes part is skipped.
+pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
+    let Some(tags) = note_clause(value, "fmt") else {
+        return Vec::new();
     };
     tags.split("; ")
         .filter_map(|entry| {
