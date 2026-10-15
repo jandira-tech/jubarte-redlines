@@ -99,7 +99,7 @@ CLI reads them.
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
-| table | table in the document's normal table style (`TableGrid` only when the view's table line names it), header row repeated, column alignment kept |
+| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's borderless Normal Table, written with no `tblStyle`; the view names it for a table that has neither a style nor borders. Header row repeated, column alignment kept |
 | `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. Reading Word back, reader and writer share github-slugger's names (a repeat `-1`, `-2`): only the exact name the writer gives a heading is its own bookmark and prints no anchor; any other (`title-01`, a lone `title-1`) stays an `<a id>` anchor, and a heading in a table cell claims no slug. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
 | `[^note]` | footnote; a label defined twice (a footnote and an endnote both `[^1]`) is two notes: its first reference names the first definition and its next the second, which takes the next free number, with a warning |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
@@ -243,7 +243,6 @@ styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
-  table: TableGrid, all borders 0.5pt
 headers:
   first: {id: header2, text: DRAFT}  # page 1 only (different first page)
   default: {id: header1, text: SIGNATURE PAGE, right}

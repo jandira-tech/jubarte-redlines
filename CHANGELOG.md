@@ -113,6 +113,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **A Markdown table takes Word's thin grid.** With no style named, the
+  writer gives a table Table Grid (single 0.5pt borders all round, as Word's
+  Insert Table makes it) instead of the borderless Normal Table. The view
+  leaves Table Grid unnamed and names `TableNormal` for a table with neither a
+  style nor borders, which the writer writes with no `tblStyle`; a table with
+  its own borders and no style (Demo.docx's) comes back bordered.
+
 - **The view nests list items by indentation.** An item past its list's
   first level is indented to the content column of the item it nests
   under, and its id line with it, so the Markdown reads as a nested list
