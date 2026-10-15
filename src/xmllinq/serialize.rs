@@ -391,8 +391,9 @@ pub(crate) fn is_namespace_prefix_list(element: &XName, name: &XName) -> bool {
 /// prefix (`w`, `r`, `mc`, `w14`, …) is preferred when one is free; if
 /// none is, a generated `ns{{n}}` is used.
 ///
-/// Element-only output: text and comment children are escaped, processing
-/// instructions are emitted verbatim, attributes are emitted in
+/// Element-only output: text children are escaped; comments and
+/// processing instructions are emitted verbatim (a comment holding `--` is
+/// not repaired), attributes are emitted in
 /// declaration order, namespace declarations first. No DTD, CDATA, or
 /// signature lists — the input is already a parsed DOM.
 ///

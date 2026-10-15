@@ -190,9 +190,8 @@ impl XName {
     ///
     /// # Panics
     ///
-    /// Panics on a malformed clark string — i.e. one starting with `{` that
-    /// contains no closing `}`, or one whose `}` is the first character
-    /// (empty local name).
+    /// Panics when the string starts with `{` and has no closing `}`. An
+    /// empty namespace (`{}local`) or local name (`{ns}`) is accepted.
     pub fn from_clark(expanded: &str) -> XName {
         if expanded.starts_with('{') {
             let close = expanded
@@ -1026,10 +1025,9 @@ impl Dom {
         self.detach(id);
     }
 
-    /// Insert `node` as the preceding sibling of `reference`. The two
-    /// must share a parent (or `reference` has no parent and the result
-    /// is dropped silently). `node` is materialized first if it is
-    /// already parented.
+    /// Insert `node` as the preceding sibling of `reference`, which must
+    /// have a parent. `node` may come from anywhere: one that already has
+    /// a parent is cloned first.
     ///
     /// # Panics
     ///

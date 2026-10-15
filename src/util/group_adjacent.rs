@@ -11,10 +11,9 @@
 
 /// Group `source` into runs of consecutive items whose
 /// `key_selector(item)` values compare equal. Each run becomes one
-/// `(key, items)` pair, in input order. Two items at the boundary of two
-/// runs are in different runs even when their keys are equal — that is
-/// the point of *adjacent* grouping (re-)starting. Empty input yields
-/// an empty `Vec`.
+/// `(key, items)` pair, in input order. A run ends only where the key
+/// changes, so equal keys that are not adjacent (`A, B, A`) make separate
+/// runs — three here. Empty input yields an empty `Vec`.
 ///
 /// `T` is the element type, `K` is the key type (only its `PartialEq`
 /// is needed), `F` is the per-item key selector.
