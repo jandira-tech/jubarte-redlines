@@ -134,6 +134,23 @@ impl Marks<'_> {
     }
 }
 
+/// The start tags of the `w:pPrChange`s `tags` name, by their people:
+/// one per tag, a tag that numbers no `w:id` taking a fresh one above
+/// `first_id`.
+pub(super) fn format_changes(
+    people: &People,
+    tags: &[&super::view_notes::Tag],
+    first_id: u32,
+) -> Vec<String> {
+    let mut marks = Marks {
+        people,
+        next_id: first_id,
+    };
+    tags.iter()
+        .map(|tag| marks.mark("w:pPrChange", Some(tag), 0))
+        .collect()
+}
+
 /// A value of a YAML flow map as the view prints it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Value {

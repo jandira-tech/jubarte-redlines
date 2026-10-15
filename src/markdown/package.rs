@@ -226,7 +226,34 @@ pub(super) fn assemble(
     let mut media = Media::default();
 
     if !document.notes.is_empty() || !document.empty_notes.is_empty() {
-        footnotes(&mut package, &main, &mut context, &mut media);
+        // The separators' formatting changes; a tag that numbers no id
+        // takes one far above the body's and the headers'.
+        let separator_changes: HashMap<&str, Vec<String>> = ["footnote", "endnote"]
+            .into_iter()
+            .map(|kind| {
+                let tags: Vec<_> = document
+                    .note_formats
+                    .iter()
+                    .filter(|(k, _)| *k == kind)
+                    .map(|(_, tag)| tag)
+                    .collect();
+                let changes = super::view_stories::format_changes(
+                    &people,
+                    &tags,
+                    next_revision
+                        .saturating_add(2_000_000)
+                        .min(super::view_notes::MOST_ID / 2 + 1_000_000),
+                );
+                (kind, changes)
+            })
+            .collect();
+        footnotes(
+            &mut package,
+            &main,
+            &mut context,
+            &mut media,
+            &separator_changes,
+        );
     }
     let body = {
         let mut relate = PartRelate {
@@ -880,24 +907,29 @@ pub(crate) fn append_numbering(
 /// continuation separator notes, its relationship and its content type when
 /// absent.
 pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String {
-    ensure_notes_part(package, main, "footnote")
+    ensure_notes_part(package, main, "footnote", &[])
 }
 
 /// The notes part of `kind` (`footnote`, `endnote`) `main` relates to,
-/// made as [`ensure_footnotes_part`] makes one.
-fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
+/// made as [`ensure_footnotes_part`] makes one. `changes` are the
+/// `w:pPrChange` start tags of its separators, the separator's first and
+/// the continuation separator's second.
+fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str, changes: &[String]) -> String {
     let separators = || {
-        let separator = |id: i32, name: &str| {
+        let separator = |id: i32, name: &str, change: Option<&String>| {
+            let spacing = "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
+            let change = change.map_or_else(String::new, |change| {
+                format!("<{change}><w:pPr>{spacing}</w:pPr></w:pPrChange>")
+            });
             format!(
-                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>\
-                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>{spacing}{change}</w:pPr>\
                  <w:r><w:{name}/></w:r></w:p></w:{kind}>"
             )
         };
         format!(
             "{}{}",
-            separator(-1, "separator"),
-            separator(0, "continuationSeparator")
+            separator(-1, "separator", changes.first()),
+            separator(0, "continuationSeparator", changes.get(1))
         )
     };
     if let Some(part) = related(package, main, &format!("/{kind}s")) {
@@ -946,18 +978,25 @@ fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
 
 /// Writes the footnotes and the endnotes into their notes parts, making
 /// each part a kind of note needs.
-fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
+fn footnotes(
+    package: &mut PartFs,
+    main: &str,
+    context: &mut Context<'_>,
+    media: &mut Media,
+    separator_changes: &HashMap<&str, Vec<String>>,
+) {
     let document = context.document;
     context.note_ids = vec![0; document.notes.len()];
     for (kind, endnote) in [("footnote", false), ("endnote", true)] {
+        let changes = separator_changes.get(kind).map_or(&[][..], Vec::as_slice);
         if !document.notes.iter().any(|note| note.endnote == endnote) {
             // A part the view names empty holds Word's separators only.
             if document.empty_notes.contains(&kind) {
-                ensure_notes_part(package, main, kind);
+                ensure_notes_part(package, main, kind, changes);
             }
             continue;
         }
-        let part = ensure_notes_part(package, main, kind);
+        let part = ensure_notes_part(package, main, kind, changes);
         let Some(existing) = package.part_string(&part) else {
             continue;
         };
