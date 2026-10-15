@@ -73,7 +73,8 @@ authors:
 page:      Letter portrait, margins 1in, header/footer 0.5in   # columns 2, column gap 0.25in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left   # default style
-  "#": Heading1, Calibri bold 16pt, before 12pt, keep-next
+  "#": Heading1, Calibri bold 16pt, before 12pt, keep-next, keep-lines
+  ListParagraph: Calibri 11pt, indent 0.5in, contextual spacing, named List Paragraph
 headers:
   first: none                        # or {id: header2, text: "{PAGE}", center}
   default: {id: header1, text: Smith & Co, right}

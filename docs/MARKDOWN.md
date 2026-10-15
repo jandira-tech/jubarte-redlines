@@ -241,8 +241,8 @@ body: p0-p20, 1 table, 2 pages     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
-  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
   table: TableGrid, all borders 0.5pt
 headers:
   first: {id: header2, text: DRAFT}  # page 1 only (different first page)
@@ -374,9 +374,14 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 spacing, alignment), each heading level's style with what differs from
 it, then every other paragraph style the body uses, keyed by its id
 (`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
-ends `, named Text Heading 2` when the style's name is not its id (for a
-`HeadingN` heading, not `heading N`). Converting the view back defines
-each style as its line says.
+names only what its style sets apart from the style it is based on:
+font and size, `before`/`after`, `line`, alignment, `keep-next`,
+`keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, and
+`contextual spacing` (no space between paragraphs of that style, as List
+Paragraph has). A line ends `, named Text Heading 2` when the style's name
+is not its id (for a `HeadingN` heading, not `heading N`). Converting the
+view back defines each style as its line says, and a style Word knows
+(`ListParagraph`, `Quote`) keeps Word's own gallery settings.
 
 Each footnote and endnote definition follows the id line of its
 paragraphs: `<!-- footnotes.p0 -->`, or `<!-- endnotes.p0-p2 -->` for a note

@@ -10,7 +10,7 @@ body: p0-p142, 1 table, 2 pages    # pages from layout
 page: 8.264x11.6944in portrait, margins top 1.181in, right 0.7875in, bottom 1.181in, left 0.7875in, header/footer 0.492in
 styles:
   Normal: Cambria 12pt, left       # default; unannotated paragraphs use it
-  ListParagraph: Cambria 12pt, named List Paragraph
+  ListParagraph: Cambria 12pt, indent 0.5in, contextual spacing, named List Paragraph
   Cuerpo: Calibri 11pt, after 8pt, line 1.08
   table: TableGrid, all borders 0.5pt
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note

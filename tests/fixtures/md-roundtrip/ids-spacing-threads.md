@@ -10,8 +10,8 @@ body: p0-p131, 2 tables, 5 pages   # pages from layout
 page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in
 styles:
   Normal: Times New Roman 11pt, after 6pt, line 12pt atLeast, left, named normal  # default; unannotated paragraphs use it
-  "#": Heading1, Times New Roman bold 24pt, before 24pt, keep-next
-  "##": Heading2, Times New Roman bold 18pt, before 18pt, after 4pt, keep-next
+  "#": Heading1, Times New Roman bold 24pt, before 24pt, keep-next, keep-lines
+  "##": Heading2, Times New Roman bold 18pt, before 18pt, after 4pt, keep-next, keep-lines
 ---
 
 <!-- p0 -->

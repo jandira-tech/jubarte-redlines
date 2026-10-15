@@ -11,8 +11,8 @@ body: p0-p20, 1 table, 2 pages     # pages from Word's cached layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
-  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
   table: TableGrid, all borders 0.5pt
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:

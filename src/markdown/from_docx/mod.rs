@@ -21,7 +21,8 @@ mod ooxml;
 mod revise;
 
 use critic::{Change, Critic, Mark};
-use ooxml::{Blocks, Element, ListIndent, Marks, Media, Package, Rels};
+use ooxml::{Blocks, ListIndent, Marks, Media, Package, Rels};
+pub(crate) use ooxml::{Element, parse_xml};
 
 /// How tracked changes and comments come out.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

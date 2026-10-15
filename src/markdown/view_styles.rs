@@ -12,14 +12,21 @@
 //!
 //! The default paragraph style's line gives its whole look: font, bold and
 //! italic, size, spacing before and after (none printed is none), line
-//! spacing (none printed is single) and alignment. A heading's line names
-//! its style, its font, size, bold and italic, and only the spacing,
-//! keep-next and alignment that differ from the default style's, which it
-//! is based on. Every other paragraph style the body uses follows, keyed by
-//! its id, described like a heading (`TOC2: Arial 12pt, after 6pt`). A line
-//! ends `, named Text Heading 2` when the style's name is not its id (for a
-//! heading `HeadingN`, not `heading N`).
+//! spacing (none printed is single), keep-next, keep-lines, a paragraph
+//! indent (`indent 0.5in`, and `first-line` or `hanging` when set),
+//! contextual spacing and alignment. A heading's line names its style, its
+//! font, size, bold and italic, and only the spacing, keep-next, keep-lines,
+//! indent, contextual spacing and alignment that differ from the default
+//! style's, which it is based on. Every other paragraph style the body uses
+//! follows, keyed by its id, described like a heading (`TOC2: Arial 12pt,
+//! after 6pt`). A line ends `, named Text Heading 2` when the style's name
+//! is not its id (for a heading `HeadingN`, not `heading N`).
+//!
+//! The writer sets a property only when the legend's value differs from
+//! what the style already inherits: the document defaults for the default
+//! style, and that style for every other.
 
+use super::from_docx::Element;
 use super::xml::escape;
 
 /// One style the legend describes.
@@ -43,6 +50,14 @@ pub(super) struct StyleSpec {
     /// Twips with `exact` or `atLeast`, or 240ths of a line with `auto`.
     pub line: Option<(u32, &'static str)>,
     pub keep_next: bool,
+    pub keep_lines: bool,
+    /// Left indent, twips.
+    pub left: Option<i64>,
+    /// First-line indent, twips.
+    pub first_line: Option<i64>,
+    /// Hanging indent, twips.
+    pub hanging: Option<i64>,
+    pub contextual_spacing: bool,
     pub align: Option<&'static str>,
 }
 
@@ -53,6 +68,17 @@ fn points(value: &str, scale: f64) -> Option<u32> {
     let n: f64 = value.strip_suffix("pt")?.parse().ok()?;
     // `as` cannot overflow: the bound is checked first.
     (n.is_finite() && (0.0..=MOST_POINTS).contains(&n)).then(|| (n * scale).round() as u32)
+}
+
+/// `0.5in` as twips. Word's indent is at most 22in (31680 twips) either way.
+fn twips_in(value: &str) -> Option<i64> {
+    let n: f64 = value.strip_suffix("in")?.parse().ok()?;
+    if !n.is_finite() {
+        return None;
+    }
+    let twips = (n * 1440.0).round();
+    // `as` cannot overflow: the bound is checked first.
+    (twips.is_finite() && twips.abs() <= 31680.0).then_some(twips as i64)
 }
 
 /// `Times New Roman bold italic 11pt`: the font, bold, italic and size.
@@ -94,12 +120,21 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
         after: None,
         line: None,
         keep_next: false,
+        keep_lines: false,
+        left: None,
+        first_line: None,
+        hanging: None,
+        contextual_spacing: false,
         align: None,
     };
     for clause in clauses {
         match clause.split_once(' ') {
             Some(("before", v)) => spec.before = Some(points(v, 20.0)?),
             Some(("after", v)) => spec.after = Some(points(v, 20.0)?),
+            Some(("indent", v)) => spec.left = Some(twips_in(v)?),
+            Some(("first-line", v)) => spec.first_line = Some(twips_in(v)?),
+            Some(("hanging", v)) => spec.hanging = Some(twips_in(v)?),
+            Some(("contextual", "spacing")) => spec.contextual_spacing = true,
             Some(("line", v)) => {
                 spec.line = Some(match v.split_once(' ') {
                     Some((height, "exact")) => (points(height, 20.0)?, "exact"),
@@ -116,6 +151,7 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
                 });
             }
             None if clause == "keep-next" => spec.keep_next = true,
+            None if clause == "keep-lines" => spec.keep_lines = true,
             None => {
                 spec.align = Some(match clause {
                     "left" => "left",
@@ -235,8 +271,10 @@ pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {
 /// legend describes it, in place of its own definition. A default style
 /// other than `Normal` takes the default from the part's own.
 pub(super) fn apply(styles: &str, specs: &[StyleSpec]) -> String {
+    let defaults = document_defaults(styles);
     let mut out = styles.to_string();
     let base = specs.iter().find(|s| s.default);
+    let from_base = base.map(effective);
     if base.is_some() {
         out = out.replace(
             "w:type=\"paragraph\" w:default=\"1\"",
@@ -245,7 +283,12 @@ pub(super) fn apply(styles: &str, specs: &[StyleSpec]) -> String {
     }
     for spec in specs {
         out = without_style(&out, &spec.id);
-        let definition = definition(spec, base.map(|b| b.id.as_str()));
+        let inherited = if spec.default {
+            &defaults
+        } else {
+            from_base.as_ref().unwrap_or(&defaults)
+        };
+        let definition = definition(spec, base.map(|b| b.id.as_str()), inherited);
         if let Some(at) = out.rfind("</w:styles>") {
             out.insert_str(at, &definition);
         }
@@ -275,9 +318,192 @@ fn without_style(styles: &str, id: &str) -> String {
     out
 }
 
+/// What a style already inherits, so a property equal to it is not written.
+struct Given {
+    font: Option<String>,
+    size: Option<u32>,
+    bold: bool,
+    italic: bool,
+    before: u32,
+    after: u32,
+    line_twips: u32,
+    line_rule: String,
+    align: String,
+    keep_next: bool,
+    keep_lines: bool,
+    contextual: bool,
+    left: Option<i64>,
+    first_line: Option<i64>,
+    hanging: Option<i64>,
+}
+
+impl Given {
+    /// Word's own values when `docDefaults` names nothing.
+    fn implicit() -> Self {
+        Self {
+            font: None,
+            size: None,
+            bold: false,
+            italic: false,
+            before: 0,
+            after: 0,
+            line_twips: 240,
+            line_rule: "auto".to_string(),
+            align: "left".to_string(),
+            keep_next: false,
+            keep_lines: false,
+            contextual: false,
+            left: None,
+            first_line: None,
+            hanging: None,
+        }
+    }
+}
+
+/// The legend's value for the default style: an omitted spacing is zero or
+/// single, an omitted alignment is left, and an omitted indent is none.
+fn effective(spec: &StyleSpec) -> Given {
+    let (line_twips, line_rule) = spec.line.unwrap_or((240, "auto"));
+    Given {
+        font: Some(spec.font.clone()),
+        size: Some(spec.size),
+        bold: spec.bold,
+        italic: spec.italic,
+        before: spec.before.unwrap_or(0),
+        after: spec.after.unwrap_or(0),
+        line_twips,
+        line_rule: line_rule.to_string(),
+        align: spec.align.unwrap_or("left").to_string(),
+        keep_next: spec.keep_next,
+        keep_lines: spec.keep_lines,
+        contextual: spec.contextual_spacing,
+        left: spec.left,
+        first_line: spec.first_line,
+        hanging: spec.hanging,
+    }
+}
+
+fn whole(element: &Element, attr: &str) -> Option<u32> {
+    let n: f64 = element.attr(attr)?.parse().ok()?;
+    let n = n.round();
+    // `as` cannot overflow: the bound is checked first.
+    (n.is_finite() && (0.0..=u32::MAX as f64).contains(&n)).then_some(n as u32)
+}
+
+fn signed(element: &Element, attr: &str) -> Option<i64> {
+    let n: f64 = element.attr(attr)?.parse().ok()?;
+    let n = n.round();
+    // `as` cannot overflow: the bound is checked first.
+    (n.is_finite() && n.abs() <= 1.0e15).then_some(n as i64)
+}
+
+/// `docDefaults` over Word's implicit values. A part that does not parse
+/// keeps the implicit values, so the legend's own properties are still written.
+fn document_defaults(styles: &str) -> Given {
+    let mut given = Given::implicit();
+    let Ok(root) = super::from_docx::parse_xml(styles.as_bytes()) else {
+        return given;
+    };
+    let Some(defaults) = root.child("docDefaults") else {
+        return given;
+    };
+    if let Some(rpr) = defaults.path(&["rPrDefault", "rPr"]) {
+        // A theme font wins over the named one, so the named one is not
+        // what the style inherits.
+        if let Some(fonts) = rpr.child("rFonts") {
+            given.font = fonts
+                .attr("asciiTheme")
+                .is_none()
+                .then(|| fonts.attr("ascii").or_else(|| fonts.attr("hAnsi")))
+                .flatten()
+                .map(str::to_string);
+        }
+        if let Some(size) = rpr.child("sz").and_then(|sz| whole(sz, "val")) {
+            given.size = Some(size);
+        }
+        if let Some(bold) = rpr.toggle("b") {
+            given.bold = bold;
+        }
+        if let Some(italic) = rpr.toggle("i") {
+            given.italic = italic;
+        }
+    }
+    if let Some(ppr) = defaults.path(&["pPrDefault", "pPr"]) {
+        if let Some(spacing) = ppr.child("spacing") {
+            if let Some(before) = whole(spacing, "before") {
+                given.before = before;
+            }
+            if let Some(after) = whole(spacing, "after") {
+                given.after = after;
+            }
+            if let Some(line) = whole(spacing, "line") {
+                given.line_twips = line;
+                given.line_rule = spacing.attr("lineRule").unwrap_or("auto").to_string();
+            }
+        }
+        if let Some(ind) = ppr.child("ind") {
+            if let Some(left) = signed(ind, "left").or_else(|| signed(ind, "start")) {
+                given.left = Some(left);
+            }
+            if let Some(first) = signed(ind, "firstLine") {
+                given.first_line = Some(first);
+            }
+            if let Some(hanging) = signed(ind, "hanging") {
+                given.hanging = Some(hanging);
+            }
+        }
+        if let Some(on) = ppr.toggle("keepNext") {
+            given.keep_next = on;
+        }
+        if let Some(on) = ppr.toggle("keepLines") {
+            given.keep_lines = on;
+        }
+        if let Some(on) = ppr.toggle("contextualSpacing") {
+            given.contextual = on;
+        }
+        if let Some(align) = ppr.child("jc").and_then(|jc| jc.attr("val")) {
+            given.align = align.to_string();
+        }
+    }
+    given
+}
+
+/// An indent the legend sets and the style does not already inherit.
+fn indent_attr(spec: Option<i64>, inherited: Option<i64>) -> Option<i64> {
+    spec.filter(|value| Some(*value) != inherited)
+}
+
+/// The gallery flags (`uiPriority`, `semiHidden`, `unhideWhenUsed`,
+/// `qFormat`) Word gives built-in style `id` named `name`, in schema order;
+/// none for a style Word does not know.
+fn gallery_flags(id: &str, name: &str) -> String {
+    let Some(builtin) = super::xml::style_definition(id) else {
+        return String::new();
+    };
+    if !builtin.contains(&format!("<w:name w:val=\"{name}\"/>")) {
+        return String::new();
+    }
+    let mut out = String::new();
+    for flag in [
+        "<w:uiPriority ",
+        "<w:semiHidden/>",
+        "<w:unhideWhenUsed/>",
+        "<w:qFormat/>",
+    ] {
+        if let Some(at) = builtin.find(flag) {
+            let end = builtin[at..]
+                .find("/>")
+                .map_or(builtin.len(), |e| at + e + 2);
+            out.push_str(&builtin[at..end]);
+        }
+    }
+    out
+}
+
 /// The `w:style` element of `spec`, based on style `base` unless it is the
-/// default.
-fn definition(spec: &StyleSpec, base: Option<&str>) -> String {
+/// default. `inherited` is what the style already has, and a property equal
+/// to it is left out.
+fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String {
     let id = escape(&spec.id);
     let name = match (&spec.name, spec.heading, spec.id.strip_prefix("Heading")) {
         (Some(name), ..) => escape(name).to_string(),
@@ -299,33 +525,80 @@ fn definition(spec: &StyleSpec, base: Option<&str>) -> String {
         }
         if spec.heading.is_some() {
             out.push_str("<w:uiPriority w:val=\"9\"/><w:qFormat/>");
+        } else {
+            out.push_str(&gallery_flags(&spec.id, &name));
         }
         out
     };
-    // pPr children in schema order: keepNext, spacing, jc, outlineLvl.
+    // pPr children in schema order: keepNext, keepLines, spacing, ind,
+    // contextualSpacing, jc, outlineLvl. The default style's omitted
+    // spacing is zero or single and its omitted alignment is left; any
+    // other style's omission inherits, so it is not written.
     let mut ppr = String::new();
-    if spec.keep_next {
+    if spec.keep_next && !inherited.keep_next {
         ppr.push_str("<w:keepNext/>");
     }
-    // The default style says all its spacing; a heading only what differs.
-    let explicit = spec.default;
-    let before = spec.before.or(explicit.then_some(0));
-    let after = spec.after.or(explicit.then_some(0));
-    let line = spec.line.or(explicit.then_some((240, "auto")));
-    if before.is_some() || after.is_some() || line.is_some() {
+    if spec.keep_lines && !inherited.keep_lines {
+        ppr.push_str("<w:keepLines/>");
+    }
+    let before = if spec.default {
+        spec.before.or(Some(0))
+    } else {
+        spec.before
+    };
+    let after = if spec.default {
+        spec.after.or(Some(0))
+    } else {
+        spec.after
+    };
+    let line = if spec.default {
+        spec.line.or(Some((240, "auto")))
+    } else {
+        spec.line
+    };
+    let write_before = before.is_some_and(|value| value != inherited.before);
+    let write_after = after.is_some_and(|value| value != inherited.after);
+    let write_line = line
+        .is_some_and(|(twips, rule)| twips != inherited.line_twips || rule != inherited.line_rule);
+    if write_before || write_after || write_line {
         ppr.push_str("<w:spacing");
-        if let Some(b) = before {
-            ppr.push_str(&format!(" w:before=\"{b}\""));
+        if write_before {
+            ppr.push_str(&format!(" w:before=\"{}\"", before.unwrap_or(0)));
         }
-        if let Some(a) = after {
-            ppr.push_str(&format!(" w:after=\"{a}\""));
+        if write_after {
+            ppr.push_str(&format!(" w:after=\"{}\"", after.unwrap_or(0)));
         }
-        if let Some((l, rule)) = line {
-            ppr.push_str(&format!(" w:line=\"{l}\" w:lineRule=\"{rule}\""));
+        if write_line {
+            let (twips, rule) = line.unwrap_or((240, "auto"));
+            ppr.push_str(&format!(" w:line=\"{twips}\" w:lineRule=\"{rule}\""));
         }
         ppr.push_str("/>");
     }
-    if let Some(align) = spec.align {
+    let left = indent_attr(spec.left, inherited.left);
+    let first = indent_attr(spec.first_line, inherited.first_line);
+    let hanging = indent_attr(spec.hanging, inherited.hanging);
+    if left.is_some() || first.is_some() || hanging.is_some() {
+        ppr.push_str("<w:ind");
+        if let Some(value) = left {
+            ppr.push_str(&format!(" w:left=\"{value}\""));
+        }
+        if let Some(value) = first {
+            ppr.push_str(&format!(" w:firstLine=\"{value}\""));
+        }
+        if let Some(value) = hanging {
+            ppr.push_str(&format!(" w:hanging=\"{value}\""));
+        }
+        ppr.push_str("/>");
+    }
+    if spec.contextual_spacing && !inherited.contextual {
+        ppr.push_str("<w:contextualSpacing/>");
+    }
+    let align = if spec.default {
+        spec.align.or(Some("left"))
+    } else {
+        spec.align
+    };
+    if let Some(align) = align.filter(|value| *value != inherited.align) {
         ppr.push_str(&format!("<w:jc w:val=\"{align}\"/>"));
     }
     if let Some(level) = spec.heading {
@@ -335,7 +608,13 @@ fn definition(spec: &StyleSpec, base: Option<&str>) -> String {
         out.push_str(&format!("<w:pPr>{ppr}</w:pPr>"));
     }
     // rPr children in schema order: rFonts, b, bCs, i, iCs, sz, szCs.
-    let font = escape(&spec.font);
+    let mut rpr = String::new();
+    if inherited.font.as_deref() != Some(spec.font.as_str()) {
+        let font = escape(&spec.font);
+        rpr.push_str(&format!(
+            "<w:rFonts w:ascii=\"{font}\" w:hAnsi=\"{font}\" w:eastAsia=\"{font}\" w:cs=\"{font}\"/>"
+        ));
+    }
     let toggle = |on: bool, name: &str| {
         if on {
             format!("<w:{name}/><w:{name}Cs/>")
@@ -343,12 +622,22 @@ fn definition(spec: &StyleSpec, base: Option<&str>) -> String {
             format!("<w:{name} w:val=\"0\"/><w:{name}Cs w:val=\"0\"/>")
         }
     };
-    out.push_str(&format!(
-        "<w:rPr><w:rFonts w:ascii=\"{font}\" w:hAnsi=\"{font}\" w:eastAsia=\"{font}\" w:cs=\"{font}\"/>{}{}<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/></w:rPr></w:style>",
-        toggle(spec.bold, "b"),
-        toggle(spec.italic, "i"),
-        size = spec.size,
-    ));
+    if spec.bold != inherited.bold {
+        rpr.push_str(&toggle(spec.bold, "b"));
+    }
+    if spec.italic != inherited.italic {
+        rpr.push_str(&toggle(spec.italic, "i"));
+    }
+    if inherited.size != Some(spec.size) {
+        rpr.push_str(&format!(
+            "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>",
+            size = spec.size
+        ));
+    }
+    if !rpr.is_empty() {
+        out.push_str(&format!("<w:rPr>{rpr}</w:rPr>"));
+    }
+    out.push_str("</w:style>");
     out
 }
 
@@ -423,6 +712,9 @@ mod tests {
             (Some(1), true, Some(480))
         );
         assert!(specs[1].keep_next);
+        assert!(!specs[0].keep_lines);
+        assert!(!specs[0].contextual_spacing);
+        assert_eq!(specs[0].left, None);
         assert_eq!(
             (specs[2].italic, specs[2].size, specs[2].line),
             (true, 27, Some((259, "auto")))
@@ -449,6 +741,18 @@ mod tests {
         );
         assert_eq!(legend("styles:\n  \"#######\": Heading7, Arial 11pt\n"), []);
         assert_eq!(legend("styles:\n  table: TableGrid\n"), []);
+        assert_eq!(
+            legend("styles:\n  Normal: Calibri 11pt, indent 99in, left\n"),
+            []
+        );
+        assert_eq!(
+            legend("styles:\n  Normal: Calibri 11pt, indent 0.5, left\n"),
+            []
+        );
+        assert_eq!(
+            legend("styles:\n  Normal: Calibri 11pt, contextual wide, left\n"),
+            []
+        );
     }
 
     #[test]
@@ -476,14 +780,162 @@ mod tests {
         let out = apply(styles, &legend(YAML));
         assert_eq!(out.matches("w:styleId=\"Normal\"").count(), 1, "{out}");
         assert!(out.contains("w:styleId=\"Quote\""), "{out}");
-        assert!(out.contains("<w:spacing w:before=\"0\" w:after=\"120\" w:line=\"240\" w:lineRule=\"atLeast\"/><w:jc w:val=\"left\"/>"), "{out}");
+        let normal = style_element(&out, "Normal");
+        assert!(
+            normal.contains("<w:spacing w:after=\"120\" w:line=\"240\" w:lineRule=\"atLeast\"/>"),
+            "{normal}"
+        );
+        assert!(!normal.contains("w:before=\"0\""), "{normal}");
+        assert!(!normal.contains("<w:jc"), "{normal}");
+        assert!(!normal.contains("<w:b"), "{normal}");
+        assert!(
+            normal.contains(
+                "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" \
+                 w:eastAsia=\"Times New Roman\" w:cs=\"Times New Roman\"/>"
+            ),
+            "{normal}"
+        );
+        assert!(
+            normal.contains("<w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/>"),
+            "{normal}"
+        );
         assert!(
             out.contains("<w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/>"),
             "{out}"
         );
+    }
+
+    fn style_element(styles: &str, id: &str) -> String {
+        let key = format!("w:styleId=\"{id}\"");
+        let at = styles
+            .find(&key)
+            .unwrap_or_else(|| panic!("no {id} in {styles}"));
+        let start = styles[..at].rfind("<w:style ").unwrap_or(at);
+        let end = styles[at..]
+            .find("</w:style>")
+            .map(|i| at + i + "</w:style>".len())
+            .unwrap_or(styles.len());
+        styles[start..end].to_string()
+    }
+
+    #[test]
+    fn an_indent_contextual_spacing_and_keep_lines_are_written() {
+        let specs = legend(
+            "styles:\n  \
+             Normal: Times New Roman 11pt, indent -0.0035in, hanging 0.007in, justify\n  \
+             \"#\": Heading1, Times New Roman bold 16pt, keep-next, keep-lines\n  \
+             ListParagraph: Times New Roman 11pt, indent 0.5in, first-line 0.25in, \
+             contextual spacing, named List Paragraph\n",
+        );
+        assert_eq!(specs[0].left, Some(-5));
+        assert_eq!(specs[0].hanging, Some(10));
+        assert!(specs[1].keep_lines);
+        assert_eq!(specs[2].left, Some(720));
+        assert_eq!(specs[2].first_line, Some(360));
+        assert!(specs[2].contextual_spacing);
+        let out = apply("<w:styles></w:styles>", &specs);
+        let list = style_element(&out, "ListParagraph");
         assert!(
-            out.contains("<w:b w:val=\"0\"/><w:bCs w:val=\"0\"/><w:i w:val=\"0\"/>"),
+            list.contains("<w:ind w:left=\"720\" w:firstLine=\"360\"/>"),
+            "{list}"
+        );
+        assert!(list.contains("<w:contextualSpacing/>"), "{list}");
+        assert!(!list.contains("<w:rPr"), "{list}");
+        let heading = style_element(&out, "Heading1");
+        assert!(heading.contains("<w:keepNext/><w:keepLines/>"), "{heading}");
+        let normal = style_element(&out, "Normal");
+        assert!(
+            normal.contains("<w:ind w:left=\"-5\" w:hanging=\"10\"/>"),
+            "{normal}"
+        );
+    }
+
+    #[test]
+    fn a_theme_font_in_the_defaults_is_not_the_named_font() {
+        // Word draws the theme's font where `asciiTheme` is set, whatever
+        // `ascii` says, so a legend naming the `ascii` font still writes it.
+        let styles = "<w:styles><w:docDefaults><w:rPrDefault><w:rPr>\
+            <w:rFonts w:ascii=\"Aptos\" w:hAnsi=\"Aptos\" w:asciiTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\"/>\
+            <w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>";
+        let out = apply(styles, &legend("styles:\n  Normal: Aptos 11pt, left\n"));
+        let normal = style_element(&out, "Normal");
+        assert!(normal.contains("<w:rFonts w:ascii=\"Aptos\""), "{normal}");
+    }
+
+    #[test]
+    fn a_style_omits_properties_the_defaults_already_give() {
+        let styles = "<w:styles><w:docDefaults><w:rPrDefault><w:rPr>\
+            <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:eastAsia=\"Calibri\" w:cs=\"Calibri\"/>\
+            <w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/></w:rPr></w:rPrDefault>\
+            <w:pPrDefault><w:pPr><w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/>\
+            </w:pPr></w:pPrDefault></w:docDefaults></w:styles>";
+        let specs = legend(
+            "styles:\n  \
+             Normal: Calibri 11pt, after 8pt, line 1.08, left\n  \
+             \"#\": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines\n  \
+             ListParagraph: Calibri 11pt, indent 0.5in, contextual spacing, named List Paragraph\n  \
+             Quote: Calibri 11pt, left\n",
+        );
+        let out = apply(styles, &specs);
+        assert!(
+            out.contains(
+                "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+                 <w:name w:val=\"Normal\"/><w:qFormat/></w:style>"
+            ),
             "{out}"
         );
+        let list = style_element(&out, "ListParagraph");
+        assert!(list.contains("<w:ind w:left=\"720\"/>"), "{list}");
+        assert!(list.contains("<w:contextualSpacing/>"), "{list}");
+        assert!(!list.contains("<w:rPr"), "{list}");
+        assert!(
+            list.contains("<w:name w:val=\"List Paragraph\"/>"),
+            "{list}"
+        );
+        // A built-in style keeps Word's gallery flags: List Paragraph is
+        // priority 34 and quick-format, as Word itself writes it.
+        assert!(
+            list.contains(
+                "<w:basedOn w:val=\"Normal\"/><w:uiPriority w:val=\"34\"/><w:qFormat/><w:pPr>"
+            ),
+            "{list}"
+        );
+        assert!(
+            style_element(&out, "Quote").contains("<w:uiPriority w:val=\"29\"/><w:qFormat/>"),
+            "{out}"
+        );
+        let heading = style_element(&out, "Heading1");
+        assert!(
+            heading.contains(
+                "<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before=\"240\" w:after=\"80\"/>\
+                 <w:outlineLvl w:val=\"0\"/></w:pPr>"
+            ),
+            "{heading}"
+        );
+        assert!(
+            heading.contains(
+                "<w:rPr><w:b/><w:bCs/><w:sz w:val=\"32\"/><w:szCs w:val=\"32\"/></w:rPr>"
+            ),
+            "{heading}"
+        );
+        // Quote is not bold, and Normal's legend is not bold either, so no toggle.
+        let quote = style_element(&out, "Quote");
+        assert!(!quote.contains("<w:rPr"), "{quote}");
+        assert!(!quote.contains("<w:pPr"), "{quote}");
+    }
+
+    #[test]
+    fn a_run_property_is_written_when_it_differs_from_the_base() {
+        let specs =
+            legend("styles:\n  Normal: Calibri bold 11pt, left\n  Quote: Calibri 11pt, left\n");
+        let out = apply("<w:styles></w:styles>", &specs);
+        let quote = style_element(&out, "Quote");
+        assert!(
+            quote.contains("<w:b w:val=\"0\"/><w:bCs w:val=\"0\"/>"),
+            "{quote}"
+        );
+        assert!(!quote.contains("w:rFonts"), "{quote}");
+        assert!(!quote.contains("<w:sz"), "{quote}");
+        assert!(!quote.contains("<w:jc"), "{quote}");
     }
 }
