@@ -25,6 +25,9 @@ import cli_locations  # noqa: E402
 
 
 class Timeout(unittest.TestCase):
+    def test_an_expired_control_id_is_a_long_id(self):
+        self.assertIsNotNone(cli_locations.LONG_ID.search("control body:sdt:3"))
+
     def test_an_html_character_reference_is_no_retired_id(self):
         # The view writes a kept space as `&#32;`; that is no `#32`.
         self.assertIsNone(cli_locations.RETIRED_ID.search("note&#32;joined"))
