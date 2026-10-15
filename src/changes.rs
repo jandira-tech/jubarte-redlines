@@ -112,7 +112,8 @@ pub struct ChangeFilter {
 }
 
 impl ChangeFilter {
-    /// The changes named by `ids`.
+    /// Build a filter that selects the changes `ids` names (`r12`,
+    /// `header1.r1`, `r1+2`).
     pub fn ids<I: IntoIterator<Item = S>, S: Into<String>>(ids: I) -> Self {
         Self {
             ids: Some(ids.into_iter().map(Into::into).collect()),
@@ -150,6 +151,11 @@ impl ChangeFilter {
     /// The first error the filter's ids meet in `listed`: an id that names
     /// no change, or one that names several. Expects a [`Self::normalized`]
     /// filter.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::UnknownChange`] when an id is not in `listed`;
+    /// [`ChangeError::Ambiguous`] when an id names more than one change.
     pub fn check(&self, listed: &[Change]) -> Result<(), ChangeError> {
         for id in self.ids.iter().flatten() {
             let named: Vec<&Change> = listed.iter().filter(|c| &c.id == id).collect();
@@ -274,6 +280,10 @@ pub fn changes_text(changes: &[Change]) -> String {
 
 /// Every tracked change, story by story (body, headers, footers, endnotes,
 /// footnotes, styles), in document order.
+///
+/// # Errors
+///
+/// [`ChangeError::Package`] when the package is not a readable zip.
 pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
     Ok(changes_in(&open(docx)?))
 }
@@ -314,12 +324,24 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
 /// Accept the changes `filter` selects; the others stay tracked. A Strict
 /// package is written back transitional, as the comparer writes it; with
 /// nothing selected the bytes come back untouched.
+///
+/// # Errors
+///
+/// [`ChangeError::InvalidId`] for an id `filter` accepts that is not a
+/// change id; [`ChangeError::UnknownChange`] for an id not present in the
+/// document; [`ChangeError::Ambiguous`] for an id that names more than one
+/// listed change; [`ChangeError::Package`] when
+/// the package cannot be read or rewritten.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Accept)
 }
 
 /// Reject the changes `filter` selects; the others stay tracked. A Strict
 /// package is written back transitional, as [`accept_changes`] writes it.
+///
+/// # Errors
+///
+/// As [`accept_changes`].
 pub fn reject_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Reject)
 }

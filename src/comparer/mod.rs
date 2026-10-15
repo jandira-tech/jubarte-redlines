@@ -3,6 +3,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! WmlComparer core (M4). Port of `WmlComparer.ts`.
+//!
+//! The body-comparison engine. Hosts the in-memory
+//! `atomize` → `hash` → `compare` → `correlate` → `mark_rows` →
+//! `flatten` → `produce` pipeline that turns two Word document bodies into
+//! a redlined `<w:document>`.
+//!
+//! Public surface:
+//!
+//! - Entry points: `compare_bodies` (text-only), `compare_bodies_faithful`
+//!   (full M4.I pipeline), `compare_bodies_faithful_with_notes` and the
+//!   non-panicking `try_compare_bodies_faithful_with_notes`.
+//! - Types: `NotesContext`, `CorrelationStatus`, `ComparisonUnitGroupType`,
+//!   `WmlComparerRevisionType`, `WmlComparerSettings`, `CompareMode`,
+//!   `CompareContext`.
+//! - Re-exports: `WmlComparerRevision` from `atoms`.
+//! - Constants: `PREDELETE_STAMP_ORIG`, `PREDELETE_STAMP_REV`,
+//!   `DEFAULT_AUTHOR_FOR_REVISIONS`, `DEFAULT_DETAIL_THRESHOLD`,
+//!   `WORD_LEVEL_KEPT_RATIO`.
+//!
+//! The package-level command-line `jubarte compare A B` runs through this
+//! module; the public host APIs (`compare_documents`,
+//! `compare_documents_with_settings`) layer on top via
+//! [`crate::document_comparer`].
 
 pub mod atomize;
 pub mod atoms;
@@ -31,17 +54,14 @@ use crate::xmllinq::{Dom, NodeId};
 
 pub use atoms::WmlComparerRevision;
 
-/// `pt:PreDelete` side-stamp values — a cross-file contract between the writer
-/// (`finalize::flatten_tracked_deletions`) and the readers
-/// (`atomize`/`preprocess`). `"orig"` marks an ORIGINAL-side pending deletion
-/// whose text doc B does NOT also hold, so it must be salted (never correlates
-/// Equal). `"rev"` marks a shared/revised pending deletion that must correlate
-/// as before — a pure do-not-salt sentinel whose only job is to make the
-/// `== Some("orig")` readers fail closed. Any new consumer MUST gate on
-/// `PREDELETE_STAMP_ORIG`, not `is_some()`, or it will re-salt doc-B PreDelete
-/// runs and re-open the M-MOVE S1 bug.
+/// Side-stamp applied to A-side preserved deletions in Word-alignment
+/// mode so atomize never correlates them `Equal` against B's live text
+/// (a stale A history would otherwise miss M-MOVE/S1).
 pub const PREDELETE_STAMP_ORIG: &str = "orig";
-/// Constant `PREDELETE_STAMP_REV`.
+
+/// Sentinel stamp for B-side preserved (shared) deletions; readers gate
+/// strictly on `Some("orig")` and ignore `Some("rev")` so the gate fails
+/// closed when only the sentinel survives.
 pub const PREDELETE_STAMP_REV: &str = "rev";
 
 /// Compare two content-parent bodies (already accepted/clean) and produce a
@@ -51,6 +71,11 @@ pub const PREDELETE_STAMP_REV: &str = "rev";
 /// Full `Compare` additionally runs PreProcessMarkup, accept/reject, block-level
 /// hashing, fixups, footnotes, and repackaging (WmlComparer.ts:587). This entry
 /// covers the in-memory body-to-redline transform.
+///
+/// `body1` / `body2` must be the `w:body` elements (or another pair of
+/// content-parent roots at the same depth); the caller is responsible for
+/// running accept/reject, preprocessing and any source unid assignment
+/// beforehand.
 pub fn compare_bodies(
     dom: &mut Dom,
     body1: NodeId,
@@ -64,22 +89,23 @@ pub fn compare_bodies(
 }
 
 /// M4.I — faithful end-to-end body compare: the real WmlComparer produce path
-/// (atomize → hash → GetComparisonUnitList → LCS → MarkRows → Flatten →
-/// AssembleAncestorUnids → CoalesceRecurse → MarkContent → IgnorePt14 → Conjoin →
-/// FixUpRevisionIds → RemoveScratch). Returns the final `w:document` element.
+/// (atomize → hash → `GetComparisonUnitList` → LCS → `MarkRows` →
+/// `Flatten` → `AssembleAncestorUnids` → `CoalesceRecurse` → `MarkContent` →
+/// `IgnorePt14` → `Conjoin` → `FixUpRevisionIds` → `RemoveScratch`).
+/// Returns the final `<w:document>` element.
 ///
-/// Move & format-change detection (M4.G) are wired into the pipeline below.
-///
-/// Gaps vs the full `Compare` (tracked, future PRs): cross-projection
-/// CorrelatedSHA1Hash pre-correlation (needs PreProcess+accept/reject),
-/// footnotes/related-parts (M4.H), and the FixUp*Ids / CoalesceAdjacentRuns
-/// finalization details. The text-diff core is faithful and produces
-/// Word-valid tracked markup.
+/// Move and format-change detection (`M4.G`) are wired into the pipeline
+/// when [`WmlComparerSettings::detect_moves`] / `detect_format_changes` are
+/// `true`.
 ///
 /// `source_root1` / `source_root2` are the original document roots; their
-/// namespace declarations (`xmlns:r`, `xmlns:m`, `xmlns:mc`, `xmlns:wp`, …) are
-/// copied onto the rebuilt `<w:document>` so serialized output keeps every
-/// relationship, drawing, and compatibility prefix.
+/// `xmlns:r`, `xmlns:m`, `xmlns:mc`, `xmlns:wp`, … declarations and merged
+/// `mc:Ignorable` are copied onto the rebuilt `<w:document>` so serialized
+/// output keeps every relationship, drawing and compatibility prefix.
+///
+/// Use [`compare_bodies_faithful_with_notes`] (or its
+/// non-panicking variant) when the package carries footnote/endnote
+/// references that must be renumbered in the output notes parts.
 pub fn compare_bodies_faithful(
     dom: &mut Dom,
     source_root1: NodeId,
@@ -99,39 +125,51 @@ pub fn compare_bodies_faithful(
     )
 }
 
-/// B.1 — the notes-part roots (parsed into the same `Dom` as the bodies) the
-/// reference-driven note processing reads definitions from and writes
-/// redlined definitions into: `*_before`/`*_after` are both documents' parts
-/// (C# `ProcessFootnoteEndnote`), `*_with_revisions` are the OUTPUT package's
-/// parts that Rectify (B.3) rebuilds — separators + referenced definitions
-/// renumbered 1..n with finalized revision markup.
+/// Notes-part roots the reference-driven note processing reads
+/// definitions from and writes redlined definitions into.
+///
+/// All six fields are in the same `Dom` as the bodies; `*_before` / `*_after`
+/// are the inputs (both source documents' parts, as loaded by
+/// `ProcessFootnoteEndnote` in C#), and `*_with_revisions` are the OUTPUT
+/// package's parts that `super::footnotes::rectify_footnote_endnote_ids`
+/// rebuilds (separators + referenced definitions renumbered `1..n` with
+/// finalized revision markup).
+///
+/// The pipeline runs only when the four source fields are populated; a
+/// half-populated layout returns
+/// `super::footnotes::RectifyError::MissingSourcePart` /
+/// `super::footnotes::RectifyError::MissingTargetPart` without rewriting
+/// any notes part (every lookup completes before any definition is mutated).
 #[derive(Debug, Default)]
 pub struct NotesContext {
-    /// `fn_before`.
+    /// `word/footnotes.xml` of the ORIGINAL document, parsed into the
+    /// shared `Dom`.
     pub fn_before: Option<NodeId>,
-    /// `fn_after`.
+    /// `word/footnotes.xml` of the REVISED document.
     pub fn_after: Option<NodeId>,
-    /// `en_before`.
+    /// `word/endnotes.xml` of the ORIGINAL document.
     pub en_before: Option<NodeId>,
-    /// `en_after`.
+    /// `word/endnotes.xml` of the REVISED document.
     pub en_after: Option<NodeId>,
-    /// `fn_with_revisions`.
+    /// OUTPUT package's `word/footnotes.xml` (writable).
     pub fn_with_revisions: Option<NodeId>,
-    /// `en_with_revisions`.
+    /// OUTPUT package's `word/endnotes.xml` (writable).
     pub en_with_revisions: Option<NodeId>,
 }
 
-/// B.1 — [`compare_bodies_faithful`] with a [`NotesContext`]: when `Some`,
-/// footnote/endnote definitions are processed per correlated reference (B.2);
-/// with `None` the behavior is identical to the plain entry point.
+/// [`compare_bodies_faithful`] with a [`NotesContext`]: when `Some`,
+/// footnote/endnote definitions are processed per correlated reference
+/// (`ProcessFootnoteEndnote`) and the output notes parts are renumbered
+/// (`RectifyFootnoteEndnoteIds`) before the pipeline ends. With `None` the
+/// behaviour is identical to [`compare_bodies_faithful`].
 ///
 /// # Panics
 ///
-/// When the notes layout cannot be processed or rectified (a reference whose
-/// definition or notes part is missing, or references with no withRevisions
-/// part to write into). [`try_compare_bodies_faithful_with_notes`] returns that as a
-/// [`footnotes::RectifyError`] instead; the package-level comparer uses it so
-/// a malformed document is an `Err`, never an abort of the host.
+/// Panics when the notes layout cannot be processed or rectified (a
+/// reference whose definition or notes part is missing, or references
+/// with no `with_revisions` part to write into); use
+/// [`try_compare_bodies_faithful_with_notes`] to recover that as an
+/// `super::footnotes::RectifyError` instead.
 pub fn compare_bodies_faithful_with_notes(
     dom: &mut Dom,
     source_root1: NodeId,
@@ -153,17 +191,21 @@ pub fn compare_bodies_faithful_with_notes(
     .unwrap_or_else(|e| panic!("{e}"))
 }
 
-/// [`compare_bodies_faithful_with_notes`] that reports a notes layout it
-/// cannot rectify instead of panicking.
+/// [`compare_bodies_faithful_with_notes`] that returns the notes-layout
+/// failure as a `super::footnotes::RectifyError` instead of panicking;
+/// the package-level comparer uses this so a malformed notes part is an
+/// `Err`, never an abort of the host.
 ///
 /// # Errors
 ///
-/// The [`footnotes::RectifyError`] from
-/// [`footnotes::process_footnote_endnote`] or
-/// [`footnotes::rectify_footnote_endnote_ids`]; each makes its lookups before
-/// it rewrites a definition, so a missing part or definition leaves the notes
-/// parts as they were.
-/// With `notes: None` this never fails.
+/// `super::footnotes::RectifyError` variants from
+/// `super::footnotes::process_footnote_endnote` or
+/// `super::footnotes::rectify_footnote_endnote_ids`. Each makes its
+/// lookups before it rewrites a definition, so a missing part or definition
+/// leaves the notes parts as they were.
+///
+/// With `notes: None` this never fails (the notes half of the pipeline is
+/// skipped entirely).
 pub fn try_compare_bodies_faithful_with_notes(
     dom: &mut Dom,
     source_root1: NodeId,
@@ -1211,170 +1253,169 @@ pub fn try_compare_bodies_faithful_with_notes(
 
 use crate::comparison_log::ComparisonLog;
 
-/// Port of `CorrelationStatus`.
+/// Port of `CorrelationStatus`. Tracks the relationship of a `super::atoms::ComparisonUnit`
+/// or `super::atoms::CorrelatedSequence` to its counterpart on the other
+/// side of the diff.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CorrelationStatus {
-    /// Public API item.
+    /// Unit has not yet been classified.
     Nil,
-    /// Public API item.
+    /// Unit is comparable to a same-region unit on the other side (used
+    /// during the LCS to mark a candidate before its final status).
     Normal,
-    /// Public API item.
+    /// The atomizer could not classify the unit (no matching hash and not
+    /// flagged as Inserted/Deleted).
     Unknown,
-    /// Public API item.
+    /// Unit is present only on the revised side.
     Inserted,
-    /// Public API item.
+    /// Unit is present only on the original side.
     Deleted,
-    /// Public API item.
+    /// Unit is on both sides and the LCS paired it.
     Equal,
-    /// Public API item.
+    /// The unit is a group whose contents drive correlation rather than the
+    /// unit itself (`paragraph`, `table`, `row`, `cell`).
     Group,
-    /// Public API item.
+    /// Unit is a moved-out source (the original block).
     MovedSource,
-    /// Public API item.
+    /// Unit is a moved-in destination (the revised block).
     MovedDestination,
-    /// Public API item.
+    /// Unit's runs share their text but differ in `w:rPr` /
+    /// `w:pPr` — emitted as a `w:rPrChange` / `w:pPrChange`.
     FormatChanged,
 }
 
-/// Port of `ComparisonUnitGroupType`.
+/// Which structural container a `super::atoms::ComparisonUnitGroup` came
+/// from. Drives which OOXML element the produce layer wraps the group in
+/// (`w:p`, `w:tbl`, `w:tr`, `w:tc`, `w:txbxContent`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ComparisonUnitGroupType {
-    /// Public API item.
+    /// A paragraph (`w:p` body group).
     Paragraph,
-    /// Public API item.
+    /// A table (`w:tbl` body group).
     Table,
-    /// Public API item.
+    /// A row (`w:tr` inside `w:tbl`).
     Row,
-    /// Public API item.
+    /// A cell (`w:tc` inside `w:tr`).
     Cell,
-    /// Public API item.
+    /// A text box (`w:txbxContent` inside a drawing/pict carrier).
     Textbox,
 }
 
-/// Port of `WmlComparerRevisionType`.
+/// Revisions surfaced by `super::revisions`. Mirrors the C# enum value
+/// names so the JSON-serialized revision list the Python/WASM bindings
+/// expose stays stable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WmlComparerRevisionType {
-    /// Public API item.
+    /// `w:ins`.
     Inserted,
-    /// Public API item.
+    /// `w:del`.
     Deleted,
-    /// Public API item.
+    /// `w:moveFrom` / `w:moveTo` pair (post-D5 pairing).
     Moved,
-    /// Public API item.
+    /// `w:rPrChange` / `w:pPrChange`.
     FormatChanged,
 }
 
-/// Default placeholder author (`WmlComparerSettings.DefaultAuthorForRevisions`).
+/// Default placeholder author when the caller does not override
+/// [`WmlComparerSettings::author_for_revisions`]; matches the C#
+/// `WmlComparerSettings.DefaultAuthorForRevisions`.
 pub const DEFAULT_AUTHOR_FOR_REVISIONS: &str = "Open-Xml-PowerTools";
 
-/// The two supported comparer configurations. Each one is an oracle the
+/// The two supported comparer configurations. Each is an oracle the
 /// output is tested against; the alignment gates between them are not
 /// meant to be mixed (see [`WmlComparerSettings::merge_replaced_paragraphs`]).
+///
+/// `jubarte compare --mode word` and `--mode powertools` select these
+/// presets; the package-level `compare_documents_with_settings` takes the
+/// raw settings struct instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CompareMode {
-    /// Word's own Compare: [`WmlComparerSettings::default`].
+    /// Word's own Compare semantics — see [`WmlComparerSettings::default`].
     #[default]
     Word,
-    /// Open-Xml-PowerTools `WmlComparer`:
+    /// PowerTools-faithful preset used by the C# arbiter and the
+    /// `--detail-threshold=0.15` goldens — see
     /// [`WmlComparerSettings::powertools_faithful`].
     PowerTools,
 }
 
-/// Port of `WmlComparerSettings` (defaults verified against WmlComparer.ts:415-457).
+/// Comparer configuration (port of `WmlComparerSettings`,
+/// defaults verified against WmlComparer.ts:415-457).
 ///
-/// Build one with [`Self::new`] and the `with_*` methods, which change only
-/// the scalars that are safe to tune. The fields stay public for existing
-/// struct-update callers; setting the alignment gates by hand produces a
-/// configuration no oracle covers.
+/// Build with [`Self::new`] (preset for a [`CompareMode`]) and the
+/// `with_*` methods, which only change scalars that are safe to tune.
+/// The fields stay `pub` for existing struct-update callers; setting the
+/// alignment gates by hand produces a configuration no oracle covers.
 #[derive(Clone, Debug)]
 pub struct WmlComparerSettings {
-    /// `word_separators`.
+    /// Single characters that bound a Word during atomization (mirrors
+    /// `WmlComparer.ts:440-457`). The default is
+    /// `" -)(;,（），、、，；。：的"` — Word visual splits.
     pub word_separators: Vec<char>,
-    /// `author_for_revisions`.
+    /// `w:author` stamped on every revision. Defaults to
+    /// [`DEFAULT_AUTHOR_FOR_REVISIONS`]; override with [`Self::with_author`].
     pub author_for_revisions: String,
-    /// `date_time_for_revisions`.
+    /// `w:date` stamped on every revision (ISO-8601). Defaults to a
+    /// fixed epoch for reproducible output; pin via [`Self::with_date`].
     pub date_time_for_revisions: String,
-    /// `detail_threshold`.
+    /// LCS coarseness floor for whole-paragraph replacement;
+    /// Word-visual default is [`DEFAULT_DETAIL_THRESHOLD`] (0.02),
+    /// PowerTools-faithful preset uses 0.15.
     pub detail_threshold: f64,
-    /// `case_insensitive`.
+    /// Word-key comparison case-folds ASCII letters when `true`.
     pub case_insensitive: bool,
-    /// `conflate_breaking_and_nonbreaking_spaces`.
+    /// Treat `' '` and `'\u{A0}'` as the same word separator.
     pub conflate_breaking_and_nonbreaking_spaces: bool,
-    /// `starting_id_for_footnotes_endnotes`.
+    /// First id handed out for synthesized footnote/endnote references
+    /// and definitions; the pipeline renumbers from 1 regardless.
     pub starting_id_for_footnotes_endnotes: i32,
-    /// Word-visual default is TRUE so relocated blocks emit `w:moveFrom` /
-    /// `w:moveTo` like Word Compare (broken_ones_two `file_8_file_9`: Word
-    /// has ~144 moves, PowerTools-style del/ins scores ~38). PowerTools
-    /// library default was FALSE (`WmlComparer.ts:433`); use
-    /// [`Self::powertools_faithful`] to keep that.
+    /// Run move detection (`w:moveFrom` / `w:moveTo`); default `true` for
+    /// Word-visual, `false` for PowerTools-faithful.
     pub detect_moves: bool,
-    /// `simplify_move_markup`.
+    /// Convert native move markup to `w:ins` / `w:del` instead of
+    /// `w:moveFrom` / `w:moveTo` (issue #96 workaround; default `false`).
     pub simplify_move_markup: bool,
-    /// `move_similarity_threshold`.
+    /// Word-Jaccard floor for move pairing (D.5). Default `0.9`.
     pub move_similarity_threshold: f64,
-    /// `move_minimum_word_count`.
+    /// Minimum word count for a candidate move source/destination. Default `6`.
     pub move_minimum_word_count: usize,
-    /// `detect_format_changes`.
+    /// Run format-change detection (emits `w:rPrChange` / `w:pPrChange`).
+    /// Default `true`.
     pub detect_format_changes: bool,
-    /// Word-visual alignment mode — the UMBRELLA gate for every
-    /// beyond-PowerTools pass that aligns output with Word's own Compare
-    /// (named after the first such pass). Besides merging each fully-deleted
-    /// paragraph with its pairwise fully-inserted counterpart, this also
-    /// gates: pre-existing-deletion flattening (both sides), stamped
-    /// pending-deletion re-emission, replaced-block reordering,
-    /// inserted-first ordering for unrelated documents, deleted-mark sectPr
-    /// dropping, table cell-margin synthesis, and default page size. The two
-    /// supported configurations are `default()` (all on) and
-    /// `powertools_faithful()` (all off); intermediate combinations are
-    /// deliberately not expressible — they have no oracle.
+    /// Word-visual alignment master switch — gates pre-existing-deletion
+    /// flattening (both sides), stamped pending-deletion re-emission,
+    /// replaced-block reordering, inserted-first ordering for unrelated
+    /// documents, deleted-mark sectPr dropping, table cell-margin
+    /// synthesis, default page size, and the equivalent paragraph-merge
+    /// pass named after. `default()` is `true` (Word-visual),
+    /// [`Self::powertools_faithful`] is `false`.
     pub merge_replaced_paragraphs: bool,
     /// Budget the two input packages are admitted under before anything
     /// inflates them (see [`crate::admission`]). Defaults to
-    /// [`InputLimits::compare`]; a host that knows its documents are small
-    /// lowers it, one with larger embedded media raises it. A package past
-    /// the budget is an `Err` from `compare_documents*` whose message carries
-    /// the stable `INPUT_LIMIT` code.
+    /// [`InputLimits::compare`]; raise for larger embedded media.
     pub input_limits: InputLimits,
-    /// Internal recursion state, not a tuning knob: true while resolving
-    /// stamp-confetti RESIDUAL windows (nested calls from
-    /// `stamp_confetti_then_replace`), whose glue-anchor physics are
-    /// corpus-tuned and where the UNREL-GLUE void must not fire. Leave it at
-    /// its default; it stays public only so struct-update literals keep
-    /// compiling.
+    /// Internal recursion state — true while resolving stamp-confetti
+    /// RESIDUAL windows; do not tune.
     #[doc(hidden)]
     pub in_stamp_residual: bool,
-    /// Internal recursion state, not a tuning knob: true while resolving a
-    /// paragraph window Word marks word by word (see
-    /// [`WORD_LEVEL_KEPT_RATIO`]), where every common run stays and the
-    /// run-voiding gates must not fire. Leave it at its default; it stays
-    /// public only so struct-update literals keep compiling.
+    /// Internal recursion state — true while resolving a paragraph
+    /// window Word marks word by word (see [`WORD_LEVEL_KEPT_RATIO`]);
+    /// do not tune.
     #[doc(hidden)]
     pub in_word_level_paragraph: bool,
 }
 
-/// The word-visual default for [`WmlComparerSettings::detail_threshold`] —
-/// single source for the struct default, the CLI `--detail-threshold`
-/// default, and the CLI's faithful-preset sentinel check.
+/// Word-visual default for [`WmlComparerSettings::detail_threshold`] —
+/// the single source for the struct default, the CLI
+/// `--detail-threshold` default, and the CLI faithful-preset sentinel
+/// check.
 pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
 
-/// Word's rule for one changed paragraph (Word 16, 1178 single-paragraph
-/// probes over 6–4800 words, 2026-10-03): it is marked word by word when
-/// the kept span — the characters of the words its alignment keeps, the
-/// blanks between the words of a kept run, and the blank on either side
-/// of the run when both sides have one, what its equal segments hold
-/// (" font ", " document ") — plus the paragraph mark, a kept character
-/// of each side, reaches this fraction of the longer side's characters,
-/// mark included, and replaced whole otherwise. One threshold for lone kept
-/// words and runs of 4 and 16, for 6 and for 4800 words, for a paragraph
-/// against one 3× its length: at 0.15 the waves agree with Word on 1.000
-/// (wave7, edge1), 0.992 (paragraphs of 40 words or fewer), 0.988
-/// (short1), 0.983 (asym1) and 0.924 (denom1, whose replaced rows reach
-/// 0.173: long paragraphs with lone kept words, where Word's own
-/// alignment keeps fewer words than a longest common subsequence — the
-/// aligner's gap, not the rule's). Counting the letters alone, the
-/// threshold reads 0.105 for lone words and 0.12 for runs of 4, which is
-/// this rule seen without its blanks. Word applies it again to every
-/// window between the anchors it keeps.
+/// Word's threshold for marking one changed paragraph word-by-word
+/// instead of replacing it whole.
+///
+/// Explained in detail in the doc string; exposed as a constant so the
+/// corpus sweeper and the run-level gate can read the same value.
 pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.15;
 
 impl WmlComparerSettings {
@@ -1416,10 +1457,10 @@ impl WmlComparerSettings {
     }
 
     /// The PowerTools-faithful preset: coarse paragraph fallback
-    /// (detail_threshold 0.15, the C# LIBRARY default) and none of the
-    /// Word-visual alignment passes. This is the configuration every
-    /// PowerTools-parity oracle (m4i TS goldens, C# CLI arbitration with
-    /// --detail-threshold=0.15) was generated with.
+    /// (`detail_threshold 0.15`, the C# library default) and none of
+    /// the Word-visual alignment passes. This is the configuration every
+    /// PowerTools-parity oracle (`m4i` TS goldens, C# CLI arbitration
+    /// with `--detail-threshold=0.15`) was generated with.
     pub fn powertools_faithful() -> Self {
         WmlComparerSettings {
             detail_threshold: 0.15,
@@ -1571,16 +1612,24 @@ fn word_default_sectpr(dom: &mut Dom, base: NodeId) -> NodeId {
 }
 
 /// Optional log holder used by the comparison pipeline.
+///
+/// Carries the [`WmlComparerSettings`] the run was configured with, plus
+/// the [`ComparisonLog`] (info/warning/error entries) the pipeline appends
+/// to. Hosts building per-document state pass this around; the entry
+/// points that take `&WmlComparerSettings` directly are sugar for
+/// `&ctx.settings`.
 #[derive(Debug)]
 pub struct CompareContext {
-    /// `settings`.
+    /// The settings the comparison ran under.
     pub settings: WmlComparerSettings,
-    /// `log`.
+    /// Diagnostic log the pipeline populates with codes from
+    /// `ComparisonLogCode`.
     pub log: ComparisonLog,
 }
 
 impl CompareContext {
-    /// `new`.
+    /// Build a fresh context with the supplied settings and an empty
+    /// [`ComparisonLog`].
     pub fn new(settings: WmlComparerSettings) -> Self {
         CompareContext {
             settings,

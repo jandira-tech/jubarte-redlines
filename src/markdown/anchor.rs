@@ -1,7 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
 // SPDX-License-Identifier: AGPL-3.0-only
-//! An anchor copied out of the agent view, read as document text.
+//! Two helpers the agent-view tooling uses to map between the
+//! CriticMarkup-flavoured Markdown [`markdown::read`] prints and the
+//! plain text a paragraph of the source document carries:
+//!
+//! - [`plain_anchor`] drops CriticMarkup marks, block markers and
+//!   emphasis delimiters, resolving backslash escapes, so an id line
+//!   `<!-- p3 -->` can be matched against the document's body text.
+//! - [`unescape_markdown`] reverses CommonMark backslash escapes for
+//!   the punctuation set both helpers share.
+//!
+//! They are the building blocks of the agent view's text-matching
+//! passes: comparing id lines across revisions, scoring fuzzy anchors
+//! for an editor's `--anchor` flag, and ranking repeated paragraphs by
+//! similarity. They back the `jubarte read` path
+//! ([`crate::markdown::read`]) and the bindings' text-projection
+//! utilities.
 
 /// The ASCII punctuation a backslash escapes in CommonMark.
 const ESCAPABLE: &str = r"\`*_{}[]()#+-.!|<>~=&";
@@ -30,7 +45,8 @@ fn space_reference(rest: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool 
 }
 
 /// Removes a backslash escape before a Markdown punctuation character
-/// (`\*` → `*`), as CommonMark reads it; other backslashes stay.
+/// (`\*` → `*`), as CommonMark reads it; backslashes that do not precede
+/// one of those characters are kept verbatim.
 pub fn unescape_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
@@ -205,13 +221,20 @@ fn without_emphasis(text: &str) -> String {
     text
 }
 
-/// The document text an agent-view fragment stands for: attribution and
-/// comment notes dropped, insertions and highlights unwrapped, deletions
-/// removed, substitutions replaced by their new side, a block mark that
-/// leads the line (`#`–`######`, `> `, `- `, `+ `, `* `, `1. `, `1) `, after
-/// any leading spaces) dropped, emphasis marks dropped, backslash
-/// escapes resolved. A mark inside a change mark (`{++1. one++}`) is the
-/// change's text and stays, as does an escaped mark (`\*\*`).
+/// The document text an agent-view fragment stands for:
+///
+/// - attribution notes and comment text dropped (`{>>r0 @AC<<}` etc.);
+/// - insertions unwrapped (`{++x++}` → `x`) and highlights too (`{==x==}`);
+/// - deletions removed (`{--x--}`);
+/// - substitutions become their new side (`{~~old~>new~~}` → `new`);
+/// - a block mark that leads the line (`#`–`######`, `> `, `- `, `+ `,
+///   `* `, `1. `, `2) `, after any leading spaces) dropped;
+/// - emphasis marks (`**`, `~~`, `==`, `<u>`, paired `*`/`_` runs) dropped;
+/// - backslash escapes (`\*`, `\[`, ...) resolved.
+///
+/// A mark inside a change mark (`{++1. one++}`) is the change's own
+/// text and stays, as does an escaped mark (`\*\*`). Reads the way
+/// pulldown-cmark reads the same source.
 pub fn plain_anchor(text: &str) -> String {
     let mut hidden = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();

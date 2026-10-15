@@ -2,15 +2,23 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Atomization + coalesce (M4.1). Port of `CreateComparisonUnitAtomList`,
-//! `CreateComparisonUnitAtomListRecurse`, `Coalesce`, `CoalesceRecurseSimple`.
+//! Atomization + coalesce (M4.1).
 //!
-//! `CreateComparisonUnitAtomList` flattens a content tree into a stream of
-//! per-character / per-leaf atoms, each remembering its ancestor chain (outermost
-//! → leaf, excluding `w:body`). `Coalesce` rebuilds the tree by regrouping atoms
-//! on each ancestor's `pt14:Unid` at successive depths. The round-trip
-//! `coalesce(atomize(body))` reconstructs a structurally-equal body — the
-//! invariant the whole comparer relies on.
+//! Port of `CreateComparisonUnitAtomList`, `CreateComparisonUnitAtomListRecurse`,
+//! `Coalesce`, `CoalesceRecurseSimple`.
+//!
+//! [`create_comparison_unit_atom_list`] flattens a content tree into a
+//! stream of per-character / per-leaf atoms, each remembering its ancestor
+//! chain (outermost → leaf, excluding `w:body`). [`coalesce`] rebuilds the
+//! tree by regrouping atoms on each ancestor's `pt14:Unid` at successive
+//! depths. The round-trip `coalesce(atomize(body))` reconstructs a
+//! structurally-equal body — the invariant the whole comparer relies on.
+//!
+//! `salt_field_results` rewrites each field's begin/code/separate/end
+//! hashes so a field whose code changed matches only as a whole (Word's
+//! shape, not docxodus's broken-pair shape). [`verify_no_invalid_content`]
+//! and [`move_last_sectpr_into_last_paragraph`] are the two pre-flight
+//! guards the compare pipeline calls before atomizing.
 
 use std::sync::Arc;
 
@@ -25,8 +33,14 @@ use super::tables::{
 };
 use super::{CorrelationStatus, WmlComparerSettings};
 
-/// `VerifyNoInvalidContent` (:8678) — error if any descendant is an
-/// `InvalidElements` member. Returns the offending local name on failure.
+/// `VerifyNoInvalidContent` (WmlComparer.ts :8678): error if any
+/// descendant of `content_parent` is a member of
+/// [`super::tables::INVALID_ELEMENTS`] (`altChunk`, `customXml`, `subDoc`,
+/// the customXml range markers).
+///
+/// # Errors
+///
+/// Returns `Err(String)` naming the offending local name on failure.
 pub fn verify_no_invalid_content(dom: &Dom, content_parent: NodeId) -> Result<(), String> {
     for d in dom.descendants(content_parent, None) {
         if let Some(name) = dom.name(d)
@@ -38,8 +52,14 @@ pub fn verify_no_invalid_content(dom: &Dom, content_parent: NodeId) -> Result<()
     Ok(())
 }
 
-/// `MoveLastSectPrIntoLastParagraph` (:8819) — move a trailing body-level
-/// `w:sectPr` into the last paragraph's `w:pPr`. Errors on >1 direct sectPr.
+/// `MoveLastSectPrIntoLastParagraph` (WmlComparer.ts :8819): move a
+/// trailing body-level `w:sectPr` into the last paragraph's `w:pPr`.
+///
+/// # Errors
+///
+/// Returns `Err(String)` when the body has more than one direct-child
+/// `w:sectPr` (the compare pipeline gates this with an admission check
+/// on the source bytes and propagates the error).
 pub fn move_last_sectpr_into_last_paragraph(
     dom: &mut Dom,
     content_parent: NodeId,
@@ -266,7 +286,24 @@ fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
     }
 }
 
-/// `CreateComparisonUnitAtomList(contentParent)` — assign unids, then flatten.
+/// `CreateComparisonUnitAtomList(contentParent)` — assign `pt:Unid` to every
+/// element under `content_parent`, move the trailing body `w:sectPr` into
+/// the last paragraph's `w:pPr` (when present), then flatten the tree
+/// into a per-character / per-leaf atom stream.
+///
+/// Each atom remembers its ancestor chain (`Arc<[NodeId]>` shared between
+/// every atom of the same character run), and its correlation status is
+/// derived from the nearest revision-tracking ancestor (`w:ins` /
+/// `w:del` / `w:moveFrom` / `w:moveTo`; a `w:pPr` content atom reads its
+/// track from `pPr/rPr` instead). Field results are then re-hashed by
+/// `salt_field_results` so a field whose code changed matches only as a
+/// whole (Word's shape).
+///
+/// # Panics
+///
+/// Panics if `verify_no_invalid_content` or `move_last_sectpr_into_last_paragraph`
+/// returns an error; the compare pipeline gates this with an
+/// `admission::admit` check on the source bytes.
 pub fn create_comparison_unit_atom_list(
     dom: &mut Dom,
     content_parent: NodeId,

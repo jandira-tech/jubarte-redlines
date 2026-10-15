@@ -118,11 +118,21 @@ impl From<InspectError> for AuditError {
 }
 
 /// Audit `docx` with `rules` (rule sets or codes; empty selects every rule).
+///
+/// # Errors
+///
+/// [`AuditError::UnknownRule`] when a rule is neither a known set nor a
+/// known code; [`AuditError::Layout`] when the layout pass fails;
+/// [`AuditError::Inspect`] when the package cannot be admitted or read.
 pub fn audit(docx: &[u8], rules: &[&str]) -> Result<Vec<AuditFinding>, AuditError> {
     Ok(audit_report(docx, rules)?.findings)
 }
 
 /// [`audit`] plus the codes that ran and whether a layout pass ran.
+///
+/// # Errors
+///
+/// As [`audit`].
 pub fn audit_report(docx: &[u8], rules: &[&str]) -> Result<AuditReport, AuditError> {
     audit_report_with(docx, rules, Some(&mut word_layout))
 }
@@ -157,6 +167,13 @@ pub type LayoutPass<'a> = &'a mut dyn FnMut(&[u8]) -> Result<RenderReport, Audit
 /// selection and asking for it is [`AuditError::Layout`];
 /// `STALE_FIELD_CACHE` still reports empty TOC and `NUMPAGES` caches but
 /// cannot compare a cached page count with a layout.
+///
+/// # Errors
+///
+/// [`AuditError::UnknownRule`] when a rule is neither a known set nor a
+/// known code; [`AuditError::Layout`] when the supplied layout pass fails
+/// or when `FONT_SUBSTITUTED` is requested without a layout pass;
+/// [`AuditError::Inspect`] when the package cannot be admitted or read.
 pub fn audit_report_with(
     docx: &[u8],
     rules: &[&str],

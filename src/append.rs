@@ -145,8 +145,10 @@ impl std::error::Error for AppendError {}
 ///
 /// # Errors
 ///
-/// [`AppendError`] when either input is refused, unreadable, or has no
-/// WordprocessingML body.
+/// [`AppendError::Admission`] when either input breaks an admission budget or
+/// rule, [`AppendError::Package`] when a package cannot be read or written,
+/// [`AppendError::Invalid`] when a main document part is missing or is not a
+/// WordprocessingML document.
 pub fn append_documents(
     a: &[u8],
     b: &[u8],

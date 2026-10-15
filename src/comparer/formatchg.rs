@@ -2,10 +2,20 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.G — format-change detection. Port of DetectFormatChangesInAtomList (:4824),
-//! GetRunPropertiesFromAtom (:4854), NormalizeRunProperties (:4884),
-//! AreRunPropertiesEqual (:4868), GetChangedPropertyNames (:4919),
-//! GetFriendlyPropertyName (:4974). settings.detect_format_changes defaults TRUE.
+//! Format-change detection (M4.G).
+//!
+//! Port of `DetectFormatChangesInAtomList` (:4824),
+//! `GetRunPropertiesFromAtom` (:4854), `NormalizeRunProperties` (:4884),
+//! `AreRunPropertiesEqual` (:4868), `GetChangedPropertyNames` (:4919),
+//! `GetFriendlyPropertyName` (:4974). [`WmlComparerSettings::detect_format_changes`]
+//! defaults to `true`.
+//!
+//! The compare pipeline calls [`detect_format_changes_in_atom_list`] once
+//! between the move pass and the produce pass; the public entry points it
+//! builds on ([`get_run_properties_from_atom`], [`normalize_run_properties`],
+//! [`are_run_properties_equal`], [`friendly_property_name`],
+//! [`get_changed_property_names`]) are exposed for the Python and WASM
+//! bindings.
 
 use std::collections::BTreeMap;
 
@@ -15,7 +25,9 @@ use crate::xmllinq::{Dom, NodeId, XName};
 use super::atoms::{ComparisonUnitAtom, FormatChangeInfo};
 use super::{CorrelationStatus, WmlComparerSettings};
 
-/// `GetRunPropertiesFromAtom` — nearest `w:r` ancestor's `w:rPr` (None if none).
+/// Nearest `w:r` ancestor's `w:rPr` element for an atom, or `None` if no
+/// such ancestor exists. Used to compare the original and revised run
+/// properties of an `Equal` atom pair.
 pub fn get_run_properties_from_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> Option<NodeId> {
     let r = atom
         .ancestor_elements
@@ -87,15 +99,22 @@ fn build_canonical_rpr(dst: &mut Dom, spec: &[CanonicalRprChild]) -> NodeId {
     ne
 }
 
-/// `NormalizeRunProperties` — canonical `w:rPr` built in the same arena `dom`. The
-/// scratch-serialization path (`normalized_rpr_serialized`) instead builds into a
-/// DEDICATED arena so the persistent one is never enlarged (MEM-ATTRIBUTE-01).
+/// Build a canonical `w:rPr` in the same arena `dom`: drop
+/// `w:rPrChange` and any `pt:`-namespace children, sort the surviving
+/// children by local name, and sort each child's attributes the same way.
+///
+/// For the cached per-rPr serialization path used by the format-change
+/// pass, see `normalized_rpr_serialized` — that path builds into a
+/// dedicated scratch arena so the persistent arena is never enlarged
+/// across thousands of distinct rPrs.
 pub fn normalize_run_properties(dom: &mut Dom, rpr: Option<NodeId>) -> NodeId {
     let spec = canonical_rpr_spec(dom, rpr);
     build_canonical_rpr(dom, &spec)
 }
 
-/// `AreRunPropertiesEqual` — canonical-form equality (null ≡ empty rPr).
+/// True when two `w:rPr` elements serialize to the same canonical form
+/// (after [`normalize_run_properties`]). `None` equals the empty `rPr`,
+/// matching the C# `AreRunPropertiesEqual`.
 pub fn are_run_properties_equal(dom: &mut Dom, a: Option<NodeId>, b: Option<NodeId>) -> bool {
     let na = normalize_run_properties(dom, a);
     let nb = normalize_run_properties(dom, b);
@@ -137,7 +156,9 @@ fn normalized_rpr_serialized(
     s
 }
 
-/// `GetFriendlyPropertyName`.
+/// Map a WordprocessingML run-property local name to the friendly name the
+/// Python and WASM revisions-binding returns (`bold`, `italic`,
+/// `strikethrough`, `fontSize`, `color`, …). Unknown names pass through.
 pub fn friendly_property_name(local: &str) -> String {
     let s = match local {
         "b" => "bold",
@@ -190,7 +211,9 @@ fn prop_signature(dom: &mut Dom, prop: NodeId) -> String {
     dom.serialize_element(pe)
 }
 
-/// `GetChangedPropertyNames` — friendly names of props that differ (presence or value).
+/// Friendly names of the run-property children that differ between `old`
+/// and `new` (presence or value, by canonical serialization). The result is
+/// what the JSON revision binding reports under `formatChange.changedProperties`.
 pub fn get_changed_property_names(
     dom: &mut Dom,
     old: Option<NodeId>,
@@ -345,10 +368,18 @@ fn are_para_properties_equal(dom: &mut Dom, a: NodeId, b: NodeId) -> bool {
     normalize_para_properties(dom, a) == normalize_para_properties(dom, b)
 }
 
-/// M4.G.5 — `DetectFormatChangesInAtomList` (:4824 / docxodus :7111):
-/// - Equal **run** atoms whose rPr differs → FormatChanged + OldRPr path
-/// - Equal **pPr** (pilcrow) atoms whose para props differ → FormatChanged +
-///   OldPPr path (M81: file_69 stamp after=20 → w:pPrChange)
+/// M4.G.5 — `DetectFormatChangesInAtomList` (WmlComparer.ts :4824 /
+/// docxodus :7111):
+/// - `Equal` run atoms whose `w:rPr` differs → `FormatChanged` with the
+///   original's `w:rPr` serialized as `pt:OldRPr`.
+/// - `Equal` pPr (pilcrow) atoms whose paragraph properties differ →
+///   `FormatChanged` with the original's `w:pPr` projected into
+///   `pt:OldPPr` (M81: `file_69` stamp after=20 → `w:pPrChange`).
+///
+/// When [`WmlComparerSettings::detect_format_changes`] is `false` the
+/// function is a no-op (the input `atoms` is unchanged). Production
+/// dispatches to the cached per-rPr serialization path; the equivalence
+/// oracle lives in `detect_format_changes_reference` (test builds only).
 pub fn detect_format_changes_in_atom_list(
     dom: &mut Dom,
     atoms: &mut [ComparisonUnitAtom],

@@ -1,18 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Git/GitHub unified patches of complete document text snapshots.
+//! Git/GitHub unified patches of complete document text snapshots, and
+//! other review presentations.
 //!
-//! DOCX snapshots use the same paragraph, table, and revision-mark view as
-//! `debug --check text`, without clipping or a hunk limit. These are text
-//! patches for review; they do not patch the binary DOCX package.
+//! DOCX snapshots use the same paragraph, table, and revision-mark view
+//! as `jubarte debug --check text`, without clipping or a hunk limit.
+//! The patches are for review only; they do not patch the binary DOCX
+//! package. They back `jubarte diff` and the Python and WASM bindings'
+//! `diff_text` / `diff_documents` shapes.
 
 use crate::markdown::Source;
 use similar::{ChangeTag, DiffOp, DiffTag, TextDiff};
 use std::fmt::Write as _;
 use std::ops::Range;
 
-/// Names in the patch headers and the number of unchanged context lines.
+/// Names written on the patch headers and the number of unchanged
+/// context lines around each change. Git's `a/` and `b/` prefixes are
+/// added automatically by every formatter that prints them.
 #[derive(Clone, Debug)]
 pub struct UnifiedOptions {
     /// Original document label (Git's `a/` prefix is added automatically).
@@ -36,29 +41,38 @@ impl Default for UnifiedOptions {
 /// Presentation of a document's line changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TextFormat {
-    /// Git headers and unified hunks, keeping the snapshots' tracked marks.
+    /// Git headers and unified hunks, with the snapshots' tracked marks
+    /// carried into the changed lines as their existing CriticMarkup.
     #[default]
     Github,
-    /// Accept both inputs, then show fresh word-level CriticMarkup only.
+    /// Accept both inputs first, then emit fresh word-level CriticMarkup
+    /// on each changed line only.
     Word,
-    /// Traditional `a`, `d`, `c` line addresses, without context.
+    /// Traditional `a`, `d`, `c` line addresses, without context lines.
     Normal,
-    /// Traditional two-sided context blocks.
+    /// Traditional two-sided context blocks (`***`, `---`).
     Context,
-    /// Aligned replacement, insertion and deletion rows, without numbers.
+    /// Aligned replacement, insertion and deletion rows, without
+    /// addresses; the default for [`Self::SideBySide`] adapts to a
+    /// `--window` wide enough for the text.
     SideBySide,
 }
 
-/// Review presentation options; the raw unified patch APIs remain unclipped.
+/// Review presentation options for [`diff_text_view`] and
+/// [`diff_documents_view`]; the raw unified patch APIs above
+/// ([`diff_text`], [`diff_documents`]) stay unclipped.
 #[derive(Clone, Debug)]
 pub struct TextOptions {
     /// Snapshot labels and surrounding unchanged lines.
     pub unified: UnifiedOptions,
     /// Output presentation; defaults to GitHub unified hunks.
     pub format: TextFormat,
-    /// Accept existing revisions before comparison (always true in Word mode).
+    /// Accept the inputs' tracked changes before comparison (always true
+    /// when `format == TextFormat::Word`).
     pub accept_changes: bool,
-    /// Unicode scalar window per line; `None` preserves complete lines.
+    /// Per-line Unicode scalar window; `None` keeps complete lines. The
+    /// window counts characters only, never delimiters, so every mark a
+    /// line opens it closes.
     pub window: Option<usize>,
 }
 
@@ -76,12 +90,14 @@ impl Default for TextOptions {
     }
 }
 
-/// Compare text snapshots in the requested review presentation.
+/// Compares two plain-text snapshots (`old`, `new`) in the review
+/// presentation `options.format` names.
 ///
-/// Existing CriticMarkup stays inside the changed lines unless acceptance is
-/// requested. Word mode always accepts both inputs and emits only changed
-/// lines with newly generated CriticMarkup. Clipping happens after comparison,
-/// so it cannot hide a hunk or change its line ranges.
+/// Existing CriticMarkup stays inside the changed lines unless acceptance
+/// is requested. Word mode always accepts both inputs and emits only the
+/// changed lines with newly-generated CriticMarkup. Clipping (the
+/// `window`) happens after comparison, so it cannot hide a hunk or
+/// change its line ranges.
 pub fn diff_text_view(old: &str, new: &str, options: &TextOptions) -> String {
     let accept = options.accept_changes || options.format == TextFormat::Word;
     let old = accepted_text(old, accept);
@@ -89,12 +105,23 @@ pub fn diff_text_view(old: &str, new: &str, options: &TextOptions) -> String {
     render_view(&old, &new, options)
 }
 
-/// Compare complete DOCX or Markdown snapshots in a review presentation.
+/// Compares two DOCX bytes or Markdown text snapshots in the review
+/// presentation `options.format` names. DOCX revision acceptance runs on
+/// the package before text extraction, so removed paragraphs and table
+/// rows cannot contribute phantom line numbers.
 ///
-/// DOCX revision acceptance runs on the package before text extraction, so
-/// removed paragraphs and table rows cannot contribute phantom line numbers.
-/// Preserved revisions are rendered directly as proper CriticMarkup; the raw
-/// [`document_text`] API retains its legacy debug snapshot notation.
+/// # Inputs
+///
+/// - `old`, `new` — either two `.docx` byte slices or two Markdown strings
+///   ([`crate::markdown::Source`]).
+/// - `options` — review presentation, acceptance policy and `window`.
+///
+/// # Errors
+///
+/// A message when [`Source::Docx`] is given for `old` or `new` and the
+/// package cannot be admitted (a budget, a duplicate or unsafe part name,
+/// an encrypted `.docx`, an unsupported XML encoding, or the bytes are
+/// not a `.docx`).
 pub fn diff_documents_view(
     old: Source<'_>,
     new: Source<'_>,
@@ -638,7 +665,16 @@ fn rows_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize
     out
 }
 
-/// Complete textual snapshot, preserving existing tracked marks.
+/// Reads a complete textual snapshot of `source` — the same view
+/// `jubarte debug --check text` prints, preserving the snapshots'
+/// tracked marks. Kept for callers that need the raw text of one
+/// document before comparing it; the review paths go through
+/// [`diff_text_view`] / [`diff_documents_view`].
+///
+/// # Errors
+///
+/// A message when `source` is [`Source::Docx`] and the package cannot
+/// be admitted.
 pub fn document_text(source: Source<'_>) -> Result<String, String> {
     match source {
         Source::Markdown(text) => Ok(text.to_string()),
@@ -646,7 +682,11 @@ pub fn document_text(source: Source<'_>) -> Result<String, String> {
     }
 }
 
-/// A standard unified patch; identical text produces an empty string.
+/// Compares two plain-text snapshots (`old`, `new`) as a standard unified
+/// patch (Git C-style quoted names, `@@` hunk headers, `context`-line
+/// surroundings, `\ No newline at end of file` markers when the last line
+/// has no newline). Backs `jubarte diff` and the bindings; CRLF line ends
+/// are normalized to LF. Returns an empty string when `old == new`.
 pub fn diff_text(old: &str, new: &str, options: &UnifiedOptions) -> String {
     if old == new {
         return String::new();
@@ -694,7 +734,14 @@ fn git_path(side: &str, name: &str) -> String {
     out
 }
 
-/// Compare DOCX bytes or Markdown text without constructing a redline.
+/// Compares two DOCX byte slices or two Markdown strings as a standard
+/// unified patch without constructing a redline. Backs `jubarte diff
+/// old.docx new.docx` and the bindings.
+///
+/// # Errors
+///
+/// A message when `old` or `new` is [`Source::Docx`] and the package
+/// cannot be admitted.
 pub fn diff_documents(
     old: Source<'_>,
     new: Source<'_>,

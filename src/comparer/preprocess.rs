@@ -2,11 +2,22 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.B — preprocess + block-level hashing. Port of `RemoveExistingPowerToolsMarkup`
-//! (:5049), `TestForInvalidContent` (:5037), `CloneForStructureHash` (:5121),
-//! the block hash-string builder (inside `HashBlockLevelContent` :867), and
-//! (later tasks) `CloneBlockLevelContentForHashing`, `AddSha1HashToBlockLevelContent`,
-//! `HashBlockLevelContent`, `PreProcessMarkup`.
+//! Preprocess + block-level hashing (M4.B).
+//!
+//! Port of `RemoveExistingPowerToolsMarkup` (:5049),
+//! `TestForInvalidContent` (:5037), `CloneForStructureHash` (:5121),
+//! `CloneBlockLevelContentForHashing` (:5142),
+//! `AddSha1HashToBlockLevelContent` (:5080), `HashBlockLevelContent`
+//! (:832), and the block hash-string / structure-hash builders. Called by
+//! [`super::try_compare_bodies_faithful_with_notes`] before the LCS
+//! pipeline runs.
+//!
+//! [`add_sha1_hash_to_block_level_content`] stamps `pt:SHA1Hash` (and
+//! `pt:StructureSHA1Hash` for tables/rows) onto every
+//! [`super::tables::ELEMENTS_TO_HAVE_SHA1`] descendant. [`hash_block_level_content`]
+//! walks the accepted/rejected projection of one body and stamps the
+//! matching source element with the corresponding `pt:CorrelatedSHA1Hash`,
+//! so the LCS can pair paragraphs that survive accept/reject unchanged.
 
 use crate::namespaces::{A14, O, PT, R, VML, W, WP};
 use crate::util::group_adjacent;
@@ -19,14 +30,17 @@ use super::tables::{
     S_RELATIONSHIP_ATTRIBUTE_NAMES,
 };
 
-/// A resolver `rId -> Some(replacement)|None` used by the rel-id clone branch:
-/// `Some(v)` replaces the attribute value (part content-hash / hyperlink URI /
-/// external URI / "NULL Relationship"); `None` drops the attribute (xml part).
+/// A resolver `rId -> Some(replacement)|None` used by the rel-id clone
+/// branch. `Some(v)` replaces the attribute value (part content-hash /
+/// hyperlink URI / external URI / `"NULL Relationship"`); `None` drops the
+/// attribute (XML part).
 pub type RelHashResolver<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
-/// Default resolver when no OPC package is available: every rId is treated as
-/// unresolvable → "NULL Relationship" (the TS fallback). Real part-hashing is
-/// wired in M4.B.6/M4.I via a package-backed resolver.
+/// Default resolver when no OPC package is available: every rId is treated
+/// as unresolvable and replaced with the C# fallback string
+/// `"NULL Relationship"`. Real part-hashing is wired in
+/// `crate::document_comparer::compare_documents_impl` via a package-
+/// backed resolver.
 pub fn null_rel_resolver(_r_id: &str) -> Option<String> {
     Some("NULL Relationship".to_string())
 }
@@ -93,8 +107,16 @@ fn strip_whitespace_in_clone_text(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// M4.B.4 — `CloneBlockLevelContentForHashing` (:5142): clone for hashing, then
-/// strip every namespace-declaration attribute from the result subtree.
+/// M4.B.4 — `CloneBlockLevelContentForHashing` (WmlComparer.ts :5142):
+/// clone a subtree for hashing, then strip every `xmlns:*` declaration
+/// from the clone (the wrapper would otherwise wrap every text in a
+/// different prefix).
+///
+/// `include_related_parts` and `rel_hash` decide whether rId attributes
+/// are replaced with the referenced part's content hash (via the
+/// [`RelHashResolver`]) or kept verbatim. Settings drive the
+/// case-insensitive / NBSP-or-space text transforms applied to `w:t`
+/// children.
 pub fn clone_block_level_content_for_hashing(
     dom: &mut Dom,
     node: NodeId,
@@ -543,8 +565,10 @@ fn is_single_t_run(dom: &Dom, e: NodeId) -> bool {
 const WML_DEFAULT_XMLNS: &str =
     " xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
 
-/// M4.B.1 — `RemoveExistingPowerToolsMarkup` (:5049): drop every `pt:*` attribute
-/// EXCEPT `pt:Unid`, across `root` and all descendants.
+/// M4.B.1 — `RemoveExistingPowerToolsMarkup` (WmlComparer.ts :5049):
+/// drop every `pt:*` attribute EXCEPT `pt:Unid`, across `root` and all
+/// descendants. Re-run before atomizing; pre-existing `pt:` markers would
+/// otherwise pollute the block hash.
 pub fn remove_existing_powertools_markup(dom: &mut Dom, root: NodeId) {
     let unid = PT::unid();
     // DOM-ITER-03: collect elements first (visit needs &Dom; mutate after).
@@ -566,9 +590,15 @@ pub fn remove_existing_powertools_markup(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// M4.B.1 — `TestForInvalidContent` (:5037): the *preprocess* guard, which rejects
-/// only `w:altChunk`, `w:subDoc`, `w:contentPart` (a narrower set than the
-/// atomizer's `VerifyNoInvalidContent`).
+/// M4.B.1 — `TestForInvalidContent` (WmlComparer.ts :5037): the
+/// *preprocess* guard, which rejects only `w:altChunk`, `w:subDoc`,
+/// `w:contentPart` (a narrower set than the atomizer's
+/// [`super::atomize::verify_no_invalid_content`]). Stops at the first
+/// hit (no full descendant materialization).
+///
+/// # Errors
+///
+/// Returns `Err(String)` naming the offending local name on failure.
 pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String> {
     let invalid = [
         W::name("altChunk"),
@@ -593,10 +623,10 @@ pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String> {
     }
 }
 
-/// M4.B.2 — the block hash *string*: serialize the clone, then strip the single
-/// re-emitted wordprocessingml default-xmlns declaration (`replacen(.., 1)` —
-/// JS string `.replace` removes only the first occurrence; the wrapper has
-/// already stripped all xmlns decls so exactly one is re-emitted on the root).
+/// M4.B.2 — the block hash *string*: serialize the clone, then strip the
+/// single re-emitted wordprocessingml default-xmlns declaration (the
+/// wrapper has already stripped every `xmlns` decl, so exactly one is
+/// re-emitted on the root).
 pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String {
     let mut serialized = dom.serialize_element(clone);
     // In-place strip (same result as `replacen(.., 1)` without a second full alloc).
@@ -606,25 +636,24 @@ pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String {
     serialized
 }
 
-/// M4.B.2 — SHA-1 of the block hash string.
-///
-/// HASH-STREAM-01 lite: stream serialize into SHA-1 (no full XML `String` for
-/// the digest path). Digest must match `sha1_hex(block_hash_string(...))`.
+/// M4.B.2 — SHA-1 of the block hash string. Digest must equal
+/// `sha1_hex(block_hash_string(...))`.
 pub fn block_sha1(dom: &Dom, clone: NodeId) -> String {
     // HASH-STREAM-01 lite: stream serialize into SHA-1 (no full intermediate
     // hash string required beyond the serialize sink).
     dom.serialize_element_sha1_hex(clone)
 }
 
-/// HASH-STREAM-03/04: content SHA-1 of a **source** block node, preferring a
-/// no-clone stream for simple `w:p` and simple `w:tbl`/`w:tr`.
+/// HASH-STREAM-03 / HASH-STREAM-04: content SHA-1 of a **source** block node,
+/// preferring a no-clone stream for simple `w:p` and simple `w:tbl` / `w:tr`.
 /// Falls back to `clone_block_level_content_for_hashing` + [`block_sha1`].
 ///
-/// When `correlated_ws` is true (Word-visual correlated hashes), text is
-/// whitespace-stripped like `strip_whitespace_in_clone_text` after clone.
+/// When `correlated_ws` is `true` (Word-visual correlated hashes), text is
+/// whitespace-stripped after the clone, like
+/// `strip_whitespace_in_clone_text`.
 ///
-/// Digest-identical to the clone oracle for every accepted simple shape and
-/// for all complex nodes (fallback path).
+/// Digest-identical to the clone oracle for every accepted simple shape
+/// and for all complex nodes (fallback path).
 pub fn block_sha1_from_source(
     dom: &mut Dom,
     node: NodeId,
@@ -650,10 +679,14 @@ pub fn block_sha1_from_source(
     block_sha1(dom, clone)
 }
 
-/// HASH-STREAM-03/05: stream-hash a simple paragraph without a hash-clone
-/// subtree. Accepts `w:t` and empty leaf run children (`w:br`/`w:tab`/…):
-/// multi-child runs expand like `clone_internal` r-fragments; adjacent text
-/// fragments merge. Returns `None` for drawings, footnotes, nested content.
+/// HASH-STREAM-03 / HASH-STREAM-05: stream-hash a simple paragraph without
+/// a hash-clone subtree. Accepts `w:t` and empty-leaf run children
+/// (`w:br` / `w:tab` / …): multi-child runs become r-fragments like
+/// `clone_internal`; adjacent text fragments merge. Returns `None` for
+/// drawings, footnotes, nested content. The optional `correlated_ws`
+/// flag selects the Word-visual whitespace-invariant form (used by
+/// [`hash_block_level_content`] when [`WmlComparerSettings::merge_replaced_paragraphs`]
+/// is on).
 pub fn try_stream_hash_simple_paragraph(
     dom: &Dom,
     node: NodeId,
@@ -890,7 +923,8 @@ fn emit_merged_run_fragments(frags: &[RunFrag], out: &mut String, structure_only
 /// Returns `(content_sha1_hex, structure_sha1_hex)` digest-identical to
 /// `block_sha1(clone)` / `structure_sha1(clone)`. For `w:tc`, structure is
 /// still returned (callers that only need content may ignore it). `None` →
-/// use clone fallback.
+/// use clone fallback. Honours the same `pt:PreDelete` salt gate as
+/// [`try_stream_hash_simple_paragraph`].
 pub fn try_stream_hash_simple_table_or_tr(
     dom: &Dom,
     node: NodeId,
@@ -1180,9 +1214,10 @@ pub fn structure_sha1(dom: &Dom, node: NodeId) -> String {
     dom.serialize_element_structure_sha1_hex(node)
 }
 
-/// M4.B.3 — `CloneForStructureHash` (:5121): keep element name + attributes +
-/// element nesting, drop ALL text/value nodes. Returns `None` for non-elements.
-/// Kept as the oracle for HASH-STREAM-02 tests; production uses [`structure_sha1`].
+/// M4.B.3 — `CloneForStructureHash` (WmlComparer.ts :5121): keep element
+/// name + attributes + element nesting, drop ALL text/value nodes. Returns
+/// `None` for non-elements. Kept as the oracle for the HASH-STREAM-02
+/// tests; production uses [`structure_sha1`].
 pub fn clone_for_structure_hash(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     if !dom.is_element(node) {
         return None;
@@ -1212,9 +1247,15 @@ pub fn clone_for_structure_hash(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
 use super::tables::ELEMENTS_TO_HAVE_SHA1;
 use std::collections::HashMap;
 
-/// M4.B.5 — `AddSha1HashToBlockLevelContent` (:5080): stamp `pt:SHA1Hash` on every
-/// `ElementsToHaveSha1Hash` descendant; additionally `pt:StructureSHA1Hash` on
-/// `w:tbl`/`w:tr` (computed from the structure-clone of the hashing-clone).
+/// M4.B.5 — `AddSha1HashToBlockLevelContent` (WmlComparer.ts :5080):
+/// stamp `pt:SHA1Hash` on every [`super::tables::ELEMENTS_TO_HAVE_SHA1`]
+/// descendant of `content_parent`; additionally `pt:StructureSHA1Hash` on
+/// `w:tbl` / `w:tr` (the structure-clone of the hashing-clone).
+///
+/// Simple paragraphs stream-hash without a clone subtree
+/// (HASH-STREAM-03); simple `w:tbl` / `w:tr` / `w:tc` likewise
+/// (HASH-STREAM-04 / HASH-STREAM-06). The remaining complex shapes take
+/// the clone path.
 pub fn add_sha1_hash_to_block_level_content(
     dom: &mut Dom,
     content_parent: NodeId,
@@ -1262,11 +1303,17 @@ pub fn add_sha1_hash_to_block_level_content(
     }
 }
 
-/// M4.B.6 — `HashBlockLevelContent` (:832): hash each block of the `after_proc`
-/// projection and store it as `pt:CorrelatedSHA1Hash` back onto the corresponding
-/// ORIGINAL `source` element (matched by surviving `pt:Unid`). Blocks whose Unid
-/// is absent from `source` (coalesced away by accept/reject) get no hash.
-/// Operates on `w:p`/`w:tbl`/`w:tr`. Returns `Err` on a duplicate Unid in source.
+/// M4.B.6 — `HashBlockLevelContent` (WmlComparer.ts :832): hash every
+/// `w:p` / `w:tbl` / `w:tr` block of the `after_proc` projection and
+/// store it as `pt:CorrelatedSHA1Hash` back onto the corresponding ORIGINAL
+/// `source_root` element (matched by surviving `pt:Unid`). Blocks whose
+/// unid is absent from `source_root` (coalesced away by accept/reject) get
+/// no hash.
+///
+/// # Errors
+///
+/// A duplicate `pt:Unid` in `source_root` is an internal error — return as
+/// `Err(String)` so the caller can decide between fail-loud and skip.
 pub fn hash_block_level_content(
     dom: &mut Dom,
     source_root: NodeId,

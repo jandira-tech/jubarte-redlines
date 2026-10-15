@@ -297,11 +297,16 @@ const OFFICE_DOCUMENT_REL: &[&str] = &[
     "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument",
 ];
 
-/// Admit `bytes` as a DOCX within `limits`.
+/// Admit `bytes` as a DOCX within `limits`, returning facts about it on
+/// success and a typed refusal on the first budget or rule the package
+/// breaks.
 ///
 /// # Errors
 ///
-/// An [`AdmissionError`] naming the first budget or rule the package breaks.
+/// An [`AdmissionError`] naming the first budget or rule the package
+/// breaks; the kind's [`AdmissionErrorKind::code`] is the stable string
+/// the CLI and bindings print (`INPUT_LIMIT`, `DUPLICATE_PART`,
+/// `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`, `INVALID_XML`, `LEGACY_DOC`).
 pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, AdmissionError> {
     use AdmissionErrorKind as K;
 

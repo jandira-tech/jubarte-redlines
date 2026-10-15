@@ -29,10 +29,33 @@ const WORD_DIFF_SIMILARITY: f64 = 0.3;
 /// one; above this many comparisons lines pair by position.
 const MAX_PAIRINGS: usize = 400;
 
-/// `old` and `new` as one Markdown document whose CriticMarkup holds the
-/// changes: accepting them all gives `new`, rejecting them all gives `old`.
-/// CriticMarkup delimiters already in the text are escaped, so they stay
-/// text.
+/// The two text snapshots, `old` and `new`, as one Markdown document
+/// whose CriticMarkup holds the changes: accepting them all gives `new`,
+/// rejecting them all gives `old`. Critically, the block markers
+/// (heading `#`, list `-`, quote `>`, table `|`, footnote `[^…]:`, …)
+/// stay outside their changes, so the marked-up document keeps the
+/// structure of both versions and `markdown_to_docx` writes each
+/// changed block whole.
+///
+/// # How changes are scoped
+///
+/// Lines are aligned first, then the words within the lines that pair up.
+/// A change does not start a line — a list, heading or quote marker stays
+/// before it (`- {++new item++}`, `# {~~Old~>New~~} title`) — so a block
+/// added or removed whole is one change over its whole text, and a line
+/// added or removed inside a paragraph takes the line break with it
+/// (`first line{++\nnew line++}`). Numbers (`$5,000,000`, `04/20/26`,
+/// `3.5%`), emphasis and strikethrough delimiters, link syntax, and code
+/// spans are read whole; a change that touches any of them covers all of
+/// it (`*Buyer*` → `Buyer` is one change, not two). CriticMarkup
+/// delimiters already in the text are escaped, so they stay text.
+///
+/// # Inputs
+///
+/// - `old`, `new` — line-oriented Markdown (`\n` line ends, no carriage
+///   returns — CRLF is normalized to LF).
+///
+/// # Examples
 ///
 /// ```
 /// use jubarte::markdown::diff_markdown;

@@ -88,7 +88,8 @@ pub enum CommentError {
 }
 
 impl CommentError {
-    /// Stable error code, as the edit API reports it.
+    /// Stable error code, as the edit API reports it: the admission code, or
+    /// `INVALID_DOCUMENT` for an unreadable package.
     pub fn code(&self) -> &'static str {
         match self {
             CommentError::Admission(refused) => refused.code(),
@@ -118,7 +119,14 @@ impl From<crate::inspect::InspectError> for CommentError {
 }
 
 /// Every comment in `comments.xml` order, with its thread, resolution and
-/// anchor. A document without comments lists none.
+/// anchor. Backs `jubarte comments`. A document without comments lists none.
+/// Nothing is written.
+///
+/// # Errors
+///
+/// [`CommentError::Admission`] when the bytes are refused before parsing;
+/// [`CommentError::Package`] when the package or one of its parts cannot be
+/// read.
 pub fn list_comments(docx: &[u8]) -> Result<Vec<CommentRecord>, CommentError> {
     comments_in(&mut Opened::open(docx)?)
 }

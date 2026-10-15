@@ -24,6 +24,12 @@
 //! side's anchors are re-injected by character position, located by context
 //! matching (robust to content loss elsewhere); an unmappable range falls to
 //! rule 4.
+//!
+//! Public entry point:
+//! - [`carry_comments`] — orchestrator for carryover. Run after the diff
+//!   produced `result_root` but before it is serialized into `out`; the
+//!   helper does the part-union decision, anchor injection, anchor-aware
+//!   selection and orphan cleanup.
 
 use std::collections::{HashMap, HashSet};
 
@@ -1548,6 +1554,32 @@ fn select_anchor_aware_comments(
 
 /// Entry point — run after the diff produced `result_root` but BEFORE it is
 /// serialized into `out` (anchors are injected into the result DOM).
+///
+/// Carries the union of both source packages' `word/comments*.xml` parts
+/// forward into `out` and re-emits `commentRangeStart`/`commentRangeEnd`/
+/// `commentReference` markers at the equivalent text position in the merged
+/// body for every comment that survives the part-union step.
+///
+/// Behaviour:
+///
+/// - **Both sides' comments present.** Either B's parts are emitted
+///   byte-identical (`B ⊇ A` by id+definition, or by anchor-identity cover
+///   when Word renumbered B's comments across sequential redline sources),
+///   or the parts become the union with A-only comments appended and their
+///   `paraId` / `durableId` keys rewritten consistently.
+/// - **Only A has comments.** `out` is expected to already be A's clone;
+///   anchors are projected onto A's text in the merged body.
+/// - **A comment whose anchors cannot be placed.** Dropped from the part
+///   family; when none survive, the entire part family is removed (no
+///   orphans).
+///
+/// `pkg1`/`main1` and `pkg2`/`main2` carry the source packages and their
+/// main-part names; `out`/`out_main` is the merge target whose
+/// `word/comments.xml` is being written. `author` is the comparer author
+/// stamped on every inserted `commentReference` run (matches the comment
+/// family's carryover policy for the `--author` CLI flag).
+///
+/// Backs the M35 part-union step and the `--keep-comments` CLI path.
 pub fn carry_comments(
     dom: &mut Dom,
     result_root: NodeId,

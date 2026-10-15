@@ -36,19 +36,24 @@ use super::{MarkdownError, MarkdownOptions, docx_to_markdown};
 use crate::document_comparer::{accept_revisions, reject_revisions};
 use crate::inspect;
 
-/// The width [`Patch`] wraps to when displayed.
+/// The column width the [`Patch`] display formatter wraps to; passed to
+/// [`Patch::render`] as `columns` to change it.
 pub const DEFAULT_COLUMNS: usize = 72;
 
-/// Who made a change or comment, and when (`YYYY-MM-DDTHH:MM:SSZ`).
+/// The author and date of a change or comment, in the form Word writes and
+/// jubarte's Markdown edit path encodes (`YYYY-MM-DDTHH:MM:SSZ`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attribution {
     /// The name Word shows.
     pub author: String,
-    /// `YYYY-MM-DDTHH:MM:SSZ`.
+    /// `YYYY-MM-DDTHH:MM:SSZ` (ISO 8601 down to the second, UTC offset
+    /// `Z` by default).
     pub date: String,
 }
 
-/// The names on the `---` and `+++` lines and the document owner.
+/// The names written on the patch's `---` and `+++` header lines, and
+/// the document owner (the author and date of every change and comment
+/// that names none).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PatchOptions {
     /// The old document's name, after `--- a/`.
@@ -89,32 +94,41 @@ impl fmt::Display for Locator {
 /// A comment, on a change, on highlighted text, or at a point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
-    /// Who wrote it.
+    /// The author name (Word's `w:author`).
     pub author: String,
-    /// When.
+    /// `YYYY-MM-DDTHH:MM:SSZ`, the date Word writes.
     pub date: String,
-    /// What it says.
+    /// The comment text: everything after `Name (date):`, or empty for an
+    /// attribution alone (`{>>Name (date)<<}`).
     pub text: String,
-    /// The highlighted text the comment is on, if any.
+    /// The highlighted text the comment is on (when the comment was on a
+    /// `{==…==}` highlight), or `None` for a comment on a tracked change
+    /// or a free-standing comment.
     pub on: Option<String>,
 }
 
-/// Text deleted, inserted, or both (a replacement).
+/// One tracked change (or self-contained substitution), with its author
+/// and date. `old` and `new` are both nonempty for a substitution, only
+/// `old` for a deletion, only `new` for an insertion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     /// The text deleted (empty for an insertion).
     pub old: String,
     /// The text inserted (empty for a deletion).
     pub new: String,
-    /// Who made the change.
+    /// Who made the change (the change's own author, when it names one;
+    /// otherwise the [`PatchOptions::owner`]).
     pub author: String,
-    /// When.
+    /// When the change was made.
     pub date: String,
-    /// The comment written right after the change.
+    /// The comment written right after the change, if any.
     pub comment: Option<Comment>,
 }
 
-/// One changed paragraph.
+/// One changed paragraph: its [`Locator`] (where it is in the old or new
+/// document), whether it is removed (a paragraph only in the old
+/// version), its rendered text with markup intact, its changes in order,
+/// and any comments that were not written right after a change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hunk {
     /// The paragraph in the new version, or in the old one when `removed`.
@@ -129,8 +143,9 @@ pub struct Hunk {
     pub comments: Vec<Comment>,
 }
 
-/// The changed paragraphs of a document. Displayed, it is
-/// [`render`](Self::render)ed at [`DEFAULT_COLUMNS`].
+/// The changed paragraphs of a document, as a `git diff --word-diff`
+/// patch. Displayed, it is [`render`](Self::render)ed at
+/// [`DEFAULT_COLUMNS`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Patch {
     /// The old document's name.
@@ -144,8 +159,8 @@ pub struct Patch {
 }
 
 impl Patch {
-    /// The patch as text, wrapped at `columns` (`0`: not wrapped). Empty
-    /// when nothing changed.
+    /// Renders the patch as text, wrapped at `columns` (`0` does not
+    /// wrap). Returns an empty string when nothing changed.
     pub fn render(&self, columns: usize) -> String {
         if self.hunks.is_empty() {
             return String::new();
@@ -182,8 +197,13 @@ fn path_name(name: &str) -> &str {
     name.trim_start_matches('/')
 }
 
-/// The changes from `old` to `new`, two Markdown documents, as a patch whose
-/// changes are the owner's.
+/// Diffs two Markdown documents (`old`, `new`) as a single [`Patch`]
+/// whose changes are attributed to the [`PatchOptions::owner`]. Each
+/// hunk lives at the line its paragraph starts on in the document
+/// itself.
+///
+/// Backs `jubarte diff old.md new.md` (`--format critic`, or the unified
+/// patch `--format`/`patch` when both inputs are Markdown).
 ///
 /// ```
 /// use jubarte::markdown::{Attribution, PatchOptions, patch_markdown};
@@ -243,11 +263,17 @@ pub fn patch_markdown(old: &str, new: &str, options: &PatchOptions) -> Patch {
     patch
 }
 
-/// A Markdown document whose CriticMarkup holds the changes (as
-/// [`diff_markdown`] or [`docx_to_markdown`] write
-/// it) as a patch. `{>>Name (date)<<}` right after a change is that change's
-/// author and date; `{>>Name (date): text<<}` is a comment by `Name`; any
-/// other comment, and every change without an author, is the owner's.
+/// Builds a [`Patch`] from a Markdown document whose CriticMarkup holds
+/// the changes (as [`diff_markdown`] or [`docx_to_markdown`] write it).
+///
+/// # Attribution rules
+///
+/// - `{>>Name (date)<<}` immediately after a change is that change's
+///   author and date.
+/// - `{>>Name (date): text<<}` is a comment by `Name`, attached to the
+///   preceding change (or to a highlight, depending on the context).
+/// - Every other comment, and every change without an author, is the
+///   [`PatchOptions::owner`]'s.
 pub fn patch_critic(critic: &str, options: &PatchOptions) -> Patch {
     build(critic, options).0
 }
@@ -264,10 +290,20 @@ pub fn patch_redline(docx: &[u8], options: &PatchOptions) -> Result<Patch, Markd
     patch_word(docx, &old, &new, None, options)
 }
 
-/// [`patch_redline`] for the owner's own changes: every change by another
-/// author, or by the owner on another date, is accepted first, so it reads
-/// as unchanged text. An edit plan with `existing_revisions: "keep"` writes
+/// [`patch_redline`] for the owner's own changes: every change by
+/// another author, or by the owner on another date, is accepted first,
+/// so the patch reads as only the changes still attributed to the
+/// owner. An edit plan with
+/// [`existing_revisions: "keep"`](crate::edit::ExistingRevisions) writes
 /// its patch this way, beside the other party's tracked changes.
+///
+/// # Errors
+///
+/// - [`MarkdownError::Docx`] when the package's tracked changes cannot
+///   be listed (admission refusal, package read failure, or malformed
+///   part).
+/// - [`MarkdownError::Package`] when accepting the other-party
+///   revisions or accepting / rejecting every revision afterward fails.
 pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, MarkdownError> {
     let changes = crate::changes::list_changes(docx)
         .map_err(|error| MarkdownError::Docx(error.to_string()))?;

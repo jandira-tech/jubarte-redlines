@@ -2,8 +2,16 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.D — table/row/cell LCS: `ApplyLcsToTableRows` (:8241),
-//! `DoLcsAlgorithmForTable` (:8348), `MarkRowsAsDeletedOrInserted` (:4216).
+//! M4.D — table / row / cell LCS and row revision marking.
+//!
+//! Port of `ApplyLcsToTableRows` (:8241), `DoLcsAlgorithmForTable` (:8348),
+//! `MarkRowsAsDeletedOrInserted` (:4216), and the
+//! `rows_preserving_horizontal_partitions` family that fixes Word's
+//! horizontal-partition / cell-mesh shape. The classic DP LCS over rows
+//! keyed on `sha1()` produces Deleted/Inserted/Unknown sequences; the row
+//! marker pass turns those into `w:ins`/`w:del` children of each affected
+//! row's `w:trPr`, keeping `w:trPrChange` last in `CT_TrPr` order so the
+//! output survives Word's PDF-save path.
 
 use super::atoms::{ComparisonUnit, ComparisonUnitGroup, CorrelatedSequence};
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerSettings};
@@ -34,8 +42,12 @@ fn ancestor_named(
         .find(|&a| dom.name(a).as_ref() == Some(name))
 }
 
-/// M4.D.1 — `ApplyLcsToTableRows` (:8241): classic DP LCS over rows keyed on
-/// `sha1`, emitting Deleted/Inserted/Unknown in document order.
+/// M4.D.1 — `ApplyLcsToTableRows` (WmlComparer.ts :8241): classic DP LCS
+/// over rows keyed on [`ComparisonUnit::sha1`], emitting
+/// Deleted/Inserted/Unknown sequences in document order. The match list is
+/// reversed so the output is forward order; an inconsistency between the
+/// matched/deleted/inserted vectors and the row indexes is a `unreachable!`
+/// bug rather than silent data loss.
 pub fn apply_lcs_to_table_rows(
     rows1: &[ComparisonUnit],
     rows2: &[ComparisonUnit],
@@ -451,7 +463,11 @@ fn rows_preserving_horizontal_partitions_inner(
     Some(out)
 }
 
-/// M4.D.2/D.3 — `DoLcsAlgorithmForTable` (:8348): single-table-vs-single-table.
+/// M4.D.2/D.3 — `DoLcsAlgorithmForTable` (WmlComparer.ts :8348):
+/// single-table-vs-single-table dispatch. Tries horizontal-partition
+/// preservation first, then a row-level LCS on same-row-count content
+/// differences, then a merged-cell / structure-hash fallback. `None` means
+/// "the caller should fall back to whole-table del+ins".
 pub fn do_lcs_algorithm_for_table(
     dom: &Dom,
     cul1: &[ComparisonUnit],

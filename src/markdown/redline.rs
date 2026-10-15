@@ -2,7 +2,20 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Word redlines between Word and Markdown documents.
+//! The Markdown side of the Word redline task.
+//!
+//! A redline takes two [`Source`] documents (`.docx` bytes or Markdown
+//! strings), turns each into a Word package, and feeds the comparator
+//! the bodies, returning a tracked-changes `.docx`. Markdown against a
+//! Word document applies the Markdown's edits to that document
+//! ([`apply_markdown`]) so direct formatting, fields, section breaks
+//! and empty paragraphs the Markdown cannot hold stay as they were.
+//! Markdown against Markdown is written to Word first
+//! ([`markdown_to_docx`]).
+//!
+//! Backs `jubarte compare` / `jubarte redline`, the Markdown input of
+//! [`crate::text_diff`], and the Python / WASM
+//! [`crate::markdown::redline`] binding.
 
 use super::{
     DocxOptions, ImageLoader, MarkdownError, PageSize, TrackChanges, apply_markdown,
@@ -11,28 +24,41 @@ use super::{
 use crate::comparer::WmlComparerSettings;
 use crate::document_comparer::compare_documents_with_settings;
 
-/// A document to compare.
+/// A document side of a comparison: either a `.docx` package or a
+/// Markdown text. Backed onto [`crate::markdown::redline`] from the
+/// redline command line and from the Python / WASM bindings.
 #[derive(Clone, Copy, Debug)]
 pub enum Source<'a> {
-    /// A `.docx` package.
+    /// A `.docx` package bytes.
     Docx(&'a [u8]),
     /// Markdown text.
     Markdown(&'a str),
 }
 
-/// How [`redline`] reads and compares two documents.
+/// How [`redline`] reads and compares two [`Source`] documents.
+///
+/// Defaults: [`WmlComparerSettings::default`] (author
+/// `"Open-Xml-PowerTools"`; the CLI and bindings pass `Redline`,
+/// `DATE "1970-01-01T00:00:00Z"` for reproducible output, Word's own
+/// detail threshold); no reference document, no CriticMarkup recognition,
+/// no image loader.
 #[derive(Clone, Default)]
 pub struct RedlineOptions<'a> {
-    /// The comparer's settings: author, date, detail threshold, mode.
+    /// The comparer's settings: author, date, detail threshold, mode,
+    /// move detection, format-change detection, the input budget for
+    /// [`crate::admission`]. See [`crate::comparer::WmlComparerSettings`].
     pub settings: WmlComparerSettings,
     /// Styles, page setup, headers and footers when both sides are
-    /// Markdown; built-in styles when `None`. (Against a Word document the
-    /// Markdown is applied to that document instead.)
+    /// Markdown; built-in styles when `None`. Against a Word document the
+    /// Markdown is applied to that document instead, so this only affects
+    /// the Markdown / Markdown case.
     pub reference: Option<&'a [u8]>,
-    /// Read CriticMarkup in a Markdown side as tracked changes. Off by
-    /// default: a document being compared is text.
+    /// Read CriticMarkup in a Markdown side as tracked changes and
+    /// comments. Off by default: a Markdown document being compared is
+    /// treated as plain text.
     pub critic: bool,
-    /// The bytes of each image a Markdown side names.
+    /// The bytes of each image a Markdown side names; `None` writes every
+    /// image as its alt text.
     pub images: Option<ImageLoader<'a>>,
 }
 
@@ -47,12 +73,26 @@ impl std::fmt::Debug for RedlineOptions<'_> {
     }
 }
 
-/// `original` against `modified` as a Word tracked-changes document: the
-/// original with every difference as a revision, as
-/// [`compare_documents_with_settings`] writes it. Either side may be
-/// Markdown. Against a Word document, the Markdown's edits are applied to
-/// that document ([`apply_markdown`]), so what Markdown cannot hold stays;
-/// two Markdown documents are written to Word first ([`markdown_to_docx`]).
+/// Compares `original` against `modified` and returns a Word
+/// tracked-changes document: the original with every difference as a
+/// revision, as
+/// [`crate::document_comparer::compare_documents_with_settings`] writes
+/// it. Backs `jubarte compare`, `jubarte redline`, and the Python / WASM
+/// redline bindings.
+///
+/// Either side may be Markdown. Against a Word document, the Markdown's
+/// edits are applied to that Word document ([`apply_markdown`]), so what
+/// Markdown cannot represent (empty paragraphs, fields, section breaks,
+/// direct formatting) stays as it was. Two Markdown documents are first
+/// written to Word ([`markdown_to_docx`]).
+///
+/// # Errors
+///
+/// [`MarkdownError::Package`] when a Word side paired with Markdown cannot
+/// be admitted or read by [`apply_markdown`], or when the comparer's
+/// `compare_documents_with_settings` call fails; what [`markdown_to_docx`]
+/// returns (a bad reference document is [`MarkdownError::Reference`]) when
+/// both sides are Markdown.
 ///
 /// ```
 /// use jubarte::markdown::{RedlineOptions, Source, redline};

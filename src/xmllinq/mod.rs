@@ -2,12 +2,36 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Port of `lib/xml-linq.ts` — a LINQ-to-XML-style mutable XML tree.
+//! LINQ-to-XML-style mutable XML tree, ported from `lib/xml-linq.ts`.
 //!
-//! M1.1: `XName` / `XNamespace` (interned expanded names).
-//! M1.2: arena DOM (`Dom`, `NodeId`, …).
-//! M1.3: `parse` — string → DOM.
-//! M1.4: `serialize` — DOM → string.
+//! Used by every WML/OOXML part the engine reads or writes (the comparer,
+//! edit pipeline, accept/reject, markdown projection, etc.). The tree is an
+//! arena (`Dom`) of nodes addressed by `NodeId` handles, so in-place
+//! mutation is borrow-checker-friendly. Names are interned through a
+//! thread-local pool so identical namespace / local-name strings — which
+//! recur on millions of elements — share one `Arc<str>` allocation.
+//!
+//! # Layout
+//!
+//! - `XNamespace` / `XName` — interned expanded names; equal strings
+//!   share storage and are byte-for-byte identical to a fresh `XName`/`XNamespace`.
+//! - `NodeId` — handle into the arena.
+//! - `XDeclaration` — `<?xml version encoding standalone?>` payload.
+//! - `Dom` — the arena; the `parse` / `serialize` entry points are exposed
+//!   both as free functions in `parse` / `serialize` and as `Dom` methods
+//!   for ergonomics.
+//!
+//! # CLI
+//!
+//! The arena backs every XML part in the comparison package and the parts the
+//! comparer writes. Nothing in this module is CLI-specific, but
+//! `jubarte debug` and the validation passes read trees through it.
+//!
+//! # Submodules
+//!
+//! - `parse` — string → DOM (a small, non-validating, namespace-aware
+//!   recursive-descent parser; `parse_xdocument` plus `validate_xml`).
+//! - `serialize` — DOM → string, with scope-aware namespace prefixes.
 
 pub mod parse;
 pub mod serialize;
@@ -66,41 +90,53 @@ fn intern_str(s: &str) -> Arc<str> {
     })
 }
 
-/// An XML namespace (just its URI), owned via `Arc<str>`. Port of `XNamespace`.
+/// An XML namespace, identified by its URI string, owned through a
+/// thread-local-interned `Arc<str>`. Port of the LINQ-to-XML `XNamespace`.
+///
+/// Equal strings share storage; semantics of `Eq`,
+/// `Hash`, and the borrowed URI view are byte-for-byte identical to a fresh
+/// `XNamespace::get(uri)`, only the backing allocation is shared.
 #[derive(Clone)]
 pub struct XNamespace {
     name: Arc<str>,
 }
 
 impl XNamespace {
-    /// `XNamespace.get(namespaceName)`.
+    /// Construct a namespace, interning `namespace_name` for sharing across
+    /// the thread (a no-op once the pool is saturated). The empty URI is the
+    /// "no namespace" namespace, equivalent to LINQ-to-XML's `XNamespace.None`.
     pub fn get(namespace_name: &str) -> XNamespace {
         XNamespace {
             name: intern_str(namespace_name),
         }
     }
 
-    /// `XNamespace.None` — the empty namespace.
+    /// The empty namespace (no URI). Equal to `XNamespace::get("")`; the
+    /// XML namespace in OOXML for unqualified elements.
     pub fn none() -> XNamespace {
         XNamespace::get("")
     }
 
-    /// `XNamespace.Xmlns`.
+    /// The reserved `xmlns:` declarations namespace
+    /// (`http://www.w3.org/2000/xmlns/`).
     pub fn xmlns() -> XNamespace {
         XNamespace::get("http://www.w3.org/2000/xmlns/")
     }
 
-    /// `XNamespace.Xml`.
+    /// The reserved `xml:` declarations namespace
+    /// (`http://www.w3.org/XML/1998/namespace`).
     pub fn xml() -> XNamespace {
         XNamespace::get("http://www.w3.org/XML/1998/namespace")
     }
 
-    /// `ns.getName(local)` → `XName`.
+    /// Build the [`XName`] `{ns}local` — i.e. an expanded name in this
+    /// namespace. Equivalent to LINQ-to-XML's `XNamespace.GetName(local)`.
     pub fn name(&self, local: &str) -> XName {
         XName::get(local, &self.name)
     }
 
-    /// `ns.NamespaceName`.
+    /// The namespace URI as a borrowed string. Empty for the no-namespace
+    /// namespace.
     pub fn namespace_name(&self) -> &str {
         &self.name
     }
@@ -127,7 +163,9 @@ impl std::fmt::Debug for XNamespace {
     }
 }
 
-/// An expanded XML name (namespace + local name), owned via `Arc<str>`. Port of `XName`.
+/// An expanded XML name: a local name plus its namespace. Both halves are
+/// interned so equal strings share one `Arc<str>` allocation. Port of the
+/// LINQ-to-XML `XName`.
 #[derive(Clone)]
 pub struct XName {
     local: Arc<str>,
@@ -135,7 +173,10 @@ pub struct XName {
 }
 
 impl XName {
-    /// `XName.get(localName, namespaceName = "")`.
+    /// Construct an expanded name in the given namespace. `local_name` and
+    /// `namespace_name` are interned through the thread-local pool
+    /// (a no-op once the pool saturates). Pass `""` for the empty
+    /// (no-namespace) namespace.
     pub fn get(local_name: &str, namespace_name: &str) -> XName {
         XName {
             local: intern_str(local_name),
@@ -143,8 +184,14 @@ impl XName {
         }
     }
 
-    /// `XName.fromExpanded(expanded)` — parse clark notation `"{ns}local"` or
-    /// bare `"local"`. Renamed `from_clark` to match the plan's API.
+    /// Parse clark notation: `"{ns}local"` becomes a qualified [`XName`], a
+    /// bare `"local"` becomes one in the empty namespace. Equivalent to
+    /// LINQ-to-XML's `XName.Get("expanded-name")`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the string starts with `{` and has no closing `}`. An
+    /// empty namespace (`{}local`) or local name (`{ns}`) is accepted.
     pub fn from_clark(expanded: &str) -> XName {
         if expanded.starts_with('{') {
             let close = expanded
@@ -157,22 +204,25 @@ impl XName {
         }
     }
 
-    /// `name.LocalName`.
+    /// The local part of the name, as a borrowed string.
     pub fn local_name(&self) -> &str {
         &self.local
     }
 
-    /// `name.Namespace`.
+    /// The namespace half of the expanded name.
     pub fn namespace(&self) -> &XNamespace {
         &self.namespace
     }
 
-    /// `name.NamespaceName`.
+    /// The namespace URI as a borrowed string. Empty for the no-namespace
+    /// namespace.
     pub fn namespace_name(&self) -> &str {
         self.namespace.namespace_name()
     }
 
-    /// `name.toString()` — clark notation.
+    /// The clark-notation form: `"{ns}local"` for a non-empty namespace,
+    /// or just `"local"` for the empty one. Equivalent to LINQ-to-XML's
+    /// `XName.ToString()`.
     pub fn clark(&self) -> String {
         if self.namespace.name.is_empty() {
             self.local.to_string()
@@ -216,18 +266,23 @@ impl std::fmt::Debug for XName {
 use std::any::Any;
 use std::collections::HashMap;
 
-/// Handle into the `Dom` arena.
+/// Handle into a [`Dom`] arena: the slot index of a node, plus a `Debug` /
+/// `Copy` so it can travel cheaply through hot loops (compare, atomize).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NodeId(pub u32);
+pub struct NodeId(#[doc = "Slot index of the node inside the arena `Vec`."] pub u32);
 
-/// An XML declaration (`<?xml version encoding standalone?>`). Port of `XDeclaration`.
+/// An XML declaration (`<?xml version encoding standalone?>`). Port of
+/// LINQ-to-XML's `XDeclaration`; the parser populates [`Self::version`] from
+/// the declaration body, [`Self::encoding`] and [`Self::standalone`] from the
+/// matching pseudo-attributes when present.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct XDeclaration {
-    /// `version`.
+    /// The `version` attribute (defaults to `"1.0"` when the parser sees a
+    /// declaration that omits or misquotes the value).
     pub version: Option<String>,
-    /// `encoding`.
+    /// The `encoding` attribute, if the declaration carried one.
     pub encoding: Option<String>,
-    /// `standalone`.
+    /// The `standalone` attribute, if the declaration carried one.
     pub standalone: Option<String>,
 }
 
@@ -284,7 +339,20 @@ impl NodeData {
     }
 }
 
-/// The arena holding all nodes. Port of the LINQ-to-XML object graph.
+/// The arena holding every XML node the engine constructs while comparing or
+/// editing a part. Port of the LINQ-to-XML object graph; the TS pointer tree
+/// becomes a `Vec<NodeData>` indexed by [`NodeId`] so in-place edits are
+/// borrow-checker-friendly.
+///
+/// Children of a node live in an ordered `content` vec (all node kinds);
+/// attributes are a separate per-element vec (attributes are XObjects but
+/// not XNodes, exactly as in LINQ-to-XML).
+///
+/// Most callers should not allocate `Dom` directly — `WmlDocument` and the
+/// per-part helpers in [`crate::opc`] own one. The unit-struct tests at the
+/// bottom of the file (`node_data_excludes_annotations_vec`,
+/// `node_kind_rare_variants_are_boxed`) pin the in-arena byte counts so a
+/// future refactor cannot silently regress the hot per-node struct.
 #[derive(Default)]
 pub struct Dom {
     nodes: Vec<NodeData>,
@@ -295,7 +363,9 @@ pub struct Dom {
 }
 
 impl Dom {
-    /// `new`.
+    /// Construct an empty arena. Constructors ([`Self::new_document`],
+    /// [`Self::new_element`], …) and the parser entry points allocate into
+    /// the arena on demand.
     pub fn new() -> Self {
         Dom {
             nodes: Vec::new(),
@@ -309,41 +379,55 @@ impl Dom {
         id
     }
 
-    /// Number of nodes currently in the arena. Diagnostic + scratch-scope helper.
+    /// Number of nodes currently in the arena. Useful for diagnostics and
+    /// for the scratch-scope checks in [`Self::with_scratch`].
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Capacity (allocated node slots) of the arena's backing `Vec`. Diagnostic:
-    /// [`with_scratch`](Self::with_scratch) reclaims LENGTH but not CAPACITY, so a
-    /// push against a full arena reallocs the whole buffer to the next doubling tier
-    /// and pins it. Scratch work that must not enlarge the persistent arena builds in
-    /// a dedicated `Dom`; this is how a test proves that (MEM-ATTRIBUTE-01).
+    /// Allocated node-slot capacity of the arena's backing `Vec`.
+    ///
+    /// [`with_scratch`](Self::with_scratch) reclaims length but not capacity,
+    /// so a push against a full arena reallocates the whole buffer to the
+    /// next doubling tier and pins it. Tests that want to prove a scratch
+    /// build stays inside a dedicated `Dom` compare this against
+    /// [`Self::node_count`] (MEM-ATTRIBUTE-01).
     pub fn node_capacity(&self) -> usize {
         self.nodes.capacity()
     }
 
-    /// Shrink the arena's backing `Vec` capacity to its current length. Lets a test
-    /// pin `capacity == length` so any subsequent internal push provably reallocs.
+    /// Shrink the arena's backing `Vec` capacity to its current length so
+    /// any subsequent internal push provably reallocates. Test-only helper
+    /// that pins `capacity == length` for the MEM-ATTRIBUTE-01 invariant.
     #[cfg(test)]
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn shrink_arena_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
     }
 
-    /// Run `f`, then RECLAIM every node it allocated by truncating the arena back
-    /// to its pre-call length. For SCRATCH work whose output does not reference
-    /// the scratch nodes — e.g. building a normalized element only to serialize it
-    /// to a `String`. The nodes `f` creates are appended at the arena's end and
-    /// dropped on return (freeing their inline child/attr `Vec`s and names), so a
-    /// `NodeId` created inside `f` MUST NOT escape via `R` (it would dangle or, once
-    /// the slot is reused, alias a different node). Reading pre-existing nodes is
-    /// fine; those keep stable ids.
+    /// Run `f` and then reclaim every node it allocated by truncating the arena
+    /// back to its pre-call length.
     ///
-    /// This is what keeps per-atom format-change normalization (thousands of
-    /// distinct `w:rPr` on run-fragmented documents) from accumulating millions of
-    /// throwaway nodes in the persistent arena (MEM-ATTRIBUTE-01: the top single
-    /// allocation, a multi-GB arena `Vec`, came from exactly that leak).
+    /// This is the scratch-scope: for work whose output does not reference
+    /// the scratch nodes (e.g. building a normalized element only to
+    /// serialize it into a `String`). The nodes `f` creates are appended at
+    /// the arena's end and dropped on return, freeing their inline child /
+    /// attribute `Vec`s and names. Pre-existing nodes keep stable ids.
+    ///
+    /// # When to use it
+    ///
+    /// Per-atom format-change normalization builds thousands of distinct
+    /// `w:rPr` clones on run-fragmented documents. Without a scratch scope
+    /// those accumulate into millions of throwaway nodes and balloon the
+    /// arena (MEM-ATTRIBUTE-01: the top single allocation, a multi-GB arena
+    /// `Vec`, came from exactly that leak).
+    ///
+    /// # Panics
+    ///
+    /// `NodeId`s created inside `f` MUST NOT escape via the return value `R`
+    /// — they would dangle or, once the slot is reused, alias a different
+    /// node. Borrow pre-existing ids freely; only newly allocated ones are
+    /// reclaimed.
     pub fn with_scratch<R>(&mut self, f: impl FnOnce(&mut Dom) -> R) -> R {
         let checkpoint = self.nodes.len();
         let out = f(self);
@@ -363,24 +447,30 @@ impl Dom {
         &mut self.nodes[id.0 as usize]
     }
 
-    // ── constructors ────────────────────────────────────────────────────────
-    /// `new_document`.
+    // ── constructors ──────────────────────────────────────────────────────────
+    /// Allocate a Document (root container) node, with no declaration. The
+    /// parser ([`Self::parse_xdocument`]) is the usual way to build one;
+    /// this constructor is for hand-built DOMs.
     pub fn new_document(&mut self) -> NodeId {
         self.alloc(NodeKind::Document { declaration: None })
     }
-    /// `new_element`.
+    /// Allocate an element node with the given expanded name. No children,
+    /// no attributes — use [`Self::add`] / [`Self::set_attribute_value`] to
+    /// populate it.
     pub fn new_element(&mut self, name: XName) -> NodeId {
         self.alloc(NodeKind::Element { name })
     }
-    /// `new_text`.
+    /// Allocate a text node carrying `value`. The text is owned as a
+    /// `String`; use [`Self::set_text_value`] to overwrite it later.
     pub fn new_text(&mut self, value: &str) -> NodeId {
         self.alloc(NodeKind::Text(value.to_string()))
     }
-    /// `new_comment`.
+    /// Allocate a comment node (`<!-- value -->`).
     pub fn new_comment(&mut self, value: &str) -> NodeId {
         self.alloc(NodeKind::Comment(value.to_string()))
     }
-    /// `new_pi`.
+    /// Allocate a processing instruction node (`<?target data?>`). The PI
+    /// payload is boxed so it does not size every node (NODE-KIND-01).
     pub fn new_pi(&mut self, target: &str, data: &str) -> NodeId {
         self.alloc(NodeKind::Pi(Box::new(PiData {
             target: target.to_string(),
@@ -388,55 +478,62 @@ impl Dom {
         })))
     }
 
-    // ── kind predicates / accessors ───────────────────────────────────────────
-    /// `is_element`.
+    // ── kind predicates / accessors ────────────────────────────────────────────
+    /// True if `id` is an element node. Cheap; the kind discriminant is in
+    /// the arena slot.
     pub fn is_element(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Element { .. })
     }
-    /// `is_text`.
+    /// True if `id` is a text node.
     pub fn is_text(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Text(_))
     }
-    /// `is_document`.
+    /// True if `id` is the document container (allocation created with
+    /// [`Self::new_document`] or via [`Self::parse_xdocument`]).
     pub fn is_document(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Document { .. })
     }
-    /// `is_comment`.
+    /// True if `id` is a comment node.
     pub fn is_comment(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Comment(_))
     }
-    /// `is_pi`.
+    /// True if `id` is a processing-instruction node.
     pub fn is_pi(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Pi(_))
     }
 
-    /// `element.Name` — element name, or None for non-elements.
+    /// The element's expanded name, or `None` for non-element nodes. The
+    /// returned [`XName`] is a clone of the stored one (two `Arc` bumps).
+    /// For a zero-copy test against a known name, prefer [`Self::name_is`].
     pub fn name(&self, id: NodeId) -> Option<XName> {
         match &self.data(id).kind {
             NodeKind::Element { name } => Some(name.clone()),
             _ => None,
         }
     }
-    /// DOM-NAME-REF-01 — `self.name(id) == Some(*name)` without cloning the
-    /// `XName` (two `Arc` bumps per call in the hot comparer loops).
+    /// True if `id` is an element whose name equals `name`. No allocations
+    /// and no `Arc` bumps (DOM-NAME-REF-01: this is the predicate the hot
+    /// comparer loops use; [`Self::name`] clones).
     pub fn name_is(&self, id: NodeId, name: &XName) -> bool {
         matches!(&self.data(id).kind, NodeKind::Element { name: n } if n == name)
     }
-    /// `element.Name = n`.
+    /// Set the element's expanded name. A no-op for non-element nodes.
     pub fn set_name(&mut self, id: NodeId, new_name: XName) {
         if let NodeKind::Element { name } = &mut self.data_mut(id).kind {
             *name = new_name;
         }
     }
 
-    /// Text/Comment value, or None for other kinds.
+    /// The payload of a text or comment node as a borrowed string, or `None`
+    /// for any other node kind. The borrow lifetime is tied to `self`.
     pub fn text_value(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
             NodeKind::Text(v) | NodeKind::Comment(v) => Some(v),
             _ => None,
         }
     }
-    /// `set_text_value`.
+    /// Replace the payload of a text or comment node. A no-op for any
+    /// other node kind.
     pub fn set_text_value(&mut self, id: NodeId, value: &str) {
         match &mut self.data_mut(id).kind {
             NodeKind::Text(v) | NodeKind::Comment(v) => *v = value.to_string(),
@@ -444,14 +541,16 @@ impl Dom {
         }
     }
 
-    /// `pi_target`.
+    /// The PI target (the part before the first whitespace inside `<?target?>`),
+    /// or `None` for non-PI nodes.
     pub fn pi_target(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
             NodeKind::Pi(pi) => Some(&pi.target),
             _ => None,
         }
     }
-    /// `pi_data`.
+    /// The PI data (everything between the target and `?>`), or `None` for
+    /// non-PI nodes.
     pub fn pi_data(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
             NodeKind::Pi(pi) => Some(&pi.data),
@@ -459,56 +558,67 @@ impl Dom {
         }
     }
 
-    /// `declaration`.
+    /// The XML declaration attached to a Document node, or `None` for any
+    /// other node kind. The reference lifetime is tied to `self`.
     pub fn declaration(&self, id: NodeId) -> Option<&XDeclaration> {
         match &self.data(id).kind {
             NodeKind::Document { declaration } => declaration.as_deref(),
             _ => None,
         }
     }
-    /// `set_declaration`.
+    /// Attach or clear the XML declaration on a Document node. A no-op for
+    /// any other node kind. Passing `None` removes the declaration.
     pub fn set_declaration(&mut self, id: NodeId, decl: Option<XDeclaration>) {
         if let NodeKind::Document { declaration } = &mut self.data_mut(id).kind {
             *declaration = decl.map(Box::new);
         }
     }
 
-    // ── tree navigation ───────────────────────────────────────────────────────
-    /// `parent`.
+    // ── tree navigation ────────────────────────────────────────────────────────
+    /// The parent of `id`, or `None` for the document root.
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.data(id).parent
     }
 
-    /// `Nodes()` — all child nodes in document order (clone of the content vec).
+    /// Direct children in document order, all node kinds (a clone of the
+    /// internal content vec). For non-allocating iteration prefer
+    /// [`Self::child_count`] + [`Self::child_at`].
     pub fn nodes(&self, id: NodeId) -> Vec<NodeId> {
         self.data(id).content.clone()
     }
 
-    /// `FirstNode`.
+    /// The first direct child of `id`, or `None` if it has none.
     pub fn first_node(&self, id: NodeId) -> Option<NodeId> {
         self.data(id).content.first().copied()
     }
-    /// `LastNode`.
+    /// The last direct child of `id`, or `None` if it has none.
     pub fn last_node(&self, id: NodeId) -> Option<NodeId> {
         self.data(id).content.last().copied()
     }
 
-    /// Number of direct children of `id` (all node kinds). Cheap O(1) index —
-    /// paired with [`child_at`](Self::child_at) for non-allocating child
-    /// iteration on hot paths where [`elements`](Self::elements)' per-call
-    /// `Vec` is the cost (atomize). The count is stable while the caller does
-    /// not add/remove children of `id`.
+    /// Number of direct children of `id` (all node kinds). O(1) and
+    /// allocation-free; pair with [`Self::child_at`] for non-allocating
+    /// child iteration on hot paths where [`Self::elements`]' per-call
+    /// `Vec` is the cost (atomize). Stable while the caller does not
+    /// add or remove children of `id`.
     pub fn child_count(&self, id: NodeId) -> usize {
         self.data(id).content.len()
     }
 
-    /// The `i`-th direct child of `id` (all node kinds). Panics out of bounds.
-    /// See [`child_count`](Self::child_count).
+    /// The `i`-th direct child of `id` (all node kinds).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is out of bounds for `id`'s child count. See
+    /// [`Self::child_count`].
     pub fn child_at(&self, id: NodeId, i: usize) -> NodeId {
         self.data(id).content[i]
     }
 
-    /// `Elements()` / `Elements(name)` — child elements, optionally filtered.
+    /// Direct child elements, optionally filtered by expanded name.
+    /// `filter == None` returns every direct child element in document
+    /// order. For non-allocating iteration, walk [`Self::child_at`]
+    /// yourself and call [`Self::is_element`] + [`Self::name_is`].
     pub fn elements(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         self.data(id)
             .content
@@ -522,7 +632,8 @@ impl Dom {
             .collect()
     }
 
-    /// `Element(name)` — first matching child element.
+    /// The first direct child element whose name matches `filter`, or
+    /// `None`. Search order is document order.
     pub fn element(&self, id: NodeId, filter: &XName) -> Option<NodeId> {
         self.data(id)
             .content
@@ -531,17 +642,20 @@ impl Dom {
             .find(|&c| matches!(&self.data(c).kind, NodeKind::Element { name } if name == filter))
     }
 
-    /// `Descendants()` / `Descendants(name)` — all descendant elements (pre-order).
+    /// Every descendant element of `id`, in pre-order. `filter == None`
+    /// visits every element; a name restricts which ones are yielded.
+    /// Recursion still enters every element child (LINQ-to-XML
+    /// `Descendants` semantics — the filter selects what is yielded, not
+    /// where the walk enters).
     pub fn descendants(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         let mut out = Vec::new();
         self.for_each_descendant_element(id, filter, |c| out.push(c));
         out
     }
 
-    /// DOM-ITER-03: visit every descendant element in document order without
-    /// allocating a result `Vec`. Same pre-order as [`Self::descendants`]. The filter
-    /// selects which elements are *visited*; recursion still enters every
-    /// element child (XLinq `Descendants` semantics).
+    /// Visit every descendant element of `id` in document order without
+    /// allocating a result `Vec` (DOM-ITER-03). Same pre-order and
+    /// filter rules as [`Self::descendants`].
     pub fn for_each_descendant_element(
         &self,
         id: NodeId,
@@ -554,9 +668,9 @@ impl Dom {
         });
     }
 
-    /// The first descendant element, in [`Self::descendants`] order, that passes
-    /// `filter` and `pred`; the walk stops there instead of listing the
-    /// whole subtree first.
+    /// First descendant element (in pre-order) that passes both the name
+    /// `filter` and the `pred` predicate; the walk stops there instead of
+    /// listing the whole subtree first.
     pub fn find_descendant_element(
         &self,
         id: NodeId,
@@ -592,7 +706,9 @@ impl Dom {
         None
     }
 
-    /// `DescendantNodes()` — all descendant nodes (not just elements), pre-order.
+    /// Every descendant node (not just elements), in pre-order: self is
+    /// NOT included. For the allocating self + closed walk see
+    /// [`Self::descendants_and_self`].
     pub fn descendant_nodes(&self, id: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
         self.walk_descendant_nodes(id, &mut out);
@@ -607,14 +723,15 @@ impl Dom {
         }
     }
 
-    /// `DescendantsAndSelf()` — self (if element & matches) then descendants.
+    /// `Self` (if it is an element matching `filter`) then its descendants,
+    /// in pre-order. Equivalent to LINQ-to-XML `DescendantsAndSelf()`.
     pub fn descendants_and_self(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         let mut out = Vec::new();
         self.for_each_descendant_and_self(id, filter, |c| out.push(c));
         out
     }
 
-    /// DOM-ITER-03: non-allocating `DescendantsAndSelf` walk.
+    /// Non-allocating `DescendantsAndSelf` walk (DOM-ITER-03).
     pub fn for_each_descendant_and_self(
         &self,
         id: NodeId,
@@ -629,7 +746,9 @@ impl Dom {
         self.for_each_descendant_element(id, filter, visit);
     }
 
-    /// `Ancestors()` — parents from nearest to root (elements only).
+    /// Ancestor elements from the nearest parent up to (but not
+    /// including) the document, optionally filtered by name. Order is
+    /// nearest → farthest.
     pub fn ancestors(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         let mut out = Vec::new();
         let mut p = self.data(id).parent;
@@ -644,7 +763,9 @@ impl Dom {
         out
     }
 
-    /// `AncestorsAndSelf()` — self then ancestors (elements only).
+    /// `Self` then its ancestor elements, optionally filtered by name.
+    /// Walks up element-by-element; non-element ancestors (the document
+    /// container) stop it.
     pub fn ancestors_and_self(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         let mut out = Vec::new();
         let mut cur = Some(id);
@@ -665,7 +786,8 @@ impl Dom {
         out
     }
 
-    /// `Document` — the owning XDocument, if any.
+    /// Walk the parent chain until a Document node is found; returns it,
+    /// or `None` if `id` is detached from any document.
     pub fn document(&self, id: NodeId) -> Option<NodeId> {
         let mut cur = Some(id);
         while let Some(c) = cur {
@@ -677,7 +799,8 @@ impl Dom {
         None
     }
 
-    /// `Root` — the document's root element.
+    /// The first child of `doc` that is an element, or `None` if the
+    /// document is empty. `doc` itself must be a Document node.
     pub fn root(&self, doc: NodeId) -> Option<NodeId> {
         self.data(doc)
             .content
@@ -692,14 +815,16 @@ impl Dom {
         Some((p, idx))
     }
 
-    /// `NodesAfterSelf()`.
+    /// Following siblings of `id` (all node kinds), in document order.
+    /// Empty if `id` has no parent or is the last child.
     pub fn nodes_after_self(&self, id: NodeId) -> Vec<NodeId> {
         match self.index_in_parent(id) {
             Some((p, idx)) => self.data(p).content[idx + 1..].to_vec(),
             None => Vec::new(),
         }
     }
-    /// `NodesBeforeSelf()`.
+    /// Preceding siblings of `id` (all node kinds), in document order.
+    /// Empty if `id` has no parent or is the first child.
     pub fn nodes_before_self(&self, id: NodeId) -> Vec<NodeId> {
         match self.index_in_parent(id) {
             Some((p, idx)) => self.data(p).content[..idx].to_vec(),
@@ -707,24 +832,27 @@ impl Dom {
         }
     }
 
-    /// `NextElement` — first following sibling element.
+    /// First following sibling element, or `None` if there is no element
+    /// sibling after `id`. Skips text, comment, and PI siblings.
     pub fn next_element(&self, id: NodeId) -> Option<NodeId> {
         self.nodes_after_self(id)
             .into_iter()
             .find(|&n| self.is_element(n))
     }
 
-    /// `has_elements`.
+    /// True if `id` has at least one direct child element.
     pub fn has_elements(&self, id: NodeId) -> bool {
         self.data(id).content.iter().any(|&c| self.is_element(c))
     }
-    /// `has_attributes`.
+    /// True if `id` carries at least one attribute. Equivalent to
+    /// `attr_count(id) > 0`.
     pub fn has_attributes(&self, id: NodeId) -> bool {
         !self.data(id).attrs.is_empty()
     }
 
     // ── attributes ────────────────────────────────────────────────────────────
-    /// `Attribute(name)` value.
+    /// The value of attribute `name` on `id`, or `None` if `id` is not an
+    /// element or has no such attribute.
     pub fn attribute(&self, id: NodeId, name: &XName) -> Option<&str> {
         self.data(id)
             .attrs
@@ -733,7 +861,9 @@ impl Dom {
             .map(|a| a.value.as_str())
     }
 
-    /// `Attributes()` — (name, value) pairs in order (owned clones).
+    /// All attributes on `id`, in declaration order, as `(name, value)`
+    /// owned pairs. For non-allocating iteration, use
+    /// [`Self::attr_count`] + [`Self::attr_at`].
     pub fn attributes(&self, id: NodeId) -> Vec<(XName, String)> {
         self.data(id)
             .attrs
@@ -742,20 +872,28 @@ impl Dom {
             .collect()
     }
 
-    /// Number of attributes on `id` (O(1)). Paired with [`attr_at`](Self::attr_at)
-    /// for non-allocating attribute walks (serializer / DOM-ITER-01).
+    /// Number of attributes on `id`. O(1) and allocation-free. Use
+    /// [`Self::attr_at`] to walk them without cloning.
     pub fn attr_count(&self, id: NodeId) -> usize {
         self.data(id).attrs.len()
     }
 
-    /// The `i`-th attribute as borrowed `(name, value)`. Panics out of bounds.
+    /// The `i`-th attribute on `id`, as borrowed `(name, value)` (no
+    /// allocations; DOM-ITER-01 backs the serializer hot path).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is out of bounds for `id`'s attribute count. See
+    /// [`Self::attr_count`].
     pub fn attr_at(&self, id: NodeId, i: usize) -> (&XName, &str) {
         let a = &self.data(id).attrs[i];
         (&a.name, a.value.as_str())
     }
 
-    /// `SetAttributeValue(name, value)` — add/update; `None` removes (matches the
-    /// TS where passing `null` removes the attribute).
+    /// Add or update an attribute. Passing `Some(value)` inserts the
+    /// attribute when missing or replaces its value when present;
+    /// `None` removes any matching attribute. Matches the TS
+    /// `setAttributeValue(name, null)` removes behavior.
     pub fn set_attribute_value(&mut self, id: NodeId, name: &XName, value: Option<&str>) {
         let attrs = &mut self.data_mut(id).attrs;
         match value {
@@ -773,7 +911,10 @@ impl Dom {
         }
     }
 
-    /// True if `attr` is a namespace declaration (`xmlns` / `xmlns:*`).
+    /// True if `name` looks like an `xmlns` / `xmlns:*` namespace
+    /// declaration: namespace URI `http://www.w3.org/2000/xmlns/`, or no
+    /// namespace with local name `xmlns`. Used by the parser and
+    /// serializer to recognize (and round-trip) namespace declarations.
     pub fn is_namespace_declaration(&self, name: &XName) -> bool {
         name.namespace_name() == "http://www.w3.org/2000/xmlns/"
             || (name.namespace_name().is_empty() && name.local_name() == "xmlns")
@@ -787,8 +928,10 @@ impl Dom {
         }
     }
 
-    /// If `node` already has a parent, deep-clone it (LINQ-to-XML semantics);
-    /// otherwise return it as-is. Used before attaching content.
+    /// If `node` already has a parent, deep-clone it (LINQ-to-XML
+    /// semantics); otherwise return it as-is. Used before attaching
+    /// content so the same subtree can move freely between parents
+    /// without aliasing two slots.
     fn materialize(&mut self, node: NodeId) -> NodeId {
         if self.data(node).parent.is_some() {
             self.clone_subtree(node)
@@ -797,11 +940,10 @@ impl Dom {
         }
     }
 
-    /// Centralized validation before a node is attached to a parent.
-    /// - `parent` must be a container (`Element` or `Document`).
-    /// - `node` must not be the same as `parent` (self-attachment).
-    /// - When `node` is unparented it must not be an ancestor of `parent`,
-    ///   which would create a cycle under its own descendant.
+    /// Centralized validation before a node is attached to a parent:
+    /// `parent` must be a container (`Element` or `Document`), `node`
+    /// must not be the same as `parent`, and an unparented `node`
+    /// must not be an ancestor of `parent` (cycle under descendant).
     fn validate_attachment(&self, parent: NodeId, node: NodeId) {
         if !self.is_element(parent) && !self.is_document(parent) {
             panic!("cannot attach a node to a non-container parent {parent:?}");
@@ -826,7 +968,15 @@ impl Dom {
         false
     }
 
-    /// `Add(node)` — append a single node (cloning if already parented).
+    /// Append `node` as the last child of `parent`. If `node` already
+    /// has a parent it is deep-cloned into the arena first; the original
+    /// id is left in place and the appended id is the new clone.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `parent` is not a container (Element or Document), if
+    /// `parent == node`, or if attaching the unparented `node` would
+    /// create a cycle (i.e. `node` is an ancestor of `parent`).
     pub fn add(&mut self, parent: NodeId, node: NodeId) {
         let n = self.materialize(node);
         self.validate_attachment(parent, n);
@@ -834,7 +984,12 @@ impl Dom {
         self.data_mut(parent).content.push(n);
     }
 
-    /// `Add(text)` — append a fresh text node.
+    /// Allocate a new text child of `parent` carrying `value`. Returns
+    /// the new text node's id.
+    ///
+    /// # Panics
+    ///
+    /// Same container / cycle panics as [`Self::add`].
     pub fn add_text(&mut self, parent: NodeId, value: &str) -> NodeId {
         let t = self.new_text(value);
         self.validate_attachment(parent, t);
@@ -843,7 +998,12 @@ impl Dom {
         t
     }
 
-    /// `AddFirst(node)` — prepend.
+    /// Prepend `node` as the first child of `parent`. Materializes
+    /// (deep-clones) `node` first if it is already parented.
+    ///
+    /// # Panics
+    ///
+    /// Same container / cycle panics as [`Self::add`].
     pub fn add_first(&mut self, parent: NodeId, node: NodeId) {
         let n = self.materialize(node);
         self.validate_attachment(parent, n);
@@ -851,7 +1011,8 @@ impl Dom {
         self.data_mut(parent).content.insert(0, n);
     }
 
-    /// `RemoveNodes()` — detach all children.
+    /// Detach every child of `id` (front matching LINQ-to-XML
+    /// `RemoveNodes()`); their parent links are cleared.
     pub fn remove_nodes(&mut self, id: NodeId) {
         let kids = std::mem::take(&mut self.data_mut(id).content);
         for k in kids {
@@ -859,12 +1020,19 @@ impl Dom {
         }
     }
 
-    /// `Remove()` — detach this node from its parent.
+    /// Detach `id` from its parent. No-op if `id` has no parent.
     pub fn remove(&mut self, id: NodeId) {
         self.detach(id);
     }
 
-    /// `AddBeforeSelf(node)`.
+    /// Insert `node` as the preceding sibling of `reference`, which must
+    /// have a parent. `node` may come from anywhere: one that already has
+    /// a parent is cloned first.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `reference` has no parent, plus the same
+    /// container / cycle panics as [`Self::add`].
     pub fn add_before_self(&mut self, reference: NodeId, node: NodeId) {
         let (p, idx) = self
             .index_in_parent(reference)
@@ -875,7 +1043,13 @@ impl Dom {
         self.data_mut(p).content.insert(idx, n);
     }
 
-    /// `AddAfterSelf(node)`.
+    /// Insert `node` as the following sibling of `reference`. Same
+    /// rules as [`Self::add_before_self`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `reference` has no parent, plus the same
+    /// container / cycle panics as [`Self::add`].
     pub fn add_after_self(&mut self, reference: NodeId, node: NodeId) {
         let (p, idx) = self
             .index_in_parent(reference)
@@ -886,7 +1060,14 @@ impl Dom {
         self.data_mut(p).content.insert(idx + 1, n);
     }
 
-    /// `ReplaceWith(nodes)` — replace this node with the given content.
+    /// Replace `reference` with the sequence of `nodes` (in order) at
+    /// the same position. `reference` is detached. Each entry is
+    /// materialized first if it is already parented.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `reference` has no parent, plus the same
+    /// container / cycle panics as [`Self::add`] for each entry.
     pub fn replace_with(&mut self, reference: NodeId, nodes: &[NodeId]) {
         let (p, idx) = self
             .index_in_parent(reference)
@@ -902,10 +1083,11 @@ impl Dom {
         self.data_mut(p).content.splice(idx..=idx, materialized);
     }
 
-    /// `element.Value` getter — concatenated descendant text.
+    /// Concatenated descendant text of `id` (LINQ-to-XML `element.Value`).
     ///
-    /// ATOM-TEXT-01: single direct text child (the common `w:t` / atom shape)
-    /// clones that string without a recursive walk.
+    /// Always allocates; for the borrowed single-text-child fast path see
+    /// [`Self::value_str`] (ATOM-TEXT-01: a `w:t` / atom with one direct
+    /// text child skips the recursive walk).
     pub fn value(&self, id: NodeId) -> String {
         match self.value_str(id) {
             std::borrow::Cow::Borrowed(s) => s.to_string(),
@@ -913,8 +1095,9 @@ impl Dom {
         }
     }
 
-    /// ATOM-TEXT-01: borrowed text when `id` has exactly one direct text child;
-    /// otherwise owned concatenated descendant text (same bytes as [`Self::value`]).
+    /// Borrowed text when `id` has exactly one direct text child;
+    /// otherwise owned concatenated descendant text. Same bytes as
+    /// [`Self::value`] in both arms (ATOM-TEXT-01).
     pub fn value_str(&self, id: NodeId) -> std::borrow::Cow<'_, str> {
         let content = &self.data(id).content;
         if content.len() == 1
@@ -937,17 +1120,20 @@ impl Dom {
         }
     }
 
-    /// `element.Value = v` — clear children, add a single text node.
+    /// Replace `id`'s children with a single text child carrying `value`
+    /// (LINQ-to-XML `element.Value = value`). Comments and PIs are lost.
     pub fn set_value(&mut self, id: NodeId, value: &str) {
         self.remove_nodes(id);
         self.add_text(id, value);
     }
 
-    /// Deep-clone a subtree into the same arena, returning the new root. The
-    /// clone has no parent. Port of `XElement.clone()` / `XContainer.clone()`.
+    /// Deep-clone the subtree rooted at `id` into the same arena and return
+    /// the new root. The clone has no parent. Port of `XElement.Clone()` /
+    /// `XContainer.Clone()`.
     ///
-    /// CLONE-01: walk children by index (no temporary `content` Vec clone) and
-    /// `reserve_exact` the destination content capacity so growth is one shot.
+    /// Walks children by index (no temporary `content` Vec clone) and
+    /// `reserve_exact`s the destination content capacity so growth is one
+    /// shot (CLONE-01).
     pub fn clone_subtree(&mut self, id: NodeId) -> NodeId {
         let new_kind = match &self.data(id).kind {
             NodeKind::Element { name } => NodeKind::Element { name: name.clone() },
@@ -977,25 +1163,32 @@ impl Dom {
         copy
     }
 
-    // ── annotations ───────────────────────────────────────────────────────────
+    // ── annotations ────────────────────────────────────────────────────────────
     // Stored in a `Dom` side table keyed by `NodeId` rather than inline on every
     // `NodeData` (ANN-01): production never annotates, so the map stays empty and
     // the hot per-node struct keeps its 24 bytes. Behavior is identical.
-    /// `AddAnnotation(obj)`.
+    /// Attach a typed annotation to `id`. Multiple annotations of the same
+    /// `T` may be added; [`Self::annotation`] returns the first, and
+    /// [`Self::remove_annotations`] removes every one of type `T`.
+    ///
+    /// Annotations are stored in a side table (ANN-01), so adding them
+    /// does not enlarge the per-node struct on the hot path.
     pub fn add_annotation<T: Any + 'static>(&mut self, id: NodeId, annotation: T) {
         self.annotations
             .entry(id)
             .or_default()
             .push(Box::new(annotation));
     }
-    /// `Annotation<T>()` — first annotation of type `T`.
+    /// The first annotation of type `T` attached to `id`, or `None`.
     pub fn annotation<T: Any + 'static>(&self, id: NodeId) -> Option<&T> {
         self.annotations
             .get(&id)?
             .iter()
             .find_map(|a| a.downcast_ref::<T>())
     }
-    /// `RemoveAnnotations<T>()`.
+    /// Drop every annotation of type `T` from `id`. Other-type annotations
+    /// on the same node are kept; if none remain the side-table entry is
+    /// cleared.
     pub fn remove_annotations<T: Any + 'static>(&mut self, id: NodeId) {
         if let Some(v) = self.annotations.get_mut(&id) {
             v.retain(|a| !a.is::<T>());
@@ -1005,27 +1198,38 @@ impl Dom {
         }
     }
 
-    // ── parse / serialize convenience (delegate to the submodules) ─────────────
-    /// Parse an XML string into a Document node (M1.3).
+    // ── parse / serialize convenience (delegate to the submodules) ──────────────
+    /// Parse a full XML string (with optional prolog) into a Document node
+    /// allocated into this arena. See [`parse::parse_xdocument`] for the
+    /// parsing semantics. A leading UTF-8 BOM is stripped before parsing.
     pub fn parse_xdocument(&mut self, xml: &str) -> NodeId {
         parse::parse_xdocument(self, xml)
     }
-    /// Serialize an element subtree to XML (M1.4).
+    /// Serialize an element subtree to an XML string. See
+    /// [`serialize::serialize_element`] for namespace-prefix scope rules.
     pub fn serialize_element(&self, el: NodeId) -> String {
         serialize::serialize_element(self, el)
     }
 
-    /// HASH-STREAM: SHA-1 hex of serialized element with first WML default xmlns
-    /// stripped (same digest as hash of [`serialize_element`] after that strip).
+    /// SHA-1 (lowercase hex) of the serialized element with the first
+    /// WML default-xmlns declaration stripped from the root open tag.
+    /// Byte-identical to hashing
+    /// `serialize_element(el).replacen(WML_DEFAULT_XMLNS, "", 1)` without
+    /// materializing the full XML string. Used by the atom-hash stream
+    /// (HASH-STREAM).
     pub fn serialize_element_sha1_hex(&self, el: NodeId) -> String {
         serialize::serialize_element_sha1_hex(self, el)
     }
 
-    /// HASH-STREAM-02: structure-only SHA-1 (no text nodes) with xmlns strip.
+    /// SHA-1 (lowercase hex) of the structural shape only: attributes and
+    /// element nesting, no text / comment / PI children, with the same
+    /// first-WML-default-xmlns strip as [`Self::serialize_element_sha1_hex`].
+    /// HASH-STREAM-02.
     pub fn serialize_element_structure_sha1_hex(&self, el: NodeId) -> String {
         serialize::serialize_element_structure_sha1_hex(self, el)
     }
-    /// Serialize a whole document (declaration + root) (M1.4).
+    /// Serialize a whole document (declaration + children) to a string.
+    /// See [`serialize::serialize_document`].
     pub fn serialize_document(&self, doc: NodeId) -> String {
         serialize::serialize_document(self, doc)
     }

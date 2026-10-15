@@ -2,9 +2,24 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M-D — `WmlComparer.GetRevisions` (:3940): the consumer revision-list API.
-//! D.2 covers the main-part list; D.3 adds notes parts, D.4 format changes,
-//! D.5 move detection, D.6 the byte facade + CLI.
+//! `WmlComparer.GetRevisions` (WmlComparer.cs:3940) — the consumer
+//! revision-list API.
+//!
+//! Re-exported as an oracle for the `--revisions` CLI listing
+//! (`jubarte debug FILE --check revisions`) and for the Python/WASM
+//! `revision_list` bindings. D.2 covers the main-part list; D.3 adds notes
+//! parts; D.4 sweeps `w:rPrChange`; D.5 pairs qualifying insert/delete into
+//! `Moved` revisions.
+//!
+//! Public entry points:
+//! - [`get_revisions_from_body`] — D.2, main-part `ComparisonUnitAtom`
+//!   groupings mapped to [`super::WmlComparerRevision`];
+//! - [`get_revisions_from_note_definitions`] — D.3, the same grouping run
+//!   per `w:footnote`/`w:endnote` definition;
+//! - [`get_format_change_revisions`] — D.4, sweeps every `w:rPrChange` under
+//!   each given part root into a [`super::WmlComparerRevision`];
+//! - [`detect_moves`] — D.5, post-process the revision list to pair
+//!   qualifying insert/delete into `Moved` revisions sharing an id.
 
 use super::atoms::{ComparisonUnitAtom, WmlComparerRevision};
 use super::{CorrelationStatus, WmlComparerRevisionType, WmlComparerSettings, atomize};
@@ -122,9 +137,17 @@ fn group_text(dom: &Dom, group: &[(String, ComparisonUnitAtom)]) -> Option<Strin
     )
 }
 
-/// D.2 — the main-part portion of `GetRevisions` (:3952–:4048): group the
-/// redline's atoms, drop Equal groups, and map each group to a
-/// [`WmlComparerRevision`] (with native-move group ids).
+/// D.2 — the main-part portion of `GetRevisions` (WmlComparer.cs:3952–4048):
+/// group the redline's atoms by their correlation status and tracking
+/// element, drop `Equal` groups, and map each remaining group to a
+/// [`WmlComparerRevision`].
+///
+/// `content_parent` is the document body or, for headers/footers/notes
+/// parts, that part's content root. `part_name` is the OPC part path
+/// (`"word/document.xml"` etc.) that ends up on every returned revision.
+/// Inserted and Deleted groups are emitted as-is; Moved groups are joined
+/// to a range-marker sibling to recover the move group id native move
+/// markup carries.
 pub fn get_revisions_from_body(
     dom: &mut Dom,
     content_parent: NodeId,
@@ -190,10 +213,14 @@ pub fn get_revisions_from_body(
     out
 }
 
-/// D.3 — `GetFootnoteEndnoteRevisionList` (:4072): the same grouping run per
-/// note DEFINITION under the notes-part root. FAITHFUL: the mapping here has
-/// ONLY the Inserted/Deleted branches (a Moved key would fall through to the
-/// C# default(enum) = Inserted) and no move-group-id logic.
+/// D.3 — `GetFootnoteEndnoteRevisionList` (WmlComparer.cs:4072): the same
+/// grouping run per note definition under the notes-part root.
+///
+/// `notes_root` is the root of `word/footnotes.xml` / `word/endnotes.xml`;
+/// `def_name` is `W::footnote()` or `W::endnote()` to pick which
+/// definition set to walk. Unlike [`get_revisions_from_body`], this only
+/// emits Inserted and Deleted groups — a Moved key falls through to the
+/// default `WmlComparerRevisionType` and no move-group-id is recovered.
 pub fn get_revisions_from_note_definitions(
     dom: &mut Dom,
     notes_root: NodeId,
@@ -323,10 +350,15 @@ fn extract_format_change_details(
     }
 }
 
-/// D.4 — `GetFormatChangeRevisions` (:4152): sweep every `w:rPrChange` under
-/// each given (root, part_name) — main document plus notes parts — into
-/// FormatChanged revisions. C# leaves ContentXElement null here and maps
-/// missing author/date to "" (`?? ""`).
+/// D.4 — `GetFormatChangeRevisions` (WmlComparer.cs:4152): every
+/// `w:rPrChange` under each given `(root, part_name)` becomes a
+/// `FormatChanged` revision.
+///
+/// Pass the main document root plus each notes-part root so notes-part
+/// changes are reported alongside the body. Missing `w:author`/`w:date`
+/// map to `""` (matching the C# `?? ""` fallback). `content_element` is
+/// intentionally left `None` — the format-change carrier is the
+/// `rPrChange` element itself.
 pub fn get_format_change_revisions(
     dom: &mut Dom,
     parts: &[(NodeId, &str)],
@@ -362,10 +394,19 @@ pub fn get_format_change_revisions(
     out
 }
 
-/// D.5 — `DetectMoves` (:4313): post-process the revision list, pairing each
-/// qualifying deletion with its best-matching unmatched insertion (word-level
-/// Jaccard ≥ threshold, both ≥ the minimum word count) into a Moved pair
-/// sharing a sequential move_group_id. Gated on `settings.detect_moves`.
+/// D.5 — `DetectMoves` (WmlComparer.cs:4313): post-process the revision
+/// list, pairing each qualifying deletion with its best-matching unmatched
+/// insertion (word-level Jaccard ≥
+/// [`super::WmlComparerSettings::move_similarity_threshold`], both ≥
+/// [`super::WmlComparerSettings::move_minimum_word_count`]) into a `Moved`
+/// pair sharing a sequential
+/// [`super::atoms::WmlComparerRevision::move_group_id`].
+///
+/// Mutates `revisions` in place: qualifying pairs swap their
+/// `revision_type` to `Moved`, set `move_group_id`, and flip
+/// `is_move_source`. A no-op when [`super::WmlComparerSettings::detect_moves`]
+/// is `false`, or when one side is empty. The pairing maximizes similarity;
+/// on ties the earlier insertion wins.
 pub fn detect_moves(revisions: &mut [WmlComparerRevision], settings: &WmlComparerSettings) {
     use super::moves::{count_words, jaccard};
 

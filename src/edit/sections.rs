@@ -8,6 +8,10 @@
 //! without a final `w:sectPr` gets one, starting from Word's default Letter
 //! page with one-inch margins. The comparer records the old geometry in
 //! `w:sectPrChange`.
+//!
+//! Backs the `page_setup` plan operation: [`SectionScope`], [`PageSize`],
+//! [`Orientation`] and [`Margins`] are its `section`, `page`, `orientation`
+//! and `margins_dxa` fields.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +28,7 @@ pub enum SectionScope {
     /// The document's last section (the body's final `w:sectPr`).
     #[default]
     Last,
-    /// Every section.
+    /// Every section: the mid-document breaks and the final one.
     All,
 }
 
@@ -32,9 +36,9 @@ pub enum SectionScope {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PageSize {
-    /// A named paper size, portrait.
+    /// A named paper size; the orientation orders its sides.
     Named(Paper),
-    /// A custom size.
+    /// A custom size; keeps its sides unless an orientation is given.
     Custom(CustomPage),
 }
 
@@ -52,9 +56,9 @@ pub enum Paper {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustomPage {
-    /// Page width.
+    /// Page width in twentieths of a point, 1 to 31_680 (22 inches).
     pub width_dxa: u32,
-    /// Page height.
+    /// Page height in twentieths of a point, 1 to 31_680 (22 inches).
     pub height_dxa: u32,
 }
 
@@ -75,22 +79,23 @@ pub enum Orientation {
 #[serde(deny_unknown_fields)]
 pub struct Margins {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Top margin.
+    /// Top margin in twentieths of a point.
     pub top: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Right margin.
+    /// Right margin in twentieths of a point.
     pub right: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Bottom margin.
+    /// Bottom margin in twentieths of a point.
     pub bottom: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Left margin.
+    /// Left margin in twentieths of a point.
     pub left: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Distance from the page top to the header.
+    /// Distance from the page top to the header, in twentieths of a point.
     pub header: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Distance from the page bottom to the footer.
+    /// Distance from the page bottom to the footer, in twentieths of a
+    /// point.
     pub footer: Option<u32>,
 }
 

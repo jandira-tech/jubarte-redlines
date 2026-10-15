@@ -6,15 +6,20 @@
 //!
 //! [`update_fields`] rebuilds every body `TOC` from the heading paragraphs,
 //! lays the document out once, then writes the results of `PAGEREF`, `REF`,
-//! `NUMPAGES` and `SEQ` fields in the body, headers, footers and notes. Field
-//! codes stay, so Word can refresh them again; `w:updateFields` is not set.
+//! `NUMPAGES` and `SEQ` fields in the body, headers, footers and notes. The
+//! field codes stay, so Word can refresh them later; `w:updateFields` is
+//! not set.
 //!
-//! The page numbers come from jubarte's layout. They match Word on most
-//! documents but are not Word's (`docs/WORD_DIFFERENCES.md`). A field whose
-//! switches this module does not implement keeps its cached result, and so
-//! does a `PAGEREF` to a bookmark the layout could not page (a bookmark
-//! outside any paragraph, or one in a header). `PAGE` is never written: it
+//! Page numbers come from jubarte's layout, which matches Word on most
+//! documents but not all (see `docs/WORD_DIFFERENCES.md`). A field whose
+//! switches this module does not implement keeps its cached result; so does
+//! a `PAGEREF` to a bookmark the layout could not page (a bookmark outside
+//! any paragraph, or one in a header). `PAGE` is never written — its result
 //! differs on every page.
+//!
+//! The error strings Word writes for an unresolvable reference
+//! ([`BOOKMARK_NOT_DEFINED`], [`REFERENCE_NOT_FOUND`],
+//! [`NO_TOC_ENTRIES`]) are the public side of that fallback.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -31,24 +36,26 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 /// What Word writes for a `PAGEREF` to a bookmark the document lacks.
 pub const BOOKMARK_NOT_DEFINED: &str = "Error! Bookmark not defined.";
+
 /// What Word writes for a `REF` to a bookmark the document lacks.
 pub const REFERENCE_NOT_FOUND: &str = "Error! Reference source not found.";
+
 /// What Word writes for a `TOC` that finds no heading.
 pub const NO_TOC_ENTRIES: &str = "No table of contents entries found.";
 
-/// One field whose cached result was written.
+/// One field whose cached result [`update_fields`] rewrote.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldUpdate {
     /// Field type, upper case (`PAGEREF`, `REF`, `NUMPAGES`, `SEQ`, `TOC`).
     pub kind: String,
-    /// The field code, trimmed.
+    /// The field code, leading and trailing whitespace stripped.
     pub code: String,
     /// The paragraph that holds the field's start (`p3`,
     /// `footer1`), in the output package's numbering.
     pub paragraph: String,
-    /// The cached result before.
+    /// The cached result before this run.
     pub old: String,
-    /// The cached result written.
+    /// The cached result that was written.
     pub new: String,
 }
 
@@ -57,7 +64,7 @@ pub struct FieldUpdate {
 pub struct Updated {
     /// The package with refreshed field results.
     pub docx: Vec<u8>,
-    /// Every field written, in story then document order.
+    /// Every field whose result was rewritten, in story then document order.
     pub fields: Vec<FieldUpdate>,
     /// Pages in jubarte's layout of the package.
     pub page_count: usize,
@@ -66,11 +73,11 @@ pub struct Updated {
 /// Why [`update_fields`] failed.
 #[derive(Debug)]
 pub enum FieldError {
-    /// The package could not be opened or read.
+    /// The package could not be opened or read (`InspectError`).
     Inspect(InspectError),
-    /// The layout pass failed.
+    /// The layout pass that pages the document failed.
     Layout(crate::convert::ConvertError),
-    /// The package could not be written back.
+    /// The package could not be serialized back to bytes.
     Package(String),
 }
 
@@ -92,7 +99,19 @@ impl From<InspectError> for FieldError {
     }
 }
 
-/// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results.
+/// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` cached results in
+/// the body, headers, footers and notes.
+///
+/// Page numbers come from jubarte's own layout; see the module-level
+/// comment for the cases where Word's result and ours diverge.
+///
+/// # Errors
+///
+/// - [`FieldError::Inspect`] when the package cannot be opened or read;
+/// - [`FieldError::Layout`] when the layout pass that backs page numbers
+///   fails (see [`crate::convert::ConvertError`]);
+/// - [`FieldError::Package`] when the rewritten package cannot be
+///   serialized back to bytes.
 pub fn update_fields(docx: &[u8]) -> Result<Updated, FieldError> {
     let opened = Opened::open(docx)?;
     let story_parts = opened.story_parts();

@@ -3,6 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Word tokens for prose diffs.
+//!
+//! `word_tokens` splits a UTF-8 string into a `Vec<&str>` of words
+//! (runs of letters and digits), whitespace runs, and single-symbol
+//! punctuation. It is used by the Markdown diff renderer
+//! (`crate::markdown::diff`) and by `crate::edit::rewrite` to align
+//! inserted and deleted text at the word level; matching decomposed and
+//! composed forms matters because Word's tracked-change runs frequently
+//! arrive decomposed.
+//!
+//! Subordinate tokenisation helpers live in the unit tests at the bottom
+//! of the file (marks, zero-width joiner, emoji skin-tone modifiers).
 
 use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
 
@@ -35,20 +46,22 @@ enum Kind {
     Other(char),
 }
 
-/// `text` as words (runs of letters and digits), runs of whitespace, and
-/// punctuation; a run of one repeated mark (`**`, `--`) is one token.
-/// Concatenated, the tokens are `text`.
+/// Split `text` into a `Vec<&str>` of tokens and return them. The tokens are
+/// borrowed slices into `text`; concatenated they are byte-for-byte
+/// identical to `text`.
 ///
-/// Combining marks (categories Mn, Mc, Me) and the zero width joiner stay in
-/// the token of the letter, digit or symbol they follow, so decomposed text
-/// (`cafe` + U+0301) is one word like its composed form, and an emoji
-/// sequence joined by U+200D, with or without a skin tone modifier or
-/// variation selector, is one token. (Flags, keycaps and tag sequences are
-/// not covered and may split.) A joiner also links the letter,
-/// digit or symbol after it. A mark with no such base before it (after
-/// whitespace, punctuation or at the start of the text) does not join that
-/// whitespace or punctuation: a run of such marks is a token of its own, and
-/// what follows starts a new token.
+/// Combining marks (categories Mn, Mc, Me) and the zero width joiner
+/// stay in the token of the letter, digit or symbol they follow, so
+/// decomposed text (`cafe` + U+0301) is one word like its composed form,
+/// and an emoji sequence joined by U+200D, with or without a skin tone
+/// modifier or variation selector, is one token. (Flags, keycaps and tag
+/// sequences are not covered and may split.) A joiner also links the
+/// letter, digit or symbol after it. A mark with no such base before it
+/// (after whitespace, punctuation or at the start of the text) does not
+/// join that whitespace or punctuation: a run of such marks is a token
+/// of its own, and what follows starts a new token.
+///
+/// Returns an empty `Vec` for the empty string.
 pub fn word_tokens(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;

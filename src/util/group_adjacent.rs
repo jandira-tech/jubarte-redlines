@@ -2,10 +2,21 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Port of `GroupAdjacent` from `PtUtil.ts` — group consecutive items sharing a
-//! key into runs (each run keeps its key).
+//! `GroupAdjacent` from `PtUtil.ts`: group consecutive items that share a
+//! key into runs, each run keeping its key.
+//!
+//! Used by the comparer's `revision_processor`, `revisions`, `units`,
+//! `preprocess`, `produce`, `atomize` paths, and `markdown::diff` for
+//! inline-block grouping when merging insertions with deletions.
 
-/// `GroupAdjacent(source, keySelector)` → `[(key, [items…]), …]`.
+/// Group `source` into runs of consecutive items whose
+/// `key_selector(item)` values compare equal. Each run becomes one
+/// `(key, items)` pair, in input order. A run ends only where the key
+/// changes, so equal keys that are not adjacent (`A, B, A`) make separate
+/// runs — three here. Empty input yields an empty `Vec`.
+///
+/// `T` is the element type, `K` is the key type (only its `PartialEq`
+/// is needed), `F` is the per-item key selector.
 pub fn group_adjacent<T, K, F>(
     source: impl IntoIterator<Item = T>,
     key_selector: F,

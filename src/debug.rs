@@ -57,14 +57,15 @@ mod render;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Check {
     /// Deleted text outside its story's deletion, live text inside one.
+    /// Triage check.
     Orphans,
-    /// Field structure and deletion state.
+    /// Field structure and deletion state. Triage check.
     Fields,
-    /// Bookmark integrity and crossings.
+    /// Bookmark integrity and crossings. Triage check.
     Bookmarks,
-    /// Content types, relationships, cross-part references.
+    /// Content types, relationships, cross-part references. Triage check.
     Package,
-    /// Cell, row, revision and section shapes Word rejects.
+    /// Cell, row, revision and section shapes Word rejects. Triage check.
     Structure,
     /// Revision and drawing ids used twice.
     Ids,
@@ -2308,6 +2309,11 @@ fn clip_line(s: &str) -> String {
 /// `--list`: the package's entries (archive order, sizes). With a second
 /// package, every entry by name with its state: `=` identical, `~` changed,
 /// `A`/`B` only in one.
+///
+/// # Errors
+///
+/// A message naming which package is not a readable zip, or which zip
+/// entry failed to read.
 pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
     let pa = Package::open(a)?;
     let mut out = String::new();
@@ -2429,6 +2435,11 @@ fn finding_code(kind: &str) -> String {
 }
 
 /// The report for one package, or the differences between two.
+///
+/// # Errors
+///
+/// A message naming which package is not a readable zip, or which zip
+/// entry failed to read.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
     let is_listing = |c: &Check| {
         matches!(

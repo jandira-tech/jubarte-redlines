@@ -2,11 +2,31 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Independent DOCX → PDF conversion (not LibreOffice / soffice).
+//! Independent DOCX → PDF, PNG and page-text conversion (no LibreOffice
+//! or Word process is involved).
 //!
-//! Layout aims at LibreOffice visual parity: Carlito/Liberation faces (the
-//! same metric-compatible substitutes soffice embeds), Word `docDefaults`
-//! (Calibri 11 / line 276 / after 200 twips), and `sectPr` page geometry.
+//! Layout aims at LibreOffice visual parity: the Carlito / Liberation
+//! faces (the same metric-compatible substitutes soffice embeds),
+//! Word's `docDefaults` (Calibri 11 / line 276 / after 200 twips) and
+//! `sectPr` page geometry. A page-by-page visual diff against a Word PDF
+//! is the `diff_render` family; per-page font resolutions and the page
+//! text are in `RenderReport`.
+//!
+//! Entry points:
+//!
+//! - `docx_to_pdf`, `docx_to_pdf_with`, `docx_to_pdf_report` for the
+//!   PDF;
+//! - `docx_to_png`, `docx_render_report`, `render` for PNG pages
+//!   and the page report;
+//! - `pdf_page_count` to count pages of a PDF;
+//! - `DiffOptions` / `RenderDiff` / `PageDiff` (re-exported from
+//!   `diff_render`) for the visual diff;
+//! - `FontStep` / `FontReportEntry` / `font_report_json` (re-exported
+//!   from `font`) for the conversion's font-resolution report.
+//!
+//! `RevisionStyle` / `RevisionPalette` back the `--revisions` CLI flag
+//! and the `RevisionStyle::Word` mode the fidelity benchmarks measure
+//! against Word's own Save as PDF.
 
 pub(crate) mod altchunk;
 mod diff_render;
@@ -46,10 +66,11 @@ fn fonts() -> &'static Fonts<'static> {
 }
 use pdf::{Op, Page, PdfComment};
 
-/// Failure opening a DOCX or emitting a PDF.
+/// Opening a DOCX, emitting a PDF, or selecting pages failed.
 #[derive(Debug)]
 pub enum ConvertError {
-    /// The bytes were not a readable OPC package.
+    /// The bytes were not a readable OPC package, or its strict-to-transitional
+    /// normalization couldn't open.
     OpenPackage(String),
     /// The package has no main document part.
     MissingDocument,
@@ -67,7 +88,7 @@ pub enum ConvertError {
         page_count: usize,
     },
     /// [`RenderRequest::pages`] named a document page that
-    /// `PdfOptions::changed_only` dropped.
+    /// [`PdfOptions::changed_only`] dropped.
     PageNotKept {
         /// The zero-based document page asked for.
         requested: usize,
@@ -101,7 +122,8 @@ impl fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
-/// How many lines a revision mark draws (strike through or under the text).
+/// How many strike or underline lines a revision mark draws under
+/// changed text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MarkLines {
     /// No line.
@@ -113,10 +135,11 @@ pub enum MarkLines {
     Double,
 }
 
-/// How one kind of tracked change is painted.
+/// How one kind of tracked change is painted: the ink and the strike /
+/// underline it draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RevisionMark {
-    /// Ink of the changed text and its lines (RGB).
+    /// Ink of the changed text and its lines, as an RGB triple.
     pub color: [u8; 3],
     /// Lines struck through the text.
     pub strike: MarkLines,
@@ -124,25 +147,26 @@ pub struct RevisionMark {
     pub underline: MarkLines,
 }
 
-/// The marks for each kind of tracked change.
+/// The marks for each kind of tracked change (`w:del`, `w:ins`,
+/// `w:moveFrom`, `w:moveTo`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RevisionPalette {
-    /// `w:del`.
+    /// `w:del`: text deleted by the redline.
     pub deleted: RevisionMark,
-    /// `w:ins`.
+    /// `w:ins`: text inserted by the redline.
     pub inserted: RevisionMark,
-    /// `w:moveFrom`.
+    /// `w:moveFrom`: text moved from here.
     pub moved_from: RevisionMark,
-    /// `w:moveTo`.
+    /// `w:moveTo`: text moved to here.
     pub moved_to: RevisionMark,
 }
 
 impl RevisionPalette {
     /// The legal-redline convention, as Litera Compare sets Word's track
-    /// changes: an insertion or deletion is marked once (blue underline, red
-    /// strike) and a move twice, in green (double strike where it left,
-    /// double underline where it landed), so a move never reads as an
-    /// insertion by its colour alone.
+    /// changes: an insertion or deletion is marked once (blue underline,
+    /// red strike) and a move twice, in green (double strike where it
+    /// left, double underline where it landed), so a move never reads as
+    /// an insertion by its colour alone.
     pub const CONVENTIONAL: Self = Self {
         deleted: RevisionMark {
             color: [0xFF, 0x00, 0x00],
@@ -224,19 +248,28 @@ impl RevisionPalette {
 /// painted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RevisionStyle {
-    /// `RevisionPalette::CONVENTIONAL`.
+    /// [`RevisionPalette::CONVENTIONAL`] (red / blue / green redline).
     #[default]
     Conventional,
     /// What Microsoft Word's Save as PDF paints (per-author ink, single
-    /// strike and underline); the fidelity benchmarks measure this one.
+    /// strike and underline); the fidelity benchmarks measure against this
+    /// one, so a jubarte PDF compared against a Word one must be rendered
+    /// with this mode.
     Word,
     /// The caller's own marks.
     Custom(RevisionPalette),
 }
 
 impl RevisionStyle {
-    /// `"conventional"`, `"word"` or `"custom"` (which needs a
-    /// `RevisionPalette::parse` spec), as the CLI and bindings name them.
+    /// Parse `"conventional"`, `"word"` or `"custom"` (which needs a
+    /// [`RevisionPalette::parse`] spec), as the CLI flag and the bindings
+    /// name them.
+    ///
+    /// # Errors
+    ///
+    /// A message when `name` is unknown, when `name = "custom"` but
+    /// `palette` is `None`, when `palette` is set with any name other than
+    /// `"custom"`, or when `palette` fails [`RevisionPalette::parse`].
     ///
     /// ```
     /// use jubarte::convert::RevisionStyle;
@@ -320,8 +353,10 @@ fn comments_at_end() -> bool {
     PAGE_PLAN.with(|p| p.get().0 == CommentPlacement::End)
 }
 
-/// Convert a `.docx` package into a PDF (`%PDF` header, one or more pages).
-/// How `docx_to_pdf` writes the PDF's stream objects.
+/// The flags a DOCX → PDF conversion runs with.
+///
+/// Defaults match what `docx_to_pdf(docx)` passes
+/// ([`PdfOptions::default`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PdfOptions {
     /// Deflate content streams (`/Filter /FlateDecode`). Image samples and
@@ -351,12 +386,13 @@ pub struct PdfOptions {
 /// Where a converted PDF puts the document's comments.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CommentPlacement {
-    /// Balloons in a pane beside the page, joined to the commented text,
-    /// as Word's Save as PDF prints them.
+    /// Balloons in a pane beside the page, joined to the commented text, as
+    /// Word's Save as PDF prints them.
     #[default]
     Margin,
-    /// The page keeps its own width: the commented text keeps its tint and
-    /// a `[JR1]` marker, and the comments are listed after the last page.
+    /// The page keeps its own width: the commented text keeps its tint
+    /// and a `[JR1]`-style marker, and the comments are listed after the
+    /// last page.
     End,
 }
 
@@ -365,22 +401,42 @@ pub enum CommentPlacement {
 pub struct ConvertedPdf {
     /// Rendered PDF (`%PDF` header).
     pub pdf: Vec<u8>,
-    /// Per-document font report (plan Step 2f): one row per distinct
-    /// requested family + style.
+    /// Per-document font report (plan Step 2f): one entry per distinct
+    /// requested family + style the layout saw.
     pub font_report: Vec<FontReportEntry>,
 }
 
-/// Render a DOCX package to PDF with the default options.
+/// Render a DOCX package to PDF with [`PdfOptions::default`]. Equivalent to
+/// `docx_to_pdf_with(docx, PdfOptions::default())`.
+///
+/// # Errors
+///
+/// [`ConvertError`] from [`docx_to_pdf_with`].
 pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
     docx_to_pdf_with(docx, PdfOptions::default())
 }
 
-/// Render a DOCX package to PDF, choosing how streams are written.
+/// Render a DOCX package to PDF, choosing how streams are written and
+/// how marks are painted.
+///
+/// # Errors
+///
+/// - [`ConvertError::OpenPackage`] when `docx` is not a readable OPC
+///   package;
+/// - [`ConvertError::MissingDocument`] when the package has no main
+///   document part;
+/// - [`ConvertError::Emit`] when the PDF object assembly fails.
 pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
     Ok(docx_to_pdf_report(docx, options)?.pdf)
 }
 
-/// Render a DOCX package to PDF and return the font-resolution report.
+/// Render a DOCX package to PDF and return the font-resolution report for
+/// it. The PDF is the `pdf` field of the result; the font report is the
+/// entries the conversion made for that document.
+///
+/// # Errors
+///
+/// As [`docx_to_pdf_with`].
 pub fn docx_to_pdf_report(docx: &[u8], options: PdfOptions) -> Result<ConvertedPdf, ConvertError> {
     let (result, font_report) = font::with_font_report(|| docx_to_pdf_inner(docx, options));
     Ok(ConvertedPdf {
@@ -400,12 +456,13 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
 /// Text painted on one page, in paint order (header first when present).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageText {
-    /// Zero-based index among the pages written.
+    /// Zero-based index among the pages written by the run.
     pub index: usize,
-    /// The page's number in the document, from 1 (the comment listing's
-    /// pages number on after the last document page).
+    /// The page's number in the document, from 1. The comment listing's
+    /// pages number on after the last document page when
+    /// [`PdfOptions::comments`] is `End`.
     pub number: usize,
-    /// One line per baseline.
+    /// One line per baseline, in painting order.
     pub text: String,
 }
 
@@ -468,18 +525,22 @@ impl RenderReport {
     }
 }
 
-/// What [`render`] should produce from its single layout pass.
+/// What [`render`] should produce from its single layout pass. All fields
+/// default to "off"; `pdf = true` writes the PDF, `png_dpi = Some(d)`
+/// rasterizes, `pages = Some([…])` narrows any of the above to a chosen
+/// set of document pages.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RenderRequest {
-    /// Write the PDF.
+    /// Write the PDF (only when at least one page is kept).
     pub pdf: bool,
-    /// Rasterize every page written to PNG at this resolution.
+    /// Rasterize every page written to PNG at this DPI. Must be in
+    /// `1.0..=MAX_PNG_DPI` when set.
     pub png_dpi: Option<f32>,
-    /// Zero-based document pages to write (any order, repeats ignored): the
-    /// PDF, the PNGs and the report hold these pages only; `None` writes
-    /// every page. They count the document's pages whatever
-    /// `PdfOptions::changed_only` keeps, then the listing pages of
-    /// `CommentPlacement::End`. A page it dropped is
+    /// Zero-based document pages to write (any order, repeats ignored):
+    /// the PDF, the PNGs and the report hold these pages only; `None`
+    /// writes every page. They count the document's pages whatever
+    /// [`PdfOptions::changed_only`] keeps, then the listing pages of
+    /// [`CommentPlacement::End`]. A page it dropped is
     /// [`ConvertError::PageNotKept`]; one past the last is
     /// [`ConvertError::PageOutOfRange`]; an empty list writes no page and
     /// no PDF. Layout always covers the whole document.
@@ -498,11 +559,29 @@ pub struct Rendered {
     pub report: RenderReport,
 }
 
-/// Highest PNG resolution [`render`] accepts.
+/// Highest PNG resolution [`render`] accepts (`1.0..=1200.0`).
 pub const MAX_PNG_DPI: f32 = 1200.0;
 
 /// Lay the document out once and emit any combination of PDF, PNG pages and
 /// the page report.
+/// Lay the document out once and emit any combination of PDF, PNG pages
+/// and the page report. The default `RenderRequest` writes nothing.
+///
+/// One layout pass covers the whole document; `request.pages` then
+/// narrows what is written. The font report always runs, so an empty
+/// `request` still pages the document and counts fonts.
+///
+/// # Errors
+///
+/// - [`ConvertError::OpenPackage`] / [`ConvertError::MissingDocument`]
+///   from the layout pass;
+/// - [`ConvertError::Raster`] when `request.png_dpi` is `Some(d)` outside
+///   `1.0..=MAX_PNG_DPI`, or any page is too large to rasterize at `d`;
+/// - [`ConvertError::PageNotKept`] when `request.pages` names a page
+///   [`PdfOptions::changed_only`] dropped;
+/// - [`ConvertError::PageOutOfRange`] when `request.pages` names a page
+///   past the document's last;
+/// - [`ConvertError::Emit`] when PDF object assembly fails.
 pub fn render(
     docx: &[u8],
     options: PdfOptions,
@@ -612,8 +691,15 @@ fn selected_pages(
         .collect()
 }
 
-/// Rasterize every page to PNG at `dpi` (96 is screen resolution; 150 reads
-/// comfortably; 300 is print).
+/// Rasterize every page to PNG at `dpi` (96 is screen resolution, 150
+/// reads comfortably, 300 is print).
+///
+/// # Errors
+///
+/// [`ConvertError::OpenPackage`] when `docx` is not a readable package,
+/// [`ConvertError::MissingDocument`] when it has no main document part;
+/// [`ConvertError::Raster`] when `dpi` is outside `1.0..=MAX_PNG_DPI` or
+/// when a page is too large to rasterize at `dpi`.
 pub fn docx_to_png(
     docx: &[u8],
     options: PdfOptions,
@@ -631,7 +717,14 @@ pub fn docx_to_png(
     .pngs)
 }
 
-/// Page count, page text and font resolutions without writing PDF or PNG.
+/// Page count, page text and font resolutions from one layout pass, with
+/// no PDF or PNG written.
+///
+/// # Errors
+///
+/// As [`render`] with a default [`RenderRequest`]: an
+/// [`ConvertError::OpenPackage`] or
+/// [`ConvertError::MissingDocument`] from the layout pass.
 pub fn docx_render_report(docx: &[u8], options: PdfOptions) -> Result<RenderReport, ConvertError> {
     Ok(render(docx, options, RenderRequest::default())?.report)
 }
@@ -848,7 +941,11 @@ fn with_layout<T>(
     })
 }
 
-/// Count page objects in a PDF (`/Type /Page`, excluding `/Type /Pages`).
+/// Count page objects in `pdf`: `/Type /Page` (not `/Type /Pages`).
+///
+/// Counts by matching the substring; an invalid PDF that happens to
+/// contain `/Type /Page` strings will over-count. The conservative use
+/// is `page_count` from a [`RenderReport`].
 pub fn pdf_page_count(pdf: &[u8]) -> usize {
     let text = String::from_utf8_lossy(pdf);
     let needle = "/Type /Page";
@@ -12114,8 +12211,11 @@ fn core_dates() -> CoreDates {
     CORE_DATES.with(Cell::get)
 }
 
-/// Now, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`: the date Word writes on a
-/// revision.
+/// The current UTC wall time as Word writes revision dates:
+/// `YYYY-MM-DDTHH:MM:SSZ` (no sub-second precision).
+///
+/// On native targets the time comes from [`SystemTime::now`]; on
+/// `wasm32-unknown-unknown` it comes from `js_sys::Date`.
 pub fn utc_now_iso8601() -> String {
     iso8601(utc_now())
 }

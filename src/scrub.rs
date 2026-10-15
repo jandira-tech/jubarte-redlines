@@ -81,7 +81,8 @@ impl Default for ScrubOptions {
 pub enum ScrubError {
     /// The bytes are not an OPC package, or it cannot be written back.
     Package(String),
-    /// The package has no main document, or the options are invalid.
+    /// The package has no main document, the options are invalid, or
+    /// scrubbing would introduce new validation findings.
     Invalid(String),
 }
 
@@ -96,7 +97,15 @@ impl std::fmt::Display for ScrubError {
 
 impl std::error::Error for ScrubError {}
 
-/// Remove the identifying data `options` names from a `.docx`.
+/// Remove the identifying data `options` names from a `.docx`. Backs
+/// `jubarte scrub`; returns the scrubbed bytes, writing nothing.
+///
+/// # Errors
+///
+/// [`ScrubError::Package`] when the bytes are not an OPC package or cannot
+/// be written back; [`ScrubError::Invalid`] when the package has no main
+/// document, the options are invalid, or scrubbing would introduce new
+/// validation findings.
 pub fn scrub(docx: &[u8], options: &ScrubOptions) -> Result<Vec<u8>, ScrubError> {
     let mut pkg = PartFs::open(docx).map_err(|e| ScrubError::Package(e.to_string()))?;
     if pkg

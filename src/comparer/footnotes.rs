@@ -2,11 +2,24 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.H.4 — footnote/endnote id-range, mandatory parts, empty-fill, revision
-//! predicate. Port of ChangeFootnoteEndnoteReferencesToUniqueRange (:2135),
-//! MandatorySeparatorNotes (:2077), FillInEmptyFootnotesEndnotes (:1053),
-//! ContentContainsFootnoteEndnoteReferencesThatHaveRevisions (:1101).
-//! (Full cross-part ProcessFootnoteEndnote diff + package plumbing land next.)
+//! Footnote/endnote — id renumbering, mandatory parts, empty-fill, style and
+//! numbering propagation, cross-part diff, and rectification.
+//!
+//! The compare pipeline calls into this module from
+//! [`super::try_compare_bodies_faithful_with_notes`]: [`process_footnote_endnote`]
+//! produces the per-reference redline into a fresh `w:footnote`/`w:endnote`
+//! definition, then [`rectify_footnote_endnote_ids`] renumbers the body's
+//! references and the output notes part (separators + referenced definitions)
+//! 1-based by reference order. The byte facade [`crate::document_comparer::pre_process_markup`]
+//! calls [`change_footnote_endnote_references_to_unique_range`],
+//! [`mandatory_separator_notes`], [`fill_in_empty_footnotes_endnotes`],
+//! [`copy_missing_styles`], and [`copy_missing_numbering`] to keep the
+//! original side Word-valid before the diff starts.
+//!
+//! The [`RectifyError`] enum names the failure modes around the C#
+//! `RectifyFootnoteEndnoteIds` (:3816) so callers can fail loud or skip;
+//! every lookup completes before any definition is rewritten, so on `Err` the
+//! notes parts are left as they were.
 
 use super::WmlComparerSettings;
 use crate::namespaces::W;
@@ -16,10 +29,12 @@ fn set_id(dom: &mut Dom, e: NodeId, v: &str) {
     dom.set_attribute_value(e, &W::id(), Some(v));
 }
 
-/// M4.H.4 — `ChangeFootnoteEndnoteReferencesToUniqueRange` (:2135): renumber each
-/// `w:footnoteReference`/`w:endnoteReference` (document order) and its definition
-/// to a unique monotonic range from `start`. Orphan ref → warning+remove (if
-/// `has_log`) else `Err`. Returns the warnings.
+/// M4.H.4 — `ChangeFootnoteEndnoteReferencesToUniqueRange` (WmlComparer.ts
+/// :2135): renumber each `w:footnoteReference`/`w:endnoteReference`
+/// (document order) and its definition to a unique monotonic range from
+/// `start`. An orphan reference (a `w:id` with no matching note in
+/// `fn_root` / `en_root`) is either logged and removed when `has_log`,
+/// or returns an error otherwise. Returns the warning strings.
 pub fn change_footnote_endnote_references_to_unique_range(
     dom: &mut Dom,
     main_root: NodeId,
@@ -196,7 +211,9 @@ pub fn content_contains_footnote_endnote_references_that_have_revisions(
     false
 }
 
-/// Collect `w:styleId` values defined under a styles root (`w:styles`).
+/// Collect every non-empty `w:styleId` defined under a `w:styles` root.
+/// Returns the set so callers can strip dangling `w:pStyle` / `w:rStyle`
+/// references in [`strip_unresolved_style_refs`].
 pub fn defined_style_ids(dom: &Dom, styles_root: NodeId) -> std::collections::HashSet<String> {
     let style = W::name("style");
     let style_id = W::name("styleId");
@@ -207,13 +224,12 @@ pub fn defined_style_ids(dom: &Dom, styles_root: NodeId) -> std::collections::Ha
         .collect()
 }
 
-/// Drop `w:pStyle` / `w:rStyle` whose `@w:val` is not defined in the stylesheet.
-///
-/// Word's compare output omits dangling style refs; LibreOffice still maps
+/// Drop `w:pStyle` / `w:rStyle` whose `@w:val` is not in `defined`. Word's
+/// compare output omits dangling style refs; LibreOffice still maps
 /// built-in names (`Heading1`, `Title`, …) to factory heading look when the
-/// attribute is present, even if `styles.xml` has no matching `w:style`. That
-/// alone flips pixel scores on style-demo pairs (heading_1_bold × heading_1_style:
-/// Word/jubarte ~100 with no `pStyle`; ours kept `pStyle=Heading1` → ~54).
+/// attribute is present, even if `styles.xml` has no matching `w:style`,
+/// which alone flips pixel scores on style-demo pairs. Returns the number
+/// of attributes removed.
 pub fn strip_unresolved_style_refs(
     dom: &mut Dom,
     root: NodeId,
@@ -238,13 +254,16 @@ pub fn strip_unresolved_style_refs(
     removed
 }
 
-/// M4.H.8 — `CopyMissingStylesFromOneDocToAnother` (:2547): copy each `w:style`
-/// from `from_root` whose styleId `to_root` lacks, dropping its `w:default`
-/// attribute (avoid two defaults). Ensures inserted content's styles exist in
-/// the output. A styleId names one style of any type: upstream keys on type
-/// and id, which wrote an id twice, while Word keeps the original's style and
-/// leaves the revision's out (420a528aa0 × 178804f5ce: character `DocID`
-/// beside paragraph `DocID`).
+/// M4.H.8 — `CopyMissingStylesFromOneDocToAnother` (WmlComparer.ts :2547):
+/// copy each `w:style` from `from_root` whose `styleId` `to_root` lacks,
+/// dropping its `w:default` attribute (so a copy doesn't add a second
+/// default style of the same kind). Ensures inserted content's styles
+/// exist in the output.
+///
+/// A `styleId` names one style of any type. Word keeps the original's
+/// style and leaves the revision's out when both have the same id; this
+/// implementation keys on `styleId` alone and copies at most one style per
+/// id from `from_root`.
 pub fn copy_missing_styles(dom: &mut Dom, to_root: NodeId, from_root: NodeId) {
     let style = W::name("style");
     let style_id = W::name("styleId");
@@ -324,24 +343,24 @@ fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> Str
     dom.serialize_element(c)
 }
 
-/// E.1 — `CopyMissingNumberingFromOneDocToAnother` (:2143): content-dedup
-/// (an abstractNum whose normalized content already exists is REUSED),
-/// id-remap (colliding abstractNumId/numId get fresh ids past the destination
-/// maximum, with num references rewired), and schema-order insertion.
-/// Malformed elements (missing/unparseable ids) are skipped like C#.
-/// Returns the numId remap for COLLIDING source ids (source numId → freshly
-/// allocated destination numId). References inside revised-side inserted
-/// content must be rewritten with this map, or they resolve against the
-/// destination's same-id definitions — B's decimal lists render with A's
-/// bullet abstractNum (complex_list_def_short × basic_list; Word renumbers
-/// to fresh ids 20/21 → abstract 13/14 and rewrites the content refs).
+/// E.1 — `CopyMissingNumberingFromOneDocToAnother` (WmlComparer.ts :2143):
+/// content-dedup (an `abstractNum` whose normalized content already exists
+/// is REUSED), id-remapped (colliding `abstractNumId` / `numId` get fresh
+/// ids past the destination maximum, with `num` references rewired), and
+/// inserted in schema order. Malformed elements (missing/unparseable ids)
+/// are skipped like C#. Returns the `numId` remap for COLLIDING source
+/// ids (source `numId` → freshly allocated destination `numId`) plus the
+/// freshly copied `w:numPicBullet` elements so the caller can carry their
+/// relationships.
 ///
-/// A copied abstractNum brings the `w:numPicBullet`s its levels name
-/// (`w:lvlPicBulletId`), under a fresh id when the destination already uses
-/// B's: a level naming an undefined picture bullet makes Word refuse the
-/// package. Identical-looking bullets are still copied — their `r:id`s resolve
-/// against different `.rels`, so equal XML can draw different images. The
-/// copied bullets are returned so the caller can carry their relationships.
+/// References inside revised-side inserted content must be rewritten with
+/// the returned map, or they resolve against the destination's same-id
+/// definitions — B's decimal lists render with A's bullet `abstractNum`.
+///
+/// A copied `abstractNum` brings the `w:numPicBullet`s its levels name
+/// (`w:lvlPicBulletId`), under a fresh id when the destination already
+/// uses B's: a level naming an undefined picture bullet makes Word refuse
+/// the package.
 pub fn copy_missing_numbering(
     dom: &mut Dom,
     to_root: NodeId,
@@ -556,14 +575,15 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
 
 /// Errors raised by [`rectify_footnote_endnote_ids`]. Mirrors the failure
 /// paths around `WlComparer` `RectifyFootnoteEndnoteIds` (:3816); typed so
-/// callers can choose to fail-loud vs skip.
+/// callers can choose to fail-loud vs skip. The strings the variants print
+/// via [`std::fmt::Display`] are the same messages the C# oracle throws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RectifyError {
     /// A note definition id was not found in the notes part it is looked up
     /// in (before ∪ after when renumbering, the one part the reference's
     /// status names when its definition is processed).
     MissingNoteDef {
-        /// The missing note definition id.
+        /// The note definition id that was not found.
         id: String,
     },
     /// The withRevisions footnotes/endnotes part is absent.
@@ -576,7 +596,7 @@ pub enum RectifyError {
     MissingSourcePart {
         /// `"footnotes"` or `"endnotes"`.
         kind: &'static str,
-        /// `"before"` or `"after"`.
+        /// `"before"` or `"after"`, naming which document side.
         side: &'static str,
     },
     /// A note reference carries a correlation status the definition
@@ -620,25 +640,36 @@ impl std::fmt::Display for RectifyError {
 
 impl std::error::Error for RectifyError {}
 
-/// The three roots the rectifier needs for one note kind (footnote or endnote):
-/// the original `before`, the comparison `after`, and the freshly-built
-/// `with_revisions` (where we keep separators and re-add the renumbered defs).
+/// The three roots the rectifier needs for one note kind (footnote or
+/// endnote): the original `before`, the comparison `after`, and the
+/// freshly-built `with_revisions` (where the rectifier keeps separators
+/// and re-adds the renumbered referenced definitions).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NotesSet {
-    /// `before`.
+    /// Original document's notes part (`word/footnotes.xml` /
+    /// `word/endnotes.xml`), if any.
     pub before: Option<NodeId>,
-    /// `after`.
+    /// Revised document's notes part, if any.
     pub after: Option<NodeId>,
-    /// `with_revisions`.
+    /// Output package's writable notes part (`word/footnotes.xml` /
+    /// `word/endnotes.xml`). Required when there is at least one reference
+    /// to renumber; absent otherwise.
     pub with_revisions: Option<NodeId>,
 }
 
-/// M4.H.6/B.3 — `RectifyFootnoteEndnoteIds` (:3309): in the withRevisions
-/// notes part keep only the separators (-1/0), then re-add the *referenced*
-/// definitions renumbered 1-based by reference order (after-part lookup wins
-/// over before), and finalize each withRevisions part (:3433–:3450):
-/// MarkContentAsDeletedOrInserted + CoalesceAdjacentRuns + order-per-standard
-/// + IgnorePt14.
+/// M4.H.6/B.3 — `RectifyFootnoteEndnoteIds` (WmlComparer.ts :3309): in the
+/// output notes part keep only the separators (`-1` / `0`), then re-add the
+/// referenced definitions renumbered 1-based by reference order (after-part
+/// lookup wins over before), and finalize each with-revisions part:
+/// `MarkContentAsDeletedOrInserted` + `CoalesceAdjacentRuns` +
+/// order-per-standard + `IgnorePt14`.
+///
+/// # Errors
+///
+/// [`RectifyError`] when a reference has no matching definition in the
+/// before/after parts, or the `with_revisions` part is missing while the
+/// references need rewriting. The plan-then-apply order keeps the notes
+/// parts untouched on any failure.
 pub fn rectify_footnote_endnote_ids(
     dom: &mut Dom,
     main_root: NodeId,
@@ -814,10 +845,10 @@ fn apply_rectify(dom: &mut Dom, def_name: &XName, notes: &NotesSet, plan: &Recti
     }
 }
 
-/// Drop `w:settings`/`w:footnotePr`/`w:endnotePr` children that reference note
-/// ids not present in the corresponding notes part. Rectify may remove
-/// special notes (or never re-emit them); a dangling settings reference is a
-/// Word repair-dialog trigger (validated by OpenXmlValidator Semantic).
+/// Drop `w:footnote`/`w:endnote` children of `w:footnotePr`/`w:endnotePr`
+/// whose `@w:id` is not present in the corresponding notes part. Rectify
+/// may remove special notes (or never re-emit them); a dangling settings
+/// reference is a Word repair-dialog trigger.
 pub fn sync_settings_special_note_ids(
     settings_dom: &mut Dom,
     settings_root: NodeId,
@@ -846,11 +877,13 @@ pub fn sync_settings_special_note_ids(
     }
 }
 
-/// M4.H.7 — `FixUpFootnotesEndnotesWithCustomMarkers` (:2474/:2484): a custom-marker
-/// footnote/endnote reference's delText/t must sit in the SAME run as the
-/// reference. For each `footnoteReference`/`endnoteReference[@customMarkFollows]`
-/// inside a `w:r` whose grandparent is `w:del`/`w:ins`, pull the delText/t of the
-/// run in the next sibling element into the reference's run. In-place.
+/// M4.H.7 — `FixUpFootnotesEndnotesWithCustomMarkers` (WmlComparer.ts
+/// :2474 / :2484): a custom-marker footnote/endnote reference's
+/// `w:delText` / `w:t` must sit in the same run as the reference. For each
+/// `w:footnoteReference` / `w:endnoteReference[@w:customMarkFollows]` inside
+/// a `w:r` whose grandparent is `w:del` / `w:ins`, pull the `w:delText` /
+/// `w:t` of the matching-leaved run in the immediately following sibling
+/// `w:del` / `w:ins` into the reference's own run, in place. Idempotent.
 pub fn fix_up_footnotes_endnotes_with_custom_markers(dom: &mut Dom, root: NodeId) {
     let cmf = W::name("customMarkFollows");
     let refs: Vec<NodeId> = [W::name("footnoteReference"), W::name("endnoteReference")]

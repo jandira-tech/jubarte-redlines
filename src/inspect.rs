@@ -27,7 +27,8 @@ mod tables;
 
 pub use tables::{Table, TableCell};
 
-/// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
+/// Wire schema version of [`inspect_json`] and of the [`crate::edit`]
+/// plan that consumes it.
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// The story every document has; its paragraph ids are `pN`, and a
@@ -121,7 +122,8 @@ pub struct Summary {
     pub track_changes: bool,
 }
 
-/// Snapshot serialized by [`inspect_json`].
+/// Snapshot of a package as it stood at inspection time, serialized by
+/// [`inspect_json`] and consumed by [`crate::edit::apply_plan_json`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
     /// Wire schema version.
@@ -273,12 +275,26 @@ pub fn source_sha256(bytes: &[u8]) -> String {
 }
 
 /// Body paragraphs in body order.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn paragraphs(docx: &[u8]) -> Result<Vec<Paragraph>, InspectError> {
     let opened = Opened::open(docx)?;
     Ok(body_paragraphs(&opened.dom, opened.body))
 }
 
 /// Package facts, following OPC relationships for related parts.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when a part cannot be read;
+/// [`InspectError::Invalid`] for a malformed XML part or an invalid setting
+/// value; [`InspectError::MissingDocument`] when no main document part is
+/// found.
 pub fn summary(docx: &[u8]) -> Result<Summary, InspectError> {
     let opened = Opened::open(docx)?;
     opened.summary()
@@ -286,11 +302,24 @@ pub fn summary(docx: &[u8]) -> Result<Summary, InspectError> {
 
 /// Header, footer and note stories in a stable order (headers, footers,
 /// footnotes, endnotes).
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::Invalid`] for a malformed part;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn stories(docx: &[u8]) -> Result<Vec<Story>, InspectError> {
     Opened::open(docx)?.stories()
 }
 
 /// Content controls (`w:sdt`) in the body, in document order.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn controls(docx: &[u8]) -> Result<Vec<ContentControl>, InspectError> {
     let opened = Opened::open(docx)?;
     Ok(collect_controls(&opened.dom, opened.body))
@@ -310,6 +339,12 @@ pub fn markdown(docx: &[u8]) -> Result<String, InspectError> {
 
 /// Body tables as grids: each cell's text and paragraph ids, the header
 /// rows and the grid widths.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn tables(docx: &[u8]) -> Result<Vec<Table>, InspectError> {
     let opened = Opened::open(docx)?;
     Ok(tables::body_tables(&opened.dom, opened.body))
@@ -317,6 +352,13 @@ pub fn tables(docx: &[u8]) -> Result<Vec<Table>, InspectError> {
 
 /// The full snapshot: `schema_version`, `source_sha256`, `summary`,
 /// `paragraphs`, `stories`, `tables`, `controls`, `changes` and `comments`.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package or comments part cannot be
+/// read; [`InspectError::Invalid`] for a malformed part;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
     // One open serves every field; the comment scan marks up the body's
     // DOM, so it runs last.
@@ -345,6 +387,11 @@ pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
 }
 
 /// [`snapshot`] as JSON.
+///
+/// # Errors
+///
+/// As [`snapshot`]; [`InspectError::Invalid`] when the snapshot cannot be
+/// serialized.
 pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
     serde_json::to_string(&snapshot(docx)?).map_err(|e| InspectError::Invalid(e.to_string()))
 }

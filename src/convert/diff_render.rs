@@ -2,9 +2,19 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Visual page diff: render two documents at one resolution and compare the
-//! pages pixel for pixel. The renderer is deterministic (the same input
-//! writes the same bytes), so any changed pixel is a changed page.
+//! Visual page diff: render two documents at one resolution and compare
+//! the pages pixel for pixel.
+//!
+//! The renderer is deterministic (the same input produces the same bytes),
+//! and pages whose PNG bytes differ are compared by their decoded pixels,
+//! so only a changed pixel is a changed page. Both
+//! sides go through [`super::render`] at the same DPI and the same
+//! [`PdfOptions`], so the diff is the redline-versus-original signal, free
+//! of layout noise.
+//!
+//! Entry point: [`diff_render`]. The overlay marks changed pixels magenta
+//! over `b`'s page and boxes them; the per-page result is in
+//! [`RenderDiff`] / [`PageDiff`].
 
 use image::{ImageFormat, Rgba, RgbaImage};
 use serde::Serialize;
@@ -19,15 +29,18 @@ const BOX_MARGIN: u32 = 2;
 /// How [`diff_render`] renders and marks the two documents.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DiffOptions {
-    /// Raster resolution of both sides.
+    /// Raster resolution of both sides, in dots per inch.
     pub dpi: f32,
-    /// Layout and revision style of both sides.
+    /// Layout and revision-mark style shared by both sides.
     pub pdf: PdfOptions,
-    /// Paint changed pixels magenta over `b`'s page and box them.
+    /// Paint changed pixels magenta over `b`'s page and frame them with a
+    /// one-pixel box; when false only the ratios and bounding boxes are
+    /// returned.
     pub overlay: bool,
 }
 
 impl Default for DiffOptions {
+    /// `dpi = 100.0`, the default [`PdfOptions`], overlays on.
     fn default() -> Self {
         Self {
             dpi: 100.0,
@@ -40,13 +53,13 @@ impl Default for DiffOptions {
 /// How one page differs between the two documents.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PageDiff {
-    /// Zero-based page index.
+    /// Zero-based page index in the longer of the two documents.
     pub index: usize,
-    /// Changed pixels over all pixels, 0.0 to 1.0. 1.0 when the page exists
-    /// on one side only or the two pages differ in size.
+    /// Changed pixels over all pixels, 0.0 to 1.0. 1.0 when the page
+    /// exists on one side only or the two pages differ in size.
     pub changed_ratio: f32,
     /// `[x0, y0, x1, y1]` in pixels around every changed pixel (`x1` and
-    /// `y1` exclusive); `None` when equal.
+    /// `y1` exclusive); `None` when the page is equal.
     pub bbox: Option<[u32; 4]>,
     /// `"a"` or `"b"` when the page exists on one side only; never skipped.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,7 +67,8 @@ pub struct PageDiff {
 }
 
 impl PageDiff {
-    /// Whether this page differs at all.
+    /// Whether this page differs at all (`changed_ratio > 0.0` or one side
+    /// has it only).
     #[must_use]
     pub fn differs(&self) -> bool {
         self.changed_ratio > 0.0 || self.only_in.is_some()
@@ -66,30 +80,42 @@ impl PageDiff {
 pub struct RenderDiff {
     /// One entry per page of the longer document, in page order.
     pub pages: Vec<PageDiff>,
-    /// `a`'s PNG pages.
+    /// `a`'s PNG pages, in page order.
     pub a: Vec<Vec<u8>>,
-    /// `b`'s PNG pages.
+    /// `b`'s PNG pages, in page order.
     pub b: Vec<Vec<u8>>,
-    /// Per entry of `pages`: `b`'s page with the change painted and boxed,
-    /// or `None` when the page is equal, exists on one side only, differs
-    /// in size, or overlays were not asked for.
+    /// One per page of `pages`: `b`'s page with the change painted and
+    /// boxed, or `None` when the page is equal, exists on one side only,
+    /// differs in size, or [`DiffOptions::overlay`] was not asked for.
     pub overlays: Vec<Option<Vec<u8>>>,
-    /// `a`'s page count, page text and fonts.
+    /// `a`'s [`super::RenderReport`]: page count, painted text, font
+    /// resolutions.
     pub a_report: RenderReport,
-    /// `b`'s page count, page text and fonts.
+    /// `b`'s [`super::RenderReport`].
     pub b_report: RenderReport,
 }
 
 impl RenderDiff {
-    /// Whether any page differs.
+    /// Whether any page in `pages` reports a change.
     #[must_use]
     pub fn differs(&self) -> bool {
         self.pages.iter().any(PageDiff::differs)
     }
 }
 
-/// Which pages of `a` and `b` differ, from one layout pass each at
-/// `options.dpi`.
+/// Render `a` and `b` once each at `options.dpi` and report the pages
+/// that differ pixel for pixel. The two sides share the same layout and
+/// `PdfOptions`, so the diff is exactly the redline-versus-original
+/// signal.
+///
+/// # Errors
+///
+/// [`ConvertError::OpenPackage`] or [`ConvertError::MissingDocument`] when
+/// either input is not a readable package with a main document;
+/// [`ConvertError::Raster`] when either document's PNG cannot be decoded
+/// or the overlay cannot be encoded, or when either layout's rasterizer
+/// reports a page too large to paint at the requested DPI (see
+/// [`super::render`]).
 pub fn diff_render(a: &[u8], b: &[u8], options: &DiffOptions) -> Result<RenderDiff, ConvertError> {
     let request = RenderRequest {
         pdf: false,

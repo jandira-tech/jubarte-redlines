@@ -2,14 +2,20 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `jubarte self-update`: replace this binary with a GitHub release, only when
-//! the user runs the command (docs/SELF_UPDATE.md).
+//! `jubarte self-update`: replace this binary with a GitHub release when the
+//! user runs `jubarte self-update` (docs/SELF_UPDATE.md).
 //!
 //! The release lookup, SHA-256 check against `SHA256SUMS.txt`, zipsign
-//! signature check, archive extraction and binary swap are the `self_update`
-//! crate's. This module decides what to install, when to ask, and when a
-//! signature is required, and keeps those decisions free of I/O so they are
-//! unit-tested.
+//! signature check, archive extraction and binary swap are the
+//! [`self_update`](https://docs.rs/self_update) crate's. This module builds
+//! the call the binary makes: it picks the release archive for this platform
+//! (`asset_target`), decides whether the target is newer
+//! (`plan`) and refuses to ask on a non-interactive stdin
+//! (`preflight`). The signature rule lives in `signature_required`,
+//! split out so it is unit-tested without I/O.
+//!
+//! Entry points: `run` for the command itself, `plan` /
+//! `preflight` / `signature_required` for the decisions.
 
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -41,21 +47,26 @@ const RELEASE_KEYS: &[self_update::VerifyingKey] = &[];
 /// `v` (`Some("0.11.0")`). `None` until [`RELEASE_KEYS`] holds a key.
 const FIRST_SIGNED_RELEASE: Option<&str> = None;
 
-/// What the user asked for.
+/// The flags `jubarte self-update` accepts, resolved from the CLI before
+/// [`run`] sees them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Options {
-    /// Print the installed and latest versions; install nothing.
+    /// Print the installed and the latest version and install nothing
+    /// (`--check`).
     pub check: bool,
-    /// Install without asking.
+    /// Install without the interactive prompt (`--yes`).
     pub yes: bool,
-    /// Install this release (`0.10.0` or `v0.10.0`), older ones included.
+    /// Install this release (`0.10.0` or `v0.10.0`; `--version`). A
+    /// request may downgrade; the installed version itself is up to date
+    /// and is not installed again.
     pub version: Option<String>,
 }
 
-/// What to do once the target release is known.
+/// The decision [`plan`] returns, once the target release is known.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Plan {
-    /// The installed version is the target (or newer, without `--version`).
+    /// The installed version is the target (or already newer, when no
+    /// `--version` was asked for): nothing to do.
     UpToDate {
         /// The installed version.
         current: String,
@@ -69,9 +80,9 @@ pub enum Plan {
     },
 }
 
-/// Release archive suffix for this machine (`macos-aarch64`, ...), matching
-/// the names `.github/workflows/release.yml` publishes; `None` where no
-/// archive is built.
+/// The release archive suffix this binary will look up (`macos-aarch64`,
+/// `linux-x86_64`, …), matching the names `release.yml` publishes. `None`
+/// for an OS / arch pair no archive is built for.
 #[must_use]
 pub fn asset_target() -> Option<&'static str> {
     asset_target_for(std::env::consts::OS, std::env::consts::ARCH)
@@ -97,13 +108,15 @@ fn bin_path_in_archive(target: &str) -> String {
     )
 }
 
-/// Refuse before any network access when the command would have to ask and
-/// there is no terminal to ask on.
+/// Refuse to start when the command would have to prompt and the stdin
+/// channel is not a terminal. None of the operation is touched, not even a
+/// network lookup.
 ///
 /// # Errors
 ///
-/// A message when neither `--check` nor `--yes` is given and stdin is not a
-/// terminal.
+/// A message when neither [`Options::check`] nor [`Options::yes`] is set
+/// and `interactive` is `false`: passing `--check` or `--yes`, or being on a
+/// terminal, lets the run continue.
 pub fn preflight(opts: &Options, interactive: bool) -> Result<(), String> {
     if opts.check || opts.yes || interactive {
         Ok(())
@@ -117,8 +130,13 @@ fn bare(version: &str) -> &str {
     version.strip_prefix('v').unwrap_or(version)
 }
 
-/// Decide between staying and installing. Without a requested version only a
-/// newer release installs; a requested version installs whenever it differs.
+/// Decide between staying and installing for a given installed version and
+/// the version `self_update` resolved on GitHub.
+///
+/// Without a requested version only a strictly newer release installs; a
+/// requested version installs whenever it differs from the installed one
+/// (downgrades included); the installed version is [`Plan::UpToDate`]. A leading `v` is stripped, so
+/// `v0.10.0` and `0.10.0` name the same release.
 ///
 /// # Errors
 ///
@@ -143,15 +161,28 @@ pub fn plan(current: &str, target: &str, requested: bool) -> Result<Plan, String
     })
 }
 
-/// Run `jubarte self-update`. Writes progress to stdout, the question to
-/// stderr, and reads the answer from stdin.
+/// `jubarte self-update`. `Ok` means the run finished without error: the
+/// binary is replaced only when an install completes, and `--check`, an
+/// up-to-date release or a declined prompt leave it as it was. On failure
+/// the installed binary is unchanged. Writes progress to
+/// stdout, the prompt to stderr, and reads the answer from stdin.
+///
+/// The flow is: [`preflight`] → resolve the release for this platform
+/// ([`asset_target`]) → decide ([`plan`]) → optional prompt → optional
+/// signature rule ([`signature_required`]) → `self_update` install. A prompt
+/// `y` / `Y` / `yes` confirms; anything else is "no".
 ///
 /// # Errors
 ///
-/// A message for an unsupported platform, a refused preflight, a network or
-/// GitHub failure, a missing or mismatched checksum, a missing or invalid
-/// signature where one is required ([`signature_required`]), or a failed
-/// swap.
+/// A message for one of:
+/// - the platform has no published archive ([`asset_target`] is `None`);
+/// - the [`preflight`] check refused the run;
+/// - the GitHub release lookup failed or returned no release;
+/// - the network or GitHub error inside the `self_update` installer;
+/// - the checksum download or verification did not match;
+/// - a signature was required but missing or did not verify against
+///   [`signature_required`];
+/// - the binary swap step failed.
 pub fn run(opts: &Options) -> Result<(), String> {
     let interactive = std::io::stdin().is_terminal();
     preflight(opts, interactive)?;
@@ -227,17 +258,18 @@ pub fn run(opts: &Options) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether installing `target_version` must pass a zipsign signature check
-/// against the trusted keys.
+/// Whether installing `target_version` must pass a zipsign signature check.
 ///
-/// True only when keys are trusted and the target is `first_signed` or later:
-/// releases published before signing began carry no signature, so a
-/// `--version` downgrade to one of them is checked by its SHA-256 alone.
+/// True only when `keys_present` and the release sorts at or after
+/// `first_signed`: releases published before signing began carry no
+/// signature, so a `--version` downgrade to one of them is checked by its
+/// SHA-256 alone. A `v` prefix on either version is stripped before the
+/// comparison.
 ///
 /// # Errors
 ///
-/// A message when keys are trusted, a first signed release is set, and either
-/// version is not semver.
+/// A message when `keys_present` and `first_signed` are both set but either
+/// side is not semver.
 pub fn signature_required(
     target_version: &str,
     first_signed: Option<&str>,
