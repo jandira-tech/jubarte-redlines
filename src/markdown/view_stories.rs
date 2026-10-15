@@ -854,7 +854,7 @@ pub(super) fn write(
                     }
                 };
                 refs.push((
-                    reference_rank(kind, &story.ty),
+                    reference_rank(kind, story.ty),
                     format!("<w:{kind}Reference w:type=\"{}\" r:id=\"{id}\"/>", story.ty),
                 ));
             }
