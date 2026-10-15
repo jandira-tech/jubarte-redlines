@@ -435,7 +435,7 @@ pub enum OperationKind {
     /// `text`, `choice`, `checked` or `date`. The control keeps its
     /// properties; its content becomes the value.
     FillControl {
-        /// The control: `"body:sdt:N"`, `{"id"}`, `{"tag"}` or `{"alias"}`;
+        /// The control: `"p3.cc0"` / `"cc1"`, `{"id"}`, `{"tag"}` or `{"alias"}`;
         /// must match exactly one.
         control: ControlSelector,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1882,7 +1882,7 @@ struct Transaction<'p> {
     reply_parents: BTreeMap<u32, u32>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
-    /// The body's content controls, `body:sdt:N` order.
+    /// The body's content controls, in document order.
     controls: Vec<NodeId>,
     /// What `inspect` reports for each of `controls`.
     control_records: Vec<crate::inspect::ContentControl>,

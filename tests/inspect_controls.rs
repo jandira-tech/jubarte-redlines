@@ -47,7 +47,7 @@ fn records_carry_ids_alias_text_and_owner_paragraph() {
     let list = controls(&form()).unwrap();
     assert_eq!(
         list.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
-        ["body:sdt:0", "body:sdt:1", "body:sdt:2"]
+        ["p0.cc0", "p1.cc0", "p2.cc0"]
     );
     assert_eq!(list[0].alias.as_deref(), Some("Full name"));
     assert_eq!(list[0].text, "Click here");
@@ -153,6 +153,7 @@ fn block_level_control_lists_its_paragraphs_and_joins_their_text() {
     let body = r#"<w:p><w:r><w:t>before</w:t></w:r></w:p><w:sdt><w:sdtPr><w:tag w:val="Terms"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:t>second</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>after</w:t></w:r></w:p>"#;
     let list = controls(&docx(body)).unwrap();
     assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, "cc0");
     assert_eq!(list[0].paragraph_ids, ["p1", "p2"]);
     assert_eq!(list[0].text, "first\nsecond");
 }
@@ -163,6 +164,8 @@ fn nested_controls_are_both_listed_in_document_order() {
     let list = controls(&docx(body)).unwrap();
     let tags: Vec<_> = list.iter().map(|c| c.tag.as_deref().unwrap()).collect();
     assert_eq!(tags, ["Outer", "Inner"]);
+    let ids: Vec<_> = list.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids, ["cc0", "p0.cc0"]);
     assert_eq!(list[0].paragraph_ids, ["p0"]);
     assert_eq!(list[1].paragraph_ids, ["p0"]);
 }
@@ -187,4 +190,43 @@ fn a_document_without_controls_lists_none() {
     )
     .unwrap();
     assert_eq!(json["controls"], serde_json::json!([]));
+}
+
+#[test]
+fn control_ids_are_block_cc_and_paragraph_cc() {
+    // Spec ids table: a block control is `ccN` (the body's block controls in
+    // order), an inline one `pN.ccK` (the paragraph's own controls in order).
+    let two = |tag: &str| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent><w:r><w:t>{tag}</w:t></w:r></w:sdtContent></w:sdt>"#
+        )
+    };
+    let block = |tag: &str| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>{tag}</w:t></w:r></w:p></w:sdtContent></w:sdt>"#
+        )
+    };
+    let body = format!(
+        "<w:p>{}{}</w:p>{}<w:p><w:r><w:t>x</w:t></w:r>{}</w:p>{}",
+        two("A"),
+        two("B"),
+        block("C"),
+        two("D"),
+        block("E")
+    );
+    let list = controls(&docx(&body)).unwrap();
+    let ids: Vec<_> = list
+        .iter()
+        .map(|c| (c.tag.as_deref().unwrap(), c.id.as_str()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("A", "p0.cc0"),
+            ("B", "p0.cc1"),
+            ("C", "cc0"),
+            ("D", "p2.cc0"),
+            ("E", "cc1")
+        ]
+    );
 }

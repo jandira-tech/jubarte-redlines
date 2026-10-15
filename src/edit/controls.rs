@@ -21,11 +21,12 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ControlSelector {
-    /// `"body:sdt:3"`, the same as `{"id": "body:sdt:3"}`.
+    /// `"p3.cc0"` or `"cc1"`, the same as `{"id": "p3.cc0"}`.
     Name(String),
-    /// `{"id": "body:sdt:3"}`.
+    /// `{"id": "p3.cc0"}`.
     Id {
-        /// `body:sdt:N` from `inspect`'s `controls`.
+        /// `ccN` (a block control) or `pN.ccK` (one in paragraph `pN`)
+        /// from `inspect`'s `controls`.
         id: String,
     },
     /// `{"tag": "Name"}`: the control's `w:tag`.
@@ -204,20 +205,32 @@ impl Transaction<'_> {
         let records = &self.control_records;
         let (what, hits): (String, Vec<usize>) = match selector {
             ControlSelector::Name(id) | ControlSelector::Id { id } => {
-                let n = id
+                if let Some(n) = records.iter().position(|r| &r.id == id) {
+                    return Ok(n);
+                }
+                // The expired `body:sdt:N` names the Nth control: refused,
+                // with the id it now has.
+                let settled = id
                     .strip_prefix("body:sdt:")
                     .and_then(|n| n.parse::<usize>().ok())
-                    .filter(|&n| n < records.len());
-                return n.ok_or_else(|| {
-                    (
-                        "ANCHOR_NOT_FOUND",
-                        format!(
-                            "no content control {id:?}; the body has {} (body:sdt:0 to body:sdt:N)",
-                            records.len()
-                        ),
-                        0,
-                    )
-                });
+                    .and_then(|n| records.get(n))
+                    .map(|r| format!("; the settled spelling is {}", r.id))
+                    .unwrap_or_default();
+                let known = match records.as_slice() {
+                    [] => "the body has none".to_string(),
+                    [only] => format!("the body has {}", only.id),
+                    [first, .., last] => format!(
+                        "the body has {} ({} to {})",
+                        records.len(),
+                        first.id,
+                        last.id
+                    ),
+                };
+                return Err((
+                    "ANCHOR_NOT_FOUND",
+                    format!("no content control {id:?}; {known}{settled}"),
+                    0,
+                ));
             }
             ControlSelector::Tag { tag } => (
                 format!("tag {tag:?}"),
