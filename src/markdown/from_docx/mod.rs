@@ -4051,21 +4051,14 @@ fn hyperlink_instruction(instruction: &str) -> Option<String> {
 }
 
 /// The table style the view names for `t`. Table Grid, the writer's
-/// default (Word's Insert Table), is none, as is no style over borders of
-/// the table's own (Demo.docx's thin grid); no style and no borders is
-/// Word's Normal Table, which the view names so the writer adds none.
+/// default (Word's Insert Table), is none; no style is Word's Normal Table,
+/// which the view names so the writer adds none. Borders the table carries
+/// itself print on its line (`borders …`).
 fn view_table_style(t: &Element) -> Option<&str> {
     match t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
         Some("TableGrid") => None,
         Some(style) => Some(style),
-        None => {
-            let bordered = t.path(&["tblPr", "tblBorders"]).is_some_and(|borders| {
-                borders
-                    .elements()
-                    .any(|side| !matches!(side.attr("val"), Some("nil" | "none") | None))
-            });
-            (!bordered).then_some("TableNormal")
-        }
+        None => Some("TableNormal"),
     }
 }
 
