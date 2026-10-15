@@ -2,19 +2,26 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! LCS correlation (M4.3). Port of the core of `DoLcsAlgorithm`.
+//! LCS correlation (M4.3 / C.4–C.12).
 //!
-//! The TS `DoLcsAlgorithm` finds the longest common CONTIGUOUS run of comparison
-//! units by SHA-1 hash, emits Equal for it, and recurses on the before/after
-//! remainders (with Deleted/Inserted for one-sided remainders). This module
-//! implements that recursion at the atom level — sufficient to tag a merged atom
-//! stream with Equal/Inserted/Deleted for the common (paragraph-text) case.
+//! Port of the core of `DoLcsAlgorithm` plus the worklist driver
+//! (`lcs` / `resolve_correlated_sequences`) and the M4.C.5 / C.6
+//! front / back run resolvers. The atom-level `correlate_atoms`
+//! (the original M4.3 core) stays in place as a fast path; the
+//! production entry is [`lcs`], which seeds an `Unknown` pair and
+//! resolves it through:
 //!
-//! NOTE: the full `DoLcsAlgorithm` additionally special-cases table/row/cell/
-//! textbox groups (WmlComparer.ts:7578-7944) and applies word-break/threshold
-//! guards on comparison UNITS. Those refinements (needed for table fixtures and
-//! exact golden parity) build on this core and are the documented remaining work
-//! for M4.3.
+//! 1. [`set_after_unids`] — stabilise the revised-side ancestor unids;
+//! 2. [`resolve_paragraph_window`] — Word's changed-paragraph driver
+//!    (carriers, paragraph-mark split, threshold-voided run, …);
+//! 3. [`process_correlated_hashes`] / [`process_correlated_hashes_in_story`]
+//!    — pair runs of groups by `pt:CorrelatedSHA1Hash`;
+//! 4. [`find_common_at_beginning_and_end`] — front / back common runs;
+//! 5. [`do_lcs_algorithm`] — paragraph-text LCS with all the C-step guards.
+//!
+//! [`detect_unrelated_sources`] / [`detect_unrelated_sources_word_mode`] short-circuit
+//! wholesale del+ins when the two documents are disjoint at the group level.
+//! [`pair_story_final_marks`] welds the final paragraph marks behind an inserted tail.
 
 use super::CorrelationStatus;
 use super::atoms::ComparisonUnitAtom;
@@ -47,17 +54,18 @@ impl std::hash::Hasher for U64IdentityHasher {
 /// `BuildHasher` for [`U64IdentityHasher`].
 pub(crate) type U64BuildHasher = std::hash::BuildHasherDefault<U64IdentityHasher>;
 
-/// An atom tagged with its correlation status, ready for the produce step.
+/// One atom tagged with its correlation status, ready for the produce step.
 #[derive(Clone, Debug)]
 pub struct TaggedAtom {
-    /// `atom`.
+    /// The atom.
     pub atom: ComparisonUnitAtom,
-    /// `status`.
+    /// Its correlation status against the other side.
     pub status: CorrelationStatus,
 }
 
-/// Correlate two atom streams (by `sha1_hash`) into a merged, tagged stream.
-/// Equal atoms carry the *modified* side's atom; Deleted carry the original's.
+/// Correlate two atom streams by `sha1_hash` into a merged, tagged stream.
+/// `Equal` atoms carry the *modified* side's atom; `Deleted` carry the
+/// original's. Recursive longest-common-contiguous-run.
 pub fn correlate_atoms(
     atoms1: &[ComparisonUnitAtom],
     atoms2: &[ComparisonUnitAtom],
@@ -785,16 +793,20 @@ fn take_while_count_rev(slice: &[ComparisonUnit], pred: impl Fn(&ComparisonUnit)
     slice.iter().rev().take_while(|u| pred(u)).count()
 }
 
-/// M4.C.4 — `FindIndexOfNextParaMark` (:8226): first index whose LAST descendant
-/// atom is a `w:pPr`, else `cul.len()`.
+/// M4.C.4 — `FindIndexOfNextParaMark` (WmlComparer.ts :8226): first
+/// comparison-unit index whose LAST descendant atom is a `w:pPr`, or
+/// `cul.len()` when no such unit exists. Used by the paragraph-aware splits
+/// to break runs on the paragraph mark.
 pub fn find_index_of_next_para_mark(dom: &Dom, cul: &[ComparisonUnit]) -> usize {
     cul.iter()
         .position(|u| unit_last_atom_is_ppr(dom, u))
         .unwrap_or(cul.len())
 }
 
-/// M4.C.4 — `SplitAtParagraphMark` (:5895): split at the first unit whose FIRST
-/// descendant atom is a `w:pPr`, keeping that unit at the head of chunk 2.
+/// M4.C.4 — `SplitAtParagraphMark` (WmlComparer.ts :5895): split at the
+/// first unit whose FIRST descendant atom is a `w:pPr`, keeping that unit
+/// at the head of chunk 2. The single-chunk fallback returns the input
+/// wrapped in a `Vec`.
 pub fn split_at_paragraph_mark(dom: &Dom, cua: &[ComparisonUnit]) -> Vec<Vec<ComparisonUnit>> {
     match cua.iter().position(|u| unit_first_atom_is_ppr(dom, u)) {
         None => vec![cua.to_vec()],
@@ -802,13 +814,16 @@ pub fn split_at_paragraph_mark(dom: &Dom, cua: &[ComparisonUnit]) -> Vec<Vec<Com
     }
 }
 
-/// M4.C.2 — `DoLcsAlgorithm` Step B: longest common CONTIGUOUS run by `sha1()`.
-/// Returns `(i1, i2, len)`; `len == 0` means no common run.
+/// M4.C.2 — `DoLcsAlgorithm` Step B: longest common CONTIGUOUS run by
+/// [`ComparisonUnit::sha1`]. Returns `(i1, i2, len)`; `len == 0` means
+/// no common run.
 ///
-/// Ranking (M84 / file_81): prefer higher non-separator content length, then
-/// longer run. A pure-space common unit of length 1 used to beat equal-length
-/// content word `"style"` (first-found wins), then Step F voided the space and
-/// the whole residual became del+ins — Word keeps Equal `"style"`.
+/// Ranking (M84 / file_81): in Word mode prefer higher non-separator
+/// content length, then longer run. A pure-space common unit of length 1
+/// used to beat an equal-length content word `"style"` (first-found wins);
+/// Step F then voided the space and the whole residual became del+ins,
+/// while Word keeps `Equal "style"`. The PowerTools-faithful preset ranks
+/// by pure length.
 pub fn longest_common_run(
     cul1: &[ComparisonUnit],
     cul2: &[ComparisonUnit],
@@ -2469,10 +2484,13 @@ fn cascade(
     }
 }
 
-/// M4.C.3/C.4/C.7 — `DoLcsAlgorithm`: Step A (empty), Step B (run), Steps C–G
-/// (para-mark/word-break/threshold guards), Step I (paragraph-aware split).
-/// Step H structural dispatch (groups/rows/tables) lands in C.8–C.10; until then
-/// a no-common-run resolves to Deleted+Inserted (the H9 fallback).
+/// M4.C.3 / C.4 / C.7 — `DoLcsAlgorithm`: Step A (empty fast paths), Step B
+/// (longest common contiguous run, via [`longest_common_run`]), Steps C–G
+/// (paragraph-mark / word-break / threshold guards, M×N carriers, mixed
+/// and unchanged runs), and Step I (paragraph-aware split). Step H
+/// structural dispatch (groups/rows/tables) lives in C.8–C.10 and falls
+/// through to `Deleted+Inserted` (the H9 fallback) when the LCS finds no
+/// common run.
 pub fn do_lcs_algorithm(
     dom: &mut Dom,
     unknown: CorrelatedSequence,
@@ -5594,9 +5612,11 @@ fn step_h(
     out
 }
 
-/// M4.C.12 — `DetectUnrelatedSources` (:7017): if both sides have ≥4 groups and
-/// their group `sha1` sets are completely disjoint, treat the documents as
-/// unrelated (delete everything, insert everything). Top-level pre-check.
+/// M4.C.12 — `DetectUnrelatedSources` (WmlComparer.ts :7017): when both
+/// sides have ≥4 groups and their group `sha1` sets are completely
+/// disjoint, treat the documents as unrelated and emit a wholesale
+/// `Deleted+Inserted`. Returns `None` to decline (the driver falls through
+/// to [`do_lcs_algorithm`]).
 pub fn detect_unrelated_sources(
     cu1: &[ComparisonUnit],
     cu2: &[ComparisonUnit],
@@ -5752,14 +5772,17 @@ fn has_common_run_ge(left: &[ComparisonUnit], right: &[ComparisonUnit], target: 
         .any(|h| right_set.contains(&h))
 }
 
-/// Word pairs the two documents' final paragraph marks and joins the revised
-/// document's last paragraph to the original's first deleted paragraph
-/// (file_58 × file_59: the revised list ends at "Ωω Omega", the original
-/// continues "Meeting Agenda" and a table). Full LCS emits
-/// `[Deleted D, Inserted I¶, Deleted …, Deleted ¶]`; Word's shape is
-/// `[Inserted I, Deleted D, Deleted …, Equal ¶]`, so the joined paragraph
-/// keeps the original's properties and deleted mark, and the story-final
-/// paragraph carries the revised properties.
+/// Word pairs the two documents' final paragraph marks and joins the
+/// revised document's last paragraph to the original's first deleted
+/// paragraph. Full LCS emits `[Deleted D, Inserted I¶, Deleted …,
+/// Deleted ¶]`; Word's shape is `[Inserted I, Deleted D, Deleted …,
+/// Equal ¶]`, so the joined paragraph keeps the original's properties
+/// and deleted mark, and the story-final paragraph carries the revised
+/// properties.
+///
+/// Tries three helpers in order (inserted-tail, replaced-tail, deleted-tail)
+/// and returns silently when none matches; the caller still pairs the two
+/// stories' final empty paragraphs when both are blank.
 pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
     if pair_final_marks_behind_inserted_tail(dom, seqs)
         || pair_final_marks_behind_replaced_tail(dom, seqs)
@@ -6027,9 +6050,15 @@ fn pair_final_marks_behind_inserted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSeq
 /// that story-final mark: Word pairs the two final pilcrows instead of
 /// inserting B's and deleting A's, and the document ends on the surviving
 /// empty paragraph (line_break × line_space_table). Left unpaired, B's
-/// trailing empty insert is later welded onto A's first deleted paragraph.
-/// `paired` reports that pairing; a junction seam ends on the same
-/// Inserted/Deleted/Equal shape without it.
+/// Word-mode unrelated-sources shortcut: when contentful block groups are
+/// disjoint (≥4 each) AND the longest pure-word common run would be
+/// voided by [`WmlComparerSettings::detail_threshold`], collapse to
+/// `Inserted(next) + Deleted(base)` like Word does.
+///
+/// Returns `(sequences, paired_flag)`. `paired_flag` is `true` when the
+/// helper also welded the revised trailing empty insert onto the original's
+/// first deleted paragraph (so the caller can pair the story-final marks).
+/// Returns `None` to decline (the driver falls through to [`do_lcs_algorithm`]).
 pub fn detect_unrelated_sources_word_mode(
     dom: &mut Dom,
     cu1: &[ComparisonUnit],
@@ -8730,10 +8759,12 @@ fn titles_share_last_sig(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUni
     }
 }
 
-/// M4.C.12 — `SetAfterUnids` (:7114): when an Unknown is a single group vs a
-/// single group of the same type, copy the original side's ancestor `pt:Unid`s
-/// onto the corresponding ancestors of the modified side's atoms (stabilises
-/// reassembly). Pure side-effect on `dom`.
+/// M4.C.12 — `SetAfterUnids` (WmlComparer.ts :7114): when an `Unknown` is
+/// a single group vs a single group of the same type, copy the original
+/// side's ancestor `pt:Unid`s onto the corresponding ancestors of the
+/// modified side's atoms. Stabilises reassembly: equal paragraphs keep the
+/// same paragraph id; coalesce packs the right children. Pure side-effect on
+/// `dom`.
 pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
     let a1 = match &unknown.com_units_1 {
         Some(v) if v.len() == 1 => v,
@@ -8814,10 +8845,15 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
     }
 }
 
-/// M4.C.11 — `ProcessCorrelatedHashes` (:7184): pre-correlate runs of groups
-/// (Paragraph/Table/Row) by `CorrelatedSHA1Hash`, emitting one Unknown per
-/// matched group, with before/after Deleted/Inserted/Unknown. Returns `None`
-/// (decline) when there are <3 units or no qualifying run.
+/// M4.C.11 — `ProcessCorrelatedHashes` (WmlComparer.ts :7184):
+/// pre-correlate runs of groups (Paragraph/Table/Row) by
+/// `pt:CorrelatedSHA1Hash`, emitting one `Unknown` per matched group, with
+/// before/after `Deleted`/`Inserted`/`Unknown`. Returns `None` (decline)
+/// when there are fewer than three units or no qualifying run.
+///
+/// The result carries every unit; callers' [`CorrelatedSequence`] vectors
+/// move (no clone) into the output. The test-only `process_correlated_hashes_owned`
+/// is the equivalence oracle for the production path.
 #[derive(Clone, Copy)]
 struct CorrelatedHashRun {
     left_start: usize,
@@ -9019,7 +9055,9 @@ fn correlated_hash_run(unknown: &CorrelatedSequence) -> Option<CorrelatedHashRun
     run
 }
 
-/// `process_correlated_hashes`.
+/// Production correlated-hash run selection (the production entry).
+/// Returns `None` to decline; the next branch in `resolve_correlated_sequences`
+/// tries [`find_common_at_beginning_and_end`] and then [`do_lcs_algorithm`].
 pub fn process_correlated_hashes(unknown: &CorrelatedSequence) -> Option<Vec<CorrelatedSequence>> {
     let run = correlated_hash_run(unknown)?;
     let cul1 = unknown.com_units_1.as_deref().unwrap_or(&[]);
@@ -9234,10 +9272,18 @@ fn unit_first_direct_atom_is_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
     first_direct_atom(u).is_some_and(|a| atom_is_ppr(dom, a))
 }
 
-/// M4.C.5/C.6 — `FindCommonAtBeginningAndEnd` (:5540): the resolver tried before
-/// DoLcsAlgorithm. Finds the longest common contiguous run at the FRONT (else the
-/// BACK), splitting the Unknown around it, paragraph-aware. Returns `None` to
-/// decline (driver falls through to DoLcsAlgorithm).
+/// M4.C.5 / C.6 — `FindCommonAtBeginningAndEnd` (WmlComparer.ts :5540):
+/// the resolver tried before [`do_lcs_algorithm`]. Finds the longest
+/// common contiguous run at the FRONT (else the BACK), splitting the
+/// `Unknown` around it, paragraph-aware. Returns `None` to decline; the
+/// driver falls through to [`do_lcs_algorithm`].
+///
+/// A front run shorter than [`WmlComparerSettings::detail_threshold`] of
+/// the shorter side is voided (Step F / M84). A back run starting with a
+/// paragraph mark (`w:pPr`) is trimmed so a body never begins with the
+/// pilcrow. The Word-mode tail handles blank-paragraph tail heads by
+/// either pairing them as Equal through the pilcrow chain or treating them
+/// as the story's final marks.
 pub fn find_common_at_beginning_and_end(
     dom: &Dom,
     unknown: &CorrelatedSequence,
@@ -9956,9 +10002,17 @@ fn resolve_paragraph_window(
     Ok(out)
 }
 
-/// Resolve all Unknown sequences in a worklist (SetAfterUnids →
-/// ResolveParagraphWindow → ProcessCorrelatedHashes →
-/// FindCommonAtBeginningAndEnd → DoLcsAlgorithm).
+/// Resolve all `Unknown` sequences in a worklist:
+///
+/// 1. [`set_after_unids`] — stabilise the revised-side ancestor unids;
+/// 2. the paragraph-window resolver (Word's changed-paragraph driver);
+/// 3. [`process_correlated_hashes_in_story`] — pre-correlate runs of
+///    groups by `pt:CorrelatedSHA1Hash`;
+/// 4. [`find_common_at_beginning_and_end`] — front / back common runs;
+/// 5. [`do_lcs_algorithm`] — paragraph-text LCS.
+///
+/// Bare-row (`Container`) `Unknown`s whose horizontal partitions differ get
+/// the table row-context specialisation first, preserving source geometry.
 pub fn resolve_correlated_sequences(
     dom: &mut Dom,
     mut cs_list: Vec<CorrelatedSequence>,
