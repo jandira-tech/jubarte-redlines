@@ -418,8 +418,12 @@ r9 @AC`) or as `fmt:` in its `sections:` entry; style changes as
 changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
 notes no definition shows (Word's separators) as `notes: {fmt: …}`;
 converting back puts a part's `fmt` changes on its separator, then its
-continuation separator (the view does not say which a lone one was on;
-its tag, author and date come back). A
+continuation separator, a reference document's own included (the view
+does not say which a lone one was on, nor a change on a continuation
+notice; its tag, author and date come back, with the separator's own
+formatting as the one before it, so accepting or rejecting it changes
+nothing). A `rev:` there (an insertion or deletion in a separator) is
+not written, and says so. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
