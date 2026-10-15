@@ -12,6 +12,7 @@ page: Letter portrait, margins 1in, header/footer 0.5in; fmt r226 @ASR
 styles:
   Normal: Inter 11pt, left         # default; unannotated paragraphs use it
   ListParagraph: Inter 11pt, named List Paragraph
+  tables: TableNormal
 notes: {fmt: footnotes.r0 @ASR; footnotes.r1 @ASR; endnotes.r2 @ASR; endnotes.r3 @ASR, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
   default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r223 @ASR<<}", style: Normal, fmt: header1.r222 @ASR}
@@ -172,7 +173,7 @@ _file\__{~~**14**~>_15_~~}{>>r8+7 @ASR<<}_.docx_
 
 <!-- p101 empty, break-del r206 @ASR -->
 
-<!-- t5 1x2, cells t5.row0 p102-p109, break-del r208 @ASR in p102; r210 @ASR in p103; r212 @ASR in p104; r213 @ASR in p105; r215 @ASR in p106; r217 @ASR in p107; r219 @ASR in p108; r220 @ASR in p109, rev-del r207 @ASR in t5.row0 -->
+<!-- t5 1x2, cells t5.row0 p102-p109, style TableNormal, break-del r208 @ASR in p102; r210 @ASR in p103; r212 @ASR in p104; r213 @ASR in p105; r215 @ASR in p106; r217 @ASR in p107; r219 @ASR in p108; r220 @ASR in p109, rev-del r207 @ASR in t5.row0 -->
 |{--**EigenPal**               --}{>>r209 @ASR<<}{--<br>Maintainer · eigenpal.com               --}{>>r211 @ASR<<}<br>{--<br>signature · date               --}{>>r214 @ASR<<}|{--**Contributor**               --}{>>r216 @ASR<<}{--<br>on behalf of the community               --}{>>r218 @ASR<<}<br>{--<br>signature · date               --}{>>r221 @ASR<<}|
 |-|-|
 

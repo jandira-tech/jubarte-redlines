@@ -12,6 +12,7 @@ page: Letter portrait, margins 1in, header/footer 0.5in; fmt r440 @AS
 styles:
   Normal: Inter 11pt, left         # default; unannotated paragraphs use it
   ListParagraph: Inter 11pt, named List Paragraph
+  tables: TableNormal
 notes: {fmt: footnotes.r0 @AS; footnotes.r1 @AS; endnotes.r2 @AS; endnotes.r3 @AS, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
   default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r437 @AS<<}", style: Normal, fmt: header1.r436 @AS}
@@ -311,7 +312,7 @@ footers:
 
 <!-- p197 empty, break-del r400 @AS -->
 
-<!-- t10 1x2, cells t10.row0 p198-p205, break-del r402 @AS in p198; r404 @AS in p199; r406 @AS in p200; r407 @AS in p201; r409 @AS in p202; r411 @AS in p203; r413 @AS in p204; r414 @AS in p205, rev-del r401 @AS in t10.row0 -->
+<!-- t10 1x2, cells t10.row0 p198-p205, style TableNormal, break-del r402 @AS in p198; r404 @AS in p199; r406 @AS in p200; r407 @AS in p201; r409 @AS in p202; r411 @AS in p203; r413 @AS in p204; r414 @AS in p205, rev-del r401 @AS in t10.row0 -->
 |{--**EigenPal**               --}{>>r403 @AS<<}{--<br>Maintainer · eigenpal.com               --}{>>r405 @AS<<}<br>{--<br>signature · date               --}{>>r408 @AS<<}|{--**Contributor**               --}{>>r410 @AS<<}{--<br>on behalf of the community               --}{>>r412 @AS<<}<br>{--<br>signature · date               --}{>>r415 @AS<<}|
 |-|-|
 
@@ -324,7 +325,7 @@ footers:
 
 <!-- p209 empty, break-del r420 @AS -->
 
-<!-- t11 1x2, cells t11.row0 p210-p217, break-del r422 @AS in p210; r424 @AS in p211; r426 @AS in p212; r427 @AS in p213; r429 @AS in p214; r431 @AS in p215; r433 @AS in p216; r434 @AS in p217, rev-del r421 @AS in t11.row0 -->
+<!-- t11 1x2, cells t11.row0 p210-p217, style TableNormal, break-del r422 @AS in p210; r424 @AS in p211; r426 @AS in p212; r427 @AS in p213; r429 @AS in p214; r431 @AS in p215; r433 @AS in p216; r434 @AS in p217, rev-del r421 @AS in t11.row0 -->
 |{--**EigenPal**               --}{>>r423 @AS<<}{--<br>Maintainer · eigenpal.com               --}{>>r425 @AS<<}<br>{--<br>signature · date               --}{>>r428 @AS<<}|{--**Contributor**               --}{>>r430 @AS<<}{--<br>on behalf of the community               --}{>>r432 @AS<<}<br>{--<br>signature · date               --}{>>r435 @AS<<}|
 |-|-|
 
