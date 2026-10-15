@@ -3088,9 +3088,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .warnings
                         .push(format!("track_changes: {value} ignored: it is on or off")),
                 },
-                "notes" => {
-                    self.document.empty_notes = view_notes::empty_notes(text);
-                }
+                "notes" => match view_notes::empty_notes(text) {
+                    Ok(kinds) => self.document.empty_notes = kinds,
+                    Err(why) => self.document.warnings.push(format!(
+                        "notes: {why}, so the notes parts it names are not made"
+                    )),
+                },
                 "unplaced" => {
                     for (at, tag) in view_notes::unplaced(text) {
                         self.unplaced.entry(at).or_default().push(tag);

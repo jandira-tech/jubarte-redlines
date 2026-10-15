@@ -840,13 +840,19 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 }
             }
         }
-        // The notes parts the view shows no note of (Word's separators
-        // only): the header's `notes:` names them, so the writer makes them.
+        // The notes parts that hold no note, Word's separators only: the
+        // header's `notes:` names them, so the writer makes them. A part
+        // with a note the view does not show (one no reference reaches) is
+        // not empty.
         let empty_notes = note_roots
             .iter()
-            .filter(|(name, _)| {
-                let endnote = *name == "endnote";
-                !defined.iter().any(|(shown, _)| *shown == endnote)
+            .filter(|(name, root)| {
+                root.children_named(name).all(|note| {
+                    matches!(
+                        note.attr("type"),
+                        Some("separator" | "continuationSeparator" | "continuationNotice")
+                    )
+                })
             })
             .map(|(name, _)| {
                 if *name == "endnote" {
