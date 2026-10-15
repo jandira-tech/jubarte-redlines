@@ -8,9 +8,10 @@
 //!
 //! A change is one revision element (`w:ins`, `w:del`, `w:moveFrom`,
 //! `w:moveTo`, `w:cellIns`, `w:cellDel`, `w:*PrChange`, ...), named
-//! `{story}:rev:{w:id}`. The story is `body`, a header, footer or notes
-//! part's file stem (`header1`, `footnotes`, as `jubarte read` names
-//! them) or `styles`. Resolving some changes never renumbers the rest, so an
+//! by its short id: `r12` in the body, `header1.r1`, `footnotes.r1` or
+//! `styles.r0` in another story, the story being a header, footer or notes
+//! part's file stem (`header1`, `footnotes`, as `jubarte read` names them)
+//! ([`crate::ids::ChangeId::short`]). Resolving some changes never renumbers the rest, so an
 //! id listed before stays valid after. Word moves text as one change:
 //! selecting either side of a move selects both sides and their range
 //! markers.
@@ -52,10 +53,10 @@ pub enum MoveSide {
 /// One tracked change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Change {
-    /// `{story}:rev:{w:id}`.
+    /// The short id: `r12` in the body, `header1.r1` in another story
+    /// ([`crate::ids::ChangeId::short`]).
     pub id: String,
-    /// The id the view and `jubarte changes` print: `r12` in the body,
-    /// `header1.r1` in another story ([`crate::ids::ChangeId::short`]).
+    /// The same id as [`Self::id`].
     #[serde(rename = "ref")]
     pub r#ref: String,
     /// What the change does.
@@ -72,7 +73,7 @@ pub struct Change {
     /// The text the change covers: inserted, deleted or moved text, or the
     /// text of the run or paragraph whose properties changed.
     pub text: String,
-    /// The paragraph the change sits in (`body:p:12`, `header1:p:0`): the
+    /// The paragraph the change sits in (`p12`, `header1.p2`): the
     /// nearest listed paragraph around it, or a row's, cell's or table's
     /// first. `None` in `styles` and outside any paragraph.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,7 +99,8 @@ pub struct Change {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChangeFilter {
-    /// Change ids (`body:rev:12`); an id not in the document is an error.
+    /// Change ids (`r12`, `header1.r1`); an id not in the document is an
+    /// error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ids: Option<Vec<String>>,
     /// Revision authors.
@@ -118,26 +120,29 @@ impl ChangeFilter {
         }
     }
 
-    /// The filter with every id in long form: `r12` becomes `body:rev:12`,
-    /// `header1.r1` `header1:rev:1`, `r1+2` both; an id that is not a
-    /// settled change id (`12`, 0.12's `#12`) is [`ChangeError::InvalidId`].
+    /// The filter with every id in its settled short spelling, the form
+    /// [`Change::id`] holds and [`Self::check`] and [`Self::matches`]
+    /// compare: `r12`, `header1.r1`, a pair `r1+2` as its two ids, each
+    /// once. Only settled ids parse ([`crate::ids::parse_change_ids`]):
+    /// `12`, 0.12's `#12` and the expired `body:rev:12` are
+    /// [`ChangeError::InvalidId`], naming the spelling to use.
     pub fn normalized(&self) -> Result<Self, ChangeError> {
         let Some(ids) = &self.ids else {
             return Ok(self.clone());
         };
-        let mut long: Vec<String> = Vec::with_capacity(ids.len());
+        let mut out: Vec<String> = Vec::with_capacity(ids.len());
         for id in ids {
             let parsed = crate::ids::parse_change_ids(id)
                 .map_err(|e| ChangeError::InvalidId(e.to_string()))?;
             for one in parsed {
-                let one = one.long();
-                if !long.contains(&one) {
-                    long.push(one);
+                let one = one.short();
+                if !out.contains(&one) {
+                    out.push(one);
                 }
             }
         }
         Ok(Self {
-            ids: Some(long),
+            ids: Some(out),
             ..self.clone()
         })
     }
@@ -181,14 +186,14 @@ impl ChangeFilter {
 pub enum ChangeError {
     /// The package could not be read or written.
     Package(String),
-    /// A filter id (long form) names no change in the document.
+    /// A filter id names no change in the document.
     UnknownChange(String),
     /// A filter id is not a change id ([`crate::ids::parse_change_ids`]).
     InvalidId(String),
-    /// A filter id (long form) names more than one listed change: a
+    /// A filter id names more than one listed change: a
     /// duplicate `w:id` in one story.
     Ambiguous {
-        /// The id, long form.
+        /// The id.
         id: String,
         /// The changes it names, in document order.
         candidates: Vec<Change>,
@@ -199,7 +204,7 @@ impl fmt::Display for ChangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ChangeError::Package(m) => write!(f, "invalid package: {m}"),
-            ChangeError::UnknownChange(id) => write!(f, "no tracked change {}", short_of(id)),
+            ChangeError::UnknownChange(id) => write!(f, "no tracked change {id}"),
             ChangeError::InvalidId(message) => f.write_str(message),
             ChangeError::Ambiguous { id, candidates } => {
                 // Only these elements' ids are renumbered by validate --repair.
@@ -209,8 +214,7 @@ impl fmt::Display for ChangeError {
                         ChangeKind::Insertion | ChangeKind::Deletion | ChangeKind::Move
                     ) && c.target != "table_cell"
                 });
-                let short = short_of(id);
-                write!(f, "{short} names {} changes", candidates.len())?;
+                write!(f, "{id} names {} changes", candidates.len())?;
                 if repairable {
                     f.write_str(" (duplicate w:id; validate --repair renumbers them)")?;
                 }
@@ -220,9 +224,9 @@ impl fmt::Display for ChangeError {
                         let place = c
                             .paragraph
                             .as_deref()
-                            .map(|p| format!(" in {}", crate::ids::short_paragraph(p)))
+                            .map(|p| format!(" in {p}"))
                             .unwrap_or_default();
-                        format!("{short} {} {:?}{place}", kind_name(c.kind), c.text)
+                        format!("{id} {} {:?}{place}", kind_name(c.kind), c.text)
                     })
                     .collect();
                 write!(f, ": {}", listed.join("; "))
@@ -232,11 +236,6 @@ impl fmt::Display for ChangeError {
 }
 
 impl std::error::Error for ChangeError {}
-
-/// The short form of a long change id, or the id itself.
-fn short_of(id: &str) -> String {
-    crate::ids::ChangeId::from_long(id).map_or_else(|| id.to_string(), |c| c.short())
-}
 
 fn kind_name(kind: ChangeKind) -> &'static str {
     match kind {
@@ -255,14 +254,11 @@ pub fn changes_text(changes: &[Change]) -> String {
     let mut out = String::new();
     for c in changes {
         let preview: String = c.text.chars().take(60).collect();
-        let paragraph = c
-            .paragraph
-            .as_deref()
-            .map_or_else(|| "-".to_string(), crate::ids::short_paragraph);
+        let paragraph = c.paragraph.as_deref().unwrap_or("-");
         let inside = c
             .inside
             .as_deref()
-            .map(|id| format!("\tinside {}", short_of(id)))
+            .map(|id| format!("\tinside {id}"))
             .unwrap_or_default();
         out.push_str(&format!(
             "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
@@ -501,7 +497,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
             node: e,
             group: move_name.clone().map_or(Group::Own(e), Group::Move),
             change: Some(Change {
-                id: format!("{story}:rev:{id}"),
+                id: crate::ids::ChangeId::new(story, id.as_str()).short(),
                 r#ref: crate::ids::ChangeId::new(story, id.as_str()).short(),
                 kind,
                 target,
@@ -532,7 +528,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
             change.paragraph = paragraphs
                 .as_ref()
                 .and_then(|index| paragraph_of(dom, c.node, index))
-                .map(|n| format!("{story}:p:{n}"));
+                .map(|n| crate::ids::paragraph_id(story, n));
         }
     }
     out
@@ -629,11 +625,7 @@ fn fold_style_pairs(dom: &Dom, carriers: &mut [Carrier]) {
         let Some(owner) = own_style(c.node) else {
             continue;
         };
-        let wid = change
-            .id
-            .rsplit_once(":rev:")
-            .map_or("", |(_, w)| w)
-            .to_string();
+        let wid = crate::ids::change_id(&change.id).map_or_else(String::new, |c| c.wid);
         match first.get(&(owner, wid.clone())) {
             Some(group) => {
                 c.group = group.clone();

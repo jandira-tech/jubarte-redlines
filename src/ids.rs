@@ -12,9 +12,12 @@
 //! Arthur, 2026-10-13: "We should strictly have the settled short IDs or long
 //! IDs. Everything else should be expired." Bare numbers (`12`), 0.12's
 //! `#12`, `#c27` and `t0.r1.c2` are refused, naming the settled spelling.
-//! The long ids `read --json` still prints (`body:rev:12`, `body:p:12`) parse
-//! until the settled long ids (spec §4) replace them in the JSON; they expire
-//! with that change, so jubarte never prints an id it refuses.
+//! Arthur, 2026-10-15: only those two types, and an error otherwise. The old
+//! long ids (`body:rev:12`, `body:p:12`) are refused, naming the short id,
+//! whenever one exists. Until the settled long ids (spec §4) land, jubarte
+//! prints an old long id only for what has no short spelling (a part outside
+//! the settled stories, `Header_1.xml`; a `w:id` such as `007`), and exactly
+//! that id still parses: jubarte never prints an id it refuses.
 //!
 //! This module reads syntax only. Whether a story, paragraph, change or
 //! comment exists is decided against a document by `edit` (`-p`) and
@@ -45,8 +48,8 @@ pub const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row
 /// Why a row or cell without its table was refused.
 pub const CELL_NEEDS_TABLE: &str = "a row or cell needs its table, as t0.row1.cell2";
 
-/// The change spellings the manifest advertises: the settled ones only;
-/// the long ids the JSON prints parse but are not advertised (module doc).
+/// The change spellings the manifest advertises: the settled ones only
+/// (module doc).
 pub const CHANGE_SPELLINGS: &[&str] = &["r12", "r1+2", "header1.r1", "footnotes.r3"];
 /// The comment spellings the manifest advertises.
 pub const COMMENT_SPELLINGS: &[&str] = &["c27"];
@@ -119,14 +122,10 @@ impl ChangeId {
         }
     }
 
-    /// `{story}:rev:{wid}`, the id JSON and machine hints carry.
-    pub fn long(&self) -> String {
-        format!("{}:rev:{}", self.story, self.wid)
-    }
-
-    /// The id the view and listings print: `r12` in the body,
-    /// `header1.r1` elsewhere, the long id when the story or the `w:id`
-    /// has no short spelling ([`ShortId`] decides: what is printed parses).
+    /// The id jubarte prints for the change, everywhere: `r12` in the
+    /// body, `header1.r1` elsewhere; `{story}:rev:{wid}` only when the
+    /// story or the `w:id` has no short spelling ([`ShortId`] decides: what
+    /// is printed parses).
     pub fn short(&self) -> String {
         let short = if self.story == "body" {
             format!("r{}", self.wid)
@@ -141,7 +140,7 @@ impl ChangeId {
             {
                 short
             }
-            _ => self.long(),
+            _ => format!("{}:rev:{}", self.story, self.wid),
         }
     }
 
@@ -156,11 +155,21 @@ impl ChangeId {
     }
 }
 
+/// The one change a printed change id names (`r12`, `header1.r1`, or the
+/// long id of a change with no short spelling); `None` for any other token,
+/// a pair `r1+2` among them.
+pub fn change_id(id: &str) -> Option<ChangeId> {
+    match parse_change_ids(id) {
+        Ok(ids) if ids.len() == 1 => ids.into_iter().next(),
+        _ => None,
+    }
+}
+
 /// What a `-p` value names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
     /// A paragraph, in a form `edit` resolves (`p12`, `header1.p2`,
-    /// `t0.row1.cell2`, `body:p:12`); a bare `12` arrives as `p12`.
+    /// `t0.row1.cell2`; the long id of a part with no short spelling).
     Paragraph(String),
     /// A comment, by `w:id`.
     Comment(u32),
@@ -191,13 +200,20 @@ fn word_number(text: &str, prefix: &str) -> Option<usize> {
 }
 
 /// The changes a change id names: `r12`, `r1+2`, `header1.r1`, and the
-/// long `body:rev:12` the JSON still prints. A story is checked only
-/// syntactically.
+/// long id of a change with no short spelling (module doc). A story is
+/// checked only syntactically.
 pub fn parse_change_ids(token: &str) -> Result<Vec<ChangeId>, IdError> {
     if token.contains(":rev:") {
-        return ChangeId::from_long(token)
-            .map(|id| vec![id])
-            .ok_or_else(|| IdError::new(token, CHANGE_EXPECTED));
+        return match ChangeId::from_long(token) {
+            // Only the id jubarte prints for a change without a short
+            // spelling; any other long id names its short one (module doc).
+            Some(id) if id.short() == token => Ok(vec![id]),
+            Some(id) => Err(IdError {
+                hint: Some(id.short()),
+                ..IdError::new(token, CHANGE_EXPECTED)
+            }),
+            None => Err(IdError::new(token, CHANGE_EXPECTED)),
+        };
     }
     match token.parse::<ShortId>() {
         Ok(ShortId::Change { story, wids }) => Ok(wids
@@ -279,7 +295,8 @@ pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, 
 /// What a `-p` value names (see the module doc).
 pub fn parse_location(token: &str) -> Result<Location, IdError> {
     let refuse = |why| Err(IdError::new(token, why));
-    // The long ids the JSON still prints (module doc).
+    // A long id parses only when it is what jubarte prints: an id with no
+    // short spelling (module doc).
     if token.contains(":rev:") {
         return parse_change_ids(token).map(Location::Changes);
     }
@@ -288,7 +305,15 @@ pub fn parse_location(token: &str) -> Result<Location, IdError> {
         && !story.contains(':')
         && number::<usize>(n).is_some()
     {
-        return Ok(Location::Paragraph(token.to_string()));
+        let short = short_paragraph(token);
+        return if short == token {
+            Ok(Location::Paragraph(token.to_string()))
+        } else {
+            Err(IdError {
+                hint: Some(short),
+                ..IdError::new(token, LOCATION_EXPECTED)
+            })
+        };
     }
     let head = token.split('.').next().unwrap_or(token);
     if word_number(head, "row").is_some() || word_number(head, "cell").is_some() {
@@ -348,6 +373,30 @@ pub fn part_story(part: &str) -> String {
     out
 }
 
+/// The id jubarte prints for paragraph `index` of `story` (`body`,
+/// `header1`, `footnotes`, …): `p12`, `header1` for a story's first
+/// paragraph, `header1.p2`; `{story}:p:{index}` only when the story has no
+/// short spelling ([`short_paragraph`]).
+pub fn paragraph_id(story: &str, index: usize) -> String {
+    short_paragraph(&format!("{story}:p:{index}"))
+}
+
+/// The story and index of a paragraph id [`paragraph_id`] prints
+/// (`p12` → `("body", 12)`, `header1` → `("header1", 0)`); `None` for any
+/// other token.
+pub fn paragraph_place(id: &str) -> Option<(String, usize)> {
+    let (story, n) = if let Some((story, n)) = id.split_once(":p:") {
+        (story, number::<usize>(n)?)
+    } else if let Some(n) = id.strip_prefix('p').and_then(number::<usize>) {
+        ("body", n)
+    } else if let Some((story, p)) = id.split_once('.') {
+        (story, p.strip_prefix('p').and_then(number::<usize>)?)
+    } else {
+        (id, 0)
+    };
+    (paragraph_id(story, n) == id).then(|| (story.to_string(), n))
+}
+
 /// The short form of a long paragraph id: `body:p:12` → `p12`,
 /// `header1:p:0` → `header1`, `header1:p:2` → `header1.p2`; the long id
 /// itself when its story or number has no short spelling.
@@ -401,21 +450,21 @@ mod tests {
 
     #[test]
     fn every_change_spelling_names_the_same_change() {
-        // The long id the JSON prints parses until the settled long ids
-        // replace it (module doc).
-        for token in ["r12", "body:rev:12"] {
-            assert_eq!(parse_change_ids(token), Ok(vec![body("12")]), "{token}");
-        }
-        for token in ["header1.r1", "header1:rev:1"] {
-            assert_eq!(
-                parse_change_ids(token),
-                Ok(vec![ChangeId::new("header1", "1")]),
-                "{token}"
-            );
+        assert_eq!(parse_change_ids("r12"), Ok(vec![body("12")]));
+        assert_eq!(
+            parse_change_ids("header1.r1"),
+            Ok(vec![ChangeId::new("header1", "1")])
+        );
+        // Arthur, 2026-10-15: only the two id types. A long id whose change
+        // has a short spelling is refused, naming it.
+        for (long, short) in [("body:rev:12", "r12"), ("header1:rev:1", "header1.r1")] {
+            let refused = parse_change_ids(long).unwrap_err();
+            assert_eq!(refused.hint.as_deref(), Some(short), "{long}");
+            assert_eq!(refused.expected, CHANGE_EXPECTED, "{long}");
         }
         assert_eq!(parse_change_ids("r1+2"), Ok(vec![body("1"), body("2")]));
         let pair = parse_change_ids("header1.r1+2").unwrap();
-        assert_eq!(pair[1].long(), "header1:rev:2");
+        assert_eq!(pair[1].short(), "header1.r2");
         for (expired, hint) in [
             ("#12", Some("r12")),
             ("12", Some("r12")),
@@ -574,7 +623,6 @@ mod tests {
             ok("header1.r1"),
             Changes(vec![ChangeId::new("header1", "1")])
         );
-        assert_eq!(ok("body:rev:3"), Changes(vec![body("3")]));
         for token in [
             "p51000",
             "t0.row1.cell2",
@@ -583,10 +631,26 @@ mod tests {
             "header1.p2",
             "footnotes.p3",
             "endnotes.p0",
-            "body:p:3",
         ] {
             assert_eq!(ok(token), Paragraph(token.into()), "{token}");
         }
+        // Arthur, 2026-10-15: only the two id types. A long id with a short
+        // spelling is refused, naming it; one without (a part outside the
+        // settled stories) is the id jubarte prints, so it reads back.
+        for (long, short) in [
+            ("body:rev:3", "r3"),
+            ("body:p:3", "p3"),
+            ("header1:p:0", "header1"),
+            ("header1:p:2", "header1.p2"),
+        ] {
+            let refused = parse_location(long).unwrap_err();
+            assert_eq!(refused.hint.as_deref(), Some(short), "{long}");
+        }
+        assert_eq!(ok("Header_1:p:2"), Paragraph("Header_1:p:2".into()));
+        assert_eq!(
+            ok("Header_1:rev:4"),
+            Changes(vec![ChangeId::new("Header_1", "4")])
+        );
         // Arthur, 2026-10-13: everything but the settled ids is expired,
         // and refused with the settled spelling.
         for (expired, hint) in [
@@ -840,11 +904,6 @@ mod tests {
                 .collect();
             if let Ok(ids) = parse_change_ids(&token) {
                 for id in &ids {
-                    assert_eq!(
-                        parse_change_ids(&id.long()),
-                        Ok(vec![id.clone()]),
-                        "{token}"
-                    );
                     assert_eq!(
                         parse_change_ids(&id.short()),
                         Ok(vec![id.clone()]),

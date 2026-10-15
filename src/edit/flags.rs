@@ -251,7 +251,7 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         }
         Some(ids) => Ok(Some((
             op.accept,
-            ids.iter().map(crate::ids::ChangeId::long).collect(),
+            ids.iter().map(crate::ids::ChangeId::short).collect(),
         ))),
     }
 }
@@ -609,9 +609,9 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
     }
     if let Some(more) = more.resolve_revisions {
         let resolve = plan.resolve_revisions.get_or_insert_with(Default::default);
-        // Every id in long form, as recorded ones are, so `r1` and
-        // `body:rev:1` are one id; a malformed one is left for the preview
-        // to report.
+        // Every id in its short spelling, as recorded ones are, so `r1+2`
+        // and `r1`, `r2` are the same ids; a malformed one is left for the
+        // preview to report.
         for side in [&mut resolve.accept, &mut resolve.reject] {
             if let Some(normal) = side.as_ref().and_then(|f| f.normalized().ok()) {
                 *side = Some(normal);
@@ -807,11 +807,8 @@ mod tests {
             OperationKind::Comment { .. }
         ));
         let resolve = plan.resolve_revisions.unwrap();
-        assert_eq!(
-            resolve.accept.unwrap().ids.unwrap(),
-            ["body:rev:2", "body:rev:5"]
-        );
-        assert_eq!(resolve.reject.unwrap().ids.unwrap(), ["header1:rev:1"]);
+        assert_eq!(resolve.accept.unwrap().ids.unwrap(), ["r2", "r5"]);
+        assert_eq!(resolve.reject.unwrap().ids.unwrap(), ["header1.r1"]);
         assert_eq!(plan.source_sha256.as_deref(), Some("aa"));
     }
 
@@ -849,7 +846,7 @@ mod tests {
                 recorded(Verb::Edit, &[revision("r2", false)], "Ann", "aa")
             )
             .unwrap_err(),
-            "body:rev:2 is both accepted and rejected"
+            "r2 is both accepted and rejected"
         );
     }
 
@@ -902,11 +899,11 @@ mod tests {
         let again = recorded(Verb::Edit, &[revision("r1", true)], "Ann", "aa");
         let plan = record_into(Some(short.clone()), again).unwrap();
         let accept = plan.resolve_revisions.unwrap().accept.unwrap().ids.unwrap();
-        assert_eq!(accept, ["body:rev:1"]);
+        assert_eq!(accept, ["r1"]);
         let reject = recorded(Verb::Edit, &[revision("r1", false)], "Ann", "aa");
         assert_eq!(
             record_into(Some(short), reject).unwrap_err(),
-            "body:rev:1 is both accepted and rejected"
+            "r1 is both accepted and rejected"
         );
         let mut padded = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
         padded.operations[0].id = Some("op-02".into());
@@ -1345,12 +1342,8 @@ mod tests {
         assert_eq!(
             built.plan.resolve_revisions,
             Some(ResolveRevisions {
-                accept: Some(ChangeFilter::ids([
-                    "body:rev:1",
-                    "body:rev:3",
-                    "body:rev:4"
-                ])),
-                reject: Some(ChangeFilter::ids(["header1:rev:2"])),
+                accept: Some(ChangeFilter::ids(["r1", "r3", "r4"])),
+                reject: Some(ChangeFilter::ids(["header1.r2"])),
             })
         );
         assert_eq!(built.plan.operations.len(), 1);
@@ -1370,7 +1363,7 @@ mod tests {
         assert!(only.plan.operations.is_empty());
         assert_eq!(
             only.plan.resolve_revisions.unwrap().reject,
-            Some(ChangeFilter::ids(["body:rev:7"]))
+            Some(ChangeFilter::ids(["r7"]))
         );
     }
 
