@@ -57,11 +57,11 @@ fn short_ids_resolve_to_the_long_ids_the_report_prints() {
     )
     .unwrap();
     assert!(out.report.ok, "{:?}", out.report.operations);
-    assert_eq!(at(&out, 0), "body:p:6");
-    assert_eq!(at(&out, 1), "body:p:4");
-    assert_eq!(at(&out, 2), "body:p:5");
-    assert_eq!(at(&out, 3), "header1:p:0");
-    assert_eq!(at(&out, 4), "header1:p:1");
+    assert_eq!(at(&out, 0), "p6");
+    assert_eq!(at(&out, 1), "p4");
+    assert_eq!(at(&out, 2), "p5");
+    assert_eq!(at(&out, 3), "header1");
+    assert_eq!(at(&out, 4), "header1.p1");
 }
 
 #[test]
@@ -139,8 +139,8 @@ fn a_cell_paragraph_id_skips_the_text_box_inside_the_cell() {
     )
     .unwrap();
     assert!(out.report.ok, "{:?}", out.report.operations);
-    assert_eq!(at(&out, 0), "body:p:2");
-    assert_eq!(at(&out, 1), "body:p:3");
+    assert_eq!(at(&out, 0), "p2");
+    assert_eq!(at(&out, 1), "p3");
     let refused = apply_plan(
         &source,
         &plan(
@@ -189,8 +189,8 @@ fn a_cell_paragraph_id_counts_the_nested_table_as_the_view_does() {
     )
     .unwrap();
     assert!(out.report.ok, "{:?}", out.report.operations);
-    assert_eq!(at(&out, 0), "body:p:2");
-    assert_eq!(at(&out, 1), "body:p:3");
+    assert_eq!(at(&out, 0), "p2");
+    assert_eq!(at(&out, 1), "p3");
 }
 
 #[test]
@@ -204,9 +204,9 @@ fn pr392_nested_cell_paragraphs_skip_text_boxes_and_stop_at_the_outer_cell() {
     );
     let source = docx_with_sect(&table, &[], "");
     for (short, find, paragraph) in [
-        ("t0.row0.cell0.p1", "INNER", "body:p:1"),
-        ("t0.row0.cell0.p2", "TAIL", "body:p:2"),
-        ("t0.row0.cell1", "NEIGHBOR", "body:p:3"),
+        ("t0.row0.cell0.p1", "INNER", "p1"),
+        ("t0.row0.cell0.p2", "TAIL", "p2"),
+        ("t0.row0.cell1", "NEIGHBOR", "p3"),
     ] {
         let out = apply_plan(
             &source,
@@ -325,10 +325,10 @@ fn malformed_short_ids_never_fall_back_to_a_valid_paragraph() {
 #[test]
 fn equivalent_short_and_long_selectors_edit_the_same_content() {
     for (short, long, find) in [
-        ("p0", "body:p:0", "Zero"),
-        ("p6", "body:p:6", "Six"),
-        ("t0.row1.cell1", "body:p:4", "Day 10"),
-        ("header1.p0", "header1:p:0", "DRAFT"),
+        ("p0", "p0", "Zero"),
+        ("p6", "p6", "Six"),
+        ("t0.row1.cell1", "p4", "Day 10"),
+        ("header1.p0", "header1", "DRAFT"),
     ] {
         let edit = |selector| {
             apply_plan(
@@ -385,8 +385,8 @@ fn footer_ids_use_the_part_number_and_default_to_its_first_paragraph() {
         ),
     )
     .unwrap();
-    assert_eq!(at(&out, 0), "footer2:p:0");
-    assert_eq!(at(&out, 1), "footer2:p:1");
+    assert_eq!(at(&out, 0), "footer2");
+    assert_eq!(at(&out, 1), "footer2.p1");
     let xml = common::docx::part_string(&out.clean, "word/footer2.xml").unwrap();
     assert!(xml.contains("One") && xml.contains("Two"), "{xml}");
     assert!(!xml.contains("First") && !xml.contains("Second"), "{xml}");
@@ -417,8 +417,8 @@ fn table_ids_skip_nested_tables_and_cell_indices_count_nested_paragraphs() {
         ),
     )
     .unwrap();
-    assert_eq!(at(&out, 0), "body:p:2");
-    assert_eq!(at(&out, 1), "body:p:3");
+    assert_eq!(at(&out, 0), "p2");
+    assert_eq!(at(&out, 1), "p3");
     let xml = common::docx::part_string(&out.clean, "word/document.xml").unwrap();
     assert!(
         xml.contains("Nested") && xml.contains("Later") && xml.contains("Last"),
@@ -442,7 +442,7 @@ fn content_controls_and_merged_cells_keep_physical_cell_indices() {
         ),
     )
     .unwrap();
-    assert_eq!(at(&out, 0), "body:p:1");
+    assert_eq!(at(&out, 0), "p1");
     let error = apply_plan(
         &bytes,
         &plan(

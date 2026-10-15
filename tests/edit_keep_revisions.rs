@@ -37,7 +37,7 @@ fn mine() -> ChangeFilter {
 #[test]
 fn keep_leaves_their_changes_and_adds_mine() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","date":"2026-10-02T00:00:00Z","existing_revisions":"keep","operations":[
-        {"kind":"replace","paragraph":"body:p:1","find":"Delaware","replacement":"New York"}]}"#).unwrap();
+        {"kind":"replace","paragraph":"p1","find":"Delaware","replacement":"New York"}]}"#).unwrap();
     let out = apply_plan(&source(), &plan).unwrap();
     assert_word_valid_package(&out.clean);
     assert_word_valid_package(&out.redline);
@@ -61,7 +61,7 @@ fn keep_leaves_their_changes_and_adds_mine() {
         .filter(|c| c.author.as_deref() == Some("Other"))
         .map(|c| c.id.as_str())
         .collect();
-    assert_eq!(theirs, ["body:rev:7", "body:rev:8"]);
+    assert_eq!(theirs, ["r7", "r8"]);
     let mine_kinds: Vec<_> = changes
         .iter()
         .filter(|c| c.author.as_deref() == Some("Me"))
@@ -78,7 +78,7 @@ fn keep_leaves_their_changes_and_adds_mine() {
         changes
             .iter()
             .filter(|c| c.author.as_deref() == Some("Me"))
-            .all(|c| c.id != "body:rev:7" && c.id != "body:rev:8")
+            .all(|c| c.id != "r7" && c.id != "r8")
     );
 
     // The invariants.
@@ -99,7 +99,7 @@ fn keep_leaves_their_changes_and_adds_mine() {
 fn an_edit_inside_their_insertion_is_still_refused() {
     let plan = EditPlan::from_json(
         r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
-        {"kind":"replace","paragraph":"body:p:0","find":"45","replacement":"60"}]}"#,
+        {"kind":"replace","paragraph":"p0","find":"45","replacement":"60"}]}"#,
     )
     .unwrap();
     let e = apply_plan(&source(), &plan).unwrap_err();
@@ -110,13 +110,13 @@ fn an_edit_inside_their_insertion_is_still_refused() {
 #[test]
 fn paragraph_operations_emit_marks_under_keep() {
     // The engine refuses an insertion anchored on a paragraph the same plan
-    // deletes, under every policy, so the new paragraph follows body:p:0.
-    // body:p:1 is the last paragraph: its content joins the paragraph before
+    // deletes, under every policy, so the new paragraph follows p0.
+    // p1 is the last paragraph: its content joins the paragraph before
     // it, the inserted one, whose mark is then both inserted and deleted.
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
-        {"kind":"insert_paragraph","paragraph":"body:p:0","position":"after","runs":[{"text":"Venue: New York County."}]},
-        {"kind":"delete_paragraph","paragraph":"body:p:1"},
-        {"kind":"rewrite","paragraph":"body:p:0","text":"Payment within 45 days of invoice."}]}"#).unwrap();
+        {"kind":"insert_paragraph","paragraph":"p0","position":"after","runs":[{"text":"Venue: New York County."}]},
+        {"kind":"delete_paragraph","paragraph":"p1"},
+        {"kind":"rewrite","paragraph":"p0","text":"Payment within 45 days of invoice."}]}"#).unwrap();
     let out = apply_plan(&source(), &plan).unwrap();
     assert_word_valid_package(&out.redline);
     let changes = list_changes(&out.redline).unwrap();
@@ -144,8 +144,8 @@ fn keep_without_existing_revisions_equals_the_compare_redline_in_text() {
     // On a source with no revisions, keep and the default produce the same
     // visible result, so an agent can always send keep.
     let plain = docx(&para("Fee is 10."));
-    let keep = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"body:p:0","find":"10","replacement":"12"}]}"#).unwrap();
-    let default = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","operations":[{"kind":"replace","paragraph":"body:p:0","find":"10","replacement":"12"}]}"#).unwrap();
+    let keep = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"p0","find":"10","replacement":"12"}]}"#).unwrap();
+    let default = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","operations":[{"kind":"replace","paragraph":"p0","find":"10","replacement":"12"}]}"#).unwrap();
     let a = apply_plan(&plain, &keep).unwrap();
     let b = apply_plan(&plain, &default).unwrap();
     assert_eq!(texts(&a.clean), texts(&b.clean));
@@ -194,10 +194,10 @@ fn invariants(source: &[u8], out: &jubarte::edit::EditResult) -> Vec<jubarte::ch
 fn text_edits_carry_comments_and_formatting() {
     let source = source();
     let out = apply_plan(&source, &keep(r#"[
-        {"kind":"insert","paragraph":"body:p:1","position":"start","text":"(a) ","format":{"bold":true}},
-        {"kind":"replace","paragraph":"body:p:1","find":"Delaware","replacement":"New York","comment":"Our home court."},
-        {"kind":"comment","paragraph":"body:p:1","find":"Governing","text":"Check."},
-        {"kind":"delete","paragraph":"body:p:0","find":" days"}]"#)).unwrap();
+        {"kind":"insert","paragraph":"p1","position":"start","text":"(a) ","format":{"bold":true}},
+        {"kind":"replace","paragraph":"p1","find":"Delaware","replacement":"New York","comment":"Our home court."},
+        {"kind":"comment","paragraph":"p1","find":"Governing","text":"Check."},
+        {"kind":"delete","paragraph":"p0","find":" days"}]"#)).unwrap();
     assert_eq!(
         texts(&out.clean),
         ["Payment within 45.", "(a) Governing law: New York."]
@@ -233,7 +233,7 @@ fn text_edits_carry_comments_and_formatting() {
     assert_eq!(red.matches("<w:commentReference").count(), 2, "{red}");
     // New ids continue after the highest id already in the document.
     for c in changes.iter().filter(|c| c.author.as_deref() == Some("Me")) {
-        let id: u64 = c.id.rsplit(':').next().unwrap().parse().unwrap();
+        let id: u64 = c.id.trim_start_matches('r').parse().unwrap();
         assert!(id > 8, "{}", c.id);
     }
     let json = serde_json::to_value(&out.report).unwrap();
@@ -253,9 +253,9 @@ fn merge_format_and_delete_mark_paragraphs() {
         &source,
         &keep(
             r#"[
-        {"kind":"merge_paragraphs","paragraph":"body:p:1","separator":" "},
-        {"kind":"delete_paragraph","paragraph":"body:p:3","comment":"Redundant."},
-        {"kind":"format_paragraph","paragraph":"body:p:4","alignment":"center"}]"#,
+        {"kind":"merge_paragraphs","paragraph":"p1","separator":" "},
+        {"kind":"delete_paragraph","paragraph":"p3","comment":"Redundant."},
+        {"kind":"format_paragraph","paragraph":"p4","alignment":"center"}]"#,
         ),
     )
     .unwrap();
@@ -302,8 +302,8 @@ fn edits_beside_a_tab_keep_the_tab() {
         &source,
         &keep(
             r#"[
-        {"kind":"replace","paragraph":"body:p:1","find":"Fee","replacement":"Price"},
-        {"kind":"replace","paragraph":"body:p:1","find":"10","replacement":"12"}]"#,
+        {"kind":"replace","paragraph":"p1","find":"Fee","replacement":"Price"},
+        {"kind":"replace","paragraph":"p1","find":"10","replacement":"12"}]"#,
         ),
     )
     .unwrap();
@@ -317,10 +317,10 @@ fn keep_refuses_paragraph_changes_on_tracked_paragraphs() {
     let reformatted = r#"<w:p><w:pPr><w:jc w:val="right"/><w:pPrChange w:id="4" w:author="Other" w:date="2026-09-01T00:00:00Z"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Moved right.</w:t></w:r></w:p>"#;
     let source = docx(&(OTHER.to_string() + tracked_mark + reformatted + &para("Last.")));
     for operations in [
-        r#"[{"kind":"delete_paragraph","paragraph":"body:p:0"}]"#,
-        r#"[{"kind":"merge_paragraphs","paragraph":"body:p:1"}]"#,
-        r#"[{"kind":"format_paragraph","paragraph":"body:p:2","alignment":"left"}]"#,
-        r#"[{"kind":"list","paragraphs":["body:p:2"]}]"#,
+        r#"[{"kind":"delete_paragraph","paragraph":"p0"}]"#,
+        r#"[{"kind":"merge_paragraphs","paragraph":"p1"}]"#,
+        r#"[{"kind":"format_paragraph","paragraph":"p2","alignment":"left"}]"#,
+        r#"[{"kind":"list","paragraphs":["p2"]}]"#,
     ] {
         let e = apply_plan(&source, &keep(operations)).unwrap_err();
         assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{operations}: {e:?}");
@@ -334,7 +334,7 @@ fn keep_refuses_paragraph_changes_on_tracked_paragraphs() {
     // The same operations on untracked paragraphs go through.
     let out = apply_plan(
         &source,
-        &keep(r#"[{"kind":"format_paragraph","paragraph":"body:p:3","alignment":"left"}]"#),
+        &keep(r#"[{"kind":"format_paragraph","paragraph":"p3","alignment":"left"}]"#),
     )
     .unwrap();
     invariants(&source, &out);
@@ -357,11 +357,15 @@ fn keep_edits_a_header_beside_their_revision() {
         }],
         r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
     );
-    let out = apply_plan(&source, &keep(r#"[{"kind":"replace","paragraph":"header1:p:0","find":"Draft","replacement":"Final"}]"#)).unwrap();
+    let out = apply_plan(
+        &source,
+        &keep(r#"[{"kind":"replace","paragraph":"header1","find":"Draft","replacement":"Final"}]"#),
+    )
+    .unwrap();
     assert_word_valid_package(&out.redline);
     let changes = list_changes(&out.redline).unwrap();
     assert!(
-        changes.iter().any(|c| c.id == "header1:rev:40"),
+        changes.iter().any(|c| c.id == "header1.r40"),
         "{changes:#?}"
     );
     let my_ids: Vec<_> = changes
@@ -371,7 +375,7 @@ fn keep_edits_a_header_beside_their_revision() {
         .collect();
     assert_eq!(
         my_ids,
-        ["header1:rev:41", "header1:rev:42"],
+        ["header1.r41", "header1.r42"],
         "ids follow the highest in any part"
     );
     let accepted = accept_changes(&out.redline, &mine()).unwrap();
@@ -394,7 +398,7 @@ fn the_patch_shows_only_my_changes() {
         Attribution, DEFAULT_COLUMNS, PatchOptions, patch_own_changes, patch_redline,
     };
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","date":"2026-10-02T00:00:00Z","existing_revisions":"keep","operations":[
-        {"kind":"replace","paragraph":"body:p:1","find":"Delaware","replacement":"New York"}]}"#).unwrap();
+        {"kind":"replace","paragraph":"p1","find":"Delaware","replacement":"New York"}]}"#).unwrap();
     let out = apply_plan(&source(), &plan).unwrap();
     let options = PatchOptions {
         old_name: "a.docx".into(),
@@ -433,7 +437,7 @@ fn the_cli_writes_my_patch_under_keep() {
     std::fs::write(
         &plan,
         r#"{"schema_version":1,"author":"Me","date":"2026-10-02T00:00:00Z","existing_revisions":"keep","operations":[
-            {"kind":"replace","paragraph":"body:p:1","find":"Delaware","replacement":"New York"}]}"#,
+            {"kind":"replace","paragraph":"p1","find":"Delaware","replacement":"New York"}]}"#,
     )
     .unwrap();
     let out_dir = dir.path().join("review");
@@ -470,8 +474,8 @@ fn the_cli_writes_my_patch_under_keep() {
 fn whole_replacements_and_insertions_beside_their_changes() {
     let source = source();
     let out = apply_plan(&source, &keep(r#"[
-        {"kind":"replace","paragraph":"body:p:1","find":"law: Delaware","replacement":"law: New York","whole":true},
-        {"kind":"insert","paragraph":"body:p:0","before":" days","text":" business"}]"#)).unwrap();
+        {"kind":"replace","paragraph":"p1","find":"law: Delaware","replacement":"law: New York","whole":true},
+        {"kind":"insert","paragraph":"p0","before":" days","text":" business"}]"#)).unwrap();
     assert_eq!(
         texts(&out.clean),
         [
@@ -502,7 +506,7 @@ fn deleting_the_paragraph_before_a_table_keeps_the_invariants() {
     let source = docx(&(OTHER.to_string() + &para("Before the table.") + table + &para("After.")));
     let out = apply_plan(
         &source,
-        &keep(r#"[{"kind":"delete_paragraph","paragraph":"body:p:1"}]"#),
+        &keep(r#"[{"kind":"delete_paragraph","paragraph":"p1"}]"#),
     )
     .unwrap();
     invariants(&source, &out);
@@ -517,8 +521,8 @@ fn thread_operations_and_spans_ride_the_redline_under_keep() {
         &source,
         &EditPlan::from_json(
             r#"{"schema_version":1,"author":"Ann","existing_revisions":"keep","operations":[
-        {"kind":"comment","paragraph":"body:p:1","find":"Governing","text":"Which law?"},
-        {"kind":"comment","paragraph":"body:p:1","find":"Delaware","text":"Drop this one"}]}"#,
+        {"kind":"comment","paragraph":"p1","find":"Governing","text":"Which law?"},
+        {"kind":"comment","paragraph":"p1","find":"Delaware","text":"Drop this one"}]}"#,
         )
         .unwrap(),
     )
@@ -533,8 +537,8 @@ fn thread_operations_and_spans_ride_the_redline_under_keep() {
         r#"[{{"kind":"reply_comment","comment_id":{a},"text":"New York"}},
             {{"kind":"resolve_comment","comment_id":{a}}},
             {{"kind":"delete_comment","comment_id":{b}}},
-            {{"kind":"comment","paragraph":"body:p:0","through":"body:p:1","text":"Both"}},
-            {{"kind":"replace","paragraph":"body:p:1","find":"Delaware","replacement":"New York"}}]"#,
+            {{"kind":"comment","paragraph":"p0","through":"p1","text":"Both"}},
+            {{"kind":"replace","paragraph":"p1","find":"Delaware","replacement":"New York"}}]"#,
         a = ids[0],
         b = ids[1]
     ));
@@ -569,9 +573,9 @@ fn thread_operations_and_spans_ride_the_redline_under_keep() {
 fn tables_and_lists_are_tracked_under_keep() {
     let source = docx(&(OTHER.to_string() + &para("Apples") + &para("Pears") + &para("End.")));
     let out = apply_plan(&source, &keep(r#"[
-        {"kind":"insert_table","paragraph":"body:p:3","position":"before","rows":[["a","b"],["c","d"]],"header_row":true},
-        {"kind":"list","paragraphs":["body:p:1","body:p:2"]},
-        {"kind":"format_paragraph","paragraph":"body:p:3","alignment":"center"}]"#)).unwrap();
+        {"kind":"insert_table","paragraph":"p3","position":"before","rows":[["a","b"],["c","d"]],"header_row":true},
+        {"kind":"list","paragraphs":["p1","p2"]},
+        {"kind":"format_paragraph","paragraph":"p3","alignment":"center"}]"#)).unwrap();
     let changes = invariants(&source, &out);
     let count = |kind: ChangeKind, target: &str| {
         changes
@@ -615,7 +619,7 @@ fn the_report_skips_a_source_change_that_shares_the_plans_stamp() {
     let source = docx(&(same + &para("Governing law: Delaware.")));
     let out = apply_plan(
         &source,
-        &keep(r#"[{"kind":"insert","paragraph":"body:p:1","position":"end","text":" Only."}]"#),
+        &keep(r#"[{"kind":"insert","paragraph":"p1","position":"end","text":" Only."}]"#),
     )
     .unwrap();
     let r = &out.report.revisions;
@@ -636,7 +640,9 @@ fn format_run_under_keep_is_a_tracked_format_change() {
     let source = source();
     let out = apply_plan(
         &source,
-        &keep(r#"[{"kind":"format_run","paragraph":"body:p:1","find":"Governing","format":{"bold":true}}]"#),
+        &keep(
+            r#"[{"kind":"format_run","paragraph":"p1","find":"Governing","format":{"bold":true}}]"#,
+        ),
     )
     .unwrap();
     invariants(&source, &out);
@@ -664,7 +670,7 @@ fn keep_refuses_what_it_cannot_track() {
     for (kind, operations) in [
         (
             "insert_footnote",
-            r#"[{"kind":"insert_footnote","paragraph":"body:p:1","after":"Delaware","text":"Why."}]"#,
+            r#"[{"kind":"insert_footnote","paragraph":"p1","after":"Delaware","text":"Why."}]"#,
         ),
         (
             "page_setup",

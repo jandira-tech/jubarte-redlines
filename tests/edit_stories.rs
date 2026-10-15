@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Headers, footers and notes are stories an edit plan can address: inspect
-//! lists their paragraphs as `header1:p:0`, `footnotes:p:0`, ...; selectors
+//! lists their paragraphs as `header1`, `footnotes`, ...; selectors
 //! take those ids or a `story` beside `index`/`starts_with`/`contains`; the
 //! comparer tracks the change in the story's own part.
 
@@ -148,20 +148,20 @@ fn inspect_lists_header_footer_and_note_stories() {
                 "header1".into(),
                 "header".into(),
                 "word/header1.xml".into(),
-                vec![format!("header1:p:0 {HEADER}")]
+                vec![format!("header1 {HEADER}")]
             ),
             (
                 "footer1".into(),
                 "footer".into(),
                 "word/footer1.xml".into(),
-                vec![format!("footer1:p:0 {FOOTER}")]
+                vec![format!("footer1 {FOOTER}")]
             ),
             (
                 "footnotes".into(),
                 "footnotes".into(),
                 "word/footnotes.xml".into(),
                 // The separator notes are not text.
-                vec![format!("footnotes:p:0  {NOTE}")]
+                vec![format!("footnotes  {NOTE}")]
             ),
         ]
     );
@@ -169,9 +169,9 @@ fn inspect_lists_header_footer_and_note_stories() {
     // after the body, each paragraph under its own id.
     assert_eq!(snapshot["paragraphs"].as_array().unwrap().len(), 2);
     let md = markdown(&source).unwrap();
-    assert!(md.starts_with("[body:p:0] Body heading"), "{md}");
-    assert!(md.contains(&format!("[header1:p:0] {HEADER}")), "{md}");
-    assert!(md.contains("[footnotes:p:0]"), "{md}");
+    assert!(md.starts_with("[p0] Body heading"), "{md}");
+    assert!(md.contains(&format!("[header1] {HEADER}")), "{md}");
+    assert!(md.contains("[footnotes]"), "{md}");
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn edits_in_header_footer_and_footnote_are_tracked_in_their_parts() {
         &source,
         &plan(
             &source,
-            r#"[{"id":"hdr","kind":"replace","paragraph":"header1:p:0","find":"Confidential","replacement":"Highly confidential"},
+            r#"[{"id":"hdr","kind":"replace","paragraph":"header1","find":"Confidential","replacement":"Highly confidential"},
                 {"id":"ftr","kind":"insert","paragraph":{"story":"footer1","index":0},"position":"end","text":" (rev. 2)"},
                 {"id":"note","kind":"replace","paragraph":{"story":"footnotes","contains":"master agreement"},"find":"2024","replacement":"2026","whole":true},
                 {"id":"body","kind":"replace","paragraph":{"index":1},"find":"agree","replacement":"hereby agree"}]"#,
@@ -195,10 +195,7 @@ fn edits_in_header_footer_and_footnote_are_tracked_in_their_parts() {
         .iter()
         .map(|o| o.paragraph.clone().unwrap())
         .collect();
-    assert_eq!(
-        at,
-        ["header1:p:0", "footer1:p:0", "footnotes:p:0", "body:p:1"]
-    );
+    assert_eq!(at, ["header1", "footer1", "footnotes", "p1"]);
     // One insertion per story; header and footer revisions count too.
     assert!(report.revisions.inserted >= 4, "{:?}", report.revisions);
     assert!(
@@ -280,7 +277,7 @@ fn a_header_with_relationships_is_still_redlined() {
         &source,
         &plan(
             &source,
-            r#"[{"kind":"replace","paragraph":"header1:p:0","find":"Confidential","replacement":"Privileged"}]"#,
+            r#"[{"kind":"replace","paragraph":"header1","find":"Confidential","replacement":"Privileged"}]"#,
         ),
     )
     .unwrap();
@@ -319,16 +316,16 @@ fn story_selectors_and_story_limits_are_checked() {
         unknown.message
     );
 
-    let past = refuse(r#"[{"kind":"delete","paragraph":"header1:p:3","find":"x"}]"#);
+    let past = refuse(r#"[{"kind":"delete","paragraph":"header1.p3","find":"x"}]"#);
     assert_eq!(past.code, "ANCHOR_NOT_FOUND");
 
     // Word cannot anchor a comment in a header or footer.
-    let comment = refuse(r#"[{"kind":"comment","paragraph":"header1:p:0","text":"why?"}]"#);
+    let comment = refuse(r#"[{"kind":"comment","paragraph":"header1","text":"why?"}]"#);
     assert_eq!(comment.code, "COMMENT_NOT_IN_BODY");
     assert!(comment.message.contains("body"), "{}", comment.message);
 
     // A header keeps at least one paragraph.
-    let last = refuse(r#"[{"kind":"delete_paragraph","paragraph":"header1:p:0"}]"#);
+    let last = refuse(r#"[{"kind":"delete_paragraph","paragraph":"header1"}]"#);
     assert_eq!(last.code, "UNSUPPORTED_STRUCTURE");
 
     // Body selectors never reach into a story.
@@ -348,7 +345,7 @@ fn story_selectors_and_story_limits_are_checked() {
         &source,
         &plan(
             &source,
-            r#"[{"kind":"insert_paragraph","paragraph":"header1:p:0","position":"after","runs":[{"text":"Privileged"}]}]"#,
+            r#"[{"kind":"insert_paragraph","paragraph":"header1","position":"after","runs":[{"text":"Privileged"}]}]"#,
         ),
     )
     .unwrap();
@@ -382,7 +379,7 @@ fn capabilities_advertise_exactly_the_story_kinds_edit_accepts() {
     ];
     for story in &found {
         operations.push(format!(
-            r#"{{"kind":"insert","paragraph":"{}:p:0","position":"end","text":" (rev)"}}"#,
+            r#"{{"kind":"insert","paragraph":"{}","position":"end","text":" (rev)"}}"#,
             story.id
         ));
     }
@@ -398,16 +395,7 @@ fn capabilities_advertise_exactly_the_story_kinds_edit_accepts() {
         .iter()
         .map(|o| o.paragraph.clone().unwrap())
         .collect();
-    assert_eq!(
-        at,
-        [
-            "body:p:0",
-            "header1:p:0",
-            "footer1:p:0",
-            "footnotes:p:0",
-            "endnotes:p:0"
-        ]
-    );
+    assert_eq!(at, ["p0", "header1", "footer1", "footnotes", "endnotes"]);
     for story in &found {
         let texts = part_texts(&result.clean, &story.part);
         assert!(
