@@ -1255,6 +1255,8 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         deleting: bool,
         /// The tagged view's last change, while nothing follows it yet.
         last: Option<Shown>,
+        /// How many printed fields' results the walk is in.
+        in_result: usize,
     }
     /// One side of a change the tagged view printed: its text, its marks'
     /// tags, and their author.
@@ -1287,14 +1289,16 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         at: usize,
     }
     /// A printed field's end: `{/}`, or nothing when it has no result and
-    /// its code is a bare name, which the writer reads as `{PAGE}`.
-    fn field_end(out: &str, at: usize, instr: &str) -> &'static str {
+    /// its code is a bare name, which the writer reads as `{PAGE}`. A
+    /// field in another's result always ends: `{PAGE}{NUMPAGES}{/}` would
+    /// read as a bare PAGE, then NUMPAGES with no result.
+    fn field_end(out: &str, at: usize, instr: &str, nested: bool) -> &'static str {
         let bare = !instr.trim().is_empty()
             && instr
                 .trim()
                 .bytes()
                 .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
-        if bare && out.len() == at {
+        if bare && !nested && out.len() == at {
             ""
         } else {
             super::FIELD_END
@@ -1325,8 +1329,11 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                         Some(code) => {
                             s.out.push_str(&code);
                             let at = s.out.len();
+                            let nested = s.in_result > 0;
+                            s.in_result += 1;
                             walk(run, s);
-                            s.out.push_str(field_end(&s.out, at, instr));
+                            s.in_result -= 1;
+                            s.out.push_str(field_end(&s.out, at, instr, nested));
                         }
                         None if s.fields.is_empty() => s.out.push_str(&code(instr)),
                         None => walk(run, s),
@@ -1410,7 +1417,13 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                                         && s.fields.is_empty()
                                     {
                                         s.out.push_str(&if field.printed {
-                                            field_end(&s.out, field.at, &field.instr).to_string()
+                                            field_end(
+                                                &s.out,
+                                                field.at,
+                                                &field.instr,
+                                                s.in_result > 0,
+                                            )
+                                            .to_string()
                                         } else {
                                             code(&field.instr)
                                         });
@@ -1527,18 +1540,29 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         view,
         deleting: false,
         last: None,
+        in_result: 0,
     };
     walk(p, &mut s);
     s.out.trim().to_string()
 }
 
-/// `text` with a backslash before each `{` that opens what reads like a
-/// field code, so `{PAGE}` typed in a header stays text.
+/// `text` with a backslash before each `{` the writer would read as a
+/// field: one that opens what reads like a field code (`{PAGE \* roman}`),
+/// a bare name (`{SELLER}`, `{1999}`) or a result's end (`{/}`), so text
+/// typed in a header stays text.
 fn escape_field_codes(text: &str) -> std::borrow::Cow<'_, str> {
     use crate::markdown::critic::{field_code_close, is_field_code};
     let opens = |at: usize| {
         let after = &text[at + 1..];
-        field_code_close(after.char_indices()).is_some_and(|close| is_field_code(&after[..close]))
+        after.starts_with("/}")
+            || after.find('}').is_some_and(|end| {
+                end > 0
+                    && after[..end]
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            })
+            || field_code_close(after.char_indices())
+                .is_some_and(|close| is_field_code(&after[..close]))
     };
     if !text.char_indices().any(|(at, c)| c == '{' && opens(at)) {
         return std::borrow::Cow::Borrowed(text);

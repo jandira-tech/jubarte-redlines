@@ -718,7 +718,10 @@ fn result_end(text: &str) -> Option<usize> {
     let mut at = 0;
     while at < text.len() {
         let rest = &text[at..];
-        if rest.starts_with(FIELD_END) {
+        if rest.starts_with("\\{") {
+            // `\{DATE}`, `\{/}`: text, not a field nor an end.
+            at += 2;
+        } else if rest.starts_with(FIELD_END) {
             if depth == 0 {
                 return Some(at);
             }
