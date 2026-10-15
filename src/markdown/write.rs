@@ -325,6 +325,9 @@ struct TablePlan {
     aligns: HashMap<usize, &'static str>,
     /// The style the table's line names (`style Ledger`).
     style: Option<String>,
+    /// The table's own borders and its cells' (`borders …`, `cell-borders …`).
+    borders: Option<crate::markdown::borders::Sides>,
+    cell_borders: Vec<(view_notes::CellsAt, crate::markdown::borders::Sides)>,
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
     styles: HashMap<usize, String>,
     /// A comment's range runs through the table (`in c5`).
@@ -753,6 +756,8 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         aligns: line.aligns,
         styles: line.styles,
         style: line.style,
+        borders: line.borders,
+        cell_borders: line.cell_borders,
         in_comment: line.in_comment,
         fmt: line.fmt,
         grid_fmt: line.grid_fmt,
@@ -2029,9 +2034,12 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some(id) = grid {
             self.document.reserved_ids.insert(id);
         }
+        let (borders, cell_borders) = (plan.borders.clone(), plan.cell_borders.clone());
         TableFormats {
             table: table.map(|tag| self.format_mark(&tag)),
             grid,
+            borders,
+            cell_borders,
             row_marks: row_marks
                 .into_iter()
                 .map(|(row, (inserted, tag))| {

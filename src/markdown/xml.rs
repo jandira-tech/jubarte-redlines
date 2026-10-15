@@ -135,6 +135,10 @@ pub(super) struct TableFormats {
     pub cell_marks: HashMap<(usize, usize), (super::view_notes::CellMark, FormatMark)>,
     pub rows: HashMap<usize, FormatMark>,
     pub cells: HashMap<(usize, usize), FormatMark>,
+    /// The table's own borders (`w:tblBorders`) and its cells'
+    /// (`w:tcBorders`), the first group naming a cell giving its own.
+    pub borders: Option<super::borders::Sides>,
+    pub cell_borders: Vec<(super::view_notes::CellsAt, super::borders::Sides)>,
 }
 
 /// A paragraph's `w:ind`, side by side, in twips.
@@ -885,6 +889,13 @@ pub(super) fn story(
                 if let Some(align) = align {
                     let _ = write!(properties, "<w:jc w:val=\"{align}\"/>");
                 }
+                if let Some(borders) = &formats.borders {
+                    let _ = write!(
+                        properties,
+                        "<w:tblBorders>{}</w:tblBorders>",
+                        super::borders::xml(borders)
+                    );
+                }
                 properties.push_str(
                     "<w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" \
                      w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/>",
@@ -1006,7 +1017,7 @@ pub(super) fn story(
                     Some(false) => out.push_str("<w:vMerge/>"),
                     None => {}
                 }
-                let (format, own) = tables
+                let (format, own, borders) = tables
                     .last_mut()
                     .map(|(formats, row, cell)| {
                         let at = (row.saturating_sub(1), *cell);
@@ -1014,9 +1025,17 @@ pub(super) fn story(
                         (
                             formats.cells.get(&at).cloned(),
                             formats.cell_marks.get(&at).cloned(),
+                            formats
+                                .cell_borders
+                                .iter()
+                                .find(|(cells, _)| cells.holds(at.0, at.1))
+                                .map(|(_, sides)| super::borders::xml(sides)),
                         )
                     })
                     .unwrap_or_default();
+                if let Some(borders) = borders {
+                    let _ = write!(out, "<w:tcBorders>{borders}</w:tcBorders>");
+                }
                 // The cell's properties as they are, without its changes.
                 let open = out
                     .rfind("<w:tcPr>")
