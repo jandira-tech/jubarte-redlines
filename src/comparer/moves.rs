@@ -7,8 +7,8 @@
 //! Port of `DetectMovesInAtomList` (:4711), `GroupConsecutiveAtomsByStatus`
 //! (:4776), `ExtractTextFromAtomBlock` (:4805), `CalculateJaccardSimilarity`
 //! (:4664), `TokenizeForComparison` / `CountWords` / `splitByChars`.
-//! Disabled by default ([`WmlComparerSettings::detect_moves`] is `true` for
-//! the Word preset, `false` for [`WmlComparerSettings::powertools_faithful`]).
+//! On by default: [`WmlComparerSettings::detect_moves`] is `true` for the
+//! Word preset and `false` for [`WmlComparerSettings::powertools_faithful`].
 //!
 //! Word-visual extensions on top of the C# / TS algorithm:
 //! - split consecutive del/ins runs on `w:pPr` so each paragraph matches

@@ -6,7 +6,8 @@
 //! the pages pixel for pixel.
 //!
 //! The renderer is deterministic (the same input produces the same bytes),
-//! so a different byte stream can only come from a different pixel. Both
+//! and pages whose PNG bytes differ are compared by their decoded pixels,
+//! so only a changed pixel is a changed page. Both
 //! sides go through [`super::render`] at the same DPI and the same
 //! [`PdfOptions`], so the diff is the redline-versus-original signal, free
 //! of layout noise.
@@ -109,6 +110,8 @@ impl RenderDiff {
 ///
 /// # Errors
 ///
+/// [`ConvertError::OpenPackage`] or [`ConvertError::MissingDocument`] when
+/// either input is not a readable package with a main document;
 /// [`ConvertError::Raster`] when either document's PNG cannot be decoded
 /// or the overlay cannot be encoded, or when either layout's rasterizer
 /// reports a page too large to paint at the requested DPI (see

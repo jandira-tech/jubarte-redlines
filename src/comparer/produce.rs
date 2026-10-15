@@ -14,9 +14,9 @@
 //! [`produce_new_wml_markup_from_correlated_sequence`] (the top-level
 //! dispatch).
 //!
-//! Every revision id minted here is taken from a shared atomic counter so
-//! the same id never collides with the move / row-group ids the LCS and
-//! `mark_rows_as_deleted_or_inserted` paths also mint.
+//! Revision ids: the faithful pipeline threads one mutable counter
+//! (`&mut id`) through its stages within a comparison; the simple
+//! [`produce_document`] wrappers draw from a process-wide atomic counter.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

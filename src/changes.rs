@@ -112,7 +112,8 @@ pub struct ChangeFilter {
 }
 
 impl ChangeFilter {
-    /// Build a filter that selects the changes whose long ids are in `ids`.
+    /// Build a filter that selects the changes `ids` names (`r12`,
+    /// `header1.r1`, `r1+2`).
     pub fn ids<I: IntoIterator<Item = S>, S: Into<String>>(ids: I) -> Self {
         Self {
             ids: Some(ids.into_iter().map(Into::into).collect()),
@@ -327,9 +328,9 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
 /// # Errors
 ///
 /// [`ChangeError::InvalidId`] for an id `filter` accepts that is not a
-/// change id; [`ChangeError::UnknownChange`] for a long-form id not
-/// present in the document; [`ChangeError::Ambiguous`] for a long-form id
-/// that names more than one listed change; [`ChangeError::Package`] when
+/// change id; [`ChangeError::UnknownChange`] for an id not present in the
+/// document; [`ChangeError::Ambiguous`] for an id that names more than one
+/// listed change; [`ChangeError::Package`] when
 /// the package cannot be read or rewritten.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Accept)

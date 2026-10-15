@@ -258,7 +258,9 @@ fn dest_rid_part_bytes(dest: &PartFs, doc_part: &str, rid: &str) -> Option<Vec<u
 }
 
 /// Ensure every rId the redline's main document references resolves in
-/// the destination package. rIds already present are left as-is; rIds
+/// the destination package. rIds already present are left as-is, except an
+/// inserted reference whose rId the revised source points at different
+/// bytes: that part is carried over under a fresh rId and rewired. rIds
 /// missing from the destination but found in a source package are carried
 /// over (internal media is copied under a fresh part name, a fresh rel is
 /// minted, the referencing attribute is rewired); rIds found nowhere have
