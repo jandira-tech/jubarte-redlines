@@ -44,7 +44,7 @@ inserted or deleted row.
 
 | Form | Meaning |
 | --- | --- |
-| `{>>r12 @AC<<}`, `{>>r1+2 @AC<<}` | revision `body:rev:12`; two marks of one change |
+| `{>>r12 @AC<<}`, `{>>r1+2 @AC<<}` | revision `r12` (its `w:id` is 12); two marks of one change |
 | `{~~a~>b~~}{>>r1 @AC<<}{>>r2 @JD<<}` | substitution by two authors, deleted side first |
 | `{>>c5 @AC: text<<}`, `re c5`, `resolved` | comment, reply, resolved thread |
 | `header1.r3 @AC`, `footnotes.r7 @AC` | change in another story |

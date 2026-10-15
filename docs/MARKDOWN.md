@@ -286,7 +286,7 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 ```
 
 - `N` counts every `w:p` under `w:body` in document order, table cells
-  included, text boxes excluded: `pN` is `body:p:N`.
+  included, text boxes excluded.
 - `Style` prints when it is not the default paragraph style and, for a
   heading, not `Heading{level}`.
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
@@ -432,7 +432,7 @@ comment only from a reference in the main story.
 ### Tags
 
 A tag is `r<ids> @<handle>`: `r0 @AC`, or `r1+2 @AC` for two Word marks of one
-logical change. The ids are `w:id` values: `r12` is `body:rev:12`; a change in
+logical change. The ids are `w:id` values: `r12` is the change with `w:id` 12; a change in
 another story names it, `footnotes.r3 @AC` or `header1.r1 @AC`. Several
 authors' tags on one id line are joined by `; ` (`rev r1 @AC; r2 @JD`).
 
@@ -500,8 +500,8 @@ block.
 ### Reading back
 
 `convert` reads an agent view back into Word. A change followed by a
-tagged note (`{>>r12 @AC<<}`) keeps its id, `body:rev:12`
-(`footnotes:rev:12` under a footnote id line), the name the `authors:`
+tagged note (`{>>r12 @AC<<}`) keeps its id, `r12`
+(`footnotes.r12` under a footnote id line), the name the `authors:`
 line gives its handle, and its date: the note's own timestamp, else the
 handle's from `authors:`. A tagged comment note keeps its id, author and
 date; `re cN` names its thread root; `resolved` resolves the thread. A
@@ -646,10 +646,10 @@ Payment is due in [-30-]{+45+} days.
 
 - Only the changed paragraphs are shown, each whole. `@@ [line:N] @@` is
   the line a Markdown paragraph starts on; in a Word document it is the
-  paragraph's id, `@@ [body:p:N] @@` (or `header1:p:N`, `footnotes:p:N`,
-  ...), the id edit plans take (`jubarte read` prints it as
+  paragraph's id, `@@ [p12] @@` (or `header1`, `header1.p2`,
+  `footnotes.p3`, ...), the id edit plans take (`jubarte read` prints it as
   `<!-- p12 -->`). It is the
-  paragraph in the new version; `@@ -[body:p:N] @@` is a paragraph
+  paragraph in the new version; `@@ -[p12] @@` is a paragraph
   removed, in the old one. A change in a text box is shown at the
   paragraph that holds the box.
 - A change is `[-old-]{+new+}`. Highlights and comments stay CriticMarkup:

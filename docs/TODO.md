@@ -267,8 +267,8 @@ X is now Y; X is removed in 0.14` once: the tasks `text`, `inspect`
 `-t`). The ids are already gone: bare numbers (`12`), 0.12's `#12`,
 `#1+2`, `#c27` and the cell id `t0.r1.c2` exit 2 naming the settled
 spelling (`r12`, `c27`, `t0.row1.cell2`), and `--date` exits 2 naming
-`--datetime`. The long ids `read --json` prints (`body:rev:12`,
-`body:p:12`) still parse until the settled long ids replace them.
+`--datetime`. The expired `body:rev:12` and `body:p:12` are refused,
+naming the short id (`r12`, `p12`); nothing prints them.
 
 - [ ] Remove the aliases, their notes and their tests in 0.14, and say so in
   the CHANGELOG's Removed section.
