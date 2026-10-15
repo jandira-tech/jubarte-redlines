@@ -1656,10 +1656,12 @@ fn list_levels(docx: &[u8]) -> Vec<ListLevel> {
     out
 }
 
+/// A level's `(left, hanging, lvlText)` as Word's list definition gives it.
+type Indent<'a> = (&'a str, &'a str, &'a str);
+
 #[test]
 fn bullet_and_numbered_levels_match_after_the_id_line_round_trip() {
-    // (left, hanging, lvlText) Word's list definition gives that level.
-    let cases: &[(&str, &[(&str, &str, &str)])] = &[
+    let cases: &[(&str, &[Indent<'_>])] = &[
         (
             "tests/fixtures/legacy/services.md",
             &[
