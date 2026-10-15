@@ -776,16 +776,27 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
         let mut prev_space = false;
-        for c in line.chars() {
-            let is_space = c == ' ' || c == '\u{a0}';
-            if is_space {
-                if keep_spaces || !prev_space {
-                    out.push(' ');
+        let mut rest = line;
+        while !rest.is_empty() {
+            // A closed equation (`$…$`, `$$…$$`) is copied as it is: its
+            // spaces are the equation's, and Word draws each one.
+            let (text, math, next) = equation_split(rest);
+            for c in text.chars() {
+                let is_space = c == ' ' || c == '\u{a0}';
+                if is_space {
+                    if keep_spaces || !prev_space {
+                        out.push(' ');
+                    }
+                } else {
+                    out.push(c);
                 }
-            } else {
-                out.push(c);
+                prev_space = is_space;
             }
-            prev_space = is_space;
+            if !math.is_empty() {
+                out.push_str(math);
+                prev_space = false;
+            }
+            rest = next;
         }
         lines.push(finish_line(&out, keep_spaces, verbatim));
     }
@@ -796,6 +807,27 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
         lines.remove(0);
     }
     lines.join("\n")
+}
+
+/// `line` as the text before its first closed equation, the equation with
+/// its fences, and the rest; all text when it holds none.
+fn equation_split(line: &str) -> (&str, &str, &str) {
+    let Some(start) = super::unescaped_dollar(line) else {
+        return (line, "", "");
+    };
+    let fence = if line[start..].starts_with("$$") {
+        "$$"
+    } else {
+        "$"
+    };
+    let body = start + fence.len();
+    match super::math_body(&line[body..], fence) {
+        Some(len) => {
+            let end = body + len + fence.len();
+            (&line[..start], &line[start..end], &line[end..])
+        }
+        None => (line, "", ""),
+    }
 }
 
 /// One line of [`tidy_inline`].
@@ -1076,6 +1108,22 @@ mod tests {
         assert_eq!(resolve_target("word", "media/a.png"), "word/media/a.png");
         assert_eq!(resolve_target("word", "/word/x.xml"), "word/x.xml");
         assert_eq!(resolve_target("", "word/document.xml"), "word/document.xml");
+    }
+
+    #[test]
+    fn an_equation_keeps_its_spaces_where_text_collapses() {
+        // `=  λ` is two spaces in the equation; Word draws both.
+        assert_eq!(
+            tidy_inline("a  $x  =  y$  b", false, false),
+            "a $x  =  y$ b"
+        );
+        assert_eq!(tidy_inline("$$a   b$$", false, false), "$$a   b$$");
+        // An escaped or unclosed dollar is text.
+        assert_eq!(tidy_inline(r"\$  a  \$", false, false), r"\$ a \$");
+        assert_eq!(
+            tidy_inline("cost $5  and  more", false, false),
+            "cost $5 and more"
+        );
     }
 
     #[test]
