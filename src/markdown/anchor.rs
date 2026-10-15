@@ -110,6 +110,11 @@ fn without_block_mark(text: &str) -> &str {
     trimmed
 }
 
+/// Whitespace, or a `&#32;` [`plain_anchor`] hid.
+fn blank(c: char) -> bool {
+    c.is_whitespace() || c == hide(' ')
+}
+
 /// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>` and
 /// `</u>` always; single `*` and `_` runs only when they pair up (`*x*`,
 /// `_x_`, `__x__`), so `2 * 3`, `snake_case`, `snake__case` and
@@ -122,9 +127,8 @@ fn without_emphasis(text: &str) -> String {
     // A `*` with spaces on both sides (`2 * 3`) is text; the rest are marks
     // when they pair up.
     let chars: Vec<char> = text.chars().collect();
-    let spaced = |i: usize| {
-        i > 0 && chars[i - 1].is_whitespace() && chars.get(i + 1).is_some_and(|c| c.is_whitespace())
-    };
+    let spaced =
+        |i: usize| i > 0 && blank(chars[i - 1]) && chars.get(i + 1).is_some_and(|&c| blank(c));
     let star = |i: usize| chars[i] == '*' && !spaced(i);
     if (0..chars.len())
         .filter(|&i| star(i))
@@ -156,10 +160,8 @@ fn without_emphasis(text: &str) -> String {
         let len = end - i;
         let before = i.checked_sub(1).map(|b| chars[b]);
         let after = chars.get(end).copied();
-        let closes =
-            before.is_some_and(|c| !c.is_whitespace()) && !after.is_some_and(char::is_alphanumeric);
-        let opens =
-            after.is_some_and(|c| !c.is_whitespace()) && !before.is_some_and(char::is_alphanumeric);
+        let closes = before.is_some_and(|c| !blank(c)) && !after.is_some_and(char::is_alphanumeric);
+        let opens = after.is_some_and(|c| !blank(c)) && !before.is_some_and(char::is_alphanumeric);
         // The first delimiter of this run not yet paired.
         let mut from = i;
         while closes && from < end {
@@ -320,6 +322,9 @@ mod tests {
             ("&#32;- item", " - item"),
             ("a &#32;b", "a  b"),
             ("&#32", "&#32"),
+            // CodeRabbit #484: a `&#32;` is a space to the emphasis rules too.
+            ("2&#32;*&#32;3&#32;*&#32;4", "2 * 3 * 4"),
+            ("a&#32;_b_&#32;c", "a b c"),
         ] {
             assert_eq!(plain_anchor(anchor), plain, "{anchor}");
         }
