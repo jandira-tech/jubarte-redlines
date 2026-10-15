@@ -760,6 +760,40 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         ),
                         _ => (0, String::new(), None, Vec::new()),
                     };
+                    // The styles of the paragraphs the writer makes again,
+                    // the empty ones before the text too: none when all
+                    // are Word's for the story (`header`, by name).
+                    let written = match last {
+                        Some(last) => &paragraphs[..=last],
+                        None => &paragraphs[..paragraphs.len().min(1)],
+                    };
+                    let styles: Vec<String> = written
+                        .iter()
+                        .map(
+                            |p| match p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) {
+                                Some(id) if Some(id) != default_style.as_deref() => {
+                                    let own = writer
+                                        .styles
+                                        .by_id
+                                        .get(id)
+                                        .map_or(id.eq_ignore_ascii_case(kind), |s| s.name == kind);
+                                    if own {
+                                        header::story_style(kind).to_string()
+                                    } else {
+                                        id.to_string()
+                                    }
+                                }
+                                _ => "Normal".to_string(),
+                            },
+                        )
+                        .collect();
+                    let styles = if styles.iter().all(|s| s == header::story_style(kind)) {
+                        Vec::new()
+                    } else if styles.iter().all(|s| *s == styles[0]) {
+                        styles[..1].to_vec()
+                    } else {
+                        styles
+                    };
                     let (rev, fmt) = if accept.is_none() && options.ids {
                         let shown = std::iter::once(&text)
                             .chain(&more)
@@ -783,6 +817,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         text,
                         more,
                         align,
+                        styles,
                         active: match ty {
                             "first" => title_page,
                             "even" => even_odd,

@@ -46,6 +46,10 @@ pub(super) struct Story {
     pub more: Vec<String>,
     /// `center` or `right`; `None` for left.
     pub align: Option<&'static str>,
+    /// The paragraphs' style ids when not Word's for the story: one for
+    /// all (`style: Normal`), or one per paragraph from the part's first
+    /// (`styles: [Header, ListParagraph]`). `Normal` writes no `w:pStyle`.
+    pub styles: Vec<String>,
     pub active: bool,
     /// The marks the text shows no tag for (`rev: footer1.r24 @BC;
     /// break-del footer1.r25 @BC in footer1.p1`), and the formatting
@@ -310,6 +314,12 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
         more,
         rev: tags("rev"),
         fmt: tags("fmt"),
+        styles: match entries.iter().find(|(k, _)| k == "styles") {
+            Some((_, Value::List(items))) => items.clone(),
+            _ => text_of("style")
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default(),
+        },
         align: if flag("center") {
             Some("center")
         } else if flag("right") {
@@ -947,7 +957,15 @@ fn story_part(package: &mut PartFs, main: &str, story: &Story, marks: &mut Marks
     let mut body = String::new();
     let last = texts.len() - 1;
     for (index, text) in texts.iter().enumerate() {
-        let mut base = format!("<w:pStyle w:val=\"{style}\"/>");
+        let style = match story.styles.as_slice() {
+            [one] => one.as_str(),
+            many => many.get(index).map_or(style, String::as_str),
+        };
+        let mut base = if style == "Normal" {
+            String::new()
+        } else {
+            format!("<w:pStyle w:val=\"{}\"/>", super::xml::escape(style))
+        };
         if let Some(align) = story.align.filter(|_| index >= story.paragraph) {
             let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
         }

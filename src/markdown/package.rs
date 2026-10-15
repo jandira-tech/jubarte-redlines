@@ -130,9 +130,20 @@ pub(super) fn assemble(
             "Footer"
         });
     }
+    // And the styles they name (`style: ListParagraph`), as id lines do.
+    let mut named = document.named_styles.clone();
+    named.extend(
+        document
+            .stories
+            .values()
+            .flat_map(|s| &s.stories)
+            .flat_map(|story| &story.styles)
+            .filter(|id| !matches!(id.as_str(), "Normal" | "Header" | "Footer"))
+            .cloned(),
+    );
     if let Some(styles) = package.part_string(&styles_part) {
         let styles = with_styles(&styles, &wanted);
-        let styles = with_named_styles(&styles, &document.named_styles);
+        let styles = with_named_styles(&styles, &named);
         let styles = super::view_styles::apply(&styles, &document.style_specs);
         let theme = related(&package, &main, "/theme")
             .and_then(|part| package.part_string(&part))
