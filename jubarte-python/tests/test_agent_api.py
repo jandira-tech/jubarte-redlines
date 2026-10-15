@@ -160,10 +160,10 @@ def test_edit_accepts_a_plain_dict_plan_and_refusals_carry_outcomes() -> None:
     with pytest.raises(EditPlanError) as info:
         doc.edit(stale)
     assert info.value.code == "STALE_SOURCE"
-    # Preview resolves without producing documents.
+    # Preview returns no documents; its counts are what applying reports.
     report = doc.preview(dict(plan, operations=plan["operations"][:1]))
     assert report.ok and report.operations[0].context == "{-Heading}"
-    assert report.revisions.total == 0
+    assert (report.revisions.deleted, report.revisions.total) == (1, 1)
     with pytest.raises(EditPlanError) as info:
         doc.preview(plan)
     assert info.value.code == "ANCHOR_NOT_FOUND"
