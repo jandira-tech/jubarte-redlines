@@ -9,6 +9,7 @@
 mod common;
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::PathBuf;
 
 use common::docx::part_string;
@@ -1866,4 +1867,100 @@ fn an_idless_file_keeps_list_indent_keep_lines_and_a_bare_normal() {
     keeps_list_indent_keep_lines_and_a_bare_normal(include_str!(
         "fixtures/from-docx/critic/synthetic/hard-lists.reject.md"
     ));
+}
+
+/// `markdown` with its `sha256:` line dropped. The line names the docx
+/// bytes, which a second write does not repeat.
+fn without_sha256(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    for line in markdown.split_inclusive('\n') {
+        if !line.starts_with("sha256:") {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+fn document_xml(docx: &[u8]) -> String {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(docx)).expect("a docx zip");
+    let mut file = zip.by_name("word/document.xml").expect("word/document.xml");
+    let mut xml = String::new();
+    file.read_to_string(&mut xml).expect("document xml");
+    xml
+}
+
+/// Plain Markdown with no id lines, through docx and back, then written
+/// once more. The second read matches the first apart from `sha256:`.
+fn idless_chain(markdown: &str) -> (String, Vec<u8>, Vec<u8>) {
+    let read_options = ReadOptions {
+        page_markers: false,
+        ..ReadOptions::default()
+    };
+    let b = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("B")
+        .docx;
+    assert_word_valid_package(&b);
+    let c = read(&b, &read_options).expect("C").markdown;
+    let d = markdown_to_docx(&c, &DocxOptions::default())
+        .expect("D")
+        .docx;
+    assert_word_valid_package(&d);
+    let again = read(&d, &read_options).expect("read D").markdown;
+    assert_eq!(without_sha256(&again), without_sha256(&c), "read(D) != C");
+    (c, b, d)
+}
+
+/// `$x_{--}$` is the text `--`. Spacing the brace so it is not a
+/// CriticMarkup delimiter puts that space into the equation.
+#[test]
+fn literal_math_delimiters_keep_their_page_text() {
+    let markdown = include_str!("fixtures/from-docx/critic/synthetic/hard-delimiters.accept.md");
+    let (c, b, d) = idless_chain(markdown);
+    assert!(
+        c.lines()
+            .any(|line| line == "Math-like text $x_{{}--{}}$ and $y^{{}++{}}$ stays."),
+        "{c}"
+    );
+    for (name, docx) in [("B", &b), ("D", &d)] {
+        let xml = document_xml(docx);
+        assert!(xml.contains("<m:t>--</m:t>"), "{name} lost `--`: {xml}");
+        assert!(xml.contains("<m:t>++</m:t>"), "{name} lost `++`: {xml}");
+        assert!(
+            !xml.contains("> -- <") && !xml.contains("> ++ <"),
+            "{name} drew a space around the delimiter text"
+        );
+    }
+}
+
+/// Bold closed against bold is `****`, which comes back as asterisks.
+#[test]
+fn bold_around_italic_does_not_print_empty_emphasis() {
+    let markdown = "__Monthly distribution of fishing effort and common dolphin (_Delphinus delphis_) captures.__\n";
+    let (c, _b, d) = idless_chain(markdown);
+    let line = "<b>Monthly distribution of fishing effort and common dolphin (</b>**_Delphinus delphis_**<b>) captures.</b>";
+    assert!(c.lines().any(|l| l == line), "{c}");
+    assert!(!c.contains("****"), "{c}");
+    let xml = document_xml(&d);
+    assert!(xml.contains("delphis"), "{xml}");
+    assert!(xml.contains(") captures."), "{xml}");
+    assert!(!xml.contains("****"), "{xml}");
+}
+
+/// `=  ` is two spaces: collapsing them onto one moves the line Word draws.
+/// A line break in a math run reads as a space, since a break in the view
+/// would end the paragraph's line. The break follows `λ`, not `\lambda`:
+/// LaTeX ends a control word on the space after it.
+#[test]
+fn math_run_spaces_survive_the_view_and_a_break_reads_as_a_space() {
+    let markdown = "$$\\textrm{logit}(\\pi_i) =  λ\n\\label{eq:one}$$\n";
+    let (c, b, d) = idless_chain(markdown);
+    let equation = "$$\\text{logit}(π_i) =  λ \\backslash label\\lbrace eq:one\\rbrace$$";
+    assert!(c.contains(equation), "{c}");
+    for (name, docx) in [("B", &b), ("D", &d)] {
+        let xml = document_xml(docx);
+        assert!(
+            xml.contains(" =  "),
+            "{name} collapsed the spaces after '=': {xml}"
+        );
+    }
 }

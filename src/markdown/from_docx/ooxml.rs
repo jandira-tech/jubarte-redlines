@@ -660,11 +660,22 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         // opening and the last closing meet the text around.
         // `**_…_**`: the `_` always reads beside the `*`; the `**` meets
         // the text around with `_` inside it.
-        let reads = if marks.bold && marks.italic {
+        let mut reads = if marks.bold && marks.italic {
             delimiters_read(before, &format!("_{inner}_"), after, false)
         } else {
             delimiters_read(before, &inner, after, marks.italic)
         };
+        // `_**` closed against `**` is emphasis around nothing (`****`),
+        // which the writer reads back as the marks. HTML says the same.
+        let markdown_open = match (marks.bold, marks.italic) {
+            (true, true) => "**_",
+            (true, false) => "**",
+            (false, true) => "_",
+            (false, false) => "",
+        };
+        if reads && lead.is_empty() && opens_empty_emphasis(&out, markdown_open) {
+            reads = false;
+        }
         let (emphasis_open, emphasis_close) = match (marks.bold, marks.italic, reads) {
             (true, true, true) => ("**_", "_**"),
             (true, false, true) => ("**", "**"),
@@ -696,6 +707,20 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         out.push_str(trail);
     }
     out
+}
+
+/// `open` (`**`, `_`, `**_`) against the marks `out` already ends with.
+/// Four or more of one mark (`_**` then `**`) are emphasis around nothing.
+fn opens_empty_emphasis(out: &str, open: &str) -> bool {
+    let Some(mark) = open.chars().next() else {
+        return false;
+    };
+    if mark != '*' && mark != '_' {
+        return false;
+    }
+    let right = open.chars().take_while(|&c| c == mark).count();
+    let left = out.chars().rev().take_while(|&c| c == mark).count();
+    left > 0 && right > 0 && left + right >= 4
 }
 
 /// Whether emphasis delimiters around `inner`, between `before` and
@@ -751,16 +776,27 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
         let mut prev_space = false;
-        for c in line.chars() {
-            let is_space = c == ' ' || c == '\u{a0}';
-            if is_space {
-                if keep_spaces || !prev_space {
-                    out.push(' ');
+        let mut rest = line;
+        while !rest.is_empty() {
+            // A closed equation (`$…$`, `$$…$$`) is copied as it is: its
+            // spaces are the equation's, and Word draws each one.
+            let (text, math, next) = equation_split(rest);
+            for c in text.chars() {
+                let is_space = c == ' ' || c == '\u{a0}';
+                if is_space {
+                    if keep_spaces || !prev_space {
+                        out.push(' ');
+                    }
+                } else {
+                    out.push(c);
                 }
-            } else {
-                out.push(c);
+                prev_space = is_space;
             }
-            prev_space = is_space;
+            if !math.is_empty() {
+                out.push_str(math);
+                prev_space = false;
+            }
+            rest = next;
         }
         lines.push(finish_line(&out, keep_spaces, verbatim));
     }
@@ -771,6 +807,27 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
         lines.remove(0);
     }
     lines.join("\n")
+}
+
+/// `line` as the text before its first closed equation, the equation with
+/// its fences, and the rest; all text when it holds none.
+fn equation_split(line: &str) -> (&str, &str, &str) {
+    let Some(start) = super::unescaped_dollar(line) else {
+        return (line, "", "");
+    };
+    let fence = if line[start..].starts_with("$$") {
+        "$$"
+    } else {
+        "$"
+    };
+    let body = start + fence.len();
+    match super::math_body(&line[body..], fence) {
+        Some(len) => {
+            let end = body + len + fence.len();
+            (&line[..start], &line[start..end], &line[end..])
+        }
+        None => (line, "", ""),
+    }
 }
 
 /// One line of [`tidy_inline`].
@@ -1051,6 +1108,48 @@ mod tests {
         assert_eq!(resolve_target("word", "media/a.png"), "word/media/a.png");
         assert_eq!(resolve_target("word", "/word/x.xml"), "word/x.xml");
         assert_eq!(resolve_target("", "word/document.xml"), "word/document.xml");
+    }
+
+    #[test]
+    fn an_equation_keeps_its_spaces_where_text_collapses() {
+        // `=  λ` is two spaces in the equation; Word draws both.
+        assert_eq!(
+            tidy_inline("a  $x  =  y$  b", false, false),
+            "a $x  =  y$ b"
+        );
+        assert_eq!(tidy_inline("$$a   b$$", false, false), "$$a   b$$");
+        // An escaped or unclosed dollar is text.
+        assert_eq!(tidy_inline(r"\$  a  \$", false, false), r"\$ a \$");
+        assert_eq!(
+            tidy_inline("cost $5  and  more", false, false),
+            "cost $5 and more"
+        );
+    }
+
+    #[test]
+    fn bold_closed_against_bold_is_not_empty_emphasis() {
+        let mut inline = Inline::default();
+        inline.push(
+            "Monthly distribution of fishing effort and common dolphin (",
+            true,
+            false,
+            None,
+        );
+        inline.push("Delphinus delphis", true, true, None);
+        inline.push(") captures.", true, false, None);
+        assert_eq!(
+            inline.render(true),
+            "<b>Monthly distribution of fishing effort and common dolphin (</b>**_Delphinus delphis_**<b>) captures.</b>"
+        );
+        // A different mark, or a space, is not emphasis around nothing.
+        let mut inline = Inline::default();
+        inline.push("bold", true, false, None);
+        inline.push("it", false, true, None);
+        assert_eq!(inline.render(true), "**bold**_it_");
+        let mut inline = Inline::default();
+        inline.push("word ", true, false, None);
+        inline.push("em", true, true, None);
+        assert_eq!(inline.render(true), "**word** **_em_**");
     }
 
     #[test]

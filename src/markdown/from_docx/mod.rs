@@ -1021,9 +1021,33 @@ fn fenced(code: &str) -> String {
 }
 
 /// A paragraph's line breaks (`w:br`) as Markdown hard breaks, which a
-/// bare newline is not: it reads as a space.
+/// bare newline is not: it reads as a space. A break inside an equation
+/// (`$…$`, `$$…$$`) stays a newline: it is part of the math text, and a
+/// backslash before it would be a character of the equation.
 fn hard_breaks(text: &str) -> String {
-    text.replace('\n', "\\\n")
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        let Some(start) = unescaped_dollar(rest) else {
+            out.push_str(&rest.replace('\n', "\\\n"));
+            break;
+        };
+        out.push_str(&rest[..start].replace('\n', "\\\n"));
+        let fence = if rest[start..].starts_with("$$") {
+            "$$"
+        } else {
+            "$"
+        };
+        let body = start + fence.len();
+        let Some(len) = math_body(&rest[body..], fence) else {
+            out.push_str(&rest[start..].replace('\n', "\\\n"));
+            break;
+        };
+        let end = body + len + fence.len();
+        out.push_str(&rest[start..end]);
+        rest = &rest[end..];
+    }
+    out
 }
 
 /// Escape a table cell for a Markdown pipe table. `escaped` text (the agent
@@ -1069,6 +1093,22 @@ fn unescaped_dollar(value: &str) -> Option<usize> {
             '$' => return Some(at),
             _ => {}
         }
+    }
+    None
+}
+
+/// The byte length of an equation's body after its opening fence, when
+/// `fence` (`$` or `$$`) closes it. A backslash before `$` is not a fence.
+fn math_body(after_open: &str, fence: &str) -> Option<usize> {
+    let mut rest = after_open;
+    let mut offset = 0usize;
+    while let Some(at) = unescaped_dollar(rest) {
+        if rest[at..].starts_with(fence) {
+            return Some(offset + at);
+        }
+        let next = at + 1;
+        offset += next;
+        rest = &rest[next..];
     }
     None
 }
@@ -3311,7 +3351,19 @@ fn collect_named<'a>(
 /// run's text (`{++2++}`, `{--π--}`); an accepted or rejected view has none
 /// left to print.
 fn math(element: &Element) -> String {
-    ooxml::collapse_ws(&math_inner(element, 0, false))
+    math_space(&math_inner(element, 0, false))
+}
+
+/// The equation's LaTeX with its edges trimmed. A run of spaces stays:
+/// collapsing it onto one moves the line. A line break reads as a space,
+/// since a break in the view would end the line (`- y` after it starts a
+/// list, and a heading or a table row ends there).
+fn math_space(latex: &str) -> String {
+    latex
+        .trim()
+        .chars()
+        .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
+        .collect()
 }
 
 /// The LaTeX of `element`; `name` while inside a function's name, whose
@@ -3921,6 +3973,38 @@ mod tests {
     use std::io::Write;
 
     const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+
+    #[test]
+    fn a_break_inside_an_equation_stays_a_newline() {
+        assert_eq!(hard_breaks("a\nb $x\ny$ c\nd"), "a\\\nb $x\ny$ c\\\nd");
+        assert_eq!(hard_breaks("$$a\nb$$"), "$$a\nb$$");
+        assert_eq!(hard_breaks("\\$ not\n $x$"), "\\$ not\\\n $x$");
+        assert_eq!(hard_breaks("plain\n"), "plain\\\n");
+    }
+
+    #[test]
+    fn math_keeps_a_run_of_spaces_and_reads_a_line_break_as_one() {
+        let spaced = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>logit</m:t></m:r><m:r><m:t xml:space="preserve"> =  </m:t></m:r><m:r><m:t>λ</m:t></m:r></m:oMath>"#;
+        let element = super::ooxml::parse_xml(spaced.as_bytes()).expect("spaced math");
+        assert_eq!(math(&element), "logit =  λ");
+        let broken = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t xml:space="preserve">.&#xA;\label</m:t></m:r></m:oMath>"#;
+        let element = super::ooxml::parse_xml(broken.as_bytes()).expect("broken math");
+        assert_eq!(math(&element), ". \\backslash label");
+        // A break in the view would end the line: `- y` would start a list,
+        // and a heading or a table row would end there.
+        for (text, latex) in [
+            ("x&#xA;- y", "x - y"),
+            ("x&#xA;# y", "x # y"),
+            ("x&#xA;&#xA;y", "x  y"),
+            ("x&#xD;&#xA;y", "x  y"),
+        ] {
+            let xml = format!(
+                r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t xml:space="preserve">{text}</m:t></m:r></m:oMath>"#
+            );
+            let element = super::ooxml::parse_xml(xml.as_bytes()).expect("math");
+            assert_eq!(math(&element), latex, "{text}");
+        }
+    }
 
     #[test]
     fn a_name_loses_the_xml_indentation_and_keeps_its_spaces() {
