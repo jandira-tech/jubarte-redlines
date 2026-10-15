@@ -4705,6 +4705,11 @@ fn defined_style_ids(pkg: &PartFs, main: &str) -> Option<std::collections::HashS
 /// orphaned footnote/endnote reference is an `invalid_content` error — C#
 /// throws DocxodusException when no ComparisonLog is wired (:1676), and the
 /// compare path wires none.
+///
+/// # Errors
+///
+/// [`OpcError`] when an orphan footnote/endnote reference has no matching
+/// definition, or the OPC layer cannot parse / serialise a referenced part.
 pub fn pre_process_markup(
     pkg: &mut PartFs,
     starting_id_for_footnotes_endnotes: i32,
@@ -4943,7 +4948,14 @@ const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!(
 );
 
 /// A.11 — `RevisionProcessor.AcceptRevisions` byte facade: accept every
-/// tracked revision across main + headers/footers + notes + styles parts.
+/// tracked revision across main + headers/footers + notes + styles parts
+/// and return the result as a `.docx` byte vector. The input is admitted
+/// under [`crate::admission::InputLimits::compare`] first.
+///
+/// # Errors
+///
+/// [`OpcError`] when admission refuses the input or the OPC layer cannot
+/// parse / serialise the package.
 pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
@@ -6328,9 +6340,9 @@ pub fn get_revisions(
 }
 
 /// Serialize one revision to the stable JSON object shape of the wasm
-/// `getRevisions` and Python `get_revisions` bindings. Full
-/// string escaping: backslash, quote, and EVERY control char < 0x20 (document
-/// text can carry `\t`, `\r`, vertical tabs, …).
+/// `getRevisions` and Python `get_revisions` bindings. Strings are fully
+/// escaped — backslash, quote, and every control char below U+0080 — so
+/// document text can carry `\t`, `\r`, vertical tabs, etc.
 pub fn revision_to_json(r: &crate::comparer::WmlComparerRevision) -> String {
     fn esc(s: &str) -> String {
         let mut o = String::with_capacity(s.len());
@@ -6371,7 +6383,8 @@ pub fn revision_to_json(r: &crate::comparer::WmlComparerRevision) -> String {
 }
 
 /// Serialize a revision list to a single JSON array string — the wasm
-/// `getRevisions` binding shape (the CLI prints one object per line instead).
+/// `getRevisions` binding shape. The CLI prints one object per line
+/// instead.
 pub fn revisions_to_json(revs: &[crate::comparer::WmlComparerRevision]) -> String {
     let items: Vec<String> = revs.iter().map(revision_to_json).collect();
     format!("[{}]", items.join(","))

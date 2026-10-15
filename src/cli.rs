@@ -2,7 +2,27 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Shared, platform-neutral command declarations and parsing. No runtime I/O.
+//! Shared, platform-neutral command declarations and parsing for the
+//! `jubarte` CLI and its native-compatible adapters. No runtime I/O
+//! happens here: every type is a description of an argv shape, and the
+//! functions walk `clap` matches, never files or packages.
+//!
+//! The public items form three layers:
+//!
+//! - The derive model: [`Cli`], [`Command`], [`CompareArgs`], [`ReadArgs`],
+//!   [`EditOptions`], [`MarkdownArgs`], [`RenderArgs`], [`Selection`] and
+//!   the enums they carry. `Cli::try_parse_from` parses argv and returns
+//!   a fully-resolved tree.
+//! - Shared parsers and formatters: [`output_format`], [`wrote_line`],
+//!   [`wrote_png_line`], [`flag_operations`], [`retired_spellings`],
+//!   [`apply_retired`], [`retired_note`], the [`Retired`] / [`RETIRED`]
+//!   table, [`Task`], and the [`Format`] / [`CompareMode`] /
+//!   [`PatchFormat`] / [`Revisions`] / [`Page`] / [`SectionBreakArg`] /
+//!   [`KindArg`] / [`TrackChanges`] enums.
+//! - The native-compatible JSON entry point: [`parse_json`], which builds
+//!   the same `clap` model, hands it `argv`, and returns a JSON
+//!   `exit_code`/`command`/`args`/`notes` document. The Python and
+//!   JavaScript bindings use it so their refusals match the binary's.
 
 pub use crate::edit::flags::FlagOp;
 use clap::{CommandFactory, FromArgMatches, Parser};
@@ -26,7 +46,9 @@ pub(crate) use crate::util::datetime::parse_datetime;
     after_help = "Examples:\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte contract.docx                    print the agent view (read)\n  jubarte old.docx new.docx                redline printed as the agent view (-o writes it)\n  jubarte read contract.docx --json\n  jubarte diff old.docx new.docx --format github\n  jubarte convert contract.docx -o contract.pdf\n\nRun jubarte <task> --help for task options.",
 )]
 pub struct Cli {
-    /// Subcommand (e.g. `revisions`); plain compare when omitted.
+    /// Subcommand to run, when one was given. `None` means the shorthand
+    /// form: `jubarte A B` is `compare A B`, `jubarte FILE` is `read FILE`
+    /// with `compare.read`'s options.
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -43,23 +65,27 @@ pub struct Cli {
     )]
     pub quiet: bool,
 
-    /// Inputs and settings of the shorthands: `jubarte A B` is `compare A
-    /// B`; `jubarte FILE` is `read FILE`, with `compare.read`'s options.
+    /// Inputs and settings of the shorthand forms. `jubarte A B` is
+    /// `compare A B`; `jubarte FILE` is `read FILE`, sharing
+    /// [`CompareArgs::read`].
     #[command(flatten)]
     #[serde(flatten)]
     pub compare: CompareArgs,
 }
 
-/// Options of `read`.
+/// Options that shape the `read` view (and the view `compare` prints
+/// without `-o`, or writes to `-o FILE.md`). Grouped under `read_options`
+/// in `--help`; also flattened into [`CompareArgs::read`] for the
+/// shorthand form.
 #[derive(clap::Args, Debug, Default, PartialEq, Serialize)]
 #[group(id = "read_options", multiple = true)]
 pub struct ReadArgs {
-    /// Tracked changes inline (all, the default), or the text with every
+    /// Tracked changes inline (`All`, the default), or the text with every
     /// change accepted or rejected; the id lines then list what changed.
     #[arg(long, value_enum, value_name = "CHOICE", help_heading = "Read options")]
     pub track_changes: Option<TrackChanges>,
-    /// Comments inline (default) or hidden, with their ids on the id line
-    /// of the paragraph that holds them.
+    /// Show comments inline (default) or hidden, with their ids on the id
+    /// line of the paragraph that holds them.
     #[arg(
         long,
         value_enum,
@@ -68,15 +94,16 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub comments: CommentsArg,
-    /// Timestamps on the notes of an author whose changes do not all share
-    /// one (the header shows an author's single timestamp).
+    /// Show timestamps on the notes of an author whose changes do not all
+    /// share one (the header shows an author's single timestamp).
     #[arg(long, help_heading = "Read options")]
     pub dates: bool,
-    /// Skip the layout pass; page count from Word's cached breaks, no
-    /// `<!-- page N of M -->` lines.
+    /// Skip the layout pass; the page count comes from Word's cached
+    /// breaks and no `<!-- page N of M -->` lines are emitted.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
-    /// Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated.
+    /// Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`,
+    /// comma-separated.
     #[arg(
         short = 'p',
         long = "paragraphs",
@@ -85,7 +112,7 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub paragraphs: Option<String>,
-    /// Only the first N blocks (a table is one block).
+    /// Only the first `N` blocks (a table is one block).
     #[arg(
         long,
         value_name = "N",
@@ -93,7 +120,7 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub head: Option<usize>,
-    /// Only the last N blocks.
+    /// Only the last `N` blocks.
     #[arg(long, value_name = "N", help_heading = "Read options")]
     pub tail: Option<usize>,
     /// Only the blocks with a tracked change or a comment.
@@ -103,8 +130,8 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub changed: bool,
-    /// With --changed: only the blocks with this author's marks (a handle
-    /// such as AC, or the full name).
+    /// With `--changed`: only the blocks with this author's marks
+    /// (a handle such as `AC`, or the full name).
     #[arg(
         long,
         value_name = "AUTHOR",
@@ -113,21 +140,21 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub by: Option<String>,
-    /// Print the snapshot as JSON instead of the view: `schema_version`,
-    /// `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`,
-    /// `controls`, `changes` and `comments`. -p, --head, --tail, --changed
-    /// and --by keep the body paragraphs they select, and every change and
-    /// comment that starts in one of them, whoever made it; the rest of the
-    /// snapshot stays whole.
+    /// Print the snapshot as JSON instead of the view:
+    /// `schema_version`, `source_sha256`, `summary`, `paragraphs`,
+    /// `stories`, `tables`, `controls`, `changes` and `comments`. `-p`,
+    /// `--head`, `--tail`, `--changed` and `--by` keep the body paragraphs
+    /// they select, and every change and comment that starts in one of
+    /// them, whoever made it; the rest of the snapshot stays whole.
     #[arg(
         long,
         conflicts_with_all = ["track_changes", "comments", "dates", "no_page_markers"],
         help_heading = "Read options"
     )]
     pub json: bool,
-    /// Print each body table as a grid instead of the view: a `table N:
-    /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
-    /// tab-separated `ids=text` cells.
+    /// Print each body table as a grid instead of the view: a
+    /// `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one line
+    /// per row of tab-separated `ids=text` cells.
     #[arg(
         long,
         conflicts_with_all = [
@@ -139,18 +166,22 @@ pub struct ReadArgs {
     pub tables: bool,
 }
 
-/// `--comments` of `read`.
+/// Values of `read --comments` and the equivalent in `compare`'s view.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CommentsArg {
-    /// Comments inline, with their ids.
+    /// Show comments inline, with their ids.
     #[default]
     Inline,
-    /// Comments hidden; their ids on the id lines.
+    /// Hide the comment text; their ids remain on the id lines.
     None,
 }
 
-/// Options `edit` and `add` share.
+/// Options the `edit` and `add` subcommands share: author, date, mode
+/// (tracked changes vs. direct), handling of revisions already in the
+/// source, output path or bundle directory, and `--force`. The operation
+/// flags (`-p`, `--anchor`, `--content`, …) live on the subcommand
+/// itself.
 #[derive(clap::Args, Debug, Serialize)]
 pub struct EditOptions {
     /// Author of the changes and comments (operation flags; a plan names
@@ -165,13 +196,13 @@ pub struct EditOptions {
     /// the redline and the view shows the marks.
     #[arg(long, conflicts_with = "editing_mode")]
     pub suggesting_mode: bool,
-    /// The edits land directly: the file written is the result, and the
-    /// view shows it with rev tags on the id lines.
+    /// The edits land directly: the file written is the result document
+    /// and the view shows it with `rev` tags on the id lines.
     #[arg(long)]
     pub editing_mode: bool,
-    /// What to do when FILE already holds tracked changes: auto keeps them
-    /// and tracks the new edits beside them; a clean file goes through the
-    /// comparer.
+    /// What to do when `FILE` already holds tracked changes. `Auto` keeps
+    /// them and tracks the new edits beside them; a clean file goes
+    /// through the comparer. `Refuse` aborts a file that has any.
     #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
     pub existing_revisions: ExistingArg,
     /// The edited document, a .docx (default: `<FILE's
@@ -189,24 +220,30 @@ pub struct EditOptions {
     /// (default: `<FILE's directory>/<stem>.edit`).
     #[arg(long, value_name = "DIR", num_args = 0..=1)]
     pub out_dir: Option<Option<PathBuf>>,
-    /// Replace an existing output (the bundle directory's files).
+    /// Overwrite an existing output file or bundle directory.
     #[arg(long)]
     pub force: bool,
 }
 
-/// What `edit` and `add` write: one document, or the bundle directory.
+/// Where `edit FILE` (or `add FILE`) writes: one document, or the
+/// bundle directory. Returned by [`EditOptions::target`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditTarget {
-    /// The redline (or, in editing mode, the result) as one .docx.
+    /// The redline (or, in editing mode, the result) as one `.docx` at
+    /// this path.
     Single(PathBuf),
-    /// clean.docx, redline.docx, patch.diff and report.jsonl in a directory.
+    /// The bundle directory (`clean.docx`, `redline.docx`, `patch.diff`,
+    /// `report.jsonl`, plus what `--pdf` and `--png` ask for) at this
+    /// path.
     Bundle(PathBuf),
 }
 
 impl EditOptions {
-    /// Where `edit FILE` (or `add FILE`) writes: `--out-dir [DIR]`'s
-    /// bundle, else `-o`, else `<FILE's dir>/<stem>_modified.docx`. A FILE
-    /// whose stem already ends in `_modified` keeps its name. Pure.
+    /// Resolves where `edit FILE` (or `add FILE`) writes: the
+    /// `--out-dir [DIR]` bundle if given, then `-o`, then
+    /// `<FILE's dir>/<stem>.docx` if the stem already ends in `_modified`,
+    /// else `<FILE's dir>/<stem>_modified.docx`. A file with no parent
+    /// is treated as the current directory. Pure: no filesystem access.
     pub fn target(&self, file: &Path) -> EditTarget {
         let beside = |name: String| match file.parent().filter(|p| !p.as_os_str().is_empty()) {
             Some(dir) => dir.join(name),
@@ -228,25 +265,28 @@ impl EditOptions {
     }
 }
 
-/// `--existing-revisions` of `edit` and `add`.
+/// Values of `edit` / `add --existing-revisions`: how the operation
+/// treats revisions already present in the source document.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExistingArg {
-    /// `keep` when the file has tracked changes, else the comparer path.
+    /// `Keep` when the file has tracked changes, else the comparer path.
     #[default]
     Auto,
-    /// Keep them; the new edits are tracked beside them.
+    /// Keep them: the new edits are tracked beside them.
     Keep,
-    /// Accept them first.
+    /// Accept every existing revision first, then apply the edits.
     Accept,
-    /// Reject them first.
+    /// Reject every existing revision first, then apply the edits.
     Reject,
-    /// Refuse a file that has them.
+    /// Refuse a file that already has any tracked changes.
     Refuse,
 }
 
 impl ExistingArg {
-    /// The plan's `existing_revisions`; `None` for `auto`.
+    /// Maps to the plan's `existing_revisions` field: `None` for `Auto`
+    /// (the plan field defaults to its own auto), the matching
+    /// [`crate::edit::ExistingRevisions`] for the other variants.
     pub fn plan_value(self) -> Option<crate::edit::ExistingRevisions> {
         use crate::edit::ExistingRevisions as E;
         match self {
@@ -259,8 +299,18 @@ impl ExistingArg {
     }
 }
 
-/// Groups the operation flags of an `edit` or `add` invocation by their
-/// `-p`, in command-line order. `matches` is the subcommand's.
+/// Groups the `-p` / `--anchor` / `--content` / `--delete` / `--resolve`
+/// / `--reply` / `--accept` / `--reject` / `--before` / `--comment` /
+/// `--style` flags of an `edit` or `add` invocation into one [`FlagOp`]
+/// per `-p`, in the order the flags appeared on the command line. A flag
+/// before the first `-p`, or a duplicate `--anchor` / `--content` /
+/// `--reply` on the same operation, is a usage error.
+///
+/// # Errors
+///
+/// Returns an error string when a non-`--location` flag appears before
+/// any `-p` / `--location`, or when an `--anchor`, `--content` or
+/// `--reply` value is given twice for the same operation.
 pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String> {
     let mut tokens: Vec<(usize, &str, Option<String>)> = Vec::new();
     for name in ["location", "anchor", "content", "reply", "style"] {
@@ -506,30 +556,36 @@ fn fill_flag_operations(
     Ok(())
 }
 
-/// Inputs and settings shared by explicit and shorthand comparisons.
+/// Inputs and settings shared by the explicit `compare` subcommand and
+/// the top-level shorthand (`jubarte A B` or `jubarte FILE`). The two
+/// positional `*_pos` fields are the bare `A`/`B` of the shorthand; the
+/// named `--original` and `--modified` override them when both are given.
+/// `read` is flattened in so the same options shape the view that
+/// `compare` prints or writes as `.md`.
 #[derive(clap::Args, Debug, Serialize)]
 #[group(id = "compare_options", multiple = true)]
 pub struct CompareArgs {
-    /// The original / base document (.docx or Markdown).
+    /// The original / base document (`.docx` or Markdown). Required
+    /// unless `--original` is given.
     #[arg(value_name = "ORIGINAL", required_unless_present = "original")]
     pub original_pos: Option<PathBuf>,
 
-    /// The modified document (.docx or Markdown).
+    /// The modified document (`.docx` or Markdown).
     #[arg(value_name = "MODIFIED")]
     pub modified_pos: Option<PathBuf>,
 
-    /// Original/base document (overrides the positional ORIGINAL).
+    /// Original/base document (overrides the positional `ORIGINAL`).
     #[arg(short = 'b', long = "original", value_name = "FILE")]
     pub original: Option<PathBuf>,
 
-    /// Modified document (overrides the positional MODIFIED).
+    /// Modified document (overrides the positional `MODIFIED`).
     #[arg(short = 'm', long = "modified", value_name = "FILE")]
     pub modified: Option<PathBuf>,
 
-    /// Write the redline to FILE instead of printing its agent view; the
-    /// extension picks the format: .docx (also any other), .md (the agent
-    /// view; CriticMarkup when both documents are Markdown), .pdf, .png
-    /// (one file per page) or .json (the snapshot).
+    /// Write the redline to `FILE` instead of printing its agent view; the
+    /// extension picks the format: `.docx` (also any other), `.md` (the
+    /// agent view; CriticMarkup when both documents are Markdown), `.pdf`,
+    /// `.png` (one file per page) or `.json` (the snapshot).
     #[arg(short = 'o', long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 
@@ -547,7 +603,8 @@ pub struct CompareArgs {
     #[arg(long)]
     pub force: bool,
 
-    /// Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15].
+    /// Word-match detail, from 0 to 1. The default depends on
+    /// [`CompareMode`]: `0.02` for `Word`, `0.15` for `Powertools`.
     #[arg(long, value_name = "RATIO", value_parser = parse_threshold)]
     pub detail_threshold: Option<f64>,
 
@@ -555,25 +612,24 @@ pub struct CompareArgs {
     #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word)]
     pub mode: CompareMode,
 
-    /// Same as --mode powertools.
+    /// Same as `--mode powertools` (a hidden alias).
     #[arg(long, hide = true)]
     pub powertools_faithful: bool,
 
-    /// DEBUG: zero WmlComparerSettings::merge_replaced_paragraphs — the
-    /// word-visual UMBRELLA gate — which disables the WHOLE word-visual pass
-    /// family (merge, flatten, reorder, margins, …), not just the paragraph
-    /// merge (pagination experiments; hidden). Redundant with
-    /// --powertools-faithful, which sets the same preset.
+    /// DEBUG: zero the [`crate::comparer::WmlComparerSettings::merge_replaced_paragraphs`]
+    /// umbrella gate, which disables the whole word-visual pass family
+    /// (merge, flatten, reorder, margins, …). Redundant with
+    /// `--powertools-faithful`, which sets the same preset. Hidden.
     #[arg(long, hide = true)]
     pub no_paragraph_merge: bool,
 
     /// Two Markdown documents written as Word take styles, page setup,
-    /// headers and footers from this .docx.
+    /// headers and footers from this `.docx`.
     #[arg(long, value_name = "FILE", help_heading = "Markdown inputs")]
     pub reference_doc: Option<PathBuf>,
 
     /// Read CriticMarkup in the Markdown documents as tracked changes. By
-    /// default a document compared is text.
+    /// default a document compared is plain text.
     #[arg(long, help_heading = "Markdown inputs")]
     pub critic: bool,
 
@@ -582,27 +638,28 @@ pub struct CompareArgs {
     #[arg(long, value_name = "DIR", help_heading = "Markdown inputs")]
     pub resource_path: Option<PathBuf>,
 
-    /// How a .pdf or .png output is drawn.
+    /// How a `.pdf` or `.png` output is drawn.
     #[command(flatten)]
     #[serde(flatten)]
     pub render: RenderArgs,
 
-    /// The options of the agent view printed without -o (or written to
-    /// FILE.md); `jubarte FILE`'s too.
+    /// The options of the agent view printed without `-o` (or written to
+    /// `FILE.md`); `jubarte FILE`'s too.
     #[command(flatten)]
     #[serde(skip)]
     pub read: ReadArgs,
 
-    /// Whether the command line spells out any of `read`'s options (set
-    /// after parsing): a `.md` of two Markdown documents is CriticMarkup,
-    /// which they cannot shape.
+    /// Whether the command line spells out any of [`ReadArgs`]' options
+    /// (set after parsing). When `false`, a `.md` of two Markdown
+    /// documents is CriticMarkup, which the view's options cannot shape.
     #[arg(skip)]
     pub view_given: bool,
 }
 
-/// The derive model with the shorthands' options hidden: `jubarte --help`
-/// lists the tasks; `jubarte compare --help` and `jubarte read --help` show
-/// every option.
+/// The `clap` command model with the shorthand's [`CompareArgs`] options
+/// hidden: `jubarte --help` lists only the tasks; `jubarte compare --help`
+/// and `jubarte read --help` show every option. Used by [`Cli::try_parse_from`]
+/// and by [`parse_json`].
 pub fn top_level_command() -> clap::Command {
     let hidden: std::collections::HashSet<clap::Id> =
         <CompareArgs as clap::Args>::augment_args(clap::Command::new("shorthand"))
@@ -620,31 +677,41 @@ pub fn top_level_command() -> clap::Command {
 
 impl std::ops::Deref for Cli {
     type Target = CompareArgs;
+    /// Derefs to the underlying [`CompareArgs`] so the top-level
+    /// shorthand's `jubarte A B` and `jubarte FILE` can be read through
+    /// the same fields as `jubarte compare A B`.
     fn deref(&self) -> &Self::Target {
         &self.compare
     }
 }
 
-/// The subcommands; none given is the two-file compare.
+/// The `jubarte` subcommands: `compare`, `read`, `convert`, `diff`,
+/// `accept`, `reject`, `edit`, `add`, `append`, `comments`, `changes`,
+/// `scrub`, `validate`, `capabilities`, `self-update` and the hidden
+/// `debug` and `visual-diff`. When no subcommand is given, the top-level
+/// shorthand runs (`compare A B` or `read FILE`).
 #[derive(clap::Subcommand, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "command", content = "args")]
 pub enum Command {
-    /// Compare documents: print the redline as the agent view, or write it with -o.
+    /// `compare`: build a redline from two documents, writing it to
+    /// `-o` or printing its agent view.
     #[command(
         visible_alias = "redline",
         after_help = "Examples:\n  jubarte compare old.docx new.docx                 the redline's agent view\n  jubarte compare old.docx new.docx -o redline.docx\n  jubarte compare old.docx new.docx -o redline.pdf --changed-pages\n  jubarte compare old.md new.md -o changes.md       CriticMarkup\n  jubarte compare -b old.docx -m new.docx --author Legal -o r.docx"
     )]
     Compare(CompareArgs),
-    /// List tracked changes with IDs for accept, reject and edit plans.
+    /// `changes`: list every tracked change in the document with the ids
+    /// `--id`, edit `-p rN` and an edit plan's `resolve_revisions` use.
     Changes {
-        /// The document (.docx).
+        /// The document (`.docx`).
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Emit one JSON object per line.
         #[arg(long)]
         json: bool,
     },
-    /// Accept all tracked changes, or select by ID, author or kind.
+    /// `accept`: accept every tracked change, or only those matched by
+    /// [`Selection`]; write the result to `-o`.
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
@@ -666,7 +733,8 @@ pub enum Command {
         #[serde(flatten)]
         render: RenderArgs,
     },
-    /// Reject all tracked changes, or select by ID, author or kind.
+    /// `reject`: reject every tracked change, or only those matched by
+    /// [`Selection`]; write the result to `-o`.
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
@@ -688,7 +756,9 @@ pub enum Command {
         #[serde(flatten)]
         render: RenderArgs,
     },
-    /// Convert Word or Markdown to DOCX, PDF, PNG or Markdown.
+    /// `convert`: render a Word or Markdown document as DOCX, PDF, PNG
+    /// pages, Markdown or the JSON snapshot. Word 97-2003 `.doc` is read
+    /// into a `.docx` first.
     #[command(after_help = "Examples:\n  \
         jubarte convert contract.docx                   PDF, Word-style layout\n  \
         jubarte convert draft.md                        draft.docx, CriticMarkup as tracked changes\n  \
@@ -760,7 +830,10 @@ pub enum Command {
         #[serde(serialize_with = "serialize_timeout")]
         timeout: Option<std::time::Duration>,
     },
-    /// Review differences as GitHub, word, normal, context or side-by-side text.
+    /// `diff`: review the differences between two documents as a
+    /// GitHub-style patch, CriticMarkup, the normal/context/side-by-side
+    /// text diffs, or a fresh word-level CriticMarkup after accepting
+    /// every change in both inputs.
     #[command(after_help = "Examples:\n  \
         jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout\n  \
         jubarte diff old.md new.md                       the patch on stdout\n  \
@@ -865,11 +938,13 @@ pub enum Command {
         #[serde(flatten)]
         args: ReadArgs,
     },
-    /// Edit a document: -p WHERE with --anchor, --content, --delete,
-    /// --resolve, --reply, --accept, --reject or --style (several -p per
-    /// command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
-    /// bundle), then prints the changed paragraphs as the agent view
-    /// (refusal: exit 3).
+    /// `edit`: change a document as tracked changes (or directly, with
+    /// `--editing-mode`). Each `-p WHERE` is followed by `--anchor`,
+    /// `--content`, `--delete`, `--resolve`, `--reply`, `--accept`,
+    /// `--reject` or `--style`; several `-p` per command. A JSON plan
+    /// (`--plan`) names its own operations; with both, the operation
+    /// flags are recorded into the plan and `FILE` is left as it is.
+    /// Refusals exit 3.
     #[command(after_help = "Examples:\n  \
         jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
         jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
@@ -967,9 +1042,10 @@ pub enum Command {
         #[arg(skip)]
         operations: Vec<FlagOp>,
     },
-    /// Add a paragraph, a comment or a reply: -p WHERE --content TEXT
-    /// (several -p per command). Writes FILE_modified.docx, as edit does,
-    /// and prints the changed paragraphs as the agent view.
+    /// `add`: insert a new paragraph (with `--before`, before WHERE),
+    /// attach a comment to WHERE, or post a reply to a comment; several
+    /// `-p` per command. Writes `FILE_modified.docx` and prints the
+    /// changed paragraphs as the agent view, as `edit` does.
     #[command(after_help = "Examples:\n  \
         jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
         jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
@@ -1028,13 +1104,15 @@ pub enum Command {
         #[arg(skip)]
         operations: Vec<FlagOp>,
     },
-    /// What this binary can do, for agents choosing an operation.
+    /// `capabilities`: machine-readable manifest of every operation
+    /// this build supports; for agents choosing an operation.
     Capabilities {
         /// The manifest as JSON instead of the text summary.
         #[arg(long)]
         json: bool,
     },
-    /// Check or install a release from GitHub.
+    /// `self-update`: check the installed and latest versions, or
+    /// install a release from GitHub.
     #[command(after_help = "Examples:\n  \
         jubarte self-update --check          installed and latest versions\n  \
         jubarte self-update                  ask, then install the latest release\n  \
@@ -1052,7 +1130,9 @@ pub enum Command {
         #[arg(long, value_name = "VERSION")]
         version: Option<String>,
     },
-    /// Diagnose a Word package, or compare package structures.
+    /// `debug` (hidden): triage a Word package against the
+    /// `Word`-validity and content checks, or compare two (or more)
+    /// packages element by element.
     #[command(after_help = "Examples:\n  \
         jubarte debug out.docx                    orphans, fields, bookmarks, package, structure\n  \
         jubarte debug out.docx --list             the package's entries\n  \
@@ -1102,7 +1182,9 @@ pub enum Command {
         #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
         context: usize,
     },
-    /// Compare rendered pages pixel by pixel (different pages: exit 5).
+    /// `visual-diff` (hidden alias `diff-render`): rasterize two
+    /// documents and list the pages that differ pixel for pixel.
+    /// Different pages exit 5.
     #[command(
         name = "visual-diff",
         alias = "diff-render",
@@ -1139,7 +1221,8 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// List comments, threads and the text they annotate.
+    /// `comments`: list every comment thread and the text it
+    /// annotates; `--author` and `--latest` narrow the list.
     Comments {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -1154,7 +1237,9 @@ pub enum Command {
         #[arg(long)]
         latest: bool,
     },
-    /// Join documents in order, preserving images, styles, lists and notes.
+    /// `append`: join two or more documents in order, preserving
+    /// images, styles, lists, notes and (with `--carry-comments`) the
+    /// comments each document's body anchors.
     #[command(after_help = "Examples:\n  \
         jubarte append a.docx b.docx -o ab.docx\n  \
         jubarte append cover.docx body.docx annex.docx -o all.docx --section-break continuous\n  \
@@ -1189,11 +1274,11 @@ pub enum Command {
         #[serde(flatten)]
         render: RenderArgs,
     },
-    /// Check Word validity, tracked edits, accessibility, style and
-    /// structure; or repair Word validity.
-    ///
-    /// A word or edits finding fails the run (exit 2), and so does any
-    /// error; --strict fails on warnings too. An unreadable file exits 1.
+    /// `validate` (alias `audit`): check the document for Word validity,
+    /// tracked-edit errors, accessibility, style and structure issues, or
+    /// write a repaired copy with `--repair`. A `word` or `edits` finding
+    /// fails the run (exit 2), and so does any error; `--strict` fails on
+    /// warnings too. An unreadable file exits 1.
     #[command(alias = "audit")]
     #[command(after_help = "Examples:\n  \
         jubarte validate contract.docx\n  \
@@ -1237,7 +1322,8 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Remove authors, editing IDs, metadata and comments before sharing.
+    /// `scrub`: remove authors, editing ids, metadata and comments from a
+    /// document before it is shared.
     #[command(after_help = "Examples:\n  \
         jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \
         jubarte scrub redline.docx -o out.docx --author-alias Counsel --rsids\n  \
@@ -1265,36 +1351,40 @@ pub enum Command {
     },
 }
 
-/// What `jubarte scrub` removes; everything when no flag is given.
+/// What `jubarte scrub` removes; every flag is off by default, so the
+/// task scrubs everything when no flag is given.
 #[derive(clap::Args, Debug, Default, PartialEq, Serialize)]
 pub struct ScrubSelection {
-    /// Name every author (revisions, comments, people.xml) takes.
+    /// Replace every author name (revisions, comments, `people.xml`) with
+    /// this single value; an empty string is refused.
     #[arg(long, value_name = "NAME")]
     pub author_alias: Option<String>,
-    /// Remove rsids, the edit-session ids that tie copies together.
+    /// Remove the edit-session ids (`w:rsid*`) that tie copies together.
     #[arg(long)]
     pub rsids: bool,
     /// Remove creator, last editor, revision number, dates, manager,
-    /// company and custom properties.
+    /// company and custom properties from `docProps/core.xml` and
+    /// `docProps/app.xml`.
     #[arg(long)]
     pub docprops: bool,
-    /// Remove every comment.
+    /// Remove every comment (anchors, ranges, threads and parts).
     #[arg(long)]
     pub comments: bool,
 }
 
+/// `jubarte debug`'s package-comparison tasks. Currently only `diff`,
+/// which compares two or more packages element by element.
 #[derive(clap::Subcommand, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "command", content = "args")]
-/// Package-level diagnostic comparison tasks.
 pub enum DebugCommand {
-    /// What differs between two or more packages, element by element:
+    /// Element-by-element comparison of two or more `.docx` packages:
     /// styles paired by type and name, paragraphs by their text, headers
     /// and footers by section role. Each hunk prints the lines not every
     /// file holds; with three or more files each line names the files that
-    /// hold it. rsids, paragraph ids, revision ids/authors/dates,
-    /// relationship ids (shown as what they point to), docProps save
+    /// hold it. `rsids`, paragraph ids, revision ids/authors/dates,
+    /// relationship ids (shown as what they point to), `docProps` save
     /// stamps, attribute order, on/off values and empty property blocks
-    /// are dropped unless --raw.
+    /// are dropped unless `--raw`.
     #[command(after_help = "Examples:\n  \
         jubarte debug diff a.docx b.docx\n  \
         jubarte debug diff a.docx ours_rej.docx word_rej.docx -p styles\n  \
@@ -1326,67 +1416,75 @@ pub enum DebugCommand {
     },
 }
 
-/// `jubarte debug --check`.
+/// One check `jubarte debug --check` can run over a `.docx` package,
+/// forwarded to [`crate::debug::Check`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DebugCheck {
-    /// Deleted text outside its story's w:del; live text inside one; bare runs
-    /// in a text box whose anchor is deleted.
+    /// Deleted text outside its story's `w:del`; live text inside one;
+    /// bare runs in a text box whose anchor is deleted.
     Orphans,
     /// Field nesting per story; fields partly deleted.
     Fields,
-    /// Duplicate/unpaired bookmarks; start and end in different sdt, cell,
-    /// text box or revision; bookmarks in plain-text or list controls.
+    /// Duplicate or unpaired bookmarks; start and end in different
+    /// `sdt`, cell, text box or revision; bookmarks in plain-text or
+    /// list controls.
     Bookmarks,
-    /// Content types, relationship ids and targets, dangling note/comment
-    /// references, undeclared mc:Ignorable prefixes.
+    /// Content types, relationship ids and targets, dangling
+    /// note/comment references, undeclared `mc:Ignorable` prefixes.
     Package,
-    /// Empty field codes, cells not ending in a paragraph, rows without cells,
-    /// nested same-kind revisions, a body sectPr that is not last.
+    /// Empty field codes, cells not ending in a paragraph, rows without
+    /// cells, nested same-kind revisions, a body `sectPr` that is not
+    /// last.
     Structure,
-    /// Revision and docPr ids used twice (not in the default triage: Word
-    /// opens such files).
+    /// Revision and `docPr` ids used twice. Not in the default triage:
+    /// Word opens such files.
     Ids,
-    /// Style links and references naming no style; two styles with one type
-    /// and name (Word pairs styles by name).
+    /// Style links and references naming no style; two styles with one
+    /// type and name (Word pairs styles by name).
     Styles,
     /// Where bookmark starts and ends sit (parent chains, tallied).
     Chains,
     /// Element counts.
     Elements,
-    /// Text box stories as XML (see --grep).
+    /// Text box stories as XML (see `--grep`).
     Textbox,
-    /// Paragraph text per story part, with {+inserted+} / [-deleted-] runs
-    /// and the mark state; with two files, the lines that differ.
+    /// Paragraph text per story part, with `{+inserted+}` /
+    /// `[-deleted-]` runs and the mark state; with two files, the
+    /// lines that differ.
     Text,
     /// Part XML one element per line, without namespace declarations,
-    /// rsids or paraIds; with two files, the lines that differ.
+    /// `rsids` or `paraIds`; with two files, the lines that differ.
     Xml,
-    /// `text` with each paragraph's direct properties [..], its mark's «..»
-    /// and each run's direct formatting «..»; with two files, the lines that
-    /// differ.
+    /// `text` with each paragraph's direct properties `[..]`, its
+    /// mark's `«..»` and each run's direct formatting `«..»`; with
+    /// two files, the lines that differ.
     Runs,
-    /// Property-change records (pPrChange, tcPrChange, sectPrChange, …):
-    /// where each sits and what the live properties add (+) and drop (-)
-    /// against the recorded ones; with two files, the lines that differ.
+    /// Property-change records (`pPrChange`, `tcPrChange`,
+    /// `sectPrChange`, …): where each sits and what the live
+    /// properties add (`+`) and drop (`-`) against the recorded ones;
+    /// with two files, the lines that differ.
     Changes,
-    /// Style definitions by type and name (localized ids pair): docDefaults,
-    /// then each style's default flag and basedOn/link by name, and a line
-    /// per pPr/rPr/tblPr/… block; with two files, the lines that differ.
+    /// Style definitions by type and name (localized ids pair):
+    /// `docDefaults`, then each style's default flag and
+    /// `basedOn` / link by name, and a line per `pPr` / `rPr` /
+    /// `tblPr` / … block; with two files, the lines that differ.
     Styledefs,
-    /// List levels by numId and level as paragraphs see them (abstract
-    /// definition plus the list's overrides; abstract ids renumber, so
-    /// they are left out); with two files, the lines that differ.
+    /// List levels by `numId` and level as paragraphs see them
+    /// (abstract definition plus the list's overrides; abstract ids
+    /// renumber, so they are left out); with two files, the lines
+    /// that differ.
     Numbering,
-    /// What each story part should put on the page (tables with style,
-    /// float and shading; shaded, highlighted, coloured and hidden text;
-    /// fonts; fields; ins/del order; frames; sections), and "(layout)":
-    /// jubarte's page count and the face each font resolved to; with two
-    /// files, the lines that differ.
+    /// What each story part should put on the page (tables with
+    /// style, float and shading; shaded, highlighted, coloured and
+    /// hidden text; fonts; fields; ins/del order; frames; sections),
+    /// and `(layout):` jubarte's page count and the face each font
+    /// resolved to; with two files, the lines that differ.
     Render,
 }
 
 impl From<DebugCheck> for crate::debug::Check {
+    /// Maps a CLI [`DebugCheck`] to the engine's [`crate::debug::Check`].
     fn from(c: DebugCheck) -> Self {
         use crate::debug::Check;
         match c {
@@ -1411,7 +1509,8 @@ impl From<DebugCheck> for crate::debug::Check {
     }
 }
 
-/// `jubarte diff --format`: what goes to stdout.
+/// Values of `diff --format`: how the differences between two documents
+/// are spelled on stdout (or in the output file).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PatchFormat {
@@ -1434,13 +1533,19 @@ pub enum PatchFormat {
 }
 
 impl PatchFormat {
-    /// Whether this format compares document snapshots without constructing a redline.
+    /// `true` for the formats that compare document text snapshots
+    /// without constructing a redline (Normal, Context, SideBySide, Word
+    /// and the unified GitHub patch). `false` for [`Self::Patch`] and
+    /// [`Self::Critic`], which build paragraph-level patches over the
+    /// changed paragraphs at their ids.
     pub fn is_text_view(self) -> bool {
         !matches!(self, Self::Patch | Self::Critic)
     }
 }
 
-/// `jubarte --mode` (compare).
+/// Values of `compare --mode`: which engine's idea of a Word redline to
+/// reproduce. Both produce Word-valid output; they differ in how much of
+/// the comparer's normalisation pass runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CompareMode {
@@ -1452,7 +1557,9 @@ pub enum CompareMode {
     Powertools,
 }
 
-/// A document format for `-f/--from` and `-t/--to`.
+/// A document format. Used by `diff -f/--from` and `-t/--to` (and
+/// `convert -t/--to`) to name the input or output format explicitly when
+/// the file extension does not say.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Format {
@@ -1485,13 +1592,15 @@ fn extension(path: &Path) -> Option<String> {
 }
 
 impl Format {
-    /// The format a file name says, by extension (`.json`, a name that is
-    /// only an extension, says json too).
+    /// The format a file name says, by extension. A name that is only an
+    /// extension (`.json`, `out/.md`) is read as its extension; otherwise
+    /// `Path::extension` is consulted.
     pub fn of_path(path: &Path) -> Option<Self> {
         Self::of_name(&extension(path)?)
     }
 
-    /// The format an extension names, in any case.
+    /// The format an extension names, in any case. Returns `None` for any
+    /// extension this enum does not list.
     pub fn of_name(extension: &str) -> Option<Self> {
         match extension.to_ascii_lowercase().as_str() {
             "docx" | "docm" | "dotx" | "dotm" => Some(Self::Docx),
@@ -1503,7 +1612,8 @@ impl Format {
         }
     }
 
-    /// The name `--to` takes and messages print.
+    /// The name `--to` takes and messages print: `docx`, `md`, `pdf`,
+    /// `png`, `json`.
     pub fn name(self) -> &'static str {
         match self {
             Self::Docx => "docx",
@@ -1514,8 +1624,10 @@ impl Format {
         }
     }
 
-    /// An input's format: the one asked for, else its extension, else its
-    /// bytes (a zip is Word, anything else Markdown).
+    /// Resolves an input's format: the one the caller asked for, else
+    /// the file's extension when it is one [`Format`] knows (Word or
+    /// Markdown), else the bytes (a `PK\x03\x04` prefix is Word,
+    /// anything else is Markdown). Pure: no I/O.
     pub fn of_input(asked: Option<Self>, path: &Path, bytes: &[u8]) -> Self {
         asked
             .or_else(|| Format::of_path(path).filter(|f| matches!(f, Self::Docx | Self::Md)))
@@ -1527,7 +1639,10 @@ impl Format {
     }
 }
 
-/// A task that writes a file through `-o`.
+/// A writing task: a subcommand that produces a file through `-o`. Used
+/// to look up the formats each task can write
+/// ([`capabilities::OUTPUT_FORMATS`]) and to map between command names
+/// and task kinds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Task {
     /// `compare` (alias `redline`): the redline.
@@ -1549,7 +1664,8 @@ pub enum Task {
 }
 
 impl Task {
-    /// The command's name.
+    /// The task's command name (`compare`, `convert`, `read`, `diff`,
+    /// `accept`, `reject`, `append`, `scrub`).
     pub fn name(self) -> &'static str {
         match self {
             Self::Compare => "compare",
@@ -1563,7 +1679,9 @@ impl Task {
         }
     }
 
-    /// The task a command name (or its alias) runs.
+    /// Maps a command name (or its alias) to its [`Task`], or `None` if
+    /// the name is not a writing task. Aliases: `redline` for
+    /// [`Task::Compare`]; `text`, `inspect` for [`Task::Read`].
     pub fn of_name(name: &str) -> Option<Self> {
         Some(match name {
             "compare" | "redline" => Self::Compare,
@@ -1578,7 +1696,8 @@ impl Task {
         })
     }
 
-    /// The formats its `-o` writes (`capabilities::OUTPUT_FORMATS`).
+    /// The formats this task's `-o` can write, as listed in
+    /// [`capabilities::OUTPUT_FORMATS`]. Pure lookup.
     fn allowed(self) -> Vec<Format> {
         crate::capabilities::OUTPUT_FORMATS
             .iter()
@@ -1592,8 +1711,9 @@ impl Task {
             .unwrap_or_default()
     }
 
-    /// What `-o PATH`'s extension says for this task: `diff` reads `.patch`
-    /// and `.diff` as text too.
+    /// What `-o PATH`'s extension says for this task. `diff` reads
+    /// `.patch` and `.diff` as Markdown; the other tasks use
+    /// [`Format::of_path`] directly.
     fn known(self, path: &Path) -> Option<Format> {
         let patch = extension(path)
             .is_some_and(|e| e.eq_ignore_ascii_case("patch") || e.eq_ignore_ascii_case("diff"));
@@ -1603,8 +1723,9 @@ impl Task {
         Format::of_path(path)
     }
 
-    /// The refusal for a format this task cannot write; the advice names
-    /// the file as typed (`c.EXT`/`v.EXT` when `--to` said the format).
+    /// Builds the refusal message a writing task prints for a format it
+    /// cannot write; the advice names the file as typed (or
+    /// `c.EXT` / `v.EXT` when `--to` said the format). Pure.
     fn cannot_write(self, format: Format, typed: Option<&str>) -> String {
         let ext = format.name();
         let named = |stem: &str| typed.map_or_else(|| format!("{stem}.{ext}"), str::to_string);
@@ -1625,11 +1746,17 @@ impl Task {
     }
 }
 
-/// The format a task writes. `-o`'s extension decides; `--to` decides when
-/// the extension is missing or unknown; a known extension that disagrees with
-/// `--to` is an error. `-o` with neither → the task's usual format (`convert`'s
-/// depends on its input: `None`). No `-o` and no `--to` → `None`: the task
-/// prints, or convert picks by input. Pure.
+/// Resolves the format a task writes: `-o`'s extension decides; `--to`
+/// decides when the extension is missing or unknown; a known extension
+/// that disagrees with `--to` is an error. `-o` with neither is the
+/// task's usual format (`convert` returns `None` and picks by input).
+/// No `-o` and no `--to` returns `None`: the task prints to stdout, or
+/// `convert` picks by input. Pure.
+///
+/// # Errors
+///
+/// Returns an error string when `-o` and `--to` name different formats,
+/// or when the resolved format is not in the task's allowed set.
 pub fn output_format(
     task: Task,
     output: Option<&Path>,
@@ -1703,8 +1830,9 @@ pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize
     )
 }
 
-/// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
-/// `pattern` naming them all.
+/// The line a writing task prints for a multi-file PNG output, e.g.
+/// `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`. `pattern` is the
+/// path the task printed, naming all the pages.
 pub fn wrote_png_line(pattern: &Path, pages: usize, dpi: f32) -> String {
     format!(
         "wrote {} (png, {}, {dpi} dpi)",
@@ -1718,7 +1846,10 @@ fn count(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
-/// A spelling 0.13 still accepts, with a note, and 0.14 removes.
+/// A spelling 0.13 still accepts with a note and 0.14 will remove. The
+/// CLI's argv parser reports each one in [`retired_spellings`] and
+/// [`apply_retired`] adjusts the parsed tree for ones that change
+/// semantics (`audit` → `validate --rules a11y,style,structure`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Retired {
     /// What the command line says (`diff-render`, `--pdf`).
@@ -2007,9 +2138,10 @@ fn spellings_in<'a>(
     found
 }
 
-/// What a retired spelling still means once parsed: `audit` with no
-/// `--rules` checks `a11y,style,structure`, as the retired task did, not
-/// `validate`'s default `word`.
+/// Applies the semantics a retired spelling still carries: `audit` with
+/// no `--rules` checks `a11y,style,structure`, as the retired task did,
+/// not `validate`'s default `word`. No-op for every other retired
+/// spelling; pure.
 pub fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
     if let Command::Validate { rules, .. } = task
         && rules.is_empty()
@@ -2046,7 +2178,9 @@ pub fn retired_note(old: &str, now: &str) -> String {
     format!("note: {old} is now {now}; {old} is removed in 0.14")
 }
 
-/// `--track-changes`, pandoc's values.
+/// Values of `convert --track-changes` (pandoc's flag): what to do with
+/// the tracked changes of the input. `read --track-changes` accepts the
+/// same values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrackChanges {
@@ -2059,6 +2193,8 @@ pub enum TrackChanges {
 }
 
 impl From<TrackChanges> for crate::markdown::TrackChanges {
+    /// Maps a CLI [`TrackChanges`] to the equivalent
+    /// [`crate::markdown::TrackChanges`] the Markdown reader uses.
     fn from(choice: TrackChanges) -> Self {
         match choice {
             TrackChanges::All => Self::All,
@@ -2068,8 +2204,10 @@ impl From<TrackChanges> for crate::markdown::TrackChanges {
     }
 }
 
-/// How `-o FILE.pdf` and `-o FILE.png` are rendered (`convert`, `diff`);
-/// refused with any other output.
+/// How a `-o FILE.pdf` or `-o FILE.png` output is rendered. Flattened
+/// into the tasks that produce PDF or PNG (the `compare`, `convert`,
+/// `accept`, `reject`, `append`, `scrub`, `edit` and `add` writing
+/// tasks); refused with any other output.
 #[derive(clap::Args, Clone, Debug, PartialEq, Serialize)]
 #[command(next_help_heading = "Rendering (-o FILE.pdf or FILE.png)")]
 pub struct RenderArgs {
@@ -2121,7 +2259,9 @@ impl Default for RenderArgs {
 }
 
 impl RenderArgs {
-    /// Apply comment placement and page filtering to the renderer options.
+    /// Applies this renderer's comment placement and changed-pages
+    /// filter to a [`crate::convert::PdfOptions`], returning the updated
+    /// options ready to pass to the renderer. Pure.
     pub fn apply(&self, options: crate::convert::PdfOptions) -> crate::convert::PdfOptions {
         crate::convert::PdfOptions {
             comments: if self.move_comments {
@@ -2135,7 +2275,9 @@ impl RenderArgs {
     }
 }
 
-/// `convert`'s format and Markdown flags.
+/// `convert`'s format and Markdown flags: explicit input/output format,
+/// tracked-changes resolution, CriticMarkup handling, reference document
+/// for styles and headers, and the page size when no reference applies.
 #[derive(clap::Args, Debug, Serialize)]
 pub struct MarkdownArgs {
     /// Input format [default: from the file: .md and .markdown are Markdown,
@@ -2234,6 +2376,8 @@ pub enum Page {
 }
 
 impl From<Page> for crate::markdown::PageSize {
+    /// Maps a CLI [`Page`] to the equivalent
+    /// [`crate::markdown::PageSize`] the Markdown → Word path uses.
     fn from(choice: Page) -> Self {
         match choice {
             Page::Letter => Self::Letter,
@@ -2242,7 +2386,9 @@ impl From<Page> for crate::markdown::PageSize {
     }
 }
 
-/// `jubarte convert --revisions`.
+/// Values of `compare` / `convert` / `edit` / `add --revisions` (and the
+/// per-task `RenderArgs::revisions`): which style of revision marks to
+/// paint in a PDF or PNG output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Revisions {
@@ -2250,12 +2396,14 @@ pub enum Revisions {
     Conventional,
     /// Microsoft Word's own markup.
     Word,
-    /// --revision-palette.
+    /// Use `--revision-palette` for the marks.
     Custom,
 }
 
+/// Filters selecting individual tracked changes (the `accept` and
+/// `reject` subcommands' `--id`, `--author` and `--kind` flags). Empty
+/// filters select every change.
 #[derive(clap::Args, Debug, Default, PartialEq, Serialize)]
-/// Filters selecting individual tracked changes.
 pub struct Selection {
     /// Only this change: `r12` (as the view and `jubarte changes` print
     /// it), `header1.r1`, or `r1+2` (both). Repeatable.
@@ -2269,7 +2417,8 @@ pub struct Selection {
     pub kinds: Vec<KindArg>,
 }
 
-/// `--kind` values.
+/// Values of `accept --kind` / `reject --kind`: the kind of change a
+/// selection filter accepts.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum KindArg {
@@ -2295,7 +2444,8 @@ fn parse_timeout(value: &str) -> Result<std::time::Duration, String> {
     std::time::Duration::try_from_secs_f64(seconds).map_err(|e| format!("'{value}': {e}"))
 }
 
-/// `jubarte append --section-break`.
+/// Values of `append --section-break`: what separates one document from
+/// the next in the joined output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SectionBreakArg {
@@ -2309,6 +2459,8 @@ pub enum SectionBreakArg {
 }
 
 impl From<SectionBreakArg> for crate::append::SectionBreak {
+    /// Maps a CLI [`SectionBreakArg`] to the equivalent
+    /// [`crate::append::SectionBreak`] the join path uses.
     fn from(arg: SectionBreakArg) -> Self {
         match arg {
             SectionBreakArg::NextPage => Self::NextPage,
@@ -2871,7 +3023,18 @@ const RENDER_ONLY: [&str; 6] = [
 ];
 
 impl Cli {
-    /// Parse native arguments with clap and validate cross-option constraints.
+    /// Parses native `argv` with `clap` and validates cross-option
+    /// constraints. The same parser the binary uses; the JSON adapter
+    /// goes through [`parse_json`] instead. No I/O is performed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `clap::Error` for any usage error: missing required
+    /// arguments, conflicting options, a `--plan` / `--out-dir` value
+    /// that names a Word document, `--out-dir` / `-o` writing an
+    /// extension the task cannot write, retired spellings treated as
+    /// conflicts, and so on. The error is suitable for printing to
+    /// stderr.
     pub fn try_parse_from<I, T>(arguments: I) -> Result<Self, clap::Error>
     where
         I: IntoIterator<Item = T>,
