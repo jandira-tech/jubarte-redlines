@@ -31,8 +31,8 @@ fn threaded(dir: &Path) -> std::path::PathBuf {
         &source,
         &EditPlan::from_json(
             r#"{"schema_version":1,"author":"Ann","operations":[
-            {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"},
-            {"kind":"comment","paragraph":"body:p:1","text":"Fine"}]}"#,
+            {"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"},
+            {"kind":"comment","paragraph":"p1","text":"Fine"}]}"#,
         )
         .unwrap(),
     )
@@ -66,7 +66,7 @@ fn comments_lists_json_lines_and_filters() {
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0]["text"], "Too low");
     assert_eq!(rows[0]["anchor_text"], "cap");
-    assert_eq!(rows[0]["paragraph"], "body:p:0");
+    assert_eq!(rows[0]["paragraph"], "p0");
     assert_eq!(rows[0]["ref"], "c0");
     assert_eq!(rows[1]["parent"], 0);
     assert_eq!(rows[1]["done"], false);
@@ -91,7 +91,7 @@ fn comments_lists_json_lines_and_filters() {
         lines[0].starts_with("c0\tp0\t") && lines[0].contains("\"Too low\""),
         "{stdout}"
     );
-    assert!(!stdout.contains("body:p:0"), "{stdout}");
+    assert!(!stdout.contains("body:p:"), "{stdout}");
     assert!(lines[1].contains("\treply to c0"), "{stdout}");
     assert!(stdout.contains("3 comment(s)"), "{stdout}");
 }

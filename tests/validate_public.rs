@@ -134,7 +134,7 @@ fn the_audit_names_an_untracked_edit_by_paragraph() {
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].code, "UNTRACKED_EDIT");
     // The location keeps the long id; the printed message names the short one.
-    assert_eq!(findings[0].location, "body:p:1");
+    assert_eq!(findings[0].location, "p1");
     assert_eq!(findings[0].r#ref, "p1");
     assert!(
         findings[0].message.starts_with("p1 differs") && !findings[0].message.contains(":p:"),
@@ -148,7 +148,14 @@ fn the_audit_names_an_untracked_edit_by_paragraph() {
             .unwrap()
             .is_empty()
     );
-    assert_eq!(markdown(&tracked).unwrap().matches("[body:p:").count(), 2);
+    assert_eq!(
+        markdown(&tracked)
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with("[p"))
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -484,7 +491,7 @@ fn the_audit_sees_an_untracked_header_edit_and_names_its_part() {
     assert_eq!(codes(&findings), ["UNTRACKED_EDIT"], "{findings:?}");
     assert_eq!(findings[0].part, "word/header1.xml");
     assert!(
-        findings[0].location.starts_with("header1:p:"),
+        findings[0].location == "header1",
         "{}",
         findings[0].location
     );
