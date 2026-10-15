@@ -40,6 +40,13 @@ precedence = "override"
 SPDX-FileCopyrightText = "2024-2026 SylphxAI"
 SPDX-License-Identifier = "LicenseRef-anymd-MIT"
 
+# Preserved MIT notice for the adapted OpenType MATH reader and layout.
+[[annotations]]
+path = "LICENSES/LicenseRef-markdown2pdf-MIT.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2023 Ismael Shakverdiev"
+SPDX-License-Identifier = "LicenseRef-markdown2pdf-MIT"
+
 # Word to Markdown fixtures and scripts copied from anymd (see LICENSES.md).
 [[annotations]]
 path = "tests/fixtures/from-docx/**"

@@ -324,7 +324,9 @@ fn radical(
         .unwrap_or_default();
     let need = body.ascent + body.descent + gap + rule;
     let sign = stretch_glyph(font, '\u{221A}', need, size, -body.descent, true);
-    let sign_top = glyph_top(font, sign.glyphs.first());
+    // A stretched radical can be an assembly. Its first glyph is the
+    // bottom piece; the rule must meet the top of the entire sign.
+    let sign_top = sign.ascent;
     let vinculum = sign_top.max(body.ascent + gap);
     let deg = if hide {
         None
@@ -725,16 +727,6 @@ fn center_fence(font: &MathFont, mut fence: MathBox, axis: f32) -> MathBox {
     fence
 }
 
-fn glyph_top(font: &MathFont, g: Option<&MathGlyph>) -> f32 {
-    let Some(g) = g else {
-        return 0.0;
-    };
-    // For an assembly the first glyph is the bottom piece. Callers that
-    // need the column top pass the fitted box. A single glyph's top is
-    // its own.
-    g.y + font.scale(font.glyph(g.gid).height(), g.size)
-}
-
 fn fit(b: &mut MathBox, font: &MathFont) {
     // A negative radical kern pulls the sign left of x = 0. Shift the box
     // so its ink starts at 0; the width is the right edge after that.
@@ -1065,6 +1057,39 @@ mod tests {
         assert!(
             den.y < rule.y_top - rule.thickness,
             "fallback denominator is not below the bar"
+        );
+    }
+    #[test]
+    fn math_layout_radical_rule_reaches_the_top_of_an_assembled_sign() {
+        let font = stix();
+        let mut body = BAR.to_string();
+        for _ in 0..6 {
+            body =
+                format!("<m:f><m:num>{body}</m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>");
+        }
+        let body_box = lay(&font, true, &body);
+        let c = font.constants();
+        let gap = font.scale(c.radical_display_vertical_gap, SIZE);
+        let thickness = font.scale(c.radical_rule_thickness, SIZE);
+        let sign = stretch_glyph(
+            &font,
+            '\u{221A}',
+            body_box.ascent + body_box.descent + gap + thickness,
+            SIZE,
+            -body_box.descent,
+            true,
+        );
+        assert!(sign.glyphs.len() > 1, "test must exercise a glyph assembly");
+        let omml = format!(
+            "<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg/><m:e>{body}</m:e></m:rad>"
+        );
+        let laid = lay(&font, true, &omml);
+        let rule = laid.rules.last().unwrap();
+        assert!(
+            rule.y_top + 0.05 >= sign.ascent,
+            "radical rule {} ends below assembled sign {}",
+            rule.y_top,
+            sign.ascent
         );
     }
 }

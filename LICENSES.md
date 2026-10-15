@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
+SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
@@ -24,6 +24,11 @@ did not author:
   crate. `tests/fixtures/from-docx/equations.docx` came to anymd from
   Microsoft's markitdown tests (MIT, Copyright (c) Microsoft Corporation;
   the same terms as `LICENSES/LicenseRef-anymd-MIT.txt`).
+- `LICENSES/LicenseRef-markdown2pdf-MIT.txt` — the preserved MIT notice
+  from [markdown2pdf](https://github.com/theiskaa/markdown2pdf), Copyright
+  (c) 2023 Ismael Shakverdiev. The MATH font reader and layout arithmetic
+  in `src/convert/math_font.rs` and `src/convert/math_layout.rs` are adapted
+  from its `src/lib/render/math/` modules.
 - `LICENSES/LicenseRef-Bench-Fixtures.txt` — provenance and the docx-corpus
   ODC-By attribution for the test fixtures copied from neurotic_docx_bench
   (`tests/corpus/neurotic_docx_bench/` and
