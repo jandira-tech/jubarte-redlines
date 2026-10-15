@@ -174,7 +174,7 @@ fn content_text(content: &str) -> (String, Option<&'static str>) {
     let text = crate::markdown::unescape_markdown(content);
     // The anchor drops a line's leading spaces (the view's indent); they are
     // not a mark.
-    let marks = crate::markdown::plain_anchor(content) != text.trim_start();
+    let marks = crate::markdown::plain_anchor(content).trim_start() != text.trim_start();
     (
         text,
         marks.then_some("content keeps its Markdown marks as text; use --style for formatting"),
@@ -1301,6 +1301,10 @@ mod tests {
         let (text, note) = content_text("**Fees**");
         assert_eq!(text, "**Fees**");
         assert!(note.is_some());
+        // A line copied from the agent view keeps its leading space as
+        // `&#32;`: it is a space, and no mark.
+        let (text, note) = content_text("&#32;Fees");
+        assert_eq!((text.as_str(), note), (" Fees", None));
         let plan = plan_from_flags(
             Verb::Edit,
             &[FlagOp {

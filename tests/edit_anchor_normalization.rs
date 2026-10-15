@@ -490,3 +490,15 @@ fn a_list_item_with_a_hard_break_is_found_by_its_copied_lines() {
         apply_plan(&source, &plan).unwrap_or_else(|e| panic!("{find:?}: {e}"));
     }
 }
+
+#[test]
+fn a_leading_space_the_view_writes_as_a_reference_is_found_as_a_space() {
+    let source = docx(&format!("{}{}", para(" lead text"), para("tail")));
+    let out = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"replace","paragraph":"p0","find":"&#32;lead","replacement":" led"}]"#),
+    )
+    .expect("the anchor reads as the paragraph's leading space");
+    let op = &out.report.operations[0];
+    assert_eq!(op.anchor_read_as.as_deref(), Some(" lead"));
+}

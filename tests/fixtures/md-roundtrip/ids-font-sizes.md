@@ -101,7 +101,7 @@ TENER EN CUENTA LAS CIRCUNSTANCIAS RELATIVAS AL CESE DE LA ACTIVIDAD PRESENCIAL 
 En a        de             de 2020
 
 <!-- p98 hanging 0.662in, left 2.264in, right 1.509in -->
-EL DIRECTOR/A  DEL CENTRO
+&#32;EL DIRECTOR/A  DEL CENTRO
 
 <!-- p99 center, left 2.073in, right 1.981in -->
 (Sello)
@@ -173,7 +173,7 @@ V.ºB.º
 Director/a del centro
 
 <!-- p152 BodyText first-line 0.37in -->
-Fdo.: 						Fdo.:
+&#32;&#32;&#32;&#32;Fdo.: 						Fdo.:
 
 <!-- p153-p171 empty -->
 

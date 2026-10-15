@@ -4,7 +4,7 @@
 //! An anchor copied out of the agent view, read as document text.
 
 /// The ASCII punctuation a backslash escapes in CommonMark.
-const ESCAPABLE: &str = r"\`*_{}[]()#+-.!|<>~=";
+const ESCAPABLE: &str = r"\`*_{}[]()#+-.!|<>~=&";
 
 /// A private-use stand-in for an escaped character, so mark stripping never
 /// sees it (Supplementary Private Use Area-A, U+F0000 onward).
@@ -19,6 +19,16 @@ fn reveal(c: char) -> char {
     }
 }
 
+/// Whether `&` (just read) starts `&#32;`, the agent view's leading space;
+/// the reference is consumed when it does.
+fn space_reference(rest: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    let found = rest.clone().take(4).eq("#32;".chars());
+    if found {
+        rest.nth(3);
+    }
+    found
+}
+
 /// Removes a backslash escape before a Markdown punctuation character
 /// (`\*` → `*`), as CommonMark reads it; other backslashes stay.
 pub fn unescape_markdown(text: &str) -> String {
@@ -31,6 +41,11 @@ pub fn unescape_markdown(text: &str) -> String {
         {
             out.push(next);
             chars.next();
+            continue;
+        }
+        // A line copied from the agent view: its leading space.
+        if c == '&' && space_reference(&mut chars) {
+            out.push(' ');
             continue;
         }
         out.push(c);
@@ -95,6 +110,11 @@ fn without_block_mark(text: &str) -> &str {
     trimmed
 }
 
+/// Whitespace, or a `&#32;` [`plain_anchor`] hid.
+fn blank(c: char) -> bool {
+    c.is_whitespace() || c == hide(' ')
+}
+
 /// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>` and
 /// `</u>` always; single `*` and `_` runs only when they pair up (`*x*`,
 /// `_x_`, `__x__`), so `2 * 3`, `snake_case`, `snake__case` and
@@ -107,9 +127,8 @@ fn without_emphasis(text: &str) -> String {
     // A `*` with spaces on both sides (`2 * 3`) is text; the rest are marks
     // when they pair up.
     let chars: Vec<char> = text.chars().collect();
-    let spaced = |i: usize| {
-        i > 0 && chars[i - 1].is_whitespace() && chars.get(i + 1).is_some_and(|c| c.is_whitespace())
-    };
+    let spaced =
+        |i: usize| i > 0 && blank(chars[i - 1]) && chars.get(i + 1).is_some_and(|&c| blank(c));
     let star = |i: usize| chars[i] == '*' && !spaced(i);
     if (0..chars.len())
         .filter(|&i| star(i))
@@ -141,10 +160,8 @@ fn without_emphasis(text: &str) -> String {
         let len = end - i;
         let before = i.checked_sub(1).map(|b| chars[b]);
         let after = chars.get(end).copied();
-        let closes =
-            before.is_some_and(|c| !c.is_whitespace()) && !after.is_some_and(char::is_alphanumeric);
-        let opens =
-            after.is_some_and(|c| !c.is_whitespace()) && !before.is_some_and(char::is_alphanumeric);
+        let closes = before.is_some_and(|c| !blank(c)) && !after.is_some_and(char::is_alphanumeric);
+        let opens = after.is_some_and(|c| !blank(c)) && !before.is_some_and(char::is_alphanumeric);
         // The first delimiter of this run not yet paired.
         let mut from = i;
         while closes && from < end {
@@ -218,6 +235,11 @@ pub fn plain_anchor(text: &str) -> String {
         {
             hidden.push(hide(next));
             chars.next();
+            continue;
+        }
+        // Hidden, so no block mark or edge trim takes it for the view's.
+        if c == '&' && space_reference(&mut chars) {
+            hidden.push(hide(' '));
             continue;
         }
         hidden.push(c);
@@ -294,6 +316,17 @@ mod tests {
             ("_foo___", "foo__"),
             ("unclosed {++ insert", "unclosed {++ insert"),
             ("\\# 1", "# 1"),
+            // The agent view writes a paragraph's leading space as `&#32;`.
+            ("alpha\\\n&#32;beta", "alpha\n beta"),
+            ("&#32;lead", " lead"),
+            ("&#32;- item", " - item"),
+            ("a &#32;b", "a  b"),
+            ("&#32", "&#32"),
+            // CodeRabbit #484: a `&#32;` is a space to the emphasis rules too.
+            ("2&#32;*&#32;3&#32;*&#32;4", "2 * 3 * 4"),
+            ("a&#32;_b_&#32;c", "a b c"),
+            // The view escapes a literal reference the document holds.
+            ("Code \\&#32; and \\&amp; literal.", "Code &#32; and &amp; literal."),
         ] {
             assert_eq!(plain_anchor(anchor), plain, "{anchor}");
         }
@@ -346,5 +379,7 @@ mod tests {
     fn unescape_markdown_resolves_punctuation_escapes_only() {
         assert_eq!(unescape_markdown("\\*a\\_b\\\\ \\n \\é"), "*a_b\\ \\n \\é");
         assert_eq!(unescape_markdown("trailing \\"), "trailing \\");
+        assert_eq!(unescape_markdown("&#32;lead and &#32"), " lead and &#32");
+        assert_eq!(unescape_markdown("\\&#32;"), "&#32;");
     }
 }

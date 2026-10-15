@@ -58,7 +58,7 @@ Neither party is liable{== for==}{>>c18 @AL: Is this consistent with the master 
 Either party may{-- end--}{>>r38 @DP<<}{-- _this_--}{>>r39+40 @AL<<}{== agreement {--with--}{>>r41 @CD<<}{++customer++}{>>r42 @BC<<}==}{>>c20 @CD: Agreed.<<} ninety{-- days--}{>>r43 @CD<<} written{++ unless agreed otherwise++}{>>r44 @CD<<} notice.
 
 <!-- p26 left -->
-The supplier may subcontract only with the buyer's{== prior **consent**.==}{>>c21 @CD: Why thirty and not sixty?<<}{>>c22 @AL: Too broad, narrow it down.<<}
+&#32;The supplier may subcontract only with the buyer's{== prior **consent**.==}{>>c21 @CD: Why thirty and not sixty?<<}{>>c22 @AL: Too broad, narrow it down.<<}
 
 <!-- p27 left, break-ins r46 @BC -->
 The

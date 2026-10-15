@@ -4835,9 +4835,11 @@ fn agent_preserves_spaces_across_runs_while_plain_conversion_collapses_them() {
         run("  Alpha  "),
         run("  Beta  ")
     ));
+    // The paragraph's own leading spaces are text Word draws; Markdown would
+    // drop a literal one, so the agent view writes each as `&#32;`.
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nAlpha    Beta\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n&#32;&#32;Alpha    Beta\n"
     );
     assert_eq!(
         agent_options(&bytes, &MarkdownOptions::default()),

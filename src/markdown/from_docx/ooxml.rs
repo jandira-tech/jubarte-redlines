@@ -531,7 +531,8 @@ impl Inline {
         self.verbatim = true;
     }
 
-    /// Whether the text starts and ends with a space, which rendering trims.
+    /// Whether the text starts and ends with a space. Rendering trims both,
+    /// except a leading space in the agent view, which it writes as `&#32;`.
     pub(crate) fn edges(&self) -> (bool, bool) {
         let spaced = |c: char| matches!(c, ' ' | '\u{a0}' | '\t');
         let mut texts = self
@@ -739,7 +740,12 @@ fn split_ws(s: &str) -> (&str, &str, &str) {
     (&s[..start], &s[start..end], &s[end..])
 }
 
-/// Collapse runs of spaces, trim line ends, and drop empty lines inside a paragraph.
+/// Collapse runs of spaces and trim each line. A blank line at either end goes.
+///
+/// The agent view (`keep_spaces`) keeps a line's leading spaces. Markdown
+/// drops a literal one, so each is `&#32;`, which the writer reads back as
+/// a space. A line of spaces only stays empty. A code block (`verbatim`)
+/// keeps its indent and only loses trailing spaces.
 fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     let mut lines = Vec::new();
     for line in s.split('\n') {
@@ -756,7 +762,7 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
             }
             prev_space = is_space;
         }
-        lines.push(if verbatim { out.trim_end() } else { out.trim() }.to_string());
+        lines.push(finish_line(&out, keep_spaces, verbatim));
     }
     while lines.last().is_some_and(String::is_empty) {
         lines.pop();
@@ -765,6 +771,28 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
         lines.remove(0);
     }
     lines.join("\n")
+}
+
+/// One line of [`tidy_inline`].
+fn finish_line(line: &str, keep_spaces: bool, verbatim: bool) -> String {
+    if verbatim {
+        return line.trim_end().to_string();
+    }
+    if !keep_spaces {
+        return line.trim().to_string();
+    }
+    let end = line.trim_end();
+    let spaces = end.chars().take_while(|c| *c == ' ').count();
+    let rest = end[spaces..].trim_start();
+    if spaces == 0 || rest.is_empty() {
+        return rest.to_string();
+    }
+    let mut kept = String::with_capacity(rest.len() + spaces * 5);
+    for _ in 0..spaces {
+        kept.push_str("&#32;");
+    }
+    kept.push_str(rest);
+    kept
 }
 
 /// Markdown for an image with alt text; images without alt text are dropped.
@@ -1225,6 +1253,29 @@ mod ooxml_package_boundary_tests {
         assert_eq!(list.item(3, "10.", "one\ntwo"), "10. one\n    two");
         list.reset();
         assert_eq!(list.item(0, "-", "next"), "- next");
+    }
+
+    #[test]
+    fn an_agent_line_keeps_its_leading_spaces_as_character_references() {
+        let mut inline = Inline::default();
+        inline.keep_spaces();
+        inline.push("  but", false, false, None);
+        assert_eq!(inline.render(true), "&#32;&#32;but");
+        let mut broken = Inline::default();
+        broken.keep_spaces();
+        broken.push("alpha\n but", false, false, None);
+        assert_eq!(broken.render(true), "alpha\n&#32;but");
+        let mut blank = Inline::default();
+        blank.keep_spaces();
+        blank.push("   ", false, false, None);
+        assert_eq!(blank.render(true), "");
+        let mut code = Inline::default();
+        code.verbatim();
+        code.push("  but", false, false, None);
+        assert_eq!(code.render(true), "  but");
+        let mut plain = Inline::default();
+        plain.push("  but", false, false, None);
+        assert_eq!(plain.render(true), "but");
     }
 
     #[test]
