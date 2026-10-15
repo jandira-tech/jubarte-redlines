@@ -55,9 +55,9 @@ def test_scrub_checks_its_arguments() -> None:
 
 def test_redact_leaves_blocks_in_both_documents() -> None:
     source = Document.from_bytes(docx(para("Account 12345678 is closed.")))
-    plan = EditPlan(author="A").redact("body:p:0", find="12345678")
+    plan = EditPlan(author="A").redact("p0", find="12345678")
     assert plan.to_dict()["operations"] == [
-        {"kind": "redact", "paragraph": {"id": "body:p:0"}, "find": "12345678"}
+        {"kind": "redact", "paragraph": {"id": "p0"}, "find": "12345678"}
     ]
     result = source.edit(plan)
     for document in (result.clean, result.redline):
@@ -69,15 +69,15 @@ def test_redact_leaves_blocks_in_both_documents() -> None:
 def test_a_redaction_left_elsewhere_is_refused() -> None:
     source = Document.from_bytes(docx(para("Account 12345678 is closed.") + para("Ref 12345678.")))
     with pytest.raises(EditPlanError) as refused:
-        source.edit(EditPlan(author="A").redact("body:p:0", find="12345678"))
+        source.edit(EditPlan(author="A").redact("p0", find="12345678"))
     assert refused.value.code == "REDACTION_LEAK"
     assert "12345678" not in str(refused.value)
 
 
 def test_redact_takes_an_occurrence_for_each_copy() -> None:
     source = Document.from_bytes(docx(para("Ref 1234 and again 1234.")))
-    plan = EditPlan(author="A").redact("body:p:0", find="1234", occurrence=1).redact(
-        "body:p:0", find="1234", occurrence=2
+    plan = EditPlan(author="A").redact("p0", find="1234", occurrence=1).redact(
+        "p0", find="1234", occurrence=2
     )
     assert plan.to_dict()["operations"][1]["occurrence"] == 2
     result = source.edit(plan)
