@@ -12,6 +12,7 @@ styles:
   Normal: Times New Roman 11pt, after 6pt, line 12pt atLeast, left, named normal  # default; unannotated paragraphs use it
   "#": Heading1, Times New Roman bold 24pt, before 24pt, keep-next, keep-lines
   "##": Heading2, Times New Roman bold 18pt, before 18pt, after 4pt, keep-next, keep-lines
+  table: TableNormal
 ---
 
 <!-- p0 -->
@@ -71,7 +72,7 @@ Bake for 22 minutes.
 <!-- p18 -->
 A small table with a header row:
 
-<!-- t0 center 5x4, cells p19-p38 by row -->
+<!-- t0 center 5x4, cells p19-p38 by row, borders single 0.25pt 000000, cell-borders top,left,bottom,right single 1pt CCCCCC in all -->
 |Region|Q1|Q2|Q3|
 |:-|:-|:-|:-|
 |North|$120k|$135k|$150k|
@@ -162,7 +163,7 @@ _— end of sample —_
 <!-- p66 -->
 {++A small table with a header row:++}{>>r19 @ASR<<}
 
-<!-- t1 center 5x4, cells p67-p86 by row -->
+<!-- t1 center 5x4, cells p67-p86 by row, borders single 0.25pt 000000, cell-borders top,left,bottom,right single 1pt CCCCCC in all -->
 |{++Region++}{>>r20 @ASR<<}|{++Q1++}{>>r21 @ASR<<}|{++Q2++}{>>r22 @ASR<<}|{++Q3++}{>>r23 @ASR<<}|
 |:-|:-|:-|:-|
 |{++North++}{>>r24 @ASR<<}|{++$120k++}{>>r25 @ASR<<}|{++$135k++}{>>r26 @ASR<<}|{++$150k++}{>>r27 @ASR<<}|
