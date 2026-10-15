@@ -477,7 +477,7 @@ class Snapshot:
     comments: tuple[Comment, ...] = ()
 
     def control(self, id: str | None = None, *, tag: str | None = None, alias: str | None = None) -> ContentControl:
-        """The one control with this id (``body:sdt:N``), tag or alias; give exactly one."""
+        """The one control with this id (``p3.cc0``, ``cc1``), tag or alias; give exactly one."""
         given = [(k, v) for k, v in (("id", id), ("tag", tag), ("alias", alias)) if v is not None]
         if len(given) != 1:
             raise ValueError("give exactly one of id, tag or alias")
@@ -617,7 +617,7 @@ _PROTECTIONS = ("none", "readOnly", "comments", "trackedChanges", "forms")
 tracked and add the plan's edits as new revisions beside them."""
 
 ControlSelector = str | dict[str, str]
-"""A control id (``body:sdt:N``) or exactly one of ``{"id"|"tag"|"alias": ...}``."""
+"""A control id (``p3.cc0`` inline, ``cc1`` block) or exactly one of ``{"id"|"tag"|"alias": ...}``."""
 
 
 def _control_selector(value: ControlSelector) -> str | dict[str, str]:
@@ -627,7 +627,7 @@ def _control_selector(value: ControlSelector) -> str | dict[str, str]:
         key, inner = next(iter(value.items()))
         if key in ("id", "tag", "alias") and isinstance(inner, str):
             return {key: inner}
-    raise TypeError('control selector must be an id ("body:sdt:N") or one of {id|tag|alias: ...}')
+    raise TypeError('control selector must be an id ("p3.cc0", "cc1") or one of {id|tag|alias: ...}')
 
 
 def _selector(value: Selector) -> dict[str, str | int]:

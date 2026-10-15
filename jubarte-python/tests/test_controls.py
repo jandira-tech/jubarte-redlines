@@ -51,7 +51,7 @@ def form() -> Document:
 
 def test_inspect_lists_controls_as_typed_records() -> None:
     controls = form().inspect().controls
-    assert [c.id for c in controls] == [f"body:sdt:{n}" for n in range(5)]
+    assert [c.id for c in controls] == [f"p{n}.cc0" for n in range(5)]
     name, country, locked, agree, signed = controls
     assert isinstance(name, ContentControl)
     assert (name.tag, name.alias, name.kind, name.text) == ("Name", "Full name", "text", "Click here")
@@ -66,13 +66,13 @@ def test_inspect_lists_controls_as_typed_records() -> None:
 
 def test_snapshot_control_lookup_by_id_tag_or_alias() -> None:
     snapshot = form().inspect()
-    assert snapshot.control("body:sdt:1").tag == "Country"
-    assert snapshot.control(tag="Name").id == "body:sdt:0"
-    assert snapshot.control(alias="Full name").id == "body:sdt:0"
+    assert snapshot.control("p1.cc0").tag == "Country"
+    assert snapshot.control(tag="Name").id == "p0.cc0"
+    assert snapshot.control(alias="Full name").id == "p0.cc0"
     with pytest.raises(LookupError):
         snapshot.control(tag="Nope")
     with pytest.raises(ValueError):
-        snapshot.control("body:sdt:0", tag="Name")
+        snapshot.control("p0.cc0", tag="Name")
     with pytest.raises(ValueError):
         snapshot.control()
 
@@ -88,16 +88,16 @@ def test_fill_control_builder_serializes_each_value_form() -> None:
         EditPlan(author="A")
         .fill_control({"tag": "Name"}, text="Ada Lovelace", id="name")
         .fill_control({"alias": "Country"}, choice="BR")
-        .fill_control("body:sdt:3", checked=True)
-        .fill_control({"id": "body:sdt:4"}, date="2026-10-02")
-        .fill_control("body:sdt:5", checked=False)
+        .fill_control("p3.cc0", checked=True)
+        .fill_control({"id": "p4.cc0"}, date="2026-10-02")
+        .fill_control("p5.cc0", checked=False)
     )
     assert plan.to_dict()["operations"] == [
         {"id": "name", "kind": "fill_control", "control": {"tag": "Name"}, "text": "Ada Lovelace"},
         {"kind": "fill_control", "control": {"alias": "Country"}, "choice": "BR"},
-        {"kind": "fill_control", "control": "body:sdt:3", "checked": True},
-        {"kind": "fill_control", "control": {"id": "body:sdt:4"}, "date": "2026-10-02"},
-        {"kind": "fill_control", "control": "body:sdt:5", "checked": False},
+        {"kind": "fill_control", "control": "p3.cc0", "checked": True},
+        {"kind": "fill_control", "control": {"id": "p4.cc0"}, "date": "2026-10-02"},
+        {"kind": "fill_control", "control": "p5.cc0", "checked": False},
     ]
 
 
@@ -121,7 +121,7 @@ def test_fill_control_rejects_bad_selectors(control: object) -> None:
 
 def test_fill_control_rejects_a_non_bool_checked() -> None:
     with pytest.raises(TypeError):
-        EditPlan(author="A").fill_control("body:sdt:0", checked=1)  # type: ignore[arg-type]
+        EditPlan(author="A").fill_control("p0.cc0", checked=1)  # type: ignore[arg-type]
 
 
 def test_fill_applies_and_keeps_the_controls() -> None:
