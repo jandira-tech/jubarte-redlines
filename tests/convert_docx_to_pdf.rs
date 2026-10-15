@@ -1943,12 +1943,12 @@ fn a_multiple_on_a_line_grid_multiplies_the_grid_line() {
 }
 
 #[test]
-fn a_face_taller_than_the_grid_line_snaps_without_its_multiple() {
+fn a_face_taller_than_the_grid_line_takes_the_lines_it_needs() {
     // Demo.docx's 24pt Heading 1 (line=278) on a 15.6pt grid: Word steps
     // 31.2, two grid lines; we multiplied the face (29.3 × 1.158 = 33.9)
-    // and snapped it to three (46.8), dropping every heading. Word probe
-    // 2026-10-15 (Calibri Light, compat 15): 14, 20 and 24pt take two
-    // lines and 28 and 36pt three, at line 240, 278 and 360 alike.
+    // and snapped it to three (46.8), dropping every heading. Word probes
+    // 2026-10-15 (Calibri Light, compat 15): a face takes the grid lines
+    // it needs or the multiple of one grid line, the more.
     let step = |size: u32, line: u32| {
         let body = format!(
             "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{line}\" w:lineRule=\"auto\"/></w:pPr>\
@@ -1964,8 +1964,11 @@ fn a_face_taller_than_the_grid_line_snaps_without_its_multiple() {
         (24, 240, 31.2),
         (24, 278, 31.2),
         (24, 360, 31.2),
+        (24, 480, 31.2),
+        (24, 720, 46.8),
         (28, 278, 46.8),
         (36, 360, 46.8),
+        (36, 480, 46.8),
     ] {
         let got = step(size, line);
         assert!(
