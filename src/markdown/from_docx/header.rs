@@ -187,9 +187,7 @@ fn join(items: &[String]) -> String {
 fn revisions_comment(f: &Facts) -> String {
     use crate::changes::ChangeKind;
     let story = |c: &crate::changes::Change| {
-        c.id.split_once(":rev:")
-            .map_or("body", |(story, _)| story)
-            .to_string()
+        crate::ids::change_id(&c.id).map_or_else(|| "body".to_string(), |id| id.story)
     };
     let marks = f
         .changes
@@ -1589,7 +1587,7 @@ mod tests {
     #[test]
     fn paragraphs_number_as_edit_does_tables_in_and_text_boxes_out() {
         // edit numbers a story's every w:p outside text boxes, table cells
-        // included, so `footer1.p1` here is edit's `footer1:p:1`.
+        // included, so `footer1.p1` here is the paragraph edit numbers 1.
         let root = ftr(
             r#"<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p><w:r><w:pict><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></w:pict></w:r><w:r><w:t>body</w:t></w:r></w:p>"#,
         );

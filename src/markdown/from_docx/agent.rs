@@ -12,7 +12,7 @@ use crate::markdown::{Pick, Select};
 
 // The stamps start with U+E000, which no XML name can hold, so a file
 // cannot forge them.
-/// Attribute stamped on every numbered `w:p`: its `body:p:N` index.
+/// Attribute stamped on every numbered `w:p`: its `pN` index.
 pub(crate) const INDEX: &str = "\u{E000}jubarteIndex";
 /// Attribute stamped on every top-level `w:tbl`: its `t{N}` number.
 pub(crate) const TABLE: &str = "\u{E000}jubarteTable";
@@ -275,7 +275,7 @@ pub(crate) fn format_tag(tag: &str) -> String {
                 .map(|w| crate::ids::ChangeId::new(story.unwrap_or("body"), untag_id(w)))
                 .collect();
             let short: Vec<String> = changes.iter().map(crate::ids::ChangeId::short).collect();
-            if changes.iter().zip(&short).all(|(c, s)| *s != c.long()) {
+            if short.iter().all(|s| !s.contains(":rev:")) {
                 let numbers: Vec<&str> = changes.iter().map(|c| c.wid.as_str()).collect();
                 let head = short[0]
                     .strip_suffix(changes[0].wid.as_str())
@@ -846,7 +846,7 @@ fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
     printed
 }
 
-/// The long ids (`body:rev:12`) of every change the view prints a tag for:
+/// The ids (`r12`, `header1.r1`) of every change the view prints a tag for:
 /// an id, or ids joined by `+`, followed by an `@` handle. Only where the
 /// writer prints tags: the body's `{>>…<<}` notes (not a comment's, which
 /// holds the author's words) and `<!-- … -->` lines, and the header without
@@ -888,7 +888,7 @@ pub(crate) fn printed_change_ids(head: &str, body: &str) -> HashSet<String> {
                 .filter(|pair| pair[1].len() > 1 && pair[1].starts_with('@'))
                 .filter_map(|pair| crate::ids::parse_change_ids(pair[0]).ok())
                 .flatten()
-                .map(|id| id.long()),
+                .map(|id| id.short()),
         );
     }
     printed

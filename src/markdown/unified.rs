@@ -65,7 +65,7 @@ pub enum Locator {
     /// The 1-based line of a Markdown document.
     Line(usize),
     /// A paragraph of a Word document by the id an edit plan names it by:
-    /// `body:p:3`, `footnotes:p:0`.
+    /// `p3`, `footnotes.p1` ([`crate::ids::paragraph_id`]).
     Paragraph {
         /// `body`, or the part a header, footer or note is in
         /// (`header1`, `footnotes`).
@@ -79,7 +79,9 @@ impl fmt::Display for Locator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Line(line) => write!(f, "line:{line}"),
-            Self::Paragraph { story, index } => write!(f, "{story}:p:{index}"),
+            Self::Paragraph { story, index } => {
+                f.write_str(&crate::ids::paragraph_id(story, *index))
+            }
         }
     }
 }
@@ -251,7 +253,7 @@ pub fn patch_critic(critic: &str, options: &PatchOptions) -> Patch {
 }
 
 /// A Word redline's tracked changes and comments as a patch, each hunk at
-/// the id ([`body:p:N`](Locator::Paragraph)) [`jubarte::inspect`](crate::inspect) gives its
+/// the id ([`pN`](Locator::Paragraph)) [`jubarte::inspect`](crate::inspect) gives its
 /// paragraph once every change is accepted (or rejected, for a removed
 /// paragraph): the id an edit plan names it by. A change in a text box is
 /// at the paragraph that holds the box. Every comment is shown.
@@ -291,7 +293,7 @@ pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, M
 
 /// The changes from `old` to `new` as a patch. Two Markdown documents give
 /// [`patch_markdown`]'s patch, at lines; otherwise the documents are
-/// compared as [`redline`] compares them and each hunk is at a `body:p:N`
+/// compared as [`redline`] compares them and each hunk is at a `pN`
 /// of the Word document on its side (of the redline, accepted or rejected,
 /// where that side is Markdown). The comparer's changes are the owner's;
 /// a comment the old document has too is not a change.

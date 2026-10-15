@@ -724,7 +724,9 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
 /// the body paragraphs `options.select` picks (and the changes and comments
 /// in them, and under `--changed` those of the stories it changed) when it
 /// picks some. The selection reads the view `options`
-/// describes, without page markers.
+/// describes, without page markers. The view prints a table whole, but a
+/// paragraph pick keeps only the paragraphs it names: `-p p5` of a cell
+/// is p5, not its table; `-p t0` keeps the table's every paragraph.
 pub fn read_snapshot(
     docx: &[u8],
     options: &ReadOptions,
@@ -739,10 +741,36 @@ pub fn read_snapshot(
                 ..options.clone()
             },
         )?;
-        snapshot.retain_with(
-            view.selected.as_deref().unwrap_or_default(),
-            &view.selected_stories,
-        );
+        let mut kept = view.selected.unwrap_or_default();
+        if let Some(Select::Picks(picks)) = &options.select {
+            let tables: Vec<Pick> = picks
+                .iter()
+                .filter(|p| matches!(p, Pick::Table(_)))
+                .cloned()
+                .collect();
+            let in_tables = if tables.is_empty() {
+                Vec::new()
+            } else {
+                read(
+                    docx,
+                    &ReadOptions {
+                        page_markers: false,
+                        select: Some(Select::Picks(tables)),
+                        ..options.clone()
+                    },
+                )?
+                .selected
+                .unwrap_or_default()
+            };
+            let named = |n: usize| {
+                picks.iter().any(|p| match p {
+                    Pick::Paragraphs { from, to } => n >= *from && to.is_none_or(|to| n <= to),
+                    Pick::Table(_) => false,
+                })
+            };
+            kept.retain(|&n| named(n) || in_tables.contains(&n));
+        }
+        snapshot.retain_with(&kept, &view.selected_stories);
     }
     Ok(snapshot)
 }
