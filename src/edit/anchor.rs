@@ -12,8 +12,14 @@
 fn reads_as(c: char) -> Option<char> {
     match c {
         '\u{A0}' | '\u{2007}' | '\u{202F}' | '\u{2000}'..='\u{200A}' => Some(' '),
-        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' => Some('\''),
-        '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' | '\u{2033}' => Some('"'),
+        // Curled and other look-alike quotes read as the straight one. A
+        // backtick-like mark (`\u{2035}`, `\u{B4}`) does not: the straight
+        // quotes and the backtick are what a shell quotes with.
+        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' | '\u{02B9}'
+        | '\u{02BB}' | '\u{02BC}' | '\u{FF07}' => Some('\''),
+        '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' | '\u{2033}' | '\u{2036}'
+        | '\u{02BA}' | '\u{02EE}' | '\u{FF02}' | '\u{301D}' | '\u{301E}' | '\u{301F}'
+        | '\u{05F4}' => Some('"'),
         '\u{2010}' | '\u{2011}' => Some('-'),
         '\u{AD}' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}' => None,
         c => Some(c),
@@ -97,6 +103,40 @@ mod tests {
         assert!(reading_hits("abc", "\u{200B}").is_empty());
         // Repeated text overlaps, as the exact search counts it.
         assert_eq!(reading_hits("aaa", "aa"), [(0, 2), (1, 3)]);
+        // Every character that reads as a quote is one; a backtick-like
+        // mark is not, and a straight quote finds only itself or a curled one.
+        for (quote, straight) in [
+            ('\u{201C}', '"'),
+            ('\u{201D}', '"'),
+            ('\u{201E}', '"'),
+            ('\u{201F}', '"'),
+            ('\u{2033}', '"'),
+            ('\u{2036}', '"'),
+            ('\u{02BA}', '"'),
+            ('\u{02EE}', '"'),
+            ('\u{FF02}', '"'),
+            ('\u{301D}', '"'),
+            ('\u{301E}', '"'),
+            ('\u{301F}', '"'),
+            ('\u{05F4}', '"'),
+            ('\u{2018}', '\''),
+            ('\u{2019}', '\''),
+            ('\u{02B9}', '\''),
+            ('\u{02BB}', '\''),
+            ('\u{02BC}', '\''),
+            ('\u{FF07}', '\''),
+        ] {
+            let text = format!("say {quote}hi{quote}");
+            let find = format!("say {straight}hi{straight}");
+            assert_eq!(reading_hits(&text, &find).len(), 1, "{quote:?}");
+        }
+        for mark in ['`', '\u{2035}', '\u{B4}'] {
+            assert!(
+                reading_hits(&format!("it{mark}s"), "it's").is_empty(),
+                "{mark:?}"
+            );
+        }
+        assert!(reading_hits("say \"hi\"", "say 'hi'").is_empty());
     }
 
     #[test]
