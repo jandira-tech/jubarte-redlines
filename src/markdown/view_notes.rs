@@ -547,6 +547,65 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
     Ok(kinds)
 }
 
+/// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
+/// each formatting change on a notes part's separators, with its part's
+/// kind (`footnote`, `endnote`), in the order the view lists them; none
+/// without the clause. An entry that names no notes part is skipped.
+pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
+    // The `fmt:` clause outside quotes, up to a YAML comment (` # …`).
+    let (mut quoted, mut escaped) = (false, false);
+    let mut clause = None;
+    for (at, c) in value.char_indices() {
+        if quoted {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => quoted = true,
+            '#' if value[..at].ends_with([' ', '\t']) => break,
+            _ if value[at..].starts_with("fmt:") && value[..at].ends_with([' ', '{', ',']) => {
+                clause = Some(at + "fmt:".len());
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(at) = clause else {
+        return Vec::new();
+    };
+    let rest = value[at..].trim_start();
+    let tags = match rest.strip_prefix('"') {
+        Some(inner) => {
+            let mut out = String::new();
+            let mut chars = inner.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => out.extend(chars.next()),
+                    '"' => break,
+                    c => out.push(c),
+                }
+            }
+            out
+        }
+        None => rest[..rest.find([',', '}']).unwrap_or(rest.len())].to_string(),
+    };
+    tags.split("; ")
+        .filter_map(|entry| {
+            let kind = match entry.trim().split_once('.')?.0 {
+                "footnotes" => "footnote",
+                "endnotes" => "endnote",
+                _ => return None,
+            };
+            Some((kind, revision_tags(entry)?.into_iter().next()?))
+        })
+        .collect()
+}
+
 /// The most grid columns a table has, and rows one merged cell reaches: a
 /// bound on what a hand-edited table line can make the reader write (Word
 /// takes 63 columns).
@@ -1226,6 +1285,34 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn note_formats_reads_each_parts_separator_changes() {
+        let kinds = |value: &str| -> Vec<(&str, Vec<u32>)> {
+            note_formats(value)
+                .into_iter()
+                .map(|(kind, tag)| (kind, tag.ids))
+                .collect()
+        };
+        assert_eq!(
+            kinds(
+                "{fmt: footnotes.r0 @AS; footnotes.r1 @AS; endnotes.r2 @AS, \
+                 empty: [footnotes, endnotes]}  # changes in notes"
+            ),
+            [
+                ("footnote", vec![0]),
+                ("footnote", vec![1]),
+                ("endnote", vec![2])
+            ]
+        );
+        assert_eq!(
+            kinds("{rev: \"footnotes.r4 @AS\", fmt: \"endnotes.r7 @AS 2026-09-26T14:55:00Z\"}"),
+            [("endnote", vec![7])]
+        );
+        assert_eq!(kinds("{rev: \"fmt: footnotes.r1 @AS\"}"), []);
+        assert_eq!(kinds("{fmt: header1.r1 @AS}"), []);
+        assert_eq!(kinds("{empty: [footnotes]}"), []);
+    }
+
     #[test]
     fn empty_notes_reads_the_clause_outside_quotes() {
         use super::empty_notes;
