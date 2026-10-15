@@ -5245,6 +5245,10 @@ fn adopt_revised_header_footer(
         .into_iter()
         .filter(|&e| d2.name(e).is_some_and(|n| n == href || n == fref))
         .collect();
+    // Copies this pass adopted under a new name (`header3.xml` for B's
+    // `header1.xml`): the copy stands for its source's basename, never for
+    // its own, which may be another B part's.
+    let mut renamed: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for r in refs {
         let is_header = d2.name(r) == Some(href.clone());
         let ty = d2
@@ -5271,7 +5275,11 @@ fn adopt_revised_header_footer(
         // file_21: mid-body has footer/default from B inserts but final is empty
         // and footer20.xml is missing → still adopt onto final.
         let basename = src_part.rsplit('/').next().unwrap_or(&src_part);
-        let part_already = out.parts().iter().any(|p| p.ends_with(basename));
+        let part_already = renamed.values().any(|source| source == basename)
+            || out
+                .parts()
+                .iter()
+                .any(|p| p.ends_with(basename) && !renamed.contains_key(p));
         if body_occupied.contains(&slot) && part_already {
             continue;
         }
@@ -5279,6 +5287,9 @@ fn adopt_revised_header_footer(
         // under a fresh name instead of dropping or clobbering it — byte-safe
         // existence check (part_string is None for binary parts)
         let part = unique_part_name(out, &src_part, &bytes);
+        if part != src_part {
+            renamed.insert(part.clone(), basename.to_string());
+        }
         let newly_adopted = out.part_bytes(&part).is_none();
         if newly_adopted {
             out.set_part(&part, bytes);
@@ -10421,6 +10432,59 @@ mod coverage_boundary_tests {
             adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
             assert_eq!(dom.serialize_element(r), before, "{ext}");
         }
+    }
+
+    #[test]
+    fn a_renamed_header_copy_never_hides_another_header_of_the_revision() {
+        // B's default header1 collides with A's and lands as header3.xml;
+        // B's own even header3.xml must still be adopted, not mistaken for
+        // that copy.
+        let hdr = |text: &str| {
+            xml("hdr", &format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")).into_bytes()
+        };
+        let mut out = package("<w:body/>");
+        out.set_part("word/header1.xml", hdr("A default"));
+        out.set_part("word/header2.xml", hdr("A even"));
+        let even_a = out.add_document_relationship(MAIN, &format!("{REL}header"), "header2.xml");
+        out.set_part(
+            MAIN,
+            xml(
+                "document",
+                &format!(
+                    "<w:body><w:p><w:pPr><w:sectPr><w:headerReference w:type='even' r:id='{even_a}'/></w:sectPr></w:pPr></w:p><w:sectPr/></w:body>"
+                ),
+            )
+            .into_bytes(),
+        );
+        let mut b = package("<w:body/>");
+        b.set_part("word/header1.xml", hdr("B default"));
+        b.set_part("word/header3.xml", hdr("B even"));
+        let default_b = b.add_document_relationship(MAIN, &format!("{REL}header"), "header1.xml");
+        let even_b = b.add_document_relationship(MAIN, &format!("{REL}header"), "header3.xml");
+        b.set_part(
+            MAIN,
+            xml(
+                "document",
+                &format!(
+                    "<w:body><w:sectPr><w:headerReference w:type='default' r:id='{default_b}'/><w:headerReference w:type='even' r:id='{even_b}'/></w:sectPr></w:body>"
+                ),
+            )
+            .into_bytes(),
+        );
+        let mut dom = Dom::new();
+        let r = root(&mut dom, &out.part_string(MAIN).unwrap());
+        adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+        let texts: Vec<String> = ["word/header3.xml", "word/header4.xml"]
+            .iter()
+            .filter_map(|part| out.part_string(part).map(|_| part_root(&out, part)))
+            .map(|(d, root)| d.value(root))
+            .collect();
+        assert_eq!(texts, ["B default", "B even"]);
+        let final_refs = dom.elements(
+            child(&dom, child(&dom, r, "body"), "sectPr"),
+            Some(&W::name("headerReference")),
+        );
+        assert_eq!(final_refs.len(), 2);
     }
 
     #[test]
