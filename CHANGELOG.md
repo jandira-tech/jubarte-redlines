@@ -141,7 +141,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   settled spelling the option takes: `--id 12` → `r12`, `read -p 12` →
   `p12`, `-p 6 --resolve` → `c6`, `t0.r1.c2` → `t0.row1.cell2`. A settled
   id `-p` does not edit yet (`s0`, `p3-p7`, `toc0`) exits 2 as well. The
-  long `body:rev:12` and `body:p:12` the JSON prints still parse.
+  long `body:rev:12`, `body:p:12` and `header1:p:0` are refused the same
+  way, naming `r12`, `p12` and `header1`; nothing prints them any more.
+- **Breaking: content controls are `ccN` and `pN.ccK`.** `inspect`'s
+  controls and a plan's `fill_control` name a block control `cc0` (the
+  body's block controls in order) and one inside paragraph `p12` `p12.cc0`
+  (that paragraph's controls in order); a cell's first paragraph also
+  spells its controls `t0.row1.cell2.cc0`. The old `body:sdt:3` is refused
+  with `ANCHOR_NOT_FOUND`, naming the control's id. Under
+  `resolve_revisions` or `existing_revisions` a control id names the
+  control of the document the plan's author read, as paragraph ids do.
+  `capabilities` lists the spellings under `ids.control`.
 - **Breaking: `read --tables` and `validate` print short ids.** A table
   cell that read `body:p:1=Item\tbody:p:2=Qty` now reads
   `p1=Item\tp2=Qty` (a cell's `p3,p4`, via `ids::short_paragraph`, the id

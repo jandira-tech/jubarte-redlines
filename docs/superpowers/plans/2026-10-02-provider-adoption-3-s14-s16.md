@@ -68,7 +68,8 @@ Wire:
 /// A content control (`w:sdt`) in the body, in document order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ContentControl {
-    /// `body:sdt:N`.
+    /// `ccN` for a block control, `pN.ccK` for one in paragraph `pN`
+    /// (2026-10-15; this plan first spelled it `body:sdt:N`).
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
@@ -100,7 +101,7 @@ pub struct ContentControl {
 ```json
 {"kind":"fill_control","control":{"tag":"Name"},"text":"Ada Lovelace"}
 {"kind":"fill_control","control":{"alias":"Country"},"choice":"Brazil"}
-{"kind":"fill_control","control":"body:sdt:3","checked":true}
+{"kind":"fill_control","control":"p3.cc0","checked":true}
 {"kind":"fill_control","control":{"tag":"Signed"},"date":"2026-10-02"}
 ```
 
