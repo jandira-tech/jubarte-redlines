@@ -488,9 +488,10 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
                     super::xml::escape(code.trim()),
                     runs(result, marks)
                 )),
-                Field::Bare(name) => out.push_str(&format!(
-                    "<w:fldSimple w:instr=\" {name} \"><w:r><w:t>1</w:t></w:r></w:fldSimple>"
-                )),
+                // No result: Word computes it (`PAGE` on every page).
+                Field::Bare(name) => {
+                    out.push_str(&format!("<w:fldSimple w:instr=\" {name} \"/>"));
+                }
             }
             rest = after;
             continue;
@@ -680,7 +681,7 @@ fn tracked_piece(
             flush(&mut plain, out, deleted);
             let (code, result) = match field {
                 Field::Coded(code, result) => (code.trim().to_string(), result.to_string()),
-                Field::Bare(name) => (name.to_string(), "1".to_string()),
+                Field::Bare(name) => (name.to_string(), String::new()),
             };
             let instr = if deleted {
                 "w:delInstrText"
@@ -717,7 +718,10 @@ fn result_end(text: &str) -> Option<usize> {
     let mut at = 0;
     while at < text.len() {
         let rest = &text[at..];
-        if rest.starts_with(FIELD_END) {
+        if rest.starts_with("\\{") {
+            // `\{DATE}`, `\{/}`: text, not a field nor an end.
+            at += 2;
+        } else if rest.starts_with(FIELD_END) {
             if depth == 0 {
                 return Some(at);
             }
@@ -1209,7 +1213,7 @@ mod tests {
         assert_eq!(
             written("p {PAGE} {++new++}{>>header1.r3 @AC<<}{--old--}{>>header1.r4 @AC<<}"),
             "<w:r><w:t xml:space=\"preserve\">p </w:t></w:r>\
-             <w:fldSimple w:instr=\" PAGE \"><w:r><w:t>1</w:t></w:r></w:fldSimple>\
+             <w:fldSimple w:instr=\" PAGE \"/>\
              <w:r><w:t xml:space=\"preserve\"> </w:t></w:r>\
              <w:ins w:id=\"3\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
              <w:r><w:t xml:space=\"preserve\">new</w:t></w:r></w:ins>\
@@ -1228,6 +1232,15 @@ mod tests {
              <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins>\
              <w:del w:id=\"5\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\">\
              <w:r><w:delText xml:space=\"preserve\">a</w:delText></w:r></w:del>"
+        );
+        // A bare field inside a mark has no result either.
+        assert_eq!(
+            written("{++{PAGE}++}{>>header1.r7 @AC<<}"),
+            "<w:ins w:id=\"7\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins>"
         );
         // No tag: the document's author and a fresh id; a newline breaks
         // the line.

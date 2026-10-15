@@ -537,6 +537,13 @@ even and odd headers, and a `sections:` entry gives its section the page
 and stories it names. With no header at all: Letter portrait, one-inch
 margins, Normal Calibri 11pt and the writer's other defaults.
 
+A header's or footer's field with no result is its bare name, `{PAGE}`,
+where the body writes `{PAGE}{/}`: Word computes the page number on each
+page, so a story's view keeps no result for it. Inside another field's
+result a field always ends with `{/}` (`{PAGE}{NUMPAGES}{/}{/}`), and
+story text that would read as a field (`{SELLER}`, `{1999}`, `{/}`) is
+escaped (`\{SELLER}`).
+
 Not read back yet: `source:` names no base document, an untagged note
 after a tagged one on the same anchor is a new comment, not a reply, and
 the applier (`jubarte compare contract.docx view.md`, `apply_markdown`)

@@ -1147,6 +1147,26 @@ fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
 }
 
 #[test]
+fn a_footer_field_without_a_result_comes_back_without_one() {
+    // kitchen-sink.md: `{PAGE}` came back `{PAGE}1{/}`, the writer's
+    // made-up result. Word computes both on every page ("Page 1 of 2").
+    let view = "---\nview: tracked\n\
+                footers:\n  default: {id: footer1, text: \"Page {PAGE} of {NUMPAGES}\"}\n\
+                ---\n\n<!-- p0 -->\nBody.\n";
+    let (again, docx) = full_trip(view);
+    assert!(
+        again.contains("  default: {id: footer1, text: \"Page {PAGE} of {NUMPAGES}\"}"),
+        "{again}"
+    );
+    let footer = common::docx::part_string(&docx, "word/footer1.xml").expect("footer1.xml");
+    assert!(
+        footer.contains(r#"<w:fldSimple w:instr=" PAGE "/>"#),
+        "{footer}"
+    );
+    assert!(!footer.contains("<w:t>1</w:t>"), "{footer}");
+}
+
+#[test]
 fn a_mark_with_no_author_keeps_its_id_and_takes_no_comment() {
     // `@??`: the reader's handle for a mark without an author's name. It
     // is a tag, not a comment, in the body and in a header.

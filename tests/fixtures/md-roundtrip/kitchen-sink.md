@@ -13,6 +13,7 @@ styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
+  ListParagraph: Calibri 11pt, indent 0.5in, contextual spacing, named List Paragraph
   table: TableGrid, all borders 0.5pt
 headers:
   default: {id: header1, text: Northwind / Contoso, right}
@@ -77,6 +78,5 @@ Signature page follows.
 
 <!-- footnotes.p0 -->
 [^1]: The effective date is the later of the two signatures.
-
 <!-- endnotes.p0 -->
 [^2]: Earlier drafts are withdrawn.
