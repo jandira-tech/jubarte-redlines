@@ -1703,3 +1703,99 @@ fn bullet_and_numbered_levels_match_after_the_id_line_round_trip() {
         }
     }
 }
+
+/// Body paragraph texts, deletions left out, a line break as `\n`.
+fn paragraph_texts(docx: &[u8]) -> Vec<String> {
+    jubarte::inspect::paragraphs(docx)
+        .expect("paragraphs")
+        .into_iter()
+        .map(|paragraph| paragraph.text)
+        .collect()
+}
+
+/// `read` of `docx` with one pinned source and no page markers.
+fn agent_view(docx: &[u8]) -> String {
+    read(
+        docx,
+        &ReadOptions {
+            page_markers: false,
+            source: Some("a.md".into()),
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown
+}
+
+/// The view without its `sha256:` line. Two docx of one view differ there.
+fn without_sha(markdown: &str) -> String {
+    let mut text = markdown
+        .lines()
+        .filter(|line| !line.starts_with("sha256:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if markdown.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
+/// A to B to C to D. The space is in B; C has to carry it or D loses it.
+fn chain(markdown: &str) -> (Vec<String>, String, Vec<String>, String) {
+    let b = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("A converts")
+        .docx;
+    assert_word_valid_package(&b);
+    let c = agent_view(&b);
+    let d = markdown_to_docx(&c, &DocxOptions::default())
+        .expect("C converts")
+        .docx;
+    assert_word_valid_package(&d);
+    (paragraph_texts(&b), c, paragraph_texts(&d), agent_view(&d))
+}
+
+#[test]
+fn a_leading_space_after_a_tracked_break_round_trips() {
+    // The space is not at the start of A's line (the closer is), so the
+    // writer stores it as the next paragraph's first run. The view has to
+    // say so: a literal leading space would not come back.
+    let cases = [
+        (
+            "packaging{++\n\n++}{>>Bo Chen (2026-09-01T00:07:00Z)<<} but excludes.\n",
+            " but excludes.",
+            "&#32;but excludes.",
+        ),
+        (
+            "rate.{--\n\n--}{>>Bo Chen (2026-09-01T01:38:00Z)<<} The price.\n",
+            " The price.",
+            "&#32;The price.",
+        ),
+    ];
+    for (markdown, run, shown) in cases {
+        let (b, c, d, again) = chain(markdown);
+        assert!(
+            b.iter().any(|text| text == run),
+            "B lost the leading space {run:?}: {b:?}"
+        );
+        assert!(
+            c.contains(shown),
+            "the view dropped the leading space {shown:?}:\n{c}"
+        );
+        assert_eq!(d, b, "D dropped the leading space\n{c}");
+        assert_eq!(without_sha(&again), without_sha(&c), "read(D):\n{again}");
+    }
+}
+
+#[test]
+fn a_leading_space_after_a_line_break_round_trips() {
+    // `<br>&#32;` is a `w:br` and a run of one space. A literal space on
+    // the next Markdown line is indentation and never reaches the run.
+    let (b, c, d, again) = chain("alpha<br>&#32;beta\n");
+    assert_eq!(b, ["alpha\n beta".to_string()]);
+    assert!(
+        c.contains("alpha\\\n&#32;beta"),
+        "the view dropped the space after the break:\n{c}"
+    );
+    assert_eq!(d, b, "D dropped the space after the break\n{c}");
+    assert_eq!(without_sha(&again), without_sha(&c), "read(D):\n{again}");
+}

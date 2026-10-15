@@ -889,7 +889,9 @@ pub(crate) fn join_paragraphs(parts: Vec<Part>, separator: &str, keep_empty: boo
             } else {
                 pending.take().or_else(|| whole_change(&part)).or(first)
             };
-            let space = trailing || leading;
+            // The agent view already wrote a leading space as `&#32;`.
+            // Another space here would double it.
+            let space = trailing || (leading && !part.starts_with("&#32;"));
             splice(&mut out, separator, "", &part, change.as_ref(), space);
         }
         pending = mark;
@@ -1369,6 +1371,12 @@ mod tests {
             ("b".to_string(), None, (true, false)),
         ];
         assert_eq!(join_marked(parts, "<br>"), "a<br>b");
+        // A space the text already keeps (`&#32;`) is not written again.
+        let parts = vec![
+            ("notice.".to_string(), Some((Del, None)), (false, false)),
+            ("&#32;The".to_string(), None, (true, false)),
+        ];
+        assert_eq!(join_marked(parts, "<br>"), "notice.{--<br>--}&#32;The");
     }
 
     #[test]
