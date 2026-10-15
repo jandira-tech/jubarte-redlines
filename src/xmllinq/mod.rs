@@ -6,19 +6,19 @@
 //!
 //! Used by every WML/OOXML part the engine reads or writes (the comparer,
 //! edit pipeline, accept/reject, markdown projection, etc.). The tree is an
-//! arena ([`Dom`]) of nodes addressed by [`NodeId`] handles, so in-place
+//! arena (`Dom`) of nodes addressed by `NodeId` handles, so in-place
 //! mutation is borrow-checker-friendly. Names are interned through a
 //! thread-local pool so identical namespace / local-name strings — which
 //! recur on millions of elements — share one `Arc<str>` allocation.
 //!
 //! # Layout
 //!
-//! - [`XNamespace`] / [`XName`] — interned expanded names; equal strings
+//! - `XNamespace` / `XName` — interned expanded names; equal strings
 //!   share storage and are byte-for-byte identical to a fresh `XName`/`XNamespace`.
-//! - [`NodeId`] — handle into the arena.
-//! - [`XDeclaration`] — `<?xml version encoding standalone?>` payload.
-//! - [`Dom`] — the arena; the `parse` / `serialize` entry points are exposed
-//!   both as free functions in [`parse`] / [`serialize`] and as `Dom` methods
+//! - `NodeId` — handle into the arena.
+//! - `XDeclaration` — `<?xml version encoding standalone?>` payload.
+//! - `Dom` — the arena; the `parse` / `serialize` entry points are exposed
+//!   both as free functions in `parse` / `serialize` and as `Dom` methods
 //!   for ergonomics.
 //!
 //! # CLI
@@ -29,9 +29,9 @@
 //!
 //! # Submodules
 //!
-//! - [`parse`] — string → DOM (a small, non-validating, namespace-aware
+//! - `parse` — string → DOM (a small, non-validating, namespace-aware
 //!   recursive-descent parser; `parse_xdocument` plus `validate_xml`).
-//! - [`serialize`] — DOM → string, with scope-aware namespace prefixes.
+//! - `serialize` — DOM → string, with scope-aware namespace prefixes.
 
 pub mod parse;
 pub mod serialize;
@@ -349,7 +349,7 @@ impl NodeData {
 /// attributes are a separate per-element vec (attributes are XObjects but
 /// not XNodes, exactly as in LINQ-to-XML).
 ///
-/// Most callers should not allocate `Dom` directly — [`WmlDocument`] and the
+/// Most callers should not allocate `Dom` directly — `WmlDocument` and the
 /// per-part helpers in [`crate::opc`] own one. The unit-struct tests at the
 /// bottom of the file (`node_data_excludes_annotations_vec`,
 /// `node_kind_rare_variants_are_boxed`) pin the in-arena byte counts so a
