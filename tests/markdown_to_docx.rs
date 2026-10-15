@@ -1735,12 +1735,26 @@ fn scholar_sets_a_manuscript_as_latex_does() {
     ] {
         assert!(normal.contains(expected), "{expected}: {normal}");
     }
-    for (id, size) in [("Heading1", "29"), ("Heading2", "24"), ("Heading3", "20")] {
+    // A heading takes Latin Modern Roman from Normal, which it is based
+    // on, so it names no font of its own. Heading 3 is 10pt like Normal,
+    // so it names no size either.
+    for (id, size) in [
+        ("Heading1", Some("29")),
+        ("Heading2", Some("24")),
+        ("Heading3", None),
+    ] {
         let heading = style(&docx, id);
+        assert!(!heading.contains("<w:rFonts"), "{id}: {heading}");
+        match size {
+            Some(size) => {
+                let sz = format!(r#"<w:sz w:val="{size}"/>"#);
+                assert!(heading.contains(&sz), "{id} {sz}: {heading}");
+            }
+            None => assert!(!heading.contains("<w:sz "), "{id}: {heading}"),
+        }
         for expected in [
-            r#"w:ascii="Latin Modern Roman""#.to_string(),
+            r#"<w:basedOn w:val="Normal"/>"#.to_string(),
             "<w:b/>".to_string(),
-            format!(r#"<w:sz w:val="{size}"/>"#),
             r#"w:lineRule="auto""#.to_string(),
             r#"<w:jc w:val="left"/>"#.to_string(),
             "<w:keepNext/>".to_string(),
