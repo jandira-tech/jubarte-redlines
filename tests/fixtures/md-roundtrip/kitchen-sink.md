@@ -14,7 +14,6 @@ styles:
   "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next
   ListParagraph: Calibri 11pt, indent 0.5in, contextual spacing, named List Paragraph
-  table: TableGrid, all borders 0.5pt
 headers:
   default: {id: header1, text: Northwind / Contoso, right}
 footers:
