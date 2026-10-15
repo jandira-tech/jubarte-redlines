@@ -16,7 +16,7 @@ use tiny_skia::{
 };
 
 use super::font::{FaceRef, Fonts, word_device_track};
-use super::pdf::{Op, Page, PdfComment, markup_chrome};
+use super::pdf::{Op, Page, markup_chrome};
 
 /// Points per inch.
 const PT_PER_INCH: f32 = 72.0;
@@ -65,9 +65,6 @@ pub(crate) fn paint_page(fonts: &Fonts<'_>, page: &Page, dpi: f32) -> Option<Pix
     let mut faces: HashMap<FaceRef, ttf_parser::Face<'_>> = HashMap::new();
     for op in &page.ops {
         paint_op(&mut pixmap, fonts, &mut faces, op, ts);
-    }
-    for note in &page.comments {
-        paint_comment(&mut pixmap, note, ts);
     }
     Some(pixmap)
 }
@@ -617,30 +614,12 @@ fn paint_image(
     pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, image_ts, mask.as_ref());
 }
 
-/// A comment balloon anchor: a light yellow box where the PDF puts its
-/// sticky-note annotation, so a reviewer sees that a comment exists here.
-fn paint_comment(pixmap: &mut Pixmap, note: &PdfComment, ts: Transform) {
-    let Some(rect) = Rect::from_xywh(note.x, note.y, note.w.max(1.0), note.h.max(1.0)) else {
-        return;
-    };
-    let path = PathBuilder::from_rect(rect);
-    let mut fill = Paint::default();
-    fill.set_color(Color::from_rgba(1.0, 0.95, 0.6, 0.7).unwrap_or(Color::WHITE));
-    pixmap.fill_path(&path, &fill, FillRule::Winding, ts, None);
-    pixmap.stroke_path(
-        &path,
-        &paint_for([0.8, 0.6, 0.0]),
-        &stroke_for(0.75),
-        ts,
-        None,
-    );
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::convert::font::FaceId;
+    use crate::convert::pdf::PdfComment;
 
     fn page_with(ops: Vec<Op>) -> Page {
         let mut page = Page::new(200.0, 100.0);
@@ -663,6 +642,36 @@ mod tests {
         let px = paint_page(&fonts, &page, 144.0).unwrap();
         assert_eq!((px.width(), px.height()), (400, 200));
         assert_eq!(pixel(&px, 10, 10), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn a_comment_anchor_paints_no_box() {
+        // The PDF's sticky note is a viewer annotation that never prints,
+        // and Word draws nothing at a comment's reference: the page stays
+        // white where the note sits.
+        let fonts = Fonts::new();
+        let mut page = page_with(Vec::new());
+        page.comments.push(PdfComment {
+            id: "0".into(),
+            x: 50.0,
+            y: 40.0,
+            w: 15.0,
+            h: 15.0,
+            top: 55.0,
+            bottom: 40.0,
+            contents: "note".into(),
+            author: "a".into(),
+            initials: "a".into(),
+            label: "1".into(),
+            color: [0.0; 3],
+            resolved: false,
+        });
+        let px = paint_page(&fonts, &page, 72.0).unwrap();
+        let painted = (0..px.width())
+            .flat_map(|c| (0..px.height()).map(move |r| (c, r)))
+            .filter(|&(c, r)| pixel(&px, c, r) != [255, 255, 255, 255])
+            .count();
+        assert_eq!(painted, 0, "no pixel marks the comment's anchor");
     }
 
     #[test]
