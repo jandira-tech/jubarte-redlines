@@ -54,7 +54,7 @@ fn a_refused_edit_names_what_holds_the_text_and_the_way_around_it() {
         ),
         (
             r#"{"kind":"replace","paragraph":"p4","find":"45","replacement":"60"}"#,
-            r#"the text sits inside body:rev:7, a tracked insertion by "Trainer 1 - LargeCo"; settle it first ("resolve_revisions": {"accept": {"ids": ["body:rev:7"]}}, or reject)"#,
+            r#"the text sits inside r7, a tracked insertion by "Trainer 1 - LargeCo"; settle it first ("resolve_revisions": {"accept": {"ids": ["r7"]}}, or reject)"#,
         ),
     ] {
         let e = apply_plan(&source(), &plan("", &format!("[{op}]"))).unwrap_err();
@@ -68,7 +68,7 @@ fn settling_the_named_revision_frees_its_text() {
     let out = apply_plan(
         &source(),
         &plan(
-            r#""resolve_revisions":{"accept":{"ids":["body:rev:7"]}},"#,
+            r#""resolve_revisions":{"accept":{"ids":["r7"]}},"#,
             r#"[{"kind":"replace","paragraph":"p4","find":"45","replacement":"60"}]"#,
         ),
     )

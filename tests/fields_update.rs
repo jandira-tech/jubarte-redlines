@@ -81,7 +81,7 @@ fn toc_entries_and_numpages_come_from_the_layout() {
     );
     let toc = updated.fields.iter().find(|f| f.kind == "TOC").unwrap();
     assert_eq!((toc.old.as_str(), toc.new.as_str()), ("", "A\t1\nB\t2"));
-    assert_eq!(toc.paragraph, "body:p:0");
+    assert_eq!(toc.paragraph, "p0");
     // Field codes are intact so Word can refresh.
     let xml = part_string(&updated.docx, "word/document.xml").unwrap();
     assert!(xml.contains(r#" TOC \o "1-3" \h "#) && xml.contains(" NUMPAGES "));
@@ -221,7 +221,7 @@ fn pagerefs_distinguish_undefined_bookmarks_from_unpaged_ones() {
             first.new.as_str(),
             first.paragraph.as_str()
         ),
-        ("PAGEREF", "PAGEREF target \\h", "9", "1", "body:p:2")
+        ("PAGEREF", "PAGEREF target \\h", "9", "1", "p2")
     );
     // The result run keeps the first result run's formatting.
     let xml = part_string(&updated.docx, "word/document.xml").unwrap();
@@ -293,7 +293,7 @@ fn numpages_in_a_footer_and_in_a_simple_field() {
         .iter()
         .find(|f| f.kind == "NUMPAGES")
         .unwrap();
-    assert_eq!(numpages.paragraph, "footer1:p:0");
+    assert_eq!(numpages.paragraph, "footer1");
     // A number format it does not write keeps the cached result.
     assert_eq!(texts(&updated.docx).last().unwrap(), "i");
 }

@@ -25,7 +25,7 @@ fn plan(operations: &str) -> EditPlan {
 #[test]
 fn the_second_occurrence_is_replaced() {
     let plan = plan(
-        r#"[{"kind":"replace","paragraph":"body:p:0","find":"fee","occurrence":2,"replacement":"cost"}]"#,
+        r#"[{"kind":"replace","paragraph":"p0","find":"fee","occurrence":2,"replacement":"cost"}]"#,
     );
     let out = apply_plan(&source(), &plan).unwrap();
     assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "fee cost fee");
@@ -34,7 +34,7 @@ fn the_second_occurrence_is_replaced() {
 
 #[test]
 fn the_last_occurrence_is_deleted() {
-    let plan = plan(r#"[{"kind":"delete","paragraph":"body:p:0","find":" fee","occurrence":2}]"#);
+    let plan = plan(r#"[{"kind":"delete","paragraph":"p0","find":" fee","occurrence":2}]"#);
     let out = apply_plan(&source(), &plan).unwrap();
     assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "fee fee");
     assert_eq!(out.report.operations[0].matches, 2);
@@ -43,8 +43,8 @@ fn the_last_occurrence_is_deleted() {
 #[test]
 fn insert_after_and_before_take_an_occurrence() {
     let plan = plan(
-        r#"[{"kind":"insert","paragraph":"body:p:0","after":"fee","occurrence":1,"text":"!"},
-            {"kind":"insert","paragraph":"body:p:0","before":"fee","occurrence":3,"text":"?"}]"#,
+        r#"[{"kind":"insert","paragraph":"p0","after":"fee","occurrence":1,"text":"!"},
+            {"kind":"insert","paragraph":"p0","before":"fee","occurrence":3,"text":"?"}]"#,
     );
     let out = apply_plan(&source(), &plan).unwrap();
     assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "fee! fee ?fee");
@@ -52,9 +52,8 @@ fn insert_after_and_before_take_an_occurrence() {
 
 #[test]
 fn a_comment_anchors_to_an_occurrence() {
-    let plan = plan(
-        r#"[{"kind":"comment","paragraph":"body:p:0","find":"fee","occurrence":3,"text":"why?"}]"#,
-    );
+    let plan =
+        plan(r#"[{"kind":"comment","paragraph":"p0","find":"fee","occurrence":3,"text":"why?"}]"#);
     let out = apply_plan(&source(), &plan).unwrap();
     let op = &out.report.operations[0];
     assert_eq!(op.status, "ok");
@@ -65,7 +64,7 @@ fn a_comment_anchors_to_an_occurrence() {
 #[test]
 fn a_unique_anchor_accepts_occurrence_one() {
     let plan = plan(
-        r#"[{"kind":"replace","paragraph":"body:p:0","find":"fee fee fee","occurrence":1,"replacement":"x"}]"#,
+        r#"[{"kind":"replace","paragraph":"p0","find":"fee fee fee","occurrence":1,"replacement":"x"}]"#,
     );
     let out = apply_plan(&source(), &plan).unwrap();
     assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "x");
@@ -74,7 +73,7 @@ fn a_unique_anchor_accepts_occurrence_one() {
 
 #[test]
 fn an_out_of_range_occurrence_names_the_range() {
-    let plan = plan(r#"[{"kind":"delete","paragraph":"body:p:0","find":"fee","occurrence":4}]"#);
+    let plan = plan(r#"[{"kind":"delete","paragraph":"p0","find":"fee","occurrence":4}]"#);
     let e = apply_plan(&source(), &plan).unwrap_err();
     assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
     assert!(
@@ -87,7 +86,7 @@ fn an_out_of_range_occurrence_names_the_range() {
 
 #[test]
 fn an_occurrence_on_a_missing_anchor_is_still_not_found() {
-    let plan = plan(r#"[{"kind":"delete","paragraph":"body:p:0","find":"fum","occurrence":1}]"#);
+    let plan = plan(r#"[{"kind":"delete","paragraph":"p0","find":"fum","occurrence":1}]"#);
     let e = apply_plan(&source(), &plan).unwrap_err();
     assert_eq!(e.code, "ANCHOR_NOT_FOUND");
     assert_eq!(e.outcomes[0].matches, 0);
@@ -95,7 +94,7 @@ fn an_occurrence_on_a_missing_anchor_is_still_not_found() {
 
 #[test]
 fn without_occurrence_the_refusal_says_how_to_fix_it() {
-    let plan = plan(r#"[{"kind":"insert","paragraph":"body:p:0","after":"fee","text":"!"}]"#);
+    let plan = plan(r#"[{"kind":"insert","paragraph":"p0","after":"fee","text":"!"}]"#);
     let e = apply_plan(&source(), &plan).unwrap_err();
     assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
     assert!(
@@ -107,9 +106,8 @@ fn without_occurrence_the_refusal_says_how_to_fix_it() {
 
 #[test]
 fn occurrence_zero_is_an_invalid_edit() {
-    let plan = plan(
-        r#"[{"kind":"comment","paragraph":"body:p:0","find":"fee","occurrence":0,"text":"?"}]"#,
-    );
+    let plan =
+        plan(r#"[{"kind":"comment","paragraph":"p0","find":"fee","occurrence":0,"text":"?"}]"#);
     let e = apply_plan(&source(), &plan).unwrap_err();
     assert_eq!(e.code, "INVALID_EDIT");
     assert!(e.message.contains("1-based"), "{}", e.message);
@@ -118,8 +116,8 @@ fn occurrence_zero_is_an_invalid_edit() {
 #[test]
 fn occurrence_round_trips_through_the_plan_json() {
     let plan = plan(
-        r#"[{"kind":"replace","paragraph":"body:p:0","find":"fee","occurrence":2,"replacement":"cost"},
-            {"kind":"delete","paragraph":"body:p:0","find":"fee"}]"#,
+        r#"[{"kind":"replace","paragraph":"p0","find":"fee","occurrence":2,"replacement":"cost"},
+            {"kind":"delete","paragraph":"p0","find":"fee"}]"#,
     );
     let json: serde_json::Value = serde_json::from_str(&plan.to_json()).unwrap();
     assert_eq!(json["operations"][0]["occurrence"], 2);
@@ -130,9 +128,9 @@ fn occurrence_round_trips_through_the_plan_json() {
 #[test]
 fn occurrence_without_an_anchor_is_an_invalid_edit() {
     for op in [
-        r#"{"kind":"insert","paragraph":"body:p:0","position":"end","occurrence":2,"text":"!"}"#,
-        r#"{"kind":"comment","paragraph":"body:p:0","occurrence":2,"text":"?"}"#,
-        r#"{"kind":"comment","paragraph":"body:p:0","through":"body:p:0","occurrence":1,"text":"?"}"#,
+        r#"{"kind":"insert","paragraph":"p0","position":"end","occurrence":2,"text":"!"}"#,
+        r#"{"kind":"comment","paragraph":"p0","occurrence":2,"text":"?"}"#,
+        r#"{"kind":"comment","paragraph":"p0","through":"p0","occurrence":1,"text":"?"}"#,
     ] {
         let e = apply_plan(&source(), &plan(&format!("[{op}]"))).unwrap_err();
         assert_eq!(e.code, "INVALID_EDIT", "{op}");

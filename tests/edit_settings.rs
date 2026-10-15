@@ -139,7 +139,7 @@ fn the_redline_carries_the_settings_and_no_change_for_them() {
         &docx(&para("Payment is due in 30 days.")),
         &plan(
             r#"{"kind":"settings","track_revisions":true},
-               {"kind":"replace","paragraph":"body:p:0","find":"30","replacement":"45"}"#,
+               {"kind":"replace","paragraph":"p0","find":"30","replacement":"45"}"#,
         ),
     )
     .unwrap();
@@ -197,7 +197,7 @@ fn refusals_name_the_problem() {
     assert_eq!(e.operation.as_deref(), Some("op-2"));
     // The wire form is checked before anything resolves.
     for bad in [
-        r#"{"kind":"settings","paragraph":"body:p:0","track_revisions":true}"#,
+        r#"{"kind":"settings","paragraph":"p0","track_revisions":true}"#,
         r#"{"kind":"settings","track_revision":true}"#,
         r#"{"kind":"settings","protection":{"edit":"everything"}}"#,
         r#"{"kind":"settings","protection":{"edit":"readOnly","enforce":true}}"#,
@@ -231,7 +231,7 @@ fn settings_ride_with_a_footnote_and_a_page_setup() {
     let out = apply_plan(
         &docx(&para("Payment is due in 30 days.")),
         &plan(
-            r#"{"kind":"insert_footnote","paragraph":"body:p:0","after":"30 days","text":"Calendar days."},
+            r#"{"kind":"insert_footnote","paragraph":"p0","after":"30 days","text":"Calendar days."},
                {"kind":"page_setup","orientation":"landscape"},
                {"kind":"settings","track_revisions":true,"protection":{"edit":"trackedChanges"}}"#,
         ),
@@ -268,7 +268,7 @@ fn the_settings_update_fields_and_the_plans_are_two_things_and_both_hold() {
         &source,
         &EditPlan::from_json(
             r#"{"schema_version":1,"author":"A","update_fields":true,"operations":[
-            {"kind":"insert_toc","paragraph":"body:p:0","levels":1},
+            {"kind":"insert_toc","paragraph":"p0","levels":1},
             {"kind":"settings","update_fields":true}]}"#,
         )
         .unwrap(),
