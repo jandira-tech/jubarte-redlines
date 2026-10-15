@@ -62,11 +62,11 @@ pub struct CommentRecord {
     pub parent: Option<u32>,
     /// `w15:done`: the thread is resolved.
     pub done: bool,
-    /// Story and paragraph id of the range start (`body:p:12`), or of the
+    /// Story and paragraph id of the range start (`p12`), or of the
     /// reference when the comment has no range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paragraph: Option<String>,
-    /// Story and paragraph id of the range end (`body:p:14`) when the range
+    /// Story and paragraph id of the range end (`p14`) when the range
     /// ends in a later paragraph than it starts; `None` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_paragraph: Option<String>,
@@ -336,7 +336,7 @@ impl Anchors {
         let start = self.starts.get(&id).copied();
         let end = self.ends.get(&id).copied();
         let paragraph_id =
-            |story: usize, para: usize| format!("{}:p:{para}", self.stories[story].0);
+            |story: usize, para: usize| crate::ids::paragraph_id(&self.stories[story].0, para);
         match (start, end) {
             (Some((story, first, s)), Some((end_story, last, e)))
                 if story == end_story && (first, s) <= (last, e) =>
@@ -1372,7 +1372,7 @@ mod public_memory_anchor_boundary_tests {
                 "First ação\nMiddle café\nLast τέλος",
                 "",
                 "",
-                "body:p:0",
+                "p0",
             ),
             (
                 format!(
@@ -1381,7 +1381,7 @@ mod public_memory_anchor_boundary_tests {
                 "Middle café",
                 "",
                 "",
-                "body:p:1",
+                "p1",
             ),
             (
                 format!(
@@ -1390,7 +1390,7 @@ mod public_memory_anchor_boundary_tests {
                 "ação\nMiddle café\nτέλος",
                 "Before ",
                 " after",
-                "body:p:1",
+                "p1",
             ),
             (
                 format!(
@@ -1399,7 +1399,7 @@ mod public_memory_anchor_boundary_tests {
                 "",
                 "",
                 "",
-                "body:p:1",
+                "p1",
             ),
         ];
         for (body, anchor, before, after, paragraph) in cases {
@@ -1417,9 +1417,9 @@ mod public_memory_anchor_boundary_tests {
             let source = snapshot(&pkg);
             let bytes = pkg.to_zip().unwrap();
             // A range over several paragraphs names its last one too.
-            let start: usize = paragraph["body:p:".len()..].parse().unwrap();
+            let start: usize = paragraph["p".len()..].parse().unwrap();
             let lines = anchor.matches('\n').count();
-            let last_paragraph = (lines > 0).then(|| format!("body:p:{}", start + lines));
+            let last_paragraph = (lines > 0).then(|| format!("p{}", start + lines));
             let expected = vec![CommentRecord {
                 id: 7,
                 r#ref: "c7".into(),
@@ -1459,7 +1459,7 @@ mod public_memory_anchor_boundary_tests {
             date: Some(date.into()),
             text: format!("Source comment {id}"),
             done: false,
-            paragraph: Some(format!("body:p:{id}")),
+            paragraph: Some(format!("p{id}")),
             last_paragraph: None,
             anchor_text: format!("Owned anchor {id}"),
             before: "before".into(),

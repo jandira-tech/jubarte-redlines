@@ -6,8 +6,8 @@
 //! structure findings with the paragraph id an agent can act on.
 //!
 //! Every rule reads the admitted package through [`crate::inspect`]'s read
-//! model, so a finding's `location` is the same `body:p:N` (or story
-//! paragraph id) that `jubarte read --json` prints and an edit plan targets.
+//! model, so a finding's `location` is the same paragraph id (`p12`,
+//! `header1.p1`) that `jubarte read --json` prints and an edit plan targets.
 //! When a finding has no paragraph (a document-wide setting), the location
 //! is the part name.
 //!
@@ -62,7 +62,7 @@ pub struct AuditFinding {
     pub rule_set: String,
     /// `error`, `warning` or `info`.
     pub severity: String,
-    /// `body:p:N`, a story paragraph id, or a part name.
+    /// A paragraph id (`p12`, `header1.p1`) or a part name.
     pub location: String,
     /// What was found, in one sentence.
     pub message: String,
@@ -305,7 +305,7 @@ impl Story {
     }
 
     fn paragraph_id(&self, index: usize) -> String {
-        format!("{}:p:{index}", self.id)
+        crate::ids::paragraph_id(&self.id, index)
     }
 }
 
@@ -1008,9 +1008,9 @@ mod public_memory_spacer_ownership_tests {
                     rule_set: "style".into(),
                     severity: "info".into(),
                     location: if label == "section carrier precedes two independent blanks" {
-                        "body:p:1".into()
+                        "p1".into()
                     } else {
-                        "body:p:0".into()
+                        "p0".into()
                     },
                     message: if label == "section carrier precedes two independent blanks" {
                         "2 consecutive empty paragraphs (p1 to p2) are used as vertical space"

@@ -99,7 +99,7 @@ pub(super) fn body_tables(dom: &Dom, body: NodeId) -> Vec<Table> {
                             TableCell {
                                 paragraph_ids: own
                                     .iter()
-                                    .map(|(i, _)| format!("body:p:{i}"))
+                                    .map(|&(i, _)| crate::ids::paragraph_id("body", i))
                                     .collect(),
                                 text: own
                                     .iter()

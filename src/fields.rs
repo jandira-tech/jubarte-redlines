@@ -43,8 +43,8 @@ pub struct FieldUpdate {
     pub kind: String,
     /// The field code, trimmed.
     pub code: String,
-    /// The paragraph that holds the field's start (`body:p:3`,
-    /// `footer1:p:0`), in the output package's numbering.
+    /// The paragraph that holds the field's start (`p3`,
+    /// `footer1`), in the output package's numbering.
     pub paragraph: String,
     /// The cached result before.
     pub old: String,
@@ -908,7 +908,7 @@ fn paragraph_ids(story: &Story) -> HashMap<NodeId, usize> {
     nodes.into_iter().enumerate().map(|(i, p)| (p, i)).collect()
 }
 
-/// `{story}:p:{index}` of the paragraph that holds `node` (for a text box,
+/// The id ([`crate::ids::paragraph_id`]) of the paragraph that holds `node` (for a text box,
 /// the paragraph that anchors it).
 fn paragraph_id(story: &Story, node: NodeId, ids: &HashMap<NodeId, usize>) -> String {
     story
@@ -916,7 +916,7 @@ fn paragraph_id(story: &Story, node: NodeId, ids: &HashMap<NodeId, usize>) -> St
         .ancestors_and_self(node, Some(&W::p()))
         .into_iter()
         .find_map(|p| ids.get(&p))
-        .map(|i| format!("{}:p:{i}", story.id))
+        .map(|&i| crate::ids::paragraph_id(&story.id, i))
         .unwrap_or_default()
 }
 
