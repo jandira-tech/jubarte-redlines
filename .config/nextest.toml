@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# CI writes JUnit XML (target/nextest/ci/junit.xml) for Codecov's test
+# results: libtest (`cargo test`) writes none.
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
