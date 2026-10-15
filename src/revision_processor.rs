@@ -5,15 +5,15 @@
 //! Revision accept / reject pipeline (M3).
 //!
 //! Port of `RevisionProcessor.ts` — the byte-level accept / reject facade
-//! ([`accept_revisions_package`], [`accept_revisions_package_keeping_ids`],
-//! [`reject_revisions_package`]) and the A.0–A.11 transforms that compose
+//! (`accept_revisions_package`, `accept_revisions_package_keeping_ids`,
+//! `reject_revisions_package`) and the A.0–A.11 transforms that compose
 //! them: paragraph / block-content iteration, paragraph-mark and
 //! content-control re-wrap, moveFrom / moveTo, deleted-cell merging,
 //! adjacent-table merging, and the reject path (revert → reverse →
 //! remove rsid → accept).
 //!
-//! The element-scope helpers ([`accept_revisions_document`],
-//! [`reject_revisions_document`], [`accept_revisions_for_element`]) are
+//! The element-scope helpers (`accept_revisions_document`,
+//! `reject_revisions_document`, `accept_revisions_for_element`) are
 //! the per-subtree entry the M4 compare pipeline calls to hash the
 //! accepted / rejected projections before correlating them.
 

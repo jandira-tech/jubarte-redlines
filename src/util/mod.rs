@@ -8,17 +8,17 @@
 //!
 //! - [`sha1`]: SHA-1 hex helpers, FNV-1a 64 / 128 fingerprints, and
 //!   hex encoding helpers used by the LCS and atom-hash stream.
-//! - [`group_adjacent`]: the LINQ `GroupAdjacent` port — runs of items
+//! - `group_adjacent`: the LINQ `GroupAdjacent` port — runs of items
 //!   sharing a key.
-//! - [`words`]: a word tokenizer that understands combining marks,
+//! - `words`: a word tokenizer that understands combining marks,
 //!   zero-width joiners, and skin-tone modifiers (so a decomposed
 //!   `cafe\u{301}` is one word like its composed form, and emoji
 //!   sequences stay together).
 //!
 //! The functions here back the comparer's LCS hot path and the
 //! Markdown projection. Nothing in this module is CLI-specific, but the
-//! `jubarte` CLI calls into [`sha1_hex`] (block hash) and
-//! [`word_tokens`] (diff mark rendering).
+//! `jubarte` CLI calls into `sha1_hex` (block hash) and
+//! `word_tokens` (diff mark rendering).
 
 pub(crate) mod datetime;
 pub mod group_adjacent;

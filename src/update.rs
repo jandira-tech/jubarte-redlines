@@ -9,13 +9,13 @@
 //! signature check, archive extraction and binary swap are the
 //! [`self_update`](https://docs.rs/self_update) crate's. This module builds
 //! the call the binary makes: it picks the release archive for this platform
-//! ([`asset_target`]), decides whether the target is newer
-//! ([`plan`]) and refuses to ask on a non-interactive stdin
-//! ([`preflight`]). The signature rule lives in [`signature_required`],
+//! (`asset_target`), decides whether the target is newer
+//! (`plan`) and refuses to ask on a non-interactive stdin
+//! (`preflight`). The signature rule lives in `signature_required`,
 //! split out so it is unit-tested without I/O.
 //!
-//! Entry points: [`run`] for the command itself, [`plan`] /
-//! [`preflight`] / [`signature_required`] for the decisions.
+//! Entry points: `run` for the command itself, `plan` /
+//! `preflight` / `signature_required` for the decisions.
 
 use std::io::{BufRead, IsTerminal, Write};
 

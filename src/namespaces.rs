@@ -8,14 +8,14 @@
 //! Each namespace is exposed as a unit struct with three associated
 //! items:
 //!
-//! - `Ns::ns()` returns the [`XNamespace`] for the URI;
-//! - `Ns::name(local)` returns an [`XName`] for `local` in that namespace;
+//! - `Ns::ns()` returns the `XNamespace` for the URI;
+//! - `Ns::name(local)` returns an `XName` for `local` in that namespace;
 //! - `Ns::URI` is the namespace URI string (a `const` for switch arms).
 //!
 //! The hottest element and attribute names — those hit on most documents
 //! during hash-cloning, finalize, and the LCS walks — are predefined
-//! on [`W`] and [`PT`] as `OnceLock`-cached methods (e.g. [`W::p`],
-//! [`PT::unid`]). Anything else is reachable via
+//! on `W` and `PT` as `OnceLock`-cached methods (e.g. `W::p`,
+//! `PT::unid`). Anything else is reachable via
 //! `Ns::name("local")`, which still benefits from the thread-local
 //! intern pool.
 //!

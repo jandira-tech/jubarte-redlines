@@ -7,7 +7,7 @@
 //! `word_tokens` splits a UTF-8 string into a `Vec<&str>` of words
 //! (runs of letters and digits), whitespace runs, and single-symbol
 //! punctuation. It is used by the Markdown diff renderer
-//! ([`crate::markdown::diff`]) and by [`crate::edit::rewrite`] to align
+//! (`crate::markdown::diff`) and by `crate::edit::rewrite` to align
 //! inserted and deleted text at the word level; matching decomposed and
 //! composed forms matters because Word's tracked-change runs frequently
 //! arrive decomposed.
