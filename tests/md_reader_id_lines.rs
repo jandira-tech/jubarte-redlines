@@ -1330,3 +1330,171 @@ fn a_reference_inside_a_note_is_text_and_takes_no_definition() {
         "{warnings:?}"
     );
 }
+
+/// A notes part (`footnotes.xml`, `endnotes.xml`) holding only Word's
+/// separators: the `notes:` line names it, and the writer makes it again.
+fn notes_part<'a>(kind: &str, notes: &str, xml: &'a mut String) -> common::docx::Part<'a> {
+    *xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{kind}s xmlns:w="{}"><w:{kind} w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:{kind}><w:{kind} w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:{kind}>{notes}</w:{kind}s>"#,
+        common::docx::W_NS
+    );
+    let (content_type, rel_type) = if kind == "footnote" {
+        (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+        )
+    } else {
+        (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes",
+        )
+    };
+    common::docx::Part {
+        name: if kind == "footnote" {
+            "word/footnotes.xml"
+        } else {
+            "word/endnotes.xml"
+        },
+        content_type,
+        rel_type,
+        xml: xml.as_str(),
+    }
+}
+
+/// The view of `docx`, the docx that view writes, and that docx's view;
+/// both views without their `sha256:` line, which names the bytes.
+fn docx_round_trip(docx: &[u8]) -> (String, Vec<u8>, String) {
+    let options = ReadOptions {
+        page_markers: false,
+        ..ReadOptions::default()
+    };
+    let without_sha = |view: String| {
+        view.lines()
+            .filter(|l| !l.starts_with("sha256: "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let view = read(docx, &options).expect("the docx reads").markdown;
+    let again = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&again);
+    let view_again = read(&again, &options).expect("the docx reads").markdown;
+    (without_sha(view), again, without_sha(view_again))
+}
+
+fn has_part(docx: &[u8], name: &str) -> bool {
+    zip::ZipArchive::new(std::io::Cursor::new(docx))
+        .unwrap()
+        .by_name(name)
+        .is_ok()
+}
+
+#[test]
+fn a_notes_part_that_holds_only_separators_comes_back() {
+    let (mut foot, mut end) = (String::new(), String::new());
+    let parts = [
+        notes_part("footnote", "", &mut foot),
+        notes_part("endnote", "", &mut end),
+    ];
+    let docx = common::docx::docx_with(&common::docx::para("Body."), &parts);
+    let (view, again, view_again) = docx_round_trip(&docx);
+    assert!(
+        view.contains("\nnotes: {empty: [footnotes, endnotes]}"),
+        "{view}"
+    );
+    assert!(has_part(&again, "word/footnotes.xml"));
+    assert!(has_part(&again, "word/endnotes.xml"));
+    assert_eq!(view_again, view);
+
+    // A note in the body makes its part; only the other is named.
+    let note = r#"<w:footnote w:id="1"><w:p><w:r><w:t>A note.</w:t></w:r></w:p></w:footnote>"#;
+    let parts = [
+        notes_part("footnote", note, &mut foot),
+        notes_part("endnote", "", &mut end),
+    ];
+    let body = r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r></w:p>"#;
+    let docx = common::docx::docx_with(body, &parts);
+    let (view, again, view_again) = docx_round_trip(&docx);
+    assert!(view.contains("\nnotes: {empty: [endnotes]}"), "{view}");
+    assert!(has_part(&again, "word/footnotes.xml"));
+    assert!(has_part(&again, "word/endnotes.xml"));
+    assert_eq!(view_again, view);
+
+    // A document without notes parts gains none.
+    let docx = common::docx::docx(&common::docx::para("Body."));
+    let (view, again, _) = docx_round_trip(&docx);
+    assert!(!view.contains("\nnotes:"), "{view}");
+    assert!(!has_part(&again, "word/footnotes.xml"));
+    assert!(!has_part(&again, "word/endnotes.xml"));
+}
+
+#[test]
+fn a_notes_part_with_an_unreferenced_note_is_not_empty() {
+    // No reference reaches footnote 1: the view does not show it, but the
+    // part holds it, so the view must not call the part empty.
+    let (mut foot, mut end) = (String::new(), String::new());
+    let orphan = r#"<w:footnote w:id="1"><w:p><w:r><w:t>Orphan.</w:t></w:r></w:p></w:footnote>"#;
+    let parts = [
+        notes_part("footnote", orphan, &mut foot),
+        notes_part("endnote", "", &mut end),
+    ];
+    let docx = common::docx::docx_with(&common::docx::para("Body."), &parts);
+    let (view, _, _) = docx_round_trip(&docx);
+    assert!(view.contains("\nnotes: {empty: [endnotes]}"), "{view}");
+}
+
+#[test]
+fn a_reference_notes_part_left_with_no_note_takes_the_separators() {
+    // A reference whose footnotes part holds one note and no separators:
+    // the writer drops the note, so it puts Word's separators back.
+    let mut full = String::new();
+    let note = r#"<w:footnote w:id="1"><w:p><w:r><w:t>Old.</w:t></w:r></w:p></w:footnote>"#;
+    let part = notes_part("footnote", note, &mut full);
+    let (content_type, rel_type) = (part.content_type.to_string(), part.rel_type.to_string());
+    let bare = full
+        .replace(r#"<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>"#, "")
+        .replace(r#"<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"#, "");
+    assert!(!bare.contains("w:type="), "{bare}");
+    let reference = common::docx::docx_with(
+        &common::docx::para("Reference."),
+        &[common::docx::Part {
+            name: "word/footnotes.xml",
+            content_type: &content_type,
+            rel_type: &rel_type,
+            xml: &bare,
+        }],
+    );
+    let markdown = "---\nnotes: {empty: [footnotes]}\n---\n\nBody.\n";
+    let docx = markdown_to_docx(
+        markdown,
+        &DocxOptions {
+            reference: Some(&reference),
+            ..DocxOptions::default()
+        },
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let notes = common::docx::part_string(&docx, "word/footnotes.xml").expect("the part");
+    assert!(!notes.contains("Old."), "{notes}");
+    assert!(notes.contains(r#"w:type="separator" w:id="-1""#), "{notes}");
+    assert!(
+        notes.contains(r#"w:type="continuationSeparator" w:id="0""#),
+        "{notes}"
+    );
+}
+
+#[test]
+fn a_notes_clause_that_does_not_read_is_a_warning() {
+    let markdown = "---\nnotes: {empty: [sidenotes]}\n---\n\nBody.\n";
+    let out = markdown_to_docx(markdown, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.starts_with("notes: empty: names sidenotes")),
+        "{:?}",
+        out.warnings
+    );
+    assert!(!has_part(&out.docx, "word/footnotes.xml"));
+}

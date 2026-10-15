@@ -9,6 +9,7 @@ body: p0-p1, 0 tables, 1 page      # pages from layout
 page: A4 portrait, margins 0.7875in, header/footer 0in
 styles:
   Normal: Times New Roman 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it
+notes: {empty: [footnotes]}        # notes parts that hold no note
 ---
 
 <!-- p0 -->

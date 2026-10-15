@@ -12,7 +12,7 @@ page: Letter portrait, margins 1in, header/footer 0.5in; fmt r226 @ASR
 styles:
   Normal: Inter 11pt, left         # default; unannotated paragraphs use it
   ListParagraph: Inter 11pt, named List Paragraph
-notes: {fmt: footnotes.r0 @ASR; footnotes.r1 @ASR; endnotes.r2 @ASR; endnotes.r3 @ASR}  # changes in notes the body does not show (separators)
+notes: {fmt: footnotes.r0 @ASR; footnotes.r1 @ASR; endnotes.r2 @ASR; endnotes.r3 @ASR, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
   default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r223 @ASR<<}", fmt: header1.r222 @ASR}
 footers:

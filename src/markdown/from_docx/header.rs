@@ -114,6 +114,9 @@ pub(crate) struct Facts<'a> {
     /// Tracked view: the changes (`rev`, `fmt`) of the notes no definition
     /// line shows, such as Word's footnote separators.
     pub note_changes: (Vec<String>, Vec<String>),
+    /// The notes parts (`footnotes`, `endnotes`) the view shows no note
+    /// of, such as a part holding only Word's separators.
+    pub empty_notes: Vec<&'static str>,
     /// Tracked view of the whole document: the listed changes no other line
     /// prints (`r3 @AC in p0`), such as a text box's deleted picture.
     pub unplaced: Vec<String>,
@@ -1055,16 +1058,24 @@ fn part_two(out: &mut String, f: &Facts) {
         }
     }
     let (rev, fmt) = &f.note_changes;
-    let clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]
+    let mut clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]
         .into_iter()
         .filter(|(_, tags)| !tags.is_empty())
         .map(|(key, tags)| format!("{key}: {}", scalar(&tags.join("; "), true)))
         .collect();
+    let changes = !clauses.is_empty();
+    if !f.empty_notes.is_empty() {
+        clauses.push(format!("empty: [{}]", f.empty_notes.join(", ")));
+    }
     if !clauses.is_empty() {
         kv(
             out,
             &format!("notes: {{{}}}", clauses.join(", ")),
-            Some("changes in notes the body does not show (separators)"),
+            Some(if changes {
+                "changes in notes the body does not show (separators)"
+            } else {
+                "notes parts that hold no note"
+            }),
         );
     }
     if !f.unplaced.is_empty() {

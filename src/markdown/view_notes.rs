@@ -488,6 +488,62 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
         .collect()
 }
 
+/// The header's `notes: {…, empty: [footnotes, endnotes]}`: the notes
+/// parts (`footnote`, `endnote`) that hold no note; none without the
+/// clause. The clause is the map's last, outside any quoted change tag;
+/// one that does not read is an error saying why.
+pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
+    // The clauses outside quotes, up to a YAML comment (` # …`).
+    let (mut quoted, mut escaped) = (false, false);
+    let (mut clause, mut end) = (None, value.len());
+    for (at, c) in value.char_indices() {
+        if quoted {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => quoted = true,
+            '#' if value[..at].ends_with([' ', '\t']) => {
+                end = at;
+                break;
+            }
+            _ if value[at..].starts_with("empty:") && value[..at].ends_with([' ', '{', ',']) => {
+                clause = Some(at);
+            }
+            _ => {}
+        }
+    }
+    let Some(at) = clause else {
+        return Ok(Vec::new());
+    };
+    let opens = value[..at].trim_end();
+    let list = value[at + "empty:".len()..end]
+        .trim()
+        .strip_suffix('}')
+        .map(str::trim_end)
+        .and_then(|l| l.strip_prefix('['))
+        .and_then(|l| l.strip_suffix(']'))
+        .filter(|_| opens.ends_with(['{', ',']))
+        .ok_or_else(|| "empty: is not the map's last clause, a [list]".to_string())?;
+    let mut kinds = Vec::new();
+    for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        let kind = match name {
+            "footnotes" => "footnote",
+            "endnotes" => "endnote",
+            other => return Err(format!("empty: names {other}, not footnotes or endnotes")),
+        };
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    Ok(kinds)
+}
+
 /// The most grid columns a table has, and rows one merged cell reaches: a
 /// bound on what a hand-edited table line can make the reader write (Word
 /// takes 63 columns).
@@ -1018,6 +1074,35 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn empty_notes_reads_the_clause_outside_quotes() {
+        use super::empty_notes;
+        assert_eq!(
+            empty_notes("{empty: [footnotes, endnotes]}  # notes parts that hold no note"),
+            Ok(vec!["footnote", "endnote"])
+        );
+        assert_eq!(
+            empty_notes("{rev: \"r1 @AC\", empty: [endnotes, endnotes]}"),
+            Ok(vec!["endnote"])
+        );
+        assert_eq!(empty_notes("{rev: \"r1 @AC\"}"), Ok(vec![]));
+        // A quoted tag that looks like the clause is not it.
+        assert_eq!(empty_notes("{rev: \"empty: [footnotes] x\"}"), Ok(vec![]));
+        assert_eq!(
+            empty_notes("{rev: \"r1 } ] empty: [endnotes] }\"}"),
+            Ok(vec![])
+        );
+        assert_eq!(
+            empty_notes("{rev: \"a \\\" empty: [endnotes]}\"}"),
+            Ok(vec![])
+        );
+        // A clause that does not read says why.
+        assert!(empty_notes("{empty: [footnotes]} junk").is_err());
+        assert!(empty_notes("{empty: footnotes}").is_err());
+        assert!(empty_notes("{empty: [sidenotes]}").is_err());
+        assert!(empty_notes("{empty: [endnotes], rev: \"r1 @AC\"}").is_err());
+    }
+
     use super::*;
 
     #[test]

@@ -13,6 +13,7 @@ styles:
   ListParagraph: Times New Roman 11.5pt, named List Paragraph
   table: TableGrid0
 style_changes: {Normal: styles.r0 @AB}  # tracked changes to the styles
+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   default: {id: header1, text: "", rev: header1.r1654 @AB}
 footers:

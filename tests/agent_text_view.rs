@@ -886,7 +886,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("notes: {fmt: footnotes.r9 @AC}")),
+            .any(|l| l.starts_with("notes: {fmt: footnotes.r9 @AC, empty: [footnotes]}")),
         "{out}"
     );
     let accepted = agent_with(&bytes, TrackChanges::Accept, true);

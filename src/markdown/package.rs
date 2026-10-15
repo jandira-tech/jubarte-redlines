@@ -194,7 +194,7 @@ pub(super) fn assemble(
     };
     let mut media = Media::default();
 
-    if !document.notes.is_empty() {
+    if !document.notes.is_empty() || !document.empty_notes.is_empty() {
         footnotes(&mut package, &main, &mut context, &mut media);
     }
     let body = {
@@ -855,7 +855,41 @@ pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String 
 /// The notes part of `kind` (`footnote`, `endnote`) `main` relates to,
 /// made as [`ensure_footnotes_part`] makes one.
 fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
-    related(package, main, &format!("/{kind}s")).unwrap_or_else(|| {
+    let separators = || {
+        let separator = |id: i32, name: &str| {
+            format!(
+                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                 <w:r><w:{name}/></w:r></w:p></w:{kind}>"
+            )
+        };
+        format!(
+            "{}{}",
+            separator(-1, "separator"),
+            separator(0, "continuationSeparator")
+        )
+    };
+    if let Some(part) = related(package, main, &format!("/{kind}s")) {
+        if let Some(xml) = package.part_string(&part)
+            && !xml.contains(&format!("<w:{kind} "))
+            && !xml.contains(&format!("<w:{kind}>"))
+        {
+            let close = format!("</w:{kind}s>");
+            let filled = match xml.rfind(&close) {
+                Some(at) => format!("{}{}{}", &xml[..at], separators(), &xml[at..]),
+                // A self-closed root (`<w:footnotes …/>`).
+                None => match xml.rfind("/>") {
+                    Some(at) if xml[..at].contains(&format!("<w:{kind}s")) => {
+                        format!("{}>{}{close}", &xml[..at], separators())
+                    }
+                    _ => xml,
+                },
+            };
+            package.set_part(&part, filled.into_bytes());
+        }
+        return part;
+    }
+    {
         let part = sibling(main, &format!("{kind}s.xml"));
         package.add_document_relationship(
             main,
@@ -864,29 +898,19 @@ fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
         );
         package.add_content_type_override(
             &format!("/{part}"),
-            &format!(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}s+xml"
-            ),
+            &format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}s+xml"),
         );
-        let separator = |id: i32, name: &str| {
-            format!(
-                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>\
-                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
-                 <w:r><w:{name}/></w:r></w:p></w:{kind}>"
-            )
-        };
         package.set_part(
             &part,
             format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
-                 <w:{kind}s xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\">{}{}</w:{kind}s>",
-                separator(-1, "separator"),
-                separator(0, "continuationSeparator"),
+                 <w:{kind}s xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\">{}</w:{kind}s>",
+                separators(),
             )
             .into_bytes(),
         );
         part
-    })
+    }
 }
 
 /// Writes the footnotes and the endnotes into their notes parts, making
@@ -896,6 +920,10 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
     context.note_ids = vec![0; document.notes.len()];
     for (kind, endnote) in [("footnote", false), ("endnote", true)] {
         if !document.notes.iter().any(|note| note.endnote == endnote) {
+            // A part the view names empty holds Word's separators only.
+            if document.empty_notes.contains(&kind) {
+                ensure_notes_part(package, main, kind);
+            }
             continue;
         }
         let part = ensure_notes_part(package, main, kind);

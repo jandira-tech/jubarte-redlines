@@ -11,7 +11,7 @@ page: A4 portrait, margins 1in, header/footer 0.492in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
 style_changes: {Normal: styles.r0 @LW}  # tracked changes to the styles
-notes: {fmt: footnotes.r1 @LW; footnotes.r2 @LW; endnotes.r3 @LW; endnotes.r4 @LW}  # changes in notes the body does not show (separators)
+notes: {fmt: footnotes.r1 @LW; footnotes.r2 @LW; endnotes.r3 @LW; endnotes.r4 @LW, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
   default: {id: header1, text: ""}
 footers:
