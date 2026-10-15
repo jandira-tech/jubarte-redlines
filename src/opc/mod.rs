@@ -93,11 +93,11 @@ fn norm(name: &str) -> String {
     format!("/{}", name.trim_start_matches('/'))
 }
 
-/// The relationship `Target` that reaches `target_part` from `source_part`:
-/// relative to the source's folder when the target sits under it, absolute
-/// (`/media/image.bin`) otherwise. Stripping `word/` blindly pointed a
-/// root-level `media/image.bin` at the non-existent `word/media/image.bin`
-/// and Word refused the package.
+/// The relationship `Target` value that reaches `target_part` from
+/// `source_part`: relative to the source's folder when the target sits
+/// under it, absolute (`/media/image.bin`) otherwise. Stripping `word/`
+/// blindly pointed a root-level `media/image.bin` at the non-existent
+/// `word/media/image.bin` and Word refused the package.
 pub fn relative_rel_target(source_part: &str, target_part: &str) -> String {
     let source = source_part.trim_start_matches('/');
     let target = target_part.trim_start_matches('/');
@@ -321,7 +321,19 @@ pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String 
 }
 
 impl PartFs {
-    /// Open a `.docx`/OPC package from raw bytes.
+    /// Open a `.docx`/OPC package from raw bytes: read its parts,
+    /// relationships and `[Content_Types].xml`, normalize their part
+    /// names to the no-leading-slash form, fold any explicit `<…></…>`
+    /// closes of empty elements (`<Relationship …></Relationship>` and
+    /// its `[Content_Types]` siblings) into self-closing ones, decode
+    /// XML entities that the underlying parser left raw, and keep one
+    /// copy of any identical repeated relationship.
+    ///
+    /// # Errors
+    ///
+    /// [`OpcError`] for an unreadable zip, an OPC metadata element
+    /// exceeding 256 attributes, or two relationships under the same
+    /// `Id` that differ in any attribute.
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
         check_package_metadata(
             bytes,
