@@ -67,7 +67,12 @@ pub struct FlagPlan {
 
 /// The plan `ops` describe. `existing` is `--existing-revisions`; `None` is
 /// `auto`: `keep` when `source` already holds tracked changes, else the
-/// comparer path. An error is a usage error.
+/// comparer path.
+///
+/// # Errors
+///
+/// The usage message when no operation is given, a flag combination fits no
+/// operation, a `--style` token is unknown, or a revision group is malformed.
 pub fn plan_from_flags(
     verb: Verb,
     ops: &[FlagOp],
@@ -558,7 +563,14 @@ pub fn editing_mode_conflict_json(plan: &str, source: &[u8]) -> Option<&'static 
 /// and `existing_revisions`, since one plan names each once; `more`'s
 /// operations follow `plan`'s and its revision ids join `plan`'s accept and
 /// reject lists, which must select by id alone. A plan pinned to no source
-/// takes `more`'s. An error is a usage error and nothing is recorded.
+/// takes `more`'s. An error records nothing.
+///
+/// # Errors
+///
+/// The usage message when the plans disagree on the source, the author, the
+/// date or `existing_revisions`, an operation id collides, a revision is both
+/// accepted and rejected, or a recorded id would narrow a filter that selects
+/// by author or kind.
 pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, String> {
     let Some(mut plan) = plan else {
         return Ok(more);
@@ -701,7 +713,12 @@ pub fn renumber_notes(notes: Vec<String>, before: usize) -> Vec<String> {
 /// `edit` or `add`, `operations` the `operations` array their parsed
 /// command carries, `existing` the `--existing-revisions` value (`auto`,
 /// `keep`, `accept`, `reject`, `refuse`). Returns the plan as JSON and the
-/// notes; an error is a usage error.
+/// notes.
+///
+/// # Errors
+///
+/// The usage message for an unknown verb, unparsable operations, a bad
+/// `--existing-revisions` value, and every [`plan_from_flags`] failure.
 pub fn plan_from_flags_json(
     verb: &str,
     operations: &str,

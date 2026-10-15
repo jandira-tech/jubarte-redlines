@@ -7,6 +7,10 @@
 //! (only `w:showingPlcHdr` goes, as when a person types into it) and its
 //! `w:sdtContent` is replaced by one run, or one paragraph for a block-level
 //! control.
+//!
+//! Backs the `fill_control` plan operation: [`ControlSelector`] is its
+//! `control` field, and exactly one of `text`, `choice`, `checked`, `date`
+//! names the value.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,12 +35,12 @@ pub enum ControlSelector {
     },
     /// `{"tag": "Name"}`: the control's `w:tag`.
     Tag {
-        /// Exact tag.
+        /// The tag, matched exactly.
         tag: String,
     },
     /// `{"alias": "Full name"}`: the control's `w:alias` (its title).
     Alias {
-        /// Exact alias.
+        /// The alias, matched exactly.
         alias: String,
     },
 }

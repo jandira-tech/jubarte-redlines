@@ -85,9 +85,8 @@ impl Recorded {
         serde_json::to_string_pretty(&self.plan).expect("a plan serializes") + "\n"
     }
 
-    /// The line printed after recording: what was added, what the plan now
-    /// holds, and the command that applies it.
-    /// The line a recording prints. `default_plan`: `--plan` was given
+    /// The line a recording prints: what was added, what the plan now holds,
+    /// and the command that applies it. `default_plan`: `--plan` was given
     /// without a value, so the apply line spells it bare (D16).
     pub fn summary(&self, file: &str, plan: &str, default_plan: bool, dry_run: bool) -> String {
         let ids = |side: fn(&super::ResolveRevisions) -> &Option<crate::changes::ChangeFilter>| {
@@ -153,6 +152,11 @@ pub fn partial_path(target: &Path) -> PathBuf {
 
 /// Write `json` (a [`Recorded::json`]) to PLAN.json at `plan`, atomically:
 /// a failed write leaves the plan as it was and no partial file behind.
+///
+/// # Errors
+///
+/// The I/O error when the partial file cannot be written beside the plan or
+/// renamed into place (a missing directory, no permission).
 pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<()> {
     let target = plan_target(plan);
     let partial = partial_path(&target);
@@ -166,7 +170,14 @@ pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<()> {
 /// The operations `ops` recorded into `held` (PLAN.json's text, `None`
 /// before the first recording), pinned to `source`'s SHA-256. `existing`
 /// is `--existing-revisions` (`None` for `auto`). The caller previews the
-/// result against `source` before writing it.
+/// result against `source` before writing it. Nothing is written here.
+///
+/// # Errors
+///
+/// [`RecordError::Usage`] when the flags describe no operation or an invalid
+/// one, or disagree with the held plan (another source, author, date or
+/// `existing_revisions`); [`RecordError::Plan`] when the held text is not a
+/// plan.
 pub fn record(
     verb: Verb,
     ops: &[FlagOp],
@@ -236,6 +247,13 @@ pub struct RecordOptions {
 /// PLAN.json's text, `options` a [`RecordOptions`] object. Returns `{plan,
 /// json, notes, summary}`: `plan` to preview, `json` to write, `notes` and
 /// `summary` to print.
+///
+/// # Errors
+///
+/// [`RecordError::Usage`] for an unknown verb, unparsable operations or
+/// options, a bad date or `--existing-revisions` value, and every
+/// [`record`] failure; [`RecordError::Plan`] when the held text is not a
+/// plan.
 pub fn record_json(
     verb: &str,
     operations: &str,
