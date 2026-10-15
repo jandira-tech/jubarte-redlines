@@ -85,11 +85,23 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # Every failing test binary, not just the first.
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
+        with:
+          tool: cargo-nextest
+      # Every failing test, not just the first binary's (the `ci` profile
+      # does not fail fast), with JUnit XML for Codecov's test results.
       # The strict Markdown round trip is red until the reader work lands
       # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
       # keeps reporting every other test.
-      - run: cargo test --all-features --no-fail-fast -- --skip markdown_and_docx_round_trip_exactly
+      - run: cargo nextest run --all-features --profile ci -E 'not test(markdown_and_docx_round_trip_exactly)'
+      # nextest runs no doctests.
+      - run: cargo test --all-features --doc
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1.2.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/nextest/ci/junit.xml
       # The wasm binding is its own workspace: its unit tests call the
       # exports as Rust, natively. Left out, a stale one went unseen.
       - name: test jubarte-wasm
