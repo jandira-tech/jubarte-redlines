@@ -2,14 +2,19 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Document settings an edit plan writes (`word/settings.xml`): Track
-//! Changes on or off, update fields on open, and editing restrictions.
+//! Document settings an edit plan writes into `word/settings.xml`: Track
+//! Changes on or off, `updateFields` on open, and editing restrictions.
 //!
-//! Every element goes where `CT_Settings` puts it ([`SETTINGS_ORDER`], the
-//! schema sequence; `tests/schema_consistency.rs` holds it to
-//! `tests/data/wml_main_schema.json`), so Word reads the part. A package
-//! without a settings part gets one, with its relationship and content
-//! type.
+//! Every element lands in `CT_Settings` sequence ([`SETTINGS_ORDER`], the
+//! schema order held by `tests/schema_consistency.rs` against
+//! `tests/data/wml_main_schema.json`), so Word reads the part back. A
+//! package without a settings part gets one, with its relationship and
+//! content type, the first time a request is applied.
+//!
+//! Entry points: [`apply_settings`] to write into an open [`PartFs`] given
+//! the main part's name, and [`apply_settings_to_docx`] for the byte-for-byte
+//! form an edit plan returns. [`SettingsRequest`] is what an operation
+//! builds; [`Protection`] and [`ProtectionEdit`] cover `documentProtection`.
 
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +28,9 @@ const SETTINGS_REL: &str =
 const SETTINGS_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";
 
-/// The children of `w:settings` in `CT_Settings` sequence order, as
-/// `(namespace URI, local name)`.
+/// The children of `w:settings` in `CT_Settings` sequence, as
+/// `(namespace URI, local name)`. New settings go in the position the schema
+/// expects; [`set_child`] refuses to leave an unknown name in the middle.
 pub const SETTINGS_ORDER: &[(&str, &str)] = &[
     (W::URI, "writeProtection"),
     (W::URI, "view"),
@@ -131,8 +137,11 @@ pub const SETTINGS_ORDER: &[(&str, &str)] = &[
     (W15::URI, "docId"),
 ];
 
-/// What `w:documentProtection` allows (`ST_DocProtect`); `none` removes
-/// the restriction.
+/// What `w:documentProtection` allows (`ST_DocProtect`).
+///
+/// [`Self::None`] removes the element entirely: the document is unrestricted.
+/// The other variants are the four values Word's Restrict Editing pane lets
+/// you pick (`readOnly`, `comments`, `trackedChanges`, `forms`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProtectionEdit {
@@ -149,6 +158,9 @@ pub enum ProtectionEdit {
 }
 
 impl ProtectionEdit {
+    /// The exact `w:edit` value Word writes on the wire
+    /// (`"none"`, `"readOnly"`, `"comments"`, `"trackedChanges"`,
+    /// `"forms"`).
     fn value(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -164,22 +176,28 @@ fn default_true() -> bool {
     true
 }
 
-/// An editing restriction. Without a password, as Word's "enforce without
-/// password": any user can turn it off in Word.
+/// An editing restriction. Without a password this is what Word's
+/// Restrict Editing pane calls "No password (just this single user can
+/// remove the restriction)": the restriction is checked but any user can
+/// turn it off.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Protection {
-    /// What the restriction allows.
+    /// What the restriction allows (`ST_DocProtect`).
     pub edit: ProtectionEdit,
     #[serde(default = "default_true")]
-    /// Enforce it (`w:enforcement="1"`); false records it unenforced.
+    /// `w:enforcement="1"` when true. False records the element
+    /// unenforced; Word shows it greyed out in the Restrict Editing pane.
     pub enforcement: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Refused: Word's legacy password hash is not written.
+    /// Word's legacy password hash. Always refused: a hashed password is
+    /// never written, because the matcher has nothing to compare against.
     pub password: Option<String>,
 }
 
-/// The settings one plan operation writes; `None` leaves a setting as it is.
+/// The settings one plan operation writes. `None` on a field leaves the
+/// existing value on the wire; `Some(true)` adds the element,
+/// `Some(false)` removes it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SettingsRequest {
     /// `w:trackRevisions`: present when true, removed when false.
@@ -191,7 +209,9 @@ pub struct SettingsRequest {
 }
 
 impl SettingsRequest {
-    /// What the request writes, for a report line.
+    /// A short human-readable description of what this request writes (no
+    /// password, no enforcement detail beyond the edit value), suitable
+    /// for a report line.
     #[must_use]
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
@@ -221,8 +241,10 @@ fn rank(dom: &Dom, node: NodeId) -> Option<usize> {
         .position(|&(ns, local)| name.namespace_name() == ns && name.local_name() == local)
 }
 
-/// Put `<w:local attrs/>` under `root` in schema order, replacing any
-/// existing element of that name.
+/// Insert or replace `<w:local attrs/>` under `root`, ordered against the
+/// children already there by the `CT_Settings` sequence
+/// ([`SETTINGS_ORDER`]). Elements that are schema-incorrect (an unknown
+/// local, the wrong namespace) stay where their position lets them.
 pub fn set_child(dom: &mut Dom, root: NodeId, local: &str, attrs: &[(&str, &str)]) -> NodeId {
     remove_child(dom, root, local);
     let ours = SETTINGS_ORDER
@@ -244,7 +266,8 @@ pub fn set_child(dom: &mut Dom, root: NodeId, local: &str, attrs: &[(&str, &str)
     node
 }
 
-/// Remove every `<w:local>` child of `root`.
+/// Remove every `<w:local>` child of `root` (none or many). No-op when the
+/// element is absent.
 pub fn remove_child(dom: &mut Dom, root: NodeId, local: &str) {
     let name: XName = W::name(local);
     for child in dom.elements(root, Some(&name)) {
@@ -313,7 +336,14 @@ fn settings_part(pkg: &mut PartFs, main: &str) -> String {
     part
 }
 
-/// Write `request` into the package's settings part.
+/// Apply `request` into the package's settings part, creating it with its
+/// relationship and content type when the package has none.
+///
+/// # Errors
+///
+/// A message when the part the main document rels name is not a
+/// `w:settings` part (the package is corrupt or the part has been edited
+/// out of shape).
 pub fn apply_settings(
     pkg: &mut PartFs,
     main: &str,
