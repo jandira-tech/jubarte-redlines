@@ -12,7 +12,7 @@ styles:
   Normal: Calibri 12pt, left       # default; unannotated paragraphs use it
   "##": Heading2, Arial 9pt, indent 0.37in
   BodyText: Arial 8.5pt, named Body Text
-  tables: TableGrid
+  tables: TableNormal
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   default: {id: header1, text: ""}
@@ -33,7 +33,7 @@ headers:
 
 <!-- p7 empty -->
 
-<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
+<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, style TableNormal, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
 |Centro:||Código de Centro:||
 |-|-|-|-|
 |Dirección:||Provincia:||
@@ -53,7 +53,7 @@ headers:
 
 <!-- p41 empty -->
 
-<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center -->
+<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center, style TableNormal -->
 |<br>Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|<br>Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
 |-|-|-|-|-|-|
 |Ed Primaria||||||
@@ -67,7 +67,7 @@ headers:
 
 <!-- p73 empty -->
 
-<!-- t2 4x2, cells t2.row0 p74-p75 t2.row1 p76-p77 t2.row2 p78-p80 t2.row3 p81-p82 -->
+<!-- t2 4x2, cells t2.row0 p74-p75 t2.row1 p76-p77 t2.row2 p78-p80 t2.row3 p81-p82, style TableNormal -->
 |En relación a las familias del alumnado participantes en el programa|2019 / 2020|
 |-|-|
 |Porcentaje de familias que ha participado en actividades de tipo informativo (entrevistas; reuniones)||
@@ -76,7 +76,7 @@ headers:
 
 <!-- p83 empty -->
 
-<!-- t3 3x2, cells t3.row0 p84-p85 t3.row1 p86-p87 t3.row2 p88-p90 -->
+<!-- t3 3x2, cells t3.row0 p84-p85 t3.row1 p86-p87 t3.row2 p88-p90, style TableNormal -->
 |En relación a la colaboración con otras entidades|2019 / 2020|
 |-|-|
 |Número de centros educativos con los que se han realizado actividades en el marco del proyecto.||
@@ -140,7 +140,7 @@ Director/a del …….…………………………………………………�
 
 <!-- p115 empty -->
 
-<!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText, style TableGrid -->
+<!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText -->
 |NOMBRE|APELLIDOS|NIF|COORDINADOR/ PARTICIPANTE|
 |-|-|-|-|
 |||||

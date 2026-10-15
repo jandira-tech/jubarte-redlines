@@ -23,7 +23,6 @@ styles:
   TextHeading2: Times New Roman 12pt, before 6pt, after 6pt, justify, named Text Heading 2
   TextHeading3: Times New Roman 12pt, before 6pt, after 6pt, indent 0.5in, justify, named Text Heading 3
   TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, indent 1in, justify, named Text Heading 4
-  table: TableGrid, all borders 0.5pt
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 sections:
   2: {p11-p147, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer1.p1, text: [Smith Family Trust, "{PAGE}i{/}"], center}}}

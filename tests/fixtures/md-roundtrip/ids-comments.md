@@ -14,6 +14,7 @@ page: A4 portrait, margins 0.7875in, header/footer 0in
 styles:
   Normal: Liberation Serif 12pt, left  # default; unannotated paragraphs use it
   "#": Heading1, Liberation Sans bold 18pt, before 12pt, after 6pt, keep-next, named Heading 1
+  table: TableNormal
 ---
 
 <!-- p0 left, hanging 0in, left 0in -->
