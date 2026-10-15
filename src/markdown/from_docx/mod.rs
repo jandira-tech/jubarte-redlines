@@ -854,9 +854,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             (i, header::story_text(p, view), align)
                         })
                         .collect();
-                    // From the first paragraph with text to the last.
-                    let first = read.iter().position(|(_, text, _)| !text.is_empty());
-                    let last = read.iter().rposition(|(_, text, _)| !text.is_empty());
+                    // From the first paragraph with text to the part's last:
+                    // an empty paragraph after the text is a line Word lays
+                    // out, so the header grows by it. A part with no text
+                    // starts at its first paragraph.
+                    let last = read.len().checked_sub(1);
+                    let first = read
+                        .iter()
+                        .position(|(_, text, _)| !text.is_empty())
+                        .or(last.map(|_| 0));
                     let (index, text, align, more) = match (first, last) {
                         (Some(first), Some(last)) => (
                             read[first].0,
