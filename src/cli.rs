@@ -356,7 +356,7 @@ fn hoist_quiet<T: AsRef<std::ffi::OsStr> + Clone>(
         help.extend_from_slice(&arguments[1 + flags..]);
         return help;
     }
-    if flags == 0 || !task.is_some_and(|name| command.find_subcommand(name).is_some()) {
+    if flags == 0 || task.is_none_or(|name| command.find_subcommand(name).is_none()) {
         return arguments.to_vec();
     }
     let mut hoisted = Vec::with_capacity(arguments.len());
