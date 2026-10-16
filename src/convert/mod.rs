@@ -878,12 +878,17 @@ fn with_layout<T>(
             MathFace::All
         });
         // The same face supplies glyph ids for the math boxes. A face
-        // with no MATH table still lays out, on the TeX fallback.
-        let math_face = fonts.get(fonts.resolve("Cambria Math", false, false));
-        let _math_font = math_font::MathFontGuard::set(
+        // with no MATH table still lays out, on the TeX fallback. Without
+        // an equation the face is never resolved: resolving it would list
+        // Cambria Math in the font report of a document that asks for no
+        // such font.
+        let _math_font = math_font::MathFontGuard::set(if has_math {
+            let math_face = fonts.get(fonts.resolve("Cambria Math", false, false));
             math_font::MathFont::from_bytes(math_face.bytes())
-                .unwrap_or_else(|| math_font::MathFont::fallback(math_face.upem)),
-        );
+                .unwrap_or_else(|| math_font::MathFont::fallback(math_face.upem))
+        } else {
+            math_font::MathFont::fallback(1000.0)
+        });
         let core = load_core_dates(&pkg);
         with_core_dates(core, || {
             let mut sheet = load_stylesheet(&pkg);
@@ -15599,7 +15604,9 @@ fn collect_runs_rec(
         ctx.math_upright = saved;
         return;
     }
-    if ctx.dom.name_is(node, &M::name("d")) || ctx.dom.name_is(node, &M::name("rad")) {
+    if (ctx.dom.name_is(node, &M::name("d")) || ctx.dom.name_is(node, &M::name("rad")))
+        && math_box_unmarked(ctx, node, mark)
+    {
         emit_math_box(ctx, node, mark, author, runs);
         return;
     }
@@ -15672,7 +15679,7 @@ fn collect_runs_rec(
     if ctx.dom.name_is(node, &M::name("f")) {
         // A bar (the Office default) is a 2D box. noBar stays stacked
         // runs; lin and skw stay on one baseline.
-        if math_f_is_bar(ctx.dom, node) {
+        if math_f_is_bar(ctx.dom, node) && math_box_unmarked(ctx, node, mark) {
             emit_math_box(ctx, node, mark, author, runs);
             return;
         }
@@ -15841,6 +15848,28 @@ fn writes_omml(text: &str) -> bool {
     prefixes
         .iter()
         .any(|prefix| text.contains(&format!("<{prefix}oMath")))
+}
+
+/// Whether a bar fraction, radical, or delimiter can be drawn as one box.
+/// The box paints its glyphs unmarked and carries no comment, so an
+/// equation under a revision, holding one (`w:ins`, `w:del`, `w:moveFrom`,
+/// `w:moveTo`, `w:delText`, `w:rPrChange`), or inside or holding a comment
+/// range keeps the per-run path, which inks, strikes and tints each run.
+fn math_box_unmarked(ctx: &RunCollect<'_>, node: NodeId, mark: RevMark) -> bool {
+    const MARKED: [&str; 4] = [
+        "rPrChange",
+        "commentRangeStart",
+        "commentRangeEnd",
+        "commentReference",
+    ];
+    mark == RevMark::None
+        && ctx.open.is_empty()
+        && ctx.pending.is_empty()
+        && ctx.dom.descendants(node, None).into_iter().all(|d| {
+            rev_mark_of(ctx.dom, d).is_none()
+                && !ctx.dom.name_is(d, &W::del_text())
+                && !MARKED.iter().any(|name| ctx.dom.name_is(d, &W::name(name)))
+        })
 }
 
 /// A bar fraction, radical, or delimiter, as one box. A script or stack
