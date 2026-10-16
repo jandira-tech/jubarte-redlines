@@ -2633,6 +2633,10 @@ impl Writer<'_> {
                 index,
                 style: style.as_deref(),
                 heading,
+                // The level the paragraph states itself (`w:outlineLvl`),
+                // which without a `w:pStyle` is the only place a `#` can
+                // come from: `outline 2`.
+                outline: style.is_none().then_some(heading).flatten(),
                 marker,
                 level,
                 page_break,

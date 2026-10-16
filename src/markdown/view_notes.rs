@@ -1072,8 +1072,9 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 20] = [
+const CLAUSE_WORDS: [&str; 21] = [
     "empty",
+    "outline",
     "center",
     "right",
     "justify",
@@ -1095,8 +1096,9 @@ const CLAUSE_WORDS: [&str; 20] = [
     "in",
 ];
 
-/// The words that open a table line's own clauses (`cells p0-p3 by row`,
-/// `merged …`): beside [`CLAUSE_WORDS`], what a style id must not read as.
+/// The words that open a id line's clauses (`center`, `left 0.5in`,
+/// `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not
+/// read as.
 const TABLE_WORDS: [&str; 10] = [
     "cells",
     "borders",
@@ -1210,6 +1212,9 @@ fn split_clauses(text: &str) -> Vec<&str> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct IdLine {
     pub style: Option<String>,
+    /// The paragraph's own outline level (`outline 2`, `#`'s count), when
+    /// no style carries it.
+    pub outline: Option<u32>,
     pub align: Option<&'static str>,
     pub first_line: Option<i64>,
     pub hanging: Option<i64>,
@@ -1303,6 +1308,7 @@ impl IdLine {
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
+            Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=6).contains(&n)),
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
