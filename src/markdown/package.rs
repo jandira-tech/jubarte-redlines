@@ -1423,6 +1423,19 @@ impl Relate for PartRelate<'_, '_, '_> {
             &relative_rel_target(&self.part, &target),
         )
     }
+
+    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {
+        let drawing = self.document.drawings.get(index)?;
+        let existing: HashSet<String> = self.package.parts().into_iter().collect();
+        super::from_docx::drawing::materialize(
+            drawing,
+            self.package,
+            &self.part,
+            &existing,
+            &mut self.media.used,
+            next_doc_pr,
+        )
+    }
 }
 
 /// The package a document is written into when there is no reference.

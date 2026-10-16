@@ -3074,6 +3074,19 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some((url, alt)) = self.image.take() else {
             return;
         };
+        // A `drawing:` destination is a whole element and its parts,
+        // spliced back as it was; a payload that does not read is alt text.
+        if url.starts_with("drawing:") {
+            match super::from_docx::drawing::decode(&url) {
+                Ok(drawing) => {
+                    self.document.drawings.push(drawing);
+                    let index = self.document.drawings.len() - 1;
+                    self.push(Content::Drawing(index));
+                }
+                Err(_) => self.plain(alt.trim()),
+            }
+            return;
+        }
         let loaded = self.options.images.map(|load| load(&url));
         let picture = loaded
             .flatten()

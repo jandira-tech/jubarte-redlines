@@ -20,7 +20,7 @@
 //! and whether Word shows it (`inactive`: a first-page story without a
 //! title page, an even one without even and odd headers).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use super::package::{related, sibling};
@@ -600,8 +600,9 @@ pub(super) fn section(entry: &str) -> Stories {
 /// `{~~old~>new~~}` the insertion then the deletion, as Word's Compare
 /// writes them, each with the author, date and `w:id` its `{>>…<<}` tag
 /// names. Any other `{>>…<<}` is a comment, which Word does not take in a
-/// header or footer.
-fn runs(text: &str, marks: &mut Marks<'_>) -> String {
+/// header or footer. A `![…](drawing:…)` token splices its materialized
+/// drawing from `drawings`.
+fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -> String {
     let mut out = String::new();
     let mut plain = String::new();
     let mut rest = text;
@@ -618,6 +619,14 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
             rest = after;
             continue;
         }
+        if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
+            flush(&mut plain, &mut out, false);
+            if let Some(drawing) = drawings.get(dest) {
+                out.push_str(drawing);
+            }
+            rest = &rest[len..];
+            continue;
+        }
         if let Some((change, after)) = change(rest) {
             flush(&mut plain, &mut out, false);
             let (tags, after) = tags_after(after);
@@ -630,7 +639,7 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
                     };
                     let tag = tags.first();
                     let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
-                    tracked(&mut out, marks, name, tag, ids, inner);
+                    tracked(&mut out, marks, name, tag, ids, inner, drawings);
                 }
                 Change::Substitute(old, new) => {
                     // One tag names both sides (`r5+6`, old first), or
@@ -640,8 +649,8 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
                         [old, new, ..] => (Some(old), Some(new), (&old.ids[..], &new.ids[..])),
                         [] => (None, None, (&[][..], &[][..])),
                     };
-                    tracked(&mut out, marks, "w:ins", new_tag, new_ids, new);
-                    tracked(&mut out, marks, "w:del", old_tag, old_ids, old);
+                    tracked(&mut out, marks, "w:ins", new_tag, new_ids, new, drawings);
+                    tracked(&mut out, marks, "w:del", old_tag, old_ids, old, drawings);
                 }
             }
             rest = after;
@@ -653,7 +662,7 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
                 Field::Coded(code, result) => out.push_str(&format!(
                     "<w:fldSimple w:instr=\" {} \">{}</w:fldSimple>",
                     super::xml::escape(code.trim()),
-                    runs(result, marks)
+                    runs(result, marks, drawings)
                 )),
                 // No result: Word computes it (`PAGE` on every page).
                 Field::Bare(name) => {
@@ -802,6 +811,7 @@ fn tracked(
     tag: Option<&super::view_notes::Tag>,
     ids: &[u32],
     inner: &str,
+    drawings: &HashMap<String, String>,
 ) {
     let has_field = inner
         .char_indices()
@@ -809,9 +819,13 @@ fn tracked(
     let mut pieces = vec![inner];
     while !has_field && pieces.len() < ids.len() {
         let Some((at, cut)) = pieces.iter().enumerate().rev().find_map(|(at, piece)| {
-            // Never between an escape and the character it escapes.
+            // Never between an escape and the character it escapes, nor
+            // inside a `drawing:` token.
             super::xml::split_point(piece)
-                .filter(|&cut| !piece[..cut].ends_with('\\'))
+                .filter(|&cut| {
+                    !piece[..cut].ends_with('\\')
+                        && !super::from_docx::drawing::cuts_token(piece, cut)
+                })
                 .map(|cut| (at, cut))
         }) else {
             break;
@@ -820,7 +834,7 @@ fn tracked(
         pieces.splice(at..=at, [head, tail]);
     }
     for (n, piece) in pieces.into_iter().enumerate() {
-        tracked_piece(out, marks, name, tag, ids.get(n).copied(), piece);
+        tracked_piece(out, marks, name, tag, ids.get(n).copied(), piece, drawings);
     }
 }
 
@@ -833,6 +847,7 @@ fn tracked_piece(
     tag: Option<&super::view_notes::Tag>,
     id: Option<u32>,
     inner: &str,
+    drawings: &HashMap<String, String>,
 ) {
     let deleted = name == "w:del";
     let _ = write!(out, "<{}>", marks.mark_id(name, tag, id));
@@ -842,6 +857,14 @@ fn tracked_piece(
         if let Some(after) = rest.strip_prefix("\\{") {
             plain.push('{');
             rest = after;
+            continue;
+        }
+        if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
+            flush(&mut plain, out, deleted);
+            if let Some(drawing) = drawings.get(dest) {
+                out.push_str(drawing);
+            }
+            rest = &rest[len..];
             continue;
         }
         if let Some((field, after)) = field(rest) {
@@ -1014,6 +1037,7 @@ pub(super) fn write(
         people,
         next_id: first_id,
     };
+    let mut next_doc_pr = super::package::max_drawing_id(package) + 1;
     let mut even = false;
     for number in 1..=count.max(1) {
         // Word reads w:titlePg per section; the view names it on each
@@ -1030,7 +1054,14 @@ pub(super) fn write(
                 let id = match parts.get(&story.part) {
                     Some(id) => id.clone(),
                     None => {
-                        let id = story_part(package, main, story, default_style, &mut marks);
+                        let id = story_part(
+                            package,
+                            main,
+                            story,
+                            default_style,
+                            &mut marks,
+                            &mut next_doc_pr,
+                        );
                         parts.insert(story.part.clone(), id.clone());
                         id
                     }
@@ -1083,6 +1114,7 @@ fn story_part(
     story: &Story,
     default_style: &str,
     marks: &mut Marks<'_>,
+    next_doc_pr: &mut u32,
 ) -> String {
     let root = if story.kind == "header" { "hdr" } else { "ftr" };
     let style = if story.kind == "header" {
@@ -1126,6 +1158,45 @@ fn story_part(
     if let Some(&deepest) = paragraph_marks.keys().max() {
         texts.resize(texts.len().max(deepest + 1), "");
     }
+    let part = sibling(main, &format!("{}.xml", story.part));
+    // `drawing:` payloads the texts hold, each materialized to the XML the
+    // story splices in their place.
+    let existing: HashSet<String> = package.parts().into_iter().collect();
+    let mut used: HashSet<String> = HashSet::from([part.clone()]);
+    let mut next = *next_doc_pr;
+    let mut drawings: HashMap<String, String> = HashMap::new();
+    for text in &texts {
+        let mut rest = *text;
+        // Every `![…](drawing:…)` the run writer can reach: anywhere but
+        // inside a `{>>…<<}` tag, which it consumes whole.
+        while let Some(c) = rest.chars().next() {
+            if let Some(after) = rest.strip_prefix("{>>")
+                && let Some(end) = after.find("<<}")
+            {
+                rest = &after[end + 3..];
+                continue;
+            }
+            let Some((dest, len)) = super::from_docx::drawing::at(rest) else {
+                rest = &rest[c.len_utf8()..];
+                continue;
+            };
+            if !drawings.contains_key(dest)
+                && let Ok(payload) = super::from_docx::drawing::decode(dest)
+                && let Some(xml) = super::from_docx::drawing::materialize(
+                    &payload, package, &part, &existing, &mut used, &mut next,
+                )
+            {
+                let xml = if payload.wraps_run() {
+                    format!("<w:r>{xml}</w:r>")
+                } else {
+                    xml
+                };
+                drawings.insert(dest.to_string(), xml);
+            }
+            rest = &rest[len..];
+        }
+    }
+    *next_doc_pr = next;
     let formats: Vec<super::view_notes::Tag> = story
         .fmt
         .iter()
@@ -1184,7 +1255,7 @@ fn story_part(
                 marks.mark("w:pPrChange", Some(tag), 0)
             );
         }
-        let mut content = runs(text, marks);
+        let mut content = runs(text, marks, &drawings);
         if let Some(color) = own.and_then(|f| f.color.as_deref()) {
             // `w:color` is the only run property the writer gives a story's
             // runs, so it opens each run's `w:rPr`.
@@ -1201,7 +1272,6 @@ fn story_part(
         }
         body.push_str("</w:p>");
     }
-    let part = sibling(main, &format!("{}.xml", story.part));
     package.set_part(
         &part,
         format!(
@@ -1392,6 +1462,7 @@ mod tests {
                 people: &people,
                 next_id: 100,
             },
+            &HashMap::new(),
         )
     }
 
