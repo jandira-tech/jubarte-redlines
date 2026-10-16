@@ -11499,7 +11499,7 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
             "ind",
             &["left", "right", "hanging", "firstLine", "start", "end"],
         ),
-        ("spacing", &["before", "after", "line"]),
+        ("spacing", &["before", "after", "line", "val"]),
         ("tab", &["pos"]),
         ("defaultTabStop", &["val"]),
         ("tblW", &["w"]),
