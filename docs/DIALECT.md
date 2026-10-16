@@ -86,6 +86,10 @@ headers:
 footers:                             # the same keys; even: turns on even/odd
   default: {id: footer2, text: "Page {PAGE}"}
   even: {id: footer1, text: [A, B], styles: [Footer, Normal]}  # Header/Footer unless style:/styles: says
+  first:                             # paragraph by paragraph, when one has its own colour,
+    id: footer3                      # borders or alignment
+    p0: {text: "docen · output", center, color: "595959", border: bottom single 0.5pt 8496B0 space 4pt}
+    p1: {text: "{PAGE}"}
 sections:
   2: {p11-p40, page: A4 landscape, headers: {first: none}}
 ```

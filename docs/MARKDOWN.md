@@ -645,6 +645,13 @@ without their Markdown marks, with a note.
 - Headers and footers are header lines (`headers:`, `footers:`), not body
   blocks: when one holds a change `--changed` selects, the `range:` line
   says to read those lines (with no block left when only they changed).
+  A story whose paragraphs carry their own text colour (`w:color`, when
+  every text run sets the same one) or borders (`w:pBdr`, in the table
+  border grammar), or differ in alignment, prints paragraph by paragraph:
+  `id: header1`, then `p0: {text: …, center, color: "595959", border:
+  bottom single 0.5pt 8496B0 space 4pt}` for each, as a block in the first
+  section and as a flow map in `sections:`. A colour that opens with a
+  digit is quoted, since YAML reads `000000` as the number 0.
 - Page markers need the layout pass; `--no-page-markers` skips it. When
   the layout fails, the markers come from Word's cached page breaks, else
   from hard breaks and section starts. That fallback does not mix the two
