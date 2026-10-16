@@ -38,6 +38,10 @@ const HAND_WRITTEN: &[&str] = &[
     "eLife.00047.md",
     "git_manuscript.md",
     "list_of_figures.md",
+    // A Google Docs export (2026-10-16). Arthur: "we will use its syntax for
+    // rendering images": `![][image4]` in the text, `[image4]: <data:image/
+    // png;base64,…>` defined at the end, a definition shared by every use.
+    "docx-libraries-comparison.md",
 ];
 
 fn jubarte(dir: &Path, args: &[&str]) -> Result<String, String> {
@@ -613,7 +617,15 @@ fn markdown_and_docx_round_trip_exactly() {
         unlisted.is_empty(),
         "every Markdown fixture is a view listed in views.txt or hand-written (HAND_WRITTEN): {unlisted:?}"
     );
-    for path in &markdown {
+    // `MD_FIXED_POINT_ONLY=ids-tables` replays only the fixtures whose path
+    // holds that text, for a quick loop on one document; the gate itself
+    // runs them all.
+    let only = std::env::var("MD_FIXED_POINT_ONLY").ok();
+    let picked = |path: &Path| {
+        only.as_deref()
+            .is_none_or(|only| path.to_string_lossy().contains(only))
+    };
+    for path in markdown.iter().filter(|p| picked(p)) {
         let dir = tempfile::tempdir().unwrap();
         let file = path.file_name().unwrap().to_string_lossy().to_string();
         cases.push(markdown_case(
@@ -624,7 +636,7 @@ fn markdown_and_docx_round_trip_exactly() {
     }
     let docx = docx_list();
     assert!(!docx.is_empty(), "no docx fixtures in {FIXTURES}/docx.txt");
-    for path in &docx {
+    for path in docx.iter().filter(|p| picked(p)) {
         let dir = tempfile::tempdir().unwrap();
         cases.push(docx_case(dir.path(), path));
     }
