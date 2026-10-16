@@ -1187,6 +1187,8 @@ struct Writer<'o, 'a> {
     paragraph_in_comments: Option<Vec<u32>>,
     /// The open paragraph ends in a page break (`page-break`).
     page_break_due: bool,
+    /// That page break's tracked change (`page-break-del r5 @AC`).
+    page_break_change: Option<(Kind, view_notes::Tag)>,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
     authors: HashMap<String, view_notes::Author>,
     /// The changes of each author the view dates with a range of days, in
@@ -1281,6 +1283,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             id_line: None,
             paragraph_in_comments: None,
             page_break_due: false,
+            page_break_change: None,
             run_after_close: false,
             highlight: None,
             groups: 0,
@@ -1914,6 +1917,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             paragraph.align = line.align.or(paragraph.align);
             self.page_break_due = line.page_break;
+            self.page_break_change = line.page_break_change.clone().map(|(inserted, tag)| {
+                let kind = if inserted { Kind::Insert } else { Kind::Delete };
+                (kind, tag)
+            });
             paragraph.section_break = line.section_break;
             paragraph.ind = Indent {
                 first_line: line.first_line,
@@ -2122,11 +2129,29 @@ impl<'o, 'a> Writer<'o, 'a> {
             return;
         };
         self.label_prefix = None;
+        let page_break_change = self.page_break_change.take().map(|(kind, tag)| {
+            // The change the text before it ends in, when the tag names
+            // it too: one `w:del` holds both, as in the source.
+            let before = self.story().iter().rev().find_map(|item| match item {
+                Item::Run(run) => Some(run.change),
+                _ => None,
+            });
+            match before.flatten() {
+                Some((k, serial))
+                    if k == kind
+                        && !tag.ids.is_empty()
+                        && self.document.revision_ids.get(&serial) == Some(&tag.ids) =>
+                {
+                    (k, serial)
+                }
+                _ => (kind, self.tag_serial(&tag)),
+            }
+        });
         if std::mem::take(&mut self.page_break_due) {
             self.story().push(Item::Run(Run {
                 content: Content::PageBreak,
                 format: RunFormat::default(),
-                change: None,
+                change: page_break_change,
                 highlight: None,
             }));
         }

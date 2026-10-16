@@ -281,7 +281,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -316,7 +316,13 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   item that skips one. A skipped level adds no indentation (four columns
   past an item's content would read as code). Reading a view back, an
   explicit `level N` wins over the indentation.
-- `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
+- `page-break`: the paragraph holds `w:br w:type="page"`. In the tracked
+  view, a page break inside an insertion or deletion names that change
+  instead: `page-break-del r282 @SW` (it would otherwise be a `rev` tag,
+  which does not say what the change holds). The clause holds one break,
+  written back at the paragraph's end: a second page break in the same
+  paragraph, or a break between its runs, does not keep its own place yet.
+  `section-break`:
   its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
   the YAML header names for its section (`page:` for the first,
   `sections:` for the others). A page's text columns are its clauses
@@ -327,7 +333,8 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   held before resolution, formatting changes and paragraph marks included.
   A paragraph joined into the one before it hands its revisions over. In
   the tracked view, the insertions, deletions and moves its text has no
-  tag for: a deleted picture, break, field character or empty run.
+  tag for: a deleted picture, line break, field character or empty run
+  (a tracked page break has its own clause).
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
 - `in c5`: with comments inline, the comment threads whose range runs on

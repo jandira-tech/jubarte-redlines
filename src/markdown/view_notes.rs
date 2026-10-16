@@ -895,7 +895,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 18] = [
+const CLAUSE_WORDS: [&str; 20] = [
     "empty",
     "center",
     "right",
@@ -907,6 +907,8 @@ const CLAUSE_WORDS: [&str; 18] = [
     "num",
     "level",
     "page-break",
+    "page-break-ins",
+    "page-break-del",
     "section-break",
     "break-ins",
     "break-del",
@@ -1035,6 +1037,9 @@ pub(super) struct IdLine {
     pub right: Option<i64>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
+    /// The page break's tracked change, `true` for an insertion
+    /// (`page-break-ins r5 @AC`, `page-break-del r5 @AC`).
+    pub page_break_change: Option<(bool, Tag)>,
     /// The paragraph ends a section (`section-break`).
     pub section_break: bool,
     /// The list label (`num "(a)"`, `bullet`).
@@ -1120,6 +1125,10 @@ impl IdLine {
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
+            Some((kind @ ("page-break-ins" | "page-break-del"), v)) => {
+                self.page_break = true;
+                self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
+            }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
             Some(_) => {}
