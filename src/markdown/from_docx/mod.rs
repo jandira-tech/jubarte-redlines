@@ -2929,7 +2929,12 @@ impl Writer<'_> {
             }
         }
         for (mark, by) in &self.revisions {
-            inline.open(*mark, by.as_deref());
+            // A change the container carries (a row's or cell's own mark, or
+            // one that goes on past this paragraph) is not the content's:
+            // [`critic::CARRIED`] keeps a sole change under it from naming
+            // it in a note, which the writer would wrap again.
+            let carried = by.as_deref().map(|by| format!("{by}{}", critic::CARRIED));
+            inline.open(*mark, carried.as_deref());
         }
         // A note's label goes inside its tracked changes, before any comment.
         let start = inline.len();
@@ -5597,7 +5602,8 @@ mod tests {
             p("", &format!("{}{}{}", ins(&r("one ")), ins(&r("insertion")), r("."))),
             // Empty change elements vanish; an inserted space stays.
             p("", &format!("{}{}{}{}", r("a"), ins(""), del(&r("")), ins(&r(" ")))),
-            // Inserted by one author and deleted by another.
+            // Inserted by one author and deleted by another: the insertion
+            // held nothing else, so the note names it after ` on `.
             p("", &format!("{}{}", r("x"), ins(&del(&dr("y"))))),
             // Moves are an insertion and a deletion; the inserted side then
             // the deleted one read as a substitution.
@@ -5606,7 +5612,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{--y--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
+            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{--y--}{>>r91 Ana (2026-01-02T03:04:00Z) on r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
         );
     }
 

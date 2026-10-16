@@ -403,6 +403,52 @@ pub(super) struct PlainRevision {
     pub date: String,
 }
 
+/// The tags of a nested revision note, its own change first: `r3 @BO on
+/// r1 @AL` is Ben's deletion inside Ana's insertion, each tag with its
+/// own date as [`revision_tags`] reads it. `None` for any other comment
+/// text.
+pub(super) fn nested_revision_tags(text: &str) -> Option<Vec<Tag>> {
+    let tags = nested_parts(text, one_tag)?;
+    (tags.len() > 1).then_some(tags)
+}
+
+/// One tag, exactly: a note names one change per ` on ` part.
+fn one_tag(part: &str) -> Option<Tag> {
+    match revision_tags(part)?.as_slice() {
+        [tag] => Some(tag.clone()),
+        _ => None,
+    }
+}
+
+/// The parts of a plain nested revision note, its own change first: `r3
+/// Ben Ode (2026-…) on r1 Ana Lima (2026-…)`. `None` for any other
+/// comment text.
+pub(super) fn nested_plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
+    let parts = nested_parts(text, plain_revision)?;
+    (parts.len() > 1).then_some(parts)
+}
+
+/// The parts of a note joined by ` on `, each parsed by `one`: the first
+/// part is the note's own change, and each part after it names the change
+/// the one before sits inside. The first ` on ` whose left part parses and
+/// whose right part parses all the way down wins; `None` unless every
+/// part parses and there is an ` on ` among them.
+fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
+    let text = text.trim();
+    let mut from = 0;
+    while let Some(found) = text[from..].find(" on ") {
+        let at = from + found;
+        if let Some(head) = one(text[..at].trim())
+            && let Some(rest) = nested_parts(&text[at + " on ".len()..], one)
+        {
+            return Some([head].into_iter().chain(rest).collect());
+        }
+        from = at + 1;
+    }
+    // The last part, or a note that names no other change.
+    one(text).map(|last| vec![last])
+}
+
 /// The plain view's revision note; `None` for any other comment text. The
 /// ids come first, as in [`revision_tags`]; what follows is `Name (date)`,
 /// `(date)`, a name with no colon or bracket, or nothing.
@@ -1611,6 +1657,70 @@ mod tests {
         ] {
             assert_eq!(plain_revision(text), None, "{text}");
         }
+    }
+
+    #[test]
+    fn nested_revision_notes_name_the_change_it_sits_inside() {
+        let tag = |handle: &str, date: Option<&str>, ids: &[u32]| Tag {
+            handle: handle.into(),
+            date: date.map(str::to_string),
+            ids: ids.to_vec(),
+        };
+        let plain = |ids: &[u32], author: &str, date: &str| {
+            Some(PlainRevision {
+                ids: ids.to_vec(),
+                author: author.into(),
+                date: date.into(),
+            })
+        };
+        assert_eq!(
+            nested_revision_tags("r3 @BO on r1 @AL"),
+            Some(vec![tag("BO", None, &[3]), tag("AL", None, &[1])])
+        );
+        assert_eq!(
+            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z on r1 @AL"),
+            Some(vec![
+                tag("BO", Some("2026-01-02T10:00:00Z"), &[3]),
+                tag("AL", None, &[1])
+            ])
+        );
+        // Deeper nests chain the same way, innermost first.
+        assert_eq!(
+            nested_revision_tags("r5 @CD on r3 @BO on r1 @AL"),
+            Some(vec![
+                tag("CD", None, &[5]),
+                tag("BO", None, &[3]),
+                tag("AL", None, &[1])
+            ])
+        );
+        assert_eq!(
+            nested_plain_revisions(
+                "r3 Ben Ode (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
+            ),
+            Some(vec![
+                plain(&[3], "Ben Ode", "2026-01-02T10:00:00Z").unwrap(),
+                plain(&[1], "Ana Lima", "2026-01-01T09:00:00Z").unwrap()
+            ])
+        );
+        // An author's own name may hold ` on `: the ids still part the
+        // changes only where both sides parse.
+        assert_eq!(
+            nested_plain_revisions(
+                "r3 Ben Ode on High (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
+            ),
+            Some(vec![
+                plain(&[3], "Ben Ode on High", "2026-01-02T10:00:00Z").unwrap(),
+                plain(&[1], "Ana Lima", "2026-01-01T09:00:00Z").unwrap()
+            ])
+        );
+        // A note with no second change, or a right side that names no
+        // change, is no nested note.
+        assert_eq!(nested_revision_tags("r3 @BO"), None);
+        assert_eq!(nested_revision_tags("r3 @BO on garbage"), None);
+        assert_eq!(
+            nested_plain_revisions("r5 Ana Lima on Verra (2026-…)"),
+            None
+        );
     }
 
     #[test]

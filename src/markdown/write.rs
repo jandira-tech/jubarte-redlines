@@ -2647,6 +2647,52 @@ impl<'o, 'a> Writer<'o, 'a> {
         };
         if let Some(mut anchor) = self.comment_anchor.take() {
             let whole = comment.paragraphs.join("\n");
+            // A note that names another change after ` on `: the change it
+            // follows was that one's only content (`A` inserted what `B`
+            // deleted), so it goes back inside it, outermost last. Deeper
+            // chains name what Word refuses to hold (a revision nested in
+            // its own kind), so only the first outer is rebuilt.
+            let sole = self.sole_change(&anchor);
+            if let Some((kind, inner)) = sole
+                && let Some(tags) = view_notes::nested_revision_tags(&whole)
+            {
+                let (author, date) = self.view_author(&tags[0].handle, tags[0].date.as_deref());
+                self.document.attributions.insert(inner, (author, date));
+                if !tags[0].ids.is_empty() {
+                    self.document
+                        .revision_ids
+                        .insert(inner, tags[0].ids.clone());
+                }
+                if let Some(tag) = tags.get(1) {
+                    let outer = (other(kind), self.tag_serial(tag));
+                    self.document.wraps.insert(inner, outer);
+                    self.unshown_rebuilt(&[outer.1]);
+                }
+                return;
+            }
+            if let Some((kind, inner)) = sole
+                && let Some(parts) = view_notes::nested_plain_revisions(&whole)
+            {
+                let first = &parts[0];
+                self.document
+                    .attributions
+                    .insert(inner, (first.author.clone(), first.date.clone()));
+                if !first.ids.is_empty() {
+                    self.document.revision_ids.insert(inner, first.ids.clone());
+                }
+                if let Some(part) = parts.get(1) {
+                    self.serial += 1;
+                    let outer = (other(kind), self.serial);
+                    self.document
+                        .attributions
+                        .insert(outer.1, (part.author.clone(), part.date.clone()));
+                    if !part.ids.is_empty() {
+                        self.document.revision_ids.insert(outer.1, part.ids.clone());
+                    }
+                    self.document.wraps.insert(inner, outer);
+                }
+                return;
+            }
             // The view's tag note: `r1+2 @AC` names both sides, `r1 @AC;
             // r2 @JD` each side in turn.
             if let Some(tags) = view_notes::revision_tags(&whole) {
@@ -3355,6 +3401,38 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.document.revision_ids.insert(serial, tag.ids.clone());
         }
         serial
+    }
+
+    /// The single change a note follows, when the anchor names exactly one
+    /// that is still the span the paragraph last closed: its kind and
+    /// serial. A substitution's second side anchors no nested note.
+    fn sole_change(&self, anchor: &Anchor) -> Option<(Kind, u32)> {
+        let serials: Vec<u32> = anchor.serials.iter().flatten().copied().collect();
+        self.span_start
+            .filter(|span| serials.as_slice() == [span.serial])
+            .map(|span| (span.kind, span.serial))
+    }
+
+    /// The paragraph's id line names a change a note rebuilt as unshown
+    /// (`rev r1 @AL` after `{--x--}{>>r3 @BO on r1 @AL<<}`): its mark is
+    /// written, so an empty one must not follow it.
+    fn unshown_rebuilt(&mut self, nested: &[u32]) {
+        let ids: Vec<u32> = nested
+            .iter()
+            .filter_map(|serial| self.document.revision_ids.get(serial))
+            .flatten()
+            .copied()
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        if let Some(at) = self.paragraph
+            && let Some(Item::Paragraph(paragraph)) = self.story().get_mut(at)
+        {
+            paragraph
+                .unshown
+                .retain(|mark| mark.id.is_none_or(|id| !ids.contains(&id)));
+        }
     }
 
     /// Fixes `paragraph`'s mark as a view line says it: `mark`, numbered and
@@ -4121,6 +4199,14 @@ fn finish_story(items: &mut Vec<Item>) {
         only.mark = None;
         only.mark_by = None;
         only.whole = false;
+    }
+}
+
+/// The kind of change nested inside one of `kind`: the other one.
+fn other(kind: Kind) -> Kind {
+    match kind {
+        Kind::Insert => Kind::Delete,
+        Kind::Delete => Kind::Insert,
     }
 }
 
