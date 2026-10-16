@@ -15605,7 +15605,7 @@ fn collect_runs_rec(
         return;
     }
     if (ctx.dom.name_is(node, &M::name("d")) || ctx.dom.name_is(node, &M::name("rad")))
-        && math_box_unmarked(ctx, node, mark)
+        && math_box_unmarked(ctx, node)
     {
         emit_math_box(ctx, node, mark, author, runs);
         return;
@@ -15679,7 +15679,7 @@ fn collect_runs_rec(
     if ctx.dom.name_is(node, &M::name("f")) {
         // A bar (the Office default) is a 2D box. noBar stays stacked
         // runs; lin and skw stay on one baseline.
-        if math_f_is_bar(ctx.dom, node) && math_box_unmarked(ctx, node, mark) {
+        if math_f_is_bar(ctx.dom, node) && math_box_unmarked(ctx, node) {
             emit_math_box(ctx, node, mark, author, runs);
             return;
         }
@@ -15851,19 +15851,19 @@ fn writes_omml(text: &str) -> bool {
 }
 
 /// Whether a bar fraction, radical, or delimiter can be drawn as one box.
-/// The box paints its glyphs unmarked and carries no comment, so an
-/// equation under a revision, holding one (`w:ins`, `w:del`, `w:moveFrom`,
-/// `w:moveTo`, `w:delText`, `w:rPrChange`), or inside or holding a comment
-/// range keeps the per-run path, which inks, strikes and tints each run.
-fn math_box_unmarked(ctx: &RunCollect<'_>, node: NodeId, mark: RevMark) -> bool {
+/// The box takes one mark for all its glyphs, the mark around it, and
+/// carries no comment, so a box holding a revision of its own (`w:ins`,
+/// `w:del`, `w:moveFrom`, `w:moveTo`, `w:delText`, `w:rPrChange`), or
+/// inside or holding a comment range keeps the per-run path, which inks,
+/// strikes and tints each run.
+fn math_box_unmarked(ctx: &RunCollect<'_>, node: NodeId) -> bool {
     const MARKED: [&str; 4] = [
         "rPrChange",
         "commentRangeStart",
         "commentRangeEnd",
         "commentReference",
     ];
-    mark == RevMark::None
-        && ctx.open.is_empty()
+    ctx.open.is_empty()
         && ctx.pending.is_empty()
         && ctx.dom.descendants(node, None).into_iter().all(|d| {
             rev_mark_of(ctx.dom, d).is_none()
