@@ -47,6 +47,20 @@ new semantics.
   budget. Leave that placement alone: `mbx doctor` checks the setup, and
   `mbx gc --dry-run` shows what a collection would free. Do not add a second
   compiler cache (`RUSTC_WRAPPER`, sccache, kache) beside it.
+- Under mbx, `target` is a symbolic link into the cache
+  (`~/Library/Caches/mbx/targets/v1/<hash>`), not a directory. Paths through
+  it (`target/debug/jubarte`) work as before, and git ignores it. Keep the
+  link in mind:
+  - Free space with `mbx clean` or `mbx gc`, never `rm -rf target` or
+    `cargo clean`. Those remove only the link, or empty a directory mbx
+    still accounts for.
+  - `find` and `du` do not follow a link given as their starting path. Use
+    `find -H target …` or `du -sh target/`.
+  - Copying a checkout (`cp -R`, rsync) copies the link, so both copies
+    then build into one target: two Cargo processes in one directory. Copy
+    without `target`, and let mbx give the copy its own.
+  - A tool that resolves real paths (`realpath`, `canonicalize`, a panic
+    backtrace) prints the cache path, not `./target`.
 - Do not suppress clippy warnings with `#[allow(...)]`; fix the cause.
 - Keep tests beside the behavior they protect and prefer deterministic tests.
 - After source changes, run formatting, clippy with `-D warnings`, the relevant
