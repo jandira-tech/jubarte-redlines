@@ -3193,12 +3193,25 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .warnings
                         .push(format!("track_changes: {value} ignored: it is on or off")),
                 },
-                "notes" => match view_notes::empty_notes(text) {
-                    Ok(kinds) => self.document.empty_notes = kinds,
-                    Err(why) => self.document.warnings.push(format!(
-                        "notes: {why}, so the notes parts it names are not made"
-                    )),
-                },
+                "notes" => {
+                    match view_notes::empty_notes(text) {
+                        Ok(kinds) => self.document.empty_notes = kinds,
+                        Err(why) => self.document.warnings.push(format!(
+                            "notes: {why}, so the notes parts it names are not made"
+                        )),
+                    }
+                    let formats = view_notes::note_formats(text);
+                    for kind in ["footnote", "endnote"] {
+                        let count = formats.iter().filter(|(k, _)| *k == kind).count();
+                        if count > 2 {
+                            self.document.warnings.push(format!(
+                                "notes: fmt: {count} changes for the {kind}s' two separators; \
+                                 the rest are not written"
+                            ));
+                        }
+                    }
+                    self.document.note_formats = formats;
+                }
                 "comments" => {
                     let value = view_notes::scalar_and_comment(text).0;
                     let (all, each) = view_notes::comment_styles(&value);

@@ -256,6 +256,9 @@ pub(super) struct Document {
     /// Notes parts (`footnote`, `endnote`) to make though no note needs
     /// them: the header's `notes: {empty: [footnotes]}`.
     pub empty_notes: Vec<&'static str>,
+    /// The formatting changes on each notes part's separators, in order:
+    /// the header's `notes: {fmt: footnotes.r0 @AS; …}`.
+    pub note_formats: Vec<(&'static str, super::view_notes::Tag)>,
     /// The style of every comment's paragraphs, when not CommentText: the
     /// header's `comments: …, style Normal`.
     pub comment_style: Option<String>,

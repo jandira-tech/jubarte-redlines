@@ -176,6 +176,7 @@ pub(super) fn assemble(
         .values()
         .flatten()
         .chain(&document.reserved_ids)
+        .chain(document.note_formats.iter().flat_map(|(_, tag)| &tag.ids))
         .max()
         .map_or(1, |max| max.saturating_add(1));
     let people = super::view_stories::People {
@@ -225,8 +226,38 @@ pub(super) fn assemble(
     };
     let mut media = Media::default();
 
-    if !document.notes.is_empty() || !document.empty_notes.is_empty() {
-        footnotes(&mut package, &main, &mut context, &mut media);
+    if !document.notes.is_empty()
+        || !document.empty_notes.is_empty()
+        || !document.note_formats.is_empty()
+    {
+        // The separators' formatting changes; a tag that numbers no id
+        // takes one far above the body's and the headers'.
+        let separator_changes: HashMap<&str, Vec<String>> = ["footnote", "endnote"]
+            .into_iter()
+            .map(|kind| {
+                let tags: Vec<_> = document
+                    .note_formats
+                    .iter()
+                    .filter(|(k, _)| *k == kind)
+                    .map(|(_, tag)| tag)
+                    .collect();
+                let changes = super::view_stories::format_changes(
+                    &people,
+                    &tags,
+                    next_revision
+                        .saturating_add(2_000_000)
+                        .min(super::view_notes::MOST_ID / 2 + 1_000_000),
+                );
+                (kind, changes)
+            })
+            .collect();
+        footnotes(
+            &mut package,
+            &main,
+            &mut context,
+            &mut media,
+            &separator_changes,
+        );
     }
     let body = {
         let mut relate = PartRelate {
@@ -880,24 +911,35 @@ pub(crate) fn append_numbering(
 /// continuation separator notes, its relationship and its content type when
 /// absent.
 pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String {
-    ensure_notes_part(package, main, "footnote")
+    ensure_notes_part(package, main, "footnote", None)
 }
 
 /// The notes part of `kind` (`footnote`, `endnote`) `main` relates to,
-/// made as [`ensure_footnotes_part`] makes one.
-fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
+/// made as [`ensure_footnotes_part`] makes one. `changes` are the
+/// `w:pPrChange` start tags of its separators, the separator's first and
+/// the continuation separator's second.
+fn ensure_notes_part(
+    package: &mut PartFs,
+    main: &str,
+    kind: &str,
+    changes: Option<&[String]>,
+) -> String {
     let separators = || {
-        let separator = |id: i32, name: &str| {
+        let changes = changes.unwrap_or_default();
+        let separator = |id: i32, name: &str, change: Option<&String>| {
+            let spacing = "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
+            let change = change.map_or_else(String::new, |change| {
+                format!("<{change}><w:pPr>{spacing}</w:pPr></w:pPrChange>")
+            });
             format!(
-                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>\
-                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>{spacing}{change}</w:pPr>\
                  <w:r><w:{name}/></w:r></w:p></w:{kind}>"
             )
         };
         format!(
             "{}{}",
-            separator(-1, "separator"),
-            separator(0, "continuationSeparator")
+            separator(-1, "separator", changes.first()),
+            separator(0, "continuationSeparator", changes.get(1))
         )
     };
     if let Some(part) = related(package, main, &format!("/{kind}s")) {
@@ -917,6 +959,11 @@ fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
                 },
             };
             package.set_part(&part, filled.into_bytes());
+        }
+        if let Some(changes) = changes
+            && let Some(xml) = package.part_string(&part)
+        {
+            package.set_part(&part, separator_formats(&xml, kind, changes).into_bytes());
         }
         return part;
     }
@@ -944,20 +991,67 @@ fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
     }
 }
 
+/// Reusing a reference keeps its separator layout, while its revision
+/// metadata follows the current view (including removal of a fmt clause).
+fn separator_formats(xml: &str, kind: &str, changes: &[String]) -> String {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let Some(root) = dom.root(doc) else {
+        return xml.to_string();
+    };
+    for (at, ty) in ["separator", "continuationSeparator"]
+        .into_iter()
+        .enumerate()
+    {
+        let note = dom
+            .elements(root, Some(&W::name(kind)))
+            .into_iter()
+            .find(|&note| dom.attribute(note, &W::name("type")) == Some(ty));
+        let Some(note) = note else { continue };
+        let Some(paragraph) = dom.element(note, &W::p()) else {
+            continue;
+        };
+        let properties = dom.element(paragraph, &W::p_pr()).unwrap_or_else(|| {
+            let properties = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, properties);
+            properties
+        });
+        for old in dom.elements(properties, Some(&W::name("pPrChange"))) {
+            dom.remove(old);
+        }
+        if let Some(change) = changes.get(at) {
+            let doc = dom.parse_xdocument(&format!("<{change} xmlns:w=\"{W_NS}\"/>"));
+            if let Some(change) = dom.root(doc) {
+                let previous = dom.clone_subtree(properties);
+                dom.add(change, previous);
+                dom.add(properties, change);
+            }
+        }
+    }
+    serialize_element(&dom, root)
+}
+
 /// Writes the footnotes and the endnotes into their notes parts, making
 /// each part a kind of note needs.
-fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
+fn footnotes(
+    package: &mut PartFs,
+    main: &str,
+    context: &mut Context<'_>,
+    media: &mut Media,
+    separator_changes: &HashMap<&str, Vec<String>>,
+) {
     let document = context.document;
     context.note_ids = vec![0; document.notes.len()];
     for (kind, endnote) in [("footnote", false), ("endnote", true)] {
+        let changes = separator_changes.get(kind).map_or(&[][..], Vec::as_slice);
         if !document.notes.iter().any(|note| note.endnote == endnote) {
             // A part the view names empty holds Word's separators only.
-            if document.empty_notes.contains(&kind) {
-                ensure_notes_part(package, main, kind);
+            if document.empty_notes.contains(&kind) || !changes.is_empty() {
+                ensure_notes_part(package, main, kind, Some(changes));
             }
             continue;
         }
-        let part = ensure_notes_part(package, main, kind);
+        let part = ensure_notes_part(package, main, kind, Some(changes));
         let Some(existing) = package.part_string(&part) else {
             continue;
         };
@@ -974,11 +1068,18 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
         let mut notes = String::new();
         // Revision ids are unique within a part, not across them: a note's
         // mark keeps the id its reference's has in the body.
-        let in_part: HashSet<u32> = ["w:ins", "w:del", "w:moveFrom", "w:moveTo"]
-            .iter()
-            .flat_map(|element| attribute_values(&existing, element, "w:id"))
-            .filter_map(|id| u32::try_from(id).ok())
-            .collect();
+        let in_part: HashSet<u32> = [
+            "w:ins",
+            "w:del",
+            "w:moveFrom",
+            "w:moveTo",
+            "w:pPrChange",
+            "w:rPrChange",
+        ]
+        .iter()
+        .flat_map(|element| attribute_values(&existing, element, "w:id"))
+        .filter_map(|id| u32::try_from(id).ok())
+        .collect();
         let outside = std::mem::replace(&mut context.used_revisions, in_part);
         {
             let mut relate = PartRelate {
