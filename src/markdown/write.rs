@@ -128,10 +128,10 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     } else {
         markdown
     };
-    let source = if options.critic {
-        critic::encode(markdown)
+    let (source, critic_warnings) = if options.critic {
+        critic::encode_checked(markdown)
     } else {
-        markdown.to_string()
+        (markdown.to_string(), Vec::new())
     };
     let source = page_commands(&source);
     let mut writer = Writer::new(options);
@@ -142,7 +142,9 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     for event in Parser::new_ext(&source, parser_options()) {
         writer.event(event);
     }
-    writer.finish()
+    let mut document = writer.finish();
+    document.warnings.splice(..0, critic_warnings);
+    document
 }
 
 /// The styles [`DocxOptions::scholar`] sets, as the front matter's
@@ -967,6 +969,57 @@ fn html_tag(html: &str) -> Option<HtmlTag> {
     })
 }
 
+/// The CriticMarkup tokens in `tokens` that cross the edge of text the
+/// writer drops or captures (an HTML comment, image alt text): the
+/// closers of spans opened before it, the openers of spans closed after
+/// it. Spans whole inside are dropped with the text. A comment's tokens
+/// count as its own only if its `<<}` is there too, because nothing
+/// nests in a comment.
+fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
+    let mut loose = Vec::new();
+    let mut open: Vec<Token> = Vec::new();
+    for token in tokens {
+        let opener = match token {
+            Token::InsertEnd => Token::InsertStart,
+            Token::DeleteEnd => Token::DeleteStart,
+            Token::SubstituteEnd => Token::SubstituteStart,
+            Token::HighlightEnd => Token::HighlightStart,
+            Token::CommentEnd => Token::CommentStart,
+            Token::MarkEnd => Token::MarkStart,
+            _ => {
+                match token {
+                    Token::SubstituteSeparator if open.last() == Some(&Token::SubstituteStart) => {}
+                    // A field's marks are part of its text, not a span.
+                    Token::FieldStart | Token::FieldSeparator | Token::FieldEnd => {}
+                    _ => {
+                        if matches!(
+                            token,
+                            Token::InsertStart
+                                | Token::DeleteStart
+                                | Token::SubstituteStart
+                                | Token::HighlightStart
+                                | Token::CommentStart
+                                | Token::MarkStart
+                        ) {
+                            open.push(token);
+                        } else {
+                            loose.push(token);
+                        }
+                    }
+                }
+                continue;
+            }
+        };
+        if let Some(at) = open.iter().rposition(|t| *t == opener) {
+            open.remove(at);
+        } else {
+            loose.push(token);
+        }
+    }
+    loose.extend(open);
+    loose
+}
+
 /// The Markdown extensions jubarte reads, for the writer and for
 /// [`super::pages`].
 pub(super) fn parser_options() -> Options {
@@ -1134,7 +1187,9 @@ struct Writer<'o, 'a> {
     /// Runs a task list marker wrote at the start of the paragraph: a
     /// change that starts right after them takes them in.
     prefix_runs: Vec<usize>,
-    image: Option<(String, String)>,
+    /// The image being read: its destination, its alt text, and the
+    /// CriticMarkup tokens the alt held that cross its edge.
+    image: Option<(String, String, Vec<Token>)>,
     metadata: Option<String>,
 
     // Inline formatting depth.
@@ -1583,7 +1638,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Tag::Image { dest_url, .. } => {
                 if self.image.is_none() {
-                    self.image = Some((critic::decode(&dest_url), String::new()));
+                    self.image = Some((critic::decode(&dest_url), String::new(), Vec::new()));
                 }
             }
             Tag::MetadataBlock(_) => self.metadata = Some(String::new()),
@@ -1690,9 +1745,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::HtmlBlock => {
                 if let Some(block) = self.html_block.take() {
-                    if comments_only(&block) {
+                    let view_lines = self.view
+                        && self.cell.is_none()
+                        && self.comment.is_none()
+                        && self.target.is_none();
+                    if comments_only(&block) && (block.trim() == PAGE_BREAK_LINE || view_lines) {
                         self.id_lines(&block);
                     } else {
+                        // Comments of the author's own, and comments
+                        // inside other markup, are dropped — but their
+                        // delimiters still count.
                         self.html_text(&block);
                     }
                 }
@@ -1843,6 +1905,12 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// A raw HTML block's text, a paragraph per block element, with a
     /// warning that its markup is dropped.
     fn html_text(&mut self, html: &str) {
+        // Comments inside the block are dropped: their delimiters still
+        // count, as CriticMarkup was read first.
+        let tokens = self.html_comment_tokens(html);
+        for token in tokens {
+            self.token(token);
+        }
         if self.comment.is_some() {
             return;
         }
@@ -2334,8 +2402,18 @@ impl<'o, 'a> Writer<'o, 'a> {
             metadata.push_str(text);
             return;
         }
-        if let Some((_, alt)) = &mut self.image {
-            alt.push_str(&critic::decode(text));
+        if let Some((_, alt, loose)) = &mut self.image {
+            // Alt text is kept, its markup is not; the CriticMarkup it
+            // holds still took effect when it was read, before Markdown,
+            // so the delimiters of spans that cross the image's edge are
+            // remembered and applied where the image ends. A span whole
+            // inside the alt is dropped with it.
+            let mut tokens = Vec::new();
+            self.pieces.feed(text, |piece| match piece {
+                Piece::Text(text) => alt.push_str(text),
+                Piece::Token(token) => tokens.push(token),
+            });
+            loose.extend(loose_tokens(tokens));
             return;
         }
         if !self.options.critic {
@@ -2365,8 +2443,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             let text = format!("{fence}{}{fence}", critic::restore(latex));
             if let Some(metadata) = &mut self.metadata {
                 metadata.push_str(&text);
-            } else if let Some((_, alt)) = &mut self.image {
-                alt.push_str(&text);
+            } else if let Some((_, alt, loose)) = &mut self.image {
+                let mut tokens = Vec::new();
+                self.pieces.feed(&text, |piece| match piece {
+                    Piece::Text(text) => alt.push_str(text),
+                    Piece::Token(token) => tokens.push(token),
+                });
+                loose.extend(loose_tokens(tokens));
             } else {
                 self.plain(&text);
             }
@@ -2540,8 +2623,16 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     fn token(&mut self, token: Token) {
         if self.comment.is_some() {
-            if token == Token::CommentEnd {
-                self.end_comment();
+            match token {
+                Token::CommentEnd => self.end_comment(),
+                // A blank line inside `{>>…<<}`: another comment
+                // paragraph, as `<br>` gives one.
+                Token::CommentBreak => {
+                    if let Some(comment) = &mut self.comment {
+                        comment.paragraphs.push(String::new());
+                    }
+                }
+                _ => {}
             }
             return;
         }
@@ -2589,6 +2680,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Token::CommentStart => self.begin_comment(),
             Token::CommentEnd => {}
+            Token::CommentBreak => {}
             Token::MarkStart => self.mark += 1,
             Token::MarkEnd => self.mark = self.mark.saturating_sub(1),
             Token::FieldStart => self.field_code = Some(String::new()),
@@ -2971,6 +3063,40 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.push(Content::NoteReference(position));
     }
 
+    /// The tokens of text the writer drops or captures that still mark
+    /// changes around it: CriticMarkup is read before Markdown, so a
+    /// closer in dropped text still closes the span it belongs to.
+    fn dropped_tokens(&mut self, text: &str) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        self.pieces.feed(text, |piece| {
+            if let Piece::Token(token) = piece {
+                tokens.push(token);
+            }
+        });
+        loose_tokens(tokens)
+    }
+
+    /// [`Self::dropped_tokens`] over the text inside a raw HTML block's
+    /// comments (`<!-- … -->`), which the block's reading drops.
+    fn html_comment_tokens(&mut self, html: &str) -> Vec<Token> {
+        let mut rest = html;
+        let mut inner = String::new();
+        while let Some(open) = rest.find("<!--") {
+            let comment = &rest[open + 4..];
+            match comment.find("-->") {
+                Some(end) => {
+                    inner.push_str(&comment[..end]);
+                    rest = &comment[end + 3..];
+                }
+                None => {
+                    inner.push_str(comment);
+                    break;
+                }
+            }
+        }
+        self.dropped_tokens(&inner)
+    }
+
     fn inline_html(&mut self, html: &str) {
         if self.note_clause(html) {
             return;
@@ -2981,6 +3107,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             empty,
         }) = html_tag(html)
         else {
+            // A comment, declaration or processing instruction: dropped,
+            // but its delimiters still count.
+            let tokens = self.dropped_tokens(html);
+            for token in tokens {
+                self.token(token);
+            }
             return;
         };
         if name == "br" {
@@ -3136,7 +3268,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn picture(&mut self) {
-        let Some((url, alt)) = self.image.take() else {
+        let Some((url, alt, loose)) = self.image.take() else {
             return;
         };
         // A `drawing:` destination is a whole element and its parts,
@@ -3170,6 +3302,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 self.plain(alt.trim());
             }
+        }
+        for token in loose {
+            self.token(token);
         }
     }
 

@@ -207,6 +207,184 @@ fn a_highlight_without_a_comment_is_highlighted_text() {
     assert!(!xml.contains("commentRangeStart"));
 }
 
+/// The Markdown parser must skip complete nested comments when looking for
+/// a change's closer or a substitution's `~>` separator, otherwise the
+/// `~>`, `++}`, `--}`, `~~}`, or `==}` inside the comment steals the
+/// change. Cover every change kind and every payload, with both
+/// substitution halves.
+#[test]
+fn a_complete_comment_inside_a_change_keeps_the_change_and_the_comment() {
+    let payloads = ["~>", "++}", "--}", "~~}", "==}"];
+    for payload in &payloads {
+        let expected = |sub: &str| match sub {
+            "ins" => format!("{{++a{{>>{payload}<<}}b++}}"),
+            "del" => format!("{{--a{{>>{payload}<<}}b--}}"),
+            "sub-old" => format!("{{~~a{{>>{payload}<<}} b~>c~~}}"),
+            "sub-new" => format!("{{~~a~>b{{>>{payload}<<}} c~~}}"),
+            "hi" => format!("{{==a{{>>{payload}<<}}b==}}"),
+            _ => unreachable!(),
+        };
+        let accepted_text = |sub: &str| -> Vec<&'static str> {
+            match sub {
+                "ins" => vec!["ab"],
+                "del" => vec![""],
+                "sub-old" => vec!["c"],
+                "sub-new" => vec!["b c"],
+                "hi" => vec!["ab"],
+                _ => unreachable!(),
+            }
+        };
+        let rejected_text = |sub: &str| -> Vec<&'static str> {
+            match sub {
+                "ins" => vec![""],
+                "del" => vec!["ab"],
+                "sub-old" => vec!["a b"],
+                "sub-new" => vec!["a"],
+                "hi" => vec!["ab"],
+                _ => unreachable!(),
+            }
+        };
+        let revision = |sub: &str| -> Vec<(String, String)> {
+            match sub {
+                "ins" => vec![("Inserted".to_string(), "ab".to_string())],
+                "del" => vec![("Deleted".to_string(), "ab".to_string())],
+                "sub-old" => vec![
+                    ("Deleted".to_string(), "a b".to_string()),
+                    ("Inserted".to_string(), "c".to_string()),
+                ],
+                "sub-new" => vec![
+                    ("Deleted".to_string(), "a".to_string()),
+                    ("Inserted".to_string(), "b c".to_string()),
+                ],
+                "hi" => vec![],
+                _ => unreachable!(),
+            }
+        };
+
+        for sub in ["ins", "del", "sub-old", "sub-new", "hi"] {
+            let markdown = expected(sub);
+            let docx = write(&markdown);
+            assert_eq!(
+                accepted(&docx),
+                accepted_text(sub),
+                "{sub} {payload:?}: accepted for {markdown:?}",
+            );
+            assert_eq!(
+                rejected(&docx),
+                rejected_text(sub),
+                "{sub} {payload:?}: rejected for {markdown:?}",
+            );
+            let revs: Vec<(String, String)> = revisions(&docx)
+                .iter()
+                .map(|(t, text)| {
+                    let label = match t {
+                        jubarte::comparer::WmlComparerRevisionType::Inserted => "Inserted",
+                        jubarte::comparer::WmlComparerRevisionType::Deleted => "Deleted",
+                        _ => "Other",
+                    };
+                    (label.to_string(), text.clone())
+                })
+                .collect();
+            let mut revs_sorted = revs.clone();
+            revs_sorted.sort();
+            assert_eq!(
+                revs_sorted,
+                revision(sub),
+                "{sub} {payload:?}: revisions for {markdown:?}",
+            );
+
+            // One comment, and its XML body contains the payload verbatim.
+            let comments = part_string(&docx, "word/comments.xml").unwrap();
+            assert!(
+                comments.matches("<w:comment ").count() == 1,
+                "{sub} {payload:?}: exactly one comment in {comments}",
+            );
+            // The payload is in the comment body. Compare against the
+            // decoded text since the writer stores `>` as `&gt;`, `~` as
+            // `~`, etc.
+            let decoded = decode_xml_entities(&comments);
+            assert!(
+                decoded.contains(payload),
+                "{sub} {payload:?}: comment XML should contain payload {decoded}",
+            );
+
+            // Range-start, range-end, and reference share the same id, and
+            // that id appears inside the intended revision (insertion or
+            // deletion).
+            let xml = document_xml(&docx);
+            let ids: std::collections::HashSet<u32> = (0..16)
+                .filter(|i| xml.contains(&format!(r#"<w:commentRangeStart w:id="{i}"/>"#)))
+                .collect();
+            assert_eq!(ids.len(), 1, "{sub} {payload:?}: one id in {xml}");
+            let id = ids.into_iter().next().unwrap();
+            assert!(
+                xml.contains(&format!(r#"<w:commentRangeEnd w:id="{id}"/>"#)),
+                "{sub} {payload:?}: range-end id {id} in {xml}",
+            );
+            assert!(
+                xml.contains(&format!(r#"<w:commentReference w:id="{id}"/>"#)),
+                "{sub} {payload:?}: reference id {id} in {xml}",
+            );
+            let start = xml
+                .find(&format!(r#"<w:commentRangeStart w:id="{id}"/>"#))
+                .unwrap();
+            let end = xml
+                .find(&format!(r#"<w:commentRangeEnd w:id="{id}"/>"#))
+                .unwrap();
+            let inside_rev = match sub {
+                "ins" | "sub-new" => {
+                    xml[..start].matches("<w:ins ").count() == xml[..end].matches("<w:ins ").count()
+                }
+                "del" | "sub-old" => {
+                    xml[..start].matches("<w:del ").count() == xml[..end].matches("<w:del ").count()
+                }
+                "hi" => xml.contains("<w:highlight "),
+                _ => unreachable!(),
+            };
+            assert!(
+                inside_rev,
+                "{sub} {payload:?}: comment range inside the intended revision in {xml}",
+            );
+        }
+    }
+}
+
+/// Decode the XML entities the writer produces (`>`, `<`, `&`) so comment
+/// text matches the source it came from. Used to compare comment bodies
+/// without quoting each special character.
+fn decode_xml_entities(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut chars = xml.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            let mut tail = String::new();
+            while let Some(&next) = chars.peek() {
+                if next == ';' {
+                    chars.next();
+                    break;
+                }
+                tail.push(next);
+                chars.next();
+            }
+            match tail.as_str() {
+                "gt" => out.push('>'),
+                "lt" => out.push('<'),
+                "amp" => out.push('&'),
+                "quot" => out.push('"'),
+                "apos" => out.push('\''),
+                other => {
+                    out.push('&');
+                    out.push_str(other);
+                    out.push(';');
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[test]
 fn a_change_across_a_paragraph_break_holds_the_break() {
     let docx = write("A{++\n\nB++}\n\nC\n");
@@ -926,6 +1104,106 @@ fn attributions_name_the_author_and_date_of_the_change_before_them() {
     assert!(comments.contains(">Ana Lima<"), "{comments}");
     assert_eq!(accepted(&docx), ["Ab ce f.", "h ij"]);
     assert_eq!(rejected(&docx), ["A cd fg.", "h i"]);
+}
+
+/// A closer inside an HTML comment or an image's alt text still closes
+/// the span that opened before it: CriticMarkup is read before Markdown,
+/// so the constructs the writer drops or captures cannot hide a token.
+/// A span complete inside such a construct is dropped with it, and a
+/// stray closer in a comment of the author's own stays dropped.
+#[test]
+fn a_closer_inside_dropped_html_or_alt_text_still_closes_its_span() {
+    for (markdown, kept, dropped) in [
+        (
+            "{++text <!-- ++} --> tail\n",
+            vec!["text  tail"],
+            vec![" tail"],
+        ),
+        (
+            "{++text ![alt ++}](url) tail\n",
+            vec!["text alt tail"],
+            vec![" tail"],
+        ),
+        // The change holds the paragraph break it spans.
+        (
+            "{++text\n\n<!-- ++} -->\n\n tail\n",
+            vec!["text", "tail"],
+            vec!["tail"],
+        ),
+    ] {
+        let docx = write(markdown);
+        let ins: Vec<String> = revisions(&docx)
+            .into_iter()
+            .filter(|(kind, _)| *kind == WmlComparerRevisionType::Inserted)
+            .map(|(_, text)| text)
+            .collect();
+        assert!(
+            ins.iter().all(|text| !text.contains("tail")),
+            "{markdown:?}: the insertion swallowed 'tail': {ins:?}"
+        );
+        assert_eq!(accepted(&docx), kept, "{markdown:?}");
+        assert_eq!(rejected(&docx), dropped, "{markdown:?}");
+    }
+    // Spans and markers complete inside dropped text stay dropped with it.
+    for (markdown, kept) in [
+        ("a <!-- {++x++} --> b\n", "a  b"),
+        ("a <!-- x ++} --> b\n", "a  b"),
+        // The image falls back to its alt text, span dropped with it.
+        ("a ![x {++y++} z](u) b\n", "a x y z b"),
+    ] {
+        let docx = write(markdown);
+        assert!(revisions(&docx).is_empty(), "{markdown:?}");
+        assert_eq!(accepted(&docx), [kept], "{markdown:?}");
+    }
+}
+
+/// A blank line inside `{>>…<<}` is a paragraph break in the comment's
+/// text, never a break in the paragraph it is anchored on.
+#[test]
+fn a_blank_line_inside_a_comment_stays_in_the_comment() {
+    let docx = write("before {>>first\n\nsecond<<} after\n");
+    assert_eq!(texts(&docx), ["before  after"]);
+    let comments = part_string(&docx, "word/comments.xml").unwrap();
+    assert_eq!(comments.matches("<w:comment ").count(), 1, "{comments}");
+    assert_eq!(comments.matches("<w:p>").count(), 2, "{comments}");
+    for line in ["first", "second"] {
+        assert!(comments.contains(line), "{line} in {comments}");
+    }
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:commentRangeStart ").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<w:commentRangeEnd ").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<w:commentReference ").count(), 1, "{xml}");
+    // One newline is a line of the same comment paragraph, and runs of
+    // blank or whitespace-only lines collapse to one paragraph break with
+    // no comment text leaking into the body.
+    let docx = write("a {>>x\ny<<} b\n");
+    assert_eq!(texts(&docx), ["a  b"]);
+    let comments = part_string(&docx, "word/comments.xml").unwrap();
+    assert_eq!(comments.matches("<w:p>").count(), 1, "{comments}");
+    let docx = write("a {>>x\n\n\n   \n\ny<<} b\n");
+    assert_eq!(texts(&docx), ["a  b"]);
+    let comments = part_string(&docx, "word/comments.xml").unwrap();
+    assert_eq!(comments.matches("<w:p>").count(), 2, "{comments}");
+}
+
+/// Malformed CriticMarkup comes out text with a warning: an unclosed
+/// opener, a closer that closed nothing, a substitution with no `~>`.
+#[test]
+fn malformed_critic_markup_warns_and_stays_text() {
+    for (markdown, warning) in [
+        ("a {++b\n", "'{++'"),
+        ("a ++} b\n", "'++}'"),
+        ("a {~~b~~}\n", "'{~~'"),
+        ("a {++b--}\n", "'--}'"),
+    ] {
+        let written = markdown_to_docx(markdown, &DocxOptions::default()).unwrap();
+        assert!(
+            written.warnings.iter().any(|w| w.contains(warning)),
+            "{markdown:?}: {:?}",
+            written.warnings
+        );
+        assert!(revisions(&written.docx).is_empty(), "{markdown:?}");
+    }
 }
 
 #[test]

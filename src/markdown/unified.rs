@@ -672,6 +672,13 @@ fn segments(critic: &str) -> Vec<Segment> {
                 }
             }
             Token::CommentStart => note = Some(String::new()),
+            // A comment paragraph break, inside a note or in dropped
+            // text.
+            Token::CommentBreak => {
+                if let Some(note) = &mut note {
+                    note.push_str("\n\n");
+                }
+            }
             Token::CommentEnd => {
                 let text = note.take().unwrap_or_default();
                 if edit.is_some() {

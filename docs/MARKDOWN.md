@@ -224,7 +224,13 @@ accepted or rejected, through the same engine as `jubarte accept` and
 flag works on a `.docx` too: `jubarte convert redline.docx --track-changes
 accept` renders the accepted document to PDF.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
-(`\{++`) or without its partner is text too.
+(`\{++`) or without its partner is text too, and says so in a warning.
+
+A comment or highlight whole inside a change is text to the change's
+own delimiters: `{~~a{>>x ~> y<<} b~>c~~}` substitutes `a b` for `c` and
+keeps the comment's `~>`, `{++a{>>b++}c++}` inserts `ac` around a
+comment that holds `b++}`. A blank line inside `{>>…<<}` is a paragraph
+break in the comment's text, not in the paragraph it sits on.
 
 ## Agent view
 
