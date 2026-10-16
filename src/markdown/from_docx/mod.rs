@@ -383,7 +383,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         hidden_ranges: Vec::new(),
         pending_notes: Vec::new(),
         in_comment: false,
-        plain: false,
         agent: options.ids,
         comments_inline: options.comments,
         resolved: accept.is_some(),
@@ -417,13 +416,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .filter_map(|r| r.attr("id"))
         .map(str::to_string)
         .collect();
-    // The agent view always reads as CriticMarkup: document text that looks
-    // like a mark is escaped even when the document has none.
-    writer.plain = !writer.agent
-        && !has_markup(&document, &writer.comments)
-        && !notes
-            .values()
-            .any(|note| has_markup(note, &writer.comments));
     let body = document.child("body").unwrap_or(&document);
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
@@ -2078,24 +2070,6 @@ fn printed_code(instruction: &str) -> Option<String> {
         .then(|| format!("{{{}}}", instruction.trim()))
 }
 
-/// Whether a part holds a tracked change, or a comment anchor for a comment
-/// that exists. Formatting-only changes (`w:rPrChange`...) do not count: they
-/// are not shown.
-fn has_markup(part: &Element, comments: &HashMap<String, Element>) -> bool {
-    part.elements().any(|child| {
-        let anchored = matches!(
-            child.local(),
-            "commentRangeStart" | "commentRangeEnd" | "commentReference"
-        ) && child.attr("id").is_some_and(|id| comments.contains_key(id));
-        anchored
-            || matches!(
-                child.local(),
-                "ins" | "del" | "moveTo" | "moveFrom" | "cellIns" | "cellDel"
-            )
-            || has_markup(child, comments)
-    })
-}
-
 /// A revision element (`w:ins`, `w:del`, `w:moveTo`, `w:moveFrom`) as a tracked
 /// change. Insertions and move destinations are insertions; deletions and move
 /// sources are deletions (the representation pandiff uses too).
@@ -2250,9 +2224,6 @@ struct Writer<'a> {
     /// changes keep their marks but not their author, and comment anchors are
     /// ignored.
     in_comment: bool,
-    /// No tracked change or comment anywhere: text is written as is, the way
-    /// it was before tracked changes were rendered.
-    plain: bool,
     /// Agent view (`Options::ids`).
     agent: bool,
     /// Agent view: comments inline, or hidden and listed on id lines.
@@ -2611,13 +2582,11 @@ impl Writer<'_> {
                 if let Some((label, _)) = &heading_marker {
                     text = format!("{label} {text}");
                 }
-                if self.agent {
-                    text = agent::escape_closing_hashes(&text);
-                }
+                text = agent::escape_closing_hashes(&text);
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
             } else if let Some(marker) = list_marker {
                 let (marker, _, ilvl) = marker;
-                let text = self.block_text(inline.render(true));
+                let text = self.block_text(&inline.render(true));
                 let item = list.item(ilvl, &marker, &hard_breaks(&text));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
@@ -2626,7 +2595,7 @@ impl Writer<'_> {
                 blocks.push_paragraph("", &fenced(&inline.render(false)), false, edges);
             } else {
                 list.reset();
-                let text = self.block_text(inline.render(true));
+                let text = self.block_text(&inline.render(true));
                 blocks.push_paragraph("", &hard_breaks(&text), false, edges);
             }
         }
@@ -2651,15 +2620,11 @@ impl Writer<'_> {
         blocks.set_separator(mark);
     }
 
-    /// A paragraph's rendered text as its block holds it: in the agent view
-    /// a line that would open a Markdown block (`# `, `- `, `1. `) is
-    /// escaped, so it reads back as text.
-    fn block_text(&self, rendered: String) -> String {
-        if self.agent {
-            agent::escape_line_starts(&rendered)
-        } else {
-            rendered
-        }
+    /// A paragraph's rendered text as its block holds it: a line that would
+    /// open a Markdown block (`# `, `- `, `1. `) is escaped, so it reads
+    /// back as text.
+    fn block_text(&self, rendered: &str) -> String {
+        agent::escape_line_starts(rendered)
     }
 
     /// Agent view: writes the pending `<!-- pN empty -->` lines, after the
@@ -2860,11 +2825,7 @@ impl Writer<'_> {
     /// Tracked changes around the paragraph and comment ranges still open from
     /// earlier paragraphs are opened again at its start.
     fn paragraph_inline(&mut self, p: &Element) -> (Critic, Vec<String>) {
-        let mut inline = if self.plain {
-            Critic::plain()
-        } else {
-            Critic::default()
-        };
+        let mut inline = Critic::default();
         if self.flattening > 0 {
             inline.set_inline_end();
         }
@@ -3320,7 +3281,9 @@ impl Writer<'_> {
         }
         let (mut aligns, _) = self.column_alignments(table);
         aligns.resize(width, None);
-        markdown_table(&rows, &aligns, self.agent)
+        // Both views escape their cell text (#519), so every cell holds
+        // what `table_cell` reads as already escaped.
+        markdown_table(&rows, &aligns, true)
     }
 
     /// Each grid column's alignment, as most of its cell paragraphs have
@@ -5513,11 +5476,12 @@ mod tests {
         let body = p("", &r("x {++ y ++} ~> z")) + &p("", &ins(&r("new")));
         assert_eq!(
             md(&docx(&body, &[])),
-            "x {\\++ y ++\\} ~\\> z\n\n{++new++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
+            "x {\\++ y ++\\} \\~\\> z\n\n{++new++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
-        // Without one, nothing is marked up, so the text is kept as is.
+        // Without one the text is escaped all the same (#519): a later
+        // convert cannot read it as changes.
         let body = p("", &r("x {++ y ++} ~> z"));
-        assert_eq!(md(&docx(&body, &[])), "x {++ y ++} ~> z\n");
+        assert_eq!(md(&docx(&body, &[])), "x {\\++ y ++\\} \\~\\> z\n");
     }
 
     #[test]

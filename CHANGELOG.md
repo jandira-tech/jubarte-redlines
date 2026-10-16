@@ -342,6 +342,23 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Literal CriticMarkup delimiters in a code block stay text.** A
+  `SourceCode` paragraph whose text holds `{++x++}` printed it into its
+  fence as is, and the next convert read it as a tracked change. The views
+  now break such delimiters for the fence (`{\++x++\}`) and double the
+  code's own backslashes, and the writer undoes both inside a fence, where
+  Markdown reads no backslash escape: the text comes back exactly, tracked
+  changes inside a code block still round-trip, and the Markdown stays a
+  fixed point.
+
+- **`--commonmark` escapes CriticMarkup and Markdown syntax.** A document
+  without tracked changes printed its text as is, so Word text such as
+  `{++a++}`, `\{++a++}`, `- not a list`, `1. not a list`, `# not a
+  heading`, `> not a quote`, `*not em*`, `` `not code` ``, `[not](link)`
+  or `<b>not html</b>` came back as real changes, lists, a heading, a
+  quote, emphasis, code, a link or HTML. The plain conversion now escapes
+  both, as the agent view always did, and round-trips as itself.
+
 - **A header or footer keeps its own text colour, borders and alignment.**
   The view prints a story whose paragraphs carry them paragraph by paragraph
   (`id: header1`, then `p0: {text: …, center, color: "595959", border: bottom

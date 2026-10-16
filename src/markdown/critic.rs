@@ -195,6 +195,10 @@ struct Closers<'a> {
     blanks: Vec<usize>,
     /// The `{/}` that closes each body field, by the field's `{`.
     fields: std::collections::HashMap<usize, usize>,
+    /// Whether the reader's fence escapes are unwound inside a code fence:
+    /// the converter reads the text a fence holds, while a resolve writes
+    /// Markdown back and keeps what the reader escaped.
+    unwind: bool,
 }
 
 impl<'a> Closers<'a> {
@@ -223,7 +227,15 @@ impl<'a> Closers<'a> {
             marks,
             blanks,
             fields,
+            unwind: true,
         }
+    }
+
+    /// The reader's fence escapes kept as written, for Markdown a resolve
+    /// writes back: its code fences still name the same document.
+    fn keeping_fences(mut self) -> Self {
+        self.unwind = false;
+        self
     }
 
     /// The first `pattern` that lies whole in `from..until`.
@@ -253,6 +265,10 @@ impl<'a> Closers<'a> {
 struct Literal {
     verbatim: Vec<std::ops::Range<usize>>,
     fences: Vec<std::ops::Range<usize>>,
+    /// Where the YAML front matter ends, when the source opens with one:
+    /// a fence for Markdown's marks, but no code block whose escapes the
+    /// reader writes and [`encode_range`] unwinds.
+    front_matter: usize,
 }
 
 impl Literal {
@@ -260,6 +276,7 @@ impl Literal {
         let mut literal = Self {
             verbatim: Vec::new(),
             fences: Vec::new(),
+            front_matter: 0,
         };
         let bytes = source.as_bytes();
         let mut fence: Option<(u8, usize, usize)> = None;
@@ -276,6 +293,7 @@ impl Literal {
                 end = (line_end + 1).min(source.len());
                 if closes {
                     literal.fences.push(0..line_end);
+                    literal.front_matter = line_end;
                     line_start = end;
                     break;
                 }
@@ -367,6 +385,12 @@ impl Literal {
     fn in_fence(&self, at: usize) -> bool {
         let i = self.fences.partition_point(|r| r.end <= at);
         self.fences.get(i).is_some_and(|r| r.start <= at)
+    }
+
+    /// Whether `at` lies in a fenced code block, not the front matter: the
+    /// reader escapes a code block's text for the writer to unwind here.
+    fn in_code_fence(&self, at: usize) -> bool {
+        self.in_fence(at) && at >= self.front_matter
     }
 }
 
@@ -498,6 +522,21 @@ fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
     out
 }
 
+/// [`encode_spans`] with the reader's fence escapes kept as written: the
+/// resolved Markdown still names the document its code blocks hold.
+fn encode_spans_kept(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    encode_range(
+        source,
+        &Closers::new(source).keeping_fences(),
+        0..source.len(),
+        ALL,
+        false,
+        &mut out,
+    );
+    out
+}
+
 /// [`encode_spans`] for the part of `source` in `range`.
 fn encode_range(
     source: &str,
@@ -524,6 +563,17 @@ fn encode_range(
         } else {
             allowed
         };
+        // The reader broke the delimiters of a code block's text for this
+        // fence, where Markdown itself reads no backslash escape, so they
+        // are unbroken here and nowhere else.
+        if closers.unwind
+            && closers.literal.in_code_fence(at)
+            && let Some((text, len)) = fence_escape_at(source, at)
+        {
+            push_escaped(out, text);
+            at += len;
+            continue;
+        }
         let span = SPANS
             .iter()
             .find(|(open, ..)| rest.starts_with(open))
@@ -595,6 +645,31 @@ fn encode_range(
             }
         }
     }
+}
+
+/// The reader's fence escape (`from_docx::critic::escape_code`) at `at`,
+/// if one sits there: the document text it names, and how many bytes it
+/// takes. Every backslash the document holds is doubled in a fence, so a
+/// lone one is the escape; Markdown reads none of them there.
+fn fence_escape_at(source: &str, at: usize) -> Option<(&'static str, usize)> {
+    const UNWOUND: [(&str, &str); 12] = [
+        ("\\\\", "\\"),
+        ("{\\++", "{++"),
+        ("{\\--", "{--"),
+        ("{\\~~", "{~~"),
+        ("{\\>>", "{>>"),
+        ("{\\==", "{=="),
+        ("++\\}", "++}"),
+        ("--\\}", "--}"),
+        ("~~\\}", "~~}"),
+        ("<<\\}", "<<}"),
+        ("==\\}", "==}"),
+        ("~\\>", "~>"),
+    ];
+    UNWOUND
+        .iter()
+        .find(|(from, _)| source[at..].starts_with(from))
+        .map(|(from, to)| (*to, from.len()))
 }
 
 /// What closes a body field.
@@ -991,7 +1066,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     // The state each open span interrupted, innermost last.
     let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
-    Pieces::default().feed(&encode_spans(markdown, ALL, false), |piece| match piece {
+    Pieces::default().feed(&encode_spans_kept(markdown), |piece| match piece {
         Piece::Text(text) => {
             let shown = match state {
                 In::Text => true,
@@ -1209,6 +1284,59 @@ mod tests {
     }
 
     #[test]
+    fn an_escape_from_a_code_block_unwinds_inside_its_fence_only() {
+        // The reader breaks literal delimiters in a code block and doubles
+        // its backslashes; Markdown itself reads no escape inside a fence,
+        // so the unwinding happens here, and only there: outside one the
+        // escapes are Markdown's own.
+        for (document, written) in [
+            ("fenced {++x++} code", "fenced {\\++x++\\} code"),
+            ("{\\++x++}", "{\\\\++x++\\}"),
+            ("a~>b", "a~\\>b"),
+            ("a\\~>b", "a\\\\~\\>b"),
+            ("back\\slash", "back\\\\slash"),
+            (
+                "$x_{--}$ and ![a {++b++}](u\\v)",
+                "$x_{\\--}$ and ![a {\\++b++\\}](u\\\\v)",
+            ),
+        ] {
+            let fence = format!("```\n{written}\n```\n");
+            assert_eq!(encode(&fence), format!("```\n{document}\n```\n"));
+            let text = format!("a {written} b");
+            assert_eq!(encode(&text), text, "outside a fence it is Markdown's");
+        }
+        // The changes the reader writes in a code block still open there,
+        // and the text inside them unwinds with the rest of the fence.
+        assert_eq!(
+            pieces(&encode("```\nkeep {++new++} old\n```\n")),
+            [
+                "```\nkeep ",
+                "<InsertStart>",
+                "new",
+                "<InsertEnd>",
+                " old\n```\n"
+            ]
+        );
+        assert_eq!(
+            pieces(&encode("```\n{~~a~\\>c~>b~~}\n```\n")),
+            [
+                "```\n",
+                "<SubstituteStart>",
+                "a~>c",
+                "<SubstituteSeparator>",
+                "b",
+                "<SubstituteEnd>",
+                "\n```\n"
+            ]
+        );
+        // The front matter is no code block: nothing unwinds there.
+        assert_eq!(
+            encode("---\ntitle: a~\\>b\n---\n"),
+            "---\ntitle: a~\\>b\n---\n"
+        );
+    }
+
+    #[test]
     fn unclosed_openers_encode_in_linear_time() {
         // Every opener once scanned the rest of the text for its closer.
         let source = "{++ {-- {~~ {== {>> ~> ".repeat(40_000);
@@ -1399,6 +1527,16 @@ mod tests {
         let text = "a{++b++}c{--d--}e{~~f~>g~~}h{==i==}{>>j<<}k \\{++l++}";
         assert_eq!(resolve(text, true), "abcegh".to_string() + "ik \\{++l++}");
         assert_eq!(resolve(text, false), "acdefh".to_string() + "ik \\{++l++}");
+    }
+
+    #[test]
+    fn resolving_keeps_a_fence_s_escapes() {
+        // The resolved Markdown still names the document its code blocks
+        // hold, so the reader's fence escapes stay: converting the output
+        // back cannot invent a change from them.
+        let fence = "```\nfenced {\\++x++\\} code\n```\n";
+        assert_eq!(resolve(fence, true), fence);
+        assert_eq!(resolve(fence, false), fence);
     }
 
     #[test]

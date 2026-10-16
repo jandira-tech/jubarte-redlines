@@ -1615,6 +1615,137 @@ fn code_reads_as_code_spans_and_fences() {
     assert_eq!(body(&agent(&back)), view);
 }
 
+/// Literal CriticMarkup delimiters in a code block are text, not changes
+/// (#518): the reader breaks them inside the fence, where Markdown reads
+/// no backslash escape, and the writer unbreaks them there. Code that
+/// already holds a backslash beside a delimiter comes back as written.
+#[test]
+fn literal_critic_delimiters_in_a_code_block_stay_text() {
+    let code = |t: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+            common::docx::esc(t)
+        )
+    };
+    let texts = [
+        "fenced {++x++} code",
+        r"brace {\++x++} tail",
+        r"sub a~>b and a\~>b end",
+    ];
+    let bytes = docx(&texts.iter().map(|t| code(t)).collect::<String>());
+    let full = agent(&bytes);
+    let view = body(&full).to_string();
+    assert!(view.contains("fenced {\\++x++\\} code\n"), "{view}");
+    assert!(view.contains("brace {\\\\++x++\\} tail\n"), "{view}");
+    assert!(view.contains("sub a~\\>b and a\\\\~\\>b end\n"), "{view}");
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert!(
+        jubarte::changes::list_changes(&back).unwrap().is_empty(),
+        "literal delimiters invented no change"
+    );
+    assert_eq!(
+        body(&agent(&back)),
+        body(&full),
+        "the view is a fixed point"
+    );
+    // The plain conversion prints the same fences, without the id lines.
+    let plain = docx_to_markdown(&bytes, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert!(plain.contains("fenced {\\++x++\\} code\n"), "{plain}");
+    let plain_back = markdown_to_docx(&plain, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert!(
+        jubarte::changes::list_changes(&plain_back)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        docx_to_markdown(&plain_back, &MarkdownOptions::default())
+            .unwrap()
+            .markdown,
+        plain,
+        "the plain view is a fixed point"
+    );
+}
+
+/// The fence rule stays: a tracked change inside a code block is written
+/// as CriticMarkup there and read back as the same change (#518).
+#[test]
+fn tracked_changes_inside_a_code_block_still_round_trip() {
+    let ins = r#"<w:ins w:id="7" w:author="Ana" w:date="2026-03-02T10:00:00Z"><w:r><w:t>new {++x++}</w:t></w:r></w:ins>"#;
+    let bytes = docx(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t xml:space="preserve">keep </w:t></w:r>{ins}<w:r><w:t xml:space="preserve"> old</w:t></w:r></w:p>"#
+    ));
+    let full = agent(&bytes);
+    let view = body(&full);
+    assert!(
+        view.contains("keep {++new {\\++x++\\}++}{>>r7 @A<<} old"),
+        "{view}"
+    );
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let listed = jubarte::changes::list_changes(&back).unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].text, "new {++x++}");
+    assert_eq!(body(&agent(&back)), view);
+}
+
+/// `--commonmark` escapes CriticMarkup and Markdown syntax as the agent
+/// view does (#519): Word text that reads like markup round-trips through
+/// both views as itself, with no change invented.
+#[test]
+fn commonmark_escapes_critic_and_markdown_syntax() {
+    let texts = [
+        "{++a++}",
+        r"{\++a++}",
+        "- not a list",
+        "1. not a list",
+        "# not a heading",
+        "> not a quote",
+        "*not em*",
+        "`not code`",
+        "[not](link)",
+        "<b>not html</b>",
+    ];
+    let bytes = docx(&texts.iter().map(|t| para(t)).collect::<String>());
+    let escaped = [
+        "{\\++a++\\}",
+        "{\\\\++a++\\}",
+        "\\- not a list",
+        "1\\. not a list",
+        "\\# not a heading",
+        "\\> not a quote",
+        "\\*not em\\*",
+        "\\`not code\\`",
+        "[not\\](link)",
+        "\\<b>not html\\</b>",
+    ];
+    for options in [&MarkdownOptions::default(), &agent_defaults()] {
+        let markdown = docx_to_markdown(&bytes, options).unwrap().markdown;
+        for want in escaped {
+            assert!(markdown.contains(&format!("{want}\n")), "{{markdown}}");
+        }
+        let back = markdown_to_docx(&markdown, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        assert!(
+            jubarte::changes::list_changes(&back).unwrap().is_empty(),
+            "no change from literal markup"
+        );
+        // The header names the file's bytes, so the bodies are compared.
+        assert_eq!(
+            body(&docx_to_markdown(&back, options).unwrap().markdown),
+            body(&markdown),
+            "the view is a fixed point"
+        );
+    }
+}
+
 #[test]
 fn body_fields_read_as_code_then_result() {
     // Spec §3: a body field prints `{CODE}result{/}`, a hyperlink field
@@ -2749,9 +2880,10 @@ fn underline_from_a_character_style_shows() {
     assert!(out.contains("<u>styled</u> plain"), "{out}");
 }
 
-/// Task 18: literal Markdown marks in document text read back as text.
+/// Task 18: literal Markdown marks in document text read back as text,
+/// in the agent view and in the plain conversion alike (#519).
 #[test]
-fn literal_markdown_marks_are_escaped_in_the_agent_view_only() {
+fn literal_markdown_marks_are_escaped_in_both_views() {
     let bytes = docx(&format!(
         "{}{}{}{}{}{}{}",
         para("# Not a heading"),
@@ -2790,8 +2922,8 @@ fn literal_markdown_marks_are_escaped_in_the_agent_view_only() {
         .unwrap()
         .markdown;
     assert!(
-        legacy.contains("# Not a heading\n") && legacy.contains("**stars** and a_b"),
-        "unchanged: {legacy}"
+        legacy.contains("\\# Not a heading\n") && legacy.contains("\\*\\*stars\\*\\* and a_b"),
+        "escaped as the agent view: {legacy}"
     );
 }
 
@@ -2822,13 +2954,22 @@ fn escaped_text_reads_back_as_the_characters() {
     )
     .unwrap()
     .docx;
+    // The plain conversion escapes too (#519), so its escapes name the
+    // literal characters the document holds.
     let text = docx_to_markdown(&written, &MarkdownOptions::default())
         .unwrap()
         .markdown;
-    assert!(text.contains("# Not a heading"), "{text}");
-    assert!(text.contains("**stars** and `tick` ~~gone~~"), "{text}");
+    assert!(text.contains("\\# Not a heading"), "{text}");
+    assert!(
+        text.contains("\\*\\*stars\\*\\* and \\`tick\\` \\~\\~gone\\~\\~"),
+        "{text}"
+    );
     let xml = common::docx::part_string(&written, "word/document.xml").unwrap();
     assert!(!xml.contains("Heading"), "no heading style: {xml}");
+    assert!(
+        xml.contains("# Not a heading"),
+        "the text as written: {xml}"
+    );
 }
 
 #[test]

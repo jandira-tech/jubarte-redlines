@@ -180,38 +180,25 @@ impl Node {
 #[derive(Debug, Default)]
 pub(crate) struct Critic {
     tokens: Vec<Token>,
-    /// Text written as is, for a document with no tracked change or comment:
-    /// nothing can open a span there, so nothing needs escaping.
-    plain: bool,
     /// The paragraph is joined to more text on the same line (a flattened
     /// table's cells): see [`space_into_last_change`].
     inline_end: bool,
-    /// Agent view: runs of spaces stay as the file holds them, and Markdown
-    /// syntax in the text is escaped once neighbouring runs are joined.
+    /// Agent view: runs of spaces stay as the file holds them.
     agent: bool,
-    /// A code block's paragraph: its text is written as is, spaces and all.
+    /// A code block's paragraph: its text goes in a fence, its runs of
+    /// spaces kept and its CriticMarkup delimiters escaped for the writer
+    /// to unwind there.
     code_block: bool,
 }
 
 impl Critic {
-    /// A paragraph of a document with no tracked change or comment: its text
-    /// is written unescaped.
-    pub(crate) fn plain() -> Self {
-        Self {
-            plain: true,
-            ..Self::default()
-        }
-    }
-
-    /// Agent view: keeps runs of spaces as the file holds them and escapes
-    /// Markdown syntax in the text. Word splits runs anywhere, so `==` or
-    /// `~~` can straddle two runs: the escaping waits for the joined text.
+    /// Agent view: keeps runs of spaces as the file holds them.
     pub(crate) fn set_agent(&mut self) {
         self.agent = true;
     }
 
     /// A code block's paragraph (`SourceCode`): its text goes in a fence
-    /// unescaped, with its runs of spaces.
+    /// with its runs of spaces, its CriticMarkup delimiters escaped.
     pub(crate) fn set_code_block(&mut self) {
         self.code_block = true;
     }
@@ -331,8 +318,6 @@ impl Critic {
             space_into_last_change(&mut nodes);
         }
         let escaping = Escaping {
-            plain: self.plain,
-            agent: self.agent,
             code_block: self.code_block,
         };
         let mut pieces = Vec::new();
@@ -530,26 +515,24 @@ struct Piece {
 /// How [`render`] escapes document text.
 #[derive(Clone, Copy)]
 struct Escaping {
-    /// No tracked change or comment: nothing can open a CriticMarkup span.
-    plain: bool,
-    /// Agent view: Markdown syntax is escaped too.
-    agent: bool,
-    /// A code block: nothing is escaped.
+    /// A code block: its delimiters are broken the way its fence unwinds
+    /// ([`escape_code`]), and nothing else is, since a fence holds the rest
+    /// of the text as written.
     code_block: bool,
 }
 
 impl Escaping {
-    /// `text` escaped; a code span's or a code block's text is written as
-    /// is, since a backslash shows there.
+    /// `text` escaped: Markdown's marks and CriticMarkup's delimiters both,
+    /// so nothing reads back as what it is not. A code span's text is
+    /// written as is, since a backslash shows there, and a code block's
+    /// delimiters are broken the way its fence unwinds.
     fn text(self, text: &str, marks: Marks) -> String {
-        if self.code_block || marks.code {
-            return text.to_string();
-        }
-        match (self.agent, self.plain) {
-            (true, true) => super::agent::escape_markdown(text),
-            (true, false) => escape(&super::agent::escape_markdown(text)),
-            (false, true) => text.to_string(),
-            (false, false) => escape(text),
+        if self.code_block {
+            escape_code(text)
+        } else if marks.code {
+            text.to_string()
+        } else {
+            escape(&super::agent::escape_markdown(text))
         }
     }
 }
@@ -609,8 +592,8 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 });
             }
             (Node::Leaf(Leaf::Raw(markdown)), _) => out.push(Piece {
-                text: math_changes(&if escaping.plain {
-                    markdown.clone()
+                text: math_changes(&if escaping.code_block {
+                    escape_code(markdown)
                 } else {
                     defuse(markdown)
                 }),
@@ -734,6 +717,45 @@ pub(crate) fn escape(text: &str) -> String {
     DELIMITERS
         .iter()
         .fold(text.to_string(), |text, (from, to)| text.replace(from, to))
+}
+
+/// The text of a code block, as its fence holds it: every delimiter of
+/// [`escape`] broken the same way, and every backslash doubled. A fence
+/// reads no Markdown escape, so the writer unwinds both there (see
+/// `crate::markdown::critic`), and the doubling keeps the pair exact where
+/// the code already holds a backslash beside a delimiter (`{\\++x++}`).
+pub(crate) fn escape_code(text: &str) -> String {
+    const DELIMITERS: [(&str, &str); 11] = [
+        ("{++", "{\\++"),
+        ("{--", "{\\--"),
+        ("{~~", "{\\~~"),
+        ("{>>", "{\\>>"),
+        ("{==", "{\\=="),
+        ("++}", "++\\}"),
+        ("--}", "--\\}"),
+        ("~~}", "~~\\}"),
+        ("<<}", "<<\\}"),
+        ("==}", "==\\}"),
+        ("~>", "~\\>"),
+    ];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    'piece: while !rest.is_empty() {
+        for (from, to) in DELIMITERS {
+            if let Some(plain) = rest.strip_prefix(from) {
+                out.push_str(to);
+                rest = plain;
+                continue 'piece;
+            }
+        }
+        let c = rest.chars().next().unwrap_or_default();
+        out.push(c);
+        if c == '\\' {
+            out.push('\\');
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    out
 }
 
 /// Breaks every CriticMarkup delimiter in Markdown the converter built
@@ -1860,5 +1882,72 @@ mod tests {
             ]),
             "{--x {\\++ y--}"
         );
+    }
+
+    #[test]
+    fn a_code_block_escapes_its_delimiters_and_doubles_its_backslashes() {
+        // Inside a fence Markdown reads no backslash escape, so the pair
+        // has to say itself what is text: every backslash the document
+        // holds is doubled, and a delimiter gains one inside it. The
+        // writer undoes both inside a fence, exactly, even where the code
+        // already holds a backslash beside a delimiter.
+        let code = |t: &str| {
+            let mut critic = Critic::default();
+            critic.set_code_block();
+            text(&mut critic, t);
+            md(critic)
+        };
+        assert_eq!(code("fenced {++x++} code"), "fenced {\\++x++\\} code");
+        for (document, markdown) in [
+            ("{\\++x++}", "{\\\\++x++\\}"),
+            ("\\{++", "\\\\{\\++"),
+            ("a~>b", "a~\\>b"),
+            ("a\\~>b", "a\\\\~\\>b"),
+            ("back\\slash", "back\\\\slash"),
+        ] {
+            assert_eq!(code(document), markdown, "{document}");
+        }
+        // A tracked change keeps its delimiters: the fence still reads
+        // CriticMarkup, so only the text inside is escaped.
+        let mut critic = Critic::default();
+        critic.set_code_block();
+        critic.open(Ins, None);
+        text(&mut critic, "new {++x++}");
+        critic.close(Ins);
+        assert_eq!(md(critic), "{++new {\\++x++\\}++}");
+        // Converter-built Markdown (an equation, an image) is fence text
+        // too, and comes back the same way.
+        let mut critic = Critic::default();
+        critic.set_code_block();
+        critic.raw("$x_{--}$ and ![a {++b++}](u\\v)");
+        assert_eq!(md(critic), "$x_{\\--}$ and ![a {\\++b++\\}](u\\\\v)");
+    }
+
+    #[test]
+    fn the_writer_unwinds_the_code_escape_inside_a_fence() {
+        // `encode` reads a fence's escaped text back as the document held
+        // it, and still opens the changes the reader wrote there.
+        let fence = |code: &str| format!("```\n{code}\n```\n");
+        for document in [
+            "fenced {++x++} code",
+            "{\\++x++}",
+            "\\{++",
+            "a~>b",
+            "a\\~>b",
+            "back\\slash",
+        ] {
+            let source = fence(&escape_code(document));
+            assert_eq!(
+                crate::markdown::critic::encode(&source),
+                fence(document),
+                "{document}"
+            );
+        }
+        let mut critic = Critic::default();
+        critic.set_code_block();
+        critic.open(Ins, None);
+        text(&mut critic, "new");
+        critic.close(Ins);
+        assert_eq!(md(critic), "{++new++}");
     }
 }
