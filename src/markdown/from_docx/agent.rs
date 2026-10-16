@@ -1458,7 +1458,9 @@ pub(crate) fn line(head: &str, clauses: &[String]) -> String {
 pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     let mut head = format!("p{}", f.index);
     if let Some(style) = f.style {
-        let implied = !f.empty && f.heading.is_some_and(|level| style == format!("Heading{level}"));
+        let implied = !f.empty
+            && f.heading
+                .is_some_and(|level| style == format!("Heading{level}"));
         if !implied {
             head.push(' ');
             head.push_str(&crate::markdown::view_notes::style_token(style));

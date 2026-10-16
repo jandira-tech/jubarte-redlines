@@ -647,8 +647,7 @@ pub(super) fn word_table_style_name(id: &str) -> Option<String> {
     }
     OLD_TABLE_FAMILIES.contains(&family).then(|| {
         let mut name = String::new();
-        let mut chars = family.chars().peekable();
-        while let Some(c) = chars.next() {
+        for c in family.chars() {
             if c.is_uppercase() && !name.is_empty() {
                 name.push(' ');
             }

@@ -375,7 +375,10 @@ fn an_empty_quoted_note_style_names_none() {
 fn a_renamed_word_note_style_keeps_its_name() {
     let styles = styles_xml()
         .replace(r#"<w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText""#, r#"<w:name w:val="Footnote Text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText""#);
-    assert!(styles.contains(r#"<w:name w:val="Footnote Text"/>"#), "{styles}");
+    assert!(
+        styles.contains(r#"<w:name w:val="Footnote Text"/>"#),
+        "{styles}"
+    );
     let docx = docx_with_styles("footnote", &[Some("FootnoteText")], &styles);
     let (view, again, view_again) = round_trip(&docx);
     assert!(view.contains(" FootnoteText -->"), "{view}");

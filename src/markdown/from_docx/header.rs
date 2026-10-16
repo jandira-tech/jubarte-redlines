@@ -912,7 +912,9 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
         .and_then(|s| s.child("name"))
         .and_then(|n| n.attr("val"))
         .filter(|name| {
-            *name != super::super::package::word_table_style_name(id).unwrap_or_else(|| id.to_string())
+            *name
+                != super::super::package::word_table_style_name(id)
+                    .unwrap_or_else(|| id.to_string())
         })
         .map(|name| format!(", named {name}"))
         .unwrap_or_default();
