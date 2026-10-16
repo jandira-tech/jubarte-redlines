@@ -64,8 +64,21 @@ pub(crate) type Change = (Mark, Option<String>);
 /// never written to the output.
 pub(crate) const TAG: &str = "\u{E000}";
 
+/// Plain-view attribution: the change's ids and its `Author (date)` note
+/// as an internal tag (`agent::plain_tag_of`) behind this sentinel, so that
+/// neighbours join their ids as the agent view's do. Printed through
+/// `agent::format_plain_tag`: `r1+2 Ana Lima (2026-09-29T14:05:00Z)`.
+pub(crate) const PLAIN: &str = "\u{E001}";
+
+/// The internal tag of an attribution, agent or plain.
 fn tag(by: Option<&str>) -> Option<&str> {
-    by?.strip_prefix(TAG)
+    let by = by?;
+    by.strip_prefix(TAG).or_else(|| by.strip_prefix(PLAIN))
+}
+
+/// The sentinel an attribution's tag sits behind.
+fn sentinel(by: &str) -> &'static str {
+    if by.starts_with(PLAIN) { PLAIN } else { TAG }
 }
 
 /// The tag proper and its optional inline timestamp.
@@ -78,6 +91,9 @@ fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
 
 /// A note's text: the formatted tag, or the plain attribution.
 fn display(by: &str) -> String {
+    if let Some(tagged) = by.strip_prefix(PLAIN) {
+        return super::agent::format_plain_tag(tagged);
+    }
     match by.strip_prefix(TAG) {
         Some(tagged) => {
             let (t, date) = tag_parts(tagged);
@@ -97,21 +113,23 @@ fn display(by: &str) -> String {
 fn same_author(a: Option<&str>, b: Option<&str>) -> bool {
     use super::agent::{handle_of, split_tag};
     match (tag(a), tag(b)) {
-        (Some(a), Some(b)) => {
-            let (a, b) = (tag_parts(a).0, tag_parts(b).0);
+        (Some(ta), Some(tb)) if a.map(sentinel) == b.map(sentinel) => {
+            let (a, b) = (tag_parts(ta).0, tag_parts(tb).0);
             handle_of(a) == handle_of(b) && split_tag(a).0 == split_tag(b).0
         }
         _ => a == b,
     }
 }
 
-/// The tags of two neighbours or of a substitution's two sides, joined,
-/// keeping the first inline timestamp.
+/// The tags of two neighbours or of a substitution's two sides (whole
+/// attributions, sentinel and all), joined, keeping the first inline
+/// timestamp.
 fn join_tagged(a: &str, b: &str) -> String {
-    let (ta, da) = tag_parts(a);
-    let (tb, db) = tag_parts(b);
+    let kind = sentinel(a);
+    let (ta, da) = tag_parts(tag(Some(a)).unwrap_or(a));
+    let (tb, db) = tag_parts(tag(Some(b)).unwrap_or(b));
     let mut out = format!(
-        "{TAG}{}",
+        "{kind}{}",
         super::agent::join_tags(&[ta.to_string(), tb.to_string()])
     );
     if let Some(date) = da.or(db) {
@@ -409,7 +427,10 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
         } else if let Some(Node::Span(_, before_by, before)) = out.last_mut().filter(|last| {
             matches!(last, Node::Span(m, b, _) if *m == mark && same_author(b.as_deref(), by.as_deref()))
         }) {
-            if let (Some(a), Some(b)) = (tag(before_by.as_deref()), tag(by.as_deref())) {
+            if let (Some(a), Some(b)) = (before_by.as_deref(), by.as_deref())
+                && tag(Some(a)).is_some()
+                && tag(Some(b)).is_some()
+            {
                 *before_by = Some(join_tagged(a, b));
             }
             before.extend(nodes);
@@ -465,7 +486,7 @@ fn space_into_last_change(nodes: &mut [Node]) {
         return;
     };
     // A tagged change (agent view) keeps its text exactly as the file holds it.
-    if tag(by.as_deref()).is_some() {
+    if by.as_deref().is_some_and(|by| by.starts_with(TAG)) {
         return;
     }
     // Only into text the change starts with, so the space keeps a format.
@@ -552,8 +573,11 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 marker(out, "~>", id);
                 render(new, out, escaping, ids);
                 marker(out, "~~}", id);
-                match (tag(old_by.as_deref()), tag(new_by.as_deref())) {
-                    (Some(a), Some(b)) if same_author(old_by.as_deref(), new_by.as_deref()) => {
+                match (old_by.as_deref(), new_by.as_deref()) {
+                    (Some(a), Some(b))
+                        if tag(Some(a)).is_some()
+                            && same_author(old_by.as_deref(), new_by.as_deref()) =>
+                    {
                         let joined = join_tagged(a, b);
                         attribution(out, Some(&joined), id);
                     }
@@ -823,11 +847,35 @@ pub(crate) fn splice(
         return;
     };
     let (open, close) = mark.delimiters();
-    let by = by.as_deref().map(|b| note(&display(b))).unwrap_or_default();
+    let shown = by.as_deref().map(display);
+    let by = shown.as_deref().map(note).unwrap_or_default();
     let end = format!("{close}{by}");
-    match out.strip_suffix(end.as_str()) {
-        Some(kept) => out.truncate(kept.len()),
+    // A plain note names its change's ids: the same author and date with
+    // other ids still continue the span.
+    let rest = shown.as_deref().and_then(plain_note_rest);
+    // The ids each piece's plain note names, in document order: the span
+    // before the break, the break, the span after it.
+    let mut pieces: Vec<String> = Vec::new();
+    let ends_alike = |text: &str| -> Option<(usize, Option<String>)> {
+        if let Some(kept) = text.strip_suffix(end.as_str()) {
+            return Some((kept.len(), None));
+        }
+        let inner = text.strip_suffix("<<}")?;
+        let at = inner.rfind("{>>")?;
+        let kept = inner[..at].strip_suffix(close)?;
+        let note = &inner[at + 3..];
+        (rest.is_some() && plain_note_rest(note) == rest)
+            .then(|| (kept.len(), Some(plain_note_ids(note).to_string())))
+    };
+    match ends_alike(out) {
+        Some((kept, ids)) => {
+            out.truncate(kept);
+            pieces.extend(ids);
+        }
         None => out.push_str(open),
+    }
+    if let Some(shown) = shown.as_deref().filter(|_| rest.is_some()) {
+        pieces.push(plain_note_ids(shown).to_string());
     }
     out.push_str(separator);
     out.push_str(prefix);
@@ -836,20 +884,98 @@ pub(crate) fn splice(
     // converter-built Markdown is defused, so neither contains the closer, and a
     // span never nests one of its own kind: the first closer after the opener
     // is that span's own.
-    let continues = body.strip_prefix(open).filter(|rest| {
-        rest.find(close)
-            .is_some_and(|at| rest[at + close.len()..].starts_with(by.as_str()))
+    let continues = body.strip_prefix(open).filter(|rest_of| {
+        rest_of.find(close).is_some_and(|at| {
+            let after = &rest_of[at + close.len()..];
+            after.starts_with(by.as_str())
+                || after
+                    .strip_prefix("{>>")
+                    .and_then(|inner| inner.find("<<}").map(|end| &inner[..end]))
+                    .is_some_and(|inner| rest.is_some() && plain_note_rest(inner) == rest)
+        })
     });
     match continues {
-        Some(rest) => out.push_str(rest),
+        Some(rest_of) => {
+            let at = rest_of.find(close).map_or(0, |at| at + close.len());
+            let found = rest_of[at..]
+                .strip_prefix("{>>")
+                .and_then(|inner| inner.find("<<}").map(|end| &inner[..end]))
+                .filter(|inner| rest.is_some() && plain_note_rest(inner) == rest);
+            match found.and_then(|found| {
+                pieces.push(plain_note_ids(found).to_string());
+                merged_plain_note(&pieces, rest?)
+            }) {
+                Some(merged) => {
+                    let after = at + "{>>".len() + found.map_or(0, str::len) + "<<}".len();
+                    out.push_str(&rest_of[..at]);
+                    out.push_str(&note(&merged));
+                    out.push_str(&rest_of[after..]);
+                }
+                None => out.push_str(rest_of),
+            }
+        }
         None => {
-            out.push_str(&end);
+            match rest.and_then(|rest| merged_plain_note(&pieces, rest)) {
+                Some(merged) => out.push_str(&format!("{close}{}", note(&merged))),
+                None => out.push_str(&end),
+            }
             if space {
                 out.push(' ');
             }
             out.push_str(body);
         }
     }
+}
+
+/// A plain-view note's ids: `r5+6` of `r5+6 Ana (2026-…)`.
+fn plain_note_ids(inner: &str) -> &str {
+    inner.split_once(' ').map_or(inner, |(ids, _)| ids)
+}
+
+/// One plain note naming every piece's ids (`r8`, `r9`, `r10` →
+/// `r8+9+10 Ana`), or `None` when the pieces name ids of different
+/// stories or forms the short `rN+M` cannot join.
+fn merged_plain_note(pieces: &[String], rest: &str) -> Option<String> {
+    if pieces.len() < 2 {
+        return None;
+    }
+    let split = |ids: &str| -> Option<(String, String)> {
+        let numbers = ids.trim_start_matches(|c: char| !c.is_ascii_digit());
+        let head = &ids[..ids.len() - numbers.len()];
+        (head.ends_with('r')
+            && !numbers.is_empty()
+            && numbers.split('+').all(|n| n.parse::<u32>().is_ok()))
+        .then(|| (head.to_string(), numbers.to_string()))
+    };
+    let parts: Vec<(String, String)> = pieces.iter().map(|p| split(p)).collect::<Option<_>>()?;
+    let head = &parts[0].0;
+    if parts.iter().any(|(h, _)| h != head) {
+        return None;
+    }
+    let mut numbers: Vec<&str> = Vec::new();
+    for n in parts.iter().flat_map(|(_, n)| n.split('+')) {
+        if !numbers.contains(&n) {
+            numbers.push(n);
+        }
+    }
+    let ids = format!("{head}{}", numbers.join("+"));
+    Some(if rest.is_empty() {
+        ids
+    } else {
+        format!("{ids} {rest}")
+    })
+}
+
+/// A plain-view note's `Author (date)` after its ids: `r5 Ana (2026-…)` is
+/// `Ana (2026-…)`, `r7` is empty. `None` for any other note, an agent tag
+/// (`r5 @AC`) among them.
+fn plain_note_rest(inner: &str) -> Option<&str> {
+    let (ids, rest) = inner.split_once(' ').unwrap_or((inner, ""));
+    let ids_ok = ids == "noid"
+        || ids.ends_with(".noid")
+        || (!ids.starts_with(|c: char| c.is_ascii_digit())
+            && crate::ids::parse_change_ids(ids).is_ok());
+    (ids_ok && !rest.starts_with('@')).then_some(rest)
 }
 
 /// The change a rendered part is wholly inside, with its attribution:
@@ -1332,6 +1458,37 @@ mod tests {
         let mut heading = "A".to_string();
         splice(&mut heading, "\n\n", "## ", "B", Some(&(Ins, None)), false);
         assert_eq!(heading, "A{++\n\n## ++}B");
+    }
+
+    #[test]
+    fn a_plain_span_across_paragraphs_names_every_piece_s_id() {
+        let mark = |id: &str| Some(format!("{PLAIN}{id}@Bo%20Chen"));
+        let join = |out: &str, body: &str, id: &str| {
+            let mut out = out.to_string();
+            splice(&mut out, "\n\n", "", body, Some(&(Del, mark(id))), false);
+            out
+        };
+        // The deleted text before the break, the break, the text after it.
+        assert_eq!(
+            join(
+                "a{--A--}{>>r8 Bo Chen<<}",
+                "{--B--}{>>r10 Bo Chen<<} b",
+                "9"
+            ),
+            "a{--A\n\nB--}{>>r8+9+10 Bo Chen<<} b"
+        );
+        assert_eq!(
+            join("{--A--}{>>r8 Bo Chen<<}", "B", "9"),
+            "{--A\n\n--}{>>r8+9 Bo Chen<<}B"
+        );
+        assert_eq!(
+            join("A", "{--B--}{>>r10 Bo Chen<<}", "9"),
+            "A{--\n\nB--}{>>r9+10 Bo Chen<<}"
+        );
+        let notes = |id: &str| Some(format!("{PLAIN}footnotes#{id}@Bo"));
+        let mut out = "{--A--}{>>footnotes.r2 Bo<<}".to_string();
+        splice(&mut out, "\n\n", "", "B", Some(&(Del, notes("3"))), false);
+        assert_eq!(out, "{--A\n\n--}{>>footnotes.r2+3 Bo<<}B");
     }
 
     #[test]

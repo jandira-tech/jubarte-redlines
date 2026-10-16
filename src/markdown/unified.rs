@@ -686,7 +686,9 @@ fn segments(critic: &str) -> Vec<Segment> {
 }
 
 /// `Name (date)` in the comment right after a change, or after the
-/// comments that follow it, becomes the change's author and date.
+/// comments that follow it, becomes the change's author and date; so does
+/// the plain view's numbered note (`r3 Name (date)`), whose number says it
+/// names the change. A number alone names no one: the owner made it.
 fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
     for segment in segments {
@@ -696,10 +698,16 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
                 .rev()
                 .find(|s| !matches!(s, Segment::Note(_)))
             && edit.by.is_none()
-            && let Some((Some(author), date, "")) = named(text.trim())
         {
-            edit.by = Some((author, date.to_string()));
-            continue;
+            if let Some(plain) = super::view_notes::plain_revision(text.trim()) {
+                edit.by = (!plain.author.is_empty() || !plain.date.is_empty())
+                    .then_some((plain.author, plain.date));
+                continue;
+            }
+            if let Some((Some(author), date, "")) = named(text.trim()) {
+                edit.by = Some((author, date.to_string()));
+                continue;
+            }
         }
         out.push(segment);
     }
@@ -1223,6 +1231,42 @@ mod tests {
         assert!(!can_break(line, line.find(" c`").unwrap(), &ranges));
         assert!(!can_break(line, line.find(" f)").unwrap(), &ranges));
         assert!(can_break(line, 1, &ranges));
+    }
+
+    #[test]
+    fn a_numbered_note_after_a_change_names_its_author_never_a_comment() {
+        let by = |critic: &str| {
+            attribute(segments(critic))
+                .into_iter()
+                .map(|segment| match segment {
+                    Segment::Edit(edit) => format!("edit {:?}", edit.by),
+                    Segment::Note(note) => format!("note {note}"),
+                    _ => String::new(),
+                })
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        };
+        let ana = Some(("Ana Lima".to_string(), "2026-09-30T14:05:00Z".to_string()));
+        assert_eq!(
+            by("a {++b++}{>>r3 Ana Lima (2026-09-30T14:05:00Z)<<} c"),
+            [format!("edit {ana:?}")]
+        );
+        assert_eq!(
+            by("a {++b++}{>>footnotes.r3+4 Ana Lima (2026-09-30T14:05:00Z)<<}"),
+            [format!("edit {ana:?}")]
+        );
+        // The old note without a number still names the author.
+        assert_eq!(
+            by("a {++b++}{>>Ana Lima (2026-09-30T14:05:00Z)<<}"),
+            [format!("edit {ana:?}")]
+        );
+        // A number alone names the change and no one: the owner made it.
+        assert_eq!(by("a {++b++}{>>r3<<}"), ["edit None"]);
+        // A comment is still a comment.
+        assert_eq!(
+            by("a {++b++}{>>Ana Lima (2026-09-30T14:05:00Z): why<<}"),
+            ["edit None", "note Ana Lima (2026-09-30T14:05:00Z): why"]
+        );
     }
 
     #[test]

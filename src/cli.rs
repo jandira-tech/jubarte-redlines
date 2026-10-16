@@ -2213,6 +2213,12 @@ pub struct MarkdownArgs {
     /// layout pass that places them.
     #[arg(long)]
     pub no_page_markers: bool,
+    /// Word to Markdown: write plain CommonMark with CriticMarkup for
+    /// readers outside jubarte's dialect, instead of the agent view (`jubarte
+    /// read`'s YAML header and id lines). Fields print as their text, and
+    /// underline, highlight and strike are left out.
+    #[arg(long)]
+    pub commonmark: bool,
 }
 
 /// `--tracking`.

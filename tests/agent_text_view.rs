@@ -621,7 +621,7 @@ fn legacy_output_keeps_author_notes() {
         .markdown;
     assert_eq!(
         legacy,
-        "a {++b++}{>>Ann Counsel (2026-10-01T09:00:00Z)<<}\n"
+        "a {++b++}{>>r7 Ann Counsel (2026-10-01T09:00:00Z)<<}\n"
     );
 }
 
@@ -631,7 +631,8 @@ fn an_author_cannot_forge_an_agent_tag_in_the_plain_view() {
     let legacy = docx_to_markdown(&docx(&p), &MarkdownOptions::default())
         .unwrap()
         .markdown;
-    assert_eq!(legacy, "{++b++}{>>0@JD (2026-10-01T09:00:00Z)<<}\n");
+    // The id comes first, so the name never reads as a tag.
+    assert_eq!(legacy, "{++b++}{>>r7 0@JD (2026-10-01T09:00:00Z)<<}\n");
 }
 
 #[test]

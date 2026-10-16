@@ -164,6 +164,7 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `--tracking` |  | <SWITCH> |  | on, off |  | Markdown to Word: turn Word's Track Changes on or off in the .docx written, whatever the Markdown's `track_changes:` key says [default: the key; without one, the --reference-doc's setting, else off] |
 | `--scholar` |  |  | false |  |  | Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern Roman 10pt on 12pt lines, justified, bold headings) and number its pages from page 2, centered in the footer. The front matter's own `styles:` entries, headers and footers win |
 | `--no-page-markers` |  |  | false |  |  | Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them |
+| `--commonmark` |  |  | false |  |  | Word to Markdown: write plain CommonMark with CriticMarkup for readers outside jubarte's dialect, instead of the agent view (`jubarte read`'s YAML header and id lines). Fields print as their text, and underline, highlight and strike are left out |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
@@ -220,7 +221,7 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 
 ## jubarte edit
 
-Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (refusal: exit 3)
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
@@ -233,8 +234,8 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--delete` |  |  |  |  | append | Delete the anchor, or the whole paragraph (or comment) without one |
 | `--resolve` |  |  |  |  | append | Resolve comment c5 (with -p c5) |
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5), as `add -p c5 --content` |
-| `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several) |
-| `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several) |
+| `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
+| `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
 | `-a, --author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
@@ -432,6 +433,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--columns` | diff | `<N> default=72 values=` |
 | `--comment` | add | `default= values=` |
 | `--comments` | (shorthand), compare, read, scrub | **differs**: `default=false values=` on scrub; `<MODE> default=inline values=inline, none` on (shorthand), compare, read |
+| `--commonmark` | convert | `default=false values=` |
 | `--compress` | convert | `default=false values=` |
 | `--consume` | edit, add | `default=false values=` |
 | `--content` | edit, add | `<TEXT> default= values=` |

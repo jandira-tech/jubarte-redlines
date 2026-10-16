@@ -173,6 +173,14 @@ pub(crate) fn tag_of(element: &Element, handles: &Handles) -> String {
     format!("{id}@{handle}")
 }
 
+/// `12@Ana%20Lima%20(2026-…)` for the plain view: the element's `w:id` and
+/// its `Author (date)` note in place of a handle, spelled ([`tag_id`],
+/// spaces too) so that tags split on none of it.
+pub(crate) fn plain_tag_of(element: &Element, note: &str) -> String {
+    let id = element.attr("id").map_or_else(|| "?".to_string(), tag_id);
+    format!("{id}@{}", tag_id(note).replace(' ', "%20"))
+}
+
 /// A `w:id` as an internal tag holds it: the characters tags join and
 /// split on (`+`, `|`, `@`, `#`, `?`) and `%` itself spelled `%XX`, so a
 /// malformed id such as `1+2` stays one id. [`untag_id`] reverses it.
@@ -263,12 +271,27 @@ pub(crate) fn join_tags(parts: &[String]) -> String {
 /// `accept --id` takes. A mark without a `w:id` (only a malformed file has
 /// one) prints `noid`: it names no change, and no id parser reads it.
 pub(crate) fn format_tag(tag: &str) -> String {
+    format_tag_by(tag, |handle| format!(" @{handle}"))
+}
+
+/// A plain-view tag ([`plain_tag_of`]) as its note prints it: the ids,
+/// then the `Author (date)` note when there is one (`r1+2 Ana Lima
+/// (2026-09-29T14:05:00Z)`, `r7`).
+pub(crate) fn format_plain_tag(tag: &str) -> String {
+    format_tag_by(tag, |note| match untag_id(note) {
+        note if note.is_empty() => note,
+        note => format!(" {note}"),
+    })
+}
+
+/// [`format_tag`] with `by` spelling what follows the ids.
+fn format_tag_by(tag: &str, by: impl Fn(&str) -> String) -> String {
     tag.split('|')
         .map(|one| {
             let (story, ids, handle) = split_tag(one);
             if ids.split('+').any(|w| w == "?") {
                 let story = story.map_or(String::new(), |s| format!("{s}."));
-                return format!("{story}noid @{handle}");
+                return format!("{story}noid{}", by(handle));
             }
             let changes: Vec<crate::ids::ChangeId> = ids
                 .split('+')
@@ -280,11 +303,11 @@ pub(crate) fn format_tag(tag: &str) -> String {
                 let head = short[0]
                     .strip_suffix(changes[0].wid.as_str())
                     .unwrap_or("r");
-                format!("{head}{} @{handle}", numbers.join("+"))
+                format!("{head}{}{}", numbers.join("+"), by(handle))
             } else {
                 short
                     .iter()
-                    .map(|s| format!("{s} @{handle}"))
+                    .map(|s| format!("{s}{}", by(handle)))
                     .collect::<Vec<_>>()
                     .join("; ")
             }

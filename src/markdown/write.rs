@@ -2698,6 +2698,40 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 return;
             }
+            // The plain view's note: the change's ids, then who made it and
+            // when, absent ones left empty (`r5 Ana Lima (2026-…)`, `r7 Di
+            // Eng`). The number says it is no comment on the change.
+            if let Some(plain) = view_notes::plain_revision(&whole) {
+                let serials: Vec<u32> = if anchor.attributed == 0 {
+                    anchor.serials.iter().flatten().copied().collect()
+                } else {
+                    anchor.serials[1..].iter().flatten().copied().collect()
+                };
+                let tag = view_notes::Tag {
+                    handle: String::new(),
+                    date: None,
+                    ids: plain.ids,
+                };
+                let ids = mark_ids(std::slice::from_ref(&tag), serials.len());
+                if let [deleted, inserted] = serials.as_slice() {
+                    self.shared_tags.push((*deleted, *inserted));
+                }
+                for (i, serial) in serials.iter().enumerate() {
+                    self.document
+                        .attributions
+                        .insert(*serial, (plain.author.clone(), plain.date.clone()));
+                    if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
+                        self.document.revision_ids.insert(*serial, ids.clone());
+                    }
+                }
+                anchor.attributed += 1;
+                // One number after a substitution names its deleted side:
+                // the inserted side's note may follow.
+                if serials.len() == 2 && tag.ids.len() == 1 {
+                    self.anchor = anchor.takes_attribution().then_some(anchor);
+                }
+                return;
+            }
             if let Some((author, date)) = attribution(whole.trim()) {
                 let author = author.unwrap_or_else(|| self.options.author.clone());
                 let serials = if anchor.attributed == 0 {

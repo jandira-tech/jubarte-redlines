@@ -42,6 +42,17 @@ new semantics.
 - Keep tests beside the behavior they protect and prefer deterministic tests.
 - After source changes, run formatting, clippy with `-D warnings`, the relevant
   tests with coverage, and a CLI `--help` smoke test.
+- Run tests with cargo-nextest (`cargo install --locked cargo-nextest`).
+  Day to day, run only the tests the change touches: `cargo nextest run
+  --test NAME` or `cargo nextest run -E 'test(PATTERN)'`.
+- Run the full suite rarely: before a release, or when a change reaches
+  across the crate. The full run is `cargo miri nextest run` (nightly with
+  the `miri` component; `.config/nextest.toml` holds its `default-miri`
+  profile). Know its cost before starting it:
+  - Under nextest, Miri compiles the test crate again for every test.
+  - Miri cannot spawn processes and implements few platform APIs. The
+    tests that run the `jubarte` binary or touch the file system fail
+    under it for that reason, not because of a bug in jubarte.
 - Rebuild native and WASM benchmark consumers from this checkout. Never patch a
   copied binary or generated WASM artifact as a substitute for a source fix.
 - Fidelity gates precede speed claims: native/WASM `script_redlines` scores must
