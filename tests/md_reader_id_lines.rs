@@ -1957,7 +1957,7 @@ fn literal_math_delimiters_keep_their_page_text() {
 fn bold_around_italic_does_not_print_empty_emphasis() {
     let markdown = "__Monthly distribution of fishing effort and common dolphin (_Delphinus delphis_) captures.__\n";
     let (c, _b, d) = idless_chain(markdown);
-    let line = "<b>Monthly distribution of fishing effort and common dolphin (</b>**_Delphinus delphis_**<b>) captures.</b>";
+    let line = "**Monthly distribution of fishing effort and common dolphin (**<b><i>Delphinus delphis</i></b>**) captures.**";
     assert!(c.lines().any(|l| l == line), "{c}");
     assert!(!c.contains("****"), "{c}");
     let xml = document_xml(&d);

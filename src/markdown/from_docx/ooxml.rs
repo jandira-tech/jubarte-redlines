@@ -1186,7 +1186,7 @@ mod tests {
         inline.push(") captures.", true, false, None);
         assert_eq!(
             inline.render(true),
-            "<b>Monthly distribution of fishing effort and common dolphin (</b>**_Delphinus delphis_**<b>) captures.</b>"
+            "**Monthly distribution of fishing effort and common dolphin (**<b><i>Delphinus delphis</i></b>**) captures.**"
         );
         // A different mark, or a space, is not emphasis around nothing.
         let mut inline = Inline::default();
