@@ -1166,10 +1166,11 @@ struct Writer<'o, 'a> {
     /// The change the open comment follows, while the comment may still
     /// turn out to be the change's attribution.
     comment_anchor: Option<Anchor>,
-    /// Highlights with no comment yet and no text since them outside a
-    /// highlight: pieces of one range whose comment follows the last piece.
-    pending_highlights: Vec<(usize, usize)>,
-    /// Where the comment range of a highlight inside a substitution's
+    /// Scopes (`{==…==}`) with no comment yet and no text since them
+    /// outside a scope: pieces of one range whose comment follows the last
+    /// piece.
+    pending_scopes: Vec<(usize, usize)>,
+    /// Where the comment range of a scope inside a substitution's
     /// inserted side ends, once that side moved before the deleted one.
     range_end_at: Option<usize>,
     /// The slot of the range a comment just took, while another comment
@@ -1179,7 +1180,7 @@ struct Writer<'o, 'a> {
     /// paragraph has no id line to name them.
     unplaced: HashMap<usize, Vec<view_notes::Tag>>,
     run_after_close: bool,
-    highlight: Option<(usize, usize)>,
+    scope: Option<(usize, usize)>,
     groups: usize,
     anchor: Option<Anchor>,
     comment: Option<Comment>,
@@ -1279,7 +1280,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             substituted: None,
             substitution: None,
             comment_anchor: None,
-            pending_highlights: Vec::new(),
+            pending_scopes: Vec::new(),
             range_end_at: None,
             shared_range: None,
             unplaced: HashMap::new(),
@@ -1287,7 +1288,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             paragraph_in_comments: None,
             page_break_due: false,
             run_after_close: false,
-            highlight: None,
+            scope: None,
             groups: 0,
             anchor: None,
             comment: None,
@@ -1613,7 +1614,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             TagEnd::Table => {
                 self.story().push(Item::TableEnd);
                 if !self.table_in_range() {
-                    self.pending_highlights.clear();
+                    self.pending_scopes.clear();
                     self.range_end_at = None;
                     self.shared_range = None;
                 }
@@ -2085,7 +2086,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// The open table lies in a comment's range (`in c5`): its cells'
-    /// highlights are pieces of that range, which goes on past them.
+    /// scopes are pieces of that range, which goes on past them.
     fn table_in_range(&self) -> bool {
         self.table_plan.as_ref().is_some_and(|plan| plan.in_comment)
     }
@@ -2098,7 +2099,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             content: Content::PageBreak,
             format: RunFormat::default(),
             change: None,
-            highlight: None,
+            scope: None,
         });
         let story = self.story();
         if matches!(story.last(), Some(Item::ParagraphEnd)) {
@@ -2129,7 +2130,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 content: Content::PageBreak,
                 format: RunFormat::default(),
                 change: None,
-                highlight: None,
+                scope: None,
             }));
         }
         if let Some(comment) = &mut self.comment {
@@ -2247,8 +2248,8 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.ensure_paragraph();
         let blank = matches!(&content, Content::Text(text) if text.trim().is_empty())
             || matches!(content, Content::Tab | Content::Break);
-        if self.highlight.is_none() && !blank {
-            self.pending_highlights.clear();
+        if self.scope.is_none() && !blank {
+            self.pending_scopes.clear();
             self.range_end_at = None;
             self.shared_range = None;
         }
@@ -2259,7 +2260,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             content,
             format: self.format(),
             change: self.change,
-            highlight: self.highlight.map(|(_, group)| group),
+            scope: self.scope.map(|(_, group)| group),
         };
         self.story().push(Item::Run(run));
         self.paragraph_runs += 1;
@@ -2426,13 +2427,13 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// deletion before an insertion as two changes, so they keep that
     /// order. Each side moves whole with its links, bookmarks and comments;
     /// a side holding more (a paragraph's end, half a link or comment range)
-    /// stays where it is. A highlight that ends inside a side
+    /// stays where it is. A scope that ends inside a side
     /// (`{~~old~>{==new==}~~}{>>c0 …<<}`) still has its range open: the side
     /// moves, and its range ends where the side does.
     fn inserted_side_first(&mut self) {
         /// The comment ranges a side leaves open, when it holds only runs,
         /// bookmarks, links that close within, and ranges that close
-        /// within or are highlights awaiting their comment (`awaiting`).
+        /// within or are scopes awaiting their comment (`awaiting`).
         fn whole(items: &[Item], awaiting: &[usize]) -> Option<usize> {
             let mut links = 0usize;
             let mut ranges = Vec::new();
@@ -2454,11 +2455,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some((start, Some(split))) = self.substitution.take() else {
             return;
         };
-        let awaiting: Vec<usize> = self
-            .pending_highlights
-            .iter()
-            .map(|(slot, _)| *slot)
-            .collect();
+        let awaiting: Vec<usize> = self.pending_scopes.iter().map(|(slot, _)| *slot).collect();
         let story = self.story();
         let end = story.len();
         if start > split || split > end {
@@ -2514,13 +2511,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 let slot = self.new_slot();
                 self.story().push(Item::RangeStart(slot));
                 self.shared_range = None;
-                self.highlight = Some((slot, self.groups));
+                self.scope = Some((slot, self.groups));
                 self.groups += 1;
                 self.anchor = None;
             }
             Token::HighlightEnd => {
-                if let Some((slot, group)) = self.highlight.take() {
-                    self.pending_highlights.push((slot, group));
+                if let Some((slot, group)) = self.scope.take() {
+                    self.pending_scopes.push((slot, group));
                     self.anchor = Some(Anchor {
                         slot,
                         group: Some(group),
@@ -2558,10 +2555,10 @@ impl<'o, 'a> Writer<'o, 'a> {
         });
     }
 
-    /// Anchors comment `id` on the span that just closed. A highlight's
+    /// Anchors comment `id` on the span that just closed. A scope's
     /// range starts at the first piece of the range it ends.
     fn anchor_comment(&mut self, anchor: Anchor, id: u32) {
-        let pieces = std::mem::take(&mut self.pending_highlights);
+        let pieces = std::mem::take(&mut self.pending_scopes);
         match anchor.group {
             Some(group) => {
                 let slot = pieces.first().map_or(anchor.slot, |(slot, _)| *slot);
@@ -2576,17 +2573,17 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
-    /// Anchors comment `id` on the highlights just before it, when there
+    /// Anchors comment `id` on the scopes just before it, when there
     /// are some (`{++{==text==}++}{>>who<<}{>>note<<}`), else on this point.
     fn anchor_here(&mut self, id: u32) {
         // The next comment on the text the last one took shares its range.
-        if self.pending_highlights.is_empty()
+        if self.pending_scopes.is_empty()
             && let Some(slot) = self.shared_range
         {
             self.document.shared.entry(slot).or_default().push(id);
             return;
         }
-        if let Some(&(slot, group)) = self.pending_highlights.last() {
+        if let Some(&(slot, group)) = self.pending_scopes.last() {
             let anchor = Anchor {
                 slot,
                 group: Some(group),
@@ -4417,7 +4414,7 @@ mod markdown_authored_boundary_tests {
                         content: Content::Text("Body".to_string()),
                         format: RunFormat::default(),
                         change: None,
-                        highlight: None
+                        scope: None
                     }),
                     Item::ParagraphEnd,
                 ]
