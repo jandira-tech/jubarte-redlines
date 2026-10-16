@@ -26,8 +26,11 @@ use crate::util::word_tokens as tokens;
 const WORD_DIFF_SIMILARITY: f64 = 0.3;
 
 /// Pairing lines in a changed hunk compares every old line with every new
-/// one; above this many comparisons lines pair by position.
-const MAX_PAIRINGS: usize = 400;
+/// one. Above this many comparisons the score matrix is too large to build
+/// (2000×2000 lines in one hunk), and lines pair by position instead. A
+/// realistic changed block stays under it; the bound is a memory guard,
+/// not a quality cutoff.
+const MAX_PAIRINGS: usize = 4_000_000;
 
 /// The two text snapshots, `old` and `new`, as one Markdown document
 /// whose CriticMarkup holds the changes: accepting them all gives `new`,
@@ -45,9 +48,10 @@ const MAX_PAIRINGS: usize = 400;
 /// added or removed whole is one change over its whole text, and a line
 /// added or removed inside a paragraph takes the line break with it
 /// (`first line{++\nnew line++}`). Numbers (`$5,000,000`, `04/20/26`,
-/// `3.5%`), emphasis and strikethrough delimiters, link syntax, and code
-/// spans are read whole; a change that touches any of them covers all of
-/// it (`*Buyer*` → `Buyer` is one change, not two). CriticMarkup
+/// `3.5%`), emphasis and strikethrough delimiters, and link syntax are
+/// read whole; a code span, an image and an equation are one atom, so a
+/// change that touches any of them covers all of it (`*Buyer*` → `Buyer`
+/// is one change, not two). CriticMarkup
 /// delimiters already in the text are escaped, so they stay text.
 ///
 /// # Inputs
@@ -210,28 +214,123 @@ fn table_row_change(line: &str, open: &str, close: &str) -> String {
 }
 
 /// CriticMarkup delimiters in text, escaped so they stay text.
+///
+/// A delimiter behind an odd number of backslashes is already escaped, as
+/// [`super::unified`] counts them, and one inside an inline code span is
+/// literal: escaping it would change the code the reader gives back.
 fn escape(text: &str) -> Cow<'_, str> {
-    const DELIMITERS: [(&str, &str); 11] = [
-        ("{++", "\\{++"),
-        ("{--", "\\{--"),
-        ("{~~", "\\{~~"),
-        ("{==", "\\{=="),
-        ("{>>", "\\{>>"),
-        ("++}", "++\\}"),
-        ("--}", "--\\}"),
-        ("~~}", "~~\\}"),
-        ("==}", "==\\}"),
-        ("<<}", "<<\\}"),
-        ("~>", "~\\>"),
-    ];
-    if !DELIMITERS.iter().any(|(d, _)| text.contains(d)) {
+    if !text_has_delimiter(text) {
         return Cow::Borrowed(text);
     }
-    let mut out = text.to_string();
-    for (delimiter, escaped) in DELIMITERS {
-        out = out.replace(delimiter, escaped);
+    let points = escape_points(text);
+    if points.is_empty() {
+        return Cow::Borrowed(text);
     }
+    let mut out = String::with_capacity(text.len() + points.len());
+    let mut from = 0;
+    for at in points {
+        out.push_str(&text[from..at]);
+        out.push('\\');
+        from = at;
+    }
+    out.push_str(&text[from..]);
     Cow::Owned(out)
+}
+
+/// Openers and the separator take the backslash before their first
+/// character; closers take it before `}`, which is how the marks are
+/// written today (`\{++`, `++\}`, `~\>`).
+const DELIMITERS: [(&str, usize); 11] = [
+    ("{++", 0),
+    ("{--", 0),
+    ("{~~", 0),
+    ("{==", 0),
+    ("{>>", 0),
+    ("++}", 2),
+    ("--}", 2),
+    ("~~}", 2),
+    ("==}", 2),
+    ("<<}", 2),
+    ("~>", 1),
+];
+
+fn text_has_delimiter(text: &str) -> bool {
+    DELIMITERS.iter().any(|(d, _)| text.contains(d))
+}
+
+/// Byte positions where a backslash must be inserted.
+fn escape_points(text: &str) -> Vec<usize> {
+    let spans = code_spans(text);
+    let bytes = text.as_bytes();
+    let mut points = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if let Some(end) = span_end(i, &spans) {
+            i = end;
+            continue;
+        }
+        for (delimiter, insert) in DELIMITERS {
+            if bytes[i..].starts_with(delimiter.as_bytes()) && !escaped_at(text, i) {
+                points.push(i + insert);
+                break;
+            }
+        }
+        i += 1;
+    }
+    points.sort_unstable();
+    points.dedup();
+    points
+}
+
+/// Inline code spans, which the reader passes over. A backtick run opens
+/// one when an equal run closes it before a blank line.
+fn code_spans(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'`' && !escaped_at(text, i) {
+            let width = bytes[i..].iter().take_while(|b| **b == b'`').count();
+            let mut end = i + width;
+            let mut closed = None;
+            while end < bytes.len() {
+                if bytes[end..].starts_with(b"\n\n") {
+                    break;
+                }
+                if bytes[end] == b'`' {
+                    let run = bytes[end..].iter().take_while(|b| **b == b'`').count();
+                    if run == width {
+                        closed = Some(end + run);
+                        break;
+                    }
+                    end += run;
+                } else {
+                    end += 1;
+                }
+            }
+            if let Some(close) = closed {
+                out.push((i, close));
+                i = close;
+                continue;
+            }
+            i += width;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+fn span_end(at: usize, spans: &[(usize, usize)]) -> Option<usize> {
+    spans
+        .iter()
+        .find(|&&(start, end)| start <= at && at < end)
+        .map(|&(_, end)| end)
+}
+
+/// Whether `at` follows an odd number of backslashes.
+fn escaped_at(text: &str, at: usize) -> bool {
+    text[..at].bytes().rev().take_while(|b| *b == b'\\').count() % 2 == 1
 }
 
 /// The marked-up document being written, line by line.
@@ -299,6 +398,12 @@ enum Entry<'a> {
 }
 
 fn hunk(out: &mut Output, olds: &[&str], news: &[&str], following: Option<&str>) {
+    if let Some(body) = reflow(olds, news) {
+        for line in body.split('\n') {
+            out.line(line);
+        }
+        return;
+    }
     let entries = pair(olds, news);
     let mut at = 0;
     while at < entries.len() {
@@ -342,42 +447,129 @@ fn hunk(out: &mut Output, olds: &[&str], news: &[&str], following: Option<&str>)
     }
 }
 
+/// A hard-wrapped paragraph whose lines all moved, as one word diff.
+///
+/// Line pairing rewrites each wrapped word into the next line (`{--runs--}`
+/// then `{++runs ++}`). When the two sides are one plain paragraph and
+/// joining them on spaces is a small change, the words are diffed across
+/// the line breaks instead. Independent lines (a list of items, each
+/// changed) are left to [`pair`]: their joined text is not a small change.
+fn reflow(olds: &[&str], news: &[&str]) -> Option<String> {
+    if !plain_paragraph(olds) || !plain_paragraph(news) || (olds.len() < 2 && news.len() < 2) {
+        return None;
+    }
+    let (old, new) = (olds.join("\n"), news.join("\n"));
+    let flat_old = old.replace('\n', " ");
+    let flat_new = new.replace('\n', " ");
+    if similarity(&flat_old, &flat_new) < 0.8 {
+        return None;
+    }
+    let flat = words_diff(&flat_old, &flat_new);
+    let marks =
+        flat.matches("{--").count() + flat.matches("{++").count() + flat.matches("{~~").count();
+    // More than a couple of word changes is a block of independent lines,
+    // not a wrap that shifted.
+    if marks > 2 {
+        return None;
+    }
+    // Keep the line breaks in the diff so accepting and rejecting still
+    // give the two wrappings. Do not join changes across a line break:
+    // that pulls a word that only moved to the next line into the change.
+    Some(reflow_body(&old, &new))
+}
+
+/// Word diff of a reflowed paragraph. A word match outranks a whitespace
+/// match, so a word that only moved onto the next line stays put; the line
+/// breaks still come along, and accepting or rejecting gives that wrapping.
+fn reflow_body(old: &str, new: &str) -> String {
+    let a = tokens(old);
+    let b = tokens(new);
+    let (n, m) = (a.len(), b.len());
+    let mut score = vec![0i32; (n + 1) * (m + 1)];
+    let cols = m + 1;
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            let take = if a[i] == b[j] {
+                score[(i + 1) * cols + j + 1] + token_weight(a[i])
+            } else {
+                i32::MIN / 4
+            };
+            score[i * cols + j] = take
+                .max(score[(i + 1) * cols + j])
+                .max(score[i * cols + j + 1]);
+        }
+    }
+    let mut segments: Vec<(bool, String, String)> = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+        let at = i * cols + j;
+        if i < n
+            && j < m
+            && a[i] == b[j]
+            && score[at] == score[(i + 1) * cols + j + 1] + token_weight(a[i])
+        {
+            push_reflow(&mut segments, true, a[i], b[j]);
+            i += 1;
+            j += 1;
+        } else if i < n && score[at] == score[(i + 1) * cols + j] {
+            push_reflow(&mut segments, false, a[i], "");
+            i += 1;
+        } else if j < m {
+            push_reflow(&mut segments, false, "", b[j]);
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    widen(segments, old, new)
+        .into_iter()
+        .map(|(equal, old_text, new_text)| {
+            if equal {
+                escape(&new_text).into_owned()
+            } else {
+                change(&old_text, &new_text)
+            }
+        })
+        .collect()
+}
+
+/// A word is worth more than the space or line break it moved across.
+fn token_weight(token: &str) -> i32 {
+    if token.chars().any(char::is_alphanumeric) {
+        3
+    } else {
+        1
+    }
+}
+
+fn push_reflow(segments: &mut Vec<(bool, String, String)>, equal: bool, old: &str, new: &str) {
+    match segments.last_mut() {
+        Some((same, o, n)) if *same == equal => {
+            o.push_str(old);
+            n.push_str(new);
+        }
+        _ => segments.push((equal, old.to_string(), new.to_string())),
+    }
+}
+
+/// Lines of one paragraph: no block marker, no blank line, each line
+/// continuing the first.
+fn plain_paragraph(lines: &[&str]) -> bool {
+    let Some(first) = lines.first() else {
+        return false;
+    };
+    marker_len(first) == 0
+        && !first.trim().is_empty()
+        && lines[1..].iter().all(|line| continues(line))
+}
+
 /// Aligns the lines of a hunk: the most similar lines with the same markers
 /// pair up, in order; lines left between two pairs pair by position when
 /// their markers match.
 fn pair<'a>(olds: &[&'a str], news: &[&'a str]) -> Vec<Entry<'a>> {
     let mut matched: Vec<(usize, usize)> = Vec::new();
-    if olds.len() * news.len() <= MAX_PAIRINGS {
-        // Weighted longest common subsequence over similar lines.
-        let (k, m) = (olds.len(), news.len());
-        let mut score = vec![vec![0.0f64; m + 1]; k + 1];
-        for i in (0..k).rev() {
-            for j in (0..m).rev() {
-                let s = similarity(olds[i], news[j]);
-                let take = if s >= WORD_DIFF_SIMILARITY && same_marker(olds[i], news[j]) {
-                    s + score[i + 1][j + 1]
-                } else {
-                    f64::MIN
-                };
-                score[i][j] = take.max(score[i + 1][j]).max(score[i][j + 1]);
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < k && j < m {
-            let s = similarity(olds[i], news[j]);
-            if s >= WORD_DIFF_SIMILARITY
-                && same_marker(olds[i], news[j])
-                && (score[i][j] - (s + score[i + 1][j + 1])).abs() < 1e-9
-            {
-                matched.push((i, j));
-                i += 1;
-                j += 1;
-            } else if (score[i][j] - score[i + 1][j]).abs() < 1e-9 {
-                i += 1;
-            } else {
-                j += 1;
-            }
-        }
+    if olds.len().saturating_mul(news.len()) <= MAX_PAIRINGS {
+        matched = pair_by_similarity(olds, news);
     }
     // Lines left between two pairs (or at the ends) pair by position.
     let mut entries = Vec::new();
@@ -402,38 +594,193 @@ fn pair<'a>(olds: &[&'a str], news: &[&'a str]) -> Vec<Entry<'a>> {
     entries
 }
 
+/// Weighted longest common subsequence over similar lines. Each line's
+/// words and marker shape are computed once; each similarity once.
+fn pair_by_similarity(olds: &[&str], news: &[&str]) -> Vec<(usize, usize)> {
+    let mut ids = std::collections::HashMap::new();
+    let old_words: Vec<Vec<u32>> = olds
+        .iter()
+        .map(|line| {
+            body_words(line)
+                .into_iter()
+                .map(|word| intern(&mut ids, word))
+                .collect()
+        })
+        .collect();
+    let new_words: Vec<Vec<u32>> = news
+        .iter()
+        .map(|line| {
+            body_words(line)
+                .into_iter()
+                .map(|word| intern(&mut ids, word))
+                .collect()
+        })
+        .collect();
+    let old_shape: Vec<String> = olds.iter().map(|line| marker_shape(line)).collect();
+    let new_shape: Vec<String> = news.iter().map(|line| marker_shape(line)).collect();
+    let (k, m) = (olds.len(), news.len());
+    let mut sim = vec![0.0f64; k * m];
+    for i in 0..k {
+        for j in 0..m {
+            sim[i * m + j] = id_similarity(&old_words[i], &new_words[j]);
+        }
+    }
+    let cols = m + 1;
+    let mut score = vec![0.0f64; (k + 1) * cols];
+    for i in (0..k).rev() {
+        for j in (0..m).rev() {
+            let s = sim[i * m + j];
+            let take = if s >= WORD_DIFF_SIMILARITY && old_shape[i] == new_shape[j] {
+                s + score[(i + 1) * cols + j + 1]
+            } else {
+                f64::MIN
+            };
+            score[i * cols + j] = take
+                .max(score[(i + 1) * cols + j])
+                .max(score[i * cols + j + 1]);
+        }
+    }
+    let mut matched = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < k && j < m {
+        let s = sim[i * m + j];
+        if s >= WORD_DIFF_SIMILARITY
+            && old_shape[i] == new_shape[j]
+            && (score[i * cols + j] - (s + score[(i + 1) * cols + j + 1])).abs() < 1e-9
+        {
+            matched.push((i, j));
+            i += 1;
+            j += 1;
+        } else if (score[i * cols + j] - score[(i + 1) * cols + j]).abs() < 1e-9 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    matched
+}
+
+/// Dice coefficient of two interned word sequences. A line pair that cannot
+/// reach the threshold even if every word matched is 0, so the matrix skips
+/// the subsequence.
+fn id_similarity(a: &[u32], b: &[u32]) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let best = 2.0 * a.len().min(b.len()) as f64 / (a.len() + b.len()) as f64;
+    if best < WORD_DIFF_SIMILARITY {
+        return 0.0;
+    }
+    let common = common_ids(a, b);
+    2.0 * common as f64 / (a.len() + b.len()) as f64
+}
+
+fn common_ids(a: &[u32], b: &[u32]) -> usize {
+    if a.len() <= 32 && b.len() <= 32 {
+        let mut prev = [0u16; 33];
+        let mut cur = [0u16; 33];
+        for &aw in a {
+            for (j, &bw) in b.iter().enumerate() {
+                cur[j + 1] = if aw == bw {
+                    prev[j] + 1
+                } else {
+                    cur[j].max(prev[j + 1])
+                };
+            }
+            prev = cur;
+        }
+        return prev[b.len()] as usize;
+    }
+    let mut prev = vec![0usize; b.len() + 1];
+    let mut cur = vec![0usize; b.len() + 1];
+    for &aw in a {
+        for (j, &bw) in b.iter().enumerate() {
+            cur[j + 1] = if aw == bw {
+                prev[j] + 1
+            } else {
+                cur[j].max(prev[j + 1])
+            };
+        }
+        std::mem::swap(&mut prev, &mut cur);
+        cur.fill(0);
+    }
+    prev[b.len()]
+}
+
+fn intern<'a>(ids: &mut std::collections::HashMap<&'a str, u32>, word: &'a str) -> u32 {
+    let next = ids.len() as u32;
+    *ids.entry(word).or_insert(next)
+}
+
+/// Words of a line after its block marker. List numbers live in the marker,
+/// so they cannot pull a pairing toward the same number.
+fn body_words(line: &str) -> Vec<&str> {
+    words(&line[marker_len(line)..])
+}
+
 /// Whether two lines open the same kind of block. An ordered list's numbers
 /// do not count: Word numbers items itself.
 fn same_marker(old: &str, new: &str) -> bool {
-    fn shape(marker: &str) -> String {
-        let mut out = String::with_capacity(marker.len());
-        for c in marker.chars() {
-            if c.is_ascii_digit() {
-                if !out.ends_with('0') {
-                    out.push('0');
-                }
-            } else {
-                out.push(c);
+    marker_shape(old) == marker_shape(new)
+}
+
+fn marker_shape(line: &str) -> String {
+    let marker = &line[..marker_len(line)];
+    let mut out = String::with_capacity(marker.len());
+    for c in marker.chars() {
+        if c.is_ascii_digit() {
+            if !out.ends_with('0') {
+                out.push('0');
             }
+        } else {
+            out.push(c);
         }
-        out
     }
-    shape(&old[..marker_len(old)]) == shape(&new[..marker_len(new)])
+    out
 }
 
 /// The share of words two lines have in common (0 to 1).
 pub(super) fn similarity(old: &str, new: &str) -> f64 {
-    let a: Vec<&str> = words(old);
-    let b: Vec<&str> = words(new);
+    let a = words(old);
+    let b = words(new);
+    let mut prev = Vec::new();
+    let mut cur = Vec::new();
+    word_similarity(&a, &b, &mut prev, &mut cur)
+}
+
+/// Dice coefficient of two word sequences. `prev` and `cur` are scratch
+/// space so a pairing matrix does not allocate per cell.
+fn word_similarity(a: &[&str], b: &[&str], prev: &mut Vec<usize>, cur: &mut Vec<usize>) -> f64 {
     if a.is_empty() && b.is_empty() {
         return 1.0;
     }
-    let common: usize = capture_diff_slices(Algorithm::Myers, &a, &b)
-        .iter()
-        .filter(|op| op.as_tag_tuple().0 == DiffTag::Equal)
-        .map(|op| op.old_range().len())
-        .sum();
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let common = common_words(a, b, prev, cur);
     2.0 * common as f64 / (a.len() + b.len()) as f64
+}
+
+/// Length of the longest common subsequence of `a` and `b`.
+fn common_words(a: &[&str], b: &[&str], prev: &mut Vec<usize>, cur: &mut Vec<usize>) -> usize {
+    prev.clear();
+    prev.resize(b.len() + 1, 0);
+    for &aw in a {
+        cur.clear();
+        cur.resize(b.len() + 1, 0);
+        for (j, &bw) in b.iter().enumerate() {
+            cur[j + 1] = if aw == bw {
+                prev[j] + 1
+            } else {
+                cur[j].max(prev[j + 1])
+            };
+        }
+        std::mem::swap(prev, cur);
+    }
+    prev[b.len()]
 }
 
 fn words(line: &str) -> Vec<&str> {
@@ -527,40 +874,47 @@ struct Atom {
     triggers: Vec<(usize, usize)>,
 }
 
-/// Numbers (`$5,000,000`, `04/20/26`, `3.5%`), the delimiters of emphasis,
-/// strikethrough and code, and the syntax of links (all but their text).
+/// Numbers (`$5,000,000`, `04/20/26`, `3.5%`), the delimiters of emphasis
+/// and strikethrough, link syntax (all but its text), and a whole code
+/// span, image or equation. The reader treats those three as literal, so a
+/// mark inside one would not accept or reject.
 fn atoms(text: &str) -> Vec<Atom> {
     let mut out = numbers(text);
     let mut open: Vec<(usize, Option<(usize, usize)>)> = Vec::new();
-    let options = Options::ENABLE_STRIKETHROUGH;
+    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_MATH;
     for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
         match event {
-            Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. }) => {
+            Event::Start(
+                Tag::Emphasis
+                | Tag::Strong
+                | Tag::Strikethrough
+                | Tag::Link { .. }
+                | Tag::Image { .. },
+            ) => {
                 open.push((range.start, None));
             }
-            Event::End(
-                TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link,
-            ) => {
+            Event::End(end) if is_atom_end(&end) => {
                 if let Some((start, inner)) = open.pop() {
                     let (inner_start, inner_end) = inner.unwrap_or((range.end, range.end));
+                    // An image's alt is part of the atom, not text inside it:
+                    // a changed alt or target wraps the whole image. A link's
+                    // text stays editable; only its syntax widens.
+                    let triggers = if matches!(end, TagEnd::Image) {
+                        vec![(start, range.end)]
+                    } else {
+                        vec![(start, inner_start), (inner_end, range.end)]
+                    };
                     out.push(Atom {
                         range: (start, range.end),
-                        triggers: vec![(start, inner_start), (inner_end, range.end)],
+                        triggers,
                     });
                     extend(&mut open, (start, range.end));
                 }
             }
-            Event::Code(_) => {
-                let ticks = text[range.clone()]
-                    .bytes()
-                    .take_while(|b| *b == b'`')
-                    .count();
+            Event::Code(_) | Event::InlineMath(_) | Event::DisplayMath(_) => {
                 out.push(Atom {
                     range: (range.start, range.end),
-                    triggers: vec![
-                        (range.start, range.start + ticks),
-                        (range.end - ticks, range.end),
-                    ],
+                    triggers: vec![(range.start, range.end)],
                 });
                 extend(&mut open, (range.start, range.end));
             }
@@ -568,6 +922,14 @@ fn atoms(text: &str) -> Vec<Atom> {
         }
     }
     out
+}
+
+/// Whether `end` closes a span [`atoms`] reads whole.
+fn is_atom_end(end: &TagEnd) -> bool {
+    matches!(
+        end,
+        TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link | TagEnd::Image
+    )
 }
 
 /// Widens the innermost open span's text to cover `range`.
@@ -745,7 +1107,11 @@ fn group(out: &mut Output, side: Side, lines: &[&str], next: Option<&str>) {
     }
     let (open, close) = side.delimiters();
     let mut rest = lines;
-    if out.started && open_paragraph(&out.last) && continues(rest[0]) {
+    // A list item, heading or quote is not the paragraph a following
+    // plain line continues: gluing them writes the new paragraph onto the
+    // deleted item (`- {--hello--}{++\nhello++}`).
+    if out.started && open_paragraph(&out.last) && marker_len(&out.last) == 0 && continues(rest[0])
+    {
         let length = rest.iter().take_while(|l| continues(l)).count();
         let joined: Vec<Cow<'_, str>> = rest[..length].iter().map(|l| escape(l)).collect();
         out.append(&format!("{open}\n{}{close}", joined.join("\n")));
@@ -771,7 +1137,7 @@ fn group(out: &mut Output, side: Side, lines: &[&str], next: Option<&str>) {
         let first = &block[0][marker..];
         // A block that follows other text of its paragraph gets a blank line,
         // so it stays a block of its own.
-        if out.started && open_paragraph(&out.last) && marker == 0 {
+        if out.started && open_paragraph(&out.last) && marker_len(&out.last) == 0 && marker == 0 {
             out.line("");
         }
         if first.is_empty() && block.len() == 1 {
@@ -990,5 +1356,200 @@ mod tests {
             diff_markdown("Lorem ipsum dolor.\n", "Completely other words here.\n"),
             "{~~Lorem ipsum dolor.~>Completely other words here.~~}\n"
         );
+    }
+
+    fn round_trip(old: &str, new: &str) {
+        let diff = diff_markdown(old, new);
+        assert_eq!(
+            crate::markdown::resolve_critic(&diff, crate::markdown::TrackChanges::Accept),
+            new,
+            "accept {diff:?}"
+        );
+        assert_eq!(
+            crate::markdown::resolve_critic(&diff, crate::markdown::TrackChanges::Reject),
+            old,
+            "reject {diff:?}"
+        );
+    }
+
+    #[test]
+    fn a_changed_code_span_is_wrapped_whole() {
+        let (old, new) = ("Call `foo()` now.\n", "Call `bar()` now.\n");
+        assert_eq!(
+            diff_markdown(old, new),
+            "Call {~~`foo()`~>`bar()`~~} now.\n"
+        );
+        // Delimiters inside the span stay literal: escaping them would
+        // change the code the reader gives back.
+        let (old, new) = ("use `{++}` here.\n", "use `{--}` here.\n");
+        assert_eq!(diff_markdown(old, new), "use {~~`{++}`~>`{--}`~~} here.\n");
+        round_trip(old, new);
+        round_trip("Call `foo()` now.\n", "Call `bar()` now.\n");
+    }
+
+    #[test]
+    fn a_changed_image_is_wrapped_whole() {
+        let target = (
+            "See ![cat](old.png) now.\n",
+            "See ![cat](new.png) now.\n",
+            "See {~~![cat](old.png)~>![cat](new.png)~~} now.\n",
+        );
+        let alt = (
+            "See ![old](a.png) now.\n",
+            "See ![new](a.png) now.\n",
+            "See {~~![old](a.png)~>![new](a.png)~~} now.\n",
+        );
+        for (old, new, expected) in [target, alt] {
+            assert_eq!(diff_markdown(old, new), expected, "{old}");
+            round_trip(old, new);
+        }
+    }
+
+    #[test]
+    fn a_changed_equation_is_wrapped_whole() {
+        for (old, new, expected) in [
+            (
+                "Area is $a+b$ now.\n",
+                "Area is $a+c$ now.\n",
+                "Area is {~~$a+b$~>$a+c$~~} now.\n",
+            ),
+            (
+                "Area is $$a+b$$ now.\n",
+                "Area is $$a+c$$ now.\n",
+                "Area is {~~$$a+b$$~>$$a+c$$~~} now.\n",
+            ),
+        ] {
+            assert_eq!(diff_markdown(old, new), expected, "{old}");
+            round_trip(old, new);
+        }
+    }
+
+    #[test]
+    fn escape_counts_backslashes_and_skips_code() {
+        // An odd run of backslashes already escapes the opener. Adding
+        // another would make the reader see a real change.
+        assert_eq!(escape(r"\{++"), r"\{++");
+        assert_eq!(escape(r"\\{++"), r"\\\{++");
+        assert_eq!(escape(r"\~>"), r"\~>");
+        assert_eq!(escape("a {++ b ++} ~> c"), "a \\{++ b ++\\} ~\\> c");
+        // Inline code is literal, so a delimiter there is not escaped.
+        assert_eq!(escape("a `{++}` b"), "a `{++}` b");
+        assert_eq!(escape("a `{++}` {++} b"), "a `{++}` \\{++\\} b");
+        let text = "call `{++}` now\n";
+        assert_eq!(diff_markdown(text, text), text);
+    }
+
+    #[test]
+    fn twenty_one_changed_lines_and_an_insertion_pair_by_content() {
+        // 21×22 comparisons is over the old 400 cap, so pairing fell back
+        // to position and each line was rewritten into its neighbour.
+        let old: String = (0..21)
+            .map(|i| format!("item {i:02} stays unique here\n"))
+            .collect();
+        let new: String = std::iter::once("item inserted at the top\n".to_string())
+            .chain((0..21).map(|i| format!("item {i:02} stays unique there\n")))
+            .collect();
+        let diff = diff_markdown(&old, &new);
+        // The inserted line continues into the paragraph, so its line break
+        // belongs to the insertion.
+        assert!(
+            diff.starts_with(
+                "{++item inserted at the top\n++}item 00 stays unique {~~here~>there~~}\n"
+            ),
+            "{diff}"
+        );
+        assert!(
+            diff.contains("item 20 stays unique {~~here~>there~~}"),
+            "{diff}"
+        );
+        assert!(!diff.contains("inserted at the top~>"), "{diff}");
+        round_trip(&old, &new);
+    }
+
+    #[test]
+    fn a_large_changed_hunk_still_pairs_similar_lines() {
+        let n = 1500;
+        let old: String = (0..n)
+            .map(|i| format!("row {i} alpha beta gamma\n"))
+            .collect();
+        let new: String = std::iter::once("row inserted zeta eta theta\n".to_string())
+            .chain((0..n).map(|i| format!("row {i} alpha beta delta\n")))
+            .collect();
+        let diff = diff_markdown(&old, &new);
+        assert!(
+            diff.contains("{++row inserted zeta eta theta\n++}row 0 alpha beta {~~gamma~>delta~~}"),
+            "{}",
+            &diff[..diff.len().min(400)]
+        );
+        assert!(diff.contains("row 1499 alpha beta {~~gamma~>delta~~}"));
+    }
+
+    #[test]
+    fn list_numbers_do_not_skew_pairing() {
+        let old = "1. alpha\n2. beta\n3. gamma\n";
+        let new = "1. inserted\n2. alpha\n3. beta\n4. gamma\n";
+        assert_eq!(
+            diff_markdown(old, new),
+            "1. {++inserted++}\n2. alpha\n3. beta\n4. gamma\n"
+        );
+    }
+
+    #[test]
+    fn a_list_item_turned_into_a_paragraph_is_not_glued() {
+        let old = "- hello world\n";
+        let new = "hello world\n";
+        let diff = diff_markdown(old, new);
+        assert!(
+            !diff
+                .lines()
+                .any(|line| line.contains("{--") && line.contains("{++")),
+            "{diff}"
+        );
+        assert_eq!(diff, "- {--hello world--}\n{++hello world++}\n");
+    }
+
+    /// Words of `text` wrapped to `width` columns, the way a hard wrap
+    /// joins lines back with a space.
+    fn wrap_words(text: &str, width: usize) -> String {
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for word in text.split_whitespace() {
+            if !line.is_empty() && line.len() + 1 + word.len() > width {
+                lines.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        lines.push(String::new());
+        lines.join("\n")
+    }
+
+    #[test]
+    fn one_word_added_to_a_hard_wrapped_paragraph_is_one_change() {
+        let base = "The quick brown fox jumps over the lazy dog and then runs around the old barn before sunset while the farmer watches quietly from the porch.";
+        let added = base.replacen("lazy", "very lazy", 1);
+        for width in [20, 24, 28, 32, 40, 48] {
+            let old = wrap_words(base, width);
+            let new = wrap_words(&added, width);
+            let diff = diff_markdown(&old, &new);
+            round_trip(&old, &new);
+            assert!(
+                diff.contains("{++very") || diff.contains("{++ very"),
+                "width {width}: the added word is not one insertion\n{diff}"
+            );
+            // A word that only moved onto the next line is not rewritten.
+            for word in ["runs", "barn", "while", "watches"] {
+                assert!(
+                    !diff.contains(&format!("{{--{word}"))
+                        && !diff.contains(&format!("{{++{word}")),
+                    "width {width}: {word} was rewritten\n{diff}"
+                );
+            }
+        }
     }
 }
