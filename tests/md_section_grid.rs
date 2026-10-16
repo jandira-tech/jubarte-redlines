@@ -95,11 +95,49 @@ fn a_line_grid_comes_back_in_every_section() {
 }
 
 #[test]
+fn a_section_that_states_its_type_comes_back() {
+    // `w:type` says how a section starts; `nextPage` is the default, but a
+    // document that states it keeps it (ids-authors, ids-comments, #528),
+    // and `continuous` must come back too (ids-font-sizes).
+    for ty in ["nextPage", "continuous", "evenPage", "oddPage"] {
+        let source = two_sections(
+            format!(r#"<w:type w:val="{ty}"/><w:cols w:space="720"/>"#).as_str(),
+            format!(r#"<w:type w:val="{ty}"/><w:cols w:space="720"/>"#).as_str(),
+        );
+        let first = view(&source);
+        assert!(first.contains(&format!("starts {ty}")), "{ty}:\n{first}");
+        let again = write(&first);
+        for sect in sections(&again) {
+            assert!(
+                sect.contains(&format!(r#"<w:type w:val="{ty}"/>"#)),
+                "{ty}: {sect}"
+            );
+        }
+        assert_eq!(view(&again), first);
+    }
+}
+
+#[test]
+fn a_section_that_states_no_type_writes_none() {
+    let source = two_sections(r#"<w:cols w:space="720"/>"#, r#"<w:cols w:space="720"/>"#);
+    let first = view(&source);
+    assert!(!first.contains("starts "), "{first}");
+    let again = write(&first);
+    for sect in sections(&again) {
+        assert!(!sect.contains("<w:type"), "{sect}");
+    }
+    assert_eq!(view(&again), first);
+}
+
+#[test]
 fn a_title_page_switched_off_is_not_a_first_page() {
     // `w:val="0"` states the default: no first page of the section's own.
     // The round trip turned it into `first: none`, and the docx it wrote
     // gained a `w:titlePg` Word's document never had (ids-tables, #528).
-    let source = two_sections(r#"<w:cols w:space="720"/>"#, r#"<w:cols w:space="720"/><w:titlePg w:val="0"/>"#);
+    let source = two_sections(
+        r#"<w:cols w:space="720"/>"#,
+        r#"<w:cols w:space="720"/><w:titlePg w:val="0"/>"#,
+    );
     let first = view(&source);
     assert!(!first.contains("first: none"), "{first}");
     let again = write(&first);
