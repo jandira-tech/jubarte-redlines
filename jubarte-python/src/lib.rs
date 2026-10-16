@@ -57,6 +57,7 @@ fn pdf_options(
         } else {
             jubarte::convert::CommentPlacement::Margin
         },
+        comment_notes: false,
         changed_only: page.changed_only,
     })
 }
