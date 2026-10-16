@@ -1653,8 +1653,9 @@ pub(super) struct PageSetup {
     /// A line between the columns (`w:cols w:sep`).
     pub column_line: bool,
     /// The grid the lines snap to (`w:docGrid`): Word's type (`lines`,
-    /// `linesAndChars`, `snapToChars`) and line pitch in twips.
-    pub grid: Option<(&'static str, u32)>,
+    /// `linesAndChars`, `snapToChars`) and line pitch in twips, which a
+    /// character grid may leave out.
+    pub grid: Option<(&'static str, Option<u32>)>,
     /// `w:docGrid w:charSpace`, for a grid with characters.
     pub char_space: i32,
 }
@@ -1675,13 +1676,15 @@ impl PageSetup {
         };
         let sep = if self.column_line { " w:sep=\"1\"" } else { "" };
         let grid = match self.grid {
-            Some((kind, pitch)) if kind == "lines" => {
-                format!("<w:docGrid w:type=\"{kind}\" w:linePitch=\"{pitch}\"/>")
+            Some((kind, pitch)) => {
+                let pitch = pitch.map_or_else(String::new, |p| format!(" w:linePitch=\"{p}\""));
+                let space = if kind == "lines" {
+                    String::new()
+                } else {
+                    format!(" w:charSpace=\"{}\"", self.char_space)
+                };
+                format!("<w:docGrid w:type=\"{kind}\"{pitch}{space}/>")
             }
-            Some((kind, pitch)) => format!(
-                "<w:docGrid w:type=\"{kind}\" w:linePitch=\"{pitch}\" w:charSpace=\"{}\"/>",
-                self.char_space
-            ),
             None => String::new(),
         };
         format!(
@@ -1766,6 +1769,11 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
             page.column_line = true;
             continue;
         }
+        if clause == "char grid" {
+            // A character grid with no line pitch.
+            page.grid = Some(("snapToChars", None));
+            continue;
+        }
         let (name, value) = clause.rsplit_once(' ')?;
         let grid = match name {
             "line grid" => Some("lines"),
@@ -1774,7 +1782,7 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
             _ => None,
         };
         if let Some(kind) = grid {
-            page.grid = Some((kind, grid_pitch(value)?));
+            page.grid = Some((kind, Some(grid_pitch(value)?)));
             continue;
         }
         if name == "char space" {

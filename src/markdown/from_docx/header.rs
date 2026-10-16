@@ -590,11 +590,21 @@ fn page_setup(sect: &Element) -> String {
             Some("snapToChars") => Some("char grid"),
             _ => None,
         }
-        && let Some(pitch) = twips(grid, "linePitch").filter(|&p| p > 0.0)
+        // A character grid needs no line pitch (`snapToChars` sets only
+        // the character spacing); the line grids do.
+        && let Some(pitch) = match twips(grid, "linePitch").filter(|&p| p > 0.0) {
+            Some(pitch) => Some(Some(pitch)),
+            None => (kind == "char grid").then_some(None),
+        }
     {
-        let points = format!("{:.2}", pitch / 20.0);
-        let points = points.trim_end_matches('0').trim_end_matches('.');
-        out.push_str(&format!(", {kind} {points}pt"));
+        match pitch {
+            Some(pitch) => {
+                let points = format!("{:.2}", pitch / 20.0);
+                let points = points.trim_end_matches('0').trim_end_matches('.');
+                out.push_str(&format!(", {kind} {points}pt"));
+            }
+            None => out.push_str(&format!(", {kind}")),
+        }
         if kind != "line grid"
             && let Some(space) = grid
                 .attr("charSpace")
