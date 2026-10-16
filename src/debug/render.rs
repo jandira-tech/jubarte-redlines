@@ -107,6 +107,9 @@ fn parse(pkg: &Package, name: &str) -> Option<(Dom, NodeId)> {
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc)?;
+    // Strict files write universal measures (`612pt`) where Transitional
+    // writes integer twips: list them alike.
+    crate::comparer::finalize::normalize_universal_measures(&mut dom, root);
     Some((dom, root))
 }
 
@@ -830,17 +833,9 @@ fn merge_pairs(base: &mut Vec<(String, String)>, over: &[(String, String)]) {
 /// `table N RxC style=… float(…) shd=… cells-shd[…] style-shd[…] "first row"`.
 fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     let tblpr = child(dom, t, "tblPr");
-    // customXml-wrapped rows are the table's own, as the converter lays
-    // them out.
-    let rows: Vec<NodeId> = dom
-        .elements(t, None)
-        .into_iter()
-        .flat_map(|c| match local(dom, c).as_str() {
-            "tr" => vec![c],
-            "customXml" => kids(dom, c, "tr"),
-            _ => Vec::new(),
-        })
-        .collect();
+    // Wrapper-held rows are the table's own, as the converter lays them
+    // out (`customXml`, and `sdt`/`sdtContent` as Strict files spell them).
+    let rows: Vec<NodeId> = crate::convert::wrapped_children(dom, t, "tr");
     // The columns the converter lays out: the grid, or the widest row
     // (its spans, grid before/after and, with a live `w:cellDel`, the
     // "Deleted Cells" column Word's All Markup appends).
@@ -983,7 +978,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         let texts: Vec<String> = crate::convert::wrapped_children(dom, *first, "tc")
             .into_iter()
             .map(|tc| {
-                kids(dom, tc, "p")
+                crate::convert::wrapped_children(dom, tc, "p")
                     .into_iter()
                     .map(|p| own_text(dom, p, p))
                     .collect::<Vec<_>>()
@@ -1455,6 +1450,54 @@ mod story_diagnostic_contract_tests {
                 0
             )
         );
+    }
+
+    #[test]
+    fn section_geometry_prints_one_spelling_of_the_same_measure() {
+        // A strict `w:sectPr` writes universal measures (`612pt`) where
+        // the transitional form writes twips: the diagnostic lists the
+        // twips, so a round trip compares one spelling while a changed
+        // size still differs and a malformed value stays raw. Packages,
+        // not `report`'s bare Dom: the normalisation lives in `parse`.
+        let sect = |size: &str, mar: &str| {
+            let main = document(&format!(
+                r#"<w:p><w:r><w:t>x</w:t></w:r></w:p><w:sectPr><w:pgSz {size}/><w:pgMar {mar}/></w:sectPr>"#
+            ));
+            let root_rels = format!(
+                r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+            );
+            let pkg = package(&[("_rels/.rels", &root_rels), ("word/document.xml", &main)]);
+            render_parts(&pkg, None)["word/document.xml"]
+                .0
+                .iter()
+                .find(|l| l.starts_with("  section"))
+                .cloned()
+                .unwrap()
+        };
+        let strict = sect(
+            r#"w:w="612pt" w:h="792pt""#,
+            r#"w:top="72pt" w:right="1440" w:bottom="1in" w:left="36pt" w:header="0.5in" w:footer="720""#,
+        );
+        assert_eq!(
+            strict,
+            "  section 1 page=12240x15840 margins=1440,1440,1440,720 header=720 footer=720"
+        );
+        let transitional = sect(
+            r#"w:w="12240" w:h="15840""#,
+            r#"w:top="1440" w:right="1440" w:bottom="1440" w:left="720" w:header="720" w:footer="720""#,
+        );
+        assert_eq!(transitional, strict);
+        // Wider than tall is landscape in either spelling, and a page a
+        // twip apart is a different page.
+        assert!(sect(r#"w:w="792pt" w:h="612pt""#, "").contains("page=15840x12240 landscape"));
+        assert_ne!(
+            sect(
+                r#"w:w="12241" w:h="15840""#,
+                r#"w:top="1440" w:right="1440" w:bottom="1440" w:left="720" w:header="720" w:footer="720""#
+            ),
+            strict
+        );
+        assert!(sect(r#"w:w="6..1" w:h="792pt""#, "").contains("page=6..1x15840"));
     }
 
     #[test]
