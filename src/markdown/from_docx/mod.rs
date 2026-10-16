@@ -186,6 +186,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
                 .chain(comments_root.as_ref()),
+            true,
         );
         // A heading's own slug bookmark prints no anchor (the link reaches
         // the heading by its slug): it keeps no two marks apart.
@@ -366,6 +367,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
                 .chain(comments_root.as_ref()),
+            options.ids,
         ),
         monospace_paragraph: false,
         closing_fields: HashSet::new(),
@@ -2178,8 +2180,9 @@ struct Writer<'a> {
     lead: Option<String>,
     /// Inside a nested table, whose cells are flattened onto one line.
     flattening: usize,
-    /// The bookmarks a link or a reference field names, which print as
-    /// `<a id="name"></a>` where they start.
+    /// The bookmarks a link or a reference field names, and Word's
+    /// cross-reference targets (`_Ref…`), which print as `<a id="name"></a>`
+    /// where they start.
     bookmarks: HashSet<String>,
     /// The tables differ in style (two styles, or one and none): each
     /// table line names its own, `style Ledger`.
@@ -4253,20 +4256,25 @@ fn field_words(instruction: &str) -> Vec<(String, bool)> {
 }
 
 /// The bookmarks under `roots` a link (`w:hyperlink w:anchor`, `HYPERLINK
-/// \l`) or a reference field (`REF`, `PAGEREF`, `NOTEREF`) names.
-fn bookmark_targets<'e>(roots: impl Iterator<Item = &'e Element>) -> HashSet<String> {
-    fn walk(e: &Element, codes: &mut Vec<String>, out: &mut HashSet<String>) {
+/// \l`) or a reference field (`REF`, `PAGEREF`, `NOTEREF`) names. Unless
+/// `fields_print` (the agent view, which prints a field as its code), every
+/// `_Ref…` bookmark too: Word's cross-reference targets.
+fn bookmark_targets<'e>(
+    roots: impl Iterator<Item = &'e Element>,
+    fields_print: bool,
+) -> HashSet<String> {
+    fn walk(e: &Element, refs: bool, codes: &mut Vec<String>, out: &mut HashSet<String>) {
         for c in e.elements() {
             match c.local() {
                 "hyperlink" => {
                     if let Some(anchor) = c.attr("anchor").filter(|a| !a.is_empty()) {
                         out.insert(anchor.to_string());
                     }
-                    walk(c, codes, out);
+                    walk(c, refs, codes, out);
                 }
                 "fldSimple" => {
                     codes.push(c.attr("instr").unwrap_or_default().to_string());
-                    walk(c, codes, out);
+                    walk(c, refs, codes, out);
                 }
                 "fldChar" if c.attr("fldCharType") == Some("begin") => codes.push(String::new()),
                 "instrText" | "delInstrText" => {
@@ -4274,14 +4282,23 @@ fn bookmark_targets<'e>(roots: impl Iterator<Item = &'e Element>) -> HashSet<Str
                         code.push_str(&c.text());
                     }
                 }
-                _ => walk(c, codes, out),
+                // Word's cross-reference targets print whether or not a
+                // field still names them: the plain view prints a REF field
+                // as its text, and the file it writes back keeps only the
+                // bookmark.
+                "bookmarkStart" if refs => {
+                    if let Some(name) = c.attr("name").filter(|n| n.starts_with("_Ref")) {
+                        out.insert(name.to_string());
+                    }
+                }
+                _ => walk(c, refs, codes, out),
             }
         }
     }
     let mut codes = Vec::new();
     let mut out = HashSet::new();
     for root in roots {
-        walk(root, &mut codes, &mut out);
+        walk(root, !fields_print, &mut codes, &mut out);
     }
     for code in &codes {
         let words = field_words(code);
@@ -4874,6 +4891,19 @@ mod tests {
             Some("#bookmark".to_string())
         );
         assert_eq!(hyperlink_instruction(" HYPERLINK "), None);
+    }
+
+    #[test]
+    fn a_cross_reference_target_prints_its_anchor_with_nothing_naming_it() {
+        // Word names its cross-reference targets `_Ref…`. The plain view
+        // prints a REF field as its text, so the file it writes back has
+        // the bookmark and no field: the anchor still prints, or a second
+        // read would lose it. Other names nothing points at print nothing.
+        let body = p(
+            "",
+            r#"<w:bookmarkStart w:id="2" w:name="_Ref100"/><w:r><w:t>Target</w:t></w:r><w:bookmarkEnd w:id="2"/><w:bookmarkStart w:id="3" w:name="_Hlk7"/><w:bookmarkEnd w:id="3"/>"#,
+        );
+        assert_eq!(md(&docx(&body, &[])), "<a id=\"_Ref100\"></a>Target\n");
     }
 
     #[test]
