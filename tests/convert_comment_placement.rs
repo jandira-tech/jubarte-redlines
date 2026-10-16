@@ -80,6 +80,41 @@ fn pdf_text(r: &Rendered) -> String {
     String::from_utf8_lossy(r.pdf.as_deref().expect("a PDF")).into_owned()
 }
 
+/// A viewer paints a PDF text annotation as a note icon over the text, so
+/// no revision style writes one unless asked: the balloon is the comment.
+#[test]
+fn comment_notes_are_written_only_when_asked() {
+    assert!(!PdfOptions::default().comment_notes);
+    for revisions in [RevisionStyle::Conventional, RevisionStyle::Word] {
+        let plain = rendered(
+            &four_pages(true),
+            PdfOptions {
+                revisions,
+                ..PdfOptions::default()
+            },
+        );
+        assert!(
+            !pdf_text(&plain).contains("/Subtype /Text"),
+            "{revisions:?}: no note icon by default"
+        );
+        let asked = rendered(
+            &four_pages(true),
+            PdfOptions {
+                revisions,
+                comment_notes: true,
+                ..PdfOptions::default()
+            },
+        );
+        let pdf = pdf_text(&asked);
+        assert_eq!(
+            pdf.matches("/Subtype /Text").count(),
+            2,
+            "{revisions:?}: one note per comment when asked"
+        );
+        assert!(pdf.contains("(First note here)") && pdf.contains("(Second note here)"));
+    }
+}
+
 #[test]
 fn margin_placement_is_the_default_and_paints_balloons_beside_the_text() {
     assert_eq!(PdfOptions::default().comments, CommentPlacement::Margin);
@@ -248,6 +283,22 @@ fn changed_only_without_changes_keeps_the_commented_pages() {
 }
 
 #[test]
+fn cli_convert_writes_comment_notes_only_with_the_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("four.docx");
+    std::fs::write(&input, four_pages(true)).unwrap();
+    for (flag, notes) in [(None, 0), (Some("--comment-notes"), 2)] {
+        let output = tmp.path().join("four.pdf");
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jubarte"));
+        cmd.args(["convert", "--force", "-o"]).arg(&output);
+        cmd.args(flag);
+        assert!(cmd.arg(&input).status().unwrap().success(), "{flag:?}");
+        let pdf = String::from_utf8_lossy(&std::fs::read(&output).unwrap()).into_owned();
+        assert_eq!(pdf.matches("/Subtype /Text").count(), notes, "{flag:?}");
+    }
+}
+
+#[test]
 fn cli_convert_takes_move_comments_and_changed_pages() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
@@ -385,7 +436,7 @@ fn the_page_flags_are_refused_where_nothing_is_laid_out() {
     let new_bytes = four_pages(true);
     std::fs::write(&old, &old_bytes).unwrap();
     std::fs::write(&new, &new_bytes).unwrap();
-    for flag in ["--move-comments", "--changed-pages"] {
+    for flag in ["--move-comments", "--comment-notes", "--changed-pages"] {
         for command in ["convert", "compare"] {
             for format in ["docx", "md"] {
                 for explicit_format in [false, true] {
