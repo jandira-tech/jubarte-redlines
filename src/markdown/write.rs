@@ -2318,30 +2318,36 @@ impl<'o, 'a> Writer<'o, 'a> {
         // Pulldown-cmark splits a stretch that holds a CommonMark delimiter
         // (`<mark>file\_</mark>` becomes `file` + `_`) even when the writer
         // holds the same marks on both sides; merge into the previous text
-        // run so the round-trip keeps one run per stretch.
+        // run so the round-trip keeps one run per stretch. A prefix run (a
+        // task box) is not one to merge into: the paragraph's first change
+        // claims the prefix runs when no text run precedes them, so text
+        // merged into the box would ride along into the revision.
         if let Content::Text(ref text) = content {
-            let now = self.format();
-            let current_change = self.change;
-            let current_scope = self.scope.map(|(_, group)| group);
-            let story = self.story();
-            let last = story.last_mut();
-            let merge = matches!(
-                last,
-                Some(Item::Run(Run {
-                    content: Content::Text(_),
-                    format,
-                    change,
-                    scope,
-                })) if *format == now && *change == current_change && *scope == current_scope
-            );
-            if merge
-                && let Some(Item::Run(Run {
-                    content: Content::Text(prev_text),
-                    ..
-                })) = last
-            {
-                prev_text.push_str(text);
-                return;
+            let last_prefix = self.prefix_runs.last().copied();
+            if last_prefix != Some(self.story().len() - 1) {
+                let now = self.format();
+                let current_change = self.change;
+                let current_scope = self.scope.map(|(_, group)| group);
+                let story = self.story();
+                let last = story.last_mut();
+                let merge = matches!(
+                    last,
+                    Some(Item::Run(Run {
+                        content: Content::Text(_),
+                        format,
+                        change,
+                        scope,
+                    })) if *format == now && *change == current_change && *scope == current_scope
+                );
+                if merge
+                    && let Some(Item::Run(Run {
+                        content: Content::Text(prev_text),
+                        ..
+                    })) = last
+                {
+                    prev_text.push_str(text);
+                    return;
+                }
             }
         }
         let run = Run {

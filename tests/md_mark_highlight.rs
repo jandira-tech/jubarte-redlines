@@ -186,6 +186,48 @@ fn a_colour_word_does_not_name_prints_as_yellow() {
     );
 }
 
+/// The `<w:t>` text inside `document`'s `<w:tag>…</w:tag>` marks, in order.
+fn marked_text(document: &str, tag: &str) -> String {
+    document
+        .split(&format!("</w:{tag}>"))
+        .filter_map(|part| {
+            // `<w:del ` or `<w:del>`, never `<w:delText`.
+            part.rfind(&format!("<w:{tag} "))
+                .or_else(|| part.rfind(&format!("<w:{tag}>")))
+                .map(|at| &part[at..])
+        })
+        .flat_map(|part| {
+            part.split("<w:t")
+                .skip(1)
+                .chain(part.split("<w:delText").skip(1))
+        })
+        .filter_map(|t| t.split_once('>').map(|(_, rest)| rest))
+        .filter_map(|t| {
+            t.split_once("</w:t>")
+                .or_else(|| t.split_once("</w:delText>"))
+                .map(|(text, _)| text)
+        })
+        .collect()
+}
+
+#[test]
+fn a_change_after_a_task_box_holds_only_its_own_text() {
+    // The task box and the plain text after it are the paragraph's own
+    // runs: the writer's merge of equal runs must stop at the box (a
+    // prefix run the paragraph's first change claims), or the box and
+    // the plain text ride along into the revision.
+    let again = document(&write("- [ ] plain {++inserted++}\n"));
+    assert_eq!(marked_text(&again, "ins"), "inserted", "{again}");
+    assert_eq!(text(&again), "\u{2610} plain inserted", "{again}");
+    let again = document(&write("- [x] plain {--gone--}\n"));
+    assert_eq!(marked_text(&again, "del"), "gone", "{again}");
+    assert!(text(&again).starts_with("\u{2612} plain "), "{again}");
+    let again = document(&write("- [ ] plain {~~old~>new~~}\n"));
+    assert_eq!(marked_text(&again, "ins"), "new", "{again}");
+    assert_eq!(marked_text(&again, "del"), "old", "{again}");
+    assert!(text(&again).starts_with("\u{2610} plain "), "{again}");
+}
+
 /// The text of every run with highlight that the writer wrote, in order.
 fn highlight_runs(document: &str) -> Vec<String> {
     document
