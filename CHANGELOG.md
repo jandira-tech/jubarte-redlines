@@ -317,6 +317,15 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Underline, highlight and strikethrough keep their spaces.** The view
+  kept a formatted stretch's edge spaces outside `<u>`, `==` and `~~`, so a
+  round trip broke the underline and the highlight at every space (and a
+  form's underlined blanks came back plain). The spaces now stay inside the
+  marks as `&#32;`; a strike `~~` cannot open or close falls back to
+  `<s>`, and a plain space between underlined words stays plain.
+  `debug --check render` counts a highlighted or underlined stretch once,
+  however many runs Word split it into.
+
 - **Markdown written to Word reads back as it was written** in five more
   shapes the round trip lost: a link inside one tracked change stays one
   change (a HYPERLINK field in its mark, its title and target escaped as
