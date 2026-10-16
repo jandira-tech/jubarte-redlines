@@ -132,12 +132,14 @@ fn blank(c: char) -> bool {
 }
 
 /// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>`,
-/// `<s>` and their closers always; single `*` and `_` runs only when they pair up (`*x*`,
+/// `<mark>`, `<s>` and their closers always; single `*` and `_` runs only when they pair up (`*x*`,
 /// `_x_`, `__x__`), so `2 * 3`, `snake_case`, `snake__case` and
 /// `foo__bar__` keep theirs.
 fn without_emphasis(text: &str) -> String {
     let mut text = text.to_string();
-    for mark in ["**", "~~", "==", "<u>", "</u>", "<s>", "</s>"] {
+    for mark in [
+        "**", "~~", "==", "<u>", "</u>", "<mark>", "</mark>", "<s>", "</s>",
+    ] {
         text = text.replace(mark, "");
     }
     // A `*` with spaces on both sides (`2 * 3`) is text; the rest are marks
@@ -224,13 +226,14 @@ fn without_emphasis(text: &str) -> String {
 /// The document text an agent-view fragment stands for:
 ///
 /// - attribution notes and comment text dropped (`{>>r0 @AC<<}` etc.);
-/// - insertions unwrapped (`{++x++}` → `x`) and highlights too (`{==x==}`);
+/// - insertions unwrapped (`{++x++}` → `x`) and comment scopes too
+///   (`{==x==}`);
 /// - deletions removed (`{--x--}`);
 /// - substitutions become their new side (`{~~old~>new~~}` → `new`);
 /// - a block mark that leads the line (`#`–`######`, `> `, `- `, `+ `,
 ///   `* `, `1. `, `2) `, after any leading spaces) dropped;
-/// - emphasis marks (`**`, `~~`, `==`, `<u>`, `<s>`, paired `*`/`_` runs)
-///   dropped;
+/// - emphasis marks (`**`, `~~`, `==`, `<u>`, `<mark>`, `<s>`, paired
+///   `*`/`_` runs) dropped;
 /// - backslash escapes (`\*`, `\[`, ...) resolved.
 ///
 /// A mark inside a change mark (`{++1. one++}`) is the change's own
@@ -296,6 +299,7 @@ mod tests {
             ("# Chapter 1", "Chapter 1"),
             ("**secret**", "secret"),
             ("<u>secret</u>", "secret"),
+            ("<mark>secret</mark>", "secret"),
             ("<s>secret</s>", "secret"),
             ("{==keep it secret.==}{>>c5 @AC: Cap?<<}", "keep it secret."),
             ("keep {++it++}{>>r0 @AC<<} secret", "keep it secret"),
