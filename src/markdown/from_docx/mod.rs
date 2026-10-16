@@ -865,7 +865,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let mut sections: Vec<header::SectionFact> = Vec::new();
             let mut first = 0;
             for (last, sect) in ends {
-                let title_page = sect.child("titlePg").is_some();
+                // `w:titlePg w:val="0"` states the default: off. Word writes
+                // the switch out when a change turns the first page off
+                // (ids-tables, #528).
+                let title_page = sect
+                    .child("titlePg")
+                    .is_some_and(|t| !matches!(t.attr("val"), Some("0" | "false" | "off")));
                 let mut stories = Vec::new();
                 for reference in sect.elements() {
                     let kind = match reference.local() {
