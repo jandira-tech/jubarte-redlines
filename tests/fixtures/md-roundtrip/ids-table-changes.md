@@ -124,7 +124,7 @@ footers:
 
 <!-- p76 empty, break-del r163 @AS -->
 
-<!-- p77 page-break, break-del r164 @AS, rev r165 @AS -->
+<!-- p77 page-break-del r165 @AS, break-del r164 @AS -->
 
 <!-- p78 break-del r166 @AS -->
 {--**Ref methods**         --}{>>r167 @AS<<}
@@ -262,7 +262,7 @@ footers:
 
 <!-- p172 empty, break-del r354 @AS -->
 
-<!-- p173 page-break, break-del r355 @AS, rev r356 @AS -->
+<!-- p173 page-break-del r356 @AS, break-del r355 @AS -->
 
 <!-- p174 break-del r357 @AS -->
 {--**Ref methods**         --}{>>r358 @AS<<}

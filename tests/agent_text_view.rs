@@ -1903,7 +1903,7 @@ styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   \"#\": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
 headers:
-  first: {id: header2, text: DRAFT, style: Normal}  # page 1 only (different first page)
+  first: {id: header2, text: [DRAFT, \"\"], style: Normal}  # page 1 only (different first page)
   default: {id: header1, text: SIGNATURE PAGE, right, style: Normal}
 footers:
   first: none                      # page 1 shows no page number
