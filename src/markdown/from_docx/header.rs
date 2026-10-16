@@ -635,6 +635,17 @@ fn page_setup(sect: &Element) -> String {
             out.push_str(&format!(", char space {space}"));
         }
     }
+    // How the section starts, when its `w:sectPr` states it: `nextPage`
+    // is Word's default, but a document that says so keeps saying it
+    // (#528). A value outside Word's five says nothing the view can write.
+    if let Some(kind) = sect.child("type").and_then(|t| t.attr("val")).filter(|v| {
+        matches!(
+            *v,
+            "nextPage" | "continuous" | "evenPage" | "oddPage" | "nextColumn"
+        )
+    }) {
+        out.push_str(&format!(", starts {kind}"));
+    }
     out
 }
 

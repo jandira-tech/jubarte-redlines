@@ -1735,6 +1735,9 @@ pub(super) struct PageSetup {
     pub grid: Option<(&'static str, Option<u32>)>,
     /// `w:docGrid w:charSpace`, for a grid with characters.
     pub char_space: i32,
+    /// How the section starts (`w:type`), when the view's page names it
+    /// (`starts nextPage`); `None` writes none, Word's default.
+    pub starts: Option<&'static str>,
 }
 
 impl PageSetup {
@@ -1764,8 +1767,14 @@ impl PageSetup {
             }
             None => String::new(),
         };
+        // `w:type` opens the page's own elements, after the references the
+        // stories write into the `w:sectPr` (Word's order: references,
+        // type, size, margins).
+        let starts = self
+            .starts
+            .map_or_else(String::new, |kind| format!("<w:type w:val=\"{kind}\"/>"));
         format!(
-            "<w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
+            "<w:sectPr>{starts}<w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
              w:right=\"{right}\" w:bottom=\"{bottom}\" w:left=\"{left}\" w:header=\"{}\" \
              w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"{}\"{num}{sep}/>{grid}</w:sectPr>",
             self.width, self.height, self.header, self.footer, self.gutter, self.column_gap
@@ -1840,6 +1849,7 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
         column_line: false,
         grid: None,
         char_space: 0,
+        starts: None,
     };
     for clause in clauses {
         if clause == "column line" {
@@ -1871,6 +1881,18 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
                 .parse()
                 .ok()
                 .filter(|n| (1..=MOST_COLUMNS).contains(n))?;
+            continue;
+        }
+        if name == "starts" {
+            page.starts = match value {
+                "nextPage" => Some("nextPage"),
+                "continuous" => Some("continuous"),
+                "evenPage" => Some("evenPage"),
+                "oddPage" => Some("oddPage"),
+                "nextColumn" => Some("nextColumn"),
+                // A `w:type` Word does not define: the page does not read.
+                _ => return None,
+            };
             continue;
         }
         let twips = page_twips(value)?;
