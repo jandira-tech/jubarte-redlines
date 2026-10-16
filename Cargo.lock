@@ -1279,7 +1279,6 @@ dependencies = [
  "ooxmlsdk",
  "pulldown-cmark",
  "quick-xml 0.42.0",
- "rdocx-opc",
  "regex",
  "rustybuzz",
  "same-file",
@@ -1295,7 +1294,7 @@ dependencies = [
  "tiny-skia",
  "ttf-parser",
  "unicode-properties",
- "zip",
+ "zip 9.0.4",
  "zipsign-api",
 ]
 
@@ -1438,6 +1437,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags",
+ "cfg-if 1.0.5",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1483,7 +1494,7 @@ dependencies = [
  "ooxmlsdk-derive",
  "quick-xml 0.41.0",
  "thiserror",
- "zip",
+ "zip 8.6.0",
  "zmij",
 ]
 
@@ -1782,17 +1793,6 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
-]
-
-[[package]]
-name = "rdocx-opc"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85e46b87a0ba15c90ba1834844246900c104fd030b7eedbbfc6d9d4284da7292"
-dependencies = [
- "quick-xml 0.41.0",
- "thiserror",
- "zip",
 ]
 
 [[package]]
@@ -2108,7 +2108,7 @@ dependencies = [
  "tempfile",
  "ureq",
  "urlencoding",
- "zip",
+ "zip 8.6.0",
  "zipsign-api",
 ]
 
@@ -3119,6 +3119,21 @@ dependencies = [
  "indexmap",
  "memchr",
  "time",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a954114b47a54df49f83d2722814e86b23d4bb1b54a1b90fb7d92b41619ddc22"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "nix",
  "typed-path",
  "zopfli",
 ]

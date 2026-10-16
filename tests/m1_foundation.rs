@@ -161,7 +161,7 @@ fn serialize_escapes_and_self_closes() {
     assert!(s.contains("/>"), "self-closing empty element: {s}");
 }
 
-// ── M1.5 OPC layer (rdocx-opc adapter) ────────────────────────────────────────
+// ── M1.5 OPC layer ──────────────────────────────────────────────────────────
 
 const ORIGINAL: &[u8] = include_bytes!("fixtures/redline/original.docx");
 

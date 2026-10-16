@@ -34,8 +34,9 @@ pdf = []
 # It is absent from the shipped default build.
 memory-metrics = []
 
-# rdocx-opc 0.2 uses pure-Rust deflate and patched quick-xml upstream, so the
-# old WASM-only source patch is no longer needed.
+# The OPC layer is in `src/opc` (ported from rdocx-opc 0.2.0, MIT) over zip 9
+# with pure-Rust deflate, so the old WASM-only source patch is no longer
+# needed.
 
 # Runtime-speed profile for wasm-pack: -O3 (not -Oz size). Requires binaryen on PATH.
 [package.metadata.wasm-pack.profile.release]

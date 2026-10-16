@@ -7,6 +7,7 @@
 //! a tiny XML tree, relationship resolution, core properties, and the inline
 //! run renderer that turns formatted text into compact Markdown.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
@@ -39,7 +40,13 @@ impl<'a> Package<'a> {
         let archive = zip::ZipArchive::new(Cursor::new(bytes))
             .map_err(|e| invalid(format!("not a valid {kind} file: {e}")))?;
         check_limits(&archive)?;
-        let names = archive.file_names().map(str::to_string).collect();
+        // An entry whose name is not decodable stays unnamed: no part in a
+        // Word file can reference it anyway.
+        let names = archive
+            .file_names()
+            .filter_map(Result::ok)
+            .map(Cow::into_owned)
+            .collect();
         Ok(Self { archive, names })
     }
 

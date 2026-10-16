@@ -569,7 +569,12 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
         if f.is_dir() {
             continue;
         }
-        let name = f.name().to_string();
+        // An undecodable name is the same verdict as an unreadable archive:
+        // the original bytes, not a rebuild missing the entry.
+        let Ok(name) = f.name() else {
+            return bytes.to_vec();
+        };
+        let name = name.to_string();
         let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let mut buf = Vec::new();
@@ -820,7 +825,7 @@ mod tests {
                 entry.last_modified(),
                 Some(zip::DateTime::default()),
                 "{} carries no wall-clock time",
-                entry.name()
+                entry.name().unwrap()
             );
         }
     }

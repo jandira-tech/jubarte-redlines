@@ -12,10 +12,10 @@
 
 //! OPC (Open Packaging Conventions) layer — M1.5.
 //!
-//! SPIKE FINDINGS (rdocx-opc 0.1, verified 2026-06-27):
-//! `rdocx_opc::OpcPackage` already provides everything `opc-partfs.ts` needs, at
-//! the BYTE level — so the plan's Step-5 fallback (porting opc-partfs over `zip`)
-//! is NOT required:
+//! SPIKE FINDINGS (rdocx-opc 0.1, verified 2026-06-27): an OPC package
+//! type over `zip` already provided everything `opc-partfs.ts` needs, at
+//! the BYTE level — so the plan's Step-5 fallback (porting opc-partfs over
+//! `zip`) is NOT required:
 //!   - `from_reader` / `write_to`   → open from bytes / write the zip back
 //!   - `get_part` / `set_part`      → byte-level read / replace / add a part
 //!   - `parts: HashMap`             → enumerate parts
@@ -26,7 +26,12 @@
 //!     → read / mutate `[Content_Types].xml`
 //!   - `main_document_part`         → the package → main-document rel
 //!
-//! rdocx-opc keys parts/rels with a LEADING SLASH (`/word/document.xml`). This
+//! That surface now lives here (ported from rdocx-opc 0.2.0, MIT; preserved
+//! notice in `LICENSES/LicenseRef-rdocx-opc-MIT.txt`): every zip 8.x was
+//! yanked, and the crate's successors still pin it, so the engine owns its
+//! OPC layer over zip 9 instead.
+//!
+//! Parts/rels are keyed with a LEADING SLASH (`/word/document.xml`). This
 //! adapter accepts the docxodus / opc-partfs style (no leading slash,
 //! `word/document.xml`) and normalizes internally, so the rest of the crate is
 //! oblivious to the difference.
@@ -35,8 +40,17 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
-use rdocx_opc::{ContentTypes, OpcPackage};
-pub use rdocx_opc::{OpcError, Relationship, Relationships};
+mod content_types;
+mod error;
+mod package;
+mod relationship;
+
+use content_types::ContentTypes;
+pub use error::OpcError;
+use package::OpcPackage;
+pub use relationship::{Relationship, Relationships};
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// Input the engine refuses before or while reading it, as an `Err` the
 /// caller can handle rather than a panic, which would abort a WASM instance
@@ -51,8 +65,6 @@ where
 {
     OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
@@ -164,7 +176,10 @@ fn reparse_explicitly_closed(pkg: &mut OpcPackage, bytes: &[u8]) {
         let Ok(mut file) = zip.by_index(i) else {
             continue;
         };
-        let name = file.name().to_string();
+        let Ok(name) = file.name() else {
+            continue;
+        };
+        let name = name.to_string();
         let is_rels = name.ends_with(".rels");
         if !is_rels && name != "[Content_Types].xml" {
             continue;
@@ -213,7 +228,7 @@ fn fold_explicit_closes(xml: &[u8], tags: &[&str]) -> Option<Vec<u8>> {
 }
 
 /// `.rels` file path (e.g. `word/_rels/document.xml.rels`). Mirrors the
-/// private `rdocx_opc::package::part_name_to_rels_path`.
+/// private `package::part_name_to_rels_path`.
 fn part_name_to_rels_path(part_name: &str) -> String {
     let name = part_name.strip_prefix('/').unwrap_or(part_name);
     if let Some((dir, file)) = name.rsplit_once('/') {
@@ -250,8 +265,8 @@ enum ZipEntry<'a> {
 
 // Retain the OPC metadata budget independently of the parser upgrade that
 // fixed RUSTSEC-2026-0194/0195. Direct Relationships::from_xml callers use
-// patched quick-xml through rdocx-opc 0.2; package admission also bounds the
-// attribute count. 256 matches quick-xml's default namespace declaration limit.
+// our patched quick-xml; package admission also bounds the attribute count.
+// 256 matches quick-xml's default namespace declaration limit.
 fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     loop {
@@ -277,7 +292,8 @@ fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        if entry.name() != "[Content_Types].xml" && !entry.name().ends_with(".rels") {
+        let name = entry.name()?;
+        if name != "[Content_Types].xml" && !name.ends_with(".rels") {
             continue;
         }
         let mut xml = Vec::new();
@@ -293,7 +309,7 @@ fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
     Ok(())
 }
 
-/// Thin adapter over `rdocx_opc::OpcPackage`. Port-equivalent of `PartFS`.
+/// Thin adapter over `package::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
     pkg: OpcPackage,
     /// Each source zip entry's position, so `to_zip` writes the package back
@@ -366,7 +382,11 @@ impl PartFs {
         let source_order = ZipArchive::new(Cursor::new(bytes))
             .map(|zip| {
                 (0..zip.len())
-                    .filter_map(|i| zip.name_for_index(i).map(|n| (n.to_string(), i)))
+                    .filter_map(|i| {
+                        zip.name_for_index(i)
+                            .and_then(Result::ok)
+                            .map(|n| (n.to_string(), i))
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -682,8 +702,8 @@ impl PartFs {
     }
 
     /// A part's relationships, created empty when missing. Created through
-    /// `Relationships::new`, which numbers from `rId1` as Word does; the
-    /// dependency's `get_or_create_part_rels` defaults to `rId0`.
+    /// `Relationships::new`, which numbers from `rId1` as Word does;
+    /// `get_or_create_part_rels` defaults to `rId0`.
     fn part_rels_mut(&mut self, source_part: &str) -> &mut Relationships {
         use std::collections::hash_map::Entry;
         // Not `or_default()`: the derived `Default` is the rId0 counter.
@@ -865,7 +885,8 @@ mod tests {
         let names: Vec<String> = ZipArchive::new(Cursor::new(&zip))
             .unwrap()
             .file_names()
-            .map(str::to_string)
+            .map(Result::unwrap)
+            .map(String::from)
             .collect();
         assert_eq!(
             names,
@@ -895,7 +916,7 @@ mod tests {
                 entry.last_modified(),
                 Some(zip::DateTime::default()),
                 "{}",
-                entry.name()
+                entry.name().unwrap()
             );
         }
     }

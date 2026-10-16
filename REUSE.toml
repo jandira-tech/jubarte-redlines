@@ -20,6 +20,13 @@ precedence = "override"
 SPDX-FileCopyrightText = "1989, 1991 Free Software Foundation, Inc."
 SPDX-License-Identifier = "AGPL-3.0-only"
 
+# The preserved MIT notice of rdocx-opc, whose OPC layer src/opc ports.
+[[annotations]]
+path = "LICENSES/LicenseRef-rdocx-opc-MIT.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2025 tensorbee"
+SPDX-License-Identifier = "LicenseRef-rdocx-opc-MIT"
+
 # These are preserved upstream attribution records. They do not provide an
 # alternative license for Jubarte or Jandira Technologies, LLC contributions.
 [[annotations]]

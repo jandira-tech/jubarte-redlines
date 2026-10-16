@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-docen-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
+SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-rdocx-opc-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-docen-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
@@ -18,6 +18,11 @@ did not author:
 
 - `LICENSES/LicenseRef-Microsoft-MIT.txt` — Microsoft upstream attribution.
 - `LICENSES/LicenseRef-Docxodus-MIT.txt` — Docxodus upstream attribution.
+- `LICENSES/LicenseRef-rdocx-opc-MIT.txt` — the MIT notice of
+  [rdocx-opc](https://github.com/tensorbee/rdocx) (Copyright (c) 2025
+  tensorbee). The OPC layer in `src/opc/` (`error.rs`, `relationship.rs`,
+  `content_types.rs`, `package.rs`) is ported from rdocx-opc 0.2.0, which
+  every zip 8.x yank made unresolvable for fresh lockfiles.
 - `LICENSES/LicenseRef-anymd-MIT.txt` — anymd upstream attribution. The Word
   to Markdown converter (`src/markdown/from_docx/`), its tests and the
   fixtures in `tests/fixtures/from-docx/` come from anymd's `anymd-formats`

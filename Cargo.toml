@@ -98,10 +98,11 @@ perf-profile = []
 self-update = ["cli", "dep:self_update"]
 
 [dependencies]
-# 0.2 keeps the OPC parsing semantics and requires patched quick-xml >=0.41.
-# This also protects callers of our public Relationships::from_xml re-export.
-rdocx-opc = "0.2" # OPC/zip package layer
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
+# The OPC layer (parts, relationships, `[Content_Types].xml`) is our own
+# `src/opc`, ported from rdocx-opc 0.2.0: every zip 8.x is yanked and the
+# crate's successors still pin it, while our patched quick-xml (RUSTSEC-
+# 2026-0194/0195) keeps protecting `Relationships::from_xml` callers.
+zip = { version = "9.0.3", default-features = false, features = ["deflate"] } # OPC/zip package layer (src/opc)
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
@@ -131,10 +132,12 @@ mimalloc = { version = "0.1", default-features = false, optional = true }
 # command contacts the network.
 self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums", "signatures"], optional = true }
 
-# Windows releases are .zip. Zip support stays off elsewhere: it turns on the
-# zip crate's `time` feature, which stamps wall-clock times into our own
-# archives unless every entry sets its time (986c526). `archive-zip` also
-# turns on zipsign's zip verifier when `signatures` is on (above).
+# Windows releases are .zip. `archive-zip` pulls self_update's own zip 8 copy
+# (locked at 8.6.0; upstream has no zip 9 release yet) — a separate crate from
+# the zip 9 the OPC layer uses, so its `time` feature cannot unify into ours.
+# Our archives still set an explicit 1980-01-01 time on every entry (986c526).
+# `archive-zip` also turns on zipsign's zip verifier when `signatures` is on
+# (above).
 [target.'cfg(windows)'.dependencies]
 self_update = { version = "1.3", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
 

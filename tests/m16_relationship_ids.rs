@@ -7,7 +7,7 @@
 //! `reconcile_dangling_relationships` ensures every rId referenced by the result
 //! resolves in the output package; rIds found nowhere have their attribute dropped
 //! (Word "unreadable content" preventer). But it read a part's relationships via
-//! `part_bytes("word/_rels/document.xml.rels")` — and the OPC layer (rdocx-opc)
+//! `part_bytes("word/_rels/document.xml.rels")` — and the OPC layer
 //! does NOT expose `.rels` as parts (it parses them into `Relationships`, read via
 //! `read_rels_for`). So `dest_existing`/source rels came back EMPTY, EVERY rId was
 //! treated as an orphan, and `r:embed` (images) / `r:id` (hyperlinks) were stripped

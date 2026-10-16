@@ -283,7 +283,7 @@ fn docx_with_settings_and_styles(body: &str, settings: &str, styles: &str) -> Ve
     let opts = SimpleFileOptions::default();
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
-        let name = file.name().to_string();
+        let name = file.name().unwrap().to_string();
         let mut data = String::new();
         file.read_to_string(&mut data).unwrap();
         let data = match name.as_str() {
@@ -35817,7 +35817,7 @@ fn with_comments_extended(docx: Vec<u8>, extended_xml: &str, listed_first: bool)
     let opts = SimpleFileOptions::default();
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
-        let name = file.name().to_string();
+        let name = file.name().unwrap().to_string();
         let mut text = String::new();
         file.read_to_string(&mut text).unwrap();
         let text = match name.as_str() {
@@ -43411,7 +43411,7 @@ fn a_picture_whose_part_name_holds_an_ampersand_still_paints() {
         let mut f = src.by_index(i).expect("entry");
         let mut data = Vec::new();
         f.read_to_end(&mut data).expect("read");
-        let name = match f.name() {
+        let name = match f.name().unwrap().as_ref() {
             "word/media/dot.png" => "word/media/dot.png&ehk=1&r=0".to_string(),
             n => n.to_string(),
         };
@@ -43552,7 +43552,7 @@ fn a_first_page_header_without_title_pg_never_shows() {
         let mut f = src.by_index(i).expect("entry");
         let mut data = Vec::new();
         f.read_to_end(&mut data).expect("read");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         if name == "word/document.xml" {
             data = String::from_utf8(data)
                 .expect("utf8")

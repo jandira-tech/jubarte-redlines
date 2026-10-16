@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Exercise the public parser directly, without PartFs's admission preflight.
-//! The dependency advisory gate guards the patched parser version; these
-//! deterministic inputs protect duplicate checks and the existing public API.
+//! The vendored parser runs on our patched quick-xml; these deterministic
+//! inputs protect duplicate checks and the existing public API.
 
 use jubarte::opc::{OpcError, Relationship, Relationships};
 

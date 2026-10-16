@@ -175,10 +175,12 @@ impl Package {
         for i in 0..zip.len() {
             let mut f = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
             let mut data = Vec::with_capacity(f.size() as usize);
+            let name = f.name().map_err(|e| format!("zip entry {i}: {e}"))?;
+            let name = name.to_string();
             f.read_to_end(&mut data)
-                .map_err(|e| format!("{}: {e}", f.name()))?;
+                .map_err(|e| format!("{name}: {e}"))?;
             entries.push(Entry {
-                name: f.name().to_string(),
+                name,
                 size: f.size(),
                 packed: f.compressed_size(),
                 data,
@@ -3262,7 +3264,7 @@ mod tests {
                 let mut f = z.by_index(i).unwrap();
                 let mut s = String::new();
                 f.read_to_string(&mut s).unwrap();
-                parts.push((f.name().to_string(), s.replace("1F3864", fill)));
+                parts.push((f.name().unwrap().to_string(), s.replace("1F3864", fill)));
             }
             let refs: Vec<(&str, &str)> = parts
                 .iter()

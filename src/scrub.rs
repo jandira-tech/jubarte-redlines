@@ -406,8 +406,10 @@ pub fn leaks(docx: &[u8], needle: &str) -> Vec<String> {
         let Ok(mut entry) = zip.by_index(i) else {
             continue;
         };
-        let name = entry.name().to_string();
-        let mut bytes = Vec::new();
+        let Ok(name) = entry.name() else {
+            continue;
+        };
+        let (name, mut bytes) = (name.to_string(), Vec::new());
         if entry.read_to_end(&mut bytes).is_err() {
             continue;
         }

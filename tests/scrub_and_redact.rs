@@ -32,7 +32,7 @@ fn contains(hay: &[u8], needle: &str) -> bool {
 
 fn part_names(docx: &[u8]) -> Vec<String> {
     let z = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
-    z.file_names().map(str::to_string).collect()
+    z.file_names().map(|n| n.unwrap().into_owned()).collect()
 }
 
 fn plan(ops: &str) -> EditPlan {

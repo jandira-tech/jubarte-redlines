@@ -4,7 +4,7 @@
 
 //! A `.rels` or `[Content_Types].xml` written with explicit closes
 //! (`<Relationship …></Relationship>`) must read like one written with
-//! empty elements. rdocx-opc's parsers read `Event::Empty` only, so the
+//! empty elements. The OPC parsers read `Event::Empty` only, so the
 //! bench corpus document 37c6c62345 (its footer relationship written that
 //! way) converted without its footer and scored 49 against Word's PDF.
 
@@ -30,7 +30,7 @@ fn with_explicit_closes(docx: &[u8]) -> Vec<u8> {
     let mut out = ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).expect("entry");
-        let name = file.name().to_string();
+        let name = file.name().unwrap().to_string();
         let mut data = Vec::new();
         file.read_to_end(&mut data).expect("read");
         if name.ends_with(".rels") || name == "[Content_Types].xml" {

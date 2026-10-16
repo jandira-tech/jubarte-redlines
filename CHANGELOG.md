@@ -117,6 +117,16 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **zip 9 replaces zip 8 (fully yanked) and the OPC layer is ours.**
+  Every `zip` 8.x is yanked from crates.io, which broke fresh lockfiles
+  (CI's `cargo deny` on the fuzz workspace). The engine now builds on
+  `zip` 9.0.3+, and the small `rdocx-opc` 0.2 surface it wrapped is ported
+  into `src/opc/` (MIT notice preserved under `LICENSES/`): every
+  `rdocx-opc`/`oxml-opc` release still requires the yanked zip 8 line.
+  `jubarte::opc`'s public API (`OpcError`, `Relationship`,
+  `Relationships`) is unchanged, and archives keep their deterministic
+  1980-01-01 timestamps.
+
 - **No PDF comment note by default.** `--revisions conventional` and
   `custom` no longer write a `/Text` annotation per comment: viewers
   painted it as a note icon over the commented words. The balloon still

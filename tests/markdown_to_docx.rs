@@ -414,7 +414,9 @@ fn images_are_embedded_through_the_loader() {
     assert!(
         part_string(&written.docx, "word/media/image1.png").is_some() || {
             let zip = zip::ZipArchive::new(Cursor::new(&written.docx)).unwrap();
-            zip.file_names().any(|n| n == "word/media/image1.png")
+            zip.file_names()
+                .filter_map(Result::ok)
+                .any(|n| n == "word/media/image1.png")
         }
     );
 }
