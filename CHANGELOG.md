@@ -130,6 +130,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   no indentation). Reading back, an HTML block indented inside a list item
   no longer leaves a stray empty paragraph.
 
+- **Breaking: `edit --accept/--reject` prints the resolved changes, not the view.**
+  `edit FILE -p r12 --accept` (or `--reject`, `-p` repeats) prints one line
+  per resolved change (`accepted r1+2 in p3: "{~~weekly~>monthly~~}" >
+  "monthly"`), nothing else; ordinary content edits still print the changed
+  paragraphs. `-p r1` accepts only `r1`, not its `r1+2` pair.
 - **Breaking: jubarte prints short ids.** The agent view tags revisions
   `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
   (a reply names its root, `re c5`); table lines name rows and cells

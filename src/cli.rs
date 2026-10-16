@@ -356,7 +356,7 @@ fn hoist_quiet<T: AsRef<std::ffi::OsStr> + Clone>(
         help.extend_from_slice(&arguments[1 + flags..]);
         return help;
     }
-    if flags == 0 || !task.is_some_and(|name| command.find_subcommand(name).is_some()) {
+    if flags == 0 || task.is_none_or(|name| command.find_subcommand(name).is_none()) {
         return arguments.to_vec();
     }
     let mut hoisted = Vec::with_capacity(arguments.len());
@@ -868,8 +868,8 @@ pub enum Command {
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
     /// --resolve, --reply, --accept, --reject or --style (several -p per
     /// command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
-    /// bundle), then prints the changed paragraphs as the agent view
-    /// (refusal: exit 3).
+    /// bundle), then prints the changed paragraphs as the agent view (a
+    /// pure --accept/--reject prints the resolved changes; refusal: exit 3).
     #[command(after_help = "Examples:\n  \
         jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
         jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
@@ -927,10 +927,12 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
-        /// Accept revision r12 (with -p r12; r1+2 for several).
+        /// Accept revision r12 (with -p r12; r1+2 for several); prints the
+        /// resolved change (`accepted r1+2 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         accept: Vec<bool>,
-        /// Reject revision r12 (with -p r12; r1+2 for several).
+        /// Reject revision r12 (with -p r12; r1+2 for several); prints the
+        /// resolved change (`rejected r0 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         reject: Vec<bool>,
         /// Formatting for the anchored text: bold, italic, underline, strike,

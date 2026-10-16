@@ -260,6 +260,9 @@ pub(super) struct Document {
     /// Notes parts (`footnote`, `endnote`) to make though no note needs
     /// them: the header's `notes: {empty: [footnotes]}`.
     pub empty_notes: Vec<&'static str>,
+    /// The formatting changes on each notes part's separators, in order:
+    /// the header's `notes: {fmt: footnotes.r0 @AS; …}`.
+    pub note_formats: Vec<(&'static str, super::view_notes::Tag)>,
     /// The style of every comment's paragraphs, when not CommentText: the
     /// header's `comments: …, style Normal`.
     pub comment_style: Option<String>,
@@ -1209,6 +1212,13 @@ fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMa
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
     for (at, item) in items.iter().enumerate() {
+        if let Some(change) = note_change(notes, item) {
+            if open != Some(change) {
+                *marks.entry(change.1).or_default() += 1;
+            }
+            open = Some(change);
+            continue;
+        }
         match item {
             Item::Bookmark(_) => {}
             Item::LinkStart(..) => {
@@ -1228,12 +1238,6 @@ fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMa
                 if fields.pop().flatten().is_none() {
                     open = None;
                 }
-            }
-            _ if let Some(change) = note_change(notes, item) => {
-                if open != Some(change) {
-                    *marks.entry(change.1).or_default() += 1;
-                }
-                open = Some(change);
             }
             Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
                 if continues(&items[at + 1..], open) => {}
