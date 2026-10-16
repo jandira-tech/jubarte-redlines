@@ -38,12 +38,19 @@ pub(crate) struct StoryFact {
     pub ty: &'static str,
     /// `header2` (the part `header2.xml`, first paragraph), `footer1`, `header2.p2`.
     pub id: String,
+    /// The part's own id, its first paragraph's (`header2`): a story printed
+    /// paragraph by paragraph names it, then `pN:` for each.
+    pub part: String,
+    /// The paragraph `text` is, in the part.
+    pub first: usize,
     pub text: String,
     /// The paragraphs after it, to the last with text: `text` then prints
     /// as a list (`text: [Page 1, Draft]`).
     pub more: Vec<String>,
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
+    /// `text` and `more`, one by one: what each paragraph carries itself.
+    pub paras: Vec<ParaFact>,
     /// The paragraphs' styles when not all are the story's own
     /// ([`story_style`]): one for all (`style: Normal`), or one per
     /// paragraph from the part's first (`styles: [Header, ListParagraph]`).
@@ -53,6 +60,20 @@ pub(crate) struct StoryFact {
     /// no tag for (`header1.r3 @AC`), then its formatting changes.
     pub rev: Vec<String>,
     pub fmt: Vec<String>,
+}
+
+/// One paragraph of a header or footer: its own alignment, text colour and
+/// borders.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct ParaFact {
+    /// `center`, `right`, or `None` for left.
+    pub align: Option<&'static str>,
+    /// The colour its text runs set themselves (`w:color`), when they all
+    /// set the same one.
+    pub color: Option<String>,
+    /// Its own borders (`w:pBdr`), as a border prints them (`bottom single
+    /// 0.5pt 8496B0 space 4pt`).
+    pub border: Option<String>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -890,7 +911,87 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
     if kind == "header" { "Header" } else { "Footer" }
 }
 
+/// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
+/// one carries its own colour or borders, or their alignments differ.
+fn by_paragraph(s: &StoryFact) -> bool {
+    s.paras
+        .iter()
+        .any(|p| p.color.is_some() || p.border.is_some() || p.align != s.align)
+}
+
+/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt}`,
+/// one per paragraph.
+fn paragraph_entries(s: &StoryFact) -> Vec<String> {
+    std::iter::once(&s.text)
+        .chain(&s.more)
+        .zip(&s.paras)
+        .enumerate()
+        .map(|(k, (text, p))| {
+            let mut inner = format!("text: {}", scalar(text, true));
+            if let Some(align) = p.align {
+                inner.push_str(&format!(", {align}"));
+            }
+            if let Some(color) = &p.color {
+                inner.push_str(&format!(", color: {}", scalar(color, true)));
+            }
+            if let Some(border) = &p.border {
+                inner.push_str(&format!(", border: {}", scalar(border, true)));
+            }
+            format!("p{}: {{{inner}}}", s.first + k)
+        })
+        .collect()
+}
+
+/// A story's entries after its text: its styles, `inactive`, its changes.
+fn story_tail(s: &StoryFact) -> Vec<String> {
+    let mut tail = Vec::new();
+    match s.styles.as_slice() {
+        [] => {}
+        [style] => tail.push(format!("style: {}", scalar(style, true))),
+        styles => {
+            let all: Vec<String> = styles.iter().map(|s| scalar(s, true)).collect();
+            tail.push(format!("styles: [{}]", all.join(", ")));
+        }
+    }
+    if !s.active {
+        tail.push("inactive".to_string());
+    }
+    for (key, tags) in [("rev", &s.rev), ("fmt", &s.fmt)] {
+        if !tags.is_empty() {
+            tail.push(format!("{key}: {}", scalar(&tags.join("; "), true)));
+        }
+    }
+    tail
+}
+
+/// A story's entry in the first section's block: one line, or, paragraph
+/// by paragraph, `key:` then its entries indented below.
+fn story_kv(out: &mut String, key: &str, s: &StoryFact, comment: Option<&str>) {
+    if !by_paragraph(s) {
+        kv(out, &format!("{key}: {}", entry(s)), comment);
+        return;
+    }
+    kv(out, &format!("{key}:"), comment);
+    out.push_str(&format!("    id: {}\n", scalar(&s.part, true)));
+    for line in paragraph_entries(s).into_iter().chain(story_tail(s)) {
+        // A block mapping's flag needs a value.
+        let line = if line == "inactive" {
+            "inactive: true".to_string()
+        } else {
+            line
+        };
+        out.push_str(&format!("    {line}\n"));
+    }
+}
+
 fn entry(s: &StoryFact) -> String {
+    if by_paragraph(s) {
+        let items: Vec<String> = std::iter::once(format!("id: {}", scalar(&s.part, true)))
+            .chain(paragraph_entries(s))
+            .chain(story_tail(s))
+            .collect();
+        return format!("{{{}}}", items.join(", "));
+    }
     let text = if s.more.is_empty() {
         scalar(&s.text, true)
     } else {
@@ -904,21 +1005,8 @@ fn entry(s: &StoryFact) -> String {
     if let Some(align) = s.align {
         inner.push_str(&format!(", {align}"));
     }
-    match s.styles.as_slice() {
-        [] => {}
-        [style] => inner.push_str(&format!(", style: {}", scalar(style, true))),
-        styles => {
-            let all: Vec<String> = styles.iter().map(|s| scalar(s, true)).collect();
-            inner.push_str(&format!(", styles: [{}]", all.join(", ")));
-        }
-    }
-    if !s.active {
-        inner.push_str(", inactive");
-    }
-    for (key, tags) in [("rev", &s.rev), ("fmt", &s.fmt)] {
-        if !tags.is_empty() {
-            inner.push_str(&format!(", {key}: {}", scalar(&tags.join("; "), true)));
-        }
+    for item in story_tail(s) {
+        inner.push_str(&format!(", {item}"));
     }
     format!("{{{inner}}}")
 }
@@ -934,9 +1022,10 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
         let find = |ty: &str| stories.iter().find(|s| s.ty == ty);
         if section.title_page {
             match find("first") {
-                Some(s) => kv(
+                Some(s) => story_kv(
                     out,
-                    &format!("  first: {}", entry(s)),
+                    "  first",
+                    s,
                     Some("page 1 only (different first page)"),
                 ),
                 None => kv(
@@ -953,20 +1042,22 @@ fn first_section_stories(out: &mut String, section: &SectionFact) {
         if !section.title_page
             && let Some(s) = find("first")
         {
-            kv(
+            story_kv(
                 out,
-                &format!("  first: {}", entry(s)),
+                "  first",
+                s,
                 Some("defined, but different first page is off"),
             );
         }
         match find("default") {
-            Some(s) => kv(out, &format!("  default: {}", entry(s)), None),
+            Some(s) => story_kv(out, "  default", s, None),
             None => kv(out, "  default: none", None),
         }
         if let Some(s) = find("even") {
-            kv(
+            story_kv(
                 out,
-                &format!("  even: {}", entry(s)),
+                "  even",
+                s,
                 if s.active {
                     None
                 } else {

@@ -832,7 +832,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         continue;
                     };
                     let paragraphs = header::story_paragraphs(&root);
-                    let read: Vec<(usize, String, Option<&'static str>)> = paragraphs
+                    let read: Vec<(usize, String, header::ParaFact)> = paragraphs
                         .iter()
                         .enumerate()
                         .map(|(i, p)| {
@@ -851,24 +851,43 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                 Some(false) => header::StoryView::Reject(&writer.hidden_styles),
                                 _ => header::StoryView::Accept(&writer.hidden_styles),
                             };
-                            (i, header::story_text(p, view), align)
+                            let own = header::ParaFact {
+                                align,
+                                color: story_color(p),
+                                border: Some(agent::own_borders(
+                                    p.path(&["pPr", "pBdr"]),
+                                    &crate::markdown::borders::PARAGRAPH_SIDES,
+                                ))
+                                .filter(|sides| !sides.is_empty())
+                                .map(|sides| {
+                                    crate::markdown::borders::describe(
+                                        &sides,
+                                        &crate::markdown::borders::PARAGRAPH_SIDES,
+                                    )
+                                }),
+                            };
+                            (i, header::story_text(p, view), own)
                         })
                         .collect();
                     // From the first paragraph with text to the last.
                     let first = read.iter().position(|(_, text, _)| !text.is_empty());
                     let last = read.iter().rposition(|(_, text, _)| !text.is_empty());
-                    let (index, text, align, more) = match (first, last) {
+                    let (index, text, paras, more) = match (first, last) {
                         (Some(first), Some(last)) => (
                             read[first].0,
                             read[first].1.clone(),
-                            read[first].2,
+                            read[first..=last]
+                                .iter()
+                                .map(|(_, _, own)| own.clone())
+                                .collect::<Vec<_>>(),
                             read[first + 1..=last]
                                 .iter()
                                 .map(|(_, text, _)| text.clone())
                                 .collect(),
                         ),
-                        _ => (0, String::new(), None, Vec::new()),
+                        _ => (0, String::new(), Vec::new(), Vec::new()),
                     };
+                    let align = paras.first().and_then(|p| p.align);
                     // The styles of the paragraphs the writer makes again,
                     // the empty ones before the text too: none when all
                     // are Word's for the story (`header`, by name).
@@ -952,9 +971,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         kind,
                         ty,
                         id: crate::ids::short_paragraph(&format!("{stem}:p:{index}")),
+                        part: crate::ids::short_paragraph(&format!("{stem}:p:0")),
+                        first: index,
                         text,
                         more,
                         align,
+                        paras,
                         styles,
                         active: match ty {
                             "first" => title_page,
@@ -4203,6 +4225,19 @@ fn bookmark_targets<'e>(roots: impl Iterator<Item = &'e Element>) -> HashSet<Str
         }
     }
     out
+}
+
+/// The colour every text run of a header or footer paragraph `p` sets
+/// itself (`w:rPr/w:color`), when they all set the same one.
+fn story_color(p: &Element) -> Option<String> {
+    let mut runs = Vec::new();
+    p.find_all("r", &mut runs);
+    let mut colors = runs
+        .iter()
+        .filter(|r| r.child("t").is_some())
+        .map(|r| r.path(&["rPr", "color"]).and_then(|c| c.attr("val")));
+    let first = colors.next()??;
+    colors.all(|c| c == Some(first)).then(|| first.to_string())
 }
 
 #[cfg(test)]

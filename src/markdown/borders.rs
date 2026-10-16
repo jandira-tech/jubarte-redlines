@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Table and cell borders as a table line prints them, read back, and as
-//! the writer writes them: the borders Word passes come back as they were
+//! Table, cell and paragraph borders as a view prints them, read back, and
+//! as the writer writes them: the borders Word passes come back as they were
 //! (Arthur, 2026-10-15: "whatever word passes, we render").
 //!
 //! A border reads `single 0.5pt 000000`: Word's `w:val`, its width in points
@@ -21,6 +21,9 @@ pub(crate) const TABLE_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "in
 pub(crate) const CELL_SIDES: [&str; 8] = [
     "top", "left", "bottom", "right", "insideH", "insideV", "tl2br", "tr2bl",
 ];
+
+/// A paragraph's sides (`w:pBdr`), in schema order.
+pub(crate) const PARAGRAPH_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"];
 
 /// One side's border.
 #[derive(Clone, Debug, PartialEq, Eq)]

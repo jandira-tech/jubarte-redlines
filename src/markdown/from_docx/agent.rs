@@ -1557,28 +1557,36 @@ fn merged_cells(t: &str, grid: &[Vec<(usize, usize, Option<bool>)>]) -> Vec<Stri
     out
 }
 
+/// The sides `props` (`w:tblBorders`, `w:tcBorders`, `w:pBdr`) names among
+/// `all`, in schema order.
+pub(super) fn own_borders(
+    props: Option<&Element>,
+    all: &[&'static str],
+) -> crate::markdown::borders::Sides {
+    use crate::markdown::borders;
+    let found: Vec<_> = props
+        .into_iter()
+        .flat_map(|e| e.elements())
+        .filter_map(|side| {
+            let name = borders::side(side.local(), all)?;
+            let border = borders::Border::new(
+                side.attr("val")?,
+                side.attr("sz"),
+                side.attr("color"),
+                side.attr("space"),
+            );
+            Some((name, border))
+        })
+        .collect();
+    borders::ordered(&found, all)
+}
+
 /// The borders `tbl` and its cells carry themselves, as its line prints them
 /// (`borders single 0.5pt 000000`, `cell-borders bottom single 1pt in
 /// t0.row0`): what Word passes comes back as it was.
 fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
     use crate::markdown::borders::{self, CELL_SIDES, TABLE_SIDES};
-    let read = |props: Option<&Element>, all: &[&'static str]| -> borders::Sides {
-        let found: Vec<_> = props
-            .into_iter()
-            .flat_map(|e| e.elements())
-            .filter_map(|side| {
-                let name = borders::side(side.local(), all)?;
-                let border = borders::Border::new(
-                    side.attr("val")?,
-                    side.attr("sz"),
-                    side.attr("color"),
-                    side.attr("space"),
-                );
-                Some((name, border))
-            })
-            .collect();
-        borders::ordered(&found, all)
-    };
+    let read = own_borders;
     let mut clauses = Vec::new();
     let own = read(tbl.path(&["tblPr", "tblBorders"]), &TABLE_SIDES);
     if !own.is_empty() {
