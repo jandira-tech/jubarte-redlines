@@ -139,6 +139,8 @@ pub(super) struct TableFormats {
     /// (`w:tcBorders`), the first group naming a cell giving its own.
     pub borders: Option<super::borders::Sides>,
     pub cell_borders: Vec<(super::view_notes::CellsAt, super::borders::Sides)>,
+    /// A row's own table borders (`w:tblPrEx/w:tblBorders`), by row.
+    pub row_borders: HashMap<usize, super::borders::Sides>,
 }
 
 /// A paragraph's `w:ind`, side by side, in twips.
@@ -941,6 +943,13 @@ pub(super) fn story(
                 let (format, own) = tables
                     .last_mut()
                     .map(|(formats, row, cell)| {
+                        if let Some(sides) = formats.row_borders.get(row) {
+                            let _ = write!(
+                                out,
+                                "<w:tblPrEx><w:tblBorders>{}</w:tblBorders></w:tblPrEx>",
+                                super::borders::xml(sides)
+                            );
+                        }
                         let found = (
                             formats.rows.get(row).cloned(),
                             formats.row_marks.get(row).cloned(),

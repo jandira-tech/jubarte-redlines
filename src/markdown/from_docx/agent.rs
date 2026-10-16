@@ -1614,6 +1614,11 @@ fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
                     side.attr("sz"),
                     side.attr("color"),
                     side.attr("space"),
+                )
+                .with_theme(
+                    side.attr("themeColor"),
+                    side.attr("themeTint"),
+                    side.attr("themeShade"),
                 );
                 Some((name, border))
             })
@@ -1624,6 +1629,28 @@ fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
     let own = read(tbl.path(&["tblPr", "tblBorders"]), &TABLE_SIDES);
     if !own.is_empty() {
         clauses.push(format!("borders {}", borders::describe(&own, &TABLE_SIDES)));
+    }
+    // A row's own table borders (`w:tblPrEx/w:tblBorders`), the rows that
+    // share one in one group: `row-borders top double 0.5pt in t0.row1`.
+    let mut row_groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (r, tr) in rows.iter().enumerate() {
+        let sides = read(tr.path(&["tblPrEx", "tblBorders"]), &TABLE_SIDES);
+        if sides.is_empty() {
+            continue;
+        }
+        let text = borders::describe(&sides, &TABLE_SIDES);
+        let at = format!("t{t}.row{r}");
+        match row_groups.iter_mut().find(|(g, _)| *g == text) {
+            Some((_, rows)) => rows.push(at),
+            None => row_groups.push((text, vec![at])),
+        }
+    }
+    if !row_groups.is_empty() {
+        let groups: Vec<String> = row_groups
+            .iter()
+            .map(|(text, at)| format!("{text} in {}", at.join(" ")))
+            .collect();
+        clauses.push(format!("row-borders {}", groups.join("; ")));
     }
     // Each cell's borders, as text, by row; the cells that share one print
     // as one group, a whole row as the row, every cell as `all`.

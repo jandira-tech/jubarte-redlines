@@ -463,6 +463,9 @@ pub(super) struct TableLine {
     /// Its cells' own borders (`cell-borders bottom single 1pt in t0.row0`),
     /// with the cells each names.
     pub cell_borders: Vec<(CellsAt, super::borders::Sides)>,
+    /// Its rows' own table borders (`row-borders top double 0.5pt in
+    /// t0.row1`, Word's `w:tblPrEx`), by row.
+    pub row_borders: Vec<(usize, super::borders::Sides)>,
     /// A comment's range runs through the table (`in c5`).
     pub in_comment: bool,
     /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
@@ -617,6 +620,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         style: None,
         borders: None,
         cell_borders: Vec::new(),
+        row_borders: Vec::new(),
         in_comment: false,
         fmt: None,
         grid_fmt: None,
@@ -745,6 +749,20 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         }
         if let Some(text) = clause.strip_prefix("borders ") {
             parsed.borders = super::borders::parse(text, &super::borders::TABLE_SIDES);
+        }
+        if let Some(groups) = clause.strip_prefix("row-borders ") {
+            // `top double 0.5pt FF0000 in t0.row1 t0.row3; left none in t0.row2`
+            for group in groups.split("; ") {
+                let Some((text, at)) = group.rsplit_once(" in ") else {
+                    continue;
+                };
+                let Some(sides) = super::borders::parse(text, &super::borders::TABLE_SIDES) else {
+                    continue;
+                };
+                for row in at.split(' ').filter_map(row_of) {
+                    parsed.row_borders.push((row, sides.clone()));
+                }
+            }
         }
         if let Some(groups) = clause.strip_prefix("cell-borders ") {
             // `top,bottom single 1pt in all; left none in t0.row1 t0.row2.cell0`
@@ -992,10 +1010,11 @@ const CLAUSE_WORDS: [&str; 20] = [
 
 /// The words that open a table line's own clauses (`cells p0-p3 by row`,
 /// `merged …`): beside [`CLAUSE_WORDS`], what a style id must not read as.
-const TABLE_WORDS: [&str; 9] = [
+const TABLE_WORDS: [&str; 10] = [
     "cells",
     "borders",
     "cell-borders",
+    "row-borders",
     "merged",
     "gaps",
     "style",

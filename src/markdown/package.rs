@@ -518,10 +518,13 @@ fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme
                     .collect();
                 format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
             });
+            // Table Grid keeps Word's name for it.
+            let name = if id == "TableGrid" { "Table Grid" } else { id };
             format!(
-                "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{id}\"/>\
+                "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
                  <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
-                id = escape(id)
+                id = escape(id),
+                name = escape(name)
             )
         })
         .collect();

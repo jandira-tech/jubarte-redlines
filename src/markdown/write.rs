@@ -328,6 +328,7 @@ struct TablePlan {
     /// The table's own borders and its cells' (`borders …`, `cell-borders …`).
     borders: Option<crate::markdown::borders::Sides>,
     cell_borders: Vec<(view_notes::CellsAt, crate::markdown::borders::Sides)>,
+    row_borders: Vec<(usize, crate::markdown::borders::Sides)>,
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
     styles: HashMap<usize, String>,
     /// A comment's range runs through the table (`in c5`).
@@ -758,6 +759,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         style: line.style,
         borders: line.borders,
         cell_borders: line.cell_borders,
+        row_borders: line.row_borders,
         in_comment: line.in_comment,
         fmt: line.fmt,
         grid_fmt: line.grid_fmt,
@@ -1498,15 +1500,17 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
-                    if id == "TableGrid" {
+                    let border = self
+                        .document
+                        .table_style
+                        .as_ref()
+                        .filter(|(legend, _)| legend == id)
+                        .and_then(|(_, border)| *border);
+                    // Word's thin Table Grid, unless the legend gives it a
+                    // border of its own (`TableGrid, all borders 1.5pt`).
+                    if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
                         self.document.styles.insert("TableGrid");
                     } else {
-                        let border = self
-                            .document
-                            .table_style
-                            .as_ref()
-                            .filter(|(legend, _)| legend == id)
-                            .and_then(|(_, border)| *border);
                         self.document.table_styles.insert(id.clone(), border);
                     }
                 }
@@ -2053,11 +2057,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.document.reserved_ids.insert(id);
         }
         let (borders, cell_borders) = (plan.borders.clone(), plan.cell_borders.clone());
+        let row_borders = plan.row_borders.iter().cloned().collect();
         TableFormats {
             table: table.map(|tag| self.format_mark(&tag)),
             grid,
             borders,
             cell_borders,
+            row_borders,
             row_marks: row_marks
                 .into_iter()
                 .map(|(row, (inserted, tag))| {
