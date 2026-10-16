@@ -11486,7 +11486,7 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
     // Cell-margin children (w:tcMar / w:tblCellMar) carry @w:w in twips; the
     // like-named border elements carry @w:sz (eighth-points) and never @w:w,
     // so keying on (element local, attr) stays safe.
-    const TWIPS_ATTRS: [(&str, &[&str]); 18] = [
+    const TWIPS_ATTRS: [(&str, &[&str]); 22] = [
         ("pgSz", &["w", "h"]),
         ("gridCol", &["w"]),
         (
@@ -11507,6 +11507,20 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
         ("tblInd", &["w"]),
         ("tblCellSpacing", &["w"]),
         ("trHeight", &["val"]),
+        ("cols", &["space"]),
+        ("col", &["w", "space"]),
+        (
+            "tblpPr",
+            &[
+                "leftFromText",
+                "rightFromText",
+                "topFromText",
+                "bottomFromText",
+                "tblpX",
+                "tblpY",
+            ],
+        ),
+        ("framePr", &["w", "h", "x", "y"]),
         ("top", &["w"]),
         ("bottom", &["w"]),
         ("left", &["w"]),
@@ -11515,25 +11529,12 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
         ("end", &["w"]),
     ];
     fn to_twips(v: &str) -> Option<i64> {
-        let t = v.trim();
-        for (suf, factor) in [
-            ("pt", 20.0),
-            ("in", 1440.0),
-            ("cm", 1440.0 / 2.54),
-            ("mm", 1440.0 / 25.4), // 1in = 25.4mm → ~56.693 twips per mm
-            ("pc", 240.0),
-            ("pi", 240.0),
-        ] {
-            if let Some(n) = t.strip_suffix(suf) {
-                return n
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .map(|f| (f * factor).round() as i64);
-            }
+        if let Some(tw) = crate::util::universal_measure_twips(v) {
+            return Some(tw.round() as i64);
         }
         // fractional plain values ("100.0") on integer-typed attributes →
         // rounded (gdocs-exported styles carry them; validator: Int16 fail)
+        let t = v.trim();
         if t.contains('.') {
             return t.parse::<f64>().ok().map(|f| f.round() as i64);
         }
