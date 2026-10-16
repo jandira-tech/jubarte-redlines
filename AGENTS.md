@@ -36,8 +36,13 @@ Docxodus/Open-Xml-PowerTools behavior and existing fixtures before inventing
 new semantics.
 
 - Run commands from this repository root.
-- Run Cargo commands sequentially; never set `CARGO_TARGET_DIR` or start a
-  second Cargo process while one is running.
+- Run Cargo commands sequentially within a checkout: never start a second
+  Cargo process in a checkout or worktree while one is running there, and
+  never set `CARGO_TARGET_DIR`. Separate worktrees may build at the same
+  time, because under mbx each one has its own target. Keep the number of
+  concurrent builds small (three at most on one machine): each build uses
+  every core, and test runs that compete for CPU time out or hide flaky
+  failures.
 - Cargo runs through mbx, the build cache shared by every checkout and
   worktree. `mbx setup` once per machine puts its Cargo shim
   (`~/Library/Application Support/mbx/bin/cargo` on macOS) first on `PATH`;
