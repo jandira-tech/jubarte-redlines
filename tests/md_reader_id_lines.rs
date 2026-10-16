@@ -1126,13 +1126,13 @@ fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
     let view = "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n  \
                 BC: Bo Chen                      # 2026-03-02T10:00:00Z\n\
                 headers:\n  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}\n\
-                footers:\n  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
+                footers:\n  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
                 rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
                 break-del footer1.r40 @BC in footer1.p1}\n---\n\n<!-- p0 -->\nBody.\n";
     let (again, docx) = full_trip(view);
     for line in [
         "  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}",
-        "  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
+        "  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
          rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
          break-del footer1.r40 @BC in footer1.p1}",
     ] {

@@ -1904,7 +1904,7 @@ styles:
   \"#\": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
   table: TableGrid, all borders 0.5pt
 headers:
-  first: {id: header2, text: DRAFT, style: Normal}  # page 1 only (different first page)
+  first: {id: header2, text: [DRAFT, \"\"], style: Normal}  # page 1 only (different first page)
   default: {id: header1, text: SIGNATURE PAGE, right, style: Normal}
 footers:
   first: none                      # page 1 shows no page number
