@@ -304,6 +304,10 @@ pub(super) struct Document {
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
     /// order (`{>>r5+6 @AB<<}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
+    /// A change that was another change's only content, by the serial of
+    /// the note's own change: the change it sits inside (`{--x--}{>>r3 @BO
+    /// on r1 @AL<<}` is a deletion inside an insertion), innermost first.
+    pub wraps: HashMap<u32, Change>,
     /// The date the last mark of a change takes, when its author's view
     /// dates them with a range (`2026-03-02..2026-03-04`).
     pub range_ends: HashMap<u32, String>,
@@ -814,6 +818,26 @@ pub(super) fn story(
                         open = Some(change);
                     } else {
                         close_marks(context, &natural, &mut out, &mut open, &mut marks);
+                        // A change that was another's only content sits
+                        // inside it again: the note names it after ` on `
+                        // (`{--x--}{>>r3 @BO on r1 @AL<<}`), so the outer
+                        // mark wraps the inner one, with nothing else in
+                        // it. Deeper notes chain (`r5 @CD on r3 @BO on
+                        // r1 @AL`), outermost last.
+                        if let Some((_, by)) = run.change {
+                            let mut chain = Vec::new();
+                            let mut at = by;
+                            while let Some(&outer) = context.document.wraps.get(&at) {
+                                chain.push(outer);
+                                at = outer.1;
+                            }
+                            for outer in chain.iter().rev() {
+                                spend(&mut natural, outer.1);
+                                let wrap = context.revision(outer.0, Some(outer.1));
+                                let _ = write!(out, "<{wrap}>");
+                                marks.push(*outer);
+                            }
+                        }
                         if let Some((kind, by)) = run.change {
                             spend(&mut natural, by);
                             let wrap = context.revision(kind, Some(by));
@@ -1137,7 +1161,7 @@ pub(super) fn story(
             }
         }
     }
-    close_mark(context, &natural, &mut out, &mut open);
+    close_marks(context, &natural, &mut out, &mut open, &mut marks);
     out
 }
 

@@ -487,7 +487,17 @@ authors' tags on one id line are joined by `; ` (`rev r1 @AC; r2 @JD`).
 {~~old~>new~~}{>>r2 @JD; r1 @AC<<}            two authors: deleted side first
 {++bold words++}{>>r7+8 @AC<<}                 neighbouring marks by one author
 {++quarterly++}{>>r0 @AC 2026-10-03T14:05:00Z<<}   with --dates
+{--deleted--}{>>r3 @BO on r1 @AL<<}         a change that was another's only content
 ```
+
+A change that was the only content of another — `A` inserted text, `B`
+later deleted it — has nothing of the outer change left to split around
+it, so its note names the outer one after ` on ` and the outer change's
+own tag, each with its own timestamp as notes print them: `r3 @BO on
+r1 @AL`, or `r3 Ben Ode (2026-09-30T09:00:00Z) on r1 Ana Lima
+(2026-09-29T14:05:00Z)` in the plain view. The writer puts the change
+back inside the one it names. A row's or cell's own mark is never
+named: the writer rebuilds those where they stand.
 
 Neighbouring marks of one kind by one author join, then an insertion
 directly followed by a deletion pairs as a substitution, left to right:
@@ -547,7 +557,12 @@ block.
 tagged note (`{>>r12 @AC<<}`) keeps its id, `r12`
 (`footnotes.r12` under a footnote id line), the name the `authors:`
 line gives its handle, and its date: the note's own timestamp, else the
-handle's from `authors:`. A tagged comment note keeps its id, author and
+handle's from `authors:`. A note that names another change after ` on `
+(`{--x--}{>>r3 @BO on r1 @AL<<}`, the plain view the same by author and
+date) puts the change it follows back inside that one: `w:ins r1`
+wrapping `w:del r3`, each with its own id, author and date, resolved
+through `authors:` like any tag. A tagged comment note keeps its id,
+author and
 date; `re cN` names its thread root; `resolved` resolves the thread. A
 change or note with no tag is new and takes the author and date
 [Markdown to Word](#markdown-to-word) lists (`-a/--author` and
