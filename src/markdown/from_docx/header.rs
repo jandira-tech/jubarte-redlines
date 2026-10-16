@@ -63,8 +63,8 @@ pub(crate) struct StoryFact {
     pub fmt: Vec<String>,
 }
 
-/// One paragraph of a header or footer: its own alignment, text colour and
-/// borders.
+/// One paragraph of a header or footer: its own alignment, text colour,
+/// borders and frame.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct ParaFact {
     /// `center`, `right`, or `None` for left.
@@ -75,6 +75,10 @@ pub(crate) struct ParaFact {
     /// Its own borders (`w:pBdr`), as a border prints them (`bottom single
     /// 0.5pt 8496B0 space 4pt`).
     pub border: Option<String>,
+    /// The paragraph's `w:framePr`, as the dialect names it (`(hAnchor=margin,
+    /// vAnchor=text, wrap=none, xAlign=right, y=1)`); `None` when none is
+    /// set.
+    pub frame: Option<String>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -923,14 +927,14 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
 }
 
 /// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
-/// one carries its own colour or borders, or their alignments differ.
+/// one carries its own colour, borders or frame, or their alignments differ.
 fn by_paragraph(s: &StoryFact) -> bool {
     s.paras
         .iter()
-        .any(|p| p.color.is_some() || p.border.is_some() || p.align != s.align)
+        .any(|p| p.color.is_some() || p.border.is_some() || p.frame.is_some() || p.align != s.align)
 }
 
-/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt}`,
+/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt, frame: (hAnchor=margin, …)}`,
 /// one per paragraph.
 fn paragraph_entries(s: &StoryFact) -> Vec<String> {
     std::iter::once(&s.text)
@@ -947,6 +951,9 @@ fn paragraph_entries(s: &StoryFact) -> Vec<String> {
             }
             if let Some(border) = &p.border {
                 inner.push_str(&format!(", border: {}", scalar(border, true)));
+            }
+            if let Some(frame) = &p.frame {
+                inner.push_str(&format!(", frame: {}", scalar(frame, true)));
             }
             format!("p{}: {{{inner}}}", s.first + k)
         })

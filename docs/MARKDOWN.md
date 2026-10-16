@@ -672,15 +672,21 @@ note.
   blocks: when one holds a change `--changed` selects, the `range:` line
   says to read those lines (with no block left when only they changed).
   A story whose paragraphs carry their own text colour (`w:color`, when
-  every text run sets the same one) or borders (`w:pBdr`, in the table
-  border grammar), or differ in alignment, prints paragraph by paragraph:
-  `id: header1`, then `p0: {text: …, center, color: "595959", border:
-  bottom single 0.5pt 8496B0 space 4pt}` for each, as a block in the first
-  section and as a flow map in `sections:`. A colour that opens with a
-  digit is quoted, since YAML reads `000000` as the number 0. Alignment is
-  `center`, `right`, or `left`/`justify` when the paragraph states it
-  (`w:jc`), so a centred Header style does not centre it; no word means the
-  paragraph names none.
+  every text run sets the same one), borders (`w:pBdr`, in the table
+  border grammar), or frame (`w:framePr`), or differ in alignment,
+  prints paragraph by paragraph: `id: header1`, then
+  `p0: {text: …, center, color: "595959", border: bottom single 0.5pt
+  8496B0 space 4pt, frame: "(hAnchor=margin,vAnchor=text,wrap=none,xAlign=right,y=1)"}`
+  for each, as a block in the first section and as a flow map in
+  `sections:`. A colour that opens with a digit is quoted, since YAML
+  reads `000000` as the number 0. A frame's `frame:` lists its `w:framePr`
+  attributes alphabetically (`hAnchor`, `vAnchor`, `wrap`, `xAlign`, `y`);
+  the writer places them in schema order (`w`, `h`, `hRule`, `hAnchor`,
+  `vAnchor`, `x`, `y`, `xAlign`, `yAlign`, `wrap`, `hSpace`, `vSpace`)
+  so Word keeps the order it reads. Alignment is `center`, `right`, or
+  `left`/`justify` when the paragraph states it (`w:jc`), so a centred
+  Header style does not centre it; no word means the paragraph names
+  none.
 - Page markers need the layout pass; `--no-page-markers` skips it. When
   the layout fails, the markers come from Word's cached page breaks, else
   from hard breaks and section starts. That fallback does not mix the two

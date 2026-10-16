@@ -916,6 +916,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                         &crate::markdown::borders::PARAGRAPH_SIDES,
                                     )
                                 }),
+                                frame: story_frame(p, &writer.styles, default_style.as_deref()),
                             };
                             (i, header::story_text(p, view), own)
                         })
@@ -1635,6 +1636,8 @@ struct Style {
     jc: Option<String>,
     /// The `w:rFonts` face its runs are set in.
     font: Option<String>,
+    /// Its own `w:framePr` attributes, by local name.
+    frame: Vec<(String, String)>,
 }
 
 #[derive(Default)]
@@ -1681,6 +1684,15 @@ impl Styles {
                         .and_then(|j| j.attr("val"))
                         .map(str::to_string),
                     font: rpr.and_then(font_of),
+                    frame: ppr
+                        .and_then(|p| p.child("framePr"))
+                        .map(|f| {
+                            f.attrs
+                                .iter()
+                                .map(|(k, v)| (ooxml::local(k).to_string(), v.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 },
             );
         }
@@ -1720,6 +1732,19 @@ impl Styles {
         self.chain(id)
             .into_iter()
             .find_map(|style| style.jc.as_deref())
+    }
+
+    /// `id`'s `w:framePr` attributes down its `basedOn` chain, a derived
+    /// style's value over its base's.
+    fn frame(&self, id: &str) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for style in self.chain(id).into_iter().rev() {
+            for (name, value) in &style.frame {
+                out.retain(|(n, _)| n != name);
+                out.push((name.clone(), value.clone()));
+            }
+        }
+        out
     }
 
     /// The style and its `basedOn` ancestors, nearest first.
@@ -4354,6 +4379,31 @@ fn story_color(p: &Element) -> Option<String> {
         .map(|r| r.path(&["rPr", "color"]).and_then(|c| c.attr("val")));
     let first = colors.next()??;
     colors.all(|c| c == Some(first)).then(|| first.to_string())
+}
+
+/// A header's or footer's paragraph frame (`w:pPr/w:framePr`), as the
+/// dialect names it (`(hAnchor=margin,vAnchor=text,wrap=none,xAlign=right,y=1)`).
+/// `None` when neither the paragraph nor its style chain names one. The
+/// attributes are the effective ones: the style chain's `framePr` under
+/// the paragraph's own, a named attribute overriding, as Word merges
+/// them.
+fn story_frame(p: &Element, styles: &Styles, default_style: Option<&str>) -> Option<String> {
+    let ppr = p.child("pPr");
+    let named = ppr
+        .and_then(|p| p.child("pStyle"))
+        .and_then(|s| s.attr("val"));
+    let mut attrs = styles.frame(named.or(default_style).unwrap_or("Normal"));
+    if let Some(own) = ppr.and_then(|p| p.child("framePr")) {
+        for (name, value) in &own.attrs {
+            let name = ooxml::local(name).to_string();
+            attrs.retain(|(n, _)| *n != name);
+            attrs.push((name, value.clone()));
+        }
+    }
+    if attrs.is_empty() {
+        return None;
+    }
+    Some(crate::markdown::frame::Frame::from_attrs(attrs).format())
 }
 
 #[cfg(test)]

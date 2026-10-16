@@ -73,11 +73,13 @@ pub(super) struct ParaFormat {
     pub color: Option<String>,
     /// Its borders (`w:pBdr`).
     pub border: Option<super::borders::Sides>,
+    /// The paragraph's `w:framePr`, in schema order.
+    pub frame: Option<super::frame::Frame>,
 }
 
 impl ParaFormat {
-    /// The `center`/`right`, `color:` and `border:` of a `pN: {…}` entry;
-    /// `None` when its border does not read.
+    /// The `center`/`right`, `color:`, `border:` and `frame:` of a `pN: {…}`
+    /// entry; `None` when its border or frame does not.
     fn read(entries: &[(String, Value)]) -> Option<Self> {
         let text_of = |key: &str| {
             entries.iter().find_map(|(k, v)| match v {
@@ -93,12 +95,17 @@ impl ParaFormat {
             )?),
             None => None,
         };
+        let frame = match text_of("frame") {
+            Some(text) => Some(super::frame::Frame::parse(text)?),
+            None => None,
+        };
         Some(Self {
             align: align_of(flag),
             color: text_of("color")
                 .filter(|c| c.chars().all(|c| c.is_ascii_alphanumeric()))
                 .map(str::to_string),
             border,
+            frame,
         })
     }
 }
@@ -1151,6 +1158,12 @@ fn story_part(
         let own = index
             .checked_sub(story.paragraph)
             .and_then(|k| story.formats.get(k));
+        // `w:framePr` lives between `pStyle` and the next children in
+        // schema order; only the own frame matters (Word has already
+        // merged the style chain's into it).
+        if let Some(frame) = own.and_then(|f| f.frame.as_ref()) {
+            base.push_str(&frame.xml());
+        }
         if let Some(sides) = own.and_then(|f| f.border.as_ref()) {
             let _ = write!(base, "<w:pBdr>{}</w:pBdr>", super::borders::xml(sides));
         }

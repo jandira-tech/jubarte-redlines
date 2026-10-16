@@ -39,6 +39,7 @@ mod anchor;
 pub(crate) mod borders;
 mod critic;
 mod diff;
+mod frame;
 mod from_docx;
 mod math;
 pub(crate) mod package;

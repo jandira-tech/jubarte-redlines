@@ -19,8 +19,15 @@ headers:
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: footer2, text: ["{PAGE}1{/}", ""]}
-  even: {id: footer1, text: ["{PAGE}", ""], inactive}  # defined, but even/odd headers are off
+  default:
+    id: footer2
+    p0: {text: "{PAGE}1{/}", frame: "(hAnchor=margin,vAnchor=text,wrap=none,xAlign=right,y=1)"}
+    p1: {text: ""}
+  even:                            # defined, but even/odd headers are off
+    id: footer1
+    p0: {text: "{PAGE}", frame: "(hAnchor=margin,vAnchor=text,wrap=none,xAlign=right,y=1)"}
+    p1: {text: ""}
+    inactive: true
 ---
 
 <!-- p0 center -->
