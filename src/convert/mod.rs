@@ -37542,6 +37542,40 @@ mod field_tests {
     }
 
     #[test]
+    fn a_tracked_change_inside_a_math_box_keeps_its_marks() {
+        // A box paints its glyphs unmarked: a deleted run inside a
+        // delimiter drew exactly like plain x. A marked equation keeps the
+        // per-run path, which inks and strikes each revised run.
+        for (inner, mark) in [
+            (r#"<m:r><w:del w:id="1" w:author="Ann"><m:t>x</m:t></w:del></m:r>"#, "del in run"),
+            (r#"<w:del w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:del>"#, "del around run"),
+            (r#"<w:ins w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:ins>"#, "ins around run"),
+        ] {
+            for (open, close) in [
+                ("<m:d><m:e>", "</m:e></m:d>"),
+                ("<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg/><m:e>", "</m:e></m:rad>"),
+                ("<m:f><m:num>", "</m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>"),
+            ] {
+                let runs = math_runs(&format!(
+                    "<w:p><m:oMath>{open}{inner}{close}</m:oMath></w:p>"
+                ));
+                assert!(
+                    runs.iter().all(|r| r.math.is_none()),
+                    "{mark} in {open}: a marked equation is not one box"
+                );
+                assert!(
+                    runs.iter().any(|r| r.rev && r.text.contains('\u{1D465}')),
+                    "{mark} in {open}: the revised x keeps its mark: {:?}",
+                    runs.iter().map(|r| (&r.text, r.rev)).collect::<Vec<_>>()
+                );
+            }
+        }
+        // Unmarked, the same delimiter is still one laid-out box.
+        let runs = math_runs(r#"<w:p><m:oMath><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath></w:p>"#);
+        assert!(runs.iter().any(|r| r.math.is_some()), "plain box");
+    }
+
+    #[test]
     fn omml_letters_are_cambria_math_italic() {
         // Word's PDF of math_matrix_tests (corpus 6c0ad6c8ef) embeds
         // CambriaMath and draws a matrix's a as U+1D44E: Word sets math
