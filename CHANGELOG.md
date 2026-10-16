@@ -115,8 +115,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - **Tables keep the borders Word passes; a Markdown table takes Word's thin
   grid.** The agent view prints a table's own borders (`borders single 0.5pt
-  000000`) and its cells' (`cell-borders … in all`, a row, or a cell), and the
-  writer writes them back as they were. A table without a style is
+  000000`), its rows' own (`row-borders … in t0.row1`, `w:tblPrEx`) and its
+  cells' (`cell-borders … in all`, a row, or a cell), theme colours included
+  (`theme accent1 tint 99 shade BF`), and the writer writes them back as they
+  were. A Table Grid the source defines with its own uniform border keeps it. A table without a style is
   `TableNormal` (written with no `tblStyle`); a table that names nothing, as a
   plain Markdown table, takes Table Grid (single 0.5pt borders all round, as
   Word's Insert Table makes it) instead of the borderless Normal Table.
@@ -130,6 +132,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   no indentation). Reading back, an HTML block indented inside a list item
   no longer leaves a stray empty paragraph.
 
+- **Breaking: `edit --accept/--reject` prints the resolved changes, not the view.**
+  `edit FILE -p r12 --accept` (or `--reject`, `-p` repeats) prints one line
+  per resolved change (`accepted r1+2 in p3: "{~~weekly~>monthly~~}" >
+  "monthly"`), nothing else; ordinary content edits still print the changed
+  paragraphs. `-p r1` accepts only `r1`, not its `r1+2` pair.
 - **Breaking: jubarte prints short ids.** The agent view tags revisions
   `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
   (a reply names its root, `re c5`); table lines name rows and cells

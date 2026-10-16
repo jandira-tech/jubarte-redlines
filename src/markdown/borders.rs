@@ -7,8 +7,10 @@
 //! (Arthur, 2026-10-15: "whatever word passes, we render").
 //!
 //! A border reads `single 0.5pt 000000`: Word's `w:val`, its width in points
-//! (`w:sz` is eighths of a point), its colour when it is not automatic, and
-//! `space 1pt` when it keeps a gap. Sides that share a border print as one
+//! (`w:sz` is eighths of a point), its colour when it is not automatic, its
+//! theme colour after that (`theme accent1 tint 99 shade BF`, Word's
+//! `w:themeColor`, `w:themeTint` and `w:themeShade`), and `space 1pt` when
+//! it keeps a gap. Sides that share a border print as one
 //! group (`top,bottom single 1.5pt`), groups joined by ` + `; a table's group
 //! naming all six of its sides drops their names (`borders single 0.5pt`).
 //! A side Word turns off (`nil`, `none`) is `none`. `start` and `end` are
@@ -37,6 +39,11 @@ pub(crate) struct Border {
     pub color: Option<String>,
     /// `w:space`, in points, when not zero.
     pub space: Option<u32>,
+    /// `w:themeColor` (`accent1`), and its `w:themeTint` and
+    /// `w:themeShade` (two hex digits), beside the fallback `color`.
+    pub theme: Option<String>,
+    pub tint: Option<String>,
+    pub shade: Option<String>,
 }
 
 impl Border {
@@ -57,7 +64,26 @@ impl Border {
             space: space
                 .and_then(|s| s.parse().ok())
                 .filter(|&s| !off && s > 0),
+            theme: None,
+            tint: None,
+            shade: None,
         }
+    }
+
+    /// The border with its element's theme colour attributes.
+    pub(crate) fn with_theme(
+        mut self,
+        theme: Option<&str>,
+        tint: Option<&str>,
+        shade: Option<&str>,
+    ) -> Self {
+        if self.val == "none" {
+            return self;
+        }
+        self.theme = theme.filter(|t| is_theme_name(t)).map(str::to_string);
+        self.tint = tint.filter(|t| is_hex_byte(t)).map(str::to_string);
+        self.shade = shade.filter(|t| is_hex_byte(t)).map(str::to_string);
+        self
     }
 
     fn text(&self) -> String {
@@ -70,6 +96,15 @@ impl Border {
         if let Some(color) = &self.color {
             text.push(' ');
             text.push_str(color);
+        }
+        for (word, value) in [
+            ("theme", &self.theme),
+            ("tint", &self.tint),
+            ("shade", &self.shade),
+        ] {
+            if let Some(value) = value {
+                text.push_str(&format!(" {word} {value}"));
+            }
         }
         if let Some(space) = self.space {
             text.push_str(&format!(" space {space}pt"));
@@ -87,12 +122,26 @@ impl Border {
             size: None,
             color: None,
             space: None,
+            theme: None,
+            tint: None,
+            shade: None,
         };
         let mut rest = rest.iter();
         while let Some(word) = rest.next() {
             if *word == "space" {
                 let pt = rest.next()?.strip_suffix("pt")?;
                 border.space = Some(pt.parse().ok()?);
+            } else if *word == "theme" {
+                let name = rest.next().filter(|n| is_theme_name(n))?;
+                border.theme = Some((*name).to_string());
+            } else if *word == "tint" || *word == "shade" {
+                let value = rest.next().filter(|v| is_hex_byte(v))?;
+                let slot = if *word == "tint" {
+                    &mut border.tint
+                } else {
+                    &mut border.shade
+                };
+                *slot = Some((*value).to_string());
             } else if let Some(pt) = word.strip_suffix("pt") {
                 let pt: f64 = pt.parse().ok()?;
                 border.size = Some(eighths(pt)?);
@@ -117,6 +166,15 @@ impl Border {
         xml.push_str(&format!(" w:space=\"{}\"", self.space.unwrap_or(0)));
         if let Some(color) = &self.color {
             xml.push_str(&format!(" w:color=\"{color}\""));
+        }
+        for (name, value) in [
+            ("themeColor", &self.theme),
+            ("themeTint", &self.tint),
+            ("themeShade", &self.shade),
+        ] {
+            if let Some(value) = value {
+                xml.push_str(&format!(" w:{name}=\"{value}\""));
+            }
         }
         xml.push_str("/>");
         xml
@@ -198,6 +256,17 @@ pub(super) fn xml(borders: &Sides) -> String {
         .iter()
         .map(|(side, border)| border.xml(side))
         .collect()
+}
+
+/// A `w:themeColor` value as the view prints it: one word of letters and
+/// digits (`accent1`, `text1`, `followedHyperlink`).
+fn is_theme_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// A `w:themeTint` or `w:themeShade` value: two hex digits.
+fn is_hex_byte(value: &str) -> bool {
+    value.len() == 2 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Eighths of a point as points: `4` is `0.5`, `12` is `1.5`.

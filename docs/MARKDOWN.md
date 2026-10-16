@@ -99,7 +99,7 @@ CLI reads them.
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
-| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). Header row repeated, column alignment kept |
+| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) `row-borders top double 0.5pt FF0000 in t0.row1 t0.row3` (a row's own `w:tblPrEx/w:tblBorders`; groups joined by `; `) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). A border in a theme colour adds it after its fallback colour: `single 1pt 2F5496 theme accent1 tint 99 shade BF` (`w:themeColor`, `w:themeTint`, `w:themeShade`). A source that defines `TableGrid` with one single border other than 0.5pt keeps it: the legend says `table: TableGrid, all borders 1.5pt`. Header row repeated, column alignment kept |
 | `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. Reading Word back, reader and writer share github-slugger's names (a repeat `-1`, `-2`): only the exact name the writer gives a heading is its own bookmark and prints no anchor; any other (`title-01`, a lone `title-1`) stays an `<a id>` anchor, and a heading in a table cell claims no slug. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
 | `[^note]` | footnote; a label defined twice (a footnote and an endnote both `[^1]`) is two notes: its first reference names the first definition and its next the second, which takes the next free number, with a warning |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
@@ -280,7 +280,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -315,15 +315,22 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   item that skips one. A skipped level adds no indentation (four columns
   past an item's content would read as code). Reading a view back, an
   explicit `level N` wins over the indentation.
-- `page-break`: the paragraph holds `w:br w:type="page"`. `section-break`:
+- `page-break`: the paragraph holds `w:br w:type="page"`. In the tracked
+  view, a page break inside an insertion or deletion names that change
+  instead: `page-break-del r282 @SW` (it would otherwise be a `rev` tag,
+  which does not say what the change holds). The clause holds one break,
+  written back at the paragraph's end: a second page break in the same
+  paragraph, or a break between its runs, does not keep its own place yet.
+  `section-break`:
   its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
   the YAML header names for its section (`page:` for the first,
   `sections:` for the others). A page's text columns are its clauses
   too: `columns 2`, `column gap 0.25in` when not Word's 0.5in, and
   `column line` for a rule between them (`w:cols w:sep`). A grid the lines
   snap to (`w:docGrid` with a type) is a clause as well: `line grid 15.6pt`,
-  `line and char grid 18pt` or `char grid 18pt`, then `char space N` when
-  a character grid sets one. A pitch with no grid type is not printed:
+  `line and char grid 18pt` or `char grid 18pt` (a character grid with no
+  line pitch is plain `char grid`), then `char space N` when a character
+  grid sets one. A pitch with no grid type is not printed:
   Word does not snap to it.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
@@ -331,7 +338,8 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   held before resolution, formatting changes and paragraph marks included.
   A paragraph joined into the one before it hands its revisions over. In
   the tracked view, the insertions, deletions and moves its text has no
-  tag for: a deleted picture, break, field character or empty run.
+  tag for: a deleted picture, line break, field character or empty run
+  (a tracked page break has its own clause).
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
 - `in c5`: with comments inline, the comment threads whose range runs on
@@ -420,14 +428,21 @@ r9 @AC`) or as `fmt:` in its `sections:` entry; style changes as
 `style_changes: {Normal: styles.r3 @AS}`, a key of its own beside
 `styles:`, so no style id can collide with it; a header's or footer's
 changes its text does not tag as `rev:`/`fmt:` in its entry; and changes in
-notes no definition shows (Word's separators) as `notes: {fmt: …}`. A
+notes no definition shows (Word's separators) as `notes: {fmt: …}`;
+converting back puts a part's `fmt` changes on its separator, then its
+continuation separator (the view does not say which a lone one was on;
+its tag, author and date come back). The clause also updates a reference
+file's separators; removing it removes their old formatting-change marks.
+A `fmt` clause alone creates the notes part it names. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
 A header's or footer's paragraphs take Word's Header or Footer style unless
 the entry names theirs: `style: Normal` for all, or `styles: [Footer,
-ListParagraph]`, one per paragraph from the part's first through the
-last with text or with a tracked mark a `rev` brings back. A paragraph
+ListParagraph]`, one per paragraph from the part's first through its
+last. A header's or footer's `text` runs from its first paragraph with
+text through the part's last, so empty paragraphs after the text stay
+(`text: [DRAFT, ""]`): Word lays each out as a line of the header. A paragraph
 with no style of its own prints the document's default style (`Normal` in
 most documents), which writes no `w:pStyle`; any other, `Normal` under
 another default too, writes one.
@@ -598,7 +613,7 @@ jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or s
 jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment
 jubarte edit FILE -p c5 --reply TEXT                           a reply
 jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
-jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change
+jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change (prints `accepted r12 in p3: "from" > "to"`)
 jubarte add  FILE -p WHERE --content TEXT [--before]           a new paragraph after (or before) WHERE
 jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND (--comment: on the whole paragraph)
 jubarte add  FILE -p c5 --content TEXT                         a reply (also --reply TEXT)
@@ -636,8 +651,11 @@ without a value reads or records `<stem>_plan.json` beside FILE.
 value is a paragraph style (`Heading2`). After applying, the command prints
 its notes, then the changed blocks: `read redline.docx --changed --by
 <author>`, or every changed block when the author has none (as after
-resolving another author's comment). Anchors match literally first, then
-without their Markdown marks, with a note.
+resolving another author's comment). A pure `--accept`/`--reject` (no
+content operation) prints one line per resolved change instead
+(`accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"`).
+Anchors match literally first, then without their Markdown marks, with a
+note.
 
 ### Limits of the agent view
 

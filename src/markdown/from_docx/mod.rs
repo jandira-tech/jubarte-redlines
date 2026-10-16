@@ -256,9 +256,50 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .flatten()
         .map(|e| Numbering::parse(&e))
         .unwrap_or_default();
+    let mut notes = HashMap::new();
+    for (name, root) in &note_roots {
+        for note in root.children_named(name) {
+            if let Some(id) = note.attr("id") {
+                let note = match accept {
+                    Some(accept) => revise::resolve(note, accept),
+                    None => note.clone(),
+                };
+                notes.insert((*name == "endnote", id.to_string()), note);
+            }
+        }
+    }
+    // Notes with no surviving reference are pruned from the settled file
+    // (`prune_orphan_notes`), so settled numbering skips them too. In the
+    // tracked view every reference survives.
+    let referenced: HashSet<(bool, String)> = if let Some(accept) = accept {
+        // Headers and footers must be settled too: a rejected insertion
+        // (or accepted deletion) there no longer keeps its note alive.
+        let settled_stories: Vec<_> = story_roots
+            .iter()
+            .map(|root| revise::resolve(root, accept))
+            .collect();
+        let mut out = HashSet::new();
+        let mut stack: Vec<&Element> = vec![&document];
+        stack.extend(settled_stories.iter());
+        stack.extend(notes.values());
+        while let Some(next) = stack.pop() {
+            for child in next.elements() {
+                if (child.is("footnoteReference") || child.is("endnoteReference"))
+                    && let Some(id) = child.attr("id")
+                {
+                    out.insert((child.is("endnoteReference"), id.to_string()));
+                }
+                stack.push(child);
+            }
+        }
+        out
+    } else {
+        HashSet::new()
+    };
     // Each note's paragraphs as `edit` numbers its story
     // (`inspect::story_paragraph_nodes`): the first index and how many;
-    // separator notes are not numbered.
+    // separator notes are not numbered. Counted after accept/reject
+    // resolution, so the ids name the paragraphs of the view they print in.
     let mut note_paragraphs: HashMap<(bool, String), (usize, usize)> = HashMap::new();
     for (name, root) in &note_roots {
         let mut first = 0;
@@ -271,23 +312,21 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             }) {
                 continue;
             }
-            let count = agent::paragraphs(note).len();
-            if let Some(id) = note.attr("id") {
-                note_paragraphs.insert((*name == "endnote", id.to_string()), (first, count));
+            let key = note
+                .attr("id")
+                .map(|id| (*name == "endnote", id.to_string()));
+            if accept.is_some() && key.as_ref().is_none_or(|key| !referenced.contains(key)) {
+                continue;
+            }
+            let count = key
+                .as_ref()
+                .and_then(|key| notes.get(key))
+                .map(agent::paragraphs)
+                .map_or_else(|| agent::paragraphs(note).len(), |v| v.len());
+            if let Some(key) = key {
+                note_paragraphs.insert(key, (first, count));
             }
             first += count;
-        }
-    }
-    let mut notes = HashMap::new();
-    for (name, root) in &note_roots {
-        for note in root.children_named(name) {
-            if let Some(id) = note.attr("id") {
-                let note = match accept {
-                    Some(accept) => revise::resolve(note, accept),
-                    None => note.clone(),
-                };
-                notes.insert((*name == "endnote", id.to_string()), note);
-            }
         }
     }
     // Accepting or rejecting the changes leaves comments out as well, except
@@ -316,9 +355,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         heading_slug: None,
         slugger: super::write::Slugger::default(),
         tables_differ: {
-            let (styles, unstyled) = table_styles(document.child("body").unwrap_or(&document));
+            let (styles, unstyled) = table_styles(
+                document.child("body").unwrap_or(&document),
+                custom_table_grid(styles_root.as_ref()),
+            );
             styles.len() > 1 || (!styles.is_empty() && unstyled)
         },
+        custom_grid: custom_table_grid(styles_root.as_ref()),
         bookmarks: bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
@@ -780,7 +823,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 other_styles.push(style.to_string());
             }
         }
-        let (table_styles, _) = table_styles(body);
+        let (table_styles, _) = table_styles(body, custom_table_grid(styles_root.as_ref()));
         let even_odd = settings
             .as_ref()
             .is_some_and(|s| s.child("evenAndOddHeaders").is_some());
@@ -869,9 +912,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             (i, header::story_text(p, view), own)
                         })
                         .collect();
-                    // From the first paragraph with text to the last.
-                    let first = read.iter().position(|(_, text, _)| !text.is_empty());
-                    let last = read.iter().rposition(|(_, text, _)| !text.is_empty());
+                    // From the first paragraph with text to the part's last:
+                    // an empty paragraph after the text is a line Word lays
+                    // out, so the header grows by it. A part with no text
+                    // starts at its first paragraph.
+                    let last = read.len().checked_sub(1);
+                    let first = read
+                        .iter()
+                        .position(|(_, text, _)| !text.is_empty())
+                        .or(last.map(|_| 0));
                     let (index, text, paras, more) = match (first, last) {
                         (Some(first), Some(last)) => (
                             read[first].0,
@@ -2129,6 +2178,9 @@ struct Writer<'a> {
     /// The tables differ in style (two styles, or one and none): each
     /// table line names its own, `style Ledger`.
     tables_differ: bool,
+    /// The source defines Table Grid with borders of its own
+    /// ([`custom_table_grid`]), so the view names it.
+    custom_grid: bool,
     /// In a heading: the name a Markdown link names it by, whose bookmark
     /// the writer makes again and so prints no `<a id>`.
     heading_slug: Option<String>,
@@ -2252,7 +2304,7 @@ impl Writer<'_> {
                         && let Some(line) = agent::table_line(
                             child,
                             self.tables_differ
-                                .then(|| view_table_style(child))
+                                .then(|| view_table_style(child, self.custom_grid))
                                 .flatten(),
                             &[self.column_alignments(child).1, self.cell_styles(child)].concat(),
                             self.resolved,
@@ -4073,24 +4125,51 @@ fn hyperlink_instruction(instruction: &str) -> Option<String> {
 }
 
 /// The table style the view names for `t`. Table Grid, the writer's
-/// default (Word's Insert Table), is none; no style is Word's Normal Table,
-/// which the view names so the writer adds none. Borders the table carries
-/// itself print on its line (`borders …`).
-fn view_table_style(t: &Element) -> Option<&str> {
+/// default (Word's Insert Table), is none unless the source defines one of
+/// its own (`custom_grid`); no style is Word's Normal Table, which the view
+/// names so the writer adds none. Borders the table carries itself print on
+/// its line (`borders …`).
+fn view_table_style(t: &Element, custom_grid: bool) -> Option<&str> {
     match t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
-        Some("TableGrid") => None,
+        Some("TableGrid") if !custom_grid => None,
         Some(style) => Some(style),
         None => Some("TableNormal"),
     }
 }
 
+/// Whether `styles` defines Table Grid with one single border all round
+/// that is not Word's 0.5pt: a grid the legend can name (`TableGrid, all
+/// borders 1.5pt`) and the writer would otherwise replace with the thin
+/// one. Borders that vary, or none, keep Word's grid.
+fn custom_table_grid(styles: Option<&Element>) -> bool {
+    let Some(borders) = styles
+        .and_then(|s| {
+            s.children_named("style")
+                .find(|s| s.attr("styleId") == Some("TableGrid"))
+        })
+        .and_then(|s| s.path(&["tblPr", "tblBorders"]))
+    else {
+        return false;
+    };
+    let sizes: Option<Vec<&str>> = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .iter()
+        .map(|side| {
+            borders
+                .child(side)
+                .filter(|b| b.attr("val") == Some("single"))
+                .and_then(|b| b.attr("sz"))
+        })
+        .collect();
+    sizes.is_some_and(|sizes| sizes.iter().all(|&sz| sz == sizes[0]) && sizes[0] != "4")
+}
+
 /// The table styles of `body`'s tables the view names, in the order they
 /// first come, and whether a table has none (the writer's Table Grid).
-fn table_styles(body: &Element) -> (Vec<String>, bool) {
+fn table_styles(body: &Element, custom_grid: bool) -> (Vec<String>, bool) {
     let mut styles: Vec<String> = Vec::new();
     let mut unstyled = false;
     for t in agent::tables(body) {
-        match view_table_style(t) {
+        match view_table_style(t, custom_grid) {
             Some(s) => {
                 if !styles.iter().any(|x| x == s) {
                     styles.push(s.to_string());
