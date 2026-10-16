@@ -1497,22 +1497,28 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .table_plan
                     .as_ref()
                     .and_then(|plan| plan.style.clone())
-                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()))
+                    .or_else(|| {
+                        self.document
+                            .table_style
+                            .as_ref()
+                            .map(|(id, _, _)| id.clone())
+                    })
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
-                    let border = self
+                    let legend = self
                         .document
                         .table_style
                         .as_ref()
-                        .filter(|(legend, _)| legend == id)
-                        .and_then(|(_, border)| *border);
+                        .filter(|(legend, ..)| legend == id);
+                    let border = legend.and_then(|(_, border, _)| *border);
                     // Word's thin Table Grid, unless the legend gives it a
                     // border of its own (`TableGrid, all borders 1.5pt`).
                     if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
                         self.document.styles.insert("TableGrid");
                     } else {
-                        self.document.table_styles.insert(id.clone(), border);
+                        let name = legend.and_then(|(_, _, name)| name.clone());
+                        self.document.table_styles.insert(id.clone(), (border, name));
                     }
                 }
                 let formats = self.table_formats();
@@ -3243,7 +3249,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.document.table_style = view_styles::table_style(text);
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
-        if let Some((id, None)) = &self.document.table_style
+        if let Some((id, None, _)) = &self.document.table_style
             && !super::package::is_built_in_table_style(id)
             && text.lines().any(|line| {
                 let line = view_styles::without_comment(line).trim();

@@ -11,7 +11,7 @@ page: Letter portrait, margins top 0.945in, right 1.671in, bottom 2.416in, left 
 styles:
   Normal: Times New Roman 11.5pt, after 2.6pt, line 0.98, indent -0.0035in, hanging 0.007in, justify  # default; unannotated paragraphs use it
   ListParagraph: Times New Roman 11.5pt, indent 0.5in, contextual spacing, named List Paragraph
-  table: TableGrid0
+  table: TableGrid0, named TableGrid
 style_changes: {Normal: styles.r0 @AB}  # tracked changes to the styles
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:

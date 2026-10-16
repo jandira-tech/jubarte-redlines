@@ -296,11 +296,14 @@ pub(super) struct Document {
     pub author: Option<String>,
     /// `authors: document_owner:`, the core properties' owner.
     pub owner: Option<super::view_notes::Owner>,
-    /// The legend's `table:` style and its border, eighths of a point.
-    pub table_style: Option<(String, Option<u32>)>,
+    /// The legend's `table:` style and its border, eighths of a point,
+    /// with the name the view gives the style when it differs from the
+    /// writer's own (`named …`).
+    pub table_style: Option<(String, Option<u32>, Option<String>)>,
     /// Table styles Word has no definition of here, each with the border
-    /// the legend gives it: defined by name.
-    pub table_styles: BTreeMap<String, Option<u32>>,
+    /// the legend gives it and the name the view says, when it does:
+    /// defined by name.
+    pub table_styles: BTreeMap<String, (Option<u32>, Option<String>)>,
     /// The `track_changes:` key: Word's Track Changes switch.
     pub tracking: Option<bool>,
     pub warnings: Vec<String>,
