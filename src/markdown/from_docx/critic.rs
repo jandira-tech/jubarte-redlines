@@ -719,41 +719,58 @@ pub(crate) fn escape(text: &str) -> String {
         .fold(text.to_string(), |text, (from, to)| text.replace(from, to))
 }
 
-/// The text of a code block, as its fence holds it: every delimiter of
-/// [`escape`] broken the same way, and every backslash doubled. A fence
-/// reads no Markdown escape, so the writer unwinds both there (see
-/// `crate::markdown::critic`), and the doubling keeps the pair exact where
-/// the code already holds a backslash beside a delimiter (`{\\++x++}`).
+/// The text of a code block, as its fence holds it: a delimiter of
+/// [`escape`] with a run of backslashes at its break point (`{` + the
+/// run + `++`, `++` + the run + `}`, `~` + the run + `>`) gains enough of
+/// them that the run is odd, and every other backslash is left alone. A
+/// fence reads no Markdown escape, so the writer unwinds exactly those
+/// odd runs there (see `crate::markdown::critic`), and hand-written code
+/// (`C:\path`, a regex `\\d+`) passes through as written.
 pub(crate) fn escape_code(text: &str) -> String {
-    const DELIMITERS: [(&str, &str); 11] = [
-        ("{++", "{\\++"),
-        ("{--", "{\\--"),
-        ("{~~", "{\\~~"),
-        ("{>>", "{\\>>"),
-        ("{==", "{\\=="),
-        ("++}", "++\\}"),
-        ("--}", "--\\}"),
-        ("~~}", "~~\\}"),
-        ("<<}", "<<\\}"),
-        ("==}", "==\\}"),
-        ("~>", "~\\>"),
-    ];
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    'piece: while !rest.is_empty() {
-        for (from, to) in DELIMITERS {
-            if let Some(plain) = rest.strip_prefix(from) {
-                out.push_str(to);
-                rest = plain;
-                continue 'piece;
+    /// What can follow the backslash run an opener holds (`{` + run).
+    const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="];
+    /// What can hold the run a closer escapes (`++` + run + `}`).
+    const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="];
+    let bytes = text.as_bytes();
+    // The delimiter shape at `at`, if one sits there: its head, the
+    // backslash run at its break point, and its tail.
+    let shape = |at: usize| -> Option<(usize, usize, usize)> {
+        let shape = |head: usize, tails: &[&str]| {
+            let mut run = at + head;
+            while bytes.get(run) == Some(&b'\\') {
+                run += 1;
             }
+            let tail = tails
+                .iter()
+                .find(|tail| text[run..].starts_with(*tail))?
+                .len();
+            Some((head, run - (at + head), tail))
+        };
+        if bytes.get(at) == Some(&b'{') {
+            shape(1, &OPENER)
+        } else if CLOSER.iter().any(|head| text[at..].starts_with(head)) {
+            shape(2, &["}"])
+        } else if bytes.get(at) == Some(&b'~') {
+            shape(1, &[">"])
+        } else {
+            None
         }
-        let c = rest.chars().next().unwrap_or_default();
-        out.push(c);
-        if c == '\\' {
-            out.push('\\');
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < text.len() {
+        if let Some((head, run, tail)) = shape(at) {
+            out.push_str(&text[at..at + head]);
+            for _ in 0..run * 2 + 1 {
+                out.push('\\');
+            }
+            out.push_str(&text[at + head + run..at + head + run + tail]);
+            at += head + run + tail;
+        } else {
+            let c = text[at..].chars().next().unwrap_or_default();
+            out.push(c);
+            at += c.len_utf8();
         }
-        rest = &rest[c.len_utf8()..];
     }
     out
 }
@@ -1885,12 +1902,13 @@ mod tests {
     }
 
     #[test]
-    fn a_code_block_escapes_its_delimiters_and_doubles_its_backslashes() {
+    fn a_code_block_breaks_only_the_delimiter_shapes_it_holds() {
         // Inside a fence Markdown reads no backslash escape, so the pair
-        // has to say itself what is text: every backslash the document
-        // holds is doubled, and a delimiter gains one inside it. The
-        // writer undoes both inside a fence, exactly, even where the code
-        // already holds a backslash beside a delimiter.
+        // has to say itself what is text: a delimiter shape with a run of
+        // backslashes at its break point gains enough of them that the run
+        // is odd, and every other backslash the document holds is left
+        // alone. The writer unwinds exactly those runs there, so code a
+        // human wrote (`C:\path`, a regex `\\d+`) is not touched either.
         let code = |t: &str| {
             let mut critic = Critic::default();
             critic.set_code_block();
@@ -1899,28 +1917,55 @@ mod tests {
         };
         assert_eq!(code("fenced {++x++} code"), "fenced {\\++x++\\} code");
         for (document, markdown) in [
-            ("{\\++x++}", "{\\\\++x++\\}"),
-            ("\\{++", "\\\\{\\++"),
-            ("a~>b", "a~\\>b"),
-            ("a\\~>b", "a\\\\~\\>b"),
-            ("back\\slash", "back\\\\slash"),
+            (r"{\++x++}", r"{\\\++x++\}"),
+            (r"{\\++x++}", r"{\\\\\++x++\}"),
+            (r"\{++", r"\{\++"),
+            ("a~>b", r"a~\>b"),
+            (r"a\~>b", r"a\~\>b"),
+            (r"back\slash", r"back\slash"),
+            (r"C:\path\x", r"C:\path\x"),
+            (r"\\d+", r"\\d+"),
+            (r"a\\b", r"a\\b"),
         ] {
             assert_eq!(code(document), markdown, "{document}");
         }
         // A tracked change keeps its delimiters: the fence still reads
-        // CriticMarkup, so only the text inside is escaped.
+        // CriticMarkup, so only the text inside is escaped, even where
+        // that text ends in a backslash right at a delimiter.
         let mut critic = Critic::default();
         critic.set_code_block();
         critic.open(Ins, None);
         text(&mut critic, "new {++x++}");
         critic.close(Ins);
         assert_eq!(md(critic), "{++new {\\++x++\\}++}");
+        let mut critic = Critic::default();
+        critic.set_code_block();
+        text(&mut critic, "old\\");
+        critic.open(Ins, None);
+        text(&mut critic, "new");
+        critic.close(Ins);
+        assert_eq!(md(critic), "old\\{++new++}");
+        let mut critic = Critic::default();
+        critic.set_code_block();
+        critic.open(Ins, None);
+        text(&mut critic, "new\\");
+        critic.close(Ins);
+        assert_eq!(md(critic), "{++new\\++}");
+        let mut critic = Critic::default();
+        critic.set_code_block();
+        critic.open(Ins, None);
+        text(&mut critic, "n");
+        critic.close(Ins);
+        critic.open(Del, None);
+        text(&mut critic, "old\\");
+        critic.close(Del);
+        assert_eq!(md(critic), "{~~old\\~>n~~}");
         // Converter-built Markdown (an equation, an image) is fence text
         // too, and comes back the same way.
         let mut critic = Critic::default();
         critic.set_code_block();
         critic.raw("$x_{--}$ and ![a {++b++}](u\\v)");
-        assert_eq!(md(critic), "$x_{\\--}$ and ![a {\\++b++\\}](u\\\\v)");
+        assert_eq!(md(critic), "$x_{\\--}$ and ![a {\\++b++\\}](u\\v)");
     }
 
     #[test]
@@ -1931,10 +1976,14 @@ mod tests {
         for document in [
             "fenced {++x++} code",
             "{\\++x++}",
+            "{\\\\++x++}",
             "\\{++",
             "a~>b",
             "a\\~>b",
             "back\\slash",
+            "C:\\path\\x",
+            "\\\\d+",
+            "a\\\\b",
         ] {
             let source = fence(&escape_code(document));
             assert_eq!(
@@ -1949,5 +1998,58 @@ mod tests {
         text(&mut critic, "new");
         critic.close(Ins);
         assert_eq!(md(critic), "{++new++}");
+    }
+
+    #[test]
+    fn the_fence_escape_pair_is_exact() {
+        // Over every mix of backslash runs and delimiter shapes:
+        // unwind(escape_code(t)) == t, and escape_code(unwind(s)) == s for
+        // every s escape_code can produce, so no code text can reach Word
+        // changed or name another document's fence.
+        let fence = |code: &str| format!("```\n{code}\n```\n");
+        let unwind = |escaped: &str| {
+            let whole = crate::markdown::critic::encode(&fence(escaped));
+            whole["```\n".len()..whole.len() - "\n```\n".len()].to_string()
+        };
+        let shapes = [
+            ("{", "++"),
+            ("{", "--"),
+            ("{", "~~"),
+            ("{", ">>"),
+            ("{", "=="),
+            ("++", "}"),
+            ("--", "}"),
+            ("~~", "}"),
+            ("<<", "}"),
+            ("==", "}"),
+            ("~", ">"),
+        ];
+        let mut texts: Vec<String> = Vec::new();
+        for run in 0..5 {
+            let backslashes = "\\".repeat(run);
+            for (head, tail) in shapes {
+                texts.push(format!("a{head}{backslashes}{tail}b"));
+                texts.push(format!("{head}{backslashes}{tail}"));
+                texts.push(format!("x{backslashes} {head}{backslashes}{tail}"));
+            }
+            texts.push(format!("u{backslashes}v"));
+        }
+        texts.extend([
+            "{++x++}".to_string(),
+            "{\\\\}".to_string(),
+            "~~}".to_string(),
+            "{~~a~>b~~}".to_string(),
+            "C:\\path\\x".to_string(),
+            "\\\\d+".to_string(),
+        ]);
+        for text in &texts {
+            let escaped = escape_code(text);
+            assert_eq!(unwind(&escaped), *text, "unwind(escape_code({text:?}))");
+            assert_eq!(
+                escape_code(&unwind(&escaped)),
+                escaped,
+                "escape_code(unwind({escaped:?}))"
+            );
+        }
     }
 }

@@ -209,7 +209,14 @@ impl<'a> Closers<'a> {
             source
                 .match_indices(pattern)
                 .map(|(at, _)| at)
-                .filter(|&at| !escaped(source, at) && literal.verbatim_end(at).is_none())
+                // A closer behind an odd run of backslashes is Markdown's
+                // escape, but never one inside a code fence: there the
+                // reader breaks every literal delimiter itself, so a bare
+                // one always closes, and the backslash is text before it.
+                .filter(|&at| {
+                    (literal.in_code_fence(at) || !escaped(source, at))
+                        && literal.verbatim_end(at).is_none()
+                })
                 .collect()
         });
         let bytes = source.as_bytes();
@@ -563,14 +570,16 @@ fn encode_range(
         } else {
             allowed
         };
-        // The reader broke the delimiters of a code block's text for this
-        // fence, where Markdown itself reads no backslash escape, so they
-        // are unbroken here and nowhere else.
+        // The reader broke the delimiter shapes of a code block's text for
+        // this fence, where Markdown itself reads no backslash escape, so
+        // they are unbroken here and nowhere else: a bare delimiter is the
+        // change the reader wrote, never Markdown-escaped by what precedes
+        // it.
         if closers.unwind
             && closers.literal.in_code_fence(at)
             && let Some((text, len)) = fence_escape_at(source, at)
         {
-            push_escaped(out, text);
+            push_escaped(out, &text);
             at += len;
             continue;
         }
@@ -578,7 +587,7 @@ fn encode_range(
             .iter()
             .find(|(open, ..)| rest.starts_with(open))
             .filter(|span| allowed & kind_of(span.3) != 0)
-            .filter(|_| !escaped(source, at))
+            .filter(|_| closers.literal.in_code_fence(at) || !escaped(source, at))
             .and_then(|&(open, close, separator, start, end)| {
                 let from = at + open.len();
                 let to = closers.find(close, from, range.end)?;
@@ -649,27 +658,57 @@ fn encode_range(
 
 /// The reader's fence escape (`from_docx::critic::escape_code`) at `at`,
 /// if one sits there: the document text it names, and how many bytes it
-/// takes. Every backslash the document holds is doubled in a fence, so a
-/// lone one is the escape; Markdown reads none of them there.
-fn fence_escape_at(source: &str, at: usize) -> Option<(&'static str, usize)> {
-    const UNWOUND: [(&str, &str); 12] = [
-        ("\\\\", "\\"),
-        ("{\\++", "{++"),
-        ("{\\--", "{--"),
-        ("{\\~~", "{~~"),
-        ("{\\>>", "{>>"),
-        ("{\\==", "{=="),
-        ("++\\}", "++}"),
-        ("--\\}", "--}"),
-        ("~~\\}", "~~}"),
-        ("<<\\}", "<<}"),
-        ("==\\}", "==}"),
-        ("~\\>", "~>"),
-    ];
-    UNWOUND
-        .iter()
-        .find(|(from, _)| source[at..].starts_with(from))
-        .map(|(from, to)| (*to, from.len()))
+/// takes. A delimiter shape with an odd run of backslashes at its break
+/// point names the run halved and the delimiter as text; one with an even
+/// run cannot come from the reader, so it stays as written and opens
+/// nothing. A bare delimiter (no run) is no escape: it is the change the
+/// reader wrote, which Markdown reads here, where it reads no backslash
+/// escape of its own.
+fn fence_escape_at(source: &str, at: usize) -> Option<(String, usize)> {
+    /// What can follow the backslash run an opener holds (`{` + run).
+    const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="];
+    /// What can hold the run a closer escapes (`++` + run + `}`).
+    const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="];
+    let bytes = source.as_bytes();
+    let (head, run, tail) = {
+        let shape = |head: usize, tails: &[&str]| {
+            let mut run = at + head;
+            while bytes.get(run) == Some(&b'\\') {
+                run += 1;
+            }
+            let tail = tails
+                .iter()
+                .find(|tail| source[run..].starts_with(*tail))?
+                .len();
+            Some((head, run - (at + head), tail))
+        };
+        if bytes.get(at) == Some(&b'{') {
+            shape(1, &OPENER)
+        } else if CLOSER.iter().any(|head| source[at..].starts_with(head)) {
+            shape(2, &["}"])
+        } else if bytes.get(at) == Some(&b'~') {
+            shape(1, &[">"])
+        } else {
+            None
+        }
+    }?;
+    if run == 0 {
+        return None;
+    }
+    let whole = head + run + tail;
+    let mut text = String::with_capacity(whole);
+    if run % 2 == 0 {
+        // An even run cannot come from the reader: it stays as written,
+        // every backslash of it, and the delimiter opens nothing.
+        text.push_str(&source[at..at + whole]);
+    } else {
+        text.push_str(&source[at..at + head]);
+        for _ in 0..(run - 1) / 2 {
+            text.push('\\');
+        }
+        text.push_str(&source[at + head + run..at + whole]);
+    }
+    Some((text, whole))
 }
 
 /// What closes a body field.
@@ -1285,25 +1324,43 @@ mod tests {
 
     #[test]
     fn an_escape_from_a_code_block_unwinds_inside_its_fence_only() {
-        // The reader breaks literal delimiters in a code block and doubles
-        // its backslashes; Markdown itself reads no escape inside a fence,
-        // so the unwinding happens here, and only there: outside one the
-        // escapes are Markdown's own.
+        // The reader breaks a code block's delimiter shapes by making
+        // their backslash run odd; Markdown itself reads no escape inside
+        // a fence, so the unwinding happens there, and only there:
+        // outside one the escapes are Markdown's own. Every other
+        // backslash is left as written, so code a human wrote reaches
+        // Word byte-identical.
         for (document, written) in [
-            ("fenced {++x++} code", "fenced {\\++x++\\} code"),
-            ("{\\++x++}", "{\\\\++x++\\}"),
-            ("a~>b", "a~\\>b"),
-            ("a\\~>b", "a\\\\~\\>b"),
-            ("back\\slash", "back\\\\slash"),
+            ("fenced {++x++} code", r"fenced {\++x++\} code"),
+            (r"{\++x++}", r"{\\\++x++\}"),
+            ("a~>b", r"a~\>b"),
+            (r"a\~>b", r"a\~\>b"),
+            (r"back\slash", r"back\slash"),
+            (r"C:\path\x", r"C:\path\x"),
             (
-                "$x_{--}$ and ![a {++b++}](u\\v)",
-                "$x_{\\--}$ and ![a {\\++b++\\}](u\\\\v)",
+                r"$x_{--}$ and ![a {++b++}](u\v)",
+                r"$x_{\--}$ and ![a {\++b++\}](u\v)",
             ),
         ] {
             let fence = format!("```\n{written}\n```\n");
             assert_eq!(encode(&fence), format!("```\n{document}\n```\n"));
             let text = format!("a {written} b");
             assert_eq!(encode(&text), text, "outside a fence it is Markdown's");
+        }
+        // Backslashes a human wrote in a fence are not the reader's
+        // escape: `C:\\path`, a regex `\\d+`, LaTeX `\\` and `a\\b`
+        // stay as written. A delimiter behind an even run stays as
+        // written too and opens nothing; it cannot come from the reader.
+        for hand in [
+            r"C:\\path\\x",
+            r"\\d+",
+            r"a\\b",
+            r"\\\\",
+            r"even {\\++ odd and \{++ text",
+            r"close ++\\} and sep ~\\>",
+        ] {
+            let fence = format!("```\n{hand}\n```\n");
+            assert_eq!(encode(&fence), fence, "{hand}");
         }
         // The changes the reader writes in a code block still open there,
         // and the text inside them unwinds with the rest of the fence.
@@ -1315,6 +1372,34 @@ mod tests {
                 "new",
                 "<InsertEnd>",
                 " old\n```\n"
+            ]
+        );
+        // A change beside the code's own backslash keeps its delimiters:
+        // inside a fence they are never Markdown-escaped.
+        assert_eq!(
+            pieces(&encode("```\nold\\{++new++}\n```\n")),
+            [
+                "```\nold\\",
+                "<InsertStart>",
+                "new",
+                "<InsertEnd>",
+                "\n```\n"
+            ]
+        );
+        assert_eq!(
+            pieces(&encode("```\n{++new\\++}\n```\n")),
+            ["```\n", "<InsertStart>", "new\\", "<InsertEnd>", "\n```\n"]
+        );
+        assert_eq!(
+            pieces(&encode("```\n{~~old\\~>new~~}\n```\n")),
+            [
+                "```\n",
+                "<SubstituteStart>",
+                "old\\",
+                "<SubstituteSeparator>",
+                "new",
+                "<SubstituteEnd>",
+                "\n```\n"
             ]
         );
         assert_eq!(

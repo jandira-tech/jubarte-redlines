@@ -1630,14 +1630,21 @@ fn literal_critic_delimiters_in_a_code_block_stay_text() {
     let texts = [
         "fenced {++x++} code",
         r"brace {\++x++} tail",
+        r"double {\\++x++} tail",
         r"sub a~>b and a\~>b end",
+        r"path C:\path\x regex \d+ latex a\\b end",
     ];
     let bytes = docx(&texts.iter().map(|t| code(t)).collect::<String>());
     let full = agent(&bytes);
     let view = body(&full).to_string();
     assert!(view.contains("fenced {\\++x++\\} code\n"), "{view}");
-    assert!(view.contains("brace {\\\\++x++\\} tail\n"), "{view}");
-    assert!(view.contains("sub a~\\>b and a\\\\~\\>b end\n"), "{view}");
+    assert!(view.contains("brace {\\\\\\++x++\\} tail\n"), "{view}");
+    assert!(view.contains("double {\\\\\\\\\\++x++\\} tail\n"), "{view}");
+    assert!(view.contains("sub a~\\>b and a\\~\\>b end\n"), "{view}");
+    assert!(
+        view.contains("path C:\\path\\x regex \\d+ latex a\\\\b end\n"),
+        "{view}"
+    );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()
         .docx;
@@ -1670,6 +1677,52 @@ fn literal_critic_delimiters_in_a_code_block_stay_text() {
         plain,
         "the plain view is a fixed point"
     );
+}
+
+/// Hand-written Markdown's backslashes inside a code fence are not the
+/// reader's escape (#518, second round): `C:\\path`, a regex `\\d+`, LaTeX
+/// `\\` and `a\\b` a human wrote reach Word byte-identical, and no even
+/// backslash run before a delimiter opens a change.
+#[test]
+fn hand_written_backslashes_in_a_fence_reach_word_as_written() {
+    for hand in [
+        "C:\\\\path\\\\x",
+        "\\\\d+",
+        "a\\\\b",
+        "\\\\\\\\",
+        "even {\\\\++ and ++\\\\} and ~\\\\>",
+    ] {
+        let markdown = format!("```\n{hand}\n```\n");
+        let docx = markdown_to_docx(&markdown, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        assert!(
+            jubarte::changes::list_changes(&docx).unwrap().is_empty(),
+            "{hand}"
+        );
+        let paragraphs = jubarte::inspect::paragraphs(&docx).unwrap();
+        assert_eq!(paragraphs.len(), 1, "{hand}");
+        assert_eq!(paragraphs[0].text, hand, "{hand}");
+        assert_eq!(paragraphs[0].style.as_deref(), Some("SourceCode"));
+        // And that document reads back as a fence that names it from then
+        // on: its own view is a fixed point. (The hand-written fence is
+        // not: an even run before a delimiter becomes the reader's odd
+        // one, which names the same text.)
+        let view = docx_to_markdown(&docx, &MarkdownOptions::default())
+            .unwrap()
+            .markdown;
+        let docx = markdown_to_docx(&view, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        assert_eq!(jubarte::inspect::paragraphs(&docx).unwrap()[0].text, hand);
+        assert_eq!(
+            docx_to_markdown(&docx, &MarkdownOptions::default())
+                .unwrap()
+                .markdown,
+            view,
+            "{hand}"
+        );
+    }
 }
 
 /// The fence rule stays: a tracked change inside a code block is written
