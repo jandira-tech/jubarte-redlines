@@ -105,3 +105,118 @@ fn hand_written_equals_marks_still_highlight() {
     let again = document(&write("Some ==marked== text.\n"));
     assert_eq!(highlighted(&again), "marked");
 }
+
+#[test]
+fn a_non_yellow_highlight_prints_with_its_colour_class() {
+    // Spec §3: `<mark>` is the highlight tag; its `class="hl-<colour>"`
+    // says which colour Word holds (`hl-yellow` is the default and the
+    // tag may omit it). The view grammar prints the colour so the
+    // round-trip keeps it.
+    let body = "<w:p><w:r><w:t xml:space=\"preserve\">Cyan </w:t></w:r>\
+                <w:r><w:rPr><w:highlight w:val=\"cyan\"/></w:rPr><w:t>lit</w:t></w:r>\
+                <w:r><w:t xml:space=\"preserve\">. </w:t></w:r>\
+                <w:r><w:rPr><w:highlight w:val=\"green\"/></w:rPr><w:t>lit</w:t></w:r>\
+                <w:r><w:t xml:space=\"preserve\">. </w:t></w:r>\
+                <w:r><w:rPr><w:highlight w:val=\"yellow\"/></w:rPr><w:t>lit</w:t></w:r></w:p>";
+    let first = view(&docx(body));
+    assert!(
+        first.contains("<mark class=\"hl-cyan\">lit</mark>"),
+        "{first}"
+    );
+    assert!(
+        first.contains("<mark class=\"hl-green\">lit</mark>"),
+        "{first}"
+    );
+    assert!(first.contains("<mark>lit</mark>"), "{first}");
+}
+
+#[test]
+fn a_non_yellow_highlight_round_trips_its_colour() {
+    // Spec §3: the colour a Word highlight holds survives docx → md → docx;
+    // each paragraph run keeps `<w:highlight w:val="<colour>"/>` with the
+    // colour it had on the way in.
+    let body = "<w:p><w:r><w:t xml:space=\"preserve\">. </w:t></w:r>\
+                <w:r><w:rPr><w:highlight w:val=\"cyan\"/></w:rPr><w:t>lit</w:t></w:r>\
+                <w:r><w:t xml:space=\"preserve\">. </w:t></w:r>\
+                <w:r><w:rPr><w:highlight w:val=\"green\"/></w:rPr><w:t>lit</w:t></w:r>\
+                <w:r><w:t xml:space=\"preserve\">. </w:t></w:r></w:p>";
+    let first = view(&docx(body));
+    let again = document(&write(&first));
+    let colours = highlight_colours(&again);
+    assert_eq!(colours, vec!["cyan", "green"], "{first}\n{again}");
+}
+
+#[test]
+fn a_yellow_highlight_keeps_its_single_run() {
+    // Spec §3: a highlight's text is one run on the page; pulldown-cmark's
+    // split on `_` does not split the run because adjacent runs with the
+    // same format merge before they leave the writer.
+    let body =
+        "<w:p><w:r><w:rPr><w:highlight w:val=\"yellow\"/></w:rPr><w:t>file_</w:t></w:r></w:p>";
+    let first = view(&docx(body));
+    assert!(first.contains("<mark>file\\_</mark>"), "{first}");
+    let again = document(&write(&first));
+    let runs = highlight_runs(&again);
+    assert_eq!(runs, vec!["file_"], "{first}\n{again}");
+}
+
+#[test]
+fn an_unclosed_mark_does_not_colour_a_later_equals_mark() {
+    // A tag left open closes with its block; the `==` marks of a later
+    // paragraph are the default yellow, not the colour the unclosed tag
+    // pushed (spec §3).
+    let source = "<mark class=\"hl-cyan\">cyan\n\ntext ==yellow==\n";
+    let again = document(&write(source));
+    assert_eq!(highlight_colours(&again), vec!["cyan", "yellow"], "{again}");
+}
+
+#[test]
+fn a_colour_word_does_not_name_prints_as_yellow() {
+    // `w:val` outside Word's 16 highlight names (schema-invalid, but a
+    // file can hold one) keeps the highlight: it prints and comes back
+    // as the default yellow.
+    let body = "<w:p><w:r><w:rPr><w:highlight w:val=\"sunny\"/></w:rPr><w:t>lit</w:t></w:r></w:p>";
+    let first = view(&docx(body));
+    assert!(first.contains("<mark>lit</mark>"), "{first}");
+    let again = document(&write(&first));
+    assert_eq!(
+        highlight_colours(&again),
+        vec!["yellow"],
+        "{first}\n{again}"
+    );
+}
+
+/// The text of every run with highlight that the writer wrote, in order.
+fn highlight_runs(document: &str) -> Vec<String> {
+    document
+        .split("</w:r>")
+        .filter_map(|run| {
+            let run = &run[run.rfind("<w:r>").or_else(|| run.rfind("<w:r "))?..];
+            run.contains("<w:highlight").then(|| {
+                run.split("<w:t")
+                    .skip(1)
+                    .filter_map(|t| t.split_once('>').map(|(_, rest)| rest))
+                    .filter_map(|t| t.split_once("</w:t>").map(|(text, _)| text))
+                    .collect::<String>()
+            })
+        })
+        .collect()
+}
+
+/// The colour of every run with a highlight, in order.
+fn highlight_colours(document: &str) -> Vec<String> {
+    let mut colours = Vec::new();
+    let mut rest = document;
+    while let Some(at) = rest.find("<w:highlight") {
+        let after = &rest[at..];
+        let end = after.find('>').unwrap();
+        let tag = &after[..end + 1];
+        let val = tag
+            .split_once("w:val=\"")
+            .and_then(|(_, rest)| rest.split_once('"').map(|(v, _)| v.to_string()))
+            .unwrap_or_default();
+        colours.push(val);
+        rest = &after[end + 1..];
+    }
+    colours
+}

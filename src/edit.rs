@@ -6354,7 +6354,7 @@ fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
 }
 
 /// `ST_HighlightColor`.
-const HIGHLIGHTS: &[&str] = &[
+pub(crate) const HIGHLIGHTS: &[&str] = &[
     "black",
     "blue",
     "cyan",

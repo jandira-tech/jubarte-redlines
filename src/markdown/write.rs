@@ -980,6 +980,17 @@ pub(super) fn parser_options() -> Options {
         | Options::ENABLE_MATH
 }
 
+/// A `class="hl-<colour>"` value: `<colour>` one of Word's 16 named
+/// highlight colours (`yellow`, `green`, `cyan`, …, `lightGray`, `black`,
+/// `white`). Anything else is the default yellow.
+fn hl_color_class(class: &str) -> Option<&'static str> {
+    let colour = class.strip_prefix("hl-")?;
+    crate::edit::HIGHLIGHTS
+        .iter()
+        .copied()
+        .find(|h| *h != "none" && *h == colour)
+}
+
 const HEADINGS: [&str; 6] = [
     "Heading1", "Heading2", "Heading3", "Heading4", "Heading5", "Heading6",
 ];
@@ -1146,6 +1157,10 @@ struct Writer<'o, 'a> {
     subscript: u32,
     /// Open `<mark>` tags: a yellow highlight.
     mark: u32,
+    /// The colour of each open `<mark>`, innermost last (`<mark>` is the
+    /// default yellow; `<mark class="hl-<colour>">` is `colour`). A
+    /// non-empty stack sets the colour of the next run; pop on close.
+    mark_color: Vec<&'static str>,
     /// The inline HTML tags dropped so far, each warned of once.
     dropped_html: Vec<String>,
     code: u32,
@@ -1271,6 +1286,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             superscript: 0,
             subscript: 0,
             mark: 0,
+            mark_color: Vec::new(),
             dropped_html: Vec::new(),
             code: 0,
             link: 0,
@@ -2281,6 +2297,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             superscript: self.superscript > 0,
             subscript: self.subscript > 0,
             mark: self.mark > 0,
+            mark_color: self.mark_color.last().copied(),
             code: self.code > 0,
             link: self.link > 0,
         }
@@ -2297,6 +2314,35 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         if self.code > 0 {
             self.document.styles.insert("VerbatimChar");
+        }
+        // Pulldown-cmark splits a stretch that holds a CommonMark delimiter
+        // (`<mark>file\_</mark>` becomes `file` + `_`) even when the writer
+        // holds the same marks on both sides; merge into the previous text
+        // run so the round-trip keeps one run per stretch.
+        if let Content::Text(ref text) = content {
+            let now = self.format();
+            let current_change = self.change;
+            let current_scope = self.scope.map(|(_, group)| group);
+            let story = self.story();
+            let last = story.last_mut();
+            let merge = matches!(
+                last,
+                Some(Item::Run(Run {
+                    content: Content::Text(_),
+                    format,
+                    change,
+                    scope,
+                })) if *format == now && *change == current_change && *scope == current_scope
+            );
+            if merge
+                && let Some(Item::Run(Run {
+                    content: Content::Text(prev_text),
+                    ..
+                })) = last
+            {
+                prev_text.push_str(text);
+                return;
+            }
         }
         let run = Run {
             content,
@@ -2976,6 +3022,18 @@ impl<'o, 'a> Writer<'o, 'a> {
         } else {
             *counter += 1;
         }
+        if name == "mark" {
+            if closing {
+                self.mark_color.pop();
+            } else if let Some(colour) = html_attribute(html, "class")
+                .as_deref()
+                .and_then(|c| c.split_whitespace().find_map(hl_color_class))
+            {
+                self.mark_color.push(colour);
+            } else {
+                self.mark_color.push("yellow");
+            }
+        }
     }
 
     /// Reads the comment that closes a note's definition in the view
@@ -3049,6 +3107,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         ] {
             *counter = 0;
         }
+        self.mark_color.clear();
     }
 
     /// `<br>`: a new paragraph of a comment, of a cell whose `<br>`s end

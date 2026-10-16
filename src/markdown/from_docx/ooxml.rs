@@ -493,8 +493,12 @@ pub(crate) struct Marks {
     pub italic: bool,
     /// Agent view only, as the two below: `<u>…</u>`.
     pub underline: bool,
-    /// `==…==`: a highlight of any colour.
-    pub highlight: bool,
+    /// `<mark>…</mark>`: a highlight of any colour. `None` when the
+    /// colour is the default yellow; the view grammar omits the class.
+    /// Word's `w:highlight` lists 16 named colours (`yellow`, `green`,
+    /// `cyan`, `red`, `blue`, `magenta`, `darkYellow`, and their `dark…`,
+    /// `lightGray`, `black`, `white`).
+    pub highlight: Option<&'static str>,
     /// `~~…~~`.
     pub strike: bool,
     /// `` `…` ``: a `VerbatimChar` run.
@@ -728,11 +732,18 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         };
         let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
         // `<mark>`, not `==`: `{==…==}` is a comment's scope, and `==`
-        // beside it or beside a text `=` reads as neither.
-        let (h_open, h_close) = pair(marks.highlight, "<mark>", "</mark>");
-        // `~~` reads where CommonMark lets it open and close; a mark
-        // beside it is punctuation, else `<s>` says the same.
-        let beside = marks.bold || marks.italic || marks.underline || marks.highlight;
+        // beside it or beside a text `=` reads as neither. The default
+        // yellow highlight prints as bare `<mark>`; every other colour
+        // names it in `class="hl-<colour>"` so the round-trip keeps it.
+        let (h_open, h_close): (String, String) = match marks.highlight {
+            None => (String::new(), String::new()),
+            Some("yellow") => ("<mark>".to_string(), "</mark>".to_string()),
+            Some(colour) => (
+                format!("<mark class=\"hl-{colour}\">"),
+                "</mark>".to_string(),
+            ),
+        };
+        let beside = marks.bold || marks.italic || marks.underline || marks.highlight.is_some();
         let (s_open, s_close) = match (
             marks.strike,
             beside || delimiters_read(before, core, after, false),
@@ -803,7 +814,7 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
 /// inside its marks, each `&#32;` so the marks still touch text.
 fn edges(marks: Marks, text: &str) -> (&str, std::borrow::Cow<'_, str>, &str) {
     let (lead, core, trail) = split_ws(text);
-    let spaced = marks.underline || marks.highlight || marks.strike;
+    let spaced = marks.underline || marks.highlight.is_some() || marks.strike;
     let plain = |c: char| c == ' ';
     if spaced && !marks.code && lead.chars().all(plain) && trail.chars().all(plain) {
         let space = |s: &str| "&#32;".repeat(s.len());

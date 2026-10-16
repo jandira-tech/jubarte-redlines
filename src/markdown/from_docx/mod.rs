@@ -1805,6 +1805,24 @@ fn font_of(rpr: &Element) -> Option<String> {
         .map(str::to_string)
 }
 
+/// `w:highlight w:val="…"` as one of Word's 16 named highlight colours
+/// (`ST_HighlightColor`), the static `&str` the view prints. `None` when
+/// `val` is empty or `none`; a colour Word does not name is the default
+/// yellow, so the highlight round-trips even when the name does not.
+fn highlight_color(c: &str) -> Option<&'static str> {
+    let v = c.trim();
+    if v.is_empty() || v == "none" {
+        return None;
+    }
+    Some(
+        crate::edit::HIGHLIGHTS
+            .iter()
+            .copied()
+            .find(|h| *h != "none" && *h == v)
+            .unwrap_or("yellow"),
+    )
+}
+
 /// Whether `font` is a monospace face: the common code and typewriter faces,
 /// and any whose name says so.
 fn is_monospace(font: &str) -> bool {
@@ -3046,12 +3064,20 @@ impl Writer<'_> {
                 })
                 .unwrap_or(false);
         // Agent view only, as underline: a highlight of any colour and a
-        // single strike (spec §3).
-        let highlight = self.agent
-            && rpr
-                .and_then(|r| r.child("highlight"))
-                .and_then(|h| h.attr("val"))
-                .is_some_and(|val| val != "none");
+        // single strike (spec §3). The colour (`w:highlight w:val`) round-
+        // trips through the view as `<mark class="hl-<colour>">`; the
+        // default yellow is the bare `<mark>`, and a colour Word does not
+        // name prints as it.
+        let val = self
+            .agent
+            .then(|| {
+                rpr.and_then(|r| r.child("highlight"))
+                    .and_then(|h| h.attr("val"))
+            })
+            .flatten();
+        let highlight = val
+            .is_some_and(|val| val != "none")
+            .then(|| val.and_then(highlight_color).unwrap_or("yellow"));
         let strike = self.agent && rpr.and_then(|r| r.toggle("strike")).unwrap_or(false);
         // Code: a `VerbatimChar` run, or a run in a monospace face inside
         // a paragraph that is not (spec §3).

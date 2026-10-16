@@ -96,7 +96,7 @@ Verdana font (screen-optimized)
 **Purple text** | **Teal text** | **Brown text** | **Gray text**
 
 <!-- p26 -->
-<mark>Yellow highlight</mark> | <mark>Green highlight</mark> | <mark>Cyan highlight</mark>
+<mark>Yellow highlight</mark> | <mark class="hl-green">Green highlight</mark> | <mark class="hl-cyan">Cyan highlight</mark>
 
 <!-- p27 2 -->
 # 4. Styles from styles.xml

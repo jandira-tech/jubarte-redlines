@@ -1551,7 +1551,7 @@ fn highlight_and_strike_render_in_the_agent_view() {
     let view = body(&full);
     assert_eq!(
         view,
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\npay **<mark>now</mark>**, ~~later~~, a\\=\\=b \\~\\~c\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\npay **<mark class=\"hl-cyan\">now</mark>**, ~~later~~, a\\=\\=b \\~\\~c\n"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()

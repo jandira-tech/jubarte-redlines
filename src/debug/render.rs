@@ -674,6 +674,37 @@ fn paints(dom: &Dom, r: NodeId) -> bool {
         })
 }
 
+/// A run that paints something a highlight can colour: text, a symbol or
+/// a tab. A break paints no glyph (a page break ends the page, a line
+/// break wraps), so a highlight on it never reaches the page.
+fn paints_glyphs(dom: &Dom, r: NodeId) -> bool {
+    dom.elements(r, None)
+        .into_iter()
+        .any(|c| match local(dom, c).as_str() {
+            "t" | "delText" => dom
+                .nodes(c)
+                .into_iter()
+                .any(|t| !dom.text_value(t).unwrap_or_default().is_empty()),
+            "tab" | "sym" => true,
+            _ => false,
+        })
+}
+
+/// The run's leading `rPr` blocks by local name: a Strict package writes
+/// them in the Strict namespace, which a qualified lookup misses.
+fn leading_rprs(dom: &Dom, r: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for i in 0..dom.child_count(r) {
+        let child = dom.child_at(r, i);
+        if local(dom, child) == "rPr" {
+            out.push(child);
+        } else if dom.text_value(child).is_none() {
+            break;
+        }
+    }
+    out
+}
+
 /// A run's colour, highlight, shading, hidden state and requested font,
 /// direct or from its character or paragraph style, over `docDefaults`.
 /// The leading `w:rPr` blocks apply in order, each its character style and
@@ -685,7 +716,7 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
     };
     tally.next_run(para);
     let text = own_text(dom, r, para);
-    let rprs = crate::convert::leading_rprs(dom, r);
+    let rprs = leading_rprs(dom, r);
     let style_of = |pr: Option<NodeId>, name: &str| {
         pr.and_then(|x| child(dom, x, name))
             .map(|s| attr(dom, s, "val"))
@@ -721,10 +752,14 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
         None => {}
     };
     add("color", fold(&|x| color(dom, x), &|s| s.color.clone()));
-    add(
-        "highlight",
-        fold(&|x| highlight(dom, x), &|s| s.highlight.clone()),
-    );
+    // A highlight paints behind glyphs, so only a run that paints some
+    // (text, a symbol, a tab) can show one on the page.
+    if paints_glyphs(dom, r) {
+        add(
+            "highlight",
+            fold(&|x| highlight(dom, x), &|s| s.highlight.clone()),
+        );
+    }
     add(
         "run-shd",
         fold(&|x| run_shd(dom, x), &|s| s.run_shd.clone()),
@@ -1370,6 +1405,39 @@ mod story_diagnostic_contract_tests {
         assert_eq!(
             report(&format!("{split}{split}"), &StyleBook::default(), &[]).0,
             vec!["  highlight yellow ×2 \"yellow,\"".to_string()]
+        );
+    }
+
+    #[test]
+    fn strict_rprs_tally_by_local_name() {
+        // A Strict package writes its parts in the purl.oclc.org namespace
+        // (Strict01): a run's leading `rPr` blocks are found by local name,
+        // so their direct highlight still counts.
+        let (d, root) = dom(
+            r#"<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body><w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>Video provides</w:t></w:r></w:p></w:body></w:document>"#,
+        );
+        let mut lines = Vec::new();
+        part_lines(&d, root, &StyleBook::default(), &[], &mut lines);
+        assert_eq!(
+            lines,
+            vec!["  highlight yellow ×1 \"Video provides\"".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_highlight_on_a_run_that_paints_no_glyph_is_not_tallied() {
+        // 791ca61933's only highlight sits on a deleted page-break run: a
+        // break paints no glyph a highlight can colour, while a tab or
+        // text does.
+        let br = r#"<w:p><w:del w:id="1" w:author="A" w:date="2024-01-01T00:00:00Z"><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:br w:type="page"/></w:r></w:del><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>lit</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(br, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1 \"lit\"".to_string()]
+        );
+        let tab = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:tab/></w:r></w:p>"#;
+        assert_eq!(
+            report(tab, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1".to_string()]
         );
     }
 
