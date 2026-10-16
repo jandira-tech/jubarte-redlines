@@ -5088,7 +5088,7 @@ mod tests {
         // rejecting removes the cell, so the text is gone either way.
         assert_eq!(
             md(&docx(&body, &[])),
-            "|Before|After|\n|-|-|\n|{--old--}|{--{++new++}--}|\n"
+            "|Before|After|\n|-|-|\n|{--old--}|{++new++}|\n"
         );
     }
 
@@ -5606,7 +5606,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{++{--y--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
+            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{--y--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
         );
     }
 
@@ -5704,7 +5704,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{++{--n1--}; {--n2--}++}|{++{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}|\n"
+            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{--n1; n2--}|{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}|\n"
         );
     }
 
@@ -5945,7 +5945,7 @@ mod tests {
             md(&docx(&body, &[])),
             "{--A--}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{--\n\n--}{>>r8 Bo Chen (2026-09-29T15:10:00Z)<<}Next\n\n\
              {--B\n\nC--}{>>r7+8 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
-             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{++{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|\n|-|-|\n"
+             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}|\n|-|-|\n"
         );
     }
 
@@ -6273,7 +6273,7 @@ mod tests {
         assert_eq!(
             md(&bytes),
             format!(
-                "Kept[^1]\n\n{{++Added[^2]++}}{added}\n\n{{--Gone[^3]--}}{gone}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{added}\n{{--[^3]: Gone {{++note++}}{}--}}{gone}\n",
+                "Kept[^1]\n\n{{++Added[^2]++}}{added}\n\n{{--Gone[^3]--}}{gone}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{added}\n{{--[^3]: Gone --}}{gone}{{++note++}}{}\n",
                 by("footnotes.r90")
             )
         );
