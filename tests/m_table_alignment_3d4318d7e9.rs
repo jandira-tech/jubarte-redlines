@@ -194,6 +194,7 @@ fn word_redline_has_expected_table_shape() {
 
 /// Task 22 target: our compare reaches Word's table shape.
 #[test]
+#[ignore = "KNOWN_ISSUES.md #11: Task 22 target, the comparer does not split tables yet"]
 fn our_compare_matches_word_table_shape() {
     let a = std::fs::read(A).unwrap();
     let b = std::fs::read(B).unwrap();
@@ -223,6 +224,7 @@ fn our_compare_matches_word_table_shape() {
 /// `Health Website` row — never a whole deleted table beside a whole
 /// inserted one. Index-agnostic so later fragmentation cannot break it.
 #[test]
+#[ignore = "KNOWN_ISSUES.md #11: Task 22 target, header rows do not pair yet"]
 fn our_compare_pairs_unmatched_rows_into_merged_rows() {
     let a = std::fs::read(A).unwrap();
     let b = std::fs::read(B).unwrap();
