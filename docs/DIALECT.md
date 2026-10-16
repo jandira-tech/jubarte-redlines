@@ -75,7 +75,7 @@ quoted, `"My Style"`, on table and paragraph id lines alike);
 comments: 2 threads open, style Normal, c6 style CommentText   # paragraph styles; CommentText unless named
 authors:
   AC: Ann Counsel                    # the handle tags name
-page:      Letter portrait, margins 1in, header/footer 0.5in   # columns 2, column gap 0.25in
+page:      Letter portrait, margins 1in, header/footer 0.5in   # columns 2, column gap 0.25in, column line, line grid 15.6pt
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left   # default style
   "#": Heading1, Calibri bold 16pt, before 12pt, keep-next, keep-lines
