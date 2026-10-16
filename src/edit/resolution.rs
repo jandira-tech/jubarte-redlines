@@ -6,8 +6,13 @@
 //!
 //! `accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"` names the
 //! action, the short id as the view prints it, the short paragraph id, the
-//! change as CriticMarkup exactly as the agent view prints it, and the text
-//! that replaces it. Strings are JSON-quoted.
+//! change as CriticMarkup, and the text that replaces it. Strings are
+//! JSON-quoted.
+//!
+//! The CriticMarkup uses the agent view's delimiters and escapes, built
+//! from each change's plain text: the view's bold, italic and link markup
+//! is not printed. A deletion beside an insertion in one paragraph (either
+//! order, nothing unchanged between them) prints as one substitution.
 
 use std::collections::HashSet;
 
