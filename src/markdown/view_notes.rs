@@ -1192,8 +1192,8 @@ pub(super) struct IdLine {
     pub in_comments: Vec<u32>,
 }
 
-/// The id line of one paragraph (`pN`, not a range); `None` for any
-/// other line.
+/// The id line of one paragraph (`pN`, or a range's first `pN-pM`, whose
+/// facts stand for every paragraph it numbers); `None` for any other line.
 pub(super) fn id_line(line: &str) -> Option<IdLine> {
     let inner = line
         .trim()
@@ -1201,7 +1201,8 @@ pub(super) fn id_line(line: &str) -> Option<IdLine> {
         .strip_suffix("-->")?
         .trim();
     let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
-    crate::ids::short_number(id, 'p')?;
+    let one = id.split_once('-').map_or(id, |(first, _)| first);
+    crate::ids::short_number(one, 'p')?;
     let mut parsed = IdLine::default();
     // The style is the head's second word, quoted when it is no plain
     // word: `p5 TitlePage[ clause]`, `p5 "My Style"[ clause]`.

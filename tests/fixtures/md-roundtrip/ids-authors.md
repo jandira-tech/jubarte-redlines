@@ -55,7 +55,7 @@ Before three cut paragraphs.
 <!-- p12 Normal left -->
 After them.
 
-<!-- p13 empty -->
+<!-- p13 Normal empty, left -->
 
 <!-- p14 Normal left, break-del r20 @BC -->
 An empty paragraph above

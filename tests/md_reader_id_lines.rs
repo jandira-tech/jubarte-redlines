@@ -2314,3 +2314,47 @@ fn an_explicit_default_style_is_named_and_comes_back() {
     );
     assert_eq!(view, once);
 }
+
+/// An empty paragraph keeps the style it states: a bare `<!-- p9 empty -->`
+/// stands only for paragraphs with no `w:pStyle`, and a heading style is
+/// named too, with no `#` to imply it (ids-paragraphs, ids-font-sizes,
+/// #528).
+#[test]
+fn an_empty_paragraph_keeps_its_style() {
+    let stated = r#"<w:p><w:pPr><w:pStyle w:val="TitlePage"/></w:pPr></w:p>"#;
+    let heading = r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:p>"#;
+    let bare = r"<w:p/>";
+    let body = format!("{stated}{stated}{bare}{heading}<w:p><w:r><w:t>Text.</w:t></w:r></w:p>");
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    assert!(view.contains("<!-- p0 TitlePage empty -->"), "{view}");
+    assert!(view.contains("<!-- p1 TitlePage empty -->"), "{view}");
+    assert!(view.contains("<!-- p2 empty -->"), "{view}");
+    assert!(view.contains("<!-- p3 Heading2 empty -->"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="TitlePage"/>"#).count(),
+        2,
+        "{document}"
+    );
+    assert_eq!(document.matches(r#"<w:pStyle w:val="Heading2"/>"#).count(), 1);
+    assert_eq!(view, once);
+}
+
+/// A range of styled empty paragraphs (`<!-- p0-p1 TitlePage empty -->`)
+/// stands for every paragraph it numbers, not only the first.
+#[test]
+fn a_range_of_styled_empty_paragraphs_stands_for_all_of_them() {
+    let md = "<!-- p0-p1 TitlePage empty -->\n\n<!-- p2 -->\nText.\n";
+    let docx = markdown_to_docx(&as_view(md), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&docx);
+    let document = part_string(&docx, "word/document.xml").unwrap();
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="TitlePage"/>"#).count(),
+        2,
+        "{document}"
+    );
+}
