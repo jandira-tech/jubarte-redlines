@@ -164,6 +164,11 @@ enum Token {
 enum Node {
     Leaf(Leaf),
     Span(Mark, Option<String>, Vec<Node>),
+    /// A change's pieces around the changes it held: each piece keeps the
+    /// outer change's attribution. CriticMarkup cannot nest a change in a
+    /// change, so an insertion holding a deletion prints `{++a++}…{++b++}`,
+    /// and the pieces never pair as a substitution.
+    Split(Vec<Node>),
 }
 
 impl Node {
@@ -171,7 +176,9 @@ impl Node {
         match self {
             Self::Leaf(Leaf::Comment(_)) => false,
             Self::Leaf(_) => true,
-            Self::Span(_, _, children) => children.iter().any(Self::has_content),
+            Self::Span(_, _, children) | Self::Split(children) => {
+                children.iter().any(Self::has_content)
+            }
         }
     }
 }
@@ -326,7 +333,7 @@ impl Critic {
     }
 
     pub(crate) fn into_inline(self) -> Inline {
-        let mut nodes = tidy(tree(self.tokens));
+        let mut nodes = tidy(unnest(tree(self.tokens)));
         if self.inline_end {
             space_into_last_change(&mut nodes);
         }
@@ -407,11 +414,76 @@ fn close_from(root: &mut Vec<Node>, open: &mut Vec<Open>, at: usize) {
     children(root, open).extend(outermost);
 }
 
+/// Splits a change around every change inside it: CriticMarkup cannot nest
+/// one, so `w:ins` holding `w:del` prints `{++a++}…{--x--}…{++b++}` and the
+/// writer puts the marks back one inside the other. Each piece keeps the
+/// outer change's attribution. A change is a span's direct child; inside a
+/// highlight or a comment it may stay.
+fn unnest(nodes: Vec<Node>) -> Vec<Node> {
+    /// `node` is a change, holds one (a comment's scope), or is the pieces
+    /// one split into: anything the outer change must break around.
+    fn is_change(node: &Node) -> bool {
+        match node {
+            Node::Split(_) => true,
+            Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
+            Node::Span(..) => true,
+            _ => false,
+        }
+    }
+    let mut out = Vec::new();
+    for node in nodes {
+        let Node::Span(mark, by, children) = node else {
+            out.push(node);
+            continue;
+        };
+        let children = unnest(children);
+        if matches!(mark, Mark::Insertion | Mark::Deletion) && children.iter().any(is_change) {
+            let mut pieces: Vec<Node> = Vec::new();
+            let mut piece: Vec<Node> = Vec::new();
+            for child in children {
+                if is_change(&child) {
+                    if !piece.is_empty() {
+                        pieces.push(Node::Span(mark, by.clone(), piece));
+                        piece = Vec::new();
+                    }
+                    pieces.push(child);
+                } else {
+                    piece.push(child);
+                }
+            }
+            if !piece.is_empty() {
+                pieces.push(Node::Span(mark, by, piece));
+            }
+            out.push(Node::Split(pieces));
+        } else {
+            out.push(Node::Span(mark, by, children));
+        }
+    }
+    out
+}
+
 /// Drops empty spans, joins neighbours of the same kind and attribution, and
 /// moves comments out of highlights, at every level.
 fn tidy(nodes: Vec<Node>) -> Vec<Node> {
     let mut out: Vec<Node> = Vec::new();
     for node in nodes {
+        let node = if let Node::Split(pieces) = node {
+            // The pieces tidy as one list: what emptied out of a child change
+            // leaves its neighbours adjacent, and they join again. A change a
+            // child swallowed whole is just the child, and joins as it would.
+            let mut pieces = tidy(pieces);
+            if !pieces.iter().any(Node::has_content) {
+                lift_comments(pieces, &mut out);
+                continue;
+            } else if pieces.len() == 1 {
+                pieces.remove(0)
+            } else {
+                out.push(Node::Split(pieces));
+                continue;
+            }
+        } else {
+            node
+        };
         let Node::Span(mark, by, nodes) = node else {
             out.push(node);
             continue;
@@ -510,6 +582,9 @@ fn lift_comments(nodes: Vec<Node>, comments: &mut Vec<Node>) -> Vec<Node> {
             Node::Span(mark, by, nodes) => {
                 kept.push(Node::Span(mark, by, lift_comments(nodes, comments)));
             }
+            Node::Split(pieces) => {
+                kept.push(Node::Split(lift_comments(pieces, comments)));
+            }
             leaf => kept.push(leaf),
         }
     }
@@ -599,6 +674,13 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 render(nodes, out, escaping, ids);
                 marker(out, close, id);
                 attribution(out, by.as_deref(), id);
+            }
+            // The pieces of a split change render side by side, never
+            // paired as a substitution: their order is the document's.
+            (Node::Split(pieces), _) => {
+                for piece in pieces {
+                    render(std::slice::from_ref(piece), out, escaping, ids);
+                }
             }
             (Node::Leaf(Leaf::Text { text, marks, link }), _) => {
                 out.push(Piece {
@@ -1202,8 +1284,10 @@ mod tests {
     }
 
     #[test]
-    fn different_kinds_may_nest() {
-        // Inserted by one author, deleted by another: gone either way.
+    fn different_kinds_cannot_nest() {
+        // CriticMarkup cannot nest a change in a change: an insertion that
+        // is only the deletion splits away entirely, each piece keeping its
+        // attribution.
         let nested = [
             ("open", "+"),
             ("open", "-"),
@@ -1211,7 +1295,87 @@ mod tests {
             ("close", "-"),
             ("close", "+"),
         ];
-        assert_eq!(script(&nested), "{++{--x--}++}");
+        assert_eq!(script(&nested), "{--x--}");
+    }
+
+    #[test]
+    fn a_change_inside_a_change_splits_the_outer_one() {
+        let nested = [
+            ("by+", "Ana"),
+            ("t", "one "),
+            ("by-", "Ben"),
+            ("t", "two"),
+            ("close", "-"),
+            ("t", " three"),
+            ("close", "+"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{++one ++}{>>Ana<<}{--two--}{>>Ben<<}{++ three++}{>>Ana<<}"
+        );
+    }
+
+    #[test]
+    fn an_insertion_inside_a_deletion_splits_it_too() {
+        let nested = [
+            ("by-", "Ben"),
+            ("t", "one "),
+            ("by+", "Ana"),
+            ("t", "two"),
+            ("close", "+"),
+            ("t", " three"),
+            ("close", "-"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{--one --}{>>Ben<<}{++two++}{>>Ana<<}{-- three--}{>>Ben<<}"
+        );
+    }
+
+    #[test]
+    fn split_pieces_do_not_pair_as_a_substitution() {
+        // `one` was inserted before `two`, not instead of it: the pieces
+        // the nested change split keep their order.
+        let nested = [
+            ("by+", "Ana"),
+            ("t", "one "),
+            ("by-", "Ben"),
+            ("t", "two"),
+            ("close", "-"),
+            ("t", " three"),
+            ("close", "+"),
+            ("by-", "Ben"),
+            ("t", "four"),
+            ("close", "-"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{++one ++}{>>Ana<<}{--two--}{>>Ben<<}{++ three++}{>>Ana<<}\
+             {--four--}{>>Ben<<}"
+        );
+    }
+
+    #[test]
+    fn a_nest_inside_a_nest_splits_at_every_level() {
+        // Two changes inside one: the outer change splits around each.
+        let nested = [
+            ("by+", "Ana"),
+            ("t", "a"),
+            ("by-", "Ben"),
+            ("t", "x"),
+            ("close", "-"),
+            ("t", "y"),
+            ("by-", "Cid"),
+            ("t", "z"),
+            ("close", "-"),
+            ("t", "b"),
+            ("close", "+"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{++a++}{>>Ana<<}{--x--}{>>Ben<<}{++y++}{>>Ana<<}{--z--}\
+             {>>Cid<<}{++b++}{>>Ana<<}"
+        );
     }
 
     #[test]
@@ -1239,7 +1403,8 @@ mod tests {
             ("close", "+"),
         ];
         assert_eq!(script(&split), "{++ab++}");
-        // Joining exposes inner neighbours, which join too.
+        // Joining exposes inner neighbours, which join too. The deletions
+        // around them split away: a change cannot hold a change.
         let deep = [
             ("open", "-"),
             ("open", "+"),
@@ -1252,7 +1417,7 @@ mod tests {
             ("close", "+"),
             ("close", "-"),
         ];
-        assert_eq!(script(&deep), "{--{++ab++}--}");
+        assert_eq!(script(&deep), "{++ab++}");
     }
 
     #[test]

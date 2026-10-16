@@ -543,6 +543,11 @@ pub(super) fn story(
     let mut out = String::new();
     // The open w:ins / w:del and the change it holds.
     let mut open: Option<Change> = None;
+    // The marks a nested change's mark sits inside, outermost first: the
+    // reader splits a change around one it holds (`{++a++}…{--x--}…{++b++}`,
+    // the pieces naming the same `rN`), and the writer nests the marks
+    // again (`<w:ins>a<w:del>x</w:del>b</w:ins>`).
+    let mut marks: Vec<Change> = Vec::new();
     let mut first_paragraph = note.is_some();
     let mut columns: Vec<Option<&'static str>> = Vec::new();
     // The bookmark the open paragraph ends.
@@ -556,7 +561,7 @@ pub(super) fn story(
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
     // (`{--plain _italic_--}{>>r43+44 @AL<<}` is two marks).
-    let mut natural = natural_marks(items, &context.document.note_changes);
+    let mut natural = natural_marks(context.document, items);
     // The open row's own change: its mark carries the text the view tags
     // with the row's id alone.
     let mut row_change: Option<Change> = None;
@@ -608,12 +613,13 @@ pub(super) fn story(
             | Item::RangeStart(_)
             | Item::RangeEnd(_)
             | Item::CommentReference(_) => {
-                fields.last().copied().flatten().is_some() || continues(&items[at + 1..], open)
+                fields.last().copied().flatten().is_some()
+                    || continues(context.document, &items[at + 1..], open, &marks)
             }
             _ => false,
         };
         if !inside {
-            close_mark(context, &natural, &mut out, &mut open);
+            close_marks(context, &natural, &mut out, &mut open, &mut marks);
         }
         if let Some(change) = in_note
             && open != Some(change)
@@ -729,7 +735,7 @@ pub(super) fn story(
                 ..
             }) => {
                 // Word marks a change inside the math, run by run.
-                close_mark(context, &natural, &mut out, &mut open);
+                close_marks(context, &natural, &mut out, &mut open, &mut marks);
                 // A change inside the math has no serial: the document's
                 // author and date.
                 let change = *change;
@@ -777,13 +783,44 @@ pub(super) fn story(
                 if carried {
                     close_mark(context, &natural, &mut out, &mut open);
                 } else if open != run.change {
-                    close_mark(context, &natural, &mut out, &mut open);
-                    if let Some((kind, by)) = run.change {
-                        spend(&mut natural, by);
-                        let wrap = context.revision(kind, Some(by));
-                        let _ = write!(out, "<{wrap}>");
+                    if let Some(change) = run.change
+                        && let Some(depth) = marks
+                            .iter()
+                            .rposition(|outer| continues_change(context.document, change, *outer))
+                    {
+                        // A piece of a change a nested one suspended resumes
+                        // it: its runs sit in its still-open mark, which ends
+                        // after them. The marks between suspend too.
+                        close_mark(context, &natural, &mut out, &mut open);
+                        while marks.len() > depth + 1 {
+                            open = marks.pop();
+                            close_mark(context, &natural, &mut out, &mut open);
+                        }
+                        open = marks.pop();
+                        write_run(context, run, relate, &mut out);
+                        close_mark(context, &natural, &mut out, &mut open);
+                        continue;
                     }
-                    open = run.change;
+                    // A change of the other kind the open mark resumes after
+                    // sits inside it; the open one stays open around it.
+                    if let (Some(outer), Some(change)) = (open, run.change)
+                        && change.0 != outer.0
+                        && resumes_after(context.document, &items[at + 1..], change, outer)
+                    {
+                        marks.push(outer);
+                        spend(&mut natural, change.1);
+                        let wrap = context.revision(change.0, Some(change.1));
+                        let _ = write!(out, "<{wrap}>");
+                        open = Some(change);
+                    } else {
+                        close_marks(context, &natural, &mut out, &mut open, &mut marks);
+                        if let Some((kind, by)) = run.change {
+                            spend(&mut natural, by);
+                            let wrap = context.revision(kind, Some(by));
+                            let _ = write!(out, "<{wrap}>");
+                        }
+                        open = run.change;
+                    }
                 } else if let Some((kind, by)) = run.change
                     && context.ids_left(by) > natural.get(&by).copied().unwrap_or(0)
                     // A field's begin and end stay in one mark.
@@ -1147,20 +1184,90 @@ fn note_change(notes: &HashMap<u32, (Change, bool)>, item: &Item) -> Option<Chan
     }
 }
 
-fn continues(rest: &[Item], open: Option<Change>) -> bool {
-    open.is_some()
-        && rest
-            .iter()
-            .find(|item| {
-                !matches!(
-                    item,
-                    Item::Bookmark(_)
-                        | Item::RangeStart(_)
-                        | Item::RangeEnd(_)
-                        | Item::CommentReference(_)
-                )
-            })
-            .is_some_and(|item| matches!(item, Item::Run(run) if run.change == open))
+/// Whether the next real item in `rest` is a run still inside a mark:
+/// `open`'s own, one a nested change suspended (`marks`), whose other
+/// pieces name the same ids, or a change `open` resumes after, which the
+/// open mark then holds.
+fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[Change]) -> bool {
+    let Some(at) = rest.iter().position(|item| {
+        !matches!(
+            item,
+            Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
+        )
+    }) else {
+        return false;
+    };
+    let Some(Item::Run(run)) = rest.get(at) else {
+        return false;
+    };
+    let Some(change) = run.change else {
+        return false;
+    };
+    if Some(change) == open
+        || open
+            .into_iter()
+            .chain(marks.iter().copied())
+            .any(|outer| continues_change(document, change, outer))
+    {
+        return true;
+    }
+    open.is_some_and(|outer| {
+        change.0 != outer.0 && resumes_after(document, &rest[at + 1..], change, outer)
+    })
+}
+
+/// Whether `inner` is another piece of `outer`'s change: the view names
+/// its `rN` ids (`{++a++}{>>r1 @AL<<}…{++b++}{>>r1 @AL<<}`), which `outer`
+/// shares. Word marks a nested change inside the mark it splits, so the
+/// pieces are the only same-kind changes that can name spent ids.
+fn continues_change(document: &Document, inner: Change, outer: Change) -> bool {
+    inner.0 == outer.0
+        && inner.1 != outer.1
+        && document.revision_ids.get(&inner.1).is_some_and(|inner| {
+            !inner.is_empty()
+                && document
+                    .revision_ids
+                    .get(&outer.1)
+                    .is_some_and(|outer| inner.iter().all(|id| outer.contains(id)))
+        })
+}
+
+/// Whether `outer`'s change has a piece past `inner`'s group: then `inner`
+/// sits inside `outer`'s mark, which stays open around it. Only a split
+/// change's pieces name a suspended mark's ids.
+fn resumes_after(document: &Document, rest: &[Item], inner: Change, outer: Change) -> bool {
+    // The marks open inside `outer`, innermost last: `inner`, then any it
+    // in turn holds.
+    let mut nested = vec![inner];
+    for item in rest {
+        match item {
+            Item::Bookmark(_)
+            | Item::RangeStart(_)
+            | Item::RangeEnd(_)
+            | Item::CommentReference(_)
+            | Item::LinkStart(..)
+            | Item::LinkEnd => {}
+            Item::Run(Run {
+                content: Content::Math { .. },
+                ..
+            }) => return false,
+            Item::Run(run) => match run.change {
+                Some(change) if continues_change(document, change, outer) => return true,
+                Some(change) => {
+                    match nested
+                        .iter()
+                        .rposition(|n| continues_change(document, change, *n))
+                    {
+                        Some(at) => nested.truncate(at + 1),
+                        None => nested.push(change),
+                    }
+                }
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Ends the open mark. A change the view gives more ids than it has pieces
@@ -1231,9 +1338,26 @@ fn close_mark(
     }
 }
 
+/// [`close_mark`] for the open mark and every mark a nested change's mark
+/// suspended, innermost first.
+fn close_marks(
+    context: &mut Context<'_>,
+    natural: &HashMap<u32, usize>,
+    out: &mut String,
+    open: &mut Option<Change>,
+    marks: &mut Vec<Change>,
+) {
+    close_mark(context, natural, out, open);
+    while let Some(mark) = marks.pop() {
+        *open = Some(mark);
+        close_mark(context, natural, out, open);
+    }
+}
+
 /// The marks each numbered change opens in `items` when no change splits:
 /// a run that does not continue the open mark, a paragraph mark, a row.
-fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMap<u32, usize> {
+fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
+    let notes = &document.note_changes;
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
@@ -1266,7 +1390,7 @@ fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMa
                 }
             }
             Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
-                if continues(&items[at + 1..], open) => {}
+                if continues(document, &items[at + 1..], open, &[]) => {}
             Item::Run(Run {
                 content: Content::Math { .. },
                 ..
