@@ -317,6 +317,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A highlight prints as `<mark>`, so `{==…==}` is only a comment's
+  scope.** With `==` for both, a highlight at the edge of a comment's scope
+  printed `{====lit==…==}` and came back as the literal text `==lit==`, and
+  text ending in `=` beside a highlight (`a===b==`) lost the highlight.
+  Hand-written `==x==` still reads as a highlight. Edit anchors drop
+  `<mark>` and `<s>` as they drop `<u>`.
+
 - **Underline, highlight and strikethrough keep their spaces.** The view
   kept a formatted stretch's edge spaces outside `<u>`, `==` and `~~`, so a
   round trip broke the underline and the highlight at every space (and a
