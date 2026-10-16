@@ -14,7 +14,9 @@
 //! The stand-ins are Unicode punctuation (general category Po), so emphasis
 //! next to a delimiter parses as it would next to the `+` of `{++`, and
 //! Markdown gives them no meaning. A stand-in character already in the
-//! source is kept apart by an escape character and comes back unchanged.
+//! source is kept apart by an escape character and comes back unchanged,
+//! and so is a numeric character reference naming one (`&#x2E0E;`): the
+//! Markdown parser decodes references only after CriticMarkup was read.
 
 /// A CriticMarkup delimiter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +136,33 @@ fn escaped(source: &str, at: usize) -> bool {
         == 1
 }
 
+/// The length of the numeric character reference `rest` starts with
+/// (`&#x2E0E;`, `&#11790;`) when the character it names is a stand-in or
+/// the escape: the Markdown parser decodes references only after
+/// CriticMarkup was read, so the decoded character must arrive escaped or
+/// it would act as a delimiter.
+fn reference_stand_in(rest: &str) -> Option<usize> {
+    let semi = rest.as_bytes().iter().take(12).position(|&b| b == b';')?;
+    let number = rest.get(1..semi)?.strip_prefix('#')?;
+    let (digits, hex) = match number.strip_prefix(['x', 'X']) {
+        Some(hex) => (hex, true),
+        None => (number, false),
+    };
+    // As CommonMark reads them: at most seven decimal digits, six
+    // hexadecimal ones.
+    if digits.is_empty() || digits.len() > if hex { 6 } else { 7 } {
+        return None;
+    }
+    if !digits
+        .bytes()
+        .all(|b| b.is_ascii_digit() || hex && b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    let named = char::from_u32(u32::from_str_radix(digits, if hex { 16 } else { 10 }).ok()?)?;
+    (token_of(named).is_some() || named == ESCAPE).then_some(semi + 1)
+}
+
 /// The source with the delimiters of every complete CriticMarkup span
 /// replaced by stand-ins. A delimiter without its partner, or behind a
 /// backslash, stays text.
@@ -184,9 +213,9 @@ pub(crate) fn encode_checked(source: &str) -> (String, Vec<String>) {
     check.consumed.dedup();
     check.unclosed.sort_unstable();
     check.unclosed.dedup();
-    // A closer that closed nothing is text. One inside a comment is the
-    // comment's text, and one paired with an escaped or verbatim opener
-    // is the literal's own — neither is a stray.
+    // A closer that closed nothing is text. One inside a comment or a
+    // complete highlight is that span's text, and one paired with an
+    // escaped or verbatim opener is the literal's own — none is a stray.
     let mut stray: Vec<(usize, &'static str)> = Vec::new();
     for (slot, open, close) in SPANS
         .iter()
@@ -199,7 +228,9 @@ pub(crate) fn encode_checked(source: &str) -> (String, Vec<String>) {
             .collect();
         let mut used = 0;
         for &at in &closers.positions[slot] {
-            if check.consumed.binary_search(&at).is_ok() || Closers::in_spans(&closers.comments, at)
+            if check.consumed.binary_search(&at).is_ok()
+                || Closers::in_spans(&closers.comments, at)
+                || Closers::in_spans(&closers.highlights, at)
             {
                 continue;
             }
@@ -293,6 +324,9 @@ struct Closers<'a> {
     /// sorted by start: delimiters inside a comment are its text, so a
     /// stray-closer warning skips them.
     comments: Vec<(usize, usize)>,
+    /// Every complete highlight (`{==…==}`) the same way: a closer
+    /// inside one is its text too.
+    highlights: Vec<(usize, usize)>,
     /// Per slot and position: the innermost nested span covering the
     /// delimiter, the earliest start and the latest end of every span
     /// covering it. `None` where no span covers it.
@@ -412,6 +446,7 @@ impl<'a> Closers<'a> {
             patterns,
             positions,
             comments,
+            highlights,
             cover,
             runs,
             literal,
@@ -445,7 +480,9 @@ impl<'a> Closers<'a> {
     /// pair or a span of `inner`, with the first `close` after its opener
     /// text that `inner` does not hold, so a `{==` whose first `==}` sits
     /// in a comment closes past it, as the recursive reader closes it.
-    /// Disjoint and sorted by start.
+    /// Disjoint and sorted by start. The closer cursor is shared: an
+    /// opener never rescans the closers an earlier opener skipped, so
+    /// many openers before many `inner` spans stay linear.
     fn paired(
         openers: &[usize],
         close: &str,
@@ -453,12 +490,13 @@ impl<'a> Closers<'a> {
         positions: &[Vec<usize>; 6],
     ) -> Vec<(usize, usize)> {
         let mut spans = Vec::new();
+        let closers = &positions[Self::slot(close)];
+        let mut at = 0;
         for &opener in openers {
             if Self::in_spans(&spans, opener) || Self::in_spans(inner, opener) {
                 continue;
             }
-            let closers = &positions[Self::slot(close)];
-            let mut at = closers.partition_point(|&c| c <= opener);
+            at = at.max(closers.partition_point(|&c| c <= opener));
             let close_at = loop {
                 let Some(&c) = closers.get(at) else {
                     break None;
@@ -471,6 +509,7 @@ impl<'a> Closers<'a> {
             };
             if let Some(close_at) = close_at {
                 spans.push((opener, close_at + close.len()));
+                at += 1;
             }
         }
         spans
@@ -945,6 +984,20 @@ fn encode_range(
                     continue;
                 }
                 let c = rest.chars().next().unwrap_or_default();
+                // A character reference naming a stand-in or the escape:
+                // escaped here, so the character the parser decodes
+                // stays text. In a fence the parser decodes nothing, so
+                // the spelling keeps its own.
+                if c == '&'
+                    && !escaped(source, at)
+                    && !closers.literal.in_fence(at)
+                    && let Some(len) = reference_stand_in(rest)
+                {
+                    out.push(ESCAPE);
+                    push_escaped(out, &rest[..len]);
+                    at += len;
+                    continue;
+                }
                 push_escaped(out, &rest[..c.len_utf8()]);
                 at += c.len_utf8();
             }
@@ -955,10 +1008,20 @@ fn encode_range(
 /// A comment's body: text, with every run of blank or whitespace-only
 /// lines as one [`Token::CommentBreak`] stand-in so the comment's
 /// paragraphs survive the Markdown parser without splitting the
-/// paragraph the comment is anchored on. A single newline stays text.
+/// paragraph the comment is anchored on. A single newline stays text,
+/// and a character reference naming a stand-in stays literal as in any
+/// other text.
 fn encode_comment(source: &str, body: std::ops::Range<usize>, out: &mut String) {
     let mut at = body.start;
     while at < body.end {
+        if source.as_bytes()[at] == b'&'
+            && let Some(len) = reference_stand_in(&source[at..body.end])
+        {
+            out.push(ESCAPE);
+            push_escaped(out, &source[at..at + len]);
+            at += len;
+            continue;
+        }
         if source.as_bytes()[at] == b'\n' {
             // The whitespace run after this newline; a second newline in
             // it makes a blank line.
@@ -1904,6 +1967,29 @@ mod tests {
         assert!(output.contains("payload"));
     }
 
+    /// Many highlight openers before many comments holding their kind's
+    /// closer must not re-skip every comment from each opener: the
+    /// pairing pass that finds complete spans stays linear too.
+    #[test]
+    fn highlight_openers_before_comment_held_closers_stay_linear() {
+        // Every `{==` fails (each `==}` sits inside a comment), and each
+        // comment is complete.
+        let openers = "{==".repeat(20_000);
+        let comments = "{>>x==}y<<} ".repeat(20_000);
+        let source = format!("{openers}{comments}");
+        let started = std::time::Instant::now();
+        let output = encode(&source);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed.as_secs() < 2,
+            "took {elapsed:?} for {} bytes",
+            source.len()
+        );
+        // The openers stay text and the comments are recognised.
+        assert!(output.contains("==}"));
+        assert!(output.contains('y'));
+    }
+
     #[test]
     fn a_footnote_label_goes_before_a_change_that_opens_its_line() {
         assert_eq!(
@@ -2200,5 +2286,61 @@ mod tests {
         assert_eq!(encoded, "{++a--}");
         assert!(warnings.iter().any(|w| w.contains("'{++'")), "{warnings:?}");
         assert!(warnings.iter().any(|w| w.contains("'--}'")), "{warnings:?}");
+    }
+
+    /// A numeric character reference that names a stand-in character or
+    /// the escape is literal text: the Markdown parser decodes references
+    /// only after CriticMarkup was read, so the decoded character must
+    /// not arrive as an unescaped delimiter.
+    #[test]
+    fn character_references_naming_stand_ins_stay_literal() {
+        for (text, guarded) in [
+            ("a &#x2E0E;x&#x2E0F; b", 2),
+            ("a &#11790;x&#11791; b", 2),
+            ("a &#X2E0E;x b", 1),
+            ("{>>a &#x2E19; b<<}", 1),
+            ("a &#xF0000; b", 1),
+        ] {
+            let encoded = encode(text);
+            assert_eq!(
+                encoded.chars().filter(|&c| c == ESCAPE).count(),
+                guarded,
+                "{text}: {encoded:?}"
+            );
+            // What a reader pieces together is the text as written.
+            assert_eq!(restore(&encoded), text, "{text}");
+        }
+        // References to other characters, malformed references,
+        // references behind a backslash and references in a code span
+        // keep their spelling, unguarded.
+        for text in [
+            "a &#65; b",
+            "a &#x2E0 b",
+            "a &#x110000; b",
+            r"a \&#x2E0E; b",
+            "`&#x2E0E;`",
+            "```
+&#x2E0E;
+```
+",
+        ] {
+            assert_eq!(encode(text), text, "{text}");
+        }
+    }
+
+    /// A closer inside a complete highlight is the highlight's text, as a
+    /// closer inside a comment is the comment's: neither warns as a
+    /// stray.
+    #[test]
+    fn a_closer_inside_a_complete_highlight_is_the_highlight_s_text() {
+        for text in [
+            "{==b++}c==}",
+            "{++a{==b++}c==}d++}",
+            "{~~a{==b~~}c==}d~>e~~}",
+            "{==a{>>x==}y<<}b==}",
+        ] {
+            let (encoded, warnings) = encode_checked(text);
+            assert!(warnings.is_empty(), "{text}: {warnings:?} in {encoded:?}");
+        }
     }
 }

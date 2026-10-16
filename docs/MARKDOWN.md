@@ -232,6 +232,13 @@ keeps the comment's `~>`, `{++a{>>b++}c++}` inserts `ac` around a
 comment that holds `b++}`. A blank line inside `{>>…<<}` is a paragraph
 break in the comment's text, not in the paragraph it sits on.
 
+A raw HTML block keeps only its text, and CriticMarkup written in that
+text is read as anywhere else: `<div>{++x++}</div>` inserts `x`.
+A numeric character reference naming a stand-in character
+(`&#x2E0E;`, `&#xF0000;`) is literal text wherever the parser decodes
+it — paragraph text, a comment's body, an HTML block — because
+references decode only after CriticMarkup was read.
+
 ## Agent view
 
 `jubarte read FILE.docx` prints the agent view: a YAML header

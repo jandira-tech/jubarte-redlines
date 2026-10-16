@@ -969,54 +969,91 @@ fn html_tag(html: &str) -> Option<HtmlTag> {
     })
 }
 
+/// The start token an end token closes, if it is one.
+fn closes(token: Token) -> Option<Token> {
+    match token {
+        Token::InsertEnd => Some(Token::InsertStart),
+        Token::DeleteEnd => Some(Token::DeleteStart),
+        Token::SubstituteEnd => Some(Token::SubstituteStart),
+        Token::HighlightEnd => Some(Token::HighlightStart),
+        Token::CommentEnd => Some(Token::CommentStart),
+        Token::MarkEnd => Some(Token::MarkStart),
+        _ => None,
+    }
+}
+
 /// The CriticMarkup tokens in `tokens` that cross the edge of text the
-/// writer drops or captures (an HTML comment, image alt text): the
-/// closers of spans opened before it, the openers of spans closed after
-/// it. Spans whole inside are dropped with the text. A comment's tokens
-/// count as its own only if its `<<}` is there too, because nothing
-/// nests in a comment.
+/// writer drops or captures (an HTML comment, image alt text), in the
+/// order they were read: the closers of spans opened before it, the
+/// openers of spans closed after it. Spans whole inside are dropped with
+/// the text. A comment's tokens count as its own only if its `<<}` is
+/// there too, because nothing nests in a comment, and a substitution
+/// keeps its `~>` when its `~~}` is not there too, or the text after
+/// the drop would read as its old half.
 fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
-    let mut loose = Vec::new();
-    let mut open: Vec<Token> = Vec::new();
-    for token in tokens {
-        let opener = match token {
-            Token::InsertEnd => Token::InsertStart,
-            Token::DeleteEnd => Token::DeleteStart,
-            Token::SubstituteEnd => Token::SubstituteStart,
-            Token::HighlightEnd => Token::HighlightStart,
-            Token::CommentEnd => Token::CommentStart,
-            Token::MarkEnd => Token::MarkStart,
-            _ => {
-                match token {
-                    Token::SubstituteSeparator if open.last() == Some(&Token::SubstituteStart) => {}
-                    // A field's marks are part of its text, not a span.
-                    Token::FieldStart | Token::FieldSeparator | Token::FieldEnd => {}
-                    _ => {
-                        if matches!(
-                            token,
-                            Token::InsertStart
-                                | Token::DeleteStart
-                                | Token::SubstituteStart
-                                | Token::HighlightStart
-                                | Token::CommentStart
-                                | Token::MarkStart
-                        ) {
-                            open.push(token);
-                        } else {
-                            loose.push(token);
-                        }
-                    }
-                }
-                continue;
+    // Which opener a closer of the same text closes, so a span whole
+    // inside is known before anything replays.
+    let mut closed = vec![false; tokens.len()];
+    let mut open: Vec<(Token, usize)> = Vec::new();
+    for (at, token) in tokens.iter().enumerate() {
+        if let Some(opener) = closes(*token) {
+            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+                let (_, start) = open.remove(index);
+                closed[start] = true;
             }
-        };
-        if let Some(at) = open.iter().rposition(|t| *t == opener) {
-            open.remove(at);
-        } else {
-            loose.push(token);
+        } else if matches!(
+            token,
+            Token::InsertStart
+                | Token::DeleteStart
+                | Token::SubstituteStart
+                | Token::HighlightStart
+                | Token::CommentStart
+                | Token::MarkStart
+        ) {
+            open.push((*token, at));
         }
     }
-    loose.extend(open);
+    let mut loose = Vec::new();
+    let mut open: Vec<(Token, usize)> = Vec::new();
+    for (at, token) in tokens.into_iter().enumerate() {
+        if let Some(opener) = closes(token) {
+            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+                open.remove(index);
+            } else {
+                // Its opener is outside: the closer crosses the edge.
+                loose.push(token);
+            }
+            continue;
+        }
+        match token {
+            Token::SubstituteSeparator
+                if open.last().is_some_and(|&(start, opened)| {
+                    start == Token::SubstituteStart && closed[opened]
+                }) => {}
+            // A field's marks are part of its text, not a span.
+            Token::FieldStart | Token::FieldSeparator | Token::FieldEnd => {}
+            _ => {
+                if matches!(
+                    token,
+                    Token::InsertStart
+                        | Token::DeleteStart
+                        | Token::SubstituteStart
+                        | Token::HighlightStart
+                        | Token::CommentStart
+                        | Token::MarkStart
+                ) {
+                    open.push((token, at));
+                    // An opener nothing in the text closes crosses the
+                    // edge; one that closes here drops with the text.
+                    if !closed[at] {
+                        loose.push(token);
+                    }
+                } else {
+                    loose.push(token);
+                }
+            }
+        }
+    }
     loose
 }
 
@@ -4681,6 +4718,38 @@ mod tests {
         );
         assert_eq!(attribution("Bo (2026-01-02T03:04:05Z): why"), None);
         assert_eq!(attribution("Bo"), None);
+    }
+
+    /// A substitution whose start and separator sit in text the writer
+    /// drops or captures, with its end outside, keeps its separator in
+    /// the replayed tokens: without it the text after the drop reads as
+    /// the old half. A substitution whole inside drops with the text.
+    #[test]
+    fn a_substitution_split_by_dropped_text_keeps_its_separator() {
+        assert_eq!(
+            loose_tokens(vec![Token::SubstituteStart, Token::SubstituteSeparator,]),
+            vec![Token::SubstituteStart, Token::SubstituteSeparator]
+        );
+        // Whole inside: start, separator and end all drop with the text.
+        assert_eq!(
+            loose_tokens(vec![
+                Token::SubstituteStart,
+                Token::SubstituteSeparator,
+                Token::SubstituteEnd,
+            ]),
+            vec![]
+        );
+        // A closed substitution inside other dropped tokens keeps only
+        // the tokens that cross the edge.
+        assert_eq!(
+            loose_tokens(vec![
+                Token::InsertEnd,
+                Token::SubstituteStart,
+                Token::SubstituteSeparator,
+                Token::SubstituteEnd,
+            ]),
+            vec![Token::InsertEnd]
+        );
     }
 }
 #[cfg(test)]

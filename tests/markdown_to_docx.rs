@@ -1206,6 +1206,95 @@ fn malformed_critic_markup_warns_and_stays_text() {
     }
 }
 
+/// A substitution whose start and separator sit in text the writer drops
+/// or captures, with its end outside, still splits: the text after the
+/// drop is the new half, not a deletion.
+#[test]
+fn a_substitution_split_by_dropped_text_inserts_its_new_half() {
+    for markdown in [
+        "a <!--{~~x~> -->b~~} c\n",
+        "a ![{~~x~>b](none.png) c~~} d\n",
+    ] {
+        let docx = write(markdown);
+        let revs = revisions(&docx);
+        let inserted: Vec<&str> = revs
+            .iter()
+            .filter(|(kind, _)| *kind == WmlComparerRevisionType::Inserted)
+            .map(|(_, text)| text.as_str())
+            .collect();
+        let deleted: Vec<&str> = revs
+            .iter()
+            .filter(|(kind, _)| *kind == WmlComparerRevisionType::Deleted)
+            .map(|(_, text)| text.as_str())
+            .collect();
+        assert!(
+            inserted
+                .iter()
+                .any(|text| text.contains('b') || text.contains(" c")),
+            "{markdown:?}: new half not inserted: {revs:?}"
+        );
+        assert!(deleted.is_empty(), "{markdown:?}: {deleted:?}");
+    }
+}
+
+/// A numeric character reference that names a CriticMarkup stand-in (or
+/// the escape) is literal text wherever the Markdown parser decodes it:
+/// paragraph text, a comment's body, an HTML block's visible text. The
+/// delimiters written directly in an HTML block are real CriticMarkup:
+/// the change applies, and no stand-in character reaches the document.
+#[test]
+fn character_references_naming_stand_ins_are_text_and_html_blocks_apply_changes() {
+    // Paragraph text: no revision, the decoded characters are text.
+    let docx = write("a &#x2E0E;x&#x2E0F; b\n");
+    assert!(revisions(&docx).is_empty());
+    assert_eq!(texts(&docx), [format!("a {}x{} b", '\u{2E0E}', '\u{2E0F}')]);
+    // A separator reference opens no phantom insertion.
+    let docx = write("a &#x2E13; b\n");
+    assert!(revisions(&docx).is_empty());
+    // An escape reference kills no change that follows it.
+    let docx = write("a &#xF0000;{++x++} b\n");
+    let inserted: Vec<String> = revisions(&docx)
+        .into_iter()
+        .filter(|(kind, _)| *kind == WmlComparerRevisionType::Inserted)
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(inserted, ["x"], "the change after an escape reference");
+    // A comment keeps its whole body: no early end, no body leak.
+    let docx = write("{>>a &#x2E19; b<<}\n");
+    assert!(texts(&docx).iter().all(|text| text.trim().is_empty()));
+    let comments = part_string(&docx, "word/comments.xml").unwrap();
+    assert_eq!(comments.matches("<w:comment ").count(), 1, "{comments}");
+    assert_eq!(comments.matches("<w:p>").count(), 1, "{comments}");
+    // No comment starts from references either.
+    let docx = write("a &#x2E18;n&#x2E19; b\n");
+    assert!(revisions(&docx).is_empty());
+    assert!(!document_xml(&docx).contains("commentRangeStart"));
+
+    // An HTML block's visible text: written delimiters are changes and
+    // leave no stand-in in the document; references are literal text
+    // (the characters they name, and no revision).
+    for markdown in ["<div>{++x++}</div>\n", "<p>a {--b--} c</p>\n"] {
+        let docx = write(markdown);
+        assert!(!revisions(&docx).is_empty(), "{markdown:?}");
+        let xml = document_xml(&docx);
+        for code in 0x2E0E..=0x2E2F {
+            let stand_in = char::from_u32(code).unwrap();
+            assert!(
+                !xml.contains(stand_in),
+                "{markdown:?}: stand-in U+{code:X} reached the document"
+            );
+        }
+        assert!(
+            !xml.contains('\u{F0000}'),
+            "{markdown:?}: escape reached the document"
+        );
+    }
+    let docx = write("<div>&#x2E0E;x&#x2E0F;</div>\n");
+    assert!(revisions(&docx).is_empty());
+    assert_eq!(texts(&docx), [format!("{}x{}", '\u{2E0E}', '\u{2E0F}')]);
+    assert!(!document_xml(&docx).contains('\u{F0000}'));
+}
+
 #[test]
 fn a_range_split_into_highlights_is_one_comment() {
     // How a comment range that crosses paragraphs and changes is read from
