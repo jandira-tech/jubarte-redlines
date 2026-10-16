@@ -674,8 +674,9 @@ fn paints(dom: &Dom, r: NodeId) -> bool {
         })
 }
 
-/// A run that paints something a highlight can colour: text, a symbol or
-/// a tab. A break paints no glyph (a page break ends the page, a line
+/// A run that paints something a highlight can colour: text, a symbol,
+/// a tab (plain or positioned) or a hyphen glyph (a non-breaking or soft
+/// one). A break paints no glyph (a page break ends the page, a line
 /// break wraps), so a highlight on it never reaches the page.
 fn paints_glyphs(dom: &Dom, r: NodeId) -> bool {
     dom.elements(r, None)
@@ -685,7 +686,7 @@ fn paints_glyphs(dom: &Dom, r: NodeId) -> bool {
                 .nodes(c)
                 .into_iter()
                 .any(|t| !dom.text_value(t).unwrap_or_default().is_empty()),
-            "tab" | "sym" => true,
+            "tab" | "ptab" | "sym" | "noBreakHyphen" | "softHyphen" => true,
             _ => false,
         })
 }
@@ -1439,6 +1440,37 @@ mod story_diagnostic_contract_tests {
             report(tab, &StyleBook::default(), &[]).0,
             vec!["  highlight yellow ×1".to_string()]
         );
+    }
+
+    #[test]
+    fn a_highlight_on_a_hyphen_or_position_tab_is_tallied() {
+        // Word draws the highlight band behind a non-breaking or soft
+        // hyphen and behind a position tab as behind any other glyph, so
+        // the comparator counts them: a faithful round trip reports no
+        // difference and a lost one a real difference, instead of hiding
+        // both behind a run that paints nothing.
+        for (run, line) in [
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="cyan"/></w:rPr><w:noBreakHyphen/></w:r>"#,
+                "  highlight cyan ×1",
+            ),
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="green"/></w:rPr><w:softHyphen/></w:r>"#,
+                "  highlight green ×1",
+            ),
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:ptab/></w:r>"#,
+                "  highlight yellow ×1",
+            ),
+        ] {
+            let body =
+                format!(r#"<w:p><w:r><w:t>A </w:t></w:r>{run}<w:r><w:t> B</w:t></w:r></w:p>"#);
+            assert_eq!(
+                report(&body, &StyleBook::default(), &[]).0,
+                vec![line.to_string()],
+                "{run}"
+            );
+        }
     }
 
     #[test]
