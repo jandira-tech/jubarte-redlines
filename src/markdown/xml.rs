@@ -2165,6 +2165,14 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
              <w:rPr><w:sz w:val=\"20\"/><w:szCs w:val=\"20\"/></w:rPr>",
         ),
         "VerbatimChar" => character("VerbatimChar", "Verbatim Char", &format!("<w:rPr>{mono}</w:rPr>")),
+        // Word's own line-number style: a character style, named in the
+        // lower case Word writes it (a footer paragraph can carry it,
+        // ids-tables, #528).
+        "LineNumber" => character(
+            "LineNumber",
+            "line number",
+            "<w:uiPriority w:val=\"99\"/><w:semiHidden/><w:unhideWhenUsed/>",
+        ),
         "Hyperlink" => character(
             "Hyperlink",
             "Hyperlink",
