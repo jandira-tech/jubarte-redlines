@@ -489,13 +489,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         .filter(|id| Some(*id) != default_style.as_deref());
                     match id {
                         None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
-                        // Word's own, under any id (`a5` in a localized document).
+                        // Word's own, under any id (`a5` in a localized
+                        // document), spelled as Word spells it.
                         Some(id)
                             if writer
                                 .styles
                                 .by_id
                                 .get(id)
-                                .map_or(id.eq_ignore_ascii_case(own), |s| s.name == own_name) =>
+                                .map_or(id.eq_ignore_ascii_case(own), |s| {
+                                    s.exact_name == own_name
+                                }) =>
                         {
                             None
                         }
@@ -1628,6 +1631,10 @@ fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) 
 #[derive(Default, Clone)]
 struct Style {
     name: String,
+    /// The name as the document writes it: Word's own are lower case
+    /// (`footnote text`), and a style that spells one differently is the
+    /// document's own (#528).
+    exact_name: String,
     based_on: Option<String>,
     outline: Option<usize>,
     num: Option<(String, usize)>,
@@ -1668,6 +1675,11 @@ impl Styles {
                         .and_then(|n| n.attr("val"))
                         .unwrap_or(id)
                         .to_ascii_lowercase(),
+                    exact_name: style
+                        .path(&["name"])
+                        .and_then(|n| n.attr("val"))
+                        .unwrap_or(id)
+                        .to_string(),
                     based_on: style
                         .path(&["basedOn"])
                         .and_then(|n| n.attr("val"))

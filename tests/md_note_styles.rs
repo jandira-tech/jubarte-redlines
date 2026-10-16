@@ -33,9 +33,25 @@ fn docx(kind: &str, styles: &[Option<&str>]) -> Vec<u8> {
     docx_paragraphs(kind, &notes)
 }
 
+/// [`docx`] with `styles_xml` as the document's styles part.
+fn docx_with_styles(kind: &str, styles: &[Option<&str>], styles_xml: &str) -> Vec<u8> {
+    let notes: Vec<Vec<Option<&str>>> = styles.iter().map(|s| vec![*s]).collect();
+    docx_paragraphs_in(kind, &notes, Some(styles_xml.to_string()))
+}
+
 /// A docx with one note of `kind` per entry of `notes`, a paragraph per
-/// entry of that note (its `w:pStyle`, `None` for none).
+/// entry of that note (its `w:pStyle`, `None` for none), with `styles` as
+/// its styles part when given.
 fn docx_paragraphs(kind: &str, notes_styles: &[Vec<Option<&str>>]) -> Vec<u8> {
+    docx_paragraphs_in(kind, notes_styles, None)
+}
+
+/// [`docx_paragraphs`] with `custom_styles` as the styles part.
+fn docx_paragraphs_in(
+    kind: &str,
+    notes_styles: &[Vec<Option<&str>>],
+    custom_styles: Option<String>,
+) -> Vec<u8> {
     let (w, r) = (common::docx::W_NS, common::docx::R_NS);
     let mut body = String::new();
     let mut notes = format!(
@@ -71,7 +87,7 @@ fn docx_paragraphs(kind: &str, notes_styles: &[Vec<Option<&str>>]) -> Vec<u8> {
         format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}s+xml");
     let notes_rel = format!("{RELS}/{kind}s");
     let styles_rel = format!("{RELS}/styles");
-    let styles = styles_xml();
+    let styles = custom_styles.unwrap_or_else(styles_xml);
     let parts = [
         common::docx::Part {
             name: &part_name,
@@ -350,4 +366,29 @@ fn an_empty_quoted_note_style_names_none() {
     assert_eq!(note_styles(&docx, "footnote"), ["FootnoteText"]);
     let styles = part(&docx, "word/styles.xml");
     assert!(!styles.contains(r#"w:styleId="""#), "{styles}");
+}
+
+/// A document that renames Word's note style keeps its name: `FootnoteText`
+/// named `Footnote Text` is not Word's `footnote text`, so the view names
+/// the style and the legend the name (ids-comments, #528).
+#[test]
+fn a_renamed_word_note_style_keeps_its_name() {
+    let styles = styles_xml()
+        .replace(r#"<w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText""#, r#"<w:name w:val="Footnote Text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText""#);
+    assert!(styles.contains(r#"<w:name w:val="Footnote Text"/>"#), "{styles}");
+    let docx = docx_with_styles("footnote", &[Some("FootnoteText")], &styles);
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(view.contains(" FootnoteText -->"), "{view}");
+    assert!(view.contains("named Footnote Text"), "{view}");
+    assert_eq!(note_styles(&again, "footnote"), ["FootnoteText"]);
+    let styles = part(&again, "word/styles.xml");
+    let definition = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"FootnoteText\""))
+        .unwrap_or_else(|| panic!("no FootnoteText: {styles}"));
+    assert!(
+        definition.contains(r#"<w:name w:val="Footnote Text"/>"#),
+        "{definition}"
+    );
+    assert_eq!(view_again, view);
 }
