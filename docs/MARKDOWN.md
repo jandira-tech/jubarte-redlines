@@ -669,7 +669,10 @@ note.
   `id: header1`, then `p0: {text: …, center, color: "595959", border:
   bottom single 0.5pt 8496B0 space 4pt}` for each, as a block in the first
   section and as a flow map in `sections:`. A colour that opens with a
-  digit is quoted, since YAML reads `000000` as the number 0.
+  digit is quoted, since YAML reads `000000` as the number 0. Alignment is
+  `center`, `right`, or `left`/`justify` when the paragraph states it
+  (`w:jc`), so a centred Header style does not centre it; no word means the
+  paragraph names none.
 - Page markers need the layout pass; `--no-page-markers` skips it. When
   the layout fails, the markers come from Word's cached page breaks, else
   from hard breaks and section starts. That fallback does not mix the two

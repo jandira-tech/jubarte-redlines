@@ -44,7 +44,8 @@ pub(super) struct Story {
     pub text: String,
     /// The paragraphs after it (`text: [first, second]`).
     pub more: Vec<String>,
-    /// `center` or `right`; `None` for left.
+    /// `center`, `right`, a stated `left` or `justify`; `None` when the
+    /// paragraphs name none.
     pub align: Option<&'static str>,
     /// Each paragraph's own formatting from `paragraph` on, when the view
     /// prints the story paragraph by paragraph (`p0: {text: …, color: …}`);
@@ -65,7 +66,8 @@ pub(super) struct Story {
 /// One header or footer paragraph's own formatting.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct ParaFormat {
-    /// `center` or `right`; `None` for left.
+    /// `center`, `right`, a stated `left` or `justify`; `None` when it
+    /// names none.
     pub align: Option<&'static str>,
     /// Its text runs' colour (`w:color`).
     pub color: Option<String>,
@@ -101,15 +103,12 @@ impl ParaFormat {
     }
 }
 
-/// `center` or `right` when the entry names it.
+/// The alignment the entry names: `center`, `right`, or a stated `left`
+/// or `justify`; `None` when it names none (the style's applies).
 fn align_of(flag: impl Fn(&str) -> bool) -> Option<&'static str> {
-    if flag("center") {
-        Some("center")
-    } else if flag("right") {
-        Some("right")
-    } else {
-        None
-    }
+    ["center", "right", "left", "justify"]
+        .into_iter()
+        .find(|&word| flag(word))
 }
 
 /// Who made a story's changes: each handle's name and date, and the
@@ -1161,6 +1160,8 @@ fn story_part(
             None => None,
         };
         if let Some(align) = align.filter(|_| index >= story.paragraph) {
+            // Word's value for justified is `both`.
+            let align = if align == "justify" { "both" } else { align };
             let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
         }
         let mut properties = base.clone();

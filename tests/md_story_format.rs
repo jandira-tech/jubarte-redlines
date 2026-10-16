@@ -183,3 +183,27 @@ fn a_later_sections_formatted_header_comes_back() {
     let again = write(&first);
     assert_eq!(view(&again), first);
 }
+
+#[test]
+fn a_stated_left_or_justified_paragraph_keeps_its_alignment() {
+    // The Header style may centre its paragraphs: a paragraph that states
+    // `left` or `both` itself must say so, or it comes back centred.
+    let source = with_header(
+        r#"<w:p><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>Left</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:t>Justified</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Centred</w:t></w:r></w:p>"#,
+    );
+    let first = view(&source);
+    let block = headers_block(&first);
+    assert!(block.contains(r#"p0: {text: Left, left}"#), "{block}");
+    assert!(
+        block.contains(r#"p1: {text: Justified, justify}"#),
+        "{block}"
+    );
+    assert!(block.contains(r#"p2: {text: Centred, center}"#), "{block}");
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").unwrap();
+    let paragraphs: Vec<&str> = xml.split("<w:p>").skip(1).collect();
+    assert!(paragraphs[0].contains(r#"<w:jc w:val="left"/>"#), "{xml}");
+    assert!(paragraphs[1].contains(r#"<w:jc w:val="both"/>"#), "{xml}");
+    assert!(paragraphs[2].contains(r#"<w:jc w:val="center"/>"#), "{xml}");
+    assert_eq!(view(&again), first);
+}

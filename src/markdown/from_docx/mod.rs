@@ -885,6 +885,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                 .and_then(|v| match v {
                                     "center" => Some("center"),
                                     "right" | "end" => Some("right"),
+                                    // Stated, left and justified differ
+                                    // from none: a style's own alignment
+                                    // applies only where the paragraph
+                                    // names none.
+                                    "left" | "start" => Some("left"),
+                                    "both" | "distribute" => Some("justify"),
                                     _ => None,
                                 });
                             let view = match accept {
