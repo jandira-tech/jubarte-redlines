@@ -14,6 +14,7 @@ page: A4 portrait, margins 0.7875in, header/footer 0in, starts nextPage
 styles:
   Normal: Liberation Serif 12pt, left  # default; unannotated paragraphs use it
   "#": Heading1, Liberation Sans bold 18pt, before 12pt, after 6pt, keep-next, named Heading 1
+  FootnoteText: Liberation Serif 10pt, indent 0.236in, hanging 0.236in, named Footnote Text
   table: TableNormal
 ---
 
@@ -91,5 +92,5 @@ the statutory _rate_.
 <!-- p36 Normal left -->
 **This** agreement is governed by the **laws** _of_ the _State_ of New {--York--}{>>r61 @AL<<}{++notice++}{>>r62 @CD<<}.{>>c29 @BC: Is this consistent with the master agreement?<<}
 
-<!-- footnotes.p0 -->
+<!-- footnotes.p0 FootnoteText -->
 [^1]: The buyer{++ on a business day++}{>>footnotes.r63 @DP<<} shall return defective goods within fourteen days.
