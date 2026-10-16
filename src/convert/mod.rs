@@ -37576,14 +37576,29 @@ mod field_tests {
         // delimiter drew exactly like plain x. A marked equation keeps the
         // per-run path, which inks and strikes each revised run.
         for (inner, mark) in [
-            (r#"<m:r><w:del w:id="1" w:author="Ann"><m:t>x</m:t></w:del></m:r>"#, "del in run"),
-            (r#"<w:del w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:del>"#, "del around run"),
-            (r#"<w:ins w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:ins>"#, "ins around run"),
+            (
+                r#"<m:r><w:del w:id="1" w:author="Ann"><m:t>x</m:t></w:del></m:r>"#,
+                "del in run",
+            ),
+            (
+                r#"<w:del w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:del>"#,
+                "del around run",
+            ),
+            (
+                r#"<w:ins w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:ins>"#,
+                "ins around run",
+            ),
         ] {
             for (open, close) in [
                 ("<m:d><m:e>", "</m:e></m:d>"),
-                ("<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg/><m:e>", "</m:e></m:rad>"),
-                ("<m:f><m:num>", "</m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>"),
+                (
+                    "<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg/><m:e>",
+                    "</m:e></m:rad>",
+                ),
+                (
+                    "<m:f><m:num>",
+                    "</m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>",
+                ),
             ] {
                 let runs = math_runs(&format!(
                     "<w:p><m:oMath>{open}{inner}{close}</m:oMath></w:p>"
@@ -37600,7 +37615,9 @@ mod field_tests {
             }
         }
         // Unmarked, the same delimiter is still one laid-out box.
-        let runs = math_runs(r#"<w:p><m:oMath><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath></w:p>"#);
+        let runs = math_runs(
+            r#"<w:p><m:oMath><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath></w:p>"#,
+        );
         assert!(runs.iter().any(|r| r.math.is_some()), "plain box");
     }
 
