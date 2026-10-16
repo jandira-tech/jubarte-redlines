@@ -107,8 +107,8 @@ pub(super) struct Paragraph {
     /// The formatting changes its id line names (`fmt r10 @AL`).
     pub formats: Vec<FormatMark>,
     /// The marks its id line names that its text shows nothing of (`rev
-    /// r9 @AL`).
-    pub unshown: Vec<FormatMark>,
+    /// r9 @AL`, `rev-del r10 @AL`): `true` for an insertion.
+    pub unshown: Vec<(bool, FormatMark)>,
 }
 
 /// A formatting change, or a mark whose text the view does not show, as
@@ -265,6 +265,9 @@ pub(super) struct Document {
     /// The formatting changes on each notes part's separators, in order:
     /// the header's `notes: {fmt: footnotes.r0 @AS; …}`.
     pub note_formats: Vec<(&'static str, super::view_notes::Tag)>,
+    /// The tracked style changes the header's `style_changes:` names, by
+    /// holder (`Normal`, `docDefaults`): their ids, authors and dates.
+    pub style_changes: Vec<(String, Vec<FormatMark>)>,
     /// The style of every comment's paragraphs, when not CommentText: the
     /// header's `comments: …, style Normal`.
     pub comment_style: Option<String>,
@@ -291,11 +294,12 @@ pub(super) struct Document {
     pub author: Option<String>,
     /// `authors: document_owner:`, the core properties' owner.
     pub owner: Option<super::view_notes::Owner>,
-    /// The legend's `table:` style and its border, eighths of a point.
-    pub table_style: Option<(String, Option<u32>)>,
+    /// The legend's `table:` style, its border in eighths of a point and its
+    /// `, named …` name.
+    pub table_style: Option<(String, Option<u32>, Option<String>)>,
     /// Table styles Word has no definition of here, each with the border
-    /// the legend gives it: defined by name.
-    pub table_styles: BTreeMap<String, Option<u32>>,
+    /// and the name the legend gives it.
+    pub table_styles: BTreeMap<String, (Option<u32>, Option<String>)>,
     /// The `track_changes:` key: Word's Track Changes switch.
     pub tracking: Option<bool>,
     pub warnings: Vec<String>,
@@ -419,9 +423,9 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
-    /// Every revision `w:id` written so far: none is written twice, not
-    /// even one the view names twice (`r43+43`), which Word's own files
-    /// never repeat (see `validate::ring1`).
+    /// Every revision `w:id` written so far: none is written twice by the
+    /// fresh counter, though one the view names twice (`r43+43`) is, as
+    /// Word's own files repeat it (a mark split around a `w:hyperlink`).
     pub used_revisions: HashSet<u32>,
     /// Each open paragraph's mark whose numbered change its runs share:
     /// its kind, its change and where in the output its `w:rPr` takes it.
@@ -464,9 +468,8 @@ impl Context<'_> {
             let at = self.cursors.entry(serial).or_insert(0);
             if let Some(&id) = ids.get(*at) {
                 *at += 1;
-                if self.used_revisions.insert(id) {
-                    return id;
-                }
+                self.used_revisions.insert(id);
+                return id;
             }
         }
         // Fresh ids stay within the `int` Word reads, past the view's own.
@@ -548,7 +551,7 @@ pub(super) fn story(
     // The bookmark the open paragraph ends.
     let mut bookmark: Option<u32> = None;
     // The marks the open paragraph's text shows nothing of.
-    let mut unshown: Vec<FormatMark> = Vec::new();
+    let mut unshown: Vec<(bool, FormatMark)> = Vec::new();
     // Its formatting changes past the mark's and its own: its runs'.
     let mut run_formats: Vec<FormatMark> = Vec::new();
     // The open tables' formatting changes, and the row and cell each is in.
@@ -556,7 +559,7 @@ pub(super) fn story(
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
     // (`{--plain _italic_--}{>>r43+44 @AL<<}` is two marks).
-    let mut natural = natural_marks(items, &context.document.note_changes);
+    let mut natural = natural_marks(items, context.document);
     // The open row's own change: its mark carries the text the view tags
     // with the row's id alone.
     let mut row_change: Option<Change> = None;
@@ -592,7 +595,7 @@ pub(super) fn story(
         // side, its deleted side next, ends inside the insertion, as Word
         // writes it: between the two it would part them.
         let field = match item {
-            Item::LinkStart(..) => field_link(&items[at + 1..]),
+            Item::LinkStart(..) => field_link(&items[at + 1..], context.document),
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
@@ -712,9 +715,11 @@ pub(super) fn story(
                         "<w:r><w:rPr><{change}><w:rPr/></w:rPrChange></w:rPr></w:r>"
                     );
                 }
-                // An empty insertion: Word keeps the mark, and shows no text.
-                for mark in std::mem::take(&mut unshown) {
-                    let mark = context.format_mark("w:ins", &mark);
+                // An empty mark: Word keeps it, and shows no text. Its kind is
+                // the clause's (`rev-del` is a deletion).
+                for (inserted, mark) in std::mem::take(&mut unshown) {
+                    let name = if inserted { "w:ins" } else { "w:del" };
+                    let mark = context.format_mark(name, &mark);
                     let _ = write!(out, "<{mark}/>");
                 }
                 if let Some((kind, by, at)) = context.pending_marks.pop().flatten() {
@@ -1106,14 +1111,18 @@ pub(super) fn story(
 
 /// Whether the next run after a comment's marks continues the open change.
 /// The change every run of the link `rest` starts with carries, when they
-/// all carry one: the link is then a HYPERLINK field inside that change's
-/// mark, as Word writes a link it tracks (a `w:hyperlink` would part the
-/// mark in two, and the change read back with two ids).
-fn field_link(rest: &[Item]) -> Option<Change> {
+/// all carry one and the view names it one id: the link is then a
+/// HYPERLINK field inside that change's mark. With two ids named, Word
+/// parts the mark around the link instead (`w:hyperlink` holding the
+/// second mark), which a field cannot do.
+fn field_link(rest: &[Item], document: &Document) -> Option<Change> {
     let mut change = None;
     for item in rest {
         match item {
-            Item::LinkEnd => return change,
+            Item::LinkEnd => {
+                return change
+                    .filter(|(_, by)| document.revision_ids.get(by).map_or(0, Vec::len) <= 1);
+            }
             Item::Run(Run {
                 content: Content::Math { .. },
                 ..
@@ -1233,7 +1242,8 @@ fn close_mark(
 
 /// The marks each numbered change opens in `items` when no change splits:
 /// a run that does not continue the open mark, a paragraph mark, a row.
-fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMap<u32, usize> {
+fn natural_marks(items: &[Item], document: &Document) -> HashMap<u32, usize> {
+    let notes = &document.note_changes;
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
@@ -1248,7 +1258,7 @@ fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMa
         match item {
             Item::Bookmark(_) => {}
             Item::LinkStart(..) => {
-                let field = field_link(&items[at + 1..]);
+                let field = field_link(&items[at + 1..], document);
                 fields.push(field);
                 match field {
                     Some(change) => {

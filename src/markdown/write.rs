@@ -1118,6 +1118,9 @@ struct Writer<'o, 'a> {
     /// The open row's planned cells, and its left-out empty cells.
     row_shapes: Vec<CellShape>,
     row_pad: Vec<Pad>,
+    /// The grid columns the open row leaves out before its cells (its
+    /// `gaps`' `before`): its first cell's grid column.
+    row_before: usize,
     /// Whether the open Markdown cell is a grid column the cell before
     /// spans ([`CellShape::Spanned`]).
     spanned: bool,
@@ -1180,7 +1183,7 @@ struct Writer<'o, 'a> {
     shared_range: Option<usize>,
     /// The header's `unplaced:` marks, by the paragraph they are in: a cell
     /// paragraph has no id line to name them.
-    unplaced: HashMap<usize, Vec<view_notes::Tag>>,
+    unplaced: HashMap<usize, Vec<(&'static str, view_notes::Tag)>>,
     run_after_close: bool,
     scope: Option<(usize, usize)>,
     groups: usize,
@@ -1251,6 +1254,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             cell_paragraph: None,
             row_shapes: Vec::new(),
             row_pad: Vec::new(),
+            row_before: 0,
             spanned: false,
             quote: 0,
             lists: Vec::new(),
@@ -1497,22 +1501,31 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .table_plan
                     .as_ref()
                     .and_then(|plan| plan.style.clone())
-                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()))
+                    .or_else(|| {
+                        self.document
+                            .table_style
+                            .as_ref()
+                            .map(|(id, ..)| id.clone())
+                    })
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
-                    let border = self
+                    let (border, name) = self
                         .document
                         .table_style
                         .as_ref()
-                        .filter(|(legend, _)| legend == id)
-                        .and_then(|(_, border)| *border);
+                        .filter(|(legend, ..)| legend == id)
+                        .map(|(_, border, name)| (*border, name.clone()))
+                        .unwrap_or_default();
                     // Word's thin Table Grid, unless the legend gives it a
-                    // border of its own (`TableGrid, all borders 1.5pt`).
-                    if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
+                    // border or a name of its own (`TableGrid, all borders
+                    // 1.5pt`, `TableGrid, named …`).
+                    if id == "TableGrid" && border.is_none_or(|sz| sz == 4) && name.is_none() {
                         self.document.styles.insert("TableGrid");
                     } else {
-                        self.document.table_styles.insert(id.clone(), border);
+                        self.document
+                            .table_styles
+                            .insert(id.clone(), (border, name));
                     }
                 }
                 let formats = self.table_formats();
@@ -1529,10 +1542,24 @@ impl<'o, 'a> Writer<'o, 'a> {
             Tag::TableHead => self.begin_row(true),
             Tag::TableRow => self.begin_row(false),
             Tag::TableCell => {
+                // The cell's grid column is the row's `before` gap plus
+                // the spans of its real cells so far: the view's cells
+                // before it count grid columns they span, and a gap the
+                // view shows fewer empty cells for.
+                let grid = self.row_before
+                    + self
+                        .row_shapes
+                        .iter()
+                        .take(self.column)
+                        .map(|shape| match shape {
+                            CellShape::Cell { across, .. } => *across,
+                            CellShape::Spanned => 0,
+                        })
+                        .sum::<usize>();
                 let align = self
                     .table
                     .as_ref()
-                    .and_then(|columns| columns.get(self.column).copied())
+                    .and_then(|columns| columns.get(grid).copied())
                     .flatten();
                 let shape = self.row_shapes.get(self.column).copied();
                 self.column += 1;
@@ -1644,11 +1671,28 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.row_pad.clear();
             }
             TagEnd::TableHead | TagEnd::TableRow => {
-                // The empty cells the view left out at the row's end.
+                // The empty cells the view left out at the row's end: their
+                // paragraphs still take their column's alignment, which the
+                // view counts toward the column's majority.
+                let mut column = self.row_before
+                    + self
+                        .row_shapes
+                        .iter()
+                        .map(|shape| match shape {
+                            CellShape::Cell { across, .. } => *across,
+                            CellShape::Spanned => 0,
+                        })
+                        .sum::<usize>();
                 for (across, merge) in std::mem::take(&mut self.row_pad) {
-                    self.cell = Some(None);
+                    let align = self
+                        .table
+                        .as_ref()
+                        .and_then(|columns| columns.get(column).copied())
+                        .flatten();
+                    column += across;
+                    self.cell = Some(align);
                     self.story().push(Item::Cell {
-                        align: None,
+                        align,
                         across,
                         merge,
                     });
@@ -1731,6 +1775,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.cell_paragraph = row.first;
         self.row_shapes = row.cells;
         self.row_pad = row.pad;
+        self.row_before = row.gaps.0;
         self.row_number += 1;
         let index = self.story().len();
         self.story().push(Item::Row {
@@ -1756,14 +1801,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             (_, RowCells::Whole(kind, serial)) => Some((kind, serial)),
             _ => None,
         };
-        // A row the table line names a mark of its own for has that mark,
-        // and its text keeps its own (`rev r80 @AL in t1.row1`).
-        let own = !self.resolved
-            && self.table_plan.as_ref().is_some_and(|plan| {
-                plan.row_marks
-                    .contains_key(&self.row_number.saturating_sub(1))
-            });
-        if let Some(row_change) = row_change.filter(|_| !own)
+        // A view's table line names every row mark of its own (`rev r80 @AL
+        // in t1.row1`): a row it says nothing of has none, however the
+        // cells' changes cover it. Plain Markdown has no line to say so,
+        // and keeps the inference.
+        let lined = !self.resolved && self.table_plan.is_some();
+        if let Some(row_change) = row_change.filter(|_| !lined)
             && let Some(Item::Row { change, .. }) = self.story().get_mut(index)
         {
             *change = Some(row_change);
@@ -1972,7 +2015,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
             if !self.resolved {
-                paragraph.unshown = line.rev.iter().map(|tag| self.format_mark(tag)).collect();
+                paragraph.unshown = line
+                    .rev
+                    .iter()
+                    .map(|tag| (!line.rev_del.contains(tag), self.format_mark(tag)))
+                    .collect();
             }
             let mark = line
                 .break_ins
@@ -2008,7 +2055,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             if !self.resolved
                 && let Some(tags) = self.unplaced.remove(&at)
             {
-                paragraph.unshown = tags.iter().map(|tag| self.format_mark(tag)).collect();
+                for (kind, tag) in &tags {
+                    let mark = self.format_mark(tag);
+                    match *kind {
+                        "fmt" => paragraph.formats.push(mark),
+                        _ => paragraph.unshown.push((*kind == "ins", mark)),
+                    }
+                }
             }
             let mark = self.table_plan.as_ref().and_then(|plan| {
                 let (inserted, tag) = plan.marks.get(&at)?;
@@ -3173,11 +3226,11 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.document.table_style = view_styles::table_style(text);
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
-        if let Some((id, None)) = &self.document.table_style
+        if let Some((id, None, _)) = &self.document.table_style
             && !super::package::is_built_in_table_style(id)
             && text.lines().any(|line| {
                 let line = view_styles::without_comment(line).trim();
-                line.starts_with("table: ") && line.ends_with(", borders vary")
+                line.starts_with("table: ") && line.contains(", borders vary")
             })
         {
             self.document.warnings.push(format!(
@@ -3269,8 +3322,32 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.document.comment_styles = each;
                 }
                 "unplaced" => {
-                    for (at, tag) in view_notes::unplaced(text) {
-                        self.unplaced.entry(at).or_default().push(tag);
+                    for (at, kind, tag) in view_notes::unplaced(text) {
+                        self.unplaced.entry(at).or_default().push((kind, tag));
+                    }
+                }
+                "style_changes" => {
+                    // `{Normal: styles.r0 @AS, …}`: the view names who
+                    // changed a style's formatting, not what it was.
+                    if !self.resolved
+                        && let Some(map) = value
+                            .strip_prefix('{')
+                            .and_then(|map| map.strip_suffix('}'))
+                    {
+                        for entry in map.split(", ") {
+                            let Some((holder, tags)) = entry.split_once(": ") else {
+                                continue;
+                            };
+                            let holder = holder.trim_matches(|c| c == '"' || c == '\'');
+                            let tags = tags.trim_matches(|c| c == '"' || c == '\'');
+                            let Some(tags) = view_notes::revision_tags(tags) else {
+                                continue;
+                            };
+                            let marks = tags.iter().map(|tag| self.format_mark(tag)).collect();
+                            self.document
+                                .style_changes
+                                .push((holder.to_string(), marks));
+                        }
                     }
                 }
                 "view" => {
@@ -3562,7 +3639,28 @@ impl<'o, 'a> Writer<'o, 'a> {
             // reference: each paragraph's mark a change of its own, and one
             // more holding its text (the first's with the reference mark),
             // numbered in that order as the view names them.
+            // A note whose paragraphs each name one mark (`rev
+            // endnotes.r228`): each mark holds that paragraph's reference
+            // and text together, so the note's change is the first of them
+            // and its runs take their own.
             if let Some((kind, _)) = change
+                && !self.resolved
+                && in_one_change(&items, kind)
+                && clauses.rev.len() == paragraphs(&items)
+            {
+                let serials: Vec<u32> =
+                    clauses.rev.iter().map(|tag| self.tag_serial(tag)).collect();
+                let mut next = serials.iter().copied();
+                let mut runs = None;
+                for item in &mut items {
+                    match item {
+                        Item::Paragraph(_) => runs = next.next(),
+                        Item::Run(run) => run.change = runs.map(|serial| (kind, serial)),
+                        _ => {}
+                    }
+                }
+                change = serials.first().map(|&first| (kind, first));
+            } else if let Some((kind, _)) = change
                 && !self.resolved
                 && in_one_change(&items, kind)
                 && clauses.rev.len() == 2 * paragraphs(&items)
@@ -3598,7 +3696,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 last.unshown = clauses
                     .rev
                     .iter()
-                    .map(|tag| self.format_mark(tag))
+                    .map(|tag| (!clauses.rev_del.contains(tag), self.format_mark(tag)))
                     .collect();
             }
             if !clauses.fmt.is_empty()
