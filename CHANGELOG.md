@@ -17,6 +17,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **`PdfOptions::comment_notes`** (hidden CLI flag `--comment-notes`)
+  attaches each comment as a PDF note at its anchor, for the exceptional
+  case that wants one.
+
 - **`convert --scholar`** sets Markdown as LaTeX's article class sets a
   manuscript (Latin Modern Roman 10pt, justified, bold headings, unstretched
   line-break lines) and numbers the pages from page 2, filling in only what
@@ -123,6 +127,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   plain Markdown table, takes Table Grid (single 0.5pt borders all round, as
   Word's Insert Table makes it) instead of the borderless Normal Table.
   `debug --check render` reports both kinds of border.
+
+- **No PDF comment note by default.** `--revisions conventional` and
+  `custom` no longer write a `/Text` annotation per comment: viewers
+  painted it as a note icon over the commented words. The balloon still
+  shows every comment; `PdfOptions::comment_notes` brings the note back.
 
 - **The view nests list items by indentation.** An item past its list's
   first level is indented to the content column of the item it nests
@@ -475,6 +484,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   AGENTS.md); `self-update` is listed last.
 
 ### Breaking (library)
+
+- **`PdfOptions` gains `comment_notes`.** A `PdfOptions { … }` literal that
+  names every field needs it (or `..PdfOptions::default()`).
 
 - `RenderRequest::pages` counts document pages and narrows the PDF and the
   report as well as the PNGs (an empty list writes no PDF).
