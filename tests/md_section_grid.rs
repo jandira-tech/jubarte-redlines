@@ -95,6 +95,34 @@ fn a_line_grid_comes_back_in_every_section() {
 }
 
 #[test]
+fn a_title_page_switched_off_is_not_a_first_page() {
+    // `w:val="0"` states the default: no first page of the section's own.
+    // The round trip turned it into `first: none`, and the docx it wrote
+    // gained a `w:titlePg` Word's document never had (ids-tables, #528).
+    let source = two_sections(r#"<w:cols w:space="720"/>"#, r#"<w:cols w:space="720"/><w:titlePg w:val="0"/>"#);
+    let first = view(&source);
+    assert!(!first.contains("first: none"), "{first}");
+    let again = write(&first);
+    for sect in sections(&again) {
+        assert!(!sect.contains("titlePg"), "{sect}");
+    }
+    assert_eq!(view(&again), first);
+}
+
+#[test]
+fn a_title_page_switched_on_names_its_first_page() {
+    let source = two_sections(
+        r#"<w:cols w:space="720"/>"#,
+        r#"<w:cols w:space="720"/><w:titlePg/>"#,
+    );
+    let first = view(&source);
+    assert!(first.contains("first: none"), "{first}");
+    let again = write(&first);
+    assert!(sections(&again)[1].contains("<w:titlePg/>"));
+    assert_eq!(view(&again), first);
+}
+
+#[test]
 fn a_grid_word_does_not_snap_to_is_not_printed() {
     // Word's own template writes `w:linePitch` with no type: no grid.
     let source = two_sections(
