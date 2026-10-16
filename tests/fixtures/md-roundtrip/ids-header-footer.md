@@ -14,10 +14,10 @@ notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   first: {id: header3, text: ["{PAGE}1{/}", "This is my first page header, page numbers at the right"]}  # page 1 only (different first page)
   default: {id: header2, text: ["{PAGE}1{/}", "Odd page header, page numbers at the right"]}
-  even: {id: header1, text: ["{PAGE}2{/}", "Even page header, page numbers at the right"]}
+  even: {id: header1, text: ["{PAGE}2{/}", "Even page header, page numbers at the right", ""]}
 footers:
   first: {id: footer3, text: ["{PAGE}1{/}", "This Is my first page footer, page numbers at the left"]}  # page 1 only (different first page)
-  default: {id: footer2, text: ["{PAGE}1{/}", "Odd page footer, page numbers at the left"], styles: [Footer, Header]}
+  default: {id: footer2, text: ["{PAGE}1{/}", "Odd page footer, page numbers at the left", ""], styles: [Footer, Header, Footer]}
   even: {id: footer1, text: ["{PAGE}2{/}", "Even page footer, page numbers at the right"]}
 ---
 

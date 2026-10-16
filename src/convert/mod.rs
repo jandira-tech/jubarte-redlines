@@ -32,6 +32,8 @@ pub(crate) mod altchunk;
 mod diff_render;
 mod font;
 mod font_table;
+mod math_font;
+mod math_layout;
 mod metafile;
 mod pdf;
 mod preset_geom;
@@ -874,6 +876,18 @@ fn with_layout<T>(
             MathFace::probe(|c| face.glyph(c) != 0)
         } else {
             MathFace::All
+        });
+        // The same face supplies glyph ids for the math boxes. A face
+        // with no MATH table still lays out, on the TeX fallback. Without
+        // an equation the face is never resolved: resolving it would list
+        // Cambria Math in the font report of a document that asks for no
+        // such font.
+        let _math_font = math_font::MathFontGuard::set(if has_math {
+            let math_face = fonts.get(fonts.resolve("Cambria Math", false, false));
+            math_font::MathFont::from_bytes(math_face.bytes())
+                .unwrap_or_else(|| math_font::MathFont::fallback(math_face.upem))
+        } else {
+            math_font::MathFont::fallback(1000.0)
         });
         let core = load_core_dates(&pkg);
         with_core_dates(core, || {
@@ -1901,6 +1915,9 @@ struct TextRun {
     /// mathematical alphanumerics: they still read back as Word's
     /// (U+1D44E for a), not as the ASCII they are painted with.
     math_ascii: bool,
+    /// A laid-out bar fraction, radical, or delimiter. Glyphs and rules
+    /// are positioned from the run's baseline. `None` for every other run.
+    math: Option<math_layout::MathBox>,
 }
 
 impl TextRun {
@@ -1935,12 +1952,18 @@ impl TextRun {
             checkbox: None,
             strut: false,
             math_ascii: false,
+            math: None,
         }
     }
 
     fn with_text(&self, text: impl Into<String>) -> Self {
         let mut run = self.clone();
         run.text = text.into();
+        // A split keeps the letters and drops the box. Painting the whole
+        // equation on a substring would draw it twice.
+        if run.text != self.text {
+            run.math = None;
+        }
         run
     }
 }
@@ -10337,6 +10360,65 @@ fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, 
 }
 
 fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
+    let (size, box_h) = cell_font_line_box(fonts, runs, style);
+    (size, line_box_for_math(fonts, runs, size, box_h, style))
+}
+
+/// A math box is taller than its font. The cell line holds the ascent
+/// and the descent (quadratic-in-table's fraction).
+fn line_box_for_math(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    size: f32,
+    box_h: f32,
+    style: &ParaStyle,
+) -> f32 {
+    let mut up = 0.0_f32;
+    let mut down = 0.0_f32;
+    let mut any = false;
+    for run in runs {
+        if let Some(math) = &run.math {
+            any = true;
+            up = up.max(math.ascent);
+            down = down.max(math.descent);
+        }
+    }
+    if !any {
+        return box_h;
+    }
+    let face = fonts.get(cell_runs_face(fonts, runs).1);
+    let em = size.max(1.0);
+    let natural = (face.ascent_pt(em).max(up) + face.line_descent_pt(em).max(down))
+        .max(face.single_line_pt(em));
+    box_h.max(line_box_from_natural(natural, style))
+}
+
+/// How far the baseline sits below the top of a cell line.
+fn cell_baseline_drop(
+    face: &Face,
+    size: f32,
+    line: &[TextRun],
+    line_box: f32,
+    exact: bool,
+    grid_pad: f32,
+) -> f32 {
+    if exact {
+        return exact_baseline(line_box);
+    }
+    let math_up = line
+        .iter()
+        .filter_map(|run| run.math.as_ref().map(|math| math.ascent))
+        .fold(0.0_f32, f32::max);
+    // The equation's own ascent. A grid pad on top of it drops the
+    // radical out of the row.
+    if math_up > 0.0 {
+        face.ascent_pt(size).max(math_up)
+    } else {
+        face.ascent_pt(size) + grid_pad
+    }
+}
+
+fn cell_font_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
     let (size, face_id) = cell_runs_face(fonts, runs);
     let grid = para_grid_pitch(style, style.cell_grid);
     if grid > 0.5 {
@@ -14608,6 +14690,8 @@ struct RunCollect<'a> {
     /// The enclosing `m:r`'s math style: `None` for `m:nor` (ordinary
     /// text), else whether its letters are upright (`m:sty` p or b).
     math_upright: Option<bool>,
+    /// Inside `m:oMathPara`: fractions and radicals use display constants.
+    math_display: bool,
     /// file_146 pBdr-bottom section heads keep generator xml:space pads.
     /// Body without pBdr stays collapsed (mini 401). Courier New body
     /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg).
@@ -14656,6 +14740,7 @@ fn collect_runs_in(
         math_vert: VertAlign::Baseline,
         in_math: false,
         math_upright: Some(false),
+        math_display: false,
         keep_xml_space: para_keeps_xml_space(dom, node),
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
@@ -15489,6 +15574,16 @@ fn collect_runs_rec(
         }
         return;
     }
+    if ctx.dom.name_is(node, &M::name("oMathPara")) {
+        let saved = ctx.math_display;
+        ctx.math_display = true;
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            collect_runs_rec(ctx, child, mark, author, runs);
+        }
+        ctx.math_display = saved;
+        return;
+    }
     if ctx.dom.name_is(node, &M::name("oMath")) {
         let saved = ctx.in_math;
         ctx.in_math = true;
@@ -15509,8 +15604,10 @@ fn collect_runs_rec(
         ctx.math_upright = saved;
         return;
     }
-    if ctx.dom.name_is(node, &M::name("d")) {
-        collect_math_delimiter(ctx, node, mark, author, runs);
+    if (ctx.dom.name_is(node, &M::name("d")) || ctx.dom.name_is(node, &M::name("rad")))
+        && math_box_unmarked(ctx, node, mark)
+    {
+        emit_math_box(ctx, node, mark, author, runs);
         return;
     }
     if ctx.dom.name_is(node, &M::name("nary")) {
@@ -15580,6 +15677,12 @@ fn collect_runs_rec(
         return;
     }
     if ctx.dom.name_is(node, &M::name("f")) {
+        // A bar (the Office default) is a 2D box. noBar stays stacked
+        // runs; lin and skw stay on one baseline.
+        if math_f_is_bar(ctx.dom, node) && math_box_unmarked(ctx, node, mark) {
+            emit_math_box(ctx, node, mark, author, runs);
+            return;
+        }
         // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359)
         // was ITT-neg; Quartz stacks n over k with no bar. Do not
         // center oMathPara.
@@ -15624,14 +15727,7 @@ fn collect_runs_rec(
                     // The whole run maps only if the face draws every
                     // letter it maps to; else it stays ASCII italic.
                     let mapped: String = shown.chars().map(math_italic).collect();
-                    let drawn = MATH_ALPHANUMERICS.with(|face| {
-                        let face = face.borrow();
-                        mapped
-                            .chars()
-                            .zip(shown.chars())
-                            .all(|(to, from)| to == from || face.draws(to))
-                    });
-                    if drawn {
+                    if math_alphanumerics_cover(&shown, &mapped) {
                         shown = mapped;
                     } else {
                         style.italic = true;
@@ -15754,57 +15850,82 @@ fn writes_omml(text: &str) -> bool {
         .any(|prefix| text.contains(&format!("<{prefix}oMath")))
 }
 
-/// An `m:d`: its `begChr`, its `m:e` items with `sepChr` between them,
-/// its `endChr` (Word's PDF of math_all_objects: "(𝑥 + 𝑦)", "sin(𝑥)").
-/// The characters default to `(`, `|` and `)`; an empty `m:val` draws
-/// nothing there.
-fn collect_math_delimiter(
+/// Whether a bar fraction, radical, or delimiter can be drawn as one box.
+/// The box paints its glyphs unmarked and carries no comment, so an
+/// equation under a revision, holding one (`w:ins`, `w:del`, `w:moveFrom`,
+/// `w:moveTo`, `w:delText`, `w:rPrChange`), or inside or holding a comment
+/// range keeps the per-run path, which inks, strikes and tints each run.
+fn math_box_unmarked(ctx: &RunCollect<'_>, node: NodeId, mark: RevMark) -> bool {
+    const MARKED: [&str; 4] = [
+        "rPrChange",
+        "commentRangeStart",
+        "commentRangeEnd",
+        "commentReference",
+    ];
+    mark == RevMark::None
+        && ctx.open.is_empty()
+        && ctx.pending.is_empty()
+        && ctx.dom.descendants(node, None).into_iter().all(|d| {
+            rev_mark_of(ctx.dom, d).is_none()
+                && !ctx.dom.name_is(d, &W::del_text())
+                && !MARKED.iter().any(|name| ctx.dom.name_is(d, &W::name(name)))
+        })
+}
+
+/// A bar fraction, radical, or delimiter, as one box. A script or stack
+/// around it is baked into the glyphs. The run stays on the baseline.
+fn emit_math_box(
     ctx: &mut RunCollect<'_>,
     node: NodeId,
     mark: RevMark,
     author: &str,
     runs: &mut Vec<TextRun>,
 ) {
-    let pr = ctx.dom.element(node, &M::name("dPr"));
-    let chr = |name: &str, default: &str| -> String {
-        pr.and_then(|p| ctx.dom.element(p, &M::name(name)))
-            .map(|c| {
-                ctx.dom
-                    .attribute(c, &M::name("val"))
-                    .or_else(|| attr_any(ctx.dom, c, "val"))
-                    .unwrap_or("")
-                    .to_string()
-            })
-            .unwrap_or_else(|| default.to_string())
+    let size = if ctx.base.size > 0.0 {
+        ctx.base.size
+    } else {
+        11.0
     };
-    let (beg, sep, end) = (chr("begChr", "("), chr("sepChr", "|"), chr("endChr", ")"));
-    let push = |ctx: &mut RunCollect<'_>, text: &str, runs: &mut Vec<TextRun>| {
-        if text.is_empty() {
-            return;
-        }
-        let mut style = ctx.base.clone();
-        math_text_style(&mut style);
-        // Inside a script or a stacked fraction the delimiters move with
-        // their contents.
-        if ctx.math_vert != VertAlign::Baseline {
-            style.vert = ctx.math_vert;
-        }
-        if mark != RevMark::None {
-            apply_rev(&mut style, mark, ctx.authors.color(author));
-        }
-        let mut run = TextRun::new(text, style);
-        run.rev = mark != RevMark::None;
-        runs.push(run);
+    let (scale, shift) = match ctx.math_vert {
+        VertAlign::Super => (0.65, 0.35),
+        VertAlign::Sub => (0.65, -0.15),
+        VertAlign::StackNum => (0.65, 0.45),
+        VertAlign::StackDen => (0.65, -0.40),
+        VertAlign::Baseline => (1.0, 0.0),
     };
-    push(ctx, &beg, runs);
-    let items: Vec<NodeId> = ctx.dom.elements(node, Some(&M::name("e")));
-    for (i, item) in items.into_iter().enumerate() {
-        if i > 0 {
-            push(ctx, &sep, runs);
+    let mut laid = math_font::with_current_math_font(|font| {
+        math_layout::layout_node(ctx.dom, node, font, size * scale, ctx.math_display)
+    });
+    if shift != 0.0 {
+        let dy = shift * size;
+        for glyph in &mut laid.glyphs {
+            glyph.y += dy;
         }
-        collect_runs_rec(ctx, item, mark, author, runs);
+        for rule in &mut laid.rules {
+            rule.y_top += dy;
+        }
+        if dy >= 0.0 {
+            laid.ascent += dy;
+            laid.descent = (laid.descent - dy).max(0.0);
+        } else {
+            laid.descent -= dy;
+            laid.ascent = (laid.ascent + dy).max(0.0);
+        }
     }
-    push(ctx, &end, runs);
+    let text: String = laid
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.text.as_str())
+        .collect();
+    let mut style = ctx.base.clone();
+    math_text_style(&mut style);
+    if mark != RevMark::None {
+        apply_rev(&mut style, mark, ctx.authors.color(author));
+    }
+    let mut run = TextRun::new(text, style);
+    run.rev = mark != RevMark::None;
+    run.math = Some(laid);
+    runs.push(run);
 }
 
 /// An `m:r`'s math style: `None` when `m:nor` makes it ordinary text,
@@ -15841,6 +15962,18 @@ fn math_text_style(style: &mut RunStyle) {
     style.italic = false;
 }
 
+/// Whether `mapped` is covered by this conversion's math face. A miss
+/// keeps the whole run in ASCII.
+pub(crate) fn math_alphanumerics_cover(from: &str, mapped: &str) -> bool {
+    MATH_ALPHANUMERICS.with(|face| {
+        let face = face.borrow();
+        mapped
+            .chars()
+            .zip(from.chars())
+            .all(|(to, from_ch)| to == from_ch || face.draws(to))
+    })
+}
+
 /// The mathematical italic form of a Latin or Greek lowercase letter
 /// (h is U+210E, the Planck constant, the block's hole); anything else
 /// as it is.
@@ -15864,6 +15997,21 @@ fn math_f_is_nobar(dom: &Dom, f: NodeId) -> bool {
                 .or_else(|| attr_any(dom, n, "val"))
         })
         .is_some_and(|v| v.eq_ignore_ascii_case("noBar"))
+}
+
+/// Office's default fraction is a bar. `noBar`, `lin`, and `skw` stay
+/// on the flat collector.
+fn math_f_is_bar(dom: &Dom, f: NodeId) -> bool {
+    let Some(pr) = dom.element(f, &M::name("fPr")) else {
+        return true;
+    };
+    let Some(kind) = dom.element(pr, &M::name("type")) else {
+        return true;
+    };
+    let val = dom
+        .attribute(kind, &M::name("val"))
+        .or_else(|| attr_any(dom, kind, "val"));
+    val.is_none_or(|v| v.eq_ignore_ascii_case("bar"))
 }
 
 fn para_keeps_xml_space(dom: &Dom, para: NodeId) -> bool {
@@ -23730,6 +23878,13 @@ impl<'a> Layout<'a> {
         let mut single = 0.0_f32;
         let mut ascent = 0.0_f32;
         for run in &runs {
+            if let Some(math) = &run.math {
+                up = up.max(math.ascent);
+                down = down.max(math.descent);
+                single = single.max(math.ascent + math.descent);
+                ascent = ascent.max(math.ascent);
+                continue;
+            }
             // 000f4c0b's all-lowercase small-caps line is a 12pt line.
             let size = if run.style.box_size > 0.0 {
                 run.style.box_size
@@ -26135,6 +26290,11 @@ impl<'a> Layout<'a> {
         if text.is_empty() {
             return 0.0;
         }
+        if let Some(math) = &run.math
+            && text == run.text
+        {
+            return math.width;
+        }
         if let Some(pieces) = script_pieces(&run.style, text) {
             let gaps: f32 = pieces
                 .array_windows()
@@ -26371,7 +26531,54 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// Glyphs at their box positions, and rules as filled rectangles.
+    /// `y` is the run baseline. A glyph id of 0 stays searchable only.
+    fn paint_math_box(
+        &mut self,
+        run: &TextRun,
+        math: &math_layout::MathBox,
+        x: f32,
+        y: f32,
+    ) -> f32 {
+        let fid = self
+            .fonts
+            .resolve(&run.style.family, run.style.bold, run.style.italic);
+        let color = run.style.color;
+        for glyph in &math.glyphs {
+            let op = Op::text(
+                fid,
+                glyph.size,
+                x + glyph.x,
+                y + glyph.y,
+                vec![glyph.gid],
+                color,
+                glyph.text.clone(),
+            );
+            self.current()
+                .ops
+                .push(if glyph.gid == 0 { op.hidden() } else { op });
+        }
+        for rule in &math.rules {
+            if rule.thickness <= 0.0 || rule.w <= 0.0 {
+                continue;
+            }
+            self.current().ops.push(Op::FillRect {
+                x: x + rule.x,
+                y: y + rule.y_top - rule.thickness,
+                w: rule.w,
+                h: rule.thickness,
+                color,
+            });
+        }
+        self.decorate_run(x, y, math.width, &run.style);
+        self.place_run_comments(run, x, y, math.width);
+        x + math.width
+    }
+
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
+        if let Some(math) = &run.math {
+            return self.paint_math_box(run, math, x, y);
+        }
         // Word's separator is the run's strikeout line on the 300dpi grid
         // (Word 16 probes 2026-10-03: Calibri 11 0.72 thick with its top
         // 2.75 over the baseline, Strict01 p13's rule 450.48 over the
@@ -26829,6 +27036,15 @@ impl<'a> Layout<'a> {
         let mut idx = 0usize;
         for run in line {
             let start = x;
+            // An equation is one box. Splitting it on its spaces paints
+            // the letters at body size and drops the bar (inline-symbol-runs
+            // is justified, so its superscript fraction became "p+14").
+            if run.math.is_some() {
+                x = self.paint_run(run, x, y);
+                idx += run.text.len();
+                self.place_run_comments(run, start, y, x - start);
+                continue;
+            }
             let mut word = String::new();
             for ch in run.text.chars() {
                 if ch == ' ' {
@@ -30257,10 +30473,14 @@ impl<'a> Layout<'a> {
                                     0.0
                                 };
                             let ty = y_line
-                                - match para.style.line_exact {
-                                    Some(_) => exact_baseline(line_box),
-                                    None => face.ascent_pt(size) + grid_pad,
-                                };
+                                - cell_baseline_drop(
+                                    face,
+                                    size,
+                                    &line,
+                                    line_box,
+                                    para.style.line_exact.is_some(),
+                                    grid_pad,
+                                );
                             if ty < bottom {
                                 break;
                             }
@@ -32995,6 +33215,11 @@ fn wrap_runs_segment(
     let mut units: Vec<(Vec<WrapPiece<'_>>, bool)> = Vec::new();
     let mut open = false;
     for run in runs {
+        if let Some(math) = &run.math {
+            units.push((vec![(run, run.text.as_str(), math.width)], false));
+            open = false;
+            continue;
+        }
         if run.strut && run.text.is_empty() {
             units.push((vec![(run, "", 0.0)], false));
             open = false;
@@ -33171,13 +33396,15 @@ fn wrap_runs_segment(
         // (0129b302's "19.720.000") where it has room, so only a word
         // wider than its laid-out cell breaks; CJK text already breaks per
         // character where our fallback faces run wide (002c5410).
+        let math_unit = unit.iter().any(|(run, _, _)| run.math.is_some());
         let cjk = unit
             .iter()
             .any(|(run, tok, _)| !run.style.ideograph_words && tok.chars().any(is_cjk));
         let ideograph_word = unit
             .iter()
             .any(|(run, tok, _)| run.style.ideograph_words && tok.chars().any(is_cjk));
-        if (tabs.is_some() || fit.char_break || ideograph_word)
+        if !math_unit
+            && (tabs.is_some() || fit.char_break || ideograph_word)
             && !cjk
             && !is_space
             && w > limit * 1.02
@@ -33256,6 +33483,8 @@ fn wrap_runs_segment(
             if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                 && style_eq(&last.style, &run.style)
                 && !run.strut
+                && last.math.is_none()
+                && run.math.is_none()
                 // A run carrying comments stays its own run: its start is
                 // where the balloon connectors anchor, and the merge would
                 // drop its notes.
@@ -37342,6 +37571,57 @@ mod field_tests {
     }
 
     #[test]
+    fn a_tracked_change_inside_a_math_box_keeps_its_marks() {
+        // A box paints its glyphs unmarked: a deleted run inside a
+        // delimiter drew exactly like plain x. A marked equation keeps the
+        // per-run path, which inks and strikes each revised run.
+        for (inner, mark) in [
+            (
+                r#"<m:r><w:del w:id="1" w:author="Ann"><m:t>x</m:t></w:del></m:r>"#,
+                "del in run",
+            ),
+            (
+                r#"<w:del w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:del>"#,
+                "del around run",
+            ),
+            (
+                r#"<w:ins w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:ins>"#,
+                "ins around run",
+            ),
+        ] {
+            for (open, close) in [
+                ("<m:d><m:e>", "</m:e></m:d>"),
+                (
+                    "<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg/><m:e>",
+                    "</m:e></m:rad>",
+                ),
+                (
+                    "<m:f><m:num>",
+                    "</m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>",
+                ),
+            ] {
+                let runs = math_runs(&format!(
+                    "<w:p><m:oMath>{open}{inner}{close}</m:oMath></w:p>"
+                ));
+                assert!(
+                    runs.iter().all(|r| r.math.is_none()),
+                    "{mark} in {open}: a marked equation is not one box"
+                );
+                assert!(
+                    runs.iter().any(|r| r.rev && r.text.contains('\u{1D465}')),
+                    "{mark} in {open}: the revised x keeps its mark: {:?}",
+                    runs.iter().map(|r| (&r.text, r.rev)).collect::<Vec<_>>()
+                );
+            }
+        }
+        // Unmarked, the same delimiter is still one laid-out box.
+        let runs = math_runs(
+            r#"<w:p><m:oMath><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath></w:p>"#,
+        );
+        assert!(runs.iter().any(|r| r.math.is_some()), "plain box");
+    }
+
+    #[test]
     fn omml_letters_are_cambria_math_italic() {
         // Word's PDF of math_matrix_tests (corpus 6c0ad6c8ef) embeds
         // CambriaMath and draws a matrix's a as U+1D44E: Word sets math
@@ -37429,14 +37709,35 @@ mod field_tests {
 
     #[test]
     fn omml_delimiters_take_the_script_placement() {
-        // An m:d inside a superscript is raised with its contents.
+        // An m:d inside a superscript is raised with its contents. The
+        // shift is baked into the box; the run stays on the baseline so
+        // paint does not raise it a second time.
         let runs = math_runs(
             r#"<w:p><m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:d><m:e><m:r><m:t>n</m:t></m:r></m:e></m:d></m:sup></m:sSup></m:oMath></w:p>"#,
         );
-        for text in ["(", "\u{1D45B}", ")"] {
-            let run = runs.iter().find(|r| r.text == text).expect(text);
-            assert!(run.style.vert == VertAlign::Super, "{text}");
-        }
+        let sup = runs
+            .iter()
+            .find(|r| r.math.is_some())
+            .expect("delimiter box");
+        assert!(sup.style.vert == VertAlign::Baseline);
+        let n = sup
+            .math
+            .as_ref()
+            .unwrap()
+            .glyphs
+            .iter()
+            .find(|g| g.text.contains('\u{1D45B}'))
+            .expect("n");
+        assert!(
+            (n.y - 11.0 * 0.35).abs() < 0.05,
+            "delimiter contents sit at +0.35 em, got {}",
+            n.y
+        );
+        assert!(
+            (n.size - 11.0 * 0.65).abs() < 0.05,
+            "script size {}",
+            n.size
+        );
     }
 
     #[test]
@@ -37729,8 +38030,12 @@ mod field_tests {
             "\u{1D465},\u{1D466})"
         );
         let runs = math_runs(&format!("<w:p><m:oMath><m:d>{x}</m:d></m:oMath></w:p>"));
-        let open = runs.iter().find(|r| r.text == "(").expect("(");
+        let open = runs.iter().find(|r| r.text.contains('(')).expect("(");
         assert_eq!(open.style.family, "Cambria Math");
+        assert!(
+            open.math.is_some(),
+            "a delimiter is one box, not a flat run of characters"
+        );
     }
 
     #[test]
@@ -49351,19 +49656,49 @@ mod coverage_round_three_tests {
     #[test]
     fn fractions_with_and_without_bars_preserve_operand_order() {
         let _face = MathAlphanumerics::only([]);
-        for (kind, num, den) in [
-            ("noBar", VertAlign::StackNum, VertAlign::StackDen),
-            ("bar", VertAlign::Baseline, VertAlign::Baseline),
-        ] {
-            let collected = runs(&format!(
-                r#"<m:oMath><m:f><m:fPr><m:type m:val="{kind}"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#
-            ));
-            assert_eq!(text(&collected), "ndend");
-            assert!(
-                collected.iter().map(|r| r.style.vert).collect::<Vec<_>>()
-                    == vec![num, den, VertAlign::Baseline]
-            );
-        }
+        let nobar = runs(
+            r#"<m:oMath><m:f><m:fPr><m:type m:val="noBar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#,
+        );
+        assert_eq!(text(&nobar), "ndend");
+        assert!(
+            nobar.iter().map(|r| r.style.vert).collect::<Vec<_>>()
+                == vec![
+                    VertAlign::StackNum,
+                    VertAlign::StackDen,
+                    VertAlign::Baseline
+                ]
+        );
+        let bar = runs(
+            r#"<m:oMath><m:f><m:fPr><m:type m:val="bar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#,
+        );
+        // only([]) : the face draws no mathematical italics, so n and d
+        // stay ASCII inside the box.
+        assert_eq!(text(&bar), "ndend");
+        assert_eq!(bar.len(), 2, "a bar fraction is one box, then end");
+        let frac = bar[0].math.as_ref().expect("bar fraction is a box");
+        assert_eq!(frac.rules.len(), 1, "the bar is a rule");
+        let glyph_text: String = frac.glyphs.iter().map(|g| g.text.as_str()).collect();
+        assert_eq!(glyph_text, "nd");
+        assert!(frac.glyphs[0].y > frac.rules[0].y_top);
+        assert!(bar[0].style.vert == VertAlign::Baseline);
+        assert_eq!(bar[1].text, "end");
+        assert!(bar[1].style.vert == VertAlign::Baseline);
+    }
+
+    #[test]
+    fn omml_rad_emits_a_radical_sign() {
+        let collected = runs(
+            r#"<m:oMath><m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>x</m:t></m:r></m:e></m:rad></m:oMath>"#,
+        );
+        let joined = text(&collected);
+        assert!(
+            joined.contains('\u{221A}'),
+            "a radical must draw its sign, got {joined:?}"
+        );
+        assert!(
+            collected.iter().any(|r| r.math.is_some()),
+            "a radical is a box"
+        );
     }
 
     #[test]
@@ -50153,17 +50488,37 @@ mod coverage_round_three_tests {
                 let collected = runs(&format!(
                     "<w:{tag}><m:oMath><m:sSup><m:e><m:r><m:t>a</m:t></m:r></m:e><m:sup><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e><m:e><m:r><m:t>y</m:t></m:r></m:e></m:d></m:sup></m:sSup></m:oMath></w:{tag}><w:r><w:t>Z</w:t></w:r>"
                 ));
+                // The face draws no mathematical italics, so the letters
+                // stay ASCII. The delimiter is one box, raised with the
+                // superscript, and the run itself stays on the baseline.
                 assert_eq!(text(&collected), "a(x|y)Z");
-                assert_eq!(collected.len(), 7);
+                assert_eq!(collected.len(), 3);
+                assert_eq!(collected[0].text, "a");
                 assert!(collected[0].style.vert == VertAlign::Baseline);
+                assert!(collected[0].rev);
+                let sup = &collected[1];
+                assert_eq!(sup.text, "(x|y)");
+                assert!(sup.rev);
+                assert!(sup.style.vert == VertAlign::Baseline);
+                let math = sup.math.as_ref().expect("delimiter box");
+                let x = math
+                    .glyphs
+                    .iter()
+                    .find(|glyph| glyph.text == "x")
+                    .expect("x");
                 assert!(
-                    collected[1..6]
-                        .iter()
-                        .all(|r| r.style.vert == VertAlign::Super)
+                    (x.y - 11.0 * 0.35).abs() < 0.05,
+                    "x sits at +0.35 em, got {}",
+                    x.y
                 );
-                assert!(collected[..6].iter().all(|r| r.rev));
-                assert!(!collected[6].rev);
-                assert!(collected[6].style.vert == VertAlign::Baseline);
+                assert!(
+                    (x.size - 11.0 * 0.65).abs() < 0.05,
+                    "x is 0.65 em, got {}",
+                    x.size
+                );
+                assert_eq!(collected[2].text, "Z");
+                assert!(!collected[2].rev);
+                assert!(collected[2].style.vert == VertAlign::Baseline);
             }
             assert_eq!(
                 text(&runs(
@@ -51372,6 +51727,115 @@ mod coverage_round_three_tests {
                 })
                 .collect();
             assert_eq!(texts, ["\u{1D44E}", "\u{1D44F}"]);
+        }
+
+        /// A justified line splits runs on spaces. A fraction is one box,
+        /// including when its text contains a space, and stays at its
+        /// glyph size above the baseline. inline-symbol-runs is Normal
+        /// `jc both`, so the superscript fraction was painted as body
+        /// "p+14" once the line stretched.
+        #[test]
+        fn justified_line_paints_a_math_box_whole() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let prose = TextRun::new("roots ", Defaults::word().run);
+            let mut frac = TextRun::new("p + 1", Defaults::word().run);
+            frac.style.size = 10.0;
+            frac.math = Some(super::math_layout::MathBox {
+                width: 14.0,
+                ascent: 8.0,
+                descent: 4.0,
+                glyphs: vec![
+                    super::math_layout::MathGlyph {
+                        text: "p".to_string(),
+                        gid: 1,
+                        x: 0.0,
+                        y: 4.0,
+                        size: 6.5,
+                    },
+                    super::math_layout::MathGlyph {
+                        text: "1".to_string(),
+                        gid: 2,
+                        x: 6.0,
+                        y: -3.0,
+                        size: 6.5,
+                    },
+                ],
+                rules: vec![super::math_layout::MathRule {
+                    x: 0.0,
+                    y_top: 1.0,
+                    w: 10.0,
+                    thickness: 0.4,
+                }],
+            });
+            lay.paint_stretched(&[prose, frac], 72.0, 700.0, 2.0);
+            let glyphs: Vec<(&str, f32, f32)> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, size, y, .. } if *text == "p" || *text == "1" => {
+                        Some((text.as_str(), *size, *y))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(glyphs, vec![("p", 6.5, 704.0), ("1", 6.5, 697.0)]);
+            let rule = lay.pages[0].ops.iter().any(|op| match op {
+                Op::FillRect { w, h, y, .. } => {
+                    (*w - 10.0).abs() < 0.01 && (*h - 0.4).abs() < 0.01 && (*y - 700.6).abs() < 0.01
+                }
+                _ => false,
+            });
+            assert!(rule, "the fraction bar is painted with the box");
+        }
+
+        /// quadratic-in-table's fraction is one box inside a cell. The row
+        /// stayed a body font line, so the radical painted into the cell
+        /// above and the denominator through the bottom border.
+        #[test]
+        fn a_cell_line_holds_a_math_box() {
+            let fonts = fonts();
+            let mut run = TextRun::new("fraction", Defaults::word().run);
+            run.style.size = 11.0;
+            run.math = Some(super::math_layout::MathBox {
+                width: 40.0,
+                ascent: 18.0,
+                descent: 12.0,
+                glyphs: vec![],
+                rules: vec![],
+            });
+            let mut style = Defaults::word().para;
+            style.before = 0.0;
+            style.after = 0.0;
+            style.line_exact = None;
+            style.line_at_least = None;
+            style.line_mult = 1.0;
+            let para = super::super::CellPara {
+                runs: vec![run],
+                images: Vec::new(),
+                boxes: Vec::new(),
+                style,
+                bookmarks: Vec::new(),
+                blank_bookmarks: Vec::new(),
+                continued: false,
+                vertical: false,
+                squeeze: super::super::Squeeze::NONE,
+                hang_spaces: false,
+            };
+            let (size, face_id, h) = super::super::cell_line_metrics(&fonts, &para, &para.runs);
+            assert!(h + 0.05 >= 30.0, "cell line {h} does not hold the math box");
+            let drop = super::super::cell_baseline_drop(
+                fonts.get(face_id),
+                size,
+                &para.runs,
+                h,
+                false,
+                0.0,
+            );
+            assert!(
+                (drop - 18.0).abs() < 0.05,
+                "baseline drop {drop} is not the math ascent"
+            );
         }
 
         /// Two stretches of missing glyphs around painted text: one hidden

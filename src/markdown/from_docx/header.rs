@@ -39,8 +39,9 @@ pub(crate) struct StoryFact {
     /// `header2` (the part `header2.xml`, first paragraph), `footer1`, `header2.p2`.
     pub id: String,
     pub text: String,
-    /// The paragraphs after it, to the last with text: `text` then prints
-    /// as a list (`text: [Page 1, Draft]`).
+    /// The paragraphs after it, to the part's last (an empty one too, a
+    /// line Word lays out): `text` then prints as a list (`text: [Page 1,
+    /// Draft]`, `text: [DRAFT, ""]`).
     pub more: Vec<String>,
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
@@ -1466,8 +1467,8 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                             }
                             // Only a printed field's result shows, and not
                             // the code of a field nested in it.
-                            _ if !s.fields.is_empty()
-                                && !(s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
+                            _ if !(s.fields.is_empty()
+                                || s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
                             "t" => s.push_text(&child.text()),
                             "delText" if s.deleting => s.push_text(&child.text()),
                             "tab" => s.out.push('\t'),

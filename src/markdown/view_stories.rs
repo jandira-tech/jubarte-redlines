@@ -104,14 +104,14 @@ impl Marks<'_> {
             }
         };
         let (author, date) = tag
-            .and_then(|tag| {
+            .map(|tag| {
                 // `??` names no one: the mark's author is empty, as it was.
                 let (name, date) = match self.people.by_handle.get(&tag.handle) {
                     Some(known) => known.clone(),
                     None if tag.handle == super::view_notes::UNNAMED => {
                         (String::new(), self.people.date.clone())
                     }
-                    None => return None,
+                    None => (tag.handle.clone(), self.people.date.clone()),
                 };
                 let date = match self.people.range_ends.get(&tag.handle) {
                     Some(last) if !self.people.started.borrow_mut().insert(tag.handle.clone()) => {
@@ -119,7 +119,7 @@ impl Marks<'_> {
                     }
                     _ => date,
                 };
-                Some((name, tag.date.clone().unwrap_or(date)))
+                (name, tag.date.clone().unwrap_or(date))
             })
             .unwrap_or_else(|| (self.people.author.clone(), self.people.date.clone()));
         let date = if date.is_empty() {
@@ -134,6 +134,40 @@ impl Marks<'_> {
     }
 }
 
+/// The start tags of the `w:pPrChange`s `tags` name, by their people:
+/// one per tag, a tag that numbers no `w:id` taking a fresh one above
+/// `first_id`.
+pub(super) fn format_changes(
+    people: &People,
+    tags: &[&super::view_notes::Tag],
+    first_id: u32,
+) -> Vec<String> {
+    let mut marks = Marks {
+        people,
+        next_id: first_id,
+    };
+    let mut reserved: std::collections::HashSet<u32> =
+        tags.iter().flat_map(|tag| &tag.ids).copied().collect();
+    let mut next = first_id;
+    tags.iter()
+        .map(|tag| {
+            let id = tag.ids.first().copied().unwrap_or_else(|| {
+                loop {
+                    next = if next >= super::view_notes::MOST_ID {
+                        0
+                    } else {
+                        next + 1
+                    };
+                    if reserved.insert(next) {
+                        break next;
+                    }
+                }
+            });
+            marks.mark_id("w:pPrChange", Some(tag), Some(id))
+        })
+        .collect()
+}
+
 /// A value of a YAML flow map as the view prints it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Value {
@@ -143,6 +177,18 @@ enum Value {
     /// `[a, "b"]`: a flow sequence of scalars.
     List(Vec<String>),
     Map(Vec<(String, Value)>),
+}
+
+/// A text clause from the shared flow-map parser, honoring both YAML
+/// quoting forms rather than looking for clause names inside strings.
+pub(super) fn flow_text(text: &str, key: &str) -> Option<String> {
+    flow_map(text, 0)?
+        .0
+        .into_iter()
+        .find_map(|(name, value)| match value {
+            Value::Text(text) if name == key => Some(text),
+            _ => None,
+        })
 }
 
 /// The most nested maps one flow map holds: the view prints three.

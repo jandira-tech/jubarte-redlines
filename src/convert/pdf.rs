@@ -420,9 +420,14 @@ pub(crate) fn emit<P: std::borrow::Borrow<Page>>(
                 face, glyphs, text, ..
             } = op
             {
-                // A glyph shaped from several characters is painted by its
-                // id; WinAnsi would paint each character instead.
-                if text.chars().count() == glyphs.len() {
+                // A glyph shaped from several characters, or a glyph the
+                // caller chose (a MATH variant), is painted by its id.
+                // WinAnsi would paint the cmap character instead.
+                let cmap_match = text
+                    .chars()
+                    .zip(glyphs.iter())
+                    .all(|(ch, &gid)| fonts.get(*face).glyph(ch) == gid);
+                if text.chars().count() == glyphs.len() && cmap_match {
                     enc = winansi_bytes(text);
                 }
                 if enc.is_some() {
