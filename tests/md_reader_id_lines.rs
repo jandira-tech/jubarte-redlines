@@ -2274,3 +2274,43 @@ fn a_plain_space_between_code_spans_keeps_both_spans() {
     assert!(!c.contains("`docProps/app.xml Application`"), "{c}");
     assert_eq!(again, c, "{c}");
 }
+
+/// A styles part with `Normal` as the default paragraph style.
+fn default_normal_styles() -> common::docx::Part<'static> {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:basedOn w:val="Normal"/></w:style></w:styles>"#,
+        W_NS = common::docx::W_NS
+    );
+    common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: Box::leak(styles.into_boxed_str()),
+    }
+}
+
+/// A paragraph that states the default style in its own `w:pPr` keeps the
+/// statement: the view names `Normal` only where the document says it
+/// (ids-authors, ids-comments, #528).
+#[test]
+fn an_explicit_default_style_is_named_and_comes_back() {
+    let stated = r#"<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:t>Stated.</w:t></w:r></w:p>"#;
+    let unstated = r#"<w:p><w:r><w:t>Unstated.</w:t></w:r></w:p>"#;
+    let cell = r#"<w:tbl><w:tr><w:tc><w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr></w:p></w:tc></w:tr></w:tbl>"#;
+    let end = r#"<w:p><w:r><w:t>End.</w:t></w:r></w:p>"#;
+    let body = format!("{stated}{unstated}{cell}{end}");
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    assert!(view.contains("<!-- p0 Normal -->"), "{view}");
+    assert!(view.contains("<!-- p1 -->"), "{view}");
+    assert!(view.contains("p2 Normal"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="Normal"/>"#).count(),
+        2,
+        "{document}"
+    );
+    assert_eq!(view, once);
+}

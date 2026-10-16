@@ -2590,7 +2590,6 @@ impl Writer<'_> {
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
-                default_style: self.default_style.as_deref(),
                 heading,
                 marker,
                 level,
@@ -3336,7 +3335,6 @@ impl Writer<'_> {
     /// paragraphs in a style other than the default, consecutive ones in
     /// one style as a range.
     fn cell_styles(&self, table: &Element) -> Vec<String> {
-        let default = self.default_style.as_deref().unwrap_or("Normal");
         let mut runs: Vec<(usize, usize, &str)> = Vec::new();
         for tr in table_rows(table) {
             for tc in row_cells(tr) {
@@ -3350,9 +3348,8 @@ impl Writer<'_> {
                     ) else {
                         continue;
                     };
-                    if style == default || style == "Normal" {
-                        continue;
-                    }
+                    // A cell that states a style names it, the default too
+                    // (#528); one without `w:pStyle` names none.
                     match runs.last_mut() {
                         Some((_, last, said)) if *last + 1 == index && *said == style => {
                             *last = index;
