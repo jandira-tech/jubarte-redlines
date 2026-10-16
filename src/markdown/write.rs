@@ -1809,12 +1809,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.textless_paragraph();
             if let Some(count) = view_notes::empty_paragraphs(line) {
                 self.end_paragraph();
-                // One empty paragraph whose id line says more than `empty`.
+                // An id line that says more than `empty` (`<!-- p7
+                // page-break -->`, `<!-- p2 TitlePage, empty -->`) stands
+                // for every paragraph it numbers, each with what it says.
                 if let Some(said) =
                     view_notes::id_line(line).filter(|said| *said != view_notes::IdLine::default())
                 {
-                    self.id_line = Some(said);
-                    self.textless_paragraph();
+                    for _ in 0..count {
+                        self.id_line = Some(said.clone());
+                        self.textless_paragraph();
+                    }
                     continue;
                 }
                 for _ in 0..count {
