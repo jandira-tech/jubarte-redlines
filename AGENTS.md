@@ -36,8 +36,17 @@ Docxodus/Open-Xml-PowerTools behavior and existing fixtures before inventing
 new semantics.
 
 - Run commands from this repository root.
-- Run Cargo commands sequentially in the default `target/`; never set
-  `CARGO_TARGET_DIR` or start a second Cargo process while one is running.
+- Run Cargo commands sequentially; never set `CARGO_TARGET_DIR` or start a
+  second Cargo process while one is running.
+- Cargo runs through mbx, the build cache shared by every checkout and
+  worktree. `mbx setup` once per machine puts its Cargo shim
+  (`~/Library/Application Support/mbx/bin/cargo` on macOS) first on `PATH`;
+  then use plain `cargo`. A shell that does not read `~/.zshrc` calls the shim
+  by its full path, or prefixes the command with `mbx`. mbx keeps each
+  checkout's `target/` under its own cache root and prunes it to a size
+  budget. Leave that placement alone: `mbx doctor` checks the setup, and
+  `mbx gc --dry-run` shows what a collection would free. Do not add a second
+  compiler cache (`RUSTC_WRAPPER`, sccache, kache) beside it.
 - Do not suppress clippy warnings with `#[allow(...)]`; fix the cause.
 - Keep tests beside the behavior they protect and prefer deterministic tests.
 - After source changes, run formatting, clippy with `-D warnings`, the relevant
