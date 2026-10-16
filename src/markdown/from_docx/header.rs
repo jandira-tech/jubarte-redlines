@@ -574,6 +574,34 @@ fn page_setup(sect: &Element) -> String {
         if let Some(gap) = twips(cols, "space").filter(|&g| g != 720.0) {
             out.push_str(&format!(", column gap {}", super::agent::inches(gap)));
         }
+        if cols
+            .attr("sep")
+            .is_some_and(|v| matches!(v, "1" | "true" | "on"))
+        {
+            out.push_str(", column line");
+        }
+    }
+    // The grid lines snap to; a `w:docGrid` with no type is none.
+    if let Some(grid) = sect.child("docGrid")
+        && let Some(kind) = match grid.attr("type") {
+            Some("lines") => Some("line grid"),
+            Some("linesAndChars") => Some("line and char grid"),
+            Some("snapToChars") => Some("char grid"),
+            _ => None,
+        }
+        && let Some(pitch) = twips(grid, "linePitch").filter(|&p| p > 0.0)
+    {
+        let points = format!("{:.2}", pitch / 20.0);
+        let points = points.trim_end_matches('0').trim_end_matches('.');
+        out.push_str(&format!(", {kind} {points}pt"));
+        if kind != "line grid"
+            && let Some(space) = grid
+                .attr("charSpace")
+                .and_then(|c| c.parse::<i64>().ok())
+                .filter(|&c| c != 0)
+        {
+            out.push_str(&format!(", char space {space}"));
+        }
     }
     out
 }
