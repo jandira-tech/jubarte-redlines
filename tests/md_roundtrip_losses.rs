@@ -506,15 +506,12 @@ fn docx_round_trip(docx: &[u8]) -> (String, Vec<u8>) {
     (view, out)
 }
 
-/// A floating image — a `wp:anchor` drawing — is not a plain inline raster:
-/// the view carries it whole as a `drawing:` payload, and writing the view
-/// back puts the anchor — its wrap, position, extent and `docPr` — into
-/// `document.xml` again, with a live image relationship.
-#[test]
-fn a_floating_image_keeps_its_anchor() {
+/// A docx with a floating image — a `wp:anchor` drawing with one PNG —
+/// as `docx_with` builds it.
+fn floating_image_docx() -> Vec<u8> {
     let anchor = r#"<w:p><w:r><w:drawing><wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:posOffset>1828800</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="7" name="Picture 7" descr="logo"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="logo.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdX0"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#;
     let image_rel = format!("{R_NS}/image");
-    let doc = replace_entry(
+    replace_entry(
         &docx_with(
             &(para("Before.") + anchor),
             &[Part {
@@ -526,9 +523,16 @@ fn a_floating_image_keeps_its_anchor() {
         ),
         "word/media/logo.png",
         PNG_1X1,
-    );
-    let (view, out) = docx_round_trip(&doc);
-    assert!(view.contains("](drawing:"), "{view}");
+    )
+}
+
+/// A floating image — a `wp:anchor` drawing — is not a plain inline raster:
+/// the view carries it whole as a `drawing:` payload, and writing the view
+/// back puts the anchor — its wrap, position, extent and `docPr` — into
+/// `document.xml` again, with a live image relationship.
+#[test]
+fn a_floating_image_keeps_its_anchor() {
+    let (_view, out) = docx_round_trip(&floating_image_docx());
     let document = part_string(&out, "word/document.xml").expect("document.xml");
     for want in [
         "<wp:anchor",
@@ -541,4 +545,36 @@ fn a_floating_image_keeps_its_anchor() {
     }
     let rels = part_string(&out, "word/_rels/document.xml.rels").expect("document rels");
     assert!(rels.contains("media/"), "{rels}");
+}
+
+/// A `drawing:` payload leaves the body text: the paragraph shows only
+/// `![descr][d1]`, and the payload sits in a `[d1]: drawing:…` reference
+/// definition under a `<!-- drawings -->` marker at the view's end. The
+/// written document reads back to the same view.
+#[test]
+fn a_drawing_payload_is_a_reference_definition() {
+    let (view, out) = docx_round_trip(&floating_image_docx());
+    let reference = "![logo][d1]";
+    let body = view
+        .find(reference)
+        .unwrap_or_else(|| panic!("{reference} not in:\n{view}"));
+    let marker = view
+        .find("<!-- drawings -->")
+        .unwrap_or_else(|| panic!("drawings marker not in:\n{view}"));
+    let definition = view
+        .find("[d1]: drawing:")
+        .unwrap_or_else(|| panic!("d1 definition not in:\n{view}"));
+    assert!(body < marker && marker < definition, "{view}");
+    assert!(!view.contains("](drawing:"), "{view}");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("out.docx"), &out).unwrap();
+    let second = jubarte(dir.path(), &["read", "out.docx", "--no-page-markers"]);
+    // The lines that name the file differ; everything else is the same view.
+    let unnamed = |view: &str| {
+        view.lines()
+            .filter(|l| !l.starts_with("source: ") && !l.starts_with("sha256: "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(unnamed(&view), unnamed(&second));
 }

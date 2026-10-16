@@ -288,6 +288,9 @@ pub(super) struct Document {
     pub pictures: Vec<Picture>,
     /// `drawing:` payloads to splice back, in the order the runs name them.
     pub drawings: Vec<super::from_docx::drawing::Drawing>,
+    /// The view's `[dN]: drawing:…` reference definitions, by name: the
+    /// stories' `![…][dN]` tokens resolve through them.
+    pub drawing_defs: HashMap<String, String>,
     pub lists: Vec<List>,
     pub styles: HashSet<&'static str>,
     /// Styles id lines name (`<!-- p0 TitlePage -->`), by id.

@@ -184,6 +184,7 @@ pub(super) fn assemble(
         author: options.author.clone(),
         date: options.date.clone(),
         range_ends: document.story_range_ends.clone(),
+        drawing_defs: document.drawing_defs.clone(),
         ..super::view_stories::People::default()
     };
     // A header's fresh ids sit far above the body's.

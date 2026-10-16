@@ -139,7 +139,14 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     writer.note_breaks = note_breaks(&source);
     writer.item_levels = item_levels(&source);
     writer.label_definitions = label_definitions(&source);
-    for event in Parser::new_ext(&source, parser_options()) {
+    let parser = Parser::new_ext(&source, parser_options());
+    writer.document.drawing_defs = parser
+        .reference_definitions()
+        .iter()
+        .filter(|(_, def)| def.dest.starts_with("drawing:"))
+        .map(|(name, def)| (name.to_string(), def.dest.to_string()))
+        .collect();
+    for event in parser {
         writer.event(event);
     }
     writer.finish()

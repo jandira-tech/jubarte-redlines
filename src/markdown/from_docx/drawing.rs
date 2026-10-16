@@ -6,23 +6,26 @@
 //! shapes, text boxes, connectors, VML pictures, AlternateContent — kept
 //! verbatim as `drawing:` payloads.
 //!
-//! The reader prints `![label](drawing:PAYLOAD)` where an image would go:
-//! `label` is the `wp:docPr` description or name (empty is fine), and
-//! `PAYLOAD` is URL-safe base64 of a JSON envelope holding the element's XML,
-//! its relationships, and every package part they reach, recursively. The
-//! writer splices the XML back and gives each stored part and relationship
-//! the id the new package assigns it, so the whole drawing is lossless even
-//! where the Markdown shows only its label.
+//! The reader prints `![label][dN]` where an image would go: `label` is the
+//! `wp:docPr` description or name (empty is fine), and `dN` is a reference
+//! name — the `N`th drawing in reading order. A reference definition at the
+//! view's end, under a `<!-- drawings -->` marker, holds the payload:
+//! `[dN]: drawing:PAYLOAD`, where `PAYLOAD` is URL-safe base64 of a JSON
+//! envelope holding the element's XML, its relationships, and every package
+//! part they reach, recursively. The writer splices the XML back and gives
+//! each stored part and relationship the id the new package assigns it, so
+//! the whole drawing is lossless even where the Markdown shows only its
+//! label — and the body text stays readable past it.
 //!
 //! An image is a `drawing:` payload when it is not a plain inline raster
 //! collected under `--media-dir`: `wp:anchor`, a chart, a text box, or a
 //! raster that was not extracted. Everything the payload needs travels
-//! inside it, so `jubarte read` — which extracts no media — keeps the
-//! drawing whole.
+//! inside its definition, so `jubarte read` — which extracts no media —
+//! keeps the drawing whole.
 //!
 //! Reading is two-phase: the walk queues a [`Pending`] per element and
-//! prints `drawing:N` placeholders; once the package can be borrowed again,
-//! [`resolve`] captures each element and the payload replaces `drawing:N`.
+//! prints the `![label][dN]` reference; once the package can be borrowed
+//! again, [`fill`] captures each element and appends the definitions.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -175,8 +178,8 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
-    /// Queue `element`, printing its `![label](drawing:N)` placeholder.
-    /// `label` is the drawing's `wp:docPr` description, title or name.
+    /// Queue `element`, printing its `![label][dN]` reference. `label` is
+    /// the drawing's `wp:docPr` description, title or name.
     pub(crate) fn push(
         list: &mut Vec<Pending>,
         element: &Element,
@@ -195,14 +198,19 @@ impl Pending {
             scope,
             wrap,
         });
-        image(&label, &format!("drawing:{index}"))
+        image(&label, &format!("d{}", index + 1))
     }
 }
 
-/// `![label](dest)` with the label made a Markdown alt text: one line,
-/// brackets escaped.
-fn image(label: &str, dest: &str) -> String {
-    format!("![{label}]({dest})")
+/// `![label][name]` with the label made a Markdown alt text: one line,
+/// brackets escaped. An empty `name` is `![label]()` — an empty image the
+/// writer reads as alt text.
+fn image(label: &str, name: &str) -> String {
+    if name.is_empty() {
+        format!("![{label}]()")
+    } else {
+        format!("![{label}][{name}]")
+    }
 }
 
 /// The `wp:docPr` description, title or name as the token's label.
@@ -553,42 +561,73 @@ pub(crate) fn content_types(package: &mut Package<'_>) -> HashMap<String, String
     types
 }
 
-/// `markdown` with each `drawing:N` placeholder resolved to its payload.
-/// A pending that failed to capture becomes `![label]()`: the label stays
-/// readable and the writer writes it as alt text.
+/// `markdown` with the payloads of its `![label][dN]` references appended
+/// as reference definitions, `<!-- drawings -->` then one `[dN]:
+/// drawing:…` per pending in order. A pending that failed to capture loses
+/// its reference: `![label]()` stays readable and the writer writes it as
+/// alt text.
 pub(crate) fn fill(
     markdown: &str,
     package: &mut Package<'_>,
     types: &HashMap<String, String>,
     pendings: &[Pending],
 ) -> String {
+    if pendings.is_empty() {
+        return markdown.to_string();
+    }
     let mut out = markdown.to_string();
+    let mut definitions = String::new();
     for (index, pending) in pendings.iter().enumerate() {
-        let encoded = resolve(package, types, pending)
-            .map(|drawing| encode(&drawing))
-            .unwrap_or_default();
-        out = out.replace(
-            &format!("(drawing:{index})"),
-            &format!("(drawing:{encoded})"),
-        );
+        match resolve(package, types, pending) {
+            Some(drawing) => {
+                let _ = writeln!(
+                    definitions,
+                    "[d{}]: drawing:{}",
+                    index + 1,
+                    encode(&drawing)
+                );
+            }
+            // `![label][dN]` is the one shape push prints; only a capture
+            // failure turns it into `![label]()`.
+            None => out = out.replace(&format!("][d{}]", index + 1), "]()"),
+        }
+    }
+    if !definitions.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let _ = write!(out, "\n<!-- drawings -->\n\n{definitions}");
     }
     out
 }
 
-/// The Markdown `![label](drawing:PAYLOAD)` at `text`'s start, if any: the
-/// `drawing:` destination and the token's whole length.
+/// The Markdown drawing token at `text`'s start, if any —
+/// `![label][dN]`, or a `![label](drawing:PAYLOAD)` of a view an older
+/// build wrote. What the token resolves by: the `dN` reference name or the
+/// `drawing:` destination, and the token's whole length.
 pub(crate) fn at(text: &str) -> Option<(&str, usize)> {
     let rest = text.strip_prefix("![")?;
     let label_end = rest.find(']')?;
-    let inner = rest[label_end + 1..].strip_prefix('(')?;
-    let end = inner.find(')')?;
-    let dest = &inner[..end];
-    let payload = dest.strip_prefix("drawing:")?;
-    (!payload.is_empty()
-        && payload
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'=')))
-    .then(|| (dest, 2 + label_end + 2 + dest.len() + 1))
+    let after = &rest[label_end + 1..];
+    if let Some(inner) = after.strip_prefix('(') {
+        let end = inner.find(')')?;
+        let dest = &inner[..end];
+        let payload = dest.strip_prefix("drawing:")?;
+        return (!payload.is_empty()
+            && payload
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'=')))
+        .then(|| (dest, 2 + label_end + 2 + dest.len() + 1));
+    }
+    let name = after
+        .strip_prefix('[')
+        .and_then(|inner| inner.split_once(']'))
+        .map(|(name, _)| name)?;
+    let digits = name.strip_prefix('d')?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then(|| {
+        let start = 2 + label_end + 2;
+        (&text[start..start + name.len()], start + name.len() + 1)
+    })
 }
 
 /// Whether cutting `text` at `cut` splits a `![…](drawing:…)` token.
@@ -885,6 +924,14 @@ mod tests {
         assert!(at("![a](media/x.png)").is_none());
         assert!(at("x![a](drawing:Zg)").is_none());
         assert!(at("![a](drawing:has space)").is_none());
+        let text = "![Text Box 2][d12] next";
+        let (dest, len) = at(text).unwrap();
+        assert_eq!(dest, "d12");
+        assert_eq!(&text[..len], "![Text Box 2][d12]");
+        assert!(at("![a][d]").is_none());
+        assert!(at("![a][dx]").is_none());
+        assert!(at("![a][other]").is_none());
+        assert!(at("![a][d1").is_none());
     }
 
     #[test]
