@@ -608,7 +608,7 @@ jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or s
 jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment
 jubarte edit FILE -p c5 --reply TEXT                           a reply
 jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
-jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change
+jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change (prints `accepted r12 in p3: "from" > "to"`)
 jubarte add  FILE -p WHERE --content TEXT [--before]           a new paragraph after (or before) WHERE
 jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND (--comment: on the whole paragraph)
 jubarte add  FILE -p c5 --content TEXT                         a reply (also --reply TEXT)
@@ -646,8 +646,11 @@ without a value reads or records `<stem>_plan.json` beside FILE.
 value is a paragraph style (`Heading2`). After applying, the command prints
 its notes, then the changed blocks: `read redline.docx --changed --by
 <author>`, or every changed block when the author has none (as after
-resolving another author's comment). Anchors match literally first, then
-without their Markdown marks, with a note.
+resolving another author's comment). A pure `--accept`/`--reject` (no
+content operation) prints one line per resolved change instead
+(`accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"`).
+Anchors match literally first, then without their Markdown marks, with a
+note.
 
 ### Limits of the agent view
 
