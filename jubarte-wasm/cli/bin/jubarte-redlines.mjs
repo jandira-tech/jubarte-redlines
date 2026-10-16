@@ -481,7 +481,7 @@ function applyEdit(verb, file, docx, o) {
   // The shared parser resolved the target: `output` for the one document
   // (FILE_modified.docx by default), `out_dir` for the bundle.
   const outDir = o.out_dir;
-  if (outDir == null) return writeEdited(o.output, result, notes, o);
+  if (outDir == null) return writeEdited(o.output, result, notes, o, docx, plan);
   if (fs.existsSync(outDir) && !o.force) {
     throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
   }
@@ -515,12 +515,53 @@ function applyEdit(verb, file, docx, o) {
   lines.push(jsonl({ ev: "save", dir: outDir, outputs: saved }), summary);
   write(path.join(outDir, "report.jsonl"), `${lines.join("\n")}\n`);
   if (o.quiet) return;
+  // A pure accept/reject prints the resolved lines on stdout, nothing
+  // else; the bundle's report.jsonl still holds the summary.
+  if (isPureResolution(plan, result.json)) {
+    try {
+      const resolved = JSON.parse(result.json).resolved_revisions ?? {};
+      const text = wasm.resolutionText(docx, JSON.stringify({ accepted: resolved.accepted ?? [], rejected: resolved.rejected ?? [] }));
+      const names = [...outputs.map(([n]) => n), "report.jsonl"];
+      console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
+      for (const note of editNotes(notes, result)) console.error(note);
+      process.stdout.write(text);
+      return;
+    } catch {}
+  }
   console.log(summary);
   const names = [...outputs.map(([n]) => n), "report.jsonl"];
   // The status lines on stderr (D6); the summary and the view are data.
   console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
   for (const note of editNotes(notes, result)) console.error(note);
-  printChangedView(result, editing, path.join(outDir, editing ? "clean.docx" : "redline.docx"));
+  printResolutionOrView(docx, plan, result, editing, path.join(outDir, editing ? "clean.docx" : "redline.docx"));
+}
+
+/** Whether the plan resolved only revisions with some resolved: a pure
+ * `--accept`/`--reject` prints the resolved lines, not the view. */
+function isPureResolution(planJson, reportJson) {
+  try {
+    const plan = JSON.parse(planJson);
+    if (!Array.isArray(plan.operations) || plan.operations.length !== 0) return false;
+    if (plan.resolve_revisions == null) return false;
+    const resolved = JSON.parse(reportJson).resolved_revisions ?? {};
+    return Boolean((resolved.accepted?.length ?? 0) + (resolved.rejected?.length ?? 0));
+  } catch {
+    return false;
+  }
+}
+
+/** The resolved lines for a pure accept/reject, or the changed view
+ * otherwise. Failures fall back to the view, as the binary does. */
+function printResolutionOrView(docx, planJson, result, editing, shown) {
+  if (isPureResolution(planJson, result.json)) {
+    try {
+      const resolved = JSON.parse(result.json).resolved_revisions ?? {};
+      const text = wasm.resolutionText(docx, JSON.stringify({ accepted: resolved.accepted ?? [], rejected: resolved.rejected ?? [] }));
+      process.stdout.write(text);
+      return;
+    } catch {}
+  }
+  printChangedView(result, editing, shown);
 }
 
 /** The `note:` lines of an applied edit: the flags' notes, then each anchor
@@ -550,8 +591,9 @@ function printChangedView(result, editing, shown) {
 
 /** `edit` and `add` without --out-dir, as the binary: the redline (in
  * editing mode, the result) as one .docx at `output`, the `wrote` line and
- * notes on stderr, the changed blocks' view of that file on stdout. */
-function writeEdited(output, result, notes, o) {
+ * notes on stderr, the changed blocks' view of that file on stdout (a pure
+ * accept/reject prints the resolved lines). */
+function writeEdited(output, result, notes, o, docx, plan) {
   const editing = Boolean(o.editing_mode);
   const document = editing ? result.clean : result.redline;
   // FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
@@ -570,6 +612,10 @@ function writeEdited(output, result, notes, o) {
   console.error(`wrote ${output} (docx, ${document.length} bytes)`);
   if (rendered) console.error(wasm.wroteLine(pdfPath, "pdf", rendered.pdf.length, rendered.page_count));
   for (const note of editNotes(notes, result)) console.error(note);
+  if (docx != null && plan != null) {
+    printResolutionOrView(docx, plan, result, editing, output);
+    return;
+  }
   printChangedView(result, editing, output);
 }
 
