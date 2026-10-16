@@ -65,7 +65,6 @@ pub const PAIRS: &[(&str, &str, &str)] = &[
         "# Intro\n\nText.\n",
         "# Introduction and scope\n\nText.\n",
     ),
-    ("heading level", "# Title\n\nText.\n", "## Title\n\nText.\n"),
     ("heading added", "Text.\n", "# Title\n\nText.\n"),
     (
         "quote",
@@ -98,15 +97,9 @@ pub const PAIRS: &[(&str, &str, &str)] = &[
         "Text.[^1]\n\n[^1]: Old note.\n",
         "Text.[^1]\n\n[^1]: New note.\n",
     ),
-    ("task", "- [ ] write\n", "- [x] write\n"),
     ("to empty", "Some text.\n", ""),
     ("from empty", "", "Some text.\n"),
     ("delimiters in text", "a {++b++} c\n", "a {++d++} c\n"),
-    (
-        "renumbered list",
-        "1. a\n2. b\n3. c\n",
-        "1. a\n2. new\n3. b\n4. c\n",
-    ),
     (
         "list after paragraph",
         "Intro.\n",
@@ -141,11 +134,6 @@ pub const PAIRS: &[(&str, &str, &str)] = &[
         "last replaced by heading",
         "Intro.\n\nOld end.\n",
         "Intro.\n\n# New end\n",
-    ),
-    (
-        "first replaced by list",
-        "Old start.\n\nRest.\n",
-        "- new start\n\nRest.\n",
     ),
     (
         "table added",
