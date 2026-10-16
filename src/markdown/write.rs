@@ -982,13 +982,14 @@ pub(super) fn parser_options() -> Options {
 
 /// A `class="hl-<colour>"` value: `<colour>` one of Word's 16 named
 /// highlight colours (`yellow`, `green`, `cyan`, …, `lightGray`, `black`,
-/// `white`). Anything else is the default yellow.
+/// `white`), read without regard to case (a hand-edited `hl-Cyan` is
+/// `cyan`). Anything else is the default yellow.
 fn hl_color_class(class: &str) -> Option<&'static str> {
     let colour = class.strip_prefix("hl-")?;
     crate::edit::HIGHLIGHTS
         .iter()
         .copied()
-        .find(|h| *h != "none" && *h == colour)
+        .find(|h| *h != "none" && h.eq_ignore_ascii_case(colour))
 }
 
 const HEADINGS: [&str; 6] = [

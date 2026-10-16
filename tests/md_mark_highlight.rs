@@ -228,6 +228,16 @@ fn a_change_after_a_task_box_holds_only_its_own_text() {
     assert!(text(&again).starts_with("\u{2610} plain "), "{again}");
 }
 
+#[test]
+fn a_colour_class_reads_without_regard_to_case() {
+    // A hand-edited `hl-Cyan` still names cyan (MARKDOWN.md: "attributes
+    // and case do not matter"), not the default yellow.
+    let again = document(&write("x <mark class=\"hl-Cyan\">lit</mark> y\n"));
+    assert_eq!(highlight_colours(&again), vec!["cyan"], "{again}");
+    let again = document(&write("x <mark class=\"hl-DARKBLUE\">lit</mark> y\n"));
+    assert_eq!(highlight_colours(&again), vec!["darkBlue"], "{again}");
+}
+
 /// The text of every run with highlight that the writer wrote, in order.
 fn highlight_runs(document: &str) -> Vec<String> {
     document
