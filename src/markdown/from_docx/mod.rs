@@ -256,9 +256,50 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .flatten()
         .map(|e| Numbering::parse(&e))
         .unwrap_or_default();
+    let mut notes = HashMap::new();
+    for (name, root) in &note_roots {
+        for note in root.children_named(name) {
+            if let Some(id) = note.attr("id") {
+                let note = match accept {
+                    Some(accept) => revise::resolve(note, accept),
+                    None => note.clone(),
+                };
+                notes.insert((*name == "endnote", id.to_string()), note);
+            }
+        }
+    }
+    // Notes with no surviving reference are pruned from the settled file
+    // (`prune_orphan_notes`), so settled numbering skips them too. In the
+    // tracked view every reference survives.
+    let referenced: HashSet<(bool, String)> = if let Some(accept) = accept {
+        // Headers and footers must be settled too: a rejected insertion
+        // (or accepted deletion) there no longer keeps its note alive.
+        let settled_stories: Vec<_> = story_roots
+            .iter()
+            .map(|root| revise::resolve(root, accept))
+            .collect();
+        let mut out = HashSet::new();
+        let mut stack: Vec<&Element> = vec![&document];
+        stack.extend(settled_stories.iter());
+        stack.extend(notes.values());
+        while let Some(next) = stack.pop() {
+            for child in next.elements() {
+                if (child.is("footnoteReference") || child.is("endnoteReference"))
+                    && let Some(id) = child.attr("id")
+                {
+                    out.insert((child.is("endnoteReference"), id.to_string()));
+                }
+                stack.push(child);
+            }
+        }
+        out
+    } else {
+        HashSet::new()
+    };
     // Each note's paragraphs as `edit` numbers its story
     // (`inspect::story_paragraph_nodes`): the first index and how many;
-    // separator notes are not numbered.
+    // separator notes are not numbered. Counted after accept/reject
+    // resolution, so the ids name the paragraphs of the view they print in.
     let mut note_paragraphs: HashMap<(bool, String), (usize, usize)> = HashMap::new();
     for (name, root) in &note_roots {
         let mut first = 0;
@@ -271,23 +312,21 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             }) {
                 continue;
             }
-            let count = agent::paragraphs(note).len();
-            if let Some(id) = note.attr("id") {
-                note_paragraphs.insert((*name == "endnote", id.to_string()), (first, count));
+            let key = note
+                .attr("id")
+                .map(|id| (*name == "endnote", id.to_string()));
+            if accept.is_some() && key.as_ref().is_none_or(|key| !referenced.contains(key)) {
+                continue;
+            }
+            let count = key
+                .as_ref()
+                .and_then(|key| notes.get(key))
+                .map(agent::paragraphs)
+                .map_or_else(|| agent::paragraphs(note).len(), |v| v.len());
+            if let Some(key) = key {
+                note_paragraphs.insert(key, (first, count));
             }
             first += count;
-        }
-    }
-    let mut notes = HashMap::new();
-    for (name, root) in &note_roots {
-        for note in root.children_named(name) {
-            if let Some(id) = note.attr("id") {
-                let note = match accept {
-                    Some(accept) => revise::resolve(note, accept),
-                    None => note.clone(),
-                };
-                notes.insert((*name == "endnote", id.to_string()), note);
-            }
         }
     }
     // Accepting or rejecting the changes leaves comments out as well, except
