@@ -1496,7 +1496,10 @@ mod tests {
         // Out of Word's range, or not inches: no indent.
         let line = id_line("<!-- p2 left 99in, right 3cm, first-line NaNin -->").unwrap();
         assert_eq!((line.left, line.right, line.first_line), (None, None, None));
-        assert_eq!(id_line("<!-- p2-p4 empty -->"), None);
+        // A range stands for several paragraphs; its facts are the first's.
+        let line = id_line("<!-- p2-p4 empty -->").unwrap();
+        assert_eq!((line.style, line.outline, line.align), (None, None, None));
+        assert_eq!(id_line("<!-- t0 cells p2-p4 by row -->"), None);
     }
 
     #[test]

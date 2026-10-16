@@ -1518,7 +1518,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                         self.document.styles.insert("TableGrid");
                     } else {
                         let name = legend.and_then(|(_, _, name)| name.clone());
-                        self.document.table_styles.insert(id.clone(), (border, name));
+                        self.document
+                            .table_styles
+                            .insert(id.clone(), (border, name));
                     }
                 }
                 let formats = self.table_formats();

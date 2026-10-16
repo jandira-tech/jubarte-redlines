@@ -2295,7 +2295,8 @@ fn default_normal_styles() -> common::docx::Part<'static> {
 /// (ids-authors, ids-comments, #528).
 #[test]
 fn an_explicit_default_style_is_named_and_comes_back() {
-    let stated = r#"<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:t>Stated.</w:t></w:r></w:p>"#;
+    let stated =
+        r#"<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:t>Stated.</w:t></w:r></w:p>"#;
     let unstated = r#"<w:p><w:r><w:t>Unstated.</w:t></w:r></w:p>"#;
     let cell = r#"<w:tbl><w:tr><w:tc><w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr></w:p></w:tc></w:tr></w:tbl>"#;
     let end = r#"<w:p><w:r><w:t>End.</w:t></w:r></w:p>"#;
@@ -2338,7 +2339,10 @@ fn an_empty_paragraph_keeps_its_style() {
         2,
         "{document}"
     );
-    assert_eq!(document.matches(r#"<w:pStyle w:val="Heading2"/>"#).count(), 1);
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="Heading2"/>"#).count(),
+        1
+    );
     assert_eq!(view, once);
 }
 
@@ -2365,7 +2369,8 @@ fn a_range_of_styled_empty_paragraphs_stands_for_all_of_them() {
 /// #528).
 #[test]
 fn a_heading_that_states_its_outline_writes_no_style() {
-    let outlined = r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Own level.</w:t></w:r></w:p>"#;
+    let outlined =
+        r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Own level.</w:t></w:r></w:p>"#;
     let body = format!("{outlined}<w:p><w:r><w:t>Body.</w:t></w:r></w:p>");
     let parts = [default_normal_styles()];
     let docx = common::docx::docx_with(&body, &parts);
@@ -2373,7 +2378,10 @@ fn a_heading_that_states_its_outline_writes_no_style() {
     assert!(view.contains("## Own level."), "{view}");
     assert!(view.contains("outline 2"), "{view}");
     let document = part_string(&again, "word/document.xml").unwrap();
-    assert!(document.contains(r#"<w:outlineLvl w:val="1"/>"#), "{document}");
+    assert!(
+        document.contains(r#"<w:outlineLvl w:val="1"/>"#),
+        "{document}"
+    );
     assert!(!document.contains("w:pStyle"), "{document}");
     assert_eq!(view, once);
 }

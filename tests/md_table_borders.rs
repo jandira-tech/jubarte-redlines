@@ -481,10 +481,7 @@ fn a_table_style_keeps_its_name() {
     let body = table(r#"<w:tblStyle w:val="9"/>"#);
     let docx = common::docx::docx_with(&body, &parts);
     let (first, again, second) = round_trip(&docx);
-    assert!(
-        first.contains("table: 9, named Normal Table"),
-        "{first}"
-    );
+    assert!(first.contains("table: 9, named Normal Table"), "{first}");
     let document = part(&again, "word/document.xml");
     assert_eq!(table_styles(&document), [Some("9".to_string())]);
     let written = part(&again, "word/styles.xml");
@@ -515,11 +512,24 @@ fn words_older_table_styles_get_their_own_names() {
         rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
         xml: &styles,
     }];
-    let body = format!("{}{}", table(r#"<w:tblStyle w:val="MediumList2"/>"#), table(r#"<w:tblStyle w:val="LightShading-Accent1"/>"#));
+    let body = format!(
+        "{}{}",
+        table(r#"<w:tblStyle w:val="MediumList2"/>"#),
+        table(r#"<w:tblStyle w:val="LightShading-Accent1"/>"#)
+    );
     let docx = common::docx::docx_with(&body, &parts);
     let (first, again, second) = round_trip(&docx);
     assert!(!first.contains("named "), "{first}");
     let written = part(&again, "word/styles.xml");
+    // Word's own definitions, band shading and all, not a bare name.
+    let shading = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"MediumList2\""))
+        .unwrap_or_else(|| panic!("no MediumList2: {written}"));
+    assert!(
+        shading.contains(r#"<w:tblStylePr w:type="band1Horz">"#) || shading.contains("band1Vert"),
+        "{shading}"
+    );
     for (id, name) in [
         ("LightShading-Accent1", "Light Shading Accent 1"),
         ("MediumList2", "Medium List 2"),

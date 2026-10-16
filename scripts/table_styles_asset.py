@@ -4,14 +4,18 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Writes src/markdown/word_table_styles.tsv: Word's built-in Grid Table and
-List Table styles (1 to 7, plain and Accent 1 to 6), as Word wrote them into
-a document that uses all 98, one template per family.
+"""Writes src/markdown/word_table_styles.tsv: Word's built-in table styles,
+the Grid and List Tables (1 to 7, plain and Accent 1 to 6) as Word wrote
+them into a document that uses all 98, and the older families (Light
+Shading, Medium List 2, …) as Word wrote them into the extra sources
+named on the command line — one template per family either way.
 
-  python3 scripts/table_styles_asset.py [SOURCE.docx]
+  python3 scripts/table_styles_asset.py [SOURCE.docx …]
 
-Each family's six accents differ only in their theme colour, so a family is
-one line, `FAMILY<TAB>accent<TAB>XML`, its colour `{C}`; a plain style is the
+With no argument, the repository's own Grid-and-List source is used;
+extra sources add families, never replace one already read. Each family's
+six accents differ only in their theme colour, so a family is one line,
+`FAMILY<TAB>accent<TAB>XML`, its colour `{C}`; a plain style is the
 template on `text1`, except the Colorful families', which Word writes
 without the accent's shade (`FAMILY<TAB>plain<TAB>XML`). Every hex colour
 Word resolved from a theme colour is `@`: the writer resolves it from the
@@ -36,6 +40,13 @@ SOURCE = ROOT / (
 )
 OUT = ROOT / "src/markdown/word_table_styles.tsv"
 FAMILY = re.compile(r"((?:Grid|List)Table\d(?:Light|Dark|Colorful)?)(?:-Accent(\d))?1$")
+# Word's older table styles (Light Shading, Medium List 2, …), named by the
+# id they had before the Grid and List Tables; also one family per accent.
+OLD_FAMILY = re.compile(
+    r"(LightShading|LightList|LightGrid|MediumShading1|MediumShading2|MediumList1|"
+    r"MediumList2|MediumGrid1|MediumGrid2|MediumGrid3|DarkList|ColorfulShading|"
+    r"ColorfulList|ColorfulGrid)(?:-Accent(\d))?$"
+)
 SLOTS = {
     "text1": "dk1", "dark1": "dk1", "background1": "lt1", "light1": "lt1",
     "text2": "dk2", "dark2": "dk2", "background2": "lt2", "light2": "lt2",
@@ -98,32 +109,53 @@ def templated(style: str, colours: dict[str, str]) -> str:
 
 
 def main() -> None:
-    source = Path(sys.argv[1]) if len(sys.argv) > 1 else SOURCE
-    package = zipfile.ZipFile(source)
-    colours = theme(package)
-    styles = package.read("word/styles.xml").decode()
+    sources = [Path(a) for a in sys.argv[1:]] or [SOURCE]
     families: dict[str, dict[str, str]] = {}
-    for match in re.finditer(r'<w:style [^>]*w:type="table"[^>]*>.*?</w:style>', styles, re.S):
-        style = match.group(0)
-        found = FAMILY.match(re.search(r'w:styleId="([^"]+)"', style).group(1))
-        if not found:
-            continue
-        family, accent = found.group(1), found.group(2)
-        body = templated(style, colours)
-        body = re.sub(r' w:rsid\w*="[^"]*"|<w:rsid [^>]*/>|<w:name [^>]*/>', "", body)
-        body = re.sub(r'<w:style [^>]*>', "", body).removesuffix("</w:style>")
-        colour = f"accent{accent}" if accent else "text1"
-        families.setdefault(family, {})[accent or "0"] = body.replace(f'"{colour}"', '"{C}"')
+    for source in sources:
+        package = zipfile.ZipFile(source)
+        colours = theme(package)
+        styles = package.read("word/styles.xml").decode()
+        for match in re.finditer(r'<w:style [^>]*w:type="table"[^>]*>.*?</w:style>', styles, re.S):
+            style = match.group(0)
+            style_id = re.search(r'w:styleId="([^"]+)"', style).group(1)
+            found = FAMILY.match(style_id) or OLD_FAMILY.match(style_id)
+            if not found:
+                continue
+            family, accent = found.group(1), found.group(2)
+            body = templated(style, colours)
+            body = re.sub(r' w:rsid\w*="[^"]*"|<w:rsid [^>]*/>|<w:name [^>]*/>', "", body)
+            body = re.sub(r'<w:style [^>]*>', "", body).removesuffix("</w:style>")
+            colour = f"accent{accent}" if accent else "text1"
+            families.setdefault(family, {}).setdefault(accent or "0", body.replace(f'"{colour}"', '"{C}"'))
     lines = []
+    skipped = []
     for family in sorted(families):
         variants = families[family]
-        accents = {variants[a] for a in "123456"}
-        check(len(accents) == 1, f"{family}: the accents differ beyond their colour")
-        (template,) = accents
-        lines.append(f"{family}\taccent\t{template}")
-        if variants["0"] != template:
+        # Every accent a source shows must agree beyond its colour, so any
+        # of them is the family's template. Word's Colorful styles of the
+        # older families mix two accents, which no one template says; they
+        # keep the name the writer derives from the id.
+        accents = {variants[a] for a in variants if a != "0"}
+        if len(accents) > 1:
+            if FAMILY.match(family + "1"):
+                check(False, f"{family}: the accents differ beyond their colour")
+            skipped.append(family)
+            continue
+        if accents:
+            (template,) = accents
+            lines.append(f"{family}\taccent\t{template}")
+        else:
+            template = variants["0"]
+            lines.append(f"{family}\tplain\t{template}")
+        if variants.get("0") not in (None, template):
             lines.append(f"{family}\tplain\t{variants['0'].replace('{C}', 'text1')}")
-    check(len(families) == 14, sorted(families))
+    for family in skipped:
+        print(f"{family}: accents differ beyond their colour; no template written")
+    # The Grid and List Tables are all there, all 14 of them, and no
+    # family the asset does not know slipped in.
+    modern = {f for f in families if FAMILY.match(f + "1")}
+    check(len(modern) == 14, f"the Grid and List Tables: {sorted(modern)}")
+    check(all(OLD_FAMILY.fullmatch(f) or FAMILY.match(f + "1") for f in families), sorted(families))
     # A whole asset or none: the build reads it with `include_str!`.
     fd, staged = tempfile.mkstemp(dir=OUT.parent, prefix=f".{OUT.name}.")
     try:

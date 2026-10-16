@@ -389,7 +389,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         resolved: accept.is_some(),
         dates: options.dates,
         handles: handles.clone(),
-        default_style: default_style.clone(),
         pending_empty: Vec::new(),
         line_indent: 0,
         cached_pages,
@@ -2279,8 +2278,6 @@ struct Writer<'a> {
     /// Agent view: inline timestamps on notes (`Options::dates`).
     dates: bool,
     handles: agent::Handles,
-    /// Agent view: the default paragraph style id (`w:default="1"`).
-    default_style: Option<String>,
     /// Agent view: empty paragraphs not yet written as `<!-- pN empty -->`.
     pending_empty: Vec<usize>,
     /// Agent view: the indentation of the comment lines written before a
