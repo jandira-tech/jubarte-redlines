@@ -65,7 +65,7 @@ Payments go to the account in [the payment portal](https://pay.example.com/north
 ## 4. Term
 
 <!-- p23 -->
-<a id="term"></a>This Agreement begins on {DATE \@ "MMMM d, yyyy"}March 1, 2026{/} and runs for ==two years==, as Section 2 sets out (see [Fees](#term)).{>>c8 @AC resolved: Confirm the start date.<<}
+<a id="term"></a>This Agreement begins on {DATE \@ "MMMM d, yyyy"}March 1, 2026{/} and runs for <mark>two years</mark>, as Section 2 sets out (see [Fees](#term)).{>>c8 @AC resolved: Confirm the start date.<<}
 
 <!-- p24 -->
 ~~Superseded terms~~ are **not** <u>incorporated</u>.[^2]
