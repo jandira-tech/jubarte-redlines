@@ -125,3 +125,18 @@ fn a_character_grid_keeps_its_pitch_and_spacing() {
         );
     }
 }
+
+#[test]
+fn a_character_grid_without_a_line_pitch_comes_back() {
+    // `tests/convert_docx_to_pdf.rs`'s character grid: `snapToChars` sets
+    // only character spacing, so `w:linePitch` is absent.
+    let grid = r#"<w:docGrid w:type="snapToChars" w:charSpace="40960"/>"#;
+    let source = two_sections(grid, grid);
+    let first = view(&source);
+    assert!(first.contains("char grid, char space 40960"), "{first}");
+    let again = write(&first);
+    for sect in sections(&again) {
+        assert!(sect.contains(grid), "{sect}");
+    }
+    assert_eq!(view(&again), first);
+}
