@@ -14,7 +14,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
@@ -1099,6 +1099,12 @@ struct Writer<'o, 'a> {
     label_uses: HashMap<String, usize>,
     note_count: usize,
     note_paragraph_breaks: bool,
+    /// The style the next note's id line names (`<!-- endnotes.p0
+    /// Endnote -->`), then the open note's.
+    note_style_next: Vec<String>,
+    note_style: Vec<String>,
+    /// The note paragraph `begin_paragraph` styles next, from 0.
+    note_paragraph: usize,
     /// The number of the next cell paragraph, when the table line counts
     /// the open row's paragraphs one by one.
     cell_paragraph: Option<usize>,
@@ -1181,6 +1187,8 @@ struct Writer<'o, 'a> {
     paragraph_in_comments: Option<Vec<u32>>,
     /// The open paragraph ends in a page break (`page-break`).
     page_break_due: bool,
+    /// That page break's tracked change (`page-break-del r5 @AC`).
+    page_break_change: Option<(Kind, view_notes::Tag)>,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
     authors: HashMap<String, view_notes::Author>,
     /// The changes of each author the view dates with a range of days, in
@@ -1229,6 +1237,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             label_uses: HashMap::new(),
             note_count: 0,
             note_paragraph_breaks: false,
+            note_style_next: Vec::new(),
+            note_style: Vec::new(),
+            note_paragraph: 0,
             cell_paragraph: None,
             row_shapes: Vec::new(),
             row_pad: Vec::new(),
@@ -1272,6 +1283,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             id_line: None,
             paragraph_in_comments: None,
             page_break_due: false,
+            page_break_change: None,
             run_after_close: false,
             highlight: None,
             groups: 0,
@@ -1420,12 +1432,21 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .copied()
                     .unwrap_or_default();
                 self.note_paragraph_breaks = counted > 1 && breaks + 1 == counted;
+                self.note_style = std::mem::take(&mut self.note_style_next);
+                self.note_paragraph = 0;
                 self.note_count += 1;
                 let label = note_label(&label);
                 if counted > 1 && !self.note_paragraph_breaks {
+                    // One paragraph takes the first style; the rest go unused.
+                    let styles = match self.note_style.split_first() {
+                        Some((first, rest)) if !rest.is_empty() => {
+                            format!(", in style {first}; {} are not written", rest.join(", "))
+                        }
+                        _ => String::new(),
+                    };
                     self.document.warnings.push(format!(
                         "[^{label}]: its id line counts {counted} paragraphs and its text \
-                         {} by its <br>s: the <br>s are written as line breaks",
+                         {} by its <br>s: the <br>s are written as line breaks{styles}",
                         breaks + 1
                     ));
                 }
@@ -1521,10 +1542,21 @@ impl<'o, 'a> Writer<'o, 'a> {
             Tag::Superscript => self.superscript += 1,
             Tag::Subscript => self.subscript += 1,
             Tag::Link {
-                dest_url, title, ..
+                link_type,
+                dest_url,
+                title,
+                ..
             } => {
                 let title = (!title.is_empty()).then(|| critic::decode(&title));
-                self.link_start(&critic::decode(&dest_url), title);
+                let dest = critic::decode(&dest_url);
+                // `<ann@x.test>` is an email autolink: its destination is the
+                // address, and the link Word stores is `mailto:` plus that address.
+                let dest = if link_type == LinkType::Email && !dest.starts_with("mailto:") {
+                    format!("mailto:{dest}")
+                } else {
+                    dest
+                };
+                self.link_start(&dest, title);
             }
             Tag::Image { dest_url, .. } => {
                 if self.image.is_none() {
@@ -1579,6 +1611,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             TagEnd::FootnoteDefinition => {
                 self.end_paragraph();
                 self.target = None;
+                self.note_style.clear();
                 self.note_paragraph_breaks = false;
             }
             TagEnd::Table => {
@@ -1751,7 +1784,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             // A note's id line says which part the definition after it is
             // in; it describes no body paragraph.
+            // Like the part, the styles are only the line's right before
+            // the definition.
             self.endnote_next = view_notes::endnote_line(line);
+            self.note_style_next = view_notes::note_styles(line).unwrap_or_default();
             if self.endnote_next || view_notes::footnote_line(line) {
                 continue;
             }
@@ -1843,11 +1879,25 @@ impl<'o, 'a> Writer<'o, 'a> {
                 paragraph.indent = Some(720 * self.quote);
             }
         } else if let Some(target) = &self.target {
-            paragraph.style = Some(if self.endnotes.contains(target) {
-                "EndnoteText".into()
-            } else {
-                "FootnoteText".into()
-            });
+            // Word's note style unless the id line names another; the
+            // document's default needs no `w:pStyle`.
+            let default = self
+                .document
+                .style_specs
+                .iter()
+                .find(|s| s.default)
+                .map_or("Normal", |s| s.id.as_str());
+            // A note paragraph takes its own entry, past the list the last.
+            let at = self
+                .note_paragraph
+                .min(self.note_style.len().saturating_sub(1));
+            self.note_paragraph += 1;
+            paragraph.style = match self.note_style.get(at) {
+                Some(style) if style == default => None,
+                Some(style) => Some(style.clone().into()),
+                None if self.endnotes.contains(target) => Some("EndnoteText".into()),
+                None => Some("FootnoteText".into()),
+            };
         }
         if let Some(align) = self.cell {
             paragraph.align = align;
@@ -1867,6 +1917,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             paragraph.align = line.align.or(paragraph.align);
             self.page_break_due = line.page_break;
+            self.page_break_change = line.page_break_change.clone().map(|(inserted, tag)| {
+                let kind = if inserted { Kind::Insert } else { Kind::Delete };
+                (kind, tag)
+            });
             paragraph.section_break = line.section_break;
             paragraph.ind = Indent {
                 first_line: line.first_line,
@@ -2075,11 +2129,29 @@ impl<'o, 'a> Writer<'o, 'a> {
             return;
         };
         self.label_prefix = None;
+        let page_break_change = self.page_break_change.take().map(|(kind, tag)| {
+            // The change the text before it ends in, when the tag names
+            // it too: one `w:del` holds both, as in the source.
+            let before = self.story().iter().rev().find_map(|item| match item {
+                Item::Run(run) => Some(run.change),
+                _ => None,
+            });
+            match before.flatten() {
+                Some((k, serial))
+                    if k == kind
+                        && !tag.ids.is_empty()
+                        && self.document.revision_ids.get(&serial) == Some(&tag.ids) =>
+                {
+                    (k, serial)
+                }
+                _ => (kind, self.tag_serial(&tag)),
+            }
+        });
         if std::mem::take(&mut self.page_break_due) {
             self.story().push(Item::Run(Run {
                 content: Content::PageBreak,
                 format: RunFormat::default(),
-                change: None,
+                change: page_break_change,
                 highlight: None,
             }));
         }
@@ -3121,12 +3193,25 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .warnings
                         .push(format!("track_changes: {value} ignored: it is on or off")),
                 },
-                "notes" => match view_notes::empty_notes(text) {
-                    Ok(kinds) => self.document.empty_notes = kinds,
-                    Err(why) => self.document.warnings.push(format!(
-                        "notes: {why}, so the notes parts it names are not made"
-                    )),
-                },
+                "notes" => {
+                    match view_notes::empty_notes(text) {
+                        Ok(kinds) => self.document.empty_notes = kinds,
+                        Err(why) => self.document.warnings.push(format!(
+                            "notes: {why}, so the notes parts it names are not made"
+                        )),
+                    }
+                    let formats = view_notes::note_formats(text);
+                    for kind in ["footnote", "endnote"] {
+                        let count = formats.iter().filter(|(k, _)| *k == kind).count();
+                        if count > 2 {
+                            self.document.warnings.push(format!(
+                                "notes: fmt: {count} changes for the {kind}s' two separators; \
+                                 the rest are not written"
+                            ));
+                        }
+                    }
+                    self.document.note_formats = formats;
+                }
                 "comments" => {
                     let value = view_notes::scalar_and_comment(text).0;
                     let (all, each) = view_notes::comment_styles(&value);

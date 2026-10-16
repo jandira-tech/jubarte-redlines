@@ -16,12 +16,12 @@ styles:
   table: TableGrid, all borders 0.5pt
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
-  first: {id: header2, text: DRAFT}  # page 1 only (different first page)
+  first: {id: header2, text: [DRAFT, ""]}  # page 1 only (different first page)
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: footer2, text: "{PAGE}1{/}"}
-  even: {id: footer1, text: "{PAGE}{/}", inactive}  # defined, but even/odd headers are off
+  default: {id: footer2, text: ["{PAGE}1{/}", ""]}
+  even: {id: footer1, text: ["{PAGE}", ""], inactive}  # defined, but even/odd headers are off
 ---
 
 <!-- p0 center -->

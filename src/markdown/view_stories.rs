@@ -104,14 +104,14 @@ impl Marks<'_> {
             }
         };
         let (author, date) = tag
-            .and_then(|tag| {
+            .map(|tag| {
                 // `??` names no one: the mark's author is empty, as it was.
                 let (name, date) = match self.people.by_handle.get(&tag.handle) {
                     Some(known) => known.clone(),
                     None if tag.handle == super::view_notes::UNNAMED => {
                         (String::new(), self.people.date.clone())
                     }
-                    None => return None,
+                    None => (tag.handle.clone(), self.people.date.clone()),
                 };
                 let date = match self.people.range_ends.get(&tag.handle) {
                     Some(last) if !self.people.started.borrow_mut().insert(tag.handle.clone()) => {
@@ -119,7 +119,7 @@ impl Marks<'_> {
                     }
                     _ => date,
                 };
-                Some((name, tag.date.clone().unwrap_or(date)))
+                (name, tag.date.clone().unwrap_or(date))
             })
             .unwrap_or_else(|| (self.people.author.clone(), self.people.date.clone()));
         let date = if date.is_empty() {
@@ -134,6 +134,40 @@ impl Marks<'_> {
     }
 }
 
+/// The start tags of the `w:pPrChange`s `tags` name, by their people:
+/// one per tag, a tag that numbers no `w:id` taking a fresh one above
+/// `first_id`.
+pub(super) fn format_changes(
+    people: &People,
+    tags: &[&super::view_notes::Tag],
+    first_id: u32,
+) -> Vec<String> {
+    let mut marks = Marks {
+        people,
+        next_id: first_id,
+    };
+    let mut reserved: std::collections::HashSet<u32> =
+        tags.iter().flat_map(|tag| &tag.ids).copied().collect();
+    let mut next = first_id;
+    tags.iter()
+        .map(|tag| {
+            let id = tag.ids.first().copied().unwrap_or_else(|| {
+                loop {
+                    next = if next >= super::view_notes::MOST_ID {
+                        0
+                    } else {
+                        next + 1
+                    };
+                    if reserved.insert(next) {
+                        break next;
+                    }
+                }
+            });
+            marks.mark_id("w:pPrChange", Some(tag), Some(id))
+        })
+        .collect()
+}
+
 /// A value of a YAML flow map as the view prints it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Value {
@@ -143,6 +177,18 @@ enum Value {
     /// `[a, "b"]`: a flow sequence of scalars.
     List(Vec<String>),
     Map(Vec<(String, Value)>),
+}
+
+/// A text clause from the shared flow-map parser, honoring both YAML
+/// quoting forms rather than looking for clause names inside strings.
+pub(super) fn flow_text(text: &str, key: &str) -> Option<String> {
+    flow_map(text, 0)?
+        .0
+        .into_iter()
+        .find_map(|(name, value)| match value {
+            Value::Text(text) if name == key => Some(text),
+            _ => None,
+        })
 }
 
 /// The most nested maps one flow map holds: the view prints three.
@@ -488,9 +534,10 @@ fn runs(text: &str, marks: &mut Marks<'_>) -> String {
                     super::xml::escape(code.trim()),
                     runs(result, marks)
                 )),
-                Field::Bare(name) => out.push_str(&format!(
-                    "<w:fldSimple w:instr=\" {name} \"><w:r><w:t>1</w:t></w:r></w:fldSimple>"
-                )),
+                // No result: Word computes it (`PAGE` on every page).
+                Field::Bare(name) => {
+                    out.push_str(&format!("<w:fldSimple w:instr=\" {name} \"/>"));
+                }
             }
             rest = after;
             continue;
@@ -680,7 +727,7 @@ fn tracked_piece(
             flush(&mut plain, out, deleted);
             let (code, result) = match field {
                 Field::Coded(code, result) => (code.trim().to_string(), result.to_string()),
-                Field::Bare(name) => (name.to_string(), "1".to_string()),
+                Field::Bare(name) => (name.to_string(), String::new()),
             };
             let instr = if deleted {
                 "w:delInstrText"
@@ -717,7 +764,10 @@ fn result_end(text: &str) -> Option<usize> {
     let mut at = 0;
     while at < text.len() {
         let rest = &text[at..];
-        if rest.starts_with(FIELD_END) {
+        if rest.starts_with("\\{") {
+            // `\{DATE}`, `\{/}`: text, not a field nor an end.
+            at += 2;
+        } else if rest.starts_with(FIELD_END) {
             if depth == 0 {
                 return Some(at);
             }
@@ -1209,7 +1259,7 @@ mod tests {
         assert_eq!(
             written("p {PAGE} {++new++}{>>header1.r3 @AC<<}{--old--}{>>header1.r4 @AC<<}"),
             "<w:r><w:t xml:space=\"preserve\">p </w:t></w:r>\
-             <w:fldSimple w:instr=\" PAGE \"><w:r><w:t>1</w:t></w:r></w:fldSimple>\
+             <w:fldSimple w:instr=\" PAGE \"/>\
              <w:r><w:t xml:space=\"preserve\"> </w:t></w:r>\
              <w:ins w:id=\"3\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
              <w:r><w:t xml:space=\"preserve\">new</w:t></w:r></w:ins>\
@@ -1228,6 +1278,15 @@ mod tests {
              <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins>\
              <w:del w:id=\"5\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\">\
              <w:r><w:delText xml:space=\"preserve\">a</w:delText></w:r></w:del>"
+        );
+        // A bare field inside a mark has no result either.
+        assert_eq!(
+            written("{++{PAGE}++}{>>header1.r7 @AC<<}"),
+            "<w:ins w:id=\"7\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins>"
         );
         // No tag: the document's author and a fresh id; a newline breaks
         // the line.

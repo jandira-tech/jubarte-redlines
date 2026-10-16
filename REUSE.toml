@@ -47,6 +47,14 @@ precedence = "override"
 SPDX-FileCopyrightText = "2023 Ismael Shakverdiev"
 SPDX-License-Identifier = "LicenseRef-markdown2pdf-MIT"
 
+# docen's feature showcase (MIT), the md-roundtrip Demo fixture; provenance
+# in LICENSES.md.
+[[annotations]]
+path = ["tests/fixtures/md-roundtrip/demo.docx", "LICENSES/LicenseRef-docen-MIT.txt"]
+precedence = "override"
+SPDX-FileCopyrightText = "2025 Demo Macro"
+SPDX-License-Identifier = "LicenseRef-docen-MIT"
+
 # Word to Markdown fixtures and scripts copied from anymd (see LICENSES.md).
 [[annotations]]
 path = "tests/fixtures/from-docx/**"

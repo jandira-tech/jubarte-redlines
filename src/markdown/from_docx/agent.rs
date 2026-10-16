@@ -1149,6 +1149,34 @@ fn count(e: &Element, hit: &dyn Fn(&Element) -> bool) -> usize {
         .sum()
 }
 
+/// The first page break of `p` inside an insertion or deletion: the
+/// change's kind (`ins`, `del`; a move as its side) and tag.
+fn tracked_page_break(p: &Element, handles: &Handles) -> Option<(&'static str, String)> {
+    fn walk(
+        e: &Element,
+        within: Option<(&'static str, &Element)>,
+        handles: &Handles,
+    ) -> Option<(&'static str, String)> {
+        for child in shown_children(e) {
+            if child.is("pPr") || child.is("txbxContent") || child.local().ends_with("PrChange") {
+                continue;
+            }
+            if is_page_break(child) {
+                if let Some((kind, change)) = within {
+                    return Some((kind, tag_of(change, handles)));
+                }
+                continue;
+            }
+            let within = kind_of(child.local()).map_or(within, |kind| Some((kind, child)));
+            if let Some(found) = walk(child, within, handles) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    walk(p, None, handles)
+}
+
 fn is_page_break(e: &Element) -> bool {
     e.is("br") && e.attr("type") == Some("page")
 }
@@ -1458,8 +1486,15 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if f.marker.is_some() && f.level > 0 {
         clauses.push(format!("level {}", f.level));
     }
-    if f.page_break {
-        clauses.push("page-break".to_string());
+    // A page break in a tracked change names it: `rev` would say only
+    // that some change shows no text, not that it is the break's.
+    let tracked_break = (!f.resolved && f.page_break)
+        .then(|| tracked_page_break(p, handles))
+        .flatten();
+    match &tracked_break {
+        Some((kind, tag)) => clauses.push(format!("page-break-{kind} {}", format_tag(tag))),
+        None if f.page_break => clauses.push("page-break".to_string()),
+        None => {}
     }
     if has_section_break(p) {
         clauses.push("section-break".to_string());
@@ -1475,8 +1510,14 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
-    if !f.resolved && !f.unshown.is_empty() {
-        clauses.push(format!("rev {}", format_tags(f.unshown)));
+    let unshown: Vec<String> = f
+        .unshown
+        .iter()
+        .filter(|tag| tracked_break.as_ref().is_none_or(|(_, b)| b != *tag))
+        .cloned()
+        .collect();
+    if !f.resolved && !unshown.is_empty() {
+        clauses.push(format!("rev {}", format_tags(&unshown)));
     }
     if f.resolved {
         let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();

@@ -54,7 +54,8 @@ inserted or deleted row.
 **Id lines**: `<!-- pN[ Style][, clause…] -->` above every body paragraph
 
 `left|center|right|justify` · `first-line|hanging|left|right Xin` ·
-`num "1)"` | `bullet` · `level N` · `page-break` · `section-break` ·
+`num "1)"` | `bullet` · `level N` · `page-break` |
+`page-break-ins|page-break-del TAG` · `section-break` ·
 `break-ins|break-del TAGS` · `fmt TAGS` · `rev TAGS` · `comments cN` ·
 `in cN` · `empty` (`<!-- p4-p7 empty -->`)
 
@@ -67,7 +68,7 @@ a cell holds other than one paragraph).
 consecutive ones) is a cell paragraph in a style other than the default (a
 style id that is a clause word or holds a space, `,`, `"` or `\` prints
 quoted, `"My Style"`, on table and paragraph id lines alike);
-`tN center` places the table. Notes: `<!-- footnotes.p0 -->`. Pages: `<!-- page 2 of 5 -->`.
+`tN center` places the table. Notes: `<!-- footnotes.p0 -->`, `<!-- endnotes.p0 Endnote -->` (paragraph styles other than Word's own, one per paragraph). Pages: `<!-- page 2 of 5 -->`.
 
 **YAML header**
 

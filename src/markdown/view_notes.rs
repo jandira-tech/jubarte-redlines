@@ -547,6 +547,26 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
     Ok(kinds)
 }
 
+/// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
+/// each formatting change on a notes part's separators, with its part's
+/// kind (`footnote`, `endnote`), in the order the view lists them; none
+/// without the clause. An entry that names no notes part is skipped.
+pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
+    let Some(tags) = super::view_stories::flow_text(value, "fmt") else {
+        return Vec::new();
+    };
+    tags.split("; ")
+        .filter_map(|entry| {
+            let kind = match entry.trim().split_once('.')?.0 {
+                "footnotes" => "footnote",
+                "endnotes" => "endnote",
+                _ => return None,
+            };
+            Some((kind, revision_tags(entry)?.into_iter().next()?))
+        })
+        .collect()
+}
+
 /// The most grid columns a table has, and rows one merged cell reaches: a
 /// bound on what a hand-edited table line can make the reader write (Word
 /// takes 63 columns).
@@ -825,6 +845,37 @@ pub(super) fn note_paragraphs(line: &str) -> Option<usize> {
     last.checked_sub(first)?.checked_add(1)
 }
 
+/// The styles a note definition's id line names after its id, one per
+/// paragraph, the last for every paragraph after it
+/// (`<!-- endnotes.p0 Endnote -->`, `<!-- footnotes.p1-p2 FootnoteText,
+/// "My Note" -->`): the note's paragraphs are in them, not in Word's note
+/// style. `None` for a line that names none, or a malformed list.
+pub(super) fn note_styles(line: &str) -> Option<Vec<String>> {
+    note_line(line, "footnotes").or_else(|| note_line(line, "endnotes"))?;
+    let inner = line
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    // Any whitespace ends the id, as for `note_line`.
+    let (id, rest) = inner.split_once(char::is_whitespace)?;
+    if id.ends_with(',') {
+        return None;
+    }
+    let mut styles = Vec::new();
+    let mut rest = rest.trim();
+    while !rest.is_empty() {
+        let (style, after) = take_style(rest)?;
+        // `""` names no style a paragraph can be in.
+        if style.trim().is_empty() {
+            return None;
+        }
+        styles.push(style);
+        rest = after;
+    }
+    (!styles.is_empty()).then_some(styles)
+}
+
 /// Whether `line` is an endnote definition's id line (`<!-- endnotes.p0 -->`).
 pub(super) fn endnote_line(line: &str) -> bool {
     note_line(line, "endnotes").is_some()
@@ -864,7 +915,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 18] = [
+const CLAUSE_WORDS: [&str; 20] = [
     "empty",
     "center",
     "right",
@@ -876,6 +927,8 @@ const CLAUSE_WORDS: [&str; 18] = [
     "num",
     "level",
     "page-break",
+    "page-break-ins",
+    "page-break-del",
     "section-break",
     "break-ins",
     "break-del",
@@ -1004,6 +1057,9 @@ pub(super) struct IdLine {
     pub right: Option<i64>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
+    /// The page break's tracked change, `true` for an insertion
+    /// (`page-break-ins r5 @AC`, `page-break-del r5 @AC`).
+    pub page_break_change: Option<(bool, Tag)>,
     /// The paragraph ends a section (`section-break`).
     pub section_break: bool,
     /// The list label (`num "(a)"`, `bullet`).
@@ -1089,6 +1145,10 @@ impl IdLine {
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
+            Some((kind @ ("page-break-ins" | "page-break-del"), v)) => {
+                self.page_break = true;
+                self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
+            }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
             Some(_) => {}
@@ -1195,6 +1255,37 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn note_formats_reads_each_parts_separator_changes() {
+        let kinds = |value: &str| -> Vec<(&str, Vec<u32>)> {
+            note_formats(value)
+                .into_iter()
+                .map(|(kind, tag)| (kind, tag.ids))
+                .collect()
+        };
+        assert_eq!(
+            kinds(
+                "{fmt: footnotes.r0 @AS; footnotes.r1 @AS; endnotes.r2 @AS, \
+                 empty: [footnotes, endnotes]}  # changes in notes"
+            ),
+            [
+                ("footnote", vec![0]),
+                ("footnote", vec![1]),
+                ("endnote", vec![2])
+            ]
+        );
+        assert_eq!(
+            kinds("{rev: \"footnotes.r4 @AS\", fmt: \"endnotes.r7 @AS 2026-09-26T14:55:00Z\"}"),
+            [("endnote", vec![7])]
+        );
+        assert_eq!(kinds("{rev: \"fmt: footnotes.r1 @AS\"}"), []);
+        assert_eq!(kinds("{rev: 'fmt: footnotes.r1 @AS'}"), []);
+        assert_eq!(kinds("{rev: 'author''s fmt: footnotes.r1 @AS'}"), []);
+        assert_eq!(kinds("{fmt: 'footnotes.r7 @AS'}"), [("footnote", vec![7])]);
+        assert_eq!(kinds("{fmt: header1.r1 @AS}"), []);
+        assert_eq!(kinds("{empty: [footnotes]}"), []);
+    }
+
     #[test]
     fn empty_notes_reads_the_clause_outside_quotes() {
         use super::empty_notes;

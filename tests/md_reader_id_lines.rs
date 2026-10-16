@@ -1126,13 +1126,13 @@ fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
     let view = "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n  \
                 BC: Bo Chen                      # 2026-03-02T10:00:00Z\n\
                 headers:\n  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}\n\
-                footers:\n  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
+                footers:\n  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
                 rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
                 break-del footer1.r40 @BC in footer1.p1}\n---\n\n<!-- p0 -->\nBody.\n";
     let (again, docx) = full_trip(view);
     for line in [
         "  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}",
-        "  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
+        "  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
          rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
          break-del footer1.r40 @BC in footer1.p1}",
     ] {
@@ -1144,6 +1144,26 @@ fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
         "{header}"
     );
     assert!(!header.contains("fldSimple"), "{header}");
+}
+
+#[test]
+fn a_footer_field_without_a_result_comes_back_without_one() {
+    // kitchen-sink.md: `{PAGE}` came back `{PAGE}1{/}`, the writer's
+    // made-up result. Word computes both on every page ("Page 1 of 2").
+    let view = "---\nview: tracked\n\
+                footers:\n  default: {id: footer1, text: \"Page {PAGE} of {NUMPAGES}\"}\n\
+                ---\n\n<!-- p0 -->\nBody.\n";
+    let (again, docx) = full_trip(view);
+    assert!(
+        again.contains("  default: {id: footer1, text: \"Page {PAGE} of {NUMPAGES}\"}"),
+        "{again}"
+    );
+    let footer = common::docx::part_string(&docx, "word/footer1.xml").expect("footer1.xml");
+    assert!(
+        footer.contains(r#"<w:fldSimple w:instr=" PAGE "/>"#),
+        "{footer}"
+    );
+    assert!(!footer.contains("<w:t>1</w:t>"), "{footer}");
 }
 
 #[test]
@@ -2078,4 +2098,179 @@ fn a_nested_tables_paragraph_style_comes_back() {
         2,
         "{view}\n{document}"
     );
+}
+
+/// `A` written, read as a view (`C`), written again (`D`) and read again.
+/// The two views, without `sha256:` (the packages differ), then `B` and `D`.
+fn idless_views(markdown: &str) -> (String, String, Vec<u8>, Vec<u8>) {
+    let options = ReadOptions {
+        page_markers: false,
+        ..ReadOptions::default()
+    };
+    let b = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("A reads")
+        .docx;
+    assert_word_valid_package(&b);
+    let c = read(&b, &options).expect("B reads").markdown;
+    let d = markdown_to_docx(&c, &DocxOptions::default())
+        .expect("C reads")
+        .docx;
+    assert_word_valid_package(&d);
+    let again = read(&d, &options).expect("D reads").markdown;
+    (without_sha(&c), without_sha(&again), b, d)
+}
+
+fn xml_decode(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+fn tag_attr(tag: &str, name: &str) -> Option<String> {
+    let key = format!("{name}=\"");
+    let start = tag.find(&key)? + key.len();
+    let end = tag[start..].find('"')? + start;
+    Some(xml_decode(&tag[start..end]))
+}
+
+/// Visible text of every `w:t` in `xml`. `<w:tab` is not one.
+fn run_texts(xml: &str) -> String {
+    let mut out = String::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<w:t") {
+        let from = &rest[start..];
+        let boundary = from.as_bytes().get(4).copied();
+        if !matches!(boundary, Some(b'>' | b' ' | b'/')) {
+            rest = &from[4..];
+            continue;
+        }
+        let Some(open_end) = from.find('>') else {
+            break;
+        };
+        if from.as_bytes().get(open_end.wrapping_sub(1)) == Some(&b'/') {
+            rest = &from[open_end + 1..];
+            continue;
+        }
+        let after = &from[open_end + 1..];
+        let Some(close) = after.find("</w:t>") else {
+            break;
+        };
+        out.push_str(&xml_decode(&after[..close]));
+        rest = &after[close + "</w:t>".len()..];
+    }
+    out
+}
+
+/// `(visible text, relationship target)` of each external hyperlink.
+fn hyperlinks(docx: &[u8]) -> Vec<(String, String)> {
+    let document = common::docx::part_string(docx, "word/document.xml").expect("document.xml");
+    let rels =
+        common::docx::part_string(docx, "word/_rels/document.xml.rels").expect("document.xml.rels");
+    let mut targets = Vec::new();
+    let mut rel_rest = rels.as_str();
+    while let Some(start) = rel_rest.find("<Relationship ") {
+        let from = &rel_rest[start..];
+        let end = from.find("/>").unwrap_or(from.len());
+        let tag = &from[..end];
+        if tag_attr(tag, "Type").is_some_and(|ty| ty.ends_with("/hyperlink"))
+            && let (Some(id), Some(target)) = (tag_attr(tag, "Id"), tag_attr(tag, "Target"))
+        {
+            targets.push((id, target));
+        }
+        rel_rest = &from[end..];
+    }
+    let mut out = Vec::new();
+    let mut rest = document.as_str();
+    while let Some(start) = rest.find("<w:hyperlink ") {
+        let from = &rest[start..];
+        let open_end = from.find('>').expect("hyperlink opens");
+        let open = &from[..=open_end];
+        let after = &from[open_end + 1..];
+        let close = after.find("</w:hyperlink>").expect("hyperlink closes");
+        if let Some(id) = tag_attr(open, "r:id") {
+            let target = targets
+                .iter()
+                .find(|(rel, _)| rel == &id)
+                .map(|(_, target)| target.clone())
+                .unwrap_or_default();
+            out.push((run_texts(&after[..close]), target));
+        }
+        rest = &after[close + "</w:hyperlink>".len()..];
+    }
+    out
+}
+
+/// Text of each `VerbatimChar` run, in document order.
+fn verbatim_runs(docx: &[u8]) -> Vec<String> {
+    let document = common::docx::part_string(docx, "word/document.xml").expect("document.xml");
+    let mut out = Vec::new();
+    let mut rest = document.as_str();
+    while let Some(start) = rest.find("<w:r>") {
+        let from = &rest[start + "<w:r>".len()..];
+        let Some(close) = from.find("</w:r>") else {
+            break;
+        };
+        let run = &from[..close];
+        if run.contains("w:val=\"VerbatimChar\"") {
+            out.push(run_texts(run));
+        }
+        rest = &from[close + "</w:r>".len()..];
+    }
+    out
+}
+
+/// A link whose URL holds parentheses comes back as that link.
+/// `S1074-7613(00)80619-6`: a bare destination treats the final `)` as the
+/// link's closer, and percent-encoding only `)` leaves `(` unmatched, so
+/// the link comes back as literal text.
+#[test]
+fn a_link_whose_url_holds_parentheses_comes_back_as_that_link() {
+    const URL: &str = concat!(
+        "http://elife.elifesciences.org/lookup/external-ref",
+        "?access_num=10.1016/S1074-7613(00)80619-6&link_type=DOI"
+    );
+    let (c, again, b, d) = idless_views(&format!("See [CrossRef]({URL}) now.\n"));
+    let expected = vec![("CrossRef".to_string(), URL.to_string())];
+    assert_eq!(hyperlinks(&b), expected, "{c}");
+    assert_eq!(hyperlinks(&d), expected, "{again}");
+    assert!(c.contains(&format!("[CrossRef](<{URL}>)")), "{c}");
+    assert_eq!(again, c);
+}
+
+/// An email autolink keeps the address as its text. `<addr>` reads back as
+/// the address; `<mailto:addr>` reads back with `mailto:` in the text.
+#[test]
+fn an_email_autolink_keeps_the_address_as_its_text() {
+    let (c, again, b, d) =
+        idless_views("[karthik.ram@berkeley.edu](mailto:karthik.ram@berkeley.edu)\n");
+    let expected = vec![(
+        "karthik.ram@berkeley.edu".to_string(),
+        "mailto:karthik.ram@berkeley.edu".to_string(),
+    )];
+    assert_eq!(hyperlinks(&b), expected, "{c}");
+    assert_eq!(hyperlinks(&d), expected, "{again}");
+    assert!(c.contains("<karthik.ram@berkeley.edu>"), "{c}");
+    assert!(!c.contains("<mailto:"), "{c}");
+    assert_eq!(again, c);
+}
+
+/// A plain space between two code spans keeps both spans. Folding the
+/// space into the mark makes one `VerbatimChar` run of both.
+#[test]
+fn a_plain_space_between_code_spans_keeps_both_spans() {
+    let (c, again, b, d) = idless_views(include_str!("fixtures/math/SOURCES.md"));
+    let left = verbatim_runs(&b);
+    let right = verbatim_runs(&d);
+    assert_eq!(left.len(), 31, "{left:?}");
+    assert_eq!(right, left);
+    assert!(
+        left.windows(2)
+            .any(|pair| pair[0] == "docProps/app.xml" && pair[1] == "Application"),
+        "{left:?}"
+    );
+    assert!(c.contains("`docProps/app.xml` `Application`"), "{c}");
+    assert!(!c.contains("`docProps/app.xml Application`"), "{c}");
+    assert_eq!(again, c, "{c}");
 }

@@ -964,6 +964,20 @@ fn changed_view(
         .map_err(err)
 }
 
+/// The lines `edit -p rN --accept/--reject` prints for a pure resolution:
+/// one per resolved change from `source` (the bytes before resolution) and
+/// `resolved_json` (`{"accepted": [...], "rejected": [...]}` short ids).
+/// Mirrors `jubarte::edit::resolution::resolution_text`.
+#[pyfunction]
+fn resolution_text(py: Python<'_>, source: &[u8], resolved_json: &str) -> PyResult<String> {
+    py.detach(|| {
+        let resolved: jubarte::edit::ResolvedRevisions =
+            serde_json::from_str(resolved_json).map_err(|e| format!("invalid resolved: {e}"))?;
+        jubarte::edit::resolution::resolution_text(source, &resolved).map_err(|e| e.to_string())
+    })
+    .map_err(err)
+}
+
 /// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
 ///
 /// On success `json` is the report; on refusal it is the structured error
@@ -1221,6 +1235,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(editing_mode_conflict, m)?)?;
     m.add_function(wrap_pyfunction!(record_plan, m)?)?;
     m.add_function(wrap_pyfunction!(changed_view, m)?)?;
+    m.add_function(wrap_pyfunction!(resolution_text, m)?)?;
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(get_revisions_json, m)?)?;

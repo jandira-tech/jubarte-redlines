@@ -51,6 +51,12 @@ style X, cN style Y`); notes open. Follow-up: `edit`/`add` write comment
 paragraphs without CommentText (and the annotation reference without
 CommentReference), which Word stamps on its own; views now say
 `style Normal` for them.
+Notes done in #495 (the id line names each paragraph's style). Open
+(pi on #495, F6): Word's own note style under a localized id (`a5`
+named `footnote text`) is silent, so the writer stamps `FootnoteText`
+with its stock definition and `a5`'s formatting is lost; the same for a
+customized `FootnoteText`/`EndnoteText` in an all-own note. The id line
+has no way to say "Word's own, under this id".
 - **Cause.** The writer stamps each story's default style on all its paragraphs:
   `header`, `footer`, `annotation text`, `footnote text`, `endnote text`. The view
   never prints a story paragraph's style.
@@ -87,6 +93,12 @@ CommentReference), which Word stamps on its own; views now say
   to the story's style without a warning (older than #491; pi on #491,
   finding 5). `styles:` reaches past the last paragraph with text to the last
   one a `rev` clause brings back.
+
+- **Open (story fields, pi on #502):** a tracked change inside a complex
+  field's result prints without its mark (`tagged` needs no open complex
+  field, `header.rs`), while the same change in a `fldSimple` keeps it;
+  a field with two `separate`s prints its code twice. Both are older than
+  #502.
 
 ## 3. Page count (10 files)
 

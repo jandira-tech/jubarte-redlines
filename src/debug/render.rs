@@ -934,9 +934,12 @@ fn section(dom: &Dom, sect: NodeId, n: usize, rels: &[Rel]) -> String {
             attr(dom, sz, "w"),
             attr(dom, sz, "h")
         ));
-        let orient = attr(dom, sz, "orient");
-        if !orient.is_empty() {
-            s.push_str(&format!(" {orient}"));
+        // The page's orientation, not the attribute's: `portrait` is the
+        // default a page need not state, and a page wider than tall is
+        // landscape (as the view reads it).
+        let number = |k: &str| attr(dom, sz, k).parse::<u64>().unwrap_or(0);
+        if attr(dom, sz, "orient") == "landscape" || number("w") > number("h") {
+            s.push_str(" landscape");
         }
     }
     if let Some(m) = child(dom, sect, "pgMar") {
@@ -1346,6 +1349,43 @@ mod story_diagnostic_contract_tests {
                 0
             )
         );
+    }
+
+    #[test]
+    fn section_orientation_is_the_pages_not_the_attributes() {
+        // `w:orient="portrait"` is the schema's default: a page that says
+        // it and one that does not are the same page (Demo.docx's round
+        // trip reported them as a lost and a new section).
+        for (size, expected) in [
+            (
+                r#"w:w="11906" w:h="16838" w:orient="portrait""#,
+                "  section 1 page=11906x16838",
+            ),
+            (r#"w:w="11906" w:h="16838""#, "  section 1 page=11906x16838"),
+            (
+                r#"w:w="16838" w:h="11906" w:orient="landscape""#,
+                "  section 1 page=16838x11906 landscape",
+            ),
+            // Wider than tall is landscape, as the view reads it.
+            (
+                r#"w:w="16838" w:h="11906""#,
+                "  section 1 page=16838x11906 landscape",
+            ),
+            (
+                r#"w:w="11906" w:h="16838" w:orient="landscape""#,
+                "  section 1 page=11906x16838 landscape",
+            ),
+        ] {
+            assert_eq!(
+                report(
+                    &format!("<w:sectPr><w:pgSz {size}/></w:sectPr>"),
+                    &StyleBook::default(),
+                    &[]
+                ),
+                (vec![expected.into()], 0),
+                "{size}"
+            );
+        }
     }
 
     #[test]
