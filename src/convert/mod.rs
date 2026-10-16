@@ -376,6 +376,11 @@ pub struct PdfOptions {
     /// Where comments go: in balloons beside the text (the default, as
     /// Word prints them) or listed after the last page.
     pub comments: CommentPlacement,
+    /// Also attach each comment as a PDF note (a text annotation) at its
+    /// anchor. Off by default for every revision style: a viewer paints
+    /// the note as an icon over the text, and the balloon already shows
+    /// the comment. Word's Save as PDF writes none.
+    pub comment_notes: bool,
     /// Lay the whole document out, then keep only the pages a tracked
     /// change touches (a revision in the body, a table, a footnote or an
     /// endnote), the

@@ -96,6 +96,14 @@ comments are drawn: `conventional` (the default: red, blue and green marks),
   into it.
 - Word mode can be worse than our convention. Say so whenever it is, record
   the case in `docs/WORD_DIFFERENCES.md`, and offer the user both behaviours.
+- NEVER add a comment icon inline. No default, no revision style and no new
+  feature may put a note icon (a PDF `/Text` annotation, or any picture of
+  a note) in the text: a viewer draws it on top of the words and hides
+  them. The balloon, or the `--move-comments` listing with its `[JR1]` text
+  marker, is how a comment shows. An icon is always the exception: it stays
+  behind an explicit opt-in (`PdfOptions::comment_notes`, the hidden
+  `--comment-notes`), off by default, and only the tests of that opt-in
+  turn it on.
 
 ## Diagnosing a low score against Word
 
