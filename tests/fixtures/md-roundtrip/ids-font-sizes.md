@@ -20,7 +20,7 @@ headers:
 
 <!-- p0 empty -->
 
-<!-- p1 center, left 2.076in, right 1.981in -->
+<!-- p1 outline 1, center, left 2.076in, right 1.981in -->
 # ANEXO V
 
 <!-- p2 center, left 2.077in, right 1.981in -->
@@ -28,7 +28,7 @@ headers:
 
 <!-- p3-p5 empty -->
 
-<!-- p6 left 0.37in -->
+<!-- p6 outline 2, left 0.37in -->
 ## 1.- Datos de identificación:
 
 <!-- p7 empty -->

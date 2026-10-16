@@ -2358,3 +2358,22 @@ fn a_range_of_styled_empty_paragraphs_stands_for_all_of_them() {
         "{document}"
     );
 }
+
+/// A heading that states its own outline level, with no style, keeps the
+/// statement: `# Text` alone means the writer's Heading1, so the id line
+/// says the level is the paragraph's own (`outline 2`, ids-font-sizes,
+/// #528).
+#[test]
+fn a_heading_that_states_its_outline_writes_no_style() {
+    let outlined = r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Own level.</w:t></w:r></w:p>"#;
+    let body = format!("{outlined}<w:p><w:r><w:t>Body.</w:t></w:r></w:p>");
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    assert!(view.contains("## Own level."), "{view}");
+    assert!(view.contains("outline 2"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(document.contains(r#"<w:outlineLvl w:val="1"/>"#), "{document}");
+    assert!(!document.contains("w:pStyle"), "{document}");
+    assert_eq!(view, once);
+}

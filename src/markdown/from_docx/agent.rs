@@ -787,6 +787,10 @@ pub(crate) struct LineFacts<'a> {
     /// view prints no list indentation, since each id line ends the
     /// Markdown list.
     pub level: usize,
+    /// The paragraph's own `w:outlineLvl`, when no style carries the
+    /// level (`outline 2`): the `#` count alone would give the writer's
+    /// `HeadingN`.
+    pub outline: Option<usize>,
     pub page_break: bool,
     /// Accept-all or reject-all view: print the `rev` tags.
     pub resolved: bool,
@@ -1462,6 +1466,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     let ppr = p.child("pPr");
     let mut clauses: Vec<String> = Vec::new();
+    if let Some(outline) = f.outline {
+        clauses.push(format!("outline {outline}"));
+    }
     if f.empty {
         clauses.push("empty".to_string());
     }

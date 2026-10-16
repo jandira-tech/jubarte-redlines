@@ -1933,6 +1933,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 paragraph.style = Some(style.into());
                 // `# Text` under its own style: the level goes with it.
                 paragraph.outline = self.heading.map(|level| level - 1);
+            } else if let Some(outline) = line.outline {
+                // `# Text` that states its own level, with no style: the
+                // writer's `HeadingN` must not step in where the document
+                // had none.
+                paragraph.style = None;
+                // The clause's bound is 1..=6, so the level cannot be empty.
+                paragraph.outline = outline.checked_sub(1).map(|level| level as usize);
             }
             paragraph.align = line.align.or(paragraph.align);
             self.page_break_due = line.page_break;
