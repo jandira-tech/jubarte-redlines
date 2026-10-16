@@ -1488,11 +1488,11 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
             (&["left", "start"][..], "left"),
             (&["right", "end"][..], "right"),
         ] {
-            if let Some(v) = attrs
-                .iter()
-                .find_map(|attr| ind.attr(attr))
-                .and_then(|v| v.parse::<f64>().ok())
-            {
+            if let Some(v) = attrs.iter().find_map(|attr| ind.attr(attr)).and_then(|v| {
+                v.parse::<f64>()
+                    .ok()
+                    .or_else(|| crate::util::universal_measure_twips(v))
+            }) {
                 clauses.push(format!("{name} {}", inches(v)));
             }
         }
@@ -2714,6 +2714,32 @@ mod tests {
         indices(&body, &mut seen);
         assert_eq!(seen, ["0", "1", "2", "3", "-", "4"]);
         assert_eq!(body.child("tbl").unwrap().attr(TABLE), Some("0"));
+    }
+
+    /// A strict `w:ind` writes universal measures (`72pt`, `1in`) where
+    /// Transitional writes twips; the clause prints the same inches.
+    #[test]
+    fn a_universal_measure_indent_on_the_id_line_reads_as_twips() {
+        let p = body(
+            r#"<w:p><w:pPr><w:ind w:start="72pt" w:end="36pt" w:firstLine="18pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+        );
+        let p = p.child("p").unwrap();
+        let facts = LineFacts {
+            index: 0,
+            style: None,
+            default_style: None,
+            heading: None,
+            marker: None,
+            level: 0,
+            page_break: false,
+            resolved: false,
+            comments: &[],
+            spans: &[],
+            empty: false,
+            unshown: &[],
+        };
+        let line = id_line(p, &facts, &Handles::default());
+        assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
     }
 
     #[test]

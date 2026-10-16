@@ -530,8 +530,14 @@ pub(crate) fn render(f: &Facts) -> String {
     out
 }
 
+/// A twips-valued attribute; Strict files write the universal measure
+/// (`72pt`, `1in`) where Transitional writes the integer.
 fn twips(e: &Element, attr: &str) -> Option<f64> {
-    e.attr(attr).and_then(|v| v.parse::<f64>().ok())
+    e.attr(attr).and_then(|v| {
+        v.parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))
+    })
 }
 
 /// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
@@ -696,7 +702,15 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             r.font = font_of(rpr, theme);
         }
         if r.size_half_points.is_none() {
-            r.size_half_points = rpr.child("sz").and_then(|s| twips(s, "val"));
+            // `w:sz` is half-points (`ST_HpsMeasure`), not twips: a strict
+            // `"11pt"` is 22, as the plain `"22"` is.
+            r.size_half_points = rpr.child("sz").and_then(|s| {
+                s.attr("val").and_then(|v| {
+                    v.parse::<f64>()
+                        .ok()
+                        .or_else(|| crate::util::universal_measure_half_points(v))
+                })
+            });
         }
         r.bold |= rpr.toggle("b").unwrap_or(false);
         r.italic |= rpr.toggle("i").unwrap_or(false);
@@ -886,11 +900,19 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
     let Some(borders) = borders else {
         return id.to_string();
     };
-    let sides = ["top", "left", "bottom", "right", "insideH", "insideV"];
+    // The strict `start`/`end` elements name the `left`/`right` borders.
+    let sides = [
+        &["top"][..],
+        &["left", "start"][..],
+        &["bottom"][..],
+        &["right", "end"][..],
+        &["insideH"][..],
+        &["insideV"][..],
+    ];
     let sizes: Vec<Option<(String, String)>> = sides
         .iter()
-        .map(|side| {
-            borders.child(side).map(|b| {
+        .map(|names| {
+            names.iter().find_map(|side| borders.child(side)).map(|b| {
                 (
                     b.attr("val").unwrap_or("").to_string(),
                     b.attr("sz").unwrap_or("").to_string(),
@@ -1798,6 +1820,62 @@ mod tests {
     }
 
     #[test]
+    fn a_section_s_universal_measures_read_as_twips() {
+        // Strict packages write `595.3pt` where Transitional writes `11906`;
+        // none of these are the fallback defaults, so a lost decode says so.
+        let strict = parse_xml(
+            format!(
+                r#"<w:sectPr {W}><w:pgSz w:w="595.3pt" w:h="841.9pt"/><w:pgMar w:top="54pt" w:right="0.75in" w:bottom="54pt" w:left="0.75in" w:header="54pt" w:footer="54pt"/></w:sectPr>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let transitional = parse_xml(
+            format!(
+                r#"<w:sectPr {W}><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080" w:header="1080" w:footer="1080"/></w:sectPr>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            page_setup(&strict),
+            "A4 portrait, margins 0.75in, header/footer 0.75in"
+        );
+        assert_eq!(page_setup(&strict), page_setup(&transitional));
+    }
+
+    /// A strict table style names its side borders `start`/`end`: the
+    /// legend reads them as the `left`/`right` they name, and one side a
+    /// twip apart still varies.
+    #[test]
+    fn a_table_style_s_start_end_borders_read_as_left_right() {
+        let borders = |sides: &str| {
+            parse_xml(
+                format!(
+                    r#"<w:styles {W}><w:style w:type="table" w:styleId="T"><w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr></w:style></w:styles>"#
+                )
+                .as_bytes(),
+            )
+            .unwrap()
+        };
+        let strict = borders(
+            r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
+        );
+        let transitional = borders(
+            r#"<w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
+        );
+        assert_eq!(table_style_line(Some(&strict), "T"), "T, all borders 0.5pt");
+        assert_eq!(
+            table_style_line(Some(&transitional), "T"),
+            table_style_line(Some(&strict), "T")
+        );
+        let varied = borders(
+            r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
+        );
+        assert_eq!(table_style_line(Some(&varied), "T"), "T, borders vary");
+    }
+
+    #[test]
     fn a_long_value_aligns_by_characters_not_bytes() {
         let mut ascii = String::new();
         // 32 characters (35 bytes): the padded branch.
@@ -2006,5 +2084,29 @@ mod tests {
             ..Resolved::default()
         };
         assert_eq!(describe(&flat, None), "Calibri 11pt, left");
+    }
+
+    /// A strict style carries its measures as universal measures (`11pt`,
+    /// `1in`) and its font size in half-points either way: the legend reads
+    /// the same as the transitional integers.
+    #[test]
+    fn a_style_s_universal_measures_read_as_their_integers() {
+        let legend = |rpr: &str, ppr: &str| {
+            let xml = format!(
+                r#"<w:styles {W}><w:style w:type="paragraph" w:styleId="S"><w:name w:val="S"/><w:pPr>{ppr}</w:pPr><w:rPr>{rpr}</w:rPr></w:style></w:styles>"#
+            );
+            let styles = parse_xml(xml.as_bytes()).unwrap();
+            describe(&resolve(Some(&styles), None, "S"), None)
+        };
+        assert_eq!(
+            legend(
+                r#"<w:rFonts w:ascii="Calibri"/><w:sz w:val="16pt"/>"#,
+                r#"<w:spacing w:before="10pt" w:after="5pt" w:line="12.95pt" w:lineRule="auto"/><w:ind w:start="0.25in"/>"#
+            ),
+            legend(
+                r#"<w:rFonts w:ascii="Calibri"/><w:sz w:val="32"/>"#,
+                r#"<w:spacing w:before="200" w:after="100" w:line="259" w:lineRule="auto"/><w:ind w:left="360"/>"#
+            )
+        );
     }
 }
