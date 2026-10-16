@@ -368,6 +368,7 @@ fn the_render_options_go_with_a_pdf_or_png() {
             compress: false,
             revisions: jubarte::convert::RevisionStyle::Conventional,
             comments: jubarte::convert::CommentPlacement::Margin,
+            comment_notes: false,
             changed_only: true,
         },
         jubarte::convert::RenderRequest {
