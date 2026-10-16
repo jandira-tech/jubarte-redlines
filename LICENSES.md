@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
+SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-docen-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
@@ -24,6 +24,10 @@ did not author:
   crate. `tests/fixtures/from-docx/equations.docx` came to anymd from
   Microsoft's markitdown tests (MIT, Copyright (c) Microsoft Corporation;
   the same terms as `LICENSES/LicenseRef-anymd-MIT.txt`).
+- `LICENSES/LicenseRef-docen-MIT.txt` — the MIT notice of
+  [docen](https://github.com/DemoMacro/docen), Copyright (c) 2025 Demo Macro.
+  `tests/fixtures/md-roundtrip/demo.docx` is docen's feature showcase as
+  Arthur supplied it (its `docProps/core.xml` dates it 2026-10-15).
 - `LICENSES/LicenseRef-Bench-Fixtures.txt` — provenance and the docx-corpus
   ODC-By attribution for the test fixtures copied from neurotic_docx_bench
   (`tests/corpus/neurotic_docx_bench/` and
