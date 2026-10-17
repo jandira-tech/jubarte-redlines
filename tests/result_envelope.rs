@@ -131,6 +131,48 @@ fn committed_phase_with_unchanged_effect_is_allowed() {
     assert!(data.validate().is_ok());
 }
 
+#[test]
+fn committed_phase_with_not_applied_effect_is_refused() {
+    // "Only actual primary publication reports phase `committed` and
+    //  actual effects" (§11): a committed primary reports changed or
+    //  unchanged, never not_applied. A generated plan keeps phase
+    //  `generated`, so it is unaffected.
+    let data = ResultData::new(Phase::Committed, jubarte::result::Effect::NotApplied);
+    assert!(
+        data.validate().is_err(),
+        "committed phase with not_applied effect contradicts the publication it reports"
+    );
+    let built = Envelope::ok(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        ResultData::new(Phase::Committed, jubarte::result::Effect::NotApplied),
+        Runtime::native(),
+    );
+    assert_eq!(
+        built.err(),
+        Some(ResultDataError::EffectRequired {
+            phase: Phase::Committed,
+            effect: jubarte::result::Effect::NotApplied,
+        }),
+        "no ok envelope may publish phase committed with effect not_applied"
+    );
+    // A post-commit failure retains the actual effect the same way; the
+    // contradictory pair must not slip through with_failure_data either.
+    let envelope = Envelope::new_error(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        Error::new("REPORT_WRITE_FAILED"),
+    )
+    .with_failure_data(ResultData::new(
+        Phase::Committed,
+        jubarte::result::Effect::NotApplied,
+    ));
+    assert!(
+        envelope.is_err(),
+        "a committed failure retains the actual effect, never not_applied"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // P4 no-effect table: every row has a serialization test.
 // ---------------------------------------------------------------------------
@@ -342,10 +384,9 @@ fn p4_unrealized_desired_text_error_row() {
     assert_eq!(value["error"]["code"], "POSTCONDITION_FAILED");
     assert_eq!(value["error"]["operation"], "op-2");
     // No silent unchanged success.
-    assert!(
-        value["data"].is_null(),
-        "data must be absent on a refused envelope"
-    );
+    assert!(value["data"].is_object());
+    assert_eq!(value["data"]["phase"], serde_json::Value::Null);
+    assert_eq!(value["data"]["effect"], "not_applied");
 }
 
 // ---------------------------------------------------------------------------
@@ -602,7 +643,9 @@ fn jsonl_terminal_line_helper_writes_only_the_terminal_record() {
 
 #[test]
 fn jsonl_stream_without_terminal_record_is_incomplete() {
-    // Only progress lines; no terminal. The reader reports incomplete.
+    // Only typed progress lines; no terminal. The reader reports incomplete.
+    // (The stream must stay well-typed: an untyped line would be refused
+    // as malformed before the missing terminal is noticed.)
     let events = vec![ProgressEvent::from(serde_json::json!({"ev": "load"}))];
     let stream = write_jsonl_stream(
         &events,
@@ -612,12 +655,17 @@ fn jsonl_stream_without_terminal_record_is_incomplete() {
             Runtime::native(),
         ),
     );
-    // Replace the terminal line with a progress line so the stream lacks it.
-    let mangled = stream.replace("\"status\":", "\"xstatus\":");
-    let result = read_jsonl_stream(&mangled);
-    assert!(
-        result.is_err(),
-        "a stream without a terminal result line must be reported incomplete"
+    // Drop the terminal line so the stream ends after typed progress.
+    let mut lines: Vec<&str> = stream.lines().filter(|l| !l.is_empty()).collect();
+    let dropped = lines.pop().expect("terminal line present");
+    let dropped_value: serde_json::Value = serde_json::from_str(dropped).unwrap();
+    assert_eq!(
+        dropped_value["status"], "ok",
+        "the dropped line is the terminal"
+    );
+    assert_eq!(
+        read_jsonl_stream(&lines.join("\n")),
+        Err(jubarte::result::StreamError::MissingTerminal)
     );
 }
 
@@ -637,7 +685,7 @@ fn jsonl_stream_with_terminal_record_is_complete() {
     assert_eq!(parsed.terminal.status, Status::Ok);
     assert!(matches!(
         parsed.terminal.data.as_ref().expect("data present").phase,
-        Phase::Committed
+        Some(Phase::Committed)
     ));
 }
 
@@ -656,10 +704,12 @@ fn jsonl_stream_rejects_two_terminal_records() {
     let stream = format!(
         "{}\n{}\n",
         write_jsonl_stream(&[], &terminal),
-        write_jsonl_stream(&[], &terminal),
+        jsonl_terminal_line(&terminal),
     );
-    let parsed = read_jsonl_stream(&stream);
-    assert!(parsed.is_err(), "exactly one terminal record is required");
+    assert_eq!(
+        read_jsonl_stream(&stream),
+        Err(jubarte::result::StreamError::MultipleTerminals)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +801,30 @@ fn exit_status_mapping_check_threshold_and_comparison_difference() {
     );
 }
 
+#[test]
+fn exit_status_dedicated_codes_win_whatever_the_envelope_status() {
+    // The §12 table is keyed by the code's meaning, not by the envelope
+    // status a route happened to choose: a refusal that carries USAGE is a
+    // usage error (64), an error envelope that carries
+    // CHECK_THRESHOLD_EXCEEDED is a findings exit (2). The cross-product is
+    // the contract; dispatching by status first silently drops the code.
+    for (code, expected) in [
+        ("CHECK_THRESHOLD_EXCEEDED", ExitStatus::CHECK_FINDINGS),
+        ("COMPARISON_DIFFERENCE", ExitStatus::COMPARISON_DIFFERENCE),
+        ("RENDER_FIDELITY_FAILED", ExitStatus::RENDER_FAILURE),
+        ("USAGE", ExitStatus::USAGE),
+        ("DEADLINE_EXCEEDED", ExitStatus::DEADLINE_EXCEEDED),
+    ] {
+        for status in [Status::Refused, Status::Error, Status::Ok] {
+            assert_eq!(
+                exit_status_for(status, Some(&Error::new(code))),
+                expected,
+                "{status:?} + {code} must map by the code's meaning"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Envelope shape: command, runtime, verification, source.
 // ---------------------------------------------------------------------------
@@ -820,25 +894,29 @@ fn ok_envelope_status_field_serializes_lower_string() {
 }
 
 #[test]
-fn refused_envelope_carries_error_and_null_data() {
+fn refused_envelope_carries_error_and_null_phase() {
     let err = Error::new("STALE_SOURCE").with_message("source sha256 mismatch");
     let envelope = Envelope::refused("edit apply", Source::new(&fixture_bytes()), err);
     let value: serde_json::Value =
         serde_json::from_str(&serde_json::to_string(&envelope).unwrap()).unwrap();
     assert_eq!(value["status"], "refused");
     assert_eq!(value["error"]["code"], "STALE_SOURCE");
-    assert!(value["data"].is_null(), "data must be absent on a refusal");
+    assert!(value["data"].is_object());
+    assert_eq!(value["data"]["phase"], serde_json::Value::Null);
+    assert_eq!(value["data"]["effect"], "not_applied");
 }
 
 #[test]
-fn error_envelope_carries_error_and_null_data() {
+fn error_envelope_carries_error_and_null_phase() {
     let err = Error::new("INVALID_PLAN").with_message("schema_version mismatch");
     let envelope = Envelope::new_error("edit apply", Source::new(&fixture_bytes()), err);
     let value: serde_json::Value =
         serde_json::from_str(&serde_json::to_string(&envelope).unwrap()).unwrap();
     assert_eq!(value["status"], "error");
     assert_eq!(value["error"]["code"], "INVALID_PLAN");
-    assert!(value["data"].is_null());
+    assert!(value["data"].is_object());
+    assert_eq!(value["data"]["phase"], serde_json::Value::Null);
+    assert_eq!(value["data"]["effect"], "not_applied");
 }
 // ---------------------------------------------------------------------------
 // Snapshot: exact JSON strings are the contract for selected shapes.
@@ -955,4 +1033,300 @@ fn error_envelope_snapshot_carries_code_operation_source_context_argv() {
     for arg in err["next_actions"][0]["argv"].as_array().unwrap() {
         assert!(arg.is_string(), "argv entries must be strings");
     }
+}
+
+#[test]
+fn failure_reports_last_completed_phase_or_null() {
+    use jubarte::result::Effect;
+    for phase in [
+        None,
+        Some(Phase::Inspected),
+        Some(Phase::Generated),
+        Some(Phase::Validated),
+    ] {
+        for refused in [false, true] {
+            let error = Error::new("PRECOMMIT_FAILED")
+                .with_commit_state(jubarte::result::CommitState::NotCommitted);
+            let envelope = if refused {
+                Envelope::refused("edit apply", Source::new(&fixture_bytes()), error)
+            } else {
+                Envelope::new_error("edit apply", Source::new(&fixture_bytes()), error)
+            };
+            let envelope = envelope
+                .with_failure_data(ResultData::failure(phase))
+                .unwrap();
+            let value = serde_json::to_value(&envelope).unwrap();
+            assert!(
+                value["data"].is_object(),
+                "failures need a data block even before inspection"
+            );
+            assert_eq!(value["data"]["phase"], serde_json::to_value(phase).unwrap());
+            assert_eq!(value["data"]["effect"], "not_applied");
+            assert_eq!(envelope.data.unwrap().effect, Effect::NotApplied);
+            assert_eq!(value["error"]["commit_state"], "not_committed");
+        }
+    }
+    let data = ResultData::failure(None);
+    assert!(
+        Envelope::ok(
+            "edit apply",
+            Source::new(&fixture_bytes()),
+            data,
+            Runtime::native()
+        )
+        .is_err(),
+        "success still requires a phase"
+    );
+}
+
+#[test]
+fn post_commit_reporting_error_retains_committed_state() {
+    use jubarte::result::{CommitState, Effect};
+    for effect in [Effect::Changed, Effect::Unchanged] {
+        let mut data = ResultData::new(Phase::Committed, effect);
+        data.counts.requested_operations = 3;
+        data.counts.body_operations_applied = usize::from(effect == Effect::Changed);
+        let envelope = Envelope::new_error(
+            "edit apply",
+            Source::new(&fixture_bytes()),
+            Error::new("REPORT_WRITE_FAILED"),
+        )
+        .with_failure_data(data.clone())
+        .unwrap();
+        let value = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(envelope.status, Status::Error);
+        assert_eq!(envelope.data, Some(data));
+        assert_eq!(value["data"]["phase"], "committed");
+        assert_eq!(
+            value["data"]["effect"],
+            serde_json::to_value(effect).unwrap()
+        );
+        assert_eq!(value["data"]["counts"]["requested_operations"], 3);
+        assert_eq!(
+            value["error"]["commit_state"],
+            serde_json::to_value(CommitState::Committed).unwrap()
+        );
+        assert_eq!(serde_json::from_value::<Envelope>(value).unwrap(), envelope);
+    }
+}
+
+#[test]
+fn jsonl_stream_starts_with_a_typed_header() {
+    let terminal = ok_envelope(Status::Ok, jubarte::result::Effect::Changed);
+    for events in [
+        vec![],
+        vec![ProgressEvent::from(serde_json::json!({"ev": "load"}))],
+    ] {
+        let stream = write_jsonl_stream(&events, &terminal);
+        let lines: Vec<serde_json::Value> = stream
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["record"], "header");
+        assert_eq!(lines[0]["schema_version"], terminal.schema_version);
+        assert_eq!(lines[0]["command"], terminal.command);
+        assert_eq!(lines[0]["engine_version"], terminal.engine_version);
+        assert_eq!(lines[0]["source"]["sha256"], terminal.source.sha256);
+        assert_eq!(lines.len(), events.len() + 2);
+        let parsed = read_jsonl_stream(&stream).unwrap();
+        assert_eq!(parsed.events, events);
+        assert_eq!(parsed.terminal, terminal);
+    }
+}
+
+#[test]
+fn jsonl_stream_without_header_is_malformed() {
+    let terminal = ok_envelope(Status::Ok, jubarte::result::Effect::Changed);
+    let terminal_line = jsonl_terminal_line(&terminal);
+    for stream in [
+        terminal_line.clone(),
+        format!("{{\"ev\":\"load\"}}\n{terminal_line}\n"),
+    ] {
+        assert_eq!(
+            read_jsonl_stream(&stream),
+            Err(jubarte::result::StreamError::MissingHeader)
+        );
+    }
+}
+
+#[test]
+fn unknown_commit_state_is_never_retryable() {
+    use jubarte::result::CommitState;
+    let errors = [
+        Error::new("PUBLICATION_FAILED")
+            .with_commit_state(CommitState::Unknown)
+            .with_retryable(true),
+        Error::new("PUBLICATION_FAILED")
+            .with_commit_state(CommitState::NotCommitted)
+            .with_retryable(true)
+            .with_commit_state(CommitState::Unknown),
+        Error::new("PUBLICATION_FAILED").with_retryable(true),
+    ];
+    for error in errors {
+        let value = serde_json::to_value(&error).unwrap();
+        assert_ne!(
+            value["retryable"], true,
+            "unknown publication must never authorize retry"
+        );
+        assert_eq!(value["commit_state"], "unknown");
+    }
+    let known = Error::new("BUSY")
+        .with_commit_state(CommitState::NotCommitted)
+        .with_retryable(true);
+    assert_eq!(serde_json::to_value(known).unwrap()["retryable"], true);
+}
+
+#[test]
+fn failure_data_rejects_contradictory_effects_and_success_status() {
+    use jubarte::result::Effect;
+    for phase in [Phase::Inspected, Phase::Generated, Phase::Validated] {
+        let envelope = Envelope::new_error(
+            "edit apply",
+            Source::new(&fixture_bytes()),
+            Error::new("FAILED"),
+        );
+        assert!(
+            envelope
+                .with_failure_data(ResultData::new(phase, Effect::Changed))
+                .is_err()
+        );
+    }
+    let envelope = ok_envelope(Status::Ok, Effect::Changed);
+    assert!(
+        envelope
+            .with_failure_data(ResultData::failure(None))
+            .is_err()
+    );
+}
+
+#[test]
+fn jsonl_progress_status_does_not_become_a_terminal() {
+    let terminal = ok_envelope(Status::Ok, jubarte::result::Effect::Changed);
+    let events = vec![ProgressEvent::from(
+        serde_json::json!({"ev": "op", "status": "ok", "id": "op-1"}),
+    )];
+    let parsed = read_jsonl_stream(&write_jsonl_stream(&events, &terminal))
+        .expect("typed operation record is progress");
+    assert_eq!(parsed.events, events);
+}
+
+#[test]
+fn jsonl_reader_refuses_untyped_progress_records() {
+    // "JSONL emits a header, typed records and exactly one terminal
+    //  result": a record with neither a string `ev` discriminator nor the
+    //  terminal `status` shape is not a typed record, so the stream is
+    //  malformed instead of silently downgraded to free-form JSON.
+    let terminal = ok_envelope(Status::Ok, jubarte::result::Effect::Changed);
+    let header = serde_json::to_string(&jubarte::result::StreamHeader::from(&terminal)).unwrap();
+    let terminal_line = jsonl_terminal_line(&terminal);
+    for untyped in [
+        "{\"foo\":\"bar\"}",
+        "{\"ev\":3}",
+        "[1,2]",
+        "\"just a string\"",
+    ] {
+        let stream = format!("{header}\n{untyped}\n{terminal_line}\n");
+        assert!(
+            matches!(
+                read_jsonl_stream(&stream),
+                Err(jubarte::result::StreamError::InvalidLine { line: 2, .. })
+            ),
+            "an untyped record ({untyped}) must be refused, not read as progress"
+        );
+    }
+}
+
+#[test]
+fn last_completed_phase_does_not_resolve_unknown_publication() {
+    use jubarte::result::CommitState;
+    let envelope = Envelope::new_error(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        Error::new("PUBLICATION_FAILED").with_commit_state(CommitState::Unknown),
+    )
+    .with_failure_data(ResultData::failure(Some(Phase::Validated)))
+    .unwrap();
+    let value = serde_json::to_value(envelope).unwrap();
+    assert_eq!(value["data"]["phase"], "validated");
+    assert_eq!(
+        value["error"]["commit_state"], "unknown",
+        "the last completed stage cannot prove publication did not occur"
+    );
+}
+
+#[test]
+fn jsonl_header_and_terminal_errors_are_distinct() {
+    use jubarte::result::{StreamError, StreamHeader};
+    let terminal = ok_envelope(Status::Ok, jubarte::result::Effect::Changed);
+    let header = serde_json::to_string(&StreamHeader::from(&terminal)).unwrap();
+    let terminal_line = jsonl_terminal_line(&terminal);
+    assert_eq!(read_jsonl_stream("\n \n"), Err(StreamError::MissingHeader));
+    assert_eq!(
+        read_jsonl_stream(&header),
+        Err(StreamError::MissingTerminal)
+    );
+    assert!(matches!(
+        read_jsonl_stream("{\"record\":\"header\"}"),
+        Err(StreamError::HeaderParse { line: 1, .. })
+    ));
+    assert!(matches!(
+        read_jsonl_stream("{broken"),
+        Err(StreamError::InvalidLine { line: 1, .. })
+    ));
+    assert!(matches!(
+        read_jsonl_stream(&format!("{header}\n{{\"status\":\"error\"}}")),
+        Err(StreamError::TerminalParse { line: 2, .. })
+    ));
+    assert!(matches!(
+        read_jsonl_stream(&format!("{header}\n{header}\n{terminal_line}")),
+        Err(StreamError::InvalidLine { line: 2, .. })
+    ));
+    assert!(matches!(
+        read_jsonl_stream(&format!("{header}\n{terminal_line}\n{{\"ev\":\"save\"}}")),
+        Err(StreamError::InvalidLine { line: 3, .. })
+    ));
+    let parsed = read_jsonl_stream(&format!("\n{header}\n\n{terminal_line}\n")).unwrap();
+    assert_eq!(parsed.header, StreamHeader::from(&terminal));
+    assert_eq!(parsed.terminal, terminal);
+}
+
+#[test]
+fn failure_data_validation_preserves_phase_and_prediction_rules() {
+    use jubarte::result::Effect;
+    let source = Source::new(&fixture_bytes());
+    let failure = || Envelope::new_error("edit apply", source.clone(), Error::new("FAILED"));
+    let mut no_phase = ResultData::failure(None);
+    no_phase.effect = Effect::Changed;
+    assert_eq!(
+        failure().with_failure_data(no_phase),
+        Err(ResultDataError::MissingPhase)
+    );
+    let mut no_phase_prediction = ResultData::failure(None);
+    no_phase_prediction.set_predicted(PredictedEffect::Changed);
+    assert_eq!(
+        failure().with_failure_data(no_phase_prediction),
+        Err(ResultDataError::MissingPhase)
+    );
+    let mut bad_prediction = ResultData::new(Phase::Committed, Effect::Changed);
+    bad_prediction.set_predicted(PredictedEffect::Changed);
+    assert!(matches!(
+        failure().with_failure_data(bad_prediction),
+        Err(ResultDataError::PredictedWithoutValidation { .. })
+    ));
+    let refused = Envelope::refused("edit apply", source, Error::new("REFUSED"));
+    assert!(
+        refused
+            .with_failure_data(ResultData::new(Phase::Committed, Effect::Changed))
+            .is_err()
+    );
+    let mut unsafe_hint = Error::new("PUBLICATION_FAILED");
+    unsafe_hint.retryable = Some(true);
+    let value = serde_json::to_value(Envelope::new_error(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        unsafe_hint,
+    ))
+    .unwrap();
+    assert_eq!(value["error"]["commit_state"], "unknown");
+    assert_eq!(value["error"]["retryable"], false);
 }
