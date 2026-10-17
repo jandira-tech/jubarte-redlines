@@ -2320,7 +2320,12 @@ mod tests {
             color: [0.0; 3],
             resolved: false,
         });
-        let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
+        // Notes are opt-in (f8932ae1); this test is about where one lands.
+        let options = crate::convert::PdfOptions {
+            comment_notes: true,
+            ..crate::convert::PdfOptions::default()
+        };
+        let pdf = super::emit(&fonts, &[page], options);
         let hay = String::from_utf8_lossy(&pdf);
         // X = y, Y = width − x: [700, 595.2 − 120] to [714, 595.2 − 100].
         assert!(
