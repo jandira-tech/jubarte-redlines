@@ -74,6 +74,10 @@ pub struct ForEditRequest {
     pub existing_revisions: ExistingRevisions,
     /// Readiness for tracked new edits (default) or direct ones.
     pub track: bool,
+    /// `edit template` (and other plan surfaces) allow only closed ranges
+    /// (proposal §2); `read --for-edit` keeps the open-ended `p17-` /
+    /// `-p3` spellings its shipped help documents, transitionally.
+    pub closed_ranges_only: bool,
 }
 
 impl Default for ForEditRequest {
@@ -98,6 +102,7 @@ impl Default for ForEditRequest {
             reject: Vec::new(),
             existing_revisions: ExistingRevisions::Keep,
             track: true,
+            closed_ranges_only: false,
         }
     }
 }
@@ -420,6 +425,11 @@ pub struct ForEdit {
     /// Read-only original-S observations (`--context` neighbours).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_context: Vec<SourceContextRow>,
+    /// The original source's comment inventory, so consumers that build on
+    /// the same view (template generation) need not reparse the package.
+    /// Not part of the wire document.
+    #[serde(skip)]
+    pub comments: Vec<crate::comments::CommentRecord>,
     /// Completeness and omissions.
     pub coverage: ForEditCoverage,
     /// Continuation token; `null` when the selection is exhausted.
@@ -558,7 +568,10 @@ impl Selection {
             ));
         }
         if let Some(spec) = &request.select {
-            filters.push(("ids", id_selection(spec, source)?));
+            filters.push((
+                "ids",
+                id_selection(spec, source, request.closed_ranges_only)?,
+            ));
         }
         if let Some(head) = request.head {
             filters.push((
@@ -634,9 +647,11 @@ impl Selection {
 }
 
 /// The paragraphs `spec` names: `pN`/`pN-pM` closed ranges and `tN`
-/// whole tables, against the body's own numbering on S.
-fn id_selection(spec: &str, source: &[u8]) -> Result<HashSet<usize>, EditError> {
-    super::v2_apply::SourceModel::new(source)?.selected_paragraphs(spec)
+/// whole tables, against the body's own numbering on S; the transitional
+/// open-ended `pN-` / `-pN` spellings parse unless the caller requires
+/// closed ranges.
+fn id_selection(spec: &str, source: &[u8], closed_only: bool) -> Result<HashSet<usize>, EditError> {
+    super::v2_apply::SourceModel::new(source)?.selected_paragraphs(spec, !closed_only)
 }
 
 /// The paragraphs whose original final logical text the search matches.
@@ -872,14 +887,10 @@ impl NativeKeys {
 }
 
 /// The `w14:paraId` of `paragraph` when it is a key Word could have
-/// written: exactly eight ASCII hex digits in `1..=0x7FFFFFFF`.
+/// written, under the shared native-key policy: exactly eight ASCII hex
+/// digits in `1..=0x7FFFFFFF`.
 fn native_para_id(dom: &Dom, paragraph: NodeId) -> Option<u32> {
-    let value = dom.attribute(paragraph, &W14::name("paraId"))?;
-    if value.len() != 8 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    let n = u32::from_str_radix(value, 16).ok()?;
-    (1..=0x7FFF_FFFF).contains(&n).then_some(n)
+    super::native_keys::para_id(dom.attribute(paragraph, &W14::name("paraId"))?)
 }
 
 /// The long ID of the revision element `el` (a `w:ins`, `w:del`,
@@ -893,11 +904,7 @@ pub(super) fn revision_pair(dom: &Dom, el: NodeId, story: &str, part: &str) -> T
     let wid = dom.attribute(el, &W::name("id")).unwrap_or_default();
     let short = crate::ids::ChangeId::new(story, wid).short();
     let stem = crate::ids::part_story(part);
-    let usable = !wid.is_empty()
-        && wid
-            .bytes()
-            .all(|b| b.is_ascii_digit() || matches!(b, b'+' | b'-'))
-        && wid.parse::<i32>().is_ok();
+    let usable = super::native_keys::revision_id(wid).is_some();
     let long_id = if usable {
         format!("{stem}.w:{local}.w:id.{}", escape_value(wid))
     } else {
@@ -1647,9 +1654,9 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
     }
 
     // Comments of S, for references and the --changed/--by selection.
-    let comments = crate::comments::list_comments(source)
+    let comment_list = crate::comments::list_comments(source)
         .map_err(|e| super::err(e.code(), None, e.to_string()))?;
-    let (comments, unanchored_comments) = comments_by_paragraph(&comments, &s_loaded);
+    let (comments, unanchored_comments) = comments_by_paragraph(&comment_list, &s_loaded);
 
     // Pagination over the frozen selection.
     let limit = if request.all {
@@ -1781,6 +1788,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         paragraphs: rows,
         unanchored_comments,
         source_context: context_rows,
+        comments: comment_list,
         next_cursor,
     })
 }

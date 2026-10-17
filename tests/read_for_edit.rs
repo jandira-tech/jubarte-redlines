@@ -793,3 +793,76 @@ fn by_matches_authors_and_initials_exactly() {
         "a handle matches a comment's explicit w:initials, never initials derived from a name"
     );
 }
+
+// V2-12 review rows 2–3: `read --for-edit` keeps the selection grammar its
+// shipped help documents (open-ended `p17-` / `-p3` spellings, transitionally)
+// and refuses a selector past the end as `USAGE`, not `ANCHOR_NOT_FOUND`.
+mod selection_grammar {
+    use super::*;
+    use serde_json::Value;
+
+    fn three() -> Vec<u8> {
+        docx(&(para("One") + &para("Two") + &para("Three")))
+    }
+
+    fn selected(spec: &str) -> Result<Vec<String>, jubarte::edit::EditError> {
+        for_edit(
+            &three(),
+            &ForEditRequest {
+                select: Some(spec.to_string()),
+                ..ForEditRequest::default()
+            },
+        )
+        .map(|view| {
+            view.paragraphs
+                .into_iter()
+                .map(|row| row.target.short_id)
+                .collect()
+        })
+    }
+
+    #[test]
+    fn open_ended_spellings_still_parse() {
+        assert_eq!(selected("p1-").unwrap(), ["p1", "p2"]);
+        assert_eq!(selected("-p1").unwrap(), ["p0", "p1"]);
+        assert_eq!(selected("p0-p2").unwrap(), ["p0", "p1", "p2"]);
+        assert_eq!(selected("p1,p2").unwrap(), ["p1", "p2"]);
+    }
+
+    #[test]
+    fn a_selector_past_the_end_is_usage_not_a_missing_anchor() {
+        for spec in ["p3", "p1-p3", "p3-", "-p3"] {
+            let error = selected(spec).unwrap_err();
+            assert_eq!(error.code, "USAGE", "{spec}: {error}");
+            assert!(
+                error.message.contains("past the last paragraph"),
+                "{spec}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_cli_still_accepts_the_open_ended_spellings_its_help_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("three.docx");
+        std::fs::write(&input, three()).unwrap();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(["read", input.to_str().unwrap(), "--for-edit", "-p", "p1-"])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let view: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let ids: Vec<&str> = view["paragraphs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["target"]["short_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["p1", "p2"]);
+    }
+}

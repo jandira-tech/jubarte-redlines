@@ -9,6 +9,7 @@ use jubarte::edit::{
     ExistingRevisions,
     for_edit::ForEditRequest,
     template::{self, TemplateRequest},
+    v2,
 };
 use jubarte::result::{
     Artifact, CommitState, Effect, Envelope, Error, MediaRole, Phase, ResultData, Source, Status,
@@ -83,6 +84,8 @@ fn generate(
                     _ => ExistingRevisions::Refuse,
                 },
                 track: options.track == "on",
+                // Proposal §2: `edit template --select` allows closed ranges only.
+                closed_ranges_only: true,
                 ..Default::default()
             },
             author: options.author.clone(),
@@ -104,10 +107,24 @@ fn generate(
     )
     .expect("generated/not_applied");
     receipt.source.path = Some(absolute(&options.file));
-    receipt.effective_options.insert(
-        "scope".into(),
-        serde_json::to_value(&generated.plan.scope).expect("scope serializes"),
+    // Template plan §2: a receipt reports the scope and readiness without
+    // dumping a document-sized scaffold. The plan file keeps the exact
+    // targets; the receipt carries their count and a digest of the scope.
+    let scope_value = serde_json::to_value(&generated.plan.scope).expect("scope serializes");
+    let scope_digest = jubarte::inspect::source_sha256(
+        serde_json::to_string(&scope_value)
+            .expect("scope serializes")
+            .as_bytes(),
     );
+    let mut scope = serde_json::Map::new();
+    scope.insert("kind".into(), scope_value["kind"].clone());
+    if let v2::Scope::Selected { targets } = &generated.plan.scope {
+        scope.insert("targets".into(), serde_json::Value::from(targets.len()));
+    }
+    scope.insert("sha256".into(), serde_json::Value::from(scope_digest));
+    receipt
+        .effective_options
+        .insert("scope".into(), serde_json::Value::Object(scope));
     receipt.effective_options.insert(
         "policy".into(),
         serde_json::to_value(&generated.plan.policy).expect("policy serializes"),

@@ -821,6 +821,8 @@ fn run_for_edit(
             .and_then(ExistingArg::plan_value)
             .unwrap_or(ExistingRevisions::Keep),
         track: args.track.unwrap_or(TrackArg::On) == TrackArg::On,
+        // `read --for-edit` keeps the open-ended spellings its help documents.
+        closed_ranges_only: false,
     };
     let refused = |e: jubarte::edit::EditError| {
         let code = if e.code == "USAGE" {

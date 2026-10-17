@@ -89,8 +89,8 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
             "template generation cannot continue a read cursor",
         ));
     }
-    let accept = super::source_refs::decisions(source, &request.view.accept)?;
-    let reject = super::source_refs::decisions(source, &request.view.reject)?;
+    let (accept, reject) =
+        super::source_refs::decisions(source, &request.view.accept, &request.view.reject)?;
     let mut query = request.view.clone();
     query.all = true;
     query.accept = accept.iter().map(|t| t.short_id.clone()).collect();
@@ -113,6 +113,9 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
     let mut operations = Vec::new();
     let mut context = Vec::new();
     let mut context_ids = BTreeSet::new();
+    // Already-inventoried opaque targets, so the opaque scan stays linear
+    // on opaque-heavy documents instead of rescanning the context list.
+    let mut opaque_ids = BTreeSet::new();
     let mut conditional = 0;
     let mut opaque = 0;
     let mut read_only = 0;
@@ -150,6 +153,7 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
                 kind: if representable {
                     v2::ContextKind::Paragraph
                 } else {
+                    opaque_ids.insert(row.target.short_id.clone());
                     v2::ContextKind::Opaque
                 },
                 target: pair(&row.target),
@@ -167,9 +171,7 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
         let has_opaque = row.original_sha256.is_none() || row.text_codec == "unsupported";
         if has_opaque {
             opaque += 1;
-            if !context.iter().any(|c| {
-                c.target.short_id == row.target.short_id && c.kind == v2::ContextKind::Opaque
-            }) {
+            if opaque_ids.insert(row.target.short_id.clone()) {
                 context.push(v2::SourceContext {
                     kind: v2::ContextKind::Opaque,
                     target: pair(&row.target),
@@ -203,8 +205,8 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
             });
         }
     }
-    let comments = crate::comments::list_comments(source)
-        .map_err(|e| super::err(e.code(), None, e.to_string()))?;
+    // The for-edit view already inventoried the source's comments; reuse
+    // that instead of parsing the package a sixth time.
     let all_scope = query.select.is_none()
         && query.story.as_deref().is_none_or(|s| s == "all")
         && query.find.is_none()
@@ -212,7 +214,7 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
         && !query.changed
         && query.head.is_none()
         && query.tail.is_none();
-    for comment in comments {
+    for comment in &view.comments {
         let id = format!("c{}", comment.id);
         if all_scope
             || view
@@ -226,7 +228,7 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
                     short_id: id,
                     long_id: format!("comments.w:comment.w:id.{}", comment.id),
                 },
-                text: Some(comment.text),
+                text: Some(comment.text.clone()),
                 reason_codes: vec!["existing_comment".into()],
             });
         }

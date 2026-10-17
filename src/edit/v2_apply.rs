@@ -265,7 +265,10 @@ pub(super) struct SourceModel {
 struct SourceIndex {
     revision_counts: BTreeMap<String, usize>,
     revision_carriers: BTreeMap<(String, String), Vec<String>>,
-    paragraph_id_counts: Vec<BTreeMap<String, usize>>,
+    /// Per story, occurrences of each native `w14:paraId` key under the
+    /// shared native-key policy (shape, range, case-folded), matching what
+    /// generation counts.
+    paragraph_id_counts: Vec<BTreeMap<u32, usize>>,
 }
 impl SourceIndex {
     fn new(opened: &Opened, loaded: &Loaded, changes: &[Change]) -> Self {
@@ -276,8 +279,12 @@ impl SourceIndex {
         for story in &loaded.stories {
             let mut counts = BTreeMap::new();
             for p in opened.dom.descendants(story.root, Some(&W::p())) {
-                if let Some(key) = opened.dom.attribute(p, &W14::name("paraId")) {
-                    *counts.entry(key.to_string()).or_default() += 1;
+                if let Some(key) = opened
+                    .dom
+                    .attribute(p, &W14::name("paraId"))
+                    .and_then(super::native_keys::para_id)
+                {
+                    *counts.entry(key).or_default() += 1;
                 }
             }
             index.paragraph_id_counts.push(counts);
@@ -317,17 +324,29 @@ impl SourceIndex {
             let Some(wid) = dom.attribute(node, &W::id()) else {
                 continue;
             };
-            let carrier = format!(
-                "{}.w:{}.w:id.{}",
-                part_token(part),
-                name.local_name(),
-                encode(wid)
-            );
             for story in &stories {
+                // The carrier long ID follows the shared native-key policy:
+                // a `w:id` Word could have written (an `i32`) is its own
+                // form, anything else travels as its printed `j:short`.
+                let carrier = if super::native_keys::revision_id(wid).is_some() {
+                    format!(
+                        "{}.w:{}.w:id.{}",
+                        part_token(part),
+                        name.local_name(),
+                        encode(wid)
+                    )
+                } else {
+                    format!(
+                        "{}.w:{}.j:short.{}",
+                        part_token(part),
+                        name.local_name(),
+                        crate::ids::ChangeId::new(story.clone(), wid).short()
+                    )
+                };
                 self.revision_carriers
                     .entry((story.clone(), wid.to_string()))
                     .or_default()
-                    .extend(std::iter::repeat_n(carrier.clone(), count));
+                    .extend(std::iter::repeat_n(carrier, count));
             }
         }
     }
@@ -387,23 +406,27 @@ impl SourceModel {
                 ),
             )
         };
+        // A change whose `w:id` has no short spelling (one Word never
+        // writes, such as a value beyond `u32`) travels as its printed
+        // transitional colon id; `change_id` accepts both spellings while
+        // `ShortId` only parses the short one.
+        if let Some(cid) = crate::ids::change_id(&target.short_id) {
+            if self.index.revision_counts.get(&target.short_id) != Some(&1) {
+                return Err(bad());
+            }
+            let carriers = self
+                .index
+                .revision_carriers
+                .get(&(cid.story, cid.wid))
+                .ok_or_else(bad)?;
+            if carriers.len() != 1 || carriers[0] != target.long_id {
+                return Err(bad());
+            }
+            return Ok(Entity::Revision(target.short_id.clone()));
+        }
         let id = target.short_id.parse::<ShortId>().map_err(|_| bad())?;
         match id {
-            ShortId::Change { .. } => {
-                let cid = crate::ids::change_id(&target.short_id).ok_or_else(bad)?;
-                if self.index.revision_counts.get(&target.short_id) != Some(&1) {
-                    return Err(bad());
-                }
-                let carriers = self
-                    .index
-                    .revision_carriers
-                    .get(&(cid.story, cid.wid))
-                    .ok_or_else(bad)?;
-                if carriers.len() != 1 || carriers[0] != target.long_id {
-                    return Err(bad());
-                }
-                Ok(Entity::Revision(target.short_id.clone()))
-            }
+            ShortId::Change { .. } => Err(bad()),
             ShortId::Comment(n) => {
                 if !self.comments.iter().any(|c| c.id == n) {
                     return Err(bad());
@@ -534,8 +557,12 @@ impl SourceModel {
             .name(node)
             .ok_or_else(|| err("TARGET_ID_MISMATCH", None, "missing entity"))?;
         let key = dom.attribute(node, &W14::name("paraId"));
-        let unique =
-            key.is_some_and(|key| self.index.paragraph_id_counts[story].get(key) == Some(&1));
+        // The shared native-key policy decides whether this paraId is a
+        // key at all (shape and range) and uniqueness is counted on the
+        // case-folded value, exactly as generation counts it.
+        let unique = key
+            .and_then(super::native_keys::para_id)
+            .is_some_and(|key| self.index.paragraph_id_counts[story].get(&key) == Some(&1));
         let (attribute, value) = if unique {
             ("w14:paraId", encode(key.unwrap_or_default()))
         } else {
@@ -555,13 +582,22 @@ impl SourceModel {
     }
 
     /// Resolve a printed source selector through the same compiled entity and
-    /// descendant resolver used by apply's scope enforcement.
+    /// descendant resolver used by apply's scope enforcement. With
+    /// `open_ranges`, the transitional open-ended `pN-` / `-pN` spellings
+    /// close against their story's ends, as `read --for-edit`'s help
+    /// documents; plan surfaces pass `false` (closed ranges only).
     pub(super) fn selected_paragraphs(
         &self,
         spec: &str,
+        open_ranges: bool,
     ) -> Result<std::collections::HashSet<usize>, EditError> {
         let mut out = std::collections::HashSet::new();
         for item in spec.split(',').map(str::trim) {
+            let item = if open_ranges {
+                self.close_open_range(item)?
+            } else {
+                item.to_string()
+            };
             let parsed = item.parse::<ShortId>().map_err(|_| {
                 err(
                     "USAGE",
@@ -569,50 +605,134 @@ impl SourceModel {
                     "--select requires printed source IDs or closed paragraph ranges",
                 )
             })?;
-            if let ShortId::Range { first, last } = parsed {
-                let mut end = *first.clone();
-                let ShortId::Block { ref mut path, .. } = end else {
-                    unreachable!("range begins at a block")
-                };
-                let Some(step @ Step::Paragraph(_)) = path.last_mut() else {
-                    return Err(err("USAGE", None, "ranges require paragraph endpoints"));
-                };
-                *step = Step::Paragraph(last);
-                let from = first.to_string();
-                let to = end.to_string();
-                let first = self.selector_pair(&from)?;
-                let last = self.selector_pair(&to)?;
-                let (Entity::Paragraph(a), Entity::Paragraph(b)) =
-                    (self.entity(&first)?, self.entity(&last)?)
-                else {
-                    return Err(err("USAGE", None, "ranges require two paragraph IDs"));
-                };
-                if self.loaded.paragraph_story[a].0 != self.loaded.paragraph_story[b].0 || a > b {
+            self.select_parsed(parsed, &mut out)?;
+        }
+        Ok(out)
+    }
+
+    /// The closed spelling of an open range: `p17-` closes against the
+    /// last paragraph of its story and `-p3` against its first. Any other
+    /// item is returned unchanged; a side past its story's end keeps the
+    /// `past the last paragraph` refusal.
+    fn close_open_range(&self, item: &str) -> Result<String, EditError> {
+        let close = |first: String, last: &str| Ok(format!("{first}-{last}"));
+        if let Some(first) = item.strip_suffix('-').filter(|f| !f.is_empty()) {
+            if let Some(error) = self.past_end_usage(first) {
+                return Err(error);
+            }
+            if let Some((story, _)) = crate::ids::paragraph_place(first) {
+                let len = self.story_paragraph_count(&story);
+                if let Some(last) = len.checked_sub(1) {
+                    return close(first.to_string(), &format!("p{last}"));
+                }
+            }
+            return Ok(item.to_string());
+        }
+        if let Some(last) = item.strip_prefix('-').filter(|l| !l.is_empty()) {
+            if let Some(error) = self.past_end_usage(last) {
+                return Err(error);
+            }
+            if let Some((story, _)) = crate::ids::paragraph_place(last) {
+                let first = crate::ids::paragraph_id(&story, 0);
+                return close(first, last);
+            }
+            return Ok(item.to_string());
+        }
+        Ok(item.to_string())
+    }
+
+    fn story_paragraph_count(&self, story: &str) -> usize {
+        self.loaded
+            .stories
+            .iter()
+            .position(|s| s.id == story)
+            .map_or(0, |si| {
+                self.loaded
+                    .paragraph_story
+                    .iter()
+                    .filter(|pair| pair.0 == si)
+                    .count()
+            })
+    }
+
+    /// `USAGE` when `id` names a paragraph of a story this document has at
+    /// an index past that story's end (`p99 is past the last paragraph
+    /// pN`); `None` when `id` is not that shape. A selector past the end
+    /// is a malformed selector, not a missing document anchor.
+    fn past_end_usage(&self, id: &str) -> Option<EditError> {
+        let (story, index) = crate::ids::paragraph_place(id)?;
+        let si = self.loaded.stories.iter().position(|s| s.id == story)?;
+        let last = self
+            .loaded
+            .paragraph_story
+            .iter()
+            .filter(|pair| pair.0 == si)
+            .count()
+            .saturating_sub(1);
+        (index > last).then(|| {
+            err(
+                "USAGE",
+                None,
+                format!(
+                    "{id} is past the last paragraph {}",
+                    crate::ids::paragraph_id(&story, last)
+                ),
+            )
+        })
+    }
+
+    /// The paragraphs one parsed selector names.
+    fn select_parsed(
+        &self,
+        parsed: ShortId,
+        out: &mut std::collections::HashSet<usize>,
+    ) -> Result<(), EditError> {
+        if let ShortId::Range { first, last } = parsed {
+            let mut end = *first.clone();
+            let ShortId::Block { ref mut path, .. } = end else {
+                // The parser guarantees a range's first side is a block
+                // today; a grammar that breaks that invariant must refuse
+                // the selector, never panic on user input.
+                return Err(err("USAGE", None, "ranges must begin at a block"));
+            };
+            let Some(step @ Step::Paragraph(_)) = path.last_mut() else {
+                return Err(err("USAGE", None, "ranges require paragraph endpoints"));
+            };
+            *step = Step::Paragraph(last);
+            let from = first.to_string();
+            let to = end.to_string();
+            let first = self.selector_pair(&from)?;
+            let last = self.selector_pair(&to)?;
+            let (Entity::Paragraph(a), Entity::Paragraph(b)) =
+                (self.entity(&first)?, self.entity(&last)?)
+            else {
+                return Err(err("USAGE", None, "ranges require two paragraph IDs"));
+            };
+            if self.loaded.paragraph_story[a].0 != self.loaded.paragraph_story[b].0 || a > b {
+                return Err(err(
+                    "USAGE",
+                    None,
+                    "ranges must be ordered paragraphs in the same story",
+                ));
+            }
+            out.extend(a..=b);
+        } else {
+            let pair = self.selector_pair(&parsed.to_string())?;
+            match self.entity(&pair)? {
+                Entity::Paragraph(g) => {
+                    out.insert(g);
+                }
+                Entity::Container(members, _) => out.extend(members),
+                _ => {
                     return Err(err(
                         "USAGE",
                         None,
-                        "ranges must be ordered paragraphs in the same story",
+                        "--select requires paragraphs or supported containers",
                     ));
-                }
-                out.extend(a..=b);
-            } else {
-                let pair = self.selector_pair(item)?;
-                match self.entity(&pair)? {
-                    Entity::Paragraph(g) => {
-                        out.insert(g);
-                    }
-                    Entity::Container(members, _) => out.extend(members),
-                    _ => {
-                        return Err(err(
-                            "USAGE",
-                            None,
-                            "--select requires paragraphs or supported containers",
-                        ));
-                    }
                 }
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     fn selector_pair(&self, id: &str) -> Result<Target, EditError> {
@@ -642,7 +762,7 @@ impl SourceModel {
         let g = self
             .ids()
             .position(&Selector::Name(id.to_string()))
-            .map_err(miss)?
+            .map_err(|m| self.selector_miss(id, m))?
             .map_err(|_| bad())?;
         let canonical = self.ids().id(g);
         self.pair(
@@ -651,6 +771,14 @@ impl SourceModel {
             self.loaded.paragraph_nodes[g],
             Some(&canonical),
         )
+    }
+
+    /// A missing selector keeps its anchor code unless it names a paragraph
+    /// past its story's end, which is a malformed selector (`USAGE`), not a
+    /// missing document anchor.
+    fn selector_miss(&self, id: &str, (code, message, _): origin::Miss) -> EditError {
+        self.past_end_usage(id)
+            .unwrap_or_else(|| err(&code, None, message))
     }
 
     fn check_pair(
@@ -1816,6 +1944,23 @@ mod tests {
                 xml: &comments,
             }],
         )
+    }
+
+    #[test]
+    fn a_range_first_side_that_is_not_a_block_refuses_usage_not_a_panic() {
+        // The parser guarantees a range's first side is a block today; a
+        // future grammar that breaks that invariant must refuse the
+        // selector, never panic on user input.
+        let source = docx(&para("Alpha"));
+        let model = SourceModel::new(&source).unwrap();
+        let mut out = std::collections::HashSet::new();
+        let parsed = ShortId::Range {
+            first: Box::new(ShortId::Comment(5)),
+            last: 3,
+        };
+        let error = model.select_parsed(parsed, &mut out).unwrap_err();
+        assert_eq!(error.code, "USAGE");
+        assert!(out.is_empty());
     }
 
     #[test]
