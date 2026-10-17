@@ -23,7 +23,7 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | `$x$`, `$$x$$` | equation (`m:oMath`, `m:oMathPara`) | LaTeX both ways; `{++…++}` inside marks a change in the math; see MARKDOWN.md, Equations |
 | `#`–`######` | `Heading1`–`Heading6` | or the `styles:` legend's heading style |
 | `- a` `* a` `+ a` / `1. a` `1) a` / `- [ ] a` | bullets / numbers (start kept) / task | `ListParagraph` |
-| `> q`, fenced code | `Quote`, `SourceCode` | |
+| `> q`, fenced or indented code | `Quote`, `SourceCode` | |
 | `[t](url)` `[t](#a)` `![alt](f.png)` `[^n]` | link, picture, footnote | `#a` is a heading's GitHub slug |
 | `---`, GFM table | bordered paragraph, `TableGrid` table | header row repeats |
 
