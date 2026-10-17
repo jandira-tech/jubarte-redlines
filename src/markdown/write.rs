@@ -460,6 +460,8 @@ fn page_commands(source: &str) -> String {
 /// whose columns then match their delimiter row, and nowhere else: front
 /// matter and fenced code keep every line, and a line a space would
 /// change without making the table is left as it was.
+/// An odd backslash run at a header's line ending likewise needs a space:
+/// otherwise pulldown-cmark sees a hard break before checking for a table.
 fn table_pipes(source: &str) -> String {
     let lines: Vec<&str> = source.split_inclusive('\n').collect();
     let mut out = String::with_capacity(source.len());
@@ -493,14 +495,15 @@ fn table_pipes(source: &str) -> String {
             out.push_str(line);
             continue;
         }
-        let row = indent < 4 && trimmed.starts_with('|');
+        let row =
+            indent < 4 && bare[..indent].bytes().all(|b| b == b' ') && trimmed.starts_with('|');
         if !row {
             in_table = false;
             out.push_str(line);
             continue;
         }
         let unshielded = unshield_pipes(bare);
-        if in_table || unshielded == bare {
+        if in_table {
             out.push_str(&unshielded);
             out.push_str(&line[bare.len()..]);
             continue;
@@ -509,14 +512,26 @@ fn table_pipes(source: &str) -> String {
         // runs moved off their pipes, are the delimiter row's.
         in_table = lines.get(n + 1).is_some_and(|next| {
             let next = next.trim_end_matches(['\n', '\r']);
-            let columns = next.len() - next.trim_start().len();
-            columns < 4 && delimiter_row(next)
+            let indent = next.len() - next.trim_start().len();
+            indent < 4 && next[..indent].bytes().all(|b| b == b' ') && delimiter_row(next)
         }) && row_columns(&unshielded)
             == lines
                 .get(n + 1)
                 .map(|next| row_columns(next.trim_end_matches(['\n', '\r'])))
                 .unwrap_or(0);
         out.push_str(if in_table { &unshielded } else { bare });
+        // Only a matching header loses the hard break. Spaces around a
+        // table cell are trimmed, so its backslashes remain cell text.
+        if in_table
+            && !unshielded
+                .bytes()
+                .rev()
+                .take_while(|&b| b == b'\\')
+                .count()
+                .is_multiple_of(2)
+        {
+            out.push(' ');
+        }
         out.push_str(&line[bare.len()..]);
     }
     out
@@ -631,7 +646,7 @@ fn delimiter_row(line: &str) -> bool {
 /// backslash run before a pipe escapes it, an even one is backslashes the
 /// row's cells hold.
 fn row_columns(line: &str) -> usize {
-    let line = line.trim_end();
+    let line = line.trim();
     let bytes = line.as_bytes();
     let (mut pipes, mut run, mut last_pipe) = (0usize, 0usize, None);
     for (i, &b) in bytes.iter().enumerate() {
@@ -5692,6 +5707,65 @@ mod tests {
             table_pipes("---\ntext: |\n  \\\\|x\n---\n"),
             "---\ntext: |\n  \\\\|x\n---\n"
         );
+    }
+
+    #[test]
+    fn trailing_backslashes_only_move_when_a_table_opens() {
+        // pulldown-cmark reads a run of an odd number of backslashes at a
+        // line's end as a hard break before it looks for a delimiter row,
+        // so the table never surfaces; GFM keeps the run as the last
+        // cell's text. The run moves off the row's end by a space, which
+        // is not a cell's text, where the row opens a table, and nowhere
+        // else: a row that opens no table keeps its hard break, and so do
+        // the rows inside a table, which no hard break can end.
+        assert_eq!(
+            table_pipes("|\\\\| \\\n|---|---|\n"),
+            "|\\\\ | \\ \n|---|---|\n"
+        );
+        assert_eq!(table_pipes("|\\\n|---|\n"), "|\\ \n|---|\n");
+        assert_eq!(
+            table_pipes("|\\\\\\\n|---|\n"),
+            "|\\\\\\ \n|---|\n",
+            "a run of three backslashes is odd too"
+        );
+        assert_eq!(
+            table_pipes("|\\\r\n|---|\r\n"),
+            "|\\ \r\n|---|\r\n",
+            "a carriage return keeps its place after the space"
+        );
+        // An even run is no hard break, and a row that opens no table, a
+        // fence or front matter keeps every byte.
+        assert_eq!(table_pipes("|\\\\\n|---|\n"), "|\\\\\n|---|\n");
+        assert_eq!(table_pipes("|\\\n| a |\n"), "|\\\n| a |\n");
+        assert_eq!(
+            table_pipes("| a |\n|---|\n| x | y\\\n"),
+            "| a |\n|---|\n| x | y\\\n",
+            "a row inside a table keeps its bytes"
+        );
+        assert_eq!(table_pipes("```\n|\\\n```\n"), "```\n|\\\n```\n");
+        for source in [
+            "|\\\n|---|---|\n",     // Mismatched columns.
+            "    |\\\n    |---|\n", // Indented code.
+            "\t|\\\n\t|---|\n",
+            " \t|\\\n \t|---|\n",
+            "\u{a0}|\\\n|---|\n", // Non-ASCII whitespace is not table indentation.
+            "~~~\n|\\\n|---|\n~~~\n",
+            "---\ntext: |\n  |\\\n  |---|\n---\n", // Front matter.
+            "|\\\n    |---|\n",                    // An indented delimiter is code.
+            "|\\\n\t|---|\n",
+            "|\\\n\u{a0}|---|\n",
+        ] {
+            assert_eq!(table_pipes(source), source);
+        }
+    }
+
+    #[test]
+    fn indented_backslash_headers_match_their_delimiter_columns() {
+        for indent in [" ", "  ", "   "] {
+            let source = format!("{indent}|\\\n{indent}|---|\n");
+            let expected = format!("{indent}|\\ \n{indent}|---|\n");
+            assert_eq!(table_pipes(&source), expected);
+        }
     }
 
     #[test]
