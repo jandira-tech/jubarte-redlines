@@ -17,7 +17,9 @@ use common::validity::assert_word_valid_package;
 use jubarte::comparer::{WmlComparerRevisionType, WmlComparerSettings};
 use jubarte::document_comparer::{accept_revisions, get_revisions, reject_revisions};
 use jubarte::inspect;
-use jubarte::markdown::{DocxOptions, TrackChanges, markdown_to_docx};
+use jubarte::markdown::{
+    DocxOptions, MarkdownOptions, TrackChanges, docx_to_markdown, markdown_to_docx,
+};
 
 fn write(markdown: &str) -> Vec<u8> {
     write_with(markdown, &DocxOptions::default())
@@ -1080,6 +1082,30 @@ fn a_table_takes_the_style_the_view_names_and_otherwise_table_grid() {
         "{styles}"
     );
     assert_word_valid_package(&mixed.docx);
+}
+
+/// GFM reads `\\|` in a table row as an escaped backslash then the cell
+/// separator; pulldown-cmark shields the pipe behind any backslash, so
+/// the escaped rows the reader writes (`|\\|\\\\|`) and hand-written
+/// ones come back as the cells they name, and the row is a fixed point.
+#[test]
+fn backslash_runs_before_a_cell_pipe_split_the_cell() {
+    let docx = write("| a \\| b | c \\\\| d |\n|---|---|---|\n| \\\\|\\\\\\\\| z |\n");
+    assert_eq!(texts(&docx), ["a | b", "c \\", "d", "\\", "\\\\", "z", ""]);
+    let markdown = docx_to_markdown(&docx, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert!(markdown.contains("|\\\\|\\\\\\\\|z|\n"), "{markdown}");
+    let back = markdown_to_docx(&markdown, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(texts(&back), texts(&docx));
+    assert_eq!(
+        docx_to_markdown(&back, &MarkdownOptions::default())
+            .unwrap()
+            .markdown,
+        markdown
+    );
 }
 
 #[test]
