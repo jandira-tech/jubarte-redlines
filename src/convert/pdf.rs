@@ -1028,12 +1028,13 @@ pub(crate) fn emit<P: std::borrow::Borrow<Page>>(
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
-        // Word's Save as PDF writes no annotation for a comment: its
-        // balloon is the print. The other styles keep the sticky note.
-        let sticky: &[PdfComment] = if options.revisions == super::RevisionStyle::Word {
-            &[]
-        } else {
+        // A viewer paints a note as an icon over the text, and the balloon
+        // already shows the comment (Word's Save as PDF writes none): a
+        // note is written only when asked.
+        let sticky: &[PdfComment] = if options.comment_notes {
             &page.comments
+        } else {
+            &[]
         };
         for note in sticky {
             let id = objs.len() + 1;
@@ -2319,7 +2320,12 @@ mod tests {
             color: [0.0; 3],
             resolved: false,
         });
-        let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
+        // Notes are opt-in (f8932ae1); this test is about where one lands.
+        let options = crate::convert::PdfOptions {
+            comment_notes: true,
+            ..crate::convert::PdfOptions::default()
+        };
+        let pdf = super::emit(&fonts, &[page], options);
         let hay = String::from_utf8_lossy(&pdf);
         // X = y, Y = width − x: [700, 595.2 − 120] to [714, 595.2 − 100].
         assert!(

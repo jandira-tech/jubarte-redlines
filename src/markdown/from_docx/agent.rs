@@ -780,7 +780,6 @@ pub(crate) fn runs(indices: &[usize]) -> Vec<(usize, usize)> {
 pub(crate) struct LineFacts<'a> {
     pub index: usize,
     pub style: Option<&'a str>,
-    pub default_style: Option<&'a str>,
     pub heading: Option<usize>,
     /// The list marker the converter computed (`1.`, `(a)`, `-`).
     pub marker: Option<&'a str>,
@@ -788,6 +787,10 @@ pub(crate) struct LineFacts<'a> {
     /// view prints no list indentation, since each id line ends the
     /// Markdown list.
     pub level: usize,
+    /// The paragraph's own `w:outlineLvl`, when no style carries the
+    /// level (`outline 2`): the `#` count alone would give the writer's
+    /// `HeadingN`.
+    pub outline: Option<usize>,
     pub page_break: bool,
     /// Accept-all or reject-all view: print the `rev` tags.
     pub resolved: bool,
@@ -1448,13 +1451,16 @@ pub(crate) fn line(head: &str, clauses: &[String]) -> String {
 }
 
 /// `<!-- p3 justify, first-line 0.5in, comments c5 -->` (the plan's grammar).
+/// A paragraph that states a style names it, the default too: the statement
+/// is the document's own, not the view's to drop (#528). A heading's own
+/// `HeadingN` with text needs no name, the `#` count says it; an empty
+/// paragraph has no `#`, so even that one is named.
 pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     let mut head = format!("p{}", f.index);
     if let Some(style) = f.style {
-        let implied = match f.heading {
-            Some(level) => style == format!("Heading{level}"),
-            None => Some(style) == f.default_style || style == "Normal",
-        };
+        let implied = !f.empty
+            && f.heading
+                .is_some_and(|level| style == format!("Heading{level}"));
         if !implied {
             head.push(' ');
             head.push_str(&crate::markdown::view_notes::style_token(style));
@@ -1462,6 +1468,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     let ppr = p.child("pPr");
     let mut clauses: Vec<String> = Vec::new();
+    if let Some(outline) = f.outline {
+        clauses.push(format!("outline {outline}"));
+    }
     if f.empty {
         clauses.push("empty".to_string());
     }
@@ -1488,11 +1497,11 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
             (&["left", "start"][..], "left"),
             (&["right", "end"][..], "right"),
         ] {
-            if let Some(v) = attrs
-                .iter()
-                .find_map(|attr| ind.attr(attr))
-                .and_then(|v| v.parse::<f64>().ok())
-            {
+            if let Some(v) = attrs.iter().find_map(|attr| ind.attr(attr)).and_then(|v| {
+                v.parse::<f64>()
+                    .ok()
+                    .or_else(|| crate::util::universal_measure_twips(v))
+            }) {
                 clauses.push(format!("{name} {}", inches(v)));
             }
         }
@@ -2714,6 +2723,62 @@ mod tests {
         indices(&body, &mut seen);
         assert_eq!(seen, ["0", "1", "2", "3", "-", "4"]);
         assert_eq!(body.child("tbl").unwrap().attr(TABLE), Some("0"));
+    }
+
+    /// A strict `w:ind` writes universal measures (`72pt`, `1in`) where
+    /// Transitional writes twips; the clause prints the same inches.
+    #[test]
+    fn a_universal_measure_indent_on_the_id_line_reads_as_twips() {
+        let p = body(
+            r#"<w:p><w:pPr><w:ind w:start="72pt" w:end="36pt" w:firstLine="18pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+        );
+        let p = p.child("p").unwrap();
+        let facts = LineFacts {
+            index: 0,
+            style: None,
+            outline: None,
+            heading: None,
+            marker: None,
+            level: 0,
+            page_break: false,
+            resolved: false,
+            comments: &[],
+            spans: &[],
+            empty: false,
+            unshown: &[],
+        };
+        let line = id_line(p, &facts, &Handles::default());
+        assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
+    }
+
+    /// A parsable-but-absurd measure is not a measure the schema spells
+    /// (`1e300pt`, `nanpt`): the clause drops, as it did before the Strict
+    /// reader, instead of printing 250-digit inches or `NaNin`
+    /// (#531 review defect 5).
+    #[test]
+    fn an_absurd_measure_indent_drops_its_clause() {
+        for start in ["1e300pt", "nanpt", "999999999999999999999999999in"] {
+            let p = body(&format!(
+                r#"<w:p><w:pPr><w:ind w:start="{start}" w:end="36pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#
+            ));
+            let p = p.child("p").unwrap();
+            let facts = LineFacts {
+                index: 0,
+                style: None,
+                outline: None,
+                heading: None,
+                marker: None,
+                level: 0,
+                page_break: false,
+                resolved: false,
+                comments: &[],
+                spans: &[],
+                empty: false,
+                unshown: &[],
+            };
+            let line = id_line(p, &facts, &Handles::default());
+            assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");
+        }
     }
 
     #[test]

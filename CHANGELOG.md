@@ -15,6 +15,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fractional plain values on table and frame geometry are rounded in
+  redline output — a validity repair.** A gdocs-style fractional dxa
+  (`w:tblpX="100.5"`, `w:framePr w:x="33.5"`) is schema-invalid on the
+  integer-typed attributes the Strict measure whitelist reads
+  (OpenXmlValidator: not a valid Int32), so `convert`'s output sweep rounds
+  them (101, 34) as it already did for indents, spacing and cell margins.
+  `jubarte debug` still reports the literal value: a diagnostic describes,
+  it does not repair.
+
 ### Added
 
 - **`convert --commonmark`** writes Word as plain CommonMark with
@@ -29,6 +40,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **Plain Markdown keeps Word's cross-reference targets:** every `_Ref…`
   bookmark prints its `<a id>`, since the REF fields that name it print as
   their text.
+- **`PdfOptions::comment_notes`** (hidden CLI flag `--comment-notes`)
+  attaches each comment as a PDF note at its anchor, for the exceptional
+  case that wants one.
 
 - **`convert --scholar`** sets Markdown as LaTeX's article class sets a
   manuscript (Latin Modern Roman 10pt, justified, bold headings, unstretched
@@ -141,6 +155,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   plain Markdown table, takes Table Grid (single 0.5pt borders all round, as
   Word's Insert Table makes it) instead of the borderless Normal Table.
   `debug --check render` reports both kinds of border.
+
+- **No PDF comment note by default.** `--revisions conventional` and
+  `custom` no longer write a `/Text` annotation per comment: viewers
+  painted it as a note icon over the commented words. The balloon still
+  shows every comment; `PdfOptions::comment_notes` brings the note back.
 
 - **The view nests list items by indentation.** An item past its list's
   first level is indented to the content column of the item it nests
@@ -342,6 +361,37 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **The view keeps a Word highlight's colour.** A highlight that is not
+  yellow prints as `<mark class="hl-green">…</mark>` (the 16 names Word
+  gives `w:highlight`), and the writer reads the class back, so green,
+  cyan and the rest round-trip instead of collapsing into yellow. A
+  stretch the view escapes (`<mark>file\_</mark>`) comes back as one
+  highlighted run, and `debug --check render` no longer counts a
+  highlight on a run that paints no glyph (a deleted page break) or
+  misses a Strict package's direct highlights.
+
+- **Literal CriticMarkup delimiters in a code block stay text.** A
+  `SourceCode` paragraph whose text holds `{++x++}` printed it into its
+  fence as is, and the next convert read it as a tracked change. The views
+  now break such delimiters for the fence, and only there, where Markdown
+  reads no backslash escape: a delimiter shape with a run of backslashes at
+  its break point (`{` + the run + `++`, `++` + the run + `}`, `~` + the
+  run + `>`) is written with the run made odd and read back halved
+  (`{\++` for literal `{++`, `{\\\++` for literal `{\++`), every other
+  backslash staying as written. The text comes back exactly, tracked
+  changes inside a code block still round-trip (their delimiters are never
+  escaped by a backslash before them), and hand-written code such as
+  `C:\\path`, a regex `\\d+` or LaTeX `\\` reaches Word byte-identical
+  instead of losing half its backslashes.
+
+- **`--commonmark` escapes CriticMarkup and Markdown syntax.** A document
+  without tracked changes printed its text as is, so Word text such as
+  `{++a++}`, `\{++a++}`, `- not a list`, `1. not a list`, `# not a
+  heading`, `> not a quote`, `*not em*`, `` `not code` ``, `[not](link)`
+  or `<b>not html</b>` came back as real changes, lists, a heading, a
+  quote, emphasis, code, a link or HTML. The plain conversion now escapes
+  both, as the agent view always did, and round-trips as itself.
+
 - **A header or footer keeps its own text colour, borders and alignment.**
   The view prints a story whose paragraphs carry them paragraph by paragraph
   (`id: header1`, then `p0: {text: …, center, color: "595959", border: bottom
@@ -500,6 +550,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   AGENTS.md); `self-update` is listed last.
 
 ### Breaking (library)
+
+- **`PdfOptions` gains `comment_notes`.** A `PdfOptions { … }` literal that
+  names every field needs it (or `..PdfOptions::default()`).
 
 - `RenderRequest::pages` counts document pages and narrows the PDF and the
   report as well as the PNGs (an empty list writes no PDF).

@@ -14,7 +14,9 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Alignment, CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
+};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
@@ -129,21 +131,31 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     } else {
         markdown
     };
-    let source = if options.critic {
-        critic::encode(&block_changes(markdown))
+    let (source, critic_warnings) = if options.critic {
+        critic::encode_checked(&block_changes(markdown))
     } else {
-        markdown.to_string()
+        (markdown.to_string(), Vec::new())
     };
     let source = page_commands(&source);
+    let source = table_pipes(&source);
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
     writer.item_levels = item_levels(&source);
     writer.label_definitions = label_definitions(&source);
-    for event in Parser::new_ext(&source, parser_options()) {
+    let parser = Parser::new_ext(&source, parser_options());
+    writer.document.drawing_defs = parser
+        .reference_definitions()
+        .iter()
+        .map(|(name, def)| (name.to_string(), def.dest.to_string()))
+        .collect();
+    writer.document.drawing_backings = super::from_docx::drawing::backing_comments(&source);
+    for event in parser {
         writer.event(event);
     }
-    writer.finish()
+    let mut document = writer.finish();
+    document.warnings.splice(..0, critic_warnings);
+    document
 }
 
 /// CriticMarkup changes that hold whole blocks, rewritten so the Markdown
@@ -437,6 +449,211 @@ fn page_commands(source: &str) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// GFM reads an even backslash run before a table row's pipe (`\\|`) as
+/// escaped backslashes and then the cell separator, but pulldown-cmark
+/// shields a pipe behind any backslash, so the rows the reader writes
+/// (`|\\|\\\\|` for the cells `\` and `\\`) and hand-written ones lose
+/// cells, or the table with them. A space moves such a run off its pipe —
+/// a cell's surrounding spaces are not its text — in the rows of tables
+/// whose columns then match their delimiter row, and nowhere else: front
+/// matter and fenced code keep every line, and a line a space would
+/// change without making the table is left as it was.
+fn table_pipes(source: &str) -> String {
+    let lines: Vec<&str> = source.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(source.len());
+    let mut fence: Option<&str> = None;
+    let mut front_matter = source.starts_with("---\n") || source.starts_with("---\r\n");
+    let mut in_table = false;
+    for (n, line) in lines.iter().enumerate() {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        let trimmed = bare.trim();
+        if front_matter {
+            if n > 0 && (trimmed == "---" || trimmed == "...") {
+                front_matter = false;
+            }
+            out.push_str(line);
+            continue;
+        }
+        let indent = bare.len() - bare.trim_start().len();
+        if let Some(open) = fence {
+            if indent < 4
+                && trimmed.starts_with(open)
+                && trimmed.trim_start_matches(open).trim().is_empty()
+            {
+                fence = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if indent < 4 && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
+            fence = Some(&trimmed[..3]);
+            in_table = false;
+            out.push_str(line);
+            continue;
+        }
+        let row = indent < 4 && trimmed.starts_with('|');
+        if !row {
+            in_table = false;
+            out.push_str(line);
+            continue;
+        }
+        let unshielded = unshield_pipes(bare);
+        if in_table || unshielded == bare {
+            out.push_str(&unshielded);
+            out.push_str(&line[bare.len()..]);
+            continue;
+        }
+        // The row opens a table only when the columns it names, with the
+        // runs moved off their pipes, are the delimiter row's.
+        in_table = lines.get(n + 1).is_some_and(|next| {
+            let next = next.trim_end_matches(['\n', '\r']);
+            let columns = next.len() - next.trim_start().len();
+            columns < 4 && delimiter_row(next)
+        }) && row_columns(&unshielded)
+            == lines
+                .get(n + 1)
+                .map(|next| row_columns(next.trim_end_matches(['\n', '\r'])))
+                .unwrap_or(0);
+        out.push_str(if in_table { &unshielded } else { bare });
+        out.push_str(&line[bare.len()..]);
+    }
+    out
+}
+
+/// `line` with every even backslash run before a pipe moved off it by a
+/// space. Code spans, equations and HTML tags are skipped: a pipe inside
+/// them is part of the cell, backslashes or not, and a space would change
+/// their text.
+fn unshield_pipes(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    // The backslash run before the byte at `at`.
+    let mut run = 0usize;
+    let mut at = 0usize;
+    while at < bytes.len() {
+        let rest = &line[at..];
+        let c = rest.chars().next().unwrap_or_default();
+        match c {
+            '\\' => {
+                run += 1;
+                out.push('\\');
+                at += 1;
+            }
+            '`' if run.is_multiple_of(2) => {
+                let ticks = rest.chars().take_while(|&c| c == '`').count();
+                let close = rest[ticks..]
+                    .char_indices()
+                    .find(|(i, _)| {
+                        rest[ticks + i..].starts_with(&"`".repeat(ticks))
+                            && rest[ticks + i + ticks..]
+                                .chars()
+                                .next()
+                                .is_none_or(|c| c != '`')
+                    })
+                    .map(|(i, _)| ticks + i + ticks);
+                let end = close.unwrap_or(ticks);
+                out.push_str(&rest[..end]);
+                at += end;
+                run = 0;
+            }
+            '$' if run.is_multiple_of(2) => {
+                let fence = usize::from(rest.starts_with("$$")) + 1;
+                let mut close = None;
+                let mut i = at + fence;
+                while i < bytes.len() {
+                    let step = line[i..].chars().next().map_or(1, char::len_utf8);
+                    match bytes[i] {
+                        // A backslash escapes the character after it, as an
+                        // equation's closing `$` is found.
+                        b'\\' => i += 1 + line[i + 1..].chars().next().map_or(1, char::len_utf8),
+                        b'$' if line[i..].starts_with(&"$".repeat(fence)) => {
+                            close = Some(i + fence);
+                            break;
+                        }
+                        _ => i += step,
+                    }
+                }
+                // An unclosed `$` is text, as pulldown-cmark reads it.
+                let end = close.unwrap_or(at + 1);
+                out.push_str(&line[at..end]);
+                at = end;
+                run = 0;
+            }
+            '<' if run.is_multiple_of(2)
+                && rest
+                    .chars()
+                    .nth(1)
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '/') =>
+            {
+                let end = rest
+                    .find('>')
+                    .filter(|&close| html_tag(&rest[..=close]).is_some())
+                    .map_or(1, |close| close + 1);
+                out.push_str(&rest[..end]);
+                at += end;
+                run = 0;
+            }
+            '|' => {
+                if run >= 2 && run.is_multiple_of(2) {
+                    out.push(' ');
+                }
+                out.push('|');
+                at += 1;
+                run = 0;
+            }
+            _ => {
+                out.push(c);
+                at += c.len_utf8();
+                run = 0;
+            }
+        }
+    }
+    out
+}
+
+/// Whether `line` is a pipe table's delimiter row (`|---|:-:|`), every
+/// column `:`-padded hyphens.
+fn delimiter_row(line: &str) -> bool {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let line = line.strip_suffix('|').unwrap_or(line);
+    line.split('|').all(|cell| {
+        let cell = cell.trim();
+        let cell = cell.strip_prefix(':').unwrap_or(cell);
+        let cell = cell.strip_suffix(':').unwrap_or(cell);
+        !cell.is_empty() && cell.bytes().all(|b| b == b'-')
+    })
+}
+
+/// The columns a table row names, its pipes counted the GFM way: an odd
+/// backslash run before a pipe escapes it, an even one is backslashes the
+/// row's cells hold.
+fn row_columns(line: &str) -> usize {
+    let line = line.trim_end();
+    let bytes = line.as_bytes();
+    let (mut pipes, mut run, mut last_pipe) = (0usize, 0usize, None);
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'\\' => run += 1,
+            b'|' => {
+                if run.is_multiple_of(2) {
+                    pipes += 1;
+                    last_pipe = Some(i);
+                }
+                run = 0;
+            }
+            _ => run = 0,
+        }
+    }
+    if line.starts_with('|') {
+        pipes -= 1;
+    }
+    match last_pipe {
+        Some(i) if line[i + 1..].trim().is_empty() => pipes,
+        _ => pipes + 1,
+    }
 }
 
 /// What the view's table line says about one table, read before the table:
@@ -1096,6 +1313,94 @@ fn html_tag(html: &str) -> Option<HtmlTag> {
     })
 }
 
+/// The start token an end token closes, if it is one.
+fn closes(token: Token) -> Option<Token> {
+    match token {
+        Token::InsertEnd => Some(Token::InsertStart),
+        Token::DeleteEnd => Some(Token::DeleteStart),
+        Token::SubstituteEnd => Some(Token::SubstituteStart),
+        Token::HighlightEnd => Some(Token::HighlightStart),
+        Token::CommentEnd => Some(Token::CommentStart),
+        Token::MarkEnd => Some(Token::MarkStart),
+        _ => None,
+    }
+}
+
+/// The CriticMarkup tokens in `tokens` that cross the edge of text the
+/// writer drops or captures (an HTML comment, image alt text), in the
+/// order they were read: the closers of spans opened before it, the
+/// openers of spans closed after it. Spans whole inside are dropped with
+/// the text. A comment's tokens count as its own only if its `<<}` is
+/// there too, because nothing nests in a comment, and a substitution
+/// keeps its `~>` when its `~~}` is not there too, or the text after
+/// the drop would read as its old half.
+fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
+    // Which opener a closer of the same text closes, so a span whole
+    // inside is known before anything replays.
+    let mut closed = vec![false; tokens.len()];
+    let mut open: Vec<(Token, usize)> = Vec::new();
+    for (at, token) in tokens.iter().enumerate() {
+        if let Some(opener) = closes(*token) {
+            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+                let (_, start) = open.remove(index);
+                closed[start] = true;
+            }
+        } else if matches!(
+            token,
+            Token::InsertStart
+                | Token::DeleteStart
+                | Token::SubstituteStart
+                | Token::HighlightStart
+                | Token::CommentStart
+                | Token::MarkStart
+        ) {
+            open.push((*token, at));
+        }
+    }
+    let mut loose = Vec::new();
+    let mut open: Vec<(Token, usize)> = Vec::new();
+    for (at, token) in tokens.into_iter().enumerate() {
+        if let Some(opener) = closes(token) {
+            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+                open.remove(index);
+            } else {
+                // Its opener is outside: the closer crosses the edge.
+                loose.push(token);
+            }
+            continue;
+        }
+        match token {
+            Token::SubstituteSeparator
+                if open.last().is_some_and(|&(start, opened)| {
+                    start == Token::SubstituteStart && closed[opened]
+                }) => {}
+            // A field's marks are part of its text, not a span.
+            Token::FieldStart | Token::FieldSeparator | Token::FieldEnd => {}
+            _ => {
+                if matches!(
+                    token,
+                    Token::InsertStart
+                        | Token::DeleteStart
+                        | Token::SubstituteStart
+                        | Token::HighlightStart
+                        | Token::CommentStart
+                        | Token::MarkStart
+                ) {
+                    open.push((token, at));
+                    // An opener nothing in the text closes crosses the
+                    // edge; one that closes here drops with the text.
+                    if !closed[at] {
+                        loose.push(token);
+                    }
+                } else {
+                    loose.push(token);
+                }
+            }
+        }
+    }
+    loose
+}
+
 /// The Markdown extensions jubarte reads, for the writer and for
 /// [`super::pages`].
 pub(super) fn parser_options() -> Options {
@@ -1107,6 +1412,21 @@ pub(super) fn parser_options() -> Options {
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
         | Options::ENABLE_MATH
+}
+
+/// A `class="hl-<colour>"` value: `<colour>` one of Word's 16 named
+/// highlight colours (`yellow`, `green`, `cyan`, …, `lightGray`, `black`,
+/// `white`), read without regard to case, the prefix's included (a
+/// hand-edited `HL-Cyan` is `cyan`). Anything else is the default yellow.
+fn hl_color_class(class: &str) -> Option<&'static str> {
+    let colour = class
+        .get(..3)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("hl-"))
+        .map(|_| &class[3..])?;
+    crate::edit::HIGHLIGHTS
+        .iter()
+        .copied()
+        .find(|h| *h != "none" && h.eq_ignore_ascii_case(colour))
 }
 
 const HEADINGS: [&str; 6] = [
@@ -1271,7 +1591,13 @@ struct Writer<'o, 'a> {
     /// Runs a task list marker wrote at the start of the paragraph: a
     /// change that starts right after them takes them in.
     prefix_runs: Vec<usize>,
-    image: Option<(String, String)>,
+    /// The open image: its destination, its reference name (`image1` of
+    /// `![alt][image1]`, else the destination), its alt text so far, and
+    /// the CriticMarkup tokens the alt held that cross its edge.
+    image: Option<(String, String, String, Vec<Token>)>,
+    /// A ` ```svg NAME ` or ` ```mermaid NAME ` fence being read: its
+    /// language, its backing's name and the source accumulated so far.
+    drawing_block: Option<(String, String, String)>,
     metadata: Option<String>,
 
     // Inline formatting depth.
@@ -1283,6 +1609,10 @@ struct Writer<'o, 'a> {
     subscript: u32,
     /// Open `<mark>` tags: a yellow highlight.
     mark: u32,
+    /// The colour of each open `<mark>`, innermost last (`<mark>` is the
+    /// default yellow; `<mark class="hl-<colour>">` is `colour`). A
+    /// non-empty stack sets the colour of the next run; pop on close.
+    mark_color: Vec<&'static str>,
     /// The inline HTML tags dropped so far, each warned of once.
     dropped_html: Vec<String>,
     code: u32,
@@ -1402,6 +1732,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_cells: RowCells::Empty,
             prefix_runs: Vec::new(),
             image: None,
+            drawing_block: None,
             metadata: None,
             bold: 0,
             italic: 0,
@@ -1410,6 +1741,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             superscript: 0,
             subscript: 0,
             mark: 0,
+            mark_color: Vec::new(),
             dropped_html: Vec::new(),
             code: 0,
             link: 0,
@@ -1460,6 +1792,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             // indentation past the item's content column over as text.
             Event::Text(text) if self.html_block.is_some() => {
                 if let Some(block) = &mut self.html_block {
+                    block.push_str(&text);
+                }
+            }
+            Event::Text(text) if self.drawing_block.is_some() => {
+                if let Some((_, _, block)) = &mut self.drawing_block {
                     block.push_str(&text);
                 }
             }
@@ -1522,10 +1859,23 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.quote += 1;
             }
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(kind) => {
                 self.end_paragraph();
                 self.code_block = true;
                 self.begin_paragraph();
+                // ` ```svg NAME ` and ` ```mermaid NAME ` are a drawing's
+                // readable layer: gather the source and let the block's
+                // end splice `NAME`'s backing.
+                if let CodeBlockKind::Fenced(info) = &kind {
+                    let mut words = info.split_whitespace();
+                    if let Some(lang) = words.next()
+                        && matches!(lang, "svg" | "mermaid")
+                        && let Some(name) = words.next()
+                    {
+                        self.drawing_block =
+                            Some((lang.to_string(), name.to_string(), String::new()));
+                    }
+                }
             }
             Tag::List(first) => {
                 self.end_paragraph();
@@ -1637,22 +1987,30 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .table_plan
                     .as_ref()
                     .and_then(|plan| plan.style.clone())
-                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()))
+                    .or_else(|| {
+                        self.document
+                            .table_style
+                            .as_ref()
+                            .map(|(id, _, _)| id.clone())
+                    })
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
-                    let border = self
+                    let legend = self
                         .document
                         .table_style
                         .as_ref()
-                        .filter(|(legend, _)| legend == id)
-                        .and_then(|(_, border)| *border);
+                        .filter(|(legend, ..)| legend == id);
+                    let border = legend.and_then(|(_, border, _)| *border);
                     // Word's thin Table Grid, unless the legend gives it a
                     // border of its own (`TableGrid, all borders 1.5pt`).
                     if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
                         self.document.styles.insert("TableGrid");
                     } else {
-                        self.document.table_styles.insert(id.clone(), border);
+                        let name = legend.and_then(|(_, _, name)| name.clone());
+                        self.document
+                            .table_styles
+                            .insert(id.clone(), (border, name));
                     }
                 }
                 let formats = self.table_formats();
@@ -1713,9 +2071,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 };
                 self.link_start(&dest, title);
             }
-            Tag::Image { dest_url, .. } => {
+            Tag::Image { dest_url, id, .. } => {
                 if self.image.is_none() {
-                    self.image = Some((critic::decode(&dest_url), String::new()));
+                    self.image = Some((
+                        critic::decode(&dest_url),
+                        critic::decode(&id),
+                        String::new(),
+                        Vec::new(),
+                    ));
                 }
             }
             Tag::MetadataBlock(_) => self.metadata = Some(String::new()),
@@ -1744,6 +2107,52 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.quote = self.quote.saturating_sub(1);
             }
             TagEnd::CodeBlock => {
+                if let Some((lang, name, text)) = self.drawing_block.take() {
+                    use super::from_docx::drawing;
+                    let dest = self.document.drawing_backings.get(&name).cloned();
+                    let drawing = dest.and_then(|dest| drawing::decode(&dest).ok()).and_then(
+                        |mut drawing| match lang.as_str() {
+                            "svg" => {
+                                use base64::Engine;
+                                drawing
+                                    .fill_slot_data(
+                                        &base64::engine::general_purpose::STANDARD
+                                            .encode(text.trim().as_bytes()),
+                                        "image/svg+xml",
+                                    )
+                                    .then_some(drawing)
+                            }
+                            // A `mermaid` fence's text is the chart it
+                            // was: unchanged, the payload writes back byte
+                            // for byte; edited, its chart part is patched.
+                            _ if drawing.mermaid_unchanged(&text) => Some(drawing),
+                            _ if drawing.rebuild_mermaid(&text) => Some(drawing),
+                            _ => {
+                                self.document.warnings.push(format!(
+                                    "mermaid '{name}' names a drawing this text cannot edit"
+                                ));
+                                Some(drawing)
+                            }
+                        },
+                    );
+                    match drawing {
+                        Some(drawing) => {
+                            // A drawing's paragraph: not SourceCode.
+                            if let Some(index) = self.paragraph
+                                && let Some(Item::Paragraph(paragraph)) =
+                                    self.story().get_mut(index)
+                            {
+                                paragraph.style = None;
+                            }
+                            self.document.drawings.push(drawing);
+                            let index = self.document.drawings.len() - 1;
+                            self.push(Content::Drawing(index));
+                        }
+                        // No backing, or one that did not read: the fence
+                        // stays the code it shows.
+                        None => self.plain(&text),
+                    }
+                }
                 // The block's last line ends in a newline: no break after it.
                 let story = self.story();
                 if matches!(
@@ -1822,9 +2231,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::HtmlBlock => {
                 if let Some(block) = self.html_block.take() {
-                    if comments_only(&block) {
+                    let view_lines = self.view
+                        && self.cell.is_none()
+                        && self.comment.is_none()
+                        && self.target.is_none();
+                    if comments_only(&block) && (block.trim() == PAGE_BREAK_LINE || view_lines) {
                         self.id_lines(&block);
                     } else {
+                        // Comments of the author's own, and comments
+                        // inside other markup, are dropped — but their
+                        // delimiters still count.
                         self.html_text(&block);
                     }
                 }
@@ -1949,12 +2365,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.textless_paragraph();
             if let Some(count) = view_notes::empty_paragraphs(line) {
                 self.end_paragraph();
-                // One empty paragraph whose id line says more than `empty`.
+                // An id line that says more than `empty` (`<!-- p7
+                // page-break -->`, `<!-- p2 TitlePage, empty -->`) stands
+                // for every paragraph it numbers, each with what it says.
                 if let Some(said) =
                     view_notes::id_line(line).filter(|said| *said != view_notes::IdLine::default())
                 {
-                    self.id_line = Some(said);
-                    self.textless_paragraph();
+                    for _ in 0..count {
+                        self.id_line = Some(said.clone());
+                        self.textless_paragraph();
+                    }
                     continue;
                 }
                 for _ in 0..count {
@@ -1971,6 +2391,12 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// A raw HTML block's text, a paragraph per block element, with a
     /// warning that its markup is dropped.
     fn html_text(&mut self, html: &str) {
+        // Comments inside the block are dropped: their delimiters still
+        // count, as CriticMarkup was read first.
+        let tokens = self.html_comment_tokens(html);
+        for token in tokens {
+            self.token(token);
+        }
         if self.comment.is_some() {
             return;
         }
@@ -2069,6 +2495,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 paragraph.style = Some(style.into());
                 // `# Text` under its own style: the level goes with it.
                 paragraph.outline = self.heading.map(|level| level - 1);
+            } else if let Some(outline) = line.outline {
+                // `# Text` that states its own level, with no style: the
+                // writer's `HeadingN` must not step in where the document
+                // had none.
+                paragraph.style = None;
+                // The clause's bound is 1..=6, so the level cannot be empty.
+                paragraph.outline = outline.checked_sub(1).map(|level| level as usize);
             }
             paragraph.align = line.align.or(paragraph.align);
             self.page_break_due = line.page_break;
@@ -2424,6 +2857,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             superscript: self.superscript > 0,
             subscript: self.subscript > 0,
             mark: self.mark > 0,
+            mark_color: self.mark_color.last().copied(),
             code: self.code > 0,
             link: self.link > 0,
         }
@@ -2440,6 +2874,41 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         if self.code > 0 {
             self.document.styles.insert("VerbatimChar");
+        }
+        // Pulldown-cmark splits a stretch that holds a CommonMark delimiter
+        // (`<mark>file\_</mark>` becomes `file` + `_`) even when the writer
+        // holds the same marks on both sides; merge into the previous text
+        // run so the round-trip keeps one run per stretch. A prefix run (a
+        // task box) is not one to merge into: the paragraph's first change
+        // claims the prefix runs when no text run precedes them, so text
+        // merged into the box would ride along into the revision.
+        if let Content::Text(ref text) = content {
+            let last_prefix = self.prefix_runs.last().copied();
+            if last_prefix != Some(self.story().len() - 1) {
+                let now = self.format();
+                let current_change = self.change;
+                let current_scope = self.scope.map(|(_, group)| group);
+                let story = self.story();
+                let last = story.last_mut();
+                let merge = matches!(
+                    last,
+                    Some(Item::Run(Run {
+                        content: Content::Text(_),
+                        format,
+                        change,
+                        scope,
+                    })) if *format == now && *change == current_change && *scope == current_scope
+                );
+                if merge
+                    && let Some(Item::Run(Run {
+                        content: Content::Text(prev_text),
+                        ..
+                    })) = last
+                {
+                    prev_text.push_str(text);
+                    return;
+                }
+            }
         }
         let run = Run {
             content,
@@ -2461,8 +2930,18 @@ impl<'o, 'a> Writer<'o, 'a> {
             metadata.push_str(text);
             return;
         }
-        if let Some((_, alt)) = &mut self.image {
-            alt.push_str(&critic::decode(text));
+        if let Some((_, _, alt, loose)) = &mut self.image {
+            // Alt text is kept, its markup is not; the CriticMarkup it
+            // holds still took effect when it was read, before Markdown,
+            // so the delimiters of spans that cross the image's edge are
+            // remembered and applied where the image ends. A span whole
+            // inside the alt is dropped with it.
+            let mut tokens = Vec::new();
+            self.pieces.feed(text, |piece| match piece {
+                Piece::Text(text) => alt.push_str(text),
+                Piece::Token(token) => tokens.push(token),
+            });
+            loose.extend(loose_tokens(tokens));
             return;
         }
         if !self.options.critic {
@@ -2515,8 +2994,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             let text = format!("{fence}{}{fence}", critic::restore(latex));
             if let Some(metadata) = &mut self.metadata {
                 metadata.push_str(&text);
-            } else if let Some((_, alt)) = &mut self.image {
-                alt.push_str(&text);
+            } else if let Some((_, _, alt, loose)) = &mut self.image {
+                let mut tokens = Vec::new();
+                self.pieces.feed(&text, |piece| match piece {
+                    Piece::Text(text) => alt.push_str(text),
+                    Piece::Token(token) => tokens.push(token),
+                });
+                loose.extend(loose_tokens(tokens));
             } else {
                 self.plain(&text);
             }
@@ -2690,8 +3174,16 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     fn token(&mut self, token: Token) {
         if self.comment.is_some() {
-            if token == Token::CommentEnd {
-                self.end_comment();
+            match token {
+                Token::CommentEnd => self.end_comment(),
+                // A blank line inside `{>>…<<}`: another comment
+                // paragraph, as `<br>` gives one.
+                Token::CommentBreak => {
+                    if let Some(comment) = &mut self.comment {
+                        comment.paragraphs.push(String::new());
+                    }
+                }
+                _ => {}
             }
             return;
         }
@@ -2739,6 +3231,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Token::CommentStart => self.begin_comment(),
             Token::CommentEnd => {}
+            Token::CommentBreak => {}
             Token::MarkStart => self.mark += 1,
             Token::MarkEnd => self.mark = self.mark.saturating_sub(1),
             Token::FieldStart => self.field_code = Some(String::new()),
@@ -2816,6 +3309,52 @@ impl<'o, 'a> Writer<'o, 'a> {
         };
         if let Some(mut anchor) = self.comment_anchor.take() {
             let whole = comment.paragraphs.join("\n");
+            // A note that names another change after ` on `: the change it
+            // follows was that one's only content (`A` inserted what `B`
+            // deleted), so it goes back inside it, outermost last. Deeper
+            // chains name what Word refuses to hold (a revision nested in
+            // its own kind), so only the first outer is rebuilt.
+            let sole = self.sole_change(&anchor);
+            if let Some((kind, inner)) = sole
+                && let Some(tags) = view_notes::nested_revision_tags(&whole)
+            {
+                let (author, date) = self.view_author(&tags[0].handle, tags[0].date.as_deref());
+                self.document.attributions.insert(inner, (author, date));
+                if !tags[0].ids.is_empty() {
+                    self.document
+                        .revision_ids
+                        .insert(inner, tags[0].ids.clone());
+                }
+                if let Some(tag) = tags.get(1) {
+                    let outer = (other(kind), self.tag_serial(tag));
+                    self.document.wraps.insert(inner, outer);
+                    self.unshown_rebuilt(&[outer.1]);
+                }
+                return;
+            }
+            if let Some((kind, inner)) = sole
+                && let Some(parts) = view_notes::nested_plain_revisions(&whole)
+            {
+                let first = &parts[0];
+                self.document
+                    .attributions
+                    .insert(inner, (first.author.clone(), first.date.clone()));
+                if !first.ids.is_empty() {
+                    self.document.revision_ids.insert(inner, first.ids.clone());
+                }
+                if let Some(part) = parts.get(1) {
+                    self.serial += 1;
+                    let outer = (other(kind), self.serial);
+                    self.document
+                        .attributions
+                        .insert(outer.1, (part.author.clone(), part.date.clone()));
+                    if !part.ids.is_empty() {
+                        self.document.revision_ids.insert(outer.1, part.ids.clone());
+                    }
+                    self.document.wraps.insert(inner, outer);
+                }
+                return;
+            }
             // The view's tag note: `r1+2 @AC` names both sides, `r1 @AC;
             // r2 @JD` each side in turn.
             if let Some(tags) = view_notes::revision_tags(&whole) {
@@ -3075,6 +3614,40 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.push(Content::NoteReference(position));
     }
 
+    /// The tokens of text the writer drops or captures that still mark
+    /// changes around it: CriticMarkup is read before Markdown, so a
+    /// closer in dropped text still closes the span it belongs to.
+    fn dropped_tokens(&mut self, text: &str) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        self.pieces.feed(text, |piece| {
+            if let Piece::Token(token) = piece {
+                tokens.push(token);
+            }
+        });
+        loose_tokens(tokens)
+    }
+
+    /// [`Self::dropped_tokens`] over the text inside a raw HTML block's
+    /// comments (`<!-- … -->`), which the block's reading drops.
+    fn html_comment_tokens(&mut self, html: &str) -> Vec<Token> {
+        let mut rest = html;
+        let mut inner = String::new();
+        while let Some(open) = rest.find("<!--") {
+            let comment = &rest[open + 4..];
+            match comment.find("-->") {
+                Some(end) => {
+                    inner.push_str(&comment[..end]);
+                    rest = &comment[end + 3..];
+                }
+                None => {
+                    inner.push_str(comment);
+                    break;
+                }
+            }
+        }
+        self.dropped_tokens(&inner)
+    }
+
     fn inline_html(&mut self, html: &str) {
         if self.note_clause(html) {
             return;
@@ -3085,6 +3658,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             empty,
         }) = html_tag(html)
         else {
+            // A comment, declaration or processing instruction: dropped,
+            // but its delimiters still count.
+            let tokens = self.dropped_tokens(html);
+            for token in tokens {
+                self.token(token);
+            }
             return;
         };
         if name == "br" {
@@ -3144,6 +3723,18 @@ impl<'o, 'a> Writer<'o, 'a> {
             *counter = counter.saturating_sub(1);
         } else {
             *counter += 1;
+        }
+        if name == "mark" {
+            if closing {
+                self.mark_color.pop();
+            } else if let Some(colour) = html_attribute(html, "class")
+                .as_deref()
+                .and_then(|c| c.split_whitespace().find_map(hl_color_class))
+            {
+                self.mark_color.push(colour);
+            } else {
+                self.mark_color.push("yellow");
+            }
         }
     }
 
@@ -3218,6 +3809,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         ] {
             *counter = 0;
         }
+        self.mark_color.clear();
     }
 
     /// `<br>`: a new paragraph of a comment, of a cell whose `<br>`s end
@@ -3240,9 +3832,63 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn picture(&mut self) {
-        let Some((url, alt)) = self.image.take() else {
+        let Some((url, id, alt, loose)) = self.image.take() else {
             return;
         };
+        // A `drawing:` destination is a whole element and its parts,
+        // spliced back as it was; a payload that does not read is alt text.
+        if url.starts_with("drawing:") {
+            match super::from_docx::drawing::decode(&url) {
+                Ok(drawing) => {
+                    self.document.drawings.push(drawing);
+                    let index = self.document.drawings.len() - 1;
+                    self.push(Content::Drawing(index));
+                }
+                Err(_) => self.plain(alt.trim()),
+            }
+            return;
+        }
+        // A `data:` destination names its bytes. A `<!-- imageN drawing:…
+        // -->` backing makes it the drawing it was: the anchor, the
+        // wrapping, the parts, with the `data:` bytes filling the slot the
+        // readable layer carries. Without a backing it is a plain picture,
+        // shared with any other `data:` picture of the same bytes.
+        if let Some((_mime, b64)) = super::from_docx::drawing::data_uri(&url) {
+            use super::from_docx::drawing;
+            if let Some(drawing) = drawing::lookup(
+                &id,
+                &self.document.drawing_defs,
+                &self.document.drawing_backings,
+            ) {
+                self.document.drawings.push(drawing);
+                let index = self.document.drawings.len() - 1;
+                self.push(Content::Drawing(index));
+                return;
+            }
+            let picture =
+                drawing::base64_decode(b64).and_then(|bytes| read_picture(bytes, alt.trim()));
+            match picture {
+                Some(picture) => {
+                    let index = self
+                        .document
+                        .pictures
+                        .iter()
+                        .position(|seen| seen.bytes == picture.bytes)
+                        .unwrap_or_else(|| {
+                            self.document.pictures.push(picture);
+                            self.document.pictures.len() - 1
+                        });
+                    self.push(Content::Picture(index));
+                }
+                None => {
+                    self.document
+                        .warnings
+                        .push(format!("image '{id}' was written as its alt text"));
+                    self.plain(alt.trim());
+                }
+            }
+            return;
+        }
         let loaded = self.options.images.map(|load| load(&url));
         let picture = loaded
             .flatten()
@@ -3261,6 +3907,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 self.plain(alt.trim());
             }
+        }
+        for token in loose {
+            self.token(token);
         }
     }
 
@@ -3342,7 +3991,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.document.table_style = view_styles::table_style(text);
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
-        if let Some((id, None)) = &self.document.table_style
+        if let Some((id, None, _)) = &self.document.table_style
             && !super::package::is_built_in_table_style(id)
             && text.lines().any(|line| {
                 let line = view_styles::without_comment(line).trim();
@@ -3511,6 +4160,38 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.document.revision_ids.insert(serial, tag.ids.clone());
         }
         serial
+    }
+
+    /// The single change a note follows, when the anchor names exactly one
+    /// that is still the span the paragraph last closed: its kind and
+    /// serial. A substitution's second side anchors no nested note.
+    fn sole_change(&self, anchor: &Anchor) -> Option<(Kind, u32)> {
+        let serials: Vec<u32> = anchor.serials.iter().flatten().copied().collect();
+        self.span_start
+            .filter(|span| serials.as_slice() == [span.serial])
+            .map(|span| (span.kind, span.serial))
+    }
+
+    /// The paragraph's id line names a change a note rebuilt as unshown
+    /// (`rev r1 @AL` after `{--x--}{>>r3 @BO on r1 @AL<<}`): its mark is
+    /// written, so an empty one must not follow it.
+    fn unshown_rebuilt(&mut self, nested: &[u32]) {
+        let ids: Vec<u32> = nested
+            .iter()
+            .filter_map(|serial| self.document.revision_ids.get(serial))
+            .flatten()
+            .copied()
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        if let Some(at) = self.paragraph
+            && let Some(Item::Paragraph(paragraph)) = self.story().get_mut(at)
+        {
+            paragraph
+                .unshown
+                .retain(|mark| mark.id.is_none_or(|id| !ids.contains(&id)));
+        }
     }
 
     /// Fixes `paragraph`'s mark as a view line says it: `mark`, numbered and
@@ -4280,6 +4961,14 @@ fn finish_story(items: &mut Vec<Item>) {
     }
 }
 
+/// The kind of change nested inside one of `kind`: the other one.
+fn other(kind: Kind) -> Kind {
+    match kind {
+        Kind::Insert => Kind::Delete,
+        Kind::Delete => Kind::Insert,
+    }
+}
+
 /// The author and date of an attribution, a comment that is only
 /// `Name (date)` or `(date)` (the date ISO 8601, as Word writes it): how
 /// CriticMarkup records who made the change before it, and how a document
@@ -4510,6 +5199,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn even_backslash_runs_move_off_the_pipes_they_shield() {
+        // GFM reads an even backslash run before a table row's pipe as
+        // escaped backslashes and then the cell separator, but
+        // pulldown-cmark shields a pipe behind any backslash: the run moves
+        // off it by a space, which is not a cell's text. An odd run escapes
+        // the pipe, which is the cell's own.
+        assert_eq!(unshield_pipes(r"|\\|\\\\|"), r"|\\ |\\\\ |");
+        assert_eq!(unshield_pipes(r"a\|b \\| c"), r"a\|b \\ | c");
+        assert_eq!(unshield_pipes(r"|\\\|x"), r"|\\\|x");
+        // A pipe inside a code span, an equation or an HTML tag is part of
+        // the cell, backslashes or not: a space there would change its
+        // text, so everything is left as written.
+        let spans = "|`a\\\\|b` x|$a\\\\|b$|<i t=\"a\\\\|b\"> y|";
+        assert_eq!(unshield_pipes(spans), spans);
+    }
+
+    #[test]
+    fn a_rows_pipes_unshield_only_where_a_table_matches_them() {
+        // The rows of tables whose columns, runs moved off their pipes,
+        // match the delimiter row; a row that opens none keeps its bytes,
+        // and so does everything that is not a table row at all.
+        assert_eq!(
+            table_pipes("|\\\\|\\\\\\\\|\n|-|-|\n"),
+            "|\\\\ |\\\\\\\\ |\n|-|-|\n"
+        );
+        assert_eq!(table_pipes("|\\\\|x|y\n|-|-|\n"), "|\\\\|x|y\n|-|-|\n");
+        assert_eq!(table_pipes("\\\\|x\n"), "\\\\|x\n");
+        assert_eq!(table_pipes("    \\\\|x\n"), "    \\\\|x\n");
+        assert_eq!(table_pipes("```\n\\\\|x\n```\n"), "```\n\\\\|x\n```\n");
+        assert_eq!(
+            table_pipes("---\ntext: |\n  \\\\|x\n---\n"),
+            "---\ntext: |\n  \\\\|x\n---\n"
+        );
+    }
+
+    #[test]
     fn dates_are_iso_8601_to_the_minute_or_finer() {
         for date in [
             "2026-01-02T03:04",
@@ -4597,6 +5322,38 @@ mod tests {
         );
         assert_eq!(attribution("Bo (2026-01-02T03:04:05Z): why"), None);
         assert_eq!(attribution("Bo"), None);
+    }
+
+    /// A substitution whose start and separator sit in text the writer
+    /// drops or captures, with its end outside, keeps its separator in
+    /// the replayed tokens: without it the text after the drop reads as
+    /// the old half. A substitution whole inside drops with the text.
+    #[test]
+    fn a_substitution_split_by_dropped_text_keeps_its_separator() {
+        assert_eq!(
+            loose_tokens(vec![Token::SubstituteStart, Token::SubstituteSeparator,]),
+            vec![Token::SubstituteStart, Token::SubstituteSeparator]
+        );
+        // Whole inside: start, separator and end all drop with the text.
+        assert_eq!(
+            loose_tokens(vec![
+                Token::SubstituteStart,
+                Token::SubstituteSeparator,
+                Token::SubstituteEnd,
+            ]),
+            vec![]
+        );
+        // A closed substitution inside other dropped tokens keeps only
+        // the tokens that cross the edge.
+        assert_eq!(
+            loose_tokens(vec![
+                Token::InsertEnd,
+                Token::SubstituteStart,
+                Token::SubstituteSeparator,
+                Token::SubstituteEnd,
+            ]),
+            vec![Token::InsertEnd]
+        );
     }
 }
 #[cfg(test)]

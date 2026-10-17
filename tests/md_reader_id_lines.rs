@@ -1930,25 +1930,28 @@ fn idless_chain(markdown: &str) -> (String, Vec<u8>, Vec<u8>) {
     (c, b, d)
 }
 
-/// `$x_{--}$` is the text `--`. Spacing the brace so it is not a
-/// CriticMarkup delimiter puts that space into the equation.
+/// `$x_{--}$` is text that looks like an equation: the escapes the view
+/// writes keep it text through the chain, with no math built from it.
 #[test]
 fn literal_math_delimiters_keep_their_page_text() {
     let markdown = include_str!("fixtures/from-docx/critic/synthetic/hard-delimiters.accept.md");
     let (c, b, d) = idless_chain(markdown);
     assert!(
         c.lines()
-            .any(|line| line == "Math-like text $x_{{}--{}}$ and $y^{{}++{}}$ stays."),
+            .any(|line| line == r"Math-like text $x\_{\--\}$ and $y\^{\++\}$ stays."),
         "{c}"
     );
     for (name, docx) in [("B", &b), ("D", &d)] {
         let xml = document_xml(docx);
-        assert!(xml.contains("<m:t>--</m:t>"), "{name} lost `--`: {xml}");
-        assert!(xml.contains("<m:t>++</m:t>"), "{name} lost `++`: {xml}");
         assert!(
-            !xml.contains("> -- <") && !xml.contains("> ++ <"),
-            "{name} drew a space around the delimiter text"
+            xml.contains("<w:t xml:space=\"preserve\">--</w:t>"),
+            "{name} lost `--`: {xml}"
         );
+        assert!(
+            xml.contains("<w:t xml:space=\"preserve\">++</w:t>"),
+            "{name} lost `++`: {xml}"
+        );
+        assert!(!xml.contains("<m:oMath"), "{name} built math from text");
     }
 }
 
@@ -2273,4 +2276,115 @@ fn a_plain_space_between_code_spans_keeps_both_spans() {
     assert!(c.contains("`docProps/app.xml` `Application`"), "{c}");
     assert!(!c.contains("`docProps/app.xml Application`"), "{c}");
     assert_eq!(again, c, "{c}");
+}
+
+/// A styles part with `Normal` as the default paragraph style.
+fn default_normal_styles() -> common::docx::Part<'static> {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:basedOn w:val="Normal"/></w:style></w:styles>"#,
+        W_NS = common::docx::W_NS
+    );
+    common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: Box::leak(styles.into_boxed_str()),
+    }
+}
+
+/// A paragraph that states the default style in its own `w:pPr` keeps the
+/// statement: the view names `Normal` only where the document says it
+/// (ids-authors, ids-comments, #528).
+#[test]
+fn an_explicit_default_style_is_named_and_comes_back() {
+    let stated =
+        r#"<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:t>Stated.</w:t></w:r></w:p>"#;
+    let unstated = r#"<w:p><w:r><w:t>Unstated.</w:t></w:r></w:p>"#;
+    let cell = r#"<w:tbl><w:tr><w:tc><w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr></w:p></w:tc></w:tr></w:tbl>"#;
+    let end = r#"<w:p><w:r><w:t>End.</w:t></w:r></w:p>"#;
+    let body = format!("{stated}{unstated}{cell}{end}");
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    assert!(view.contains("<!-- p0 Normal -->"), "{view}");
+    assert!(view.contains("<!-- p1 -->"), "{view}");
+    assert!(view.contains("p2 Normal"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="Normal"/>"#).count(),
+        2,
+        "{document}"
+    );
+    assert_eq!(view, once);
+}
+
+/// An empty paragraph keeps the style it states: a bare `<!-- p9 empty -->`
+/// stands only for paragraphs with no `w:pStyle`, and a heading style is
+/// named too, with no `#` to imply it (ids-paragraphs, ids-font-sizes,
+/// #528).
+#[test]
+fn an_empty_paragraph_keeps_its_style() {
+    let stated = r#"<w:p><w:pPr><w:pStyle w:val="TitlePage"/></w:pPr></w:p>"#;
+    let heading = r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:p>"#;
+    let bare = r"<w:p/>";
+    let body = format!("{stated}{stated}{bare}{heading}<w:p><w:r><w:t>Text.</w:t></w:r></w:p>");
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    assert!(view.contains("<!-- p0 TitlePage empty -->"), "{view}");
+    assert!(view.contains("<!-- p1 TitlePage empty -->"), "{view}");
+    assert!(view.contains("<!-- p2 empty -->"), "{view}");
+    assert!(view.contains("<!-- p3 Heading2 empty -->"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="TitlePage"/>"#).count(),
+        2,
+        "{document}"
+    );
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="Heading2"/>"#).count(),
+        1
+    );
+    assert_eq!(view, once);
+}
+
+/// A range of styled empty paragraphs (`<!-- p0-p1 TitlePage empty -->`)
+/// stands for every paragraph it numbers, not only the first.
+#[test]
+fn a_range_of_styled_empty_paragraphs_stands_for_all_of_them() {
+    let md = "<!-- p0-p1 TitlePage empty -->\n\n<!-- p2 -->\nText.\n";
+    let docx = markdown_to_docx(&as_view(md), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&docx);
+    let document = part_string(&docx, "word/document.xml").unwrap();
+    assert_eq!(
+        document.matches(r#"<w:pStyle w:val="TitlePage"/>"#).count(),
+        2,
+        "{document}"
+    );
+}
+
+/// A heading that states its own outline level, with no style, keeps the
+/// statement: `# Text` alone means the writer's Heading1, so the id line
+/// says the level is the paragraph's own (`outline 2`, ids-font-sizes,
+/// #528).
+#[test]
+fn a_heading_that_states_its_outline_writes_no_style() {
+    let outlined =
+        r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Own level.</w:t></w:r></w:p>"#;
+    let body = format!("{outlined}<w:p><w:r><w:t>Body.</w:t></w:r></w:p>");
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    assert!(view.contains("## Own level."), "{view}");
+    assert!(view.contains("outline 2"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"<w:outlineLvl w:val="1"/>"#),
+        "{document}"
+    );
+    assert!(!document.contains("w:pStyle"), "{document}");
+    assert_eq!(view, once);
 }

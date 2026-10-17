@@ -14,7 +14,9 @@
 //! The stand-ins are Unicode punctuation (general category Po), so emphasis
 //! next to a delimiter parses as it would next to the `+` of `{++`, and
 //! Markdown gives them no meaning. A stand-in character already in the
-//! source is kept apart by an escape character and comes back unchanged.
+//! source is kept apart by an escape character and comes back unchanged,
+//! and so is a numeric character reference naming one (`&#x2E0E;`): the
+//! Markdown parser decodes references only after CriticMarkup was read.
 
 /// A CriticMarkup delimiter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +43,8 @@ pub(crate) enum Token {
     CommentStart,
     /// `<<}`
     CommentEnd,
+    /// A blank line inside a comment's body: a comment paragraph break.
+    CommentBreak,
     /// `==` opening a highlight run (`==x==`), not CriticMarkup
     MarkStart,
     /// `==` closing a highlight run
@@ -54,7 +58,7 @@ pub(crate) enum Token {
 }
 
 /// Every delimiter with its stand-in (Supplemental Punctuation, all Po).
-const STAND_INS: [(Token, char); 16] = [
+const STAND_INS: [(Token, char); 17] = [
     (Token::InsertStart, '\u{2E0E}'),
     (Token::InsertEnd, '\u{2E0F}'),
     (Token::DeleteStart, '\u{2E10}'),
@@ -66,6 +70,7 @@ const STAND_INS: [(Token, char); 16] = [
     (Token::HighlightEnd, '\u{2E16}'),
     (Token::CommentStart, '\u{2E18}'),
     (Token::CommentEnd, '\u{2E19}'),
+    (Token::CommentBreak, '\u{2E2E}'),
     (Token::MarkStart, '\u{2E1B}'),
     (Token::MarkEnd, '\u{2E1E}'),
     (Token::FieldStart, '\u{2E1F}'),
@@ -131,6 +136,33 @@ fn escaped(source: &str, at: usize) -> bool {
         == 1
 }
 
+/// The length of the numeric character reference `rest` starts with
+/// (`&#x2E0E;`, `&#11790;`) when the character it names is a stand-in or
+/// the escape: the Markdown parser decodes references only after
+/// CriticMarkup was read, so the decoded character must arrive escaped or
+/// it would act as a delimiter.
+fn reference_stand_in(rest: &str) -> Option<usize> {
+    let semi = rest.as_bytes().iter().take(12).position(|&b| b == b';')?;
+    let number = rest.get(1..semi)?.strip_prefix('#')?;
+    let (digits, hex) = match number.strip_prefix(['x', 'X']) {
+        Some(hex) => (hex, true),
+        None => (number, false),
+    };
+    // As CommonMark reads them: at most seven decimal digits, six
+    // hexadecimal ones.
+    if digits.is_empty() || digits.len() > if hex { 6 } else { 7 } {
+        return None;
+    }
+    if !digits
+        .bytes()
+        .all(|b| b.is_ascii_digit() || hex && b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    let named = char::from_u32(u32::from_str_radix(digits, if hex { 16 } else { 10 }).ok()?)?;
+    (token_of(named).is_some() || named == ESCAPE).then_some(semi + 1)
+}
+
 /// The source with the delimiters of every complete CriticMarkup span
 /// replaced by stand-ins. A delimiter without its partner, or behind a
 /// backslash, stays text.
@@ -139,13 +171,24 @@ fn escaped(source: &str, at: usize) -> bool {
 /// inside a commented range and comment inside a change, and a document
 /// read from Word says so, so here spans nest one level: a highlight can
 /// hold changes and comments (`{==a {++b++}==}{>>note<<}`), a change can
-/// hold highlights and comments (`{~~a~>{==b==}{>>note<<}~~}`), and anything
+/// hold highlights and comments (`{~~a~>{==b==}{>>n<<}~~}`), and anything
 /// deeper, or inside a comment, is text.
+///
+/// A complete nested comment or highlight is opaque to the enclosing
+/// span's closer and (for a substitution) its `~>` separator: a
+/// `{++a{>>b++}c++}` looks for `++}` past the comment, not at the one
+/// inside it, and a `{~~a{>>x ~> y<<} b~>c~~}` keeps its `~>` separator
+/// outside the comment. An opener whose closer never comes, or whose
+/// closer falls outside the enclosing range, opens nothing: only a
+/// complete, fully nested span becomes opaque. A blank line inside a
+/// comment is a comment paragraph break ([`Token::CommentBreak`]), kept
+/// out of the text around it.
 ///
 /// A change or highlight that opens a line with a footnote label
 /// (`{++[^2]: Added later.++}`, a note inserted with its reference) is read
 /// as changing the note: the label goes before the delimiter, so the
 /// definition stays a definition.
+#[cfg(test)]
 pub(crate) fn encode(source: &str) -> String {
     encode_spans(source, ALL, true)
 }
@@ -225,6 +268,86 @@ pub(crate) fn change_regions(source: &str) -> Vec<ChangeRegion> {
     regions
 }
 
+/// [`encode`], plus a warning for every malformed delimiter that comes
+/// out text: an opener without its closer or separator, a closer that
+/// closed nothing.
+pub(crate) fn encode_checked(source: &str) -> (String, Vec<String>) {
+    let closers = Closers::new(source);
+    let mut check = Check::default();
+    let mut out = String::with_capacity(source.len());
+    encode_range(
+        source,
+        &closers,
+        0..source.len(),
+        ALL,
+        true,
+        &mut check,
+        &mut out,
+    );
+    check.consumed.sort_unstable();
+    check.consumed.dedup();
+    check.unclosed.sort_unstable();
+    check.unclosed.dedup();
+    // A closer that closed nothing is text. One inside a comment or a
+    // complete highlight is that span's text, and one paired with an
+    // escaped or verbatim opener is the literal's own — none is a stray.
+    let mut stray: Vec<(usize, &'static str)> = Vec::new();
+    for (slot, open, close) in SPANS
+        .iter()
+        .map(|&(open, close, ..)| (Closers::slot(close), open, close))
+    {
+        let escaped_openers: Vec<usize> = source
+            .match_indices(open)
+            .map(|(at, _)| at)
+            .filter(|&at| escaped(source, at) || closers.literal.verbatim_end(at).is_some())
+            .collect();
+        let mut used = 0;
+        for &at in &closers.positions[slot] {
+            if check.consumed.binary_search(&at).is_ok()
+                || Closers::in_spans(&closers.comments, at)
+                || Closers::in_spans(&closers.highlights, at)
+            {
+                continue;
+            }
+            if let Some(&opener) = escaped_openers.get(used)
+                && opener < at
+            {
+                used += 1;
+                continue;
+            }
+            stray.push((at, close));
+        }
+    }
+    stray.sort_unstable();
+    stray.dedup();
+    // The warnings in source order, each line counted in one pass.
+    let events: Vec<(usize, &'static str, &'static str, bool)> = check
+        .unclosed
+        .iter()
+        .map(|&(at, open, missing, separator)| (at, open, missing, separator))
+        .chain(stray.iter().map(|&(at, close)| (at, "", close, false)))
+        .collect();
+    let mut ordered = events;
+    ordered.sort_by_key(|&(at, ..)| at);
+    let mut warnings = Vec::with_capacity(ordered.len());
+    let mut line = 1;
+    let mut past = 0;
+    for (at, open, missing, separator) in ordered {
+        line += source[past..at].bytes().filter(|&b| b == b'\n').count();
+        past = at;
+        warnings.push(if open.is_empty() {
+            format!("'{missing}' with nothing open on line {line} is text")
+        } else if separator {
+            format!("'{open}' without its '{missing}' separator on line {line} is text")
+        } else {
+            format!("'{open}' without its '{missing}' on line {line} is text")
+        });
+    }
+    warnings.sort();
+    warnings.dedup();
+    (out, warnings)
+}
+
 /// Which spans a text may open: bits of [`INSERT`], [`DELETE`]...
 type Allowed = u8;
 const INSERT: Allowed = 1;
@@ -257,12 +380,34 @@ fn inside(kind: Allowed, allowed: Allowed) -> Allowed {
     }
 }
 
+/// A nested span's cover of one delimiter position: the innermost span
+/// covering it, the earliest start and the latest end of every span
+/// covering it.
+type Cover = ((usize, usize), usize, usize);
+
+/// A delimiter's run of consecutive covered positions: the first index
+/// after it, its earliest covering start, its latest covering end.
+type Run = (usize, usize, usize);
+
 /// Where every unescaped closer and separator sits in the source, found once
 /// so that an opener without its closer does not scan the rest of the text,
 /// and the parts Markdown reads literally.
 struct Closers<'a> {
     patterns: [&'a str; 6],
     positions: [Vec<usize>; 6],
+    /// Every complete comment (`{>>…<<}`) as (start, end), disjoint and
+    /// sorted by start: delimiters inside a comment are its text, so a
+    /// stray-closer warning skips them.
+    comments: Vec<(usize, usize)>,
+    /// Every complete highlight (`{==…==}`) the same way: a closer
+    /// inside one is its text too.
+    highlights: Vec<(usize, usize)>,
+    /// Per slot and position: the innermost nested span covering the
+    /// delimiter, the earliest start and the latest end of every span
+    /// covering it. `None` where no span covers it.
+    cover: [Vec<Option<Cover>>; 6],
+    /// Per slot and covered position: the [`Run`] the delimiter sits in.
+    runs: [Vec<Option<Run>>; 6],
     literal: Literal,
     /// Every `==` that can close a highlight.
     marks: Vec<usize>,
@@ -270,19 +415,111 @@ struct Closers<'a> {
     blanks: Vec<usize>,
     /// The `{/}` that closes each body field, by the field's `{`.
     fields: std::collections::HashMap<usize, usize>,
+    /// Whether the reader's fence escapes are unwound inside a code fence:
+    /// the converter reads the text a fence holds, while a resolve writes
+    /// Markdown back and keeps what the reader escaped.
+    unwind: bool,
 }
 
 impl<'a> Closers<'a> {
     fn new(source: &str) -> Self {
         let literal = Literal::new(source);
         let patterns = ["++}", "--}", "~~}", "==}", "<<}", "~>"];
-        let positions = patterns.map(|pattern| {
+        let positions: [Vec<usize>; 6] = patterns.map(|pattern| {
             source
                 .match_indices(pattern)
                 .map(|(at, _)| at)
-                .filter(|&at| !escaped(source, at) && literal.verbatim_end(at).is_none())
+                // A closer behind an odd run of backslashes is Markdown's
+                // escape, but never one inside a code fence: there the
+                // reader breaks every literal delimiter itself, so a bare
+                // one always closes, and the backslash is text before it.
+                .filter(|&at| {
+                    (literal.in_code_fence(at) || !escaped(source, at))
+                        && literal.verbatim_end(at).is_none()
+                })
                 .collect()
         });
+        // The complete comments and highlights, as (start, end) pairs:
+        // delimiters inside one are its text, so a complete nested span
+        // is opaque to the span around it. Pairing is greedy, left to
+        // right; an opener inside a completed pair opens nothing (a
+        // comment's own text holds no span), so the pairs stay disjoint
+        // and sorted.
+        let openers = |open: &str| -> Vec<usize> {
+            source
+                .match_indices(open)
+                .map(|(at, _)| at)
+                .filter(|&at| !escaped(source, at) && literal.verbatim_end(at).is_none())
+                .collect()
+        };
+        let comments = Self::paired(&openers("{>>"), "<<}", &[], &positions);
+        let highlights = Self::paired(&openers("{=="), "==}", &comments, &positions);
+        // Comments and highlights sorted by start, overlaps kept: a span
+        // that holds another is opaque to a lookup only inside its own
+        // extent, so each position's innermost cover decides.
+        let mut nested = comments
+            .iter()
+            .chain(&highlights)
+            .copied()
+            .collect::<Vec<_>>();
+        nested.sort_unstable();
+
+        // For each slot's positions: the innermost nested span covering
+        // each one (the last-started, decided alone — a wider span
+        // containing it starts earlier and ends later, so it can only
+        // be *less* inside the search range), the earliest start and
+        // latest end of every span covering it, and the run of
+        // consecutive covered positions it sits in. The lookup can then
+        // jump a whole run of hidden delimiters in one step.
+        let mut cover: [Vec<Option<Cover>>; 6] = std::array::from_fn(|_| Vec::new());
+        let mut runs: [Vec<Option<Run>>; 6] = std::array::from_fn(|_| Vec::new());
+        for (slot, positions) in positions.iter().enumerate() {
+            let mut covered = Vec::with_capacity(positions.len());
+            let mut open: std::collections::VecDeque<(usize, usize)> =
+                std::collections::VecDeque::new();
+            let mut s = 0;
+            for &pos in positions {
+                while s < nested.len() && nested[s].0 <= pos {
+                    open.push_back(nested[s]);
+                    s += 1;
+                }
+                while open.back().is_some_and(|&(_, end)| end <= pos) {
+                    open.pop_back();
+                }
+                while open.front().is_some_and(|&(_, end)| end <= pos) {
+                    open.pop_front();
+                }
+                covered.push(open.back().map(|&inner| {
+                    (
+                        inner,
+                        open.front().copied().unwrap_or(inner).0,
+                        open.iter().map(|&(_, end)| end).max().unwrap_or(0),
+                    )
+                }));
+            }
+            let mut run = vec![None; positions.len()];
+            let mut i = 0;
+            while i < positions.len() {
+                let Some((_, mut first, mut last)) = covered[i] else {
+                    i += 1;
+                    continue;
+                };
+                let mut j = i + 1;
+                while j < positions.len() {
+                    let Some((_, f, l)) = covered[j] else { break };
+                    first = first.min(f);
+                    last = last.max(l);
+                    j += 1;
+                }
+                for item in run.iter_mut().take(j).skip(i) {
+                    *item = Some((j, first, last));
+                }
+                i = j;
+            }
+            cover[slot] = covered;
+            runs[slot] = run;
+        }
+
         let bytes = source.as_bytes();
         let marks = (0..bytes.len())
             .filter(|&at| bytes[at..].starts_with(b"==") && mark_closes(source, &literal, at))
@@ -294,11 +531,82 @@ impl<'a> Closers<'a> {
         Self {
             patterns,
             positions,
+            comments,
+            highlights,
+            cover,
+            runs,
             literal,
             marks,
             blanks,
             fields,
+            unwind: true,
         }
+    }
+
+    /// The delimiter list slot `pattern` occupies.
+    fn slot(pattern: &str) -> usize {
+        match pattern {
+            "++}" => 0,
+            "--}" => 1,
+            "~~}" => 2,
+            "==}" => 3,
+            "<<}" => 4,
+            "~>" => 5,
+            _ => unreachable!("unknown pattern {pattern}"),
+        }
+    }
+
+    /// Whether `at` is inside one of `spans`, which must be disjoint and
+    /// sorted.
+    fn in_spans(spans: &[(usize, usize)], at: usize) -> bool {
+        let i = spans.partition_point(|&(_, end)| end <= at);
+        spans.get(i).is_some_and(|&(start, _)| start <= at)
+    }
+
+    /// The spans `open` opens: each opener, skipping any inside an earlier
+    /// pair or a span of `inner`, with the first `close` after its opener
+    /// text that `inner` does not hold, so a `{==` whose first `==}` sits
+    /// in a comment closes past it, as the recursive reader closes it.
+    /// Disjoint and sorted by start. The closer cursor is shared: an
+    /// opener never rescans the closers an earlier opener skipped, so
+    /// many openers before many `inner` spans stay linear.
+    fn paired(
+        openers: &[usize],
+        close: &str,
+        inner: &[(usize, usize)],
+        positions: &[Vec<usize>; 6],
+    ) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        let closers = &positions[Self::slot(close)];
+        let mut at = 0;
+        for &opener in openers {
+            if Self::in_spans(&spans, opener) || Self::in_spans(inner, opener) {
+                continue;
+            }
+            at = at.max(closers.partition_point(|&c| c <= opener));
+            let close_at = loop {
+                let Some(&c) = closers.get(at) else {
+                    break None;
+                };
+                if Self::in_spans(inner, c) {
+                    at += 1;
+                    continue;
+                }
+                break Some(c);
+            };
+            if let Some(close_at) = close_at {
+                spans.push((opener, close_at + close.len()));
+                at += 1;
+            }
+        }
+        spans
+    }
+
+    /// The reader's fence escapes kept as written, for Markdown a resolve
+    /// writes back: its code fences still name the same document.
+    fn keeping_fences(mut self) -> Self {
+        self.unwind = false;
+        self
     }
 
     /// The first `pattern` that lies whole in `from..until`.
@@ -307,6 +615,42 @@ impl<'a> Closers<'a> {
         let positions = &self.positions[slot];
         let at = *positions.get(positions.partition_point(|&at| at < from))?;
         (at + pattern.len() <= until).then_some(at)
+    }
+
+    /// The first `pattern` that lies whole in `from..until` outside every
+    /// complete nested span, or inside one whose opener is before `from`
+    /// or whose closer is past `until`: a comment or highlight is opaque
+    /// only while it is whole inside the range, so a `~>` or `++}` in its
+    /// text cannot split or shorten the span around it, and an
+    /// unfinished one keeps its delimiters text.
+    fn find_outside_nested(&self, pattern: &str, from: usize, until: usize) -> Option<usize> {
+        let slot = Self::slot(pattern);
+        let positions = &self.positions[slot];
+        let mut at = positions.partition_point(|&pos| pos < from);
+        loop {
+            let pos = *positions.get(at)?;
+            if pos + pattern.len() > until {
+                return None;
+            }
+            let Some((inner, ..)) = self.cover[slot][at] else {
+                return Some(pos);
+            };
+            if inner.0 < from || inner.1 > until {
+                // The span holding this delimiter crosses the range: the
+                // delimiter counts.
+                return Some(pos);
+            }
+            let (next, first, last) = self.runs[slot][at].expect("a covered position has a run");
+            at = if first >= from && last <= until {
+                // Every span covering a position of the run is inside
+                // the range: one jump past them all.
+                next
+            } else {
+                // The run reaches out of the range: only this
+                // delimiter's innermost span is certainly opaque.
+                positions.partition_point(|&p| p < inner.1)
+            };
+        }
     }
 
     /// Where the paragraph `from` lies in ends: at its blank line, or at
@@ -328,6 +672,10 @@ impl<'a> Closers<'a> {
 struct Literal {
     verbatim: Vec<std::ops::Range<usize>>,
     fences: Vec<std::ops::Range<usize>>,
+    /// Where the YAML front matter ends, when the source opens with one:
+    /// a fence for Markdown's marks, but no code block whose escapes the
+    /// reader writes and [`encode_range`] unwinds.
+    front_matter: usize,
 }
 
 impl Literal {
@@ -335,6 +683,7 @@ impl Literal {
         let mut literal = Self {
             verbatim: Vec::new(),
             fences: Vec::new(),
+            front_matter: 0,
         };
         let bytes = source.as_bytes();
         let mut fence: Option<(u8, usize, usize)> = None;
@@ -351,6 +700,7 @@ impl Literal {
                 end = (line_end + 1).min(source.len());
                 if closes {
                     literal.fences.push(0..line_end);
+                    literal.front_matter = line_end;
                     line_start = end;
                     break;
                 }
@@ -365,7 +715,10 @@ impl Literal {
                 let run = |b: u8| line.bytes().skip(indent).take_while(|&c| c == b).count();
                 match fence {
                     Some((b, width, start)) => {
-                        if run(b) >= width && line[indent + run(b)..].trim().is_empty() {
+                        if indent < 4
+                            && run(b) >= width
+                            && line[indent + run(b)..].trim().is_empty()
+                        {
                             literal.fences.push(start..line_end);
                             fence = None;
                         }
@@ -378,7 +731,9 @@ impl Literal {
                         for b in *b"`~" {
                             let width = run(b);
                             let info = &line[indent + width..];
-                            if width >= 3 && !(b == b'`' && info.contains('`')) {
+                            // Four spaces of indent make indented code, not
+                            // a fence: Markdown reads its text verbatim.
+                            if indent < 4 && width >= 3 && !(b == b'`' && info.contains('`')) {
                                 fence = Some((b, width, at));
                             }
                         }
@@ -429,6 +784,11 @@ impl Literal {
         if let Some((.., start)) = fence {
             literal.fences.push(start..bytes.len());
         }
+        // CommonMark's indented code blocks hold their text verbatim,
+        // like a code span: nothing opens in them, and the reader never
+        // writes them, so no fence escape is unwound there either.
+        literal.verbatim.extend(indented_code(source));
+        literal.verbatim.sort_by_key(|range| range.start);
         literal
     }
 
@@ -447,6 +807,35 @@ impl Literal {
         let i = self.fences.partition_point(|r| r.end <= at);
         self.fences.get(i).is_some_and(|r| r.start <= at)
     }
+
+    /// Whether `at` lies in a fenced code block, not the front matter: the
+    /// reader escapes a code block's text for the writer to unwind here.
+    fn in_code_fence(&self, at: usize) -> bool {
+        self.in_fence(at) && at >= self.front_matter
+    }
+}
+
+/// The byte ranges of CommonMark's indented code blocks: a line indented
+/// four or more spaces that nothing contains is one, and pulldown-cmark
+/// finds it, a list item's own indent included. Its text is verbatim, like
+/// a code span's.
+fn indented_code(source: &str) -> Vec<std::ops::Range<usize>> {
+    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
+
+    // Nothing indented: no such block to find, and a long document is not
+    // parsed for one it cannot hold.
+    if !source
+        .lines()
+        .any(|line| line.starts_with("    ") || line.starts_with('\t'))
+    {
+        return Vec::new();
+    }
+    Parser::new_ext(source, super::write::parser_options())
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(event, Event::Start(Tag::CodeBlock(CodeBlockKind::Indented))).then_some(range)
+        })
+        .collect()
 }
 
 /// The end of the code span a backtick run at `at` opens: after the next
@@ -571,9 +960,21 @@ fn autolink_end(source: &str, at: usize) -> Option<usize> {
     (rest.as_bytes()[close] == b'>').then_some(at + 1 + close + 1)
 }
 
-/// [`encode`], opening only the spans `allowed` names, and moving footnote
-/// labels out of spans only when `labels`.
-fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
+/// What a whole-`encode` pass found amiss, for a caller that warns:
+/// positions, line numbers resolved at the end so the scan stays cheap.
+#[derive(Default)]
+struct Check {
+    /// Every opener that closed nothing: (position, opener, what it
+    /// lacks, whether what it lacks is a separator).
+    unclosed: Vec<(usize, &'static str, &'static str, bool)>,
+    /// Every delimiter position that closed or split a span.
+    consumed: Vec<usize>,
+}
+
+/// [`encode`], opening only the spans `allowed` names, moving footnote
+/// labels out of spans only when `labels`, and noting malformed
+/// delimiters in `check`.
+fn encode_spans_checked(source: &str, allowed: Allowed, labels: bool, check: &mut Check) -> String {
     let mut out = String::with_capacity(source.len());
     encode_range(
         source,
@@ -581,6 +982,29 @@ fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
         0..source.len(),
         allowed,
         labels,
+        check,
+        &mut out,
+    );
+    out
+}
+
+/// [`encode`], opening only the spans `allowed` names, and moving footnote
+/// labels out of spans only when `labels`.
+fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
+    encode_spans_checked(source, allowed, labels, &mut Check::default())
+}
+
+/// [`encode_spans`] with the reader's fence escapes kept as written: the
+/// resolved Markdown still names the document its code blocks hold.
+fn encode_spans_kept(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    encode_range(
+        source,
+        &Closers::new(source).keeping_fences(),
+        0..source.len(),
+        ALL,
+        false,
+        &mut Check::default(),
         &mut out,
     );
     out
@@ -593,6 +1017,7 @@ fn encode_range(
     range: std::ops::Range<usize>,
     allowed: Allowed,
     labels: bool,
+    check: &mut Check,
     out: &mut String,
 ) {
     let mut at = range.start;
@@ -612,16 +1037,61 @@ fn encode_range(
         } else {
             allowed
         };
+        // The reader broke the delimiter shapes of a code block's text for
+        // this fence, where Markdown itself reads no backslash escape, so
+        // they are unbroken here and nowhere else: a bare delimiter is the
+        // change the reader wrote, never Markdown-escaped by what precedes
+        // it.
+        if closers.unwind
+            && closers.literal.in_code_fence(at)
+            && let Some((text, len)) = fence_escape_at(source, at)
+        {
+            push_escaped(out, &text);
+            at += len;
+            continue;
+        }
         let span = SPANS
             .iter()
             .find(|(open, ..)| rest.starts_with(open))
             .filter(|span| allowed & kind_of(span.3) != 0)
-            .filter(|_| !escaped(source, at))
+            .filter(|_| closers.literal.in_code_fence(at) || !escaped(source, at))
             .and_then(|&(open, close, separator, start, end)| {
                 let from = at + open.len();
-                let to = closers.find(close, from, range.end)?;
+                // A span's closer (and a substitution's `~>` separator)
+                // skips every complete nested span: a `{++a{>>b++}c++}`
+                // looks for the insertion's `++}` after `a`, the `++}`
+                // inside the comment is the comment's text, and the
+                // second `++}` is the closer. Comments close at the
+                // first `<<}` as before: nothing nests in one.
+                let skip_nested = start != Token::CommentStart;
+                let to = if skip_nested {
+                    closers.find_outside_nested(close, from, range.end)
+                } else {
+                    closers.find(close, from, range.end)
+                };
+                let Some(to) = to else {
+                    check.unclosed.push((at, open, close, false));
+                    return None;
+                };
+                check.consumed.push(to);
                 let split = match separator {
-                    Some(separator) => Some((closers.find(separator, from, to)?, separator.len())),
+                    Some(separator) => {
+                        let mid = if skip_nested {
+                            closers.find_outside_nested(separator, from, to)
+                        } else {
+                            closers.find(separator, from, to)
+                        };
+                        match mid {
+                            Some(mid) => {
+                                check.consumed.push(mid);
+                                Some((mid, separator.len()))
+                            }
+                            None => {
+                                check.unclosed.push((at, open, separator, true));
+                                return None;
+                            }
+                        }
+                    }
                     None => None,
                 };
                 Some((from..to, to + close.len(), split, start, end))
@@ -641,11 +1111,22 @@ fn encode_range(
                 out.push(stand_in(start));
                 match split {
                     Some((mid, width)) => {
-                        encode_range(source, closers, body.start..mid, nested, false, out);
+                        encode_range(source, closers, body.start..mid, nested, false, check, out);
                         out.push(stand_in(Token::SubstituteSeparator));
-                        encode_range(source, closers, mid + width..body.end, nested, false, out);
+                        encode_range(
+                            source,
+                            closers,
+                            mid + width..body.end,
+                            nested,
+                            false,
+                            check,
+                            out,
+                        );
                     }
-                    None => encode_range(source, closers, body, nested, false, out),
+                    None if start == Token::CommentStart => {
+                        encode_comment(source, closers, body, out);
+                    }
+                    None => encode_range(source, closers, body, nested, false, check, out),
                 }
                 out.push(stand_in(end));
                 at = after;
@@ -663,7 +1144,15 @@ fn encode_range(
                         push_escaped(out, c.encode_utf8(&mut [0; 4]));
                     }
                     out.push(stand_in(Token::FieldSeparator));
-                    encode_range(source, closers, code.end + 1..end, allowed, labels, out);
+                    encode_range(
+                        source,
+                        closers,
+                        code.end + 1..end,
+                        allowed,
+                        labels,
+                        check,
+                        out,
+                    );
                     out.push(stand_in(Token::FieldEnd));
                     at = end + FIELD_END.len();
                     continue;
@@ -672,17 +1161,134 @@ fn encode_range(
                     && let Some(close) = mark_close(source, closers, at, range.end)
                 {
                     out.push(stand_in(Token::MarkStart));
-                    encode_range(source, closers, at + 2..close, allowed, false, out);
+                    encode_range(source, closers, at + 2..close, allowed, false, check, out);
                     out.push(stand_in(Token::MarkEnd));
                     at = close + 2;
                     continue;
                 }
                 let c = rest.chars().next().unwrap_or_default();
+                // A character reference naming a stand-in or the escape:
+                // escaped here, so the character the parser decodes
+                // stays text. In a fence the parser decodes nothing, so
+                // the spelling keeps its own.
+                if c == '&'
+                    && !escaped(source, at)
+                    && !closers.literal.in_fence(at)
+                    && let Some(len) = reference_stand_in(rest)
+                {
+                    out.push(ESCAPE);
+                    push_escaped(out, &rest[..len]);
+                    at += len;
+                    continue;
+                }
                 push_escaped(out, &rest[..c.len_utf8()]);
                 at += c.len_utf8();
             }
         }
     }
+}
+
+/// A comment's body: text, with every run of blank or whitespace-only
+/// lines as one [`Token::CommentBreak`] stand-in so the comment's
+/// paragraphs survive the Markdown parser without splitting the
+/// paragraph the comment is anchored on. A single newline stays text,
+/// and a character reference naming a stand-in stays literal as in any
+/// other text. A comment anchored in a code block unwinds the reader's
+/// fence escapes in its body, as the fence's own text does.
+fn encode_comment(
+    source: &str,
+    closers: &Closers<'_>,
+    body: std::ops::Range<usize>,
+    out: &mut String,
+) {
+    let mut at = body.start;
+    while at < body.end {
+        if closers.unwind
+            && closers.literal.in_code_fence(at)
+            && let Some((text, len)) = fence_escape_at(&source[..body.end], at)
+        {
+            push_escaped(out, &text);
+            at += len;
+            continue;
+        }
+        if source.as_bytes()[at] == b'&'
+            && let Some(len) = reference_stand_in(&source[at..body.end])
+        {
+            out.push(ESCAPE);
+            push_escaped(out, &source[at..at + len]);
+            at += len;
+            continue;
+        }
+        if source.as_bytes()[at] == b'\n' {
+            // The whitespace run after this newline; a second newline in
+            // it makes a blank line.
+            let rest = &source[at + 1..body.end];
+            let white = rest.len() - rest.trim_start_matches([' ', '\t', '\r', '\n']).len();
+            if rest[..white].contains('\n') {
+                out.push(stand_in(Token::CommentBreak));
+                at += 1 + white;
+                continue;
+            }
+        }
+        let c = source[at..body.end].chars().next().unwrap_or_default();
+        push_escaped(out, &source[at..at + c.len_utf8()]);
+        at += c.len_utf8();
+    }
+}
+
+/// The reader's fence escape (`from_docx::critic::escape_code`) at `at`,
+/// if one sits there: the document text it names, and how many bytes it
+/// takes. A delimiter shape with an odd run of backslashes at its break
+/// point names the run halved and the delimiter as text; one with an even
+/// run cannot come from the reader, so it stays as written and opens
+/// nothing. A bare delimiter (no run) is no escape: it is the change the
+/// reader wrote, which Markdown reads here, where it reads no backslash
+/// escape of its own.
+fn fence_escape_at(source: &str, at: usize) -> Option<(String, usize)> {
+    /// What can follow the backslash run an opener holds (`{` + run).
+    const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="];
+    /// What can hold the run a closer escapes (`++` + run + `}`).
+    const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="];
+    let bytes = source.as_bytes();
+    let (head, run, tail) = {
+        let shape = |head: usize, tails: &[&str]| {
+            let mut run = at + head;
+            while bytes.get(run) == Some(&b'\\') {
+                run += 1;
+            }
+            let tail = tails
+                .iter()
+                .find(|tail| source[run..].starts_with(*tail))?
+                .len();
+            Some((head, run - (at + head), tail))
+        };
+        if bytes.get(at) == Some(&b'{') {
+            shape(1, &OPENER)
+        } else if CLOSER.iter().any(|head| source[at..].starts_with(head)) {
+            shape(2, &["}"])
+        } else if bytes.get(at) == Some(&b'~') {
+            shape(1, &[">"])
+        } else {
+            None
+        }
+    }?;
+    if run == 0 {
+        return None;
+    }
+    let whole = head + run + tail;
+    let mut text = String::with_capacity(whole);
+    if run % 2 == 0 {
+        // An even run cannot come from the reader: it stays as written,
+        // every backslash of it, and the delimiter opens nothing.
+        text.push_str(&source[at..at + whole]);
+    } else {
+        text.push_str(&source[at..at + head]);
+        for _ in 0..(run - 1) / 2 {
+            text.push('\\');
+        }
+        text.push_str(&source[at + head + run..at + whole]);
+    }
+    Some((text, whole))
 }
 
 /// What closes a body field.
@@ -968,10 +1574,13 @@ pub(super) fn verbatim_ranges(source: &str) -> Vec<std::ops::Range<usize>> {
 pub(crate) fn decode(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pieces = Pieces::default();
-    pieces.feed(text, |piece| {
-        if let Piece::Text(text) = piece {
-            out.push_str(text);
-        }
+    pieces.feed(text, |piece| match piece {
+        Piece::Text(text) => out.push_str(text),
+        // A comment paragraph break decodes as a space: `decode` is for
+        // text that holds no stand-ins, and one in a caller's text means
+        // the caller saw a blank line.
+        Piece::Token(Token::CommentBreak) => out.push(' '),
+        Piece::Token(_) => {}
     });
     out
 }
@@ -1001,6 +1610,7 @@ pub(crate) fn delimiter(token: Token) -> &'static str {
         Token::HighlightEnd => "==}",
         Token::CommentStart => "{>>",
         Token::CommentEnd => "<<}",
+        Token::CommentBreak => "\n\n",
         Token::FieldStart => "{",
         Token::FieldSeparator => "}",
         Token::FieldEnd => FIELD_END,
@@ -1087,7 +1697,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     // The state each open span interrupted, innermost last.
     let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
-    Pieces::default().feed(&encode_spans(markdown, ALL, false), |piece| match piece {
+    Pieces::default().feed(&encode_spans_kept(markdown), |piece| match piece {
         Piece::Text(text) => {
             let shown = match state {
                 In::Text => true,
@@ -1171,6 +1781,9 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     state = outer.pop().unwrap_or(In::Text);
                     None
                 }
+                // A comment paragraph break: comments resolve to nothing,
+                // so the break is dropped with the comment's text.
+                Token::CommentBreak => None,
             };
             if let Some(opened) = opened {
                 outer.push(state);
@@ -1305,6 +1918,121 @@ mod tests {
     }
 
     #[test]
+    fn indented_code_is_verbatim_not_a_fence() {
+        // CommonMark reads a line indented four or more spaces as indented
+        // code, so its text is verbatim (#518): a ``` line there is text,
+        // no fence opens, and CriticMarkup and its escapes open nothing.
+        // The reader never writes indented fences, so nothing is lost.
+        for hand in [
+            "    ```\n    a{\\++b\n    ```\n",
+            "     ```\n     x++\\}y\n     ```\n",
+            "    a{++b++}c\n",
+            "\tcode {++x++} too\n",
+        ] {
+            assert_eq!(encode(hand), hand, "{hand:?}");
+        }
+    }
+
+    #[test]
+    fn an_escape_from_a_code_block_unwinds_inside_its_fence_only() {
+        // The reader breaks a code block's delimiter shapes by making
+        // their backslash run odd; Markdown itself reads no escape inside
+        // a fence, so the unwinding happens there, and only there:
+        // outside one the escapes are Markdown's own. Every other
+        // backslash is left as written, so code a human wrote reaches
+        // Word byte-identical.
+        for (document, written) in [
+            ("fenced {++x++} code", r"fenced {\++x++\} code"),
+            (r"{\++x++}", r"{\\\++x++\}"),
+            ("a~>b", r"a~\>b"),
+            (r"a\~>b", r"a\~\>b"),
+            (r"back\slash", r"back\slash"),
+            (r"C:\path\x", r"C:\path\x"),
+            (
+                r"$x_{--}$ and ![a {++b++}](u\v)",
+                r"$x_{\--}$ and ![a {\++b++\}](u\v)",
+            ),
+        ] {
+            let fence = format!("```\n{written}\n```\n");
+            assert_eq!(encode(&fence), format!("```\n{document}\n```\n"));
+            let text = format!("a {written} b");
+            assert_eq!(encode(&text), text, "outside a fence it is Markdown's");
+        }
+        // Backslashes a human wrote in a fence are not the reader's
+        // escape: `C:\\path`, a regex `\\d+`, LaTeX `\\` and `a\\b`
+        // stay as written. A delimiter behind an even run stays as
+        // written too and opens nothing; it cannot come from the reader.
+        for hand in [
+            r"C:\\path\\x",
+            r"\\d+",
+            r"a\\b",
+            r"\\\\",
+            r"even {\\++ odd and \{++ text",
+            r"close ++\\} and sep ~\\>",
+        ] {
+            let fence = format!("```\n{hand}\n```\n");
+            assert_eq!(encode(&fence), fence, "{hand}");
+        }
+        // The changes the reader writes in a code block still open there,
+        // and the text inside them unwinds with the rest of the fence.
+        assert_eq!(
+            pieces(&encode("```\nkeep {++new++} old\n```\n")),
+            [
+                "```\nkeep ",
+                "<InsertStart>",
+                "new",
+                "<InsertEnd>",
+                " old\n```\n"
+            ]
+        );
+        // A change beside the code's own backslash keeps its delimiters:
+        // inside a fence they are never Markdown-escaped.
+        assert_eq!(
+            pieces(&encode("```\nold\\{++new++}\n```\n")),
+            [
+                "```\nold\\",
+                "<InsertStart>",
+                "new",
+                "<InsertEnd>",
+                "\n```\n"
+            ]
+        );
+        assert_eq!(
+            pieces(&encode("```\n{++new\\++}\n```\n")),
+            ["```\n", "<InsertStart>", "new\\", "<InsertEnd>", "\n```\n"]
+        );
+        assert_eq!(
+            pieces(&encode("```\n{~~old\\~>new~~}\n```\n")),
+            [
+                "```\n",
+                "<SubstituteStart>",
+                "old\\",
+                "<SubstituteSeparator>",
+                "new",
+                "<SubstituteEnd>",
+                "\n```\n"
+            ]
+        );
+        assert_eq!(
+            pieces(&encode("```\n{~~a~\\>c~>b~~}\n```\n")),
+            [
+                "```\n",
+                "<SubstituteStart>",
+                "a~>c",
+                "<SubstituteSeparator>",
+                "b",
+                "<SubstituteEnd>",
+                "\n```\n"
+            ]
+        );
+        // The front matter is no code block: nothing unwinds there.
+        assert_eq!(
+            encode("---\ntitle: a~\\>b\n---\n"),
+            "---\ntitle: a~\\>b\n---\n"
+        );
+    }
+
+    #[test]
     fn unclosed_openers_encode_in_linear_time() {
         // Every opener once scanned the rest of the text for its closer.
         let source = "{++ {-- {~~ {== {>> ~> ".repeat(40_000);
@@ -1436,6 +2164,207 @@ mod tests {
         assert_eq!(resolve(text, false), "xc");
     }
 
+    /// Every payload that, inside a comment, would shorten the enclosing
+    /// span or steal its separator, with every change kind and every
+    /// substitution half. The comment is opaque to the boundary lookup;
+    /// the change and the comment both survive.
+    #[test]
+    fn a_complete_comment_inside_a_change_is_opaque_to_its_boundaries() {
+        // The exact ticket example: a `~>` inside the comment must not
+        // become the substitution's separator.
+        let text = "{~~a{>>x ~> y<<} b~>c~~}";
+        assert_eq!(
+            pieces(&encode(text)),
+            [
+                "<SubstituteStart>",
+                "a",
+                "<CommentStart>",
+                "x ~> y",
+                "<CommentEnd>",
+                " b",
+                "<SubstituteSeparator>",
+                "c",
+                "<SubstituteEnd>",
+            ]
+        );
+        assert_eq!(resolve(text, true), "c");
+        assert_eq!(resolve(text, false), "a b");
+
+        for payload in ["~>", "++}", "--}", "~~}", "==}"] {
+            // Insertion with the payload inside a comment.
+            let text = format!("{{++a{{>>{payload}<<}}b++}}");
+            assert_eq!(
+                pieces(&encode(&text)),
+                [
+                    "<InsertStart>",
+                    "a",
+                    "<CommentStart>",
+                    payload,
+                    "<CommentEnd>",
+                    "b",
+                    "<InsertEnd>"
+                ],
+                "insertion {payload:?}",
+            );
+            assert_eq!(resolve(&text, true), "ab", "insertion {payload:?} accept");
+            assert_eq!(resolve(&text, false), "", "insertion {payload:?} reject");
+
+            // Deletion with the payload inside a comment.
+            let text = format!("{{--a{{>>{payload}<<}}b--}}");
+            assert_eq!(
+                pieces(&encode(&text)),
+                [
+                    "<DeleteStart>",
+                    "a",
+                    "<CommentStart>",
+                    payload,
+                    "<CommentEnd>",
+                    "b",
+                    "<DeleteEnd>"
+                ],
+                "deletion {payload:?}",
+            );
+            assert_eq!(resolve(&text, true), "", "deletion {payload:?} accept");
+            assert_eq!(resolve(&text, false), "ab", "deletion {payload:?} reject");
+
+            // Substitution with the payload inside a comment in the old
+            // half; the outer `~>` is the separator.
+            let text = format!("{{~~a{{>>{payload}<<}} b~>c~~}}");
+            assert_eq!(
+                pieces(&encode(&text)),
+                [
+                    "<SubstituteStart>",
+                    "a",
+                    "<CommentStart>",
+                    payload,
+                    "<CommentEnd>",
+                    " b",
+                    "<SubstituteSeparator>",
+                    "c",
+                    "<SubstituteEnd>",
+                ],
+                "substitution-old {payload:?}",
+            );
+            assert_eq!(resolve(&text, true), "c", "sub-old {payload:?} accept");
+            assert_eq!(resolve(&text, false), "a b", "sub-old {payload:?} reject");
+
+            // Substitution with the payload inside a comment in the new
+            // half; the `~>` is before the comment.
+            let text = format!("{{~~a~>b{{>>{payload}<<}} c~~}}");
+            assert_eq!(
+                pieces(&encode(&text)),
+                [
+                    "<SubstituteStart>",
+                    "a",
+                    "<SubstituteSeparator>",
+                    "b",
+                    "<CommentStart>",
+                    payload,
+                    "<CommentEnd>",
+                    " c",
+                    "<SubstituteEnd>",
+                ],
+                "substitution-new {payload:?}",
+            );
+            assert_eq!(resolve(&text, true), "b c", "sub-new {payload:?} accept");
+            assert_eq!(resolve(&text, false), "a", "sub-new {payload:?} reject");
+
+            // Highlight with the payload inside a comment.
+            let text = format!("{{==a{{>>{payload}<<}}b==}}");
+            assert_eq!(
+                pieces(&encode(&text)),
+                [
+                    "<HighlightStart>",
+                    "a",
+                    "<CommentStart>",
+                    payload,
+                    "<CommentEnd>",
+                    "b",
+                    "<HighlightEnd>",
+                ],
+                "highlight {payload:?}",
+            );
+            assert_eq!(resolve(&text, true), "ab", "highlight {payload:?} accept");
+            assert_eq!(resolve(&text, false), "ab", "highlight {payload:?} reject");
+        }
+    }
+
+    /// Incomplete comments and comment boundaries that fall outside the
+    /// enclosing span must not hide its closer or separator.
+    #[test]
+    fn incomplete_comments_and_escaped_comment_openers_do_not_break_changes() {
+        // An incomplete comment inside an insertion: the insertion still
+        // closes at its `++}` and the comment opener stays text.
+        let text = "{++a{>>b++} c";
+        assert_eq!(
+            pieces(&encode(text)),
+            ["<InsertStart>", "a{>>b", "<InsertEnd>", " c"]
+        );
+        assert_eq!(resolve(text, true), "a{>>b c");
+        assert_eq!(resolve(text, false), " c");
+
+        // An escaped `{>>` opener does not start a comment: the backslash
+        // breaks the escape, so the whole thing stays text.
+        let text = r"\{++a{>>b++} c++}";
+        assert_eq!(encode(text), text);
+        assert_eq!(resolve(text, true), text);
+        assert_eq!(resolve(text, false), text);
+
+        // A `{>>` inside a code span does not start a comment: code
+        // spans are verbatim, the opener is text.
+        let text = "before `{>>a++}` text after\n";
+        assert_eq!(encode(text), text);
+        assert_eq!(resolve(text, true), text);
+        assert_eq!(resolve(text, false), text);
+    }
+
+    /// Many failed change openers before many complete comments must not
+    /// rescann every comment: the lookup stays linear in the input size.
+    #[test]
+    fn many_failed_openers_with_comments_stay_linear() {
+        // Each `{~~x` is a failed substitution opener (no separator, no
+        // closer); each `{>>` opens a complete comment containing both
+        // `~~}` and `~>`.
+        let failed = "{~~x".repeat(2_000);
+        let comment = "{>>payload ~~} ~> body<<} ".repeat(2_000);
+        let source = format!("{failed}{comment}");
+        let started = std::time::Instant::now();
+        let output = encode(&source);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed.as_secs() < 2,
+            "took {elapsed:?} for {} bytes",
+            source.len()
+        );
+        // Sanity: the failed openers leave the markers as text, the
+        // comments are recognised as complete.
+        assert!(output.contains("~>"));
+        assert!(output.contains("payload"));
+    }
+
+    /// Many highlight openers before many comments holding their kind's
+    /// closer must not re-skip every comment from each opener: the
+    /// pairing pass that finds complete spans stays linear too.
+    #[test]
+    fn highlight_openers_before_comment_held_closers_stay_linear() {
+        // Every `{==` fails (each `==}` sits inside a comment), and each
+        // comment is complete.
+        let openers = "{==".repeat(20_000);
+        let comments = "{>>x==}y<<} ".repeat(20_000);
+        let source = format!("{openers}{comments}");
+        let started = std::time::Instant::now();
+        let output = encode(&source);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed.as_secs() < 2,
+            "took {elapsed:?} for {} bytes",
+            source.len()
+        );
+        // The openers stay text and the comments are recognised.
+        assert!(output.contains("==}"));
+        assert!(output.contains('y'));
+    }
+
     #[test]
     fn a_footnote_label_goes_before_a_change_that_opens_its_line() {
         assert_eq!(
@@ -1498,6 +2427,16 @@ mod tests {
     }
 
     #[test]
+    fn resolving_keeps_a_fence_s_escapes() {
+        // The resolved Markdown still names the document its code blocks
+        // hold, so the reader's fence escapes stay: converting the output
+        // back cannot invent a change from them.
+        let fence = "```\nfenced {\\++x++\\} code\n```\n";
+        assert_eq!(resolve(fence, true), fence);
+        assert_eq!(resolve(fence, false), fence);
+    }
+
+    #[test]
     fn accepting_a_whole_deleted_paragraph_collapses_its_blank_separator() {
         // A paragraph deleted between blank-line-separated paragraphs must
         // not leave a phantom blank line once the deletion is accepted (the
@@ -1533,5 +2472,260 @@ mod tests {
             });
         }
         assert_eq!(out.concat(), "x\u{2E0E}y");
+    }
+
+    /// A comment after another comment is still opaque: an earlier comment
+    /// must not hide the later one's delimiters from the boundary lookup.
+    #[test]
+    fn every_comment_hides_its_own_delimiters() {
+        let text = "x {>>one<<} {~~a{>>y ~> z<<}b~>c~~} d{>>two<<}e";
+        assert_eq!(
+            pieces(&encode(text)),
+            [
+                "x ",
+                "<CommentStart>",
+                "one",
+                "<CommentEnd>",
+                " ",
+                "<SubstituteStart>",
+                "a",
+                "<CommentStart>",
+                "y ~> z",
+                "<CommentEnd>",
+                "b",
+                "<SubstituteSeparator>",
+                "c",
+                "<SubstituteEnd>",
+                " d",
+                "<CommentStart>",
+                "two",
+                "<CommentEnd>",
+                "e",
+            ]
+        );
+        assert_eq!(resolve(text, true), "x  c de");
+        assert_eq!(resolve(text, false), "x  ab de");
+        // A comment that crosses a blank line and holds the kind's
+        // closer still nests whole: the change ends after it.
+        let text = "{++a{>>x++}y\n\n<<}z++}";
+        assert_eq!(
+            pieces(&encode(text)),
+            [
+                "<InsertStart>",
+                "a",
+                "<CommentStart>",
+                "x++}y",
+                "<CommentBreak>",
+                "<CommentEnd>",
+                "z",
+                "<InsertEnd>",
+            ]
+        );
+        assert_eq!(resolve(text, true), "az");
+        assert_eq!(resolve(text, false), "");
+    }
+
+    /// A complete nested highlight is opaque like a comment: a `~>` or a
+    /// closer inside it does not split or shorten the change around it,
+    /// and a `==}` inside its own nested comment does not close it.
+    #[test]
+    fn a_complete_highlight_inside_a_change_is_opaque_to_its_boundaries() {
+        let text = "{~~a{==x ~> y==} b~>c~~}";
+        assert_eq!(
+            pieces(&encode(text)),
+            [
+                "<SubstituteStart>",
+                "a",
+                "<HighlightStart>",
+                "x ~> y",
+                "<HighlightEnd>",
+                " b",
+                "<SubstituteSeparator>",
+                "c",
+                "<SubstituteEnd>",
+            ]
+        );
+        assert_eq!(resolve(text, true), "c");
+        assert_eq!(resolve(text, false), "ax ~> y b");
+
+        let text = "{++a{==b ++}c==}d++}";
+        assert_eq!(
+            pieces(&encode(text)),
+            [
+                "<InsertStart>",
+                "a",
+                "<HighlightStart>",
+                "b ++}c",
+                "<HighlightEnd>",
+                "d",
+                "<InsertEnd>",
+            ]
+        );
+        assert_eq!(resolve(text, true), "ab ++}cd");
+        assert_eq!(resolve(text, false), "");
+
+        // A comment inside the highlight makes its `==}` text.
+        let text = "{==a{>>x==}y<<}b==}{>>done<<}";
+        assert_eq!(
+            pieces(&encode(text)),
+            [
+                "<HighlightStart>",
+                "a",
+                "<CommentStart>",
+                "x==}y",
+                "<CommentEnd>",
+                "b",
+                "<HighlightEnd>",
+                "<CommentStart>",
+                "done",
+                "<CommentEnd>",
+            ]
+        );
+        // An incomplete highlight keeps its delimiters usable.
+        let text = "{++a{==x++}y++}";
+        assert_eq!(
+            pieces(&encode(text)),
+            ["<InsertStart>", "a{==x", "<InsertEnd>", "y++}"]
+        );
+    }
+
+    /// A blank line inside `{>>…<<}` becomes a comment paragraph break,
+    /// not a paragraph break in the text the comment is anchored on.
+    #[test]
+    fn a_blank_line_inside_a_comment_is_a_comment_paragraph_break() {
+        let text = "a{>>first\n\nsecond<<}b";
+        assert_eq!(
+            pieces(&encode(text)),
+            [
+                "a",
+                "<CommentStart>",
+                "first",
+                "<CommentBreak>",
+                "second",
+                "<CommentEnd>",
+                "b",
+            ]
+        );
+        // One line break is text; blank-line runs collapse to one break,
+        // whitespace-only lines and the next line's indent with them.
+        assert_eq!(
+            pieces(&encode("a{>>first\nsecond<<}b")),
+            ["a", "<CommentStart>", "first\nsecond", "<CommentEnd>", "b"]
+        );
+        assert_eq!(
+            pieces(&encode("a{>>first\n\n\n  \n\nsecond<<}b")),
+            [
+                "a",
+                "<CommentStart>",
+                "first",
+                "<CommentBreak>",
+                "second",
+                "<CommentEnd>",
+                "b",
+            ]
+        );
+        assert_eq!(decode(&encode("a{>>first\n\nsecond<<}b")), "afirst secondb");
+    }
+
+    /// Malformed CriticMarkup is text, and says so: an opener without its
+    /// closer or separator, and a closer nothing opened.
+    #[test]
+    fn malformed_critic_markup_is_text_with_a_warning() {
+        // Delimiters inside a comment are text of the comment: the
+        // comment still encodes, and nothing warns.
+        let (encoded, warnings) = encode_checked("{>>x ++} ~> y<<}");
+        assert_eq!(
+            encoded,
+            format!(
+                "{}{}{}",
+                stand_in(Token::CommentStart),
+                "x ++} ~> y",
+                stand_in(Token::CommentEnd)
+            )
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // Inside a code span nothing opens: it stays literal, and the
+        // comment around a `++}` warns nothing.
+        let source = "`{++x ++}` {>>y ++}<<}";
+        let (encoded, warnings) = encode_checked(source);
+        assert!(encoded.starts_with("`{++x ++}` "), "{encoded}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let cases = [
+            ("{++a", "'{++' without its '++}'"),
+            ("a ++} b", "'++}' with nothing open"),
+            ("{~~a~~}", "'{~~' without its '~>' separator"),
+            ("{>>a", "'{>>' without its '<<}'"),
+        ];
+        for (source, warning) in cases {
+            let (encoded, warnings) = encode_checked(source);
+            assert_eq!(encoded, source, "{source}");
+            assert!(
+                warnings.iter().any(|w| w.contains(warning)),
+                "{source}: {warnings:?} lacks {warning:?}"
+            );
+        }
+        // A wrong-kind closer is both: the opener never closed, and the
+        // closer is a stray.
+        let (encoded, warnings) = encode_checked("{++a--}");
+        assert_eq!(encoded, "{++a--}");
+        assert!(warnings.iter().any(|w| w.contains("'{++'")), "{warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("'--}'")), "{warnings:?}");
+    }
+
+    /// A numeric character reference that names a stand-in character or
+    /// the escape is literal text: the Markdown parser decodes references
+    /// only after CriticMarkup was read, so the decoded character must
+    /// not arrive as an unescaped delimiter.
+    #[test]
+    fn character_references_naming_stand_ins_stay_literal() {
+        for (text, guarded) in [
+            ("a &#x2E0E;x&#x2E0F; b", 2),
+            ("a &#11790;x&#11791; b", 2),
+            ("a &#X2E0E;x b", 1),
+            ("{>>a &#x2E19; b<<}", 1),
+            ("a &#xF0000; b", 1),
+        ] {
+            let encoded = encode(text);
+            assert_eq!(
+                encoded.chars().filter(|&c| c == ESCAPE).count(),
+                guarded,
+                "{text}: {encoded:?}"
+            );
+            // What a reader pieces together is the text as written.
+            assert_eq!(restore(&encoded), text, "{text}");
+        }
+        // References to other characters, malformed references,
+        // references behind a backslash and references in a code span
+        // keep their spelling, unguarded.
+        for text in [
+            "a &#65; b",
+            "a &#x2E0 b",
+            "a &#x110000; b",
+            r"a \&#x2E0E; b",
+            "`&#x2E0E;`",
+            "```
+&#x2E0E;
+```
+",
+        ] {
+            assert_eq!(encode(text), text, "{text}");
+        }
+    }
+
+    /// A closer inside a complete highlight is the highlight's text, as a
+    /// closer inside a comment is the comment's: neither warns as a
+    /// stray.
+    #[test]
+    fn a_closer_inside_a_complete_highlight_is_the_highlight_s_text() {
+        for text in [
+            "{==b++}c==}",
+            "{++a{==b++}c==}d++}",
+            "{~~a{==b~~}c==}d~>e~~}",
+            "{==a{>>x==}y<<}b==}",
+        ] {
+            let (encoded, warnings) = encode_checked(text);
+            assert!(warnings.is_empty(), "{text}: {warnings:?} in {encoded:?}");
+        }
     }
 }

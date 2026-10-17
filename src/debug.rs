@@ -169,6 +169,19 @@ struct Package {
 
 impl Package {
     fn open(bytes: &[u8]) -> Result<Self, String> {
+        // Read Strict packages as the Transitional the checks describe, as
+        // the comparer does at load — and only those: whether a package IS
+        // Strict is decided by its main part's namespace, so a Transitional
+        // file that merely quotes a Strict URI in its text is reported as
+        // the bytes it carries (#531).
+        let translated = if crate::strict_translation::main_part_is_strict(bytes) {
+            Some(crate::strict_translation::strict_to_transitional_docx(
+                bytes,
+            ))
+        } else {
+            None
+        };
+        let bytes = translated.as_deref().unwrap_or(bytes);
         let mut zip =
             zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
         let mut entries = Vec::with_capacity(zip.len());
@@ -3407,6 +3420,56 @@ mod tests {
         let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:customXml w:element="row"><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:customXml><w:tr><w:tc><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
         let out = render_of(body, "");
         assert!(out.contains("  table 1 2x1 \"A1\"\n"), "{out}");
+    }
+
+    /// A `w:sdt` row and a `w:sdt` cell's paragraphs are the table's own,
+    /// as Strict files and content controls spell them.
+    #[test]
+    fn render_counts_rows_and_cells_through_sdt_wrappers() {
+        let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:sdt><w:sdtPr/><w:sdtContent><w:tr><w:tc><w:sdt><w:sdtPr/><w:sdtContent><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:sdtContent></w:sdt></w:tc></w:tr></w:sdtContent></w:sdt><w:tr><w:tc><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  table 1 2x1 \"A1\"\n"), "{out}");
+    }
+
+    /// Strict parts reach the checks translated: the package the SDK's
+    /// strict→transitional load writes is what `render` describes, so a
+    /// Strict `w:tbl` and `w:pgSz` list like Transitional ones.
+    #[test]
+    fn render_reads_strict_packages() {
+        let w = r#"xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main""#;
+        let body = format!(
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>{ONE_CELL}</w:tbl><w:p/><w:sectPr><w:pgSz w:w="612pt" w:h="792pt"/></w:sectPr>"#,
+        );
+        let doc_xml = format!("<w:document {w}><w:body>{body}</w:body></w:document>");
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", doc_xml.as_str()),
+        ]);
+        let out = report(&pkg, None, &opts_for(Check::Render)).unwrap();
+        assert!(out.contains("  table 1 1x1 \"A1\"\n"), "{out}");
+        assert!(out.contains("  section 1 page=12240x15840"), "{out}");
+    }
+
+    /// A *Transitional* document whose text quotes a Strict URI reports its
+    /// text verbatim (#531 review defect 2): debug describes the file's own
+    /// bytes, so only a package whose main part IS Strict (detected by its
+    /// namespace) is read through the strict→transitional translation —
+    /// not any package that merely mentions the URI in prose.
+    #[test]
+    fn text_quoting_a_strict_uri_stays_verbatim() {
+        let body = r#"<w:p><w:r><w:t>See http://purl.oclc.org/ooxml/wordprocessingml/main for the strict namespace.</w:t></w:r></w:p><w:p/>"#;
+        for check in [Check::Text, Check::Runs] {
+            let out = report(&docx(body), None, &opts_for(check)).unwrap();
+            assert!(
+                out.contains("See http://purl.oclc.org/ooxml/wordprocessingml/main"),
+                "{check:?}: the run's text is the file's own content: {out}"
+            );
+            assert!(
+                !out.contains("See http://schemas.openxmlformats.org/wordprocessingml/2006/main"),
+                "{check:?}: the report rewrote the file's prose: {out}"
+            );
+        }
     }
 
     /// PR #247 review: `behindDoc="true"` is behind the text, like `"1"`.
