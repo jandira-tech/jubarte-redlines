@@ -896,6 +896,13 @@ enum Mode {
 /// Options for `edit` and `add`.
 struct EditJob<'a> {
     file: &'a Path,
+    /// The plan's path when `--plan` named one: an input of the command,
+    /// protected from output aliases like `file` (V2-05).
+    plan: Option<&'a Path>,
+    /// `-o` named the document. When it did not, the default name of a
+    /// `X_modified.docx` input is that input itself: the documented
+    /// in-place iteration, not an output alias (V2-05).
+    explicit_output: bool,
     /// One document, or the bundle directory.
     target: &'a EditTarget,
     mode: Mode,
@@ -1016,8 +1023,6 @@ fn run_edit(
         });
         insert_before_summary(&mut jsonl, &render_line.to_string());
     }
-    std::fs::create_dir_all(out_dir)
-        .map_err(|e| fail(format!("creating {}: {e}", out_dir.display())))?;
     let name = job.file.file_name().map_or_else(
         || job.file.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -1059,17 +1064,46 @@ fn run_edit(
             outputs.push((png_name(name, i, count), png));
         }
     }
-    let mut saved = Vec::new();
-    for (name, bytes) in &outputs {
-        let path = out_dir.join(name);
-        std::fs::write(&path, bytes)
-            .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
-        saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
-    }
+    // The report names every member and closes with the summary; both are
+    // settled before anything is staged.
+    let saved: Vec<_> = outputs
+        .iter()
+        .map(|(name, bytes)| {
+            serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)})
+        })
+        .collect();
     let save_line = serde_json::json!({"ev": "save", "dir": slash_path(out_dir), "outputs": saved});
     insert_before_summary(&mut jsonl, &save_line.to_string());
-    std::fs::write(out_dir.join("report.jsonl"), &jsonl)
-        .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
+    let summary = jsonl.lines().last().unwrap_or("").to_string();
+    outputs.push(("report.jsonl".into(), jsonl.into_bytes()));
+    // V2-05: a bundle member that is an input refuses the publication;
+    // otherwise the bundle is staged in a sibling temp directory and
+    // published as a new directory — never merged into the existing one.
+    let inputs = job_inputs(job);
+    for (name, _) in &outputs {
+        refuse_output_alias(&out_dir.join(name), &inputs)?;
+    }
+    if job.force {
+        refuse_foreign_bundle_contents(out_dir)?;
+    }
+    let stage = stage_bundle_dir(out_dir).map_err(fail)?;
+    for (name, bytes) in &outputs {
+        if let Err(e) = std::fs::write(stage.join(name), bytes) {
+            let _ = std::fs::remove_dir_all(&stage);
+            return Err(fail(format!(
+                "writing {}: {e}",
+                out_dir.join(name).display()
+            )));
+        }
+    }
+    publish_dir(&stage, out_dir, job.force).map_err(fail)?;
+    let committed = |e: String| {
+        fail(format!(
+            "committed {} ({} files), but reporting the result failed: {e}",
+            slash_path(out_dir),
+            outputs.len()
+        ))
+    };
     if job.quiet {
         return Ok(());
     }
@@ -1079,11 +1113,7 @@ fn run_edit(
         && let Ok(text) =
             jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
     {
-        let names: Vec<&str> = outputs
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .chain(["report.jsonl"])
-            .collect();
+        let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
         eprintln!(
             "wrote {} ({} files: {})",
             out_dir.display(),
@@ -1093,15 +1123,10 @@ fn run_edit(
         for note in edit_notes(notes, &result) {
             eprintln!("{note}");
         }
-        return write_stdout(&text).map_err(fail);
+        return write_stdout(&text).map_err(committed);
     }
-    let summary = jsonl.lines().last().unwrap_or("").to_string();
-    outln!("{summary}");
-    let names: Vec<&str> = outputs
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .chain(["report.jsonl"])
-        .collect();
+    write_stdout(format!("{summary}\n")).map_err(committed)?;
+    let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
     // The status lines on stderr (D6); the summary and the view are data.
     eprintln!(
         "wrote {} ({} files: {})",
@@ -1127,7 +1152,7 @@ fn run_edit(
         // An identifier agents read back: `/` on every OS (#568).
         Some(&slash_path(&out_dir.join(shown))),
     ) {
-        Ok(view) => write_stdout(&view).map_err(fail),
+        Ok(view) => write_stdout(&view).map_err(committed),
         Err(e) => {
             eprintln!("warning: the changed blocks cannot be shown: {e}");
             Ok(())
@@ -1144,6 +1169,227 @@ fn taken_output(path: &Path) -> (u8, String) {
             path.display()
         ),
     )
+}
+
+/// The inputs an output of `edit` or `add` must never overwrite (V2-05).
+fn job_inputs<'a>(job: &EditJob<'a>) -> Vec<(&'a Path, &'static str)> {
+    let mut inputs: Vec<(&'a Path, &'static str)> = vec![(job.file, "the input")];
+    if let Some(plan) = job.plan {
+        inputs.push((plan, "the plan"));
+    }
+    inputs
+}
+
+/// Exit 2, stable code `OUTPUT_ALIAS`: an output that names an input
+/// through another spelling, a symlink or a hard link, refused before
+/// anything is written (V2-05). `same_path` compares device and inode for
+/// existing paths (volume serial and file index on Windows) and keys a
+/// path not written yet by its canonicalized parent and lowercase name;
+/// there a hard link under a third name is not visible, but a hard link is
+/// an existing directory entry, so every alias of an existing input is
+/// seen.
+fn refuse_output_alias(output: &Path, inputs: &[(&Path, &str)]) -> Result<(), (u8, String)> {
+    for (input, what) in inputs {
+        if same_path(output, input) {
+            return Err((
+                EXIT_USAGE,
+                format!(
+                    "OUTPUT_ALIAS: the output '{}' is the same file as {what} '{}'",
+                    output.display(),
+                    input.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `paths` comma-separated, with the `/` spelling the views use.
+fn comma_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| slash_path(p))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A staging path beside `dest`: the same filesystem, so the commit is a
+/// rename; hidden; unique to this process (`n` breaks a tie with the
+/// survivor of an interrupted run).
+fn staging_path(dest: &Path, n: usize) -> PathBuf {
+    let dir = dest
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let name = dest
+        .file_name()
+        .map_or_else(|| "out".into(), |f| f.to_string_lossy().into_owned());
+    dir.join(format!(".{name}.jubarte-tmp-{}-{n}", std::process::id()))
+}
+
+/// `bytes` staged in a temp file beside `path`, ready for the rename
+/// commit. A failure removes the temp file again.
+fn stage_file(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    for n in 0..100 {
+        let tmp = staging_path(path, n);
+        match std::fs::File::create_new(&tmp)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, bytes))
+        {
+            Ok(()) => return Ok(tmp),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("writing {}: {e}", path.display()));
+            }
+        }
+    }
+    Err(format!("writing {}: no free staging name", path.display()))
+}
+
+/// Stage `outputs` beside their destinations and commit each with a
+/// rename (V2-05): a failure before a file's commit leaves neither that
+/// output nor its temp file, and a failure mid-commit names what was
+/// committed. Returns the committed paths.
+fn publish_files(outputs: &[(PathBuf, &[u8])]) -> Result<Vec<PathBuf>, String> {
+    let mut staged: Vec<(PathBuf, &Path)> = Vec::new();
+    for (path, bytes) in outputs {
+        match stage_file(path, bytes) {
+            Ok(tmp) => staged.push((tmp, path.as_path())),
+            Err(e) => {
+                for (tmp, _) in &staged {
+                    let _ = std::fs::remove_file(tmp);
+                }
+                return Err(e);
+            }
+        }
+    }
+    let mut committed: Vec<PathBuf> = Vec::new();
+    for (tmp, path) in &staged {
+        if let Err(e) = std::fs::rename(tmp, path) {
+            for (tmp, _) in staged.iter().skip(committed.len()) {
+                let _ = std::fs::remove_file(tmp);
+            }
+            let mut message = format!("committing {}: {e}", path.display());
+            if !committed.is_empty() {
+                message += &format!(" (already committed: {})", comma_paths(&committed));
+            }
+            return Err(message);
+        }
+        committed.push(path.to_path_buf());
+    }
+    Ok(committed)
+}
+
+/// Exit 2, stable code `OUTPUT_DIR_NOT_EMPTY`: `--force` replaces an
+/// existing `--out-dir` wholesale only when it is an earlier jubarte bundle,
+/// every entry named by its `report.jsonl` save line (V2-05). Anything else
+/// in it (a user's file, an input under a subdirectory) would be deleted by
+/// the replacement, so the publication refuses before staging.
+fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
+    let mut ours: std::collections::BTreeSet<String> = ["report.jsonl".to_string()].into();
+    if let Ok(report) = std::fs::read_to_string(dir.join("report.jsonl")) {
+        let saved = report
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|line| line["ev"] == "save")
+            .flat_map(|line| line["outputs"].as_array().cloned().unwrap_or_default());
+        ours.extend(saved.filter_map(|o| o["f"].as_str().map(str::to_string)));
+    }
+    let mut foreign: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| !ours.contains(name))
+        .collect();
+    foreign.extend(
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| format!("{}/", e.file_name().to_string_lossy())),
+    );
+    if foreign.is_empty() {
+        return Ok(());
+    }
+    foreign.sort();
+    Err((
+        EXIT_USAGE,
+        format!(
+            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); --force replaces only a jubarte bundle, so move those files or name another --out-dir",
+            dir.display(),
+            foreign.join(", ")
+        ),
+    ))
+}
+
+/// The sibling temp directory a bundle is staged in (V2-05). Its parent
+/// chain is created first, as `--out-dir` has always allowed nested names.
+fn stage_bundle_dir(dir: &Path) -> Result<PathBuf, String> {
+    if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    }
+    for n in 0..100 {
+        let stage = staging_path(dir, n);
+        match std::fs::create_dir(&stage) {
+            Ok(()) => return Ok(stage),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("creating {}: {e}", dir.display())),
+        }
+    }
+    Err(format!("creating {}: no free staging name", dir.display()))
+}
+
+/// Publish the staged bundle as `dir` (V2-05): a rename when `dir` is
+/// free; under --force over an existing directory, a swap that replaces it
+/// wholesale — never a merge into its files. On a failure `dir` keeps what
+/// it held and the staging directory is removed.
+fn publish_dir(stage: &Path, dir: &Path, force: bool) -> Result<(), String> {
+    let failed = |message: String| {
+        let _ = std::fs::remove_dir_all(stage);
+        message
+    };
+    if dir.symlink_metadata().is_err() {
+        return std::fs::rename(stage, dir)
+            .map_err(|e| failed(format!("publishing {}: {e}", dir.display())));
+    }
+    if !force {
+        return Err(failed(format!(
+            "output directory '{}' already exists (use --force to replace its files)",
+            dir.display()
+        )));
+    }
+    if !dir.is_dir() {
+        return Err(failed(format!(
+            "--out-dir '{}' is an existing file, not a directory",
+            dir.display()
+        )));
+    }
+    let aside = staging_path(dir, 100);
+    std::fs::rename(dir, &aside)
+        .map_err(|e| failed(format!("moving aside {}: {e}", dir.display())))?;
+    if let Err(e) = std::fs::rename(stage, dir) {
+        let _ = std::fs::remove_dir_all(stage);
+        let _ = std::fs::rename(&aside, dir);
+        return Err(format!("publishing {}: {e}", dir.display()));
+    }
+    // The old directory is replaced, not merged: drop what it held.
+    let dropped = if aside
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        std::fs::remove_file(&aside)
+    } else {
+        std::fs::remove_dir_all(&aside)
+    };
+    if let Err(e) = dropped {
+        eprintln!("warning: {}: {e}", aside.display());
+    }
+    Ok(())
 }
 
 /// The `note:` lines of an applied edit: the flags' notes, then each
@@ -1263,16 +1509,27 @@ fn write_edited(
             outputs.push((dir.join(png_name(&stem, i, png_count)), png));
         }
     }
+    // V2-05: never write over an input, whatever spelling or link named
+    // it; --force authorizes replacing an output, never an input. The
+    // in-place default (`X_modified.docx` edited again, without -o) is the
+    // command's own name for its input, not an alias of it.
+    for (output, _) in &outputs {
+        let inplace_default = !job.explicit_output && output == job.file;
+        let inputs: Vec<(&Path, &str)> = job_inputs(job)
+            .into_iter()
+            .filter(|(input, _)| !inplace_default || *input != job.file)
+            .collect();
+        refuse_output_alias(output, &inputs)?;
+    }
     // The PNG names are known only now: nothing is written over a file.
     if !job.force
         && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.exists())
     {
         return Err(taken_output(taken));
     }
-    for (output, bytes) in &outputs {
-        std::fs::write(output, bytes)
-            .map_err(|e| fail(format!("writing {}: {e}", output.display())))?;
-    }
+    // Each output is staged beside its destination and committed with a
+    // rename, so a failure before the commit leaves nothing behind (V2-05).
+    let committed = publish_files(&outputs).map_err(fail)?;
     if job.quiet {
         return Ok(());
     }
@@ -1303,7 +1560,14 @@ fn write_edited(
         // An identifier agents read back: `/` on every OS (#568).
         Some(&slash_path(path)),
     ) {
-        Ok(text) => write_stdout(&text).map_err(fail),
+        // V2-05: the commit stands when the report fails; say what it
+        // wrote.
+        Ok(text) => write_stdout(&text).map_err(|e| {
+            fail(format!(
+                "committed {}, but reporting the result failed: {e}",
+                comma_paths(&committed)
+            ))
+        }),
         Err(e) => {
             eprintln!("warning: {e}");
             Ok(())
@@ -1371,6 +1635,8 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     let target = flags.options.target(flags.file);
     let job = EditJob {
         file: flags.file,
+        plan: flags.plan,
+        explicit_output: flags.options.output.is_some(),
         target: &target,
         mode: if flags.options.editing_mode {
             Mode::Editing

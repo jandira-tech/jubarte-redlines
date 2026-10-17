@@ -314,3 +314,268 @@ fn a_text_output_is_refused_naming_its_own_extension() {
         "{err}"
     );
 }
+
+/// The sha256 of a file, for "the input is untouched" assertions.
+fn sha256(path: &Path) -> String {
+    jubarte::inspect::source_sha256(&std::fs::read(path).unwrap())
+}
+
+/// V2-05: an output that spells the source another way is the same file;
+/// it is refused with a stable code before anything is written, even with
+/// `--force`, and the source keeps its bytes.
+#[test]
+fn an_output_spelling_the_source_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let source = sha256(&dir.join("a.docx"));
+    for spelling in ["a.docx", "./a.docx", "sub/../a.docx"] {
+        let mut args = EDIT.to_vec();
+        args.extend(["-o", spelling, "--force"]);
+        let (code, _, err) = run(dir, &args);
+        assert_eq!(code, 2, "{spelling}: {err}");
+        assert!(err.contains("OUTPUT_ALIAS"), "{spelling}: {err}");
+        assert_eq!(sha256(&dir.join("a.docx")), source, "{spelling}");
+    }
+}
+
+/// V2-05: a symlink or a hard link to the source is the same file too.
+#[cfg(unix)]
+#[test]
+fn an_output_linked_to_the_source_is_refused() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let source = sha256(&dir.join("a.docx"));
+    let source_ino = std::fs::metadata(dir.join("a.docx")).unwrap().ino();
+    std::os::unix::fs::symlink("a.docx", dir.join("link.docx")).unwrap();
+    std::fs::hard_link(dir.join("a.docx"), dir.join("hard.docx")).unwrap();
+    for link in ["link.docx", "hard.docx"] {
+        let mut args = EDIT.to_vec();
+        args.extend(["-o", link, "--force"]);
+        let (code, _, err) = run(dir, &args);
+        assert_eq!(code, 2, "{link}: {err}");
+        assert!(err.contains("OUTPUT_ALIAS"), "{link}: {err}");
+    }
+    // Neither link nor the shared inode was touched.
+    assert!(
+        dir.join("link.docx")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(sha256(&dir.join("a.docx")), source);
+    assert_eq!(
+        std::fs::metadata(dir.join("hard.docx")).unwrap().ino(),
+        source_ino
+    );
+}
+
+/// V2-05: the plan is an input of the command as well; `-o` naming it
+/// through a hard link is refused and the plan keeps its bytes. (`-o`
+/// takes only a .docx name, so a .json plan is aliased through a link.)
+#[test]
+fn an_output_spelling_the_plan_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--content",
+            "x",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let plan = sha256(&dir.join("plan.json"));
+    std::fs::hard_link(dir.join("plan.json"), dir.join("out.docx")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "out.docx",
+            "--force",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("OUTPUT_ALIAS"), "{err}");
+    assert_eq!(sha256(&dir.join("plan.json")), plan);
+}
+
+/// V2-05: a bundle member that is an input (here the plan, living at the
+/// report's path) refuses the publication; nothing is written.
+#[test]
+fn a_bundle_member_aliasing_the_plan_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--content",
+            "x",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    std::fs::create_dir(dir.join("out")).unwrap();
+    std::fs::copy(dir.join("plan.json"), dir.join("out/report.jsonl")).unwrap();
+    let plan = sha256(&dir.join("out/report.jsonl"));
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "out/report.jsonl",
+            "--out-dir",
+            "out",
+            "--force",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("OUTPUT_ALIAS"), "{err}");
+    // The destination kept what it held: the plan, byte for byte, alone.
+    assert_eq!(sha256(&dir.join("out/report.jsonl")), plan);
+    assert_eq!(
+        std::fs::read_dir(dir.join("out")).unwrap().count(),
+        1,
+        "no staged or committed file may appear in out/"
+    );
+}
+
+/// V2-05: a forced bundle publishes a new directory wholesale over its own
+/// earlier bundle; an existing destination without `--force` refuses.
+#[test]
+fn a_forced_bundle_replaces_its_earlier_bundle_wholesale() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let mut args = EDIT.to_vec();
+    args.extend(["--out-dir", "r"]);
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 0, "{err}");
+    let first = sha256(&dir.join("r/report.jsonl"));
+    // Without --force the taken destination refuses, untouched.
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("already exists"), "{err}");
+    assert_eq!(sha256(&dir.join("r/report.jsonl")), first);
+    // With --force the earlier bundle is replaced by a new directory.
+    args.push("--force");
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 0, "{err}");
+    assert!(dir.join("r/redline.docx").exists());
+    assert!(dir.join("r/report.jsonl").exists());
+}
+
+/// V2-05: a bundle is never merged into a directory, and `--force` never
+/// deletes a file the bundle did not write: a destination holding one
+/// refuses with `OUTPUT_DIR_NOT_EMPTY`, every file in it untouched.
+#[test]
+fn a_forced_bundle_refuses_a_directory_holding_files_it_did_not_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let mut args = EDIT.to_vec();
+    args.extend(["--out-dir", "r"]);
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(dir.join("r/notes.txt"), "the user's notes").unwrap();
+    let report = sha256(&dir.join("r/report.jsonl"));
+    args.push("--force");
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("OUTPUT_DIR_NOT_EMPTY"), "{err}");
+    assert!(
+        err.contains("notes.txt"),
+        "the refusal names the file: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("r/notes.txt")).unwrap(),
+        "the user's notes"
+    );
+    assert_eq!(sha256(&dir.join("r/report.jsonl")), report);
+    // Nothing staged survives the refusal.
+    assert_eq!(
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter(|e| e
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("jubarte-tmp"))
+            .count(),
+        0
+    );
+}
+
+/// V2-05: an input inside the forced destination (here in a subdirectory,
+/// which the input-directory check does not cover) is never deleted by the
+/// wholesale replacement.
+#[test]
+fn a_forced_bundle_never_deletes_an_input_inside_the_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    std::fs::create_dir_all(dir.join("r/src")).unwrap();
+    letter(&dir.join("r/src"));
+    let source = sha256(&dir.join("r/src/a.docx"));
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "r/src/a.docx",
+            "-p",
+            "p1",
+            "--content",
+            "The fee is forty dollars.",
+            "--out-dir",
+            "r",
+            "--force",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("OUTPUT_DIR_NOT_EMPTY"), "{err}");
+    assert_eq!(sha256(&dir.join("r/src/a.docx")), source);
+}
+
+/// V2-05: a failure before the commit writes neither the output nor its
+/// staging file.
+#[cfg(unix)]
+#[test]
+fn a_failed_commit_leaves_no_output_or_staging_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    let ro = dir.join("ro");
+    std::fs::create_dir(&ro).unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let mut args = EDIT.to_vec();
+    args.extend(["-o", "ro/out.docx"]);
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("ro/out.docx"), "{err}");
+    let left: Vec<_> = std::fs::read_dir(&ro).unwrap().collect();
+    assert!(left.is_empty(), "no output and no staging file: {left:?}");
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
