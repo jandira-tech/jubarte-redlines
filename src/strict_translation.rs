@@ -688,10 +688,10 @@ pub fn main_part_is_strict(bytes: &[u8]) -> bool {
         if read == 0 {
             break;
         }
-        head.extend_from_slice(&chunk[..read]);
+        head.extend(chunk.iter().copied().take(read));
         let window = String::from_utf8_lossy(&head);
         if let Some((start, _)) = root_open(&window)
-            && window[start..].contains('>')
+            && window.split_at(start).1.contains('>')
         {
             break;
         }
