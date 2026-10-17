@@ -56,6 +56,22 @@ fn package(extra: impl FnOnce(&mut ZipWriter<Cursor<Vec<u8>>>, SimpleFileOptions
     writer.finish().unwrap().into_inner()
 }
 
+/// A minimal WordprocessingML package with `document_xml` as its
+/// `word/document.xml` (`package` always writes the fixture document).
+fn package_with_document(document_xml: &str) -> Vec<u8> {
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (name, body) in [
+        ("[Content_Types].xml", CONTENT_TYPES),
+        ("_rels/.rels", PACKAGE_RELS),
+        ("word/document.xml", document_xml),
+    ] {
+        writer.start_file(name, options).unwrap();
+        writer.write_all(body.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
 /// A package whose one media part inflates to `size` zero bytes.
 fn package_with_blob(size: usize) -> Vec<u8> {
     package(|writer, options| {
@@ -334,4 +350,61 @@ fn document_open_bounds_opc_metadata_attributes() {
             assert!(err.to_string().contains("256 attributes"), "{err}");
         }
     }
+}
+
+/// Package admission admitted unquoted and valueless attributes before it
+/// checked attribute budgets (#1055), and the permissive parser reads them:
+/// Word never writes them, but other writers' files carry them. They are
+/// still admitted, and the opened document holds the DOM `parse_xdocument`
+/// builds from the same part.
+#[test]
+fn admit_accepts_unquoted_and_valueless_attributes_the_permissive_parser_reads() {
+    for (xml, label) in [
+        (
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b w:val=on/></w:rPr><w:t>hi</w:t></w:r></w:p></w:body></w:document>"#,
+            "unquoted value on w:b",
+        ),
+        (
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b valueless/></w:rPr><w:t>hi</w:t></w:r></w:p></w:body></w:document>"#,
+            "valueless attribute on w:b",
+        ),
+    ] {
+        let bytes = package_with_document(xml);
+        let mut wml = WmlDocument::from_bytes(&bytes)
+            .unwrap_or_else(|e| panic!("{label}: admit must accept, got {e}"));
+        let admit_root = wml.main_document_root().expect("main root after admit");
+
+        let admit_body = wml.dom().serialize_element(admit_root);
+        let mut direct = jubarte::xmllinq::Dom::new();
+        let direct_doc = direct.parse_xdocument(xml);
+        let direct_root = direct.root(direct_doc).expect("direct parse root");
+        let direct_body = direct.serialize_element(direct_root);
+        assert_eq!(
+            admit_body, direct_body,
+            "{label}: admit-then-parse DOM must equal direct parse_xdocument DOM"
+        );
+    }
+}
+
+/// Unquoted attributes count against the same budgets: 257 of them on one
+/// tag exceed the attribute cap, and a repeated name is refused, because
+/// the DOM keeps one slot per name and would drop a value silently.
+#[test]
+fn admit_keeps_refusing_over_the_count_cap_and_duplicates_in_html_mode() {
+    let over_cap_attrs = (0..257).map(|i| format!(" a{i}=v{i}")).collect::<String>();
+    let over_cap_xml = format!(
+        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body{over_cap_attrs}></w:body></w:document>"
+    );
+    let bytes = package_with_document(&over_cap_xml);
+    let Err(err) = WmlDocument::from_bytes(&bytes) else {
+        panic!("257 unquoted attributes must still be refused")
+    };
+    assert!(err.to_string().contains("256 attributes"), "{err}");
+
+    let dup_xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p a=1 a=2/></w:body></w:document>"#;
+    let bytes = package_with_document(dup_xml);
+    let Err(err) = WmlDocument::from_bytes(&bytes) else {
+        panic!("duplicated attributes must still be refused")
+    };
+    assert!(err.to_string().contains("duplicated attribute"), "{err}");
 }

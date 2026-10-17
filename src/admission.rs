@@ -550,26 +550,35 @@ fn part_text(xml: &[u8]) -> Cow<'_, str> {
     }
 }
 
-/// Well-formed enough to scan, and no deeper than `max_depth` elements.
+/// Well-formed enough to scan, no deeper than `max_depth` elements, and
+/// inside the tag/namespace policy (`xmllinq::parse::TagPolicy`) so no part
+/// reaching the permissive DOM parser can carry pathological attribute or
+/// namespace-declaration widths.
 fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), AdmissionError> {
     let invalid =
         |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().check_end_names = true;
+    let mut policy = crate::xmllinq::parse::TagPolicy::tolerant();
     let mut depth = 0usize;
     loop {
         match reader.read_event() {
-            Ok(Event::Start(_)) => {
+            Ok(Event::Start(tag)) => {
+                policy.open(&tag).map_err(invalid)?;
                 depth = depth.saturating_add(1);
                 if depth > max_depth {
                     return Err(invalid(format!("XML nests deeper than {max_depth}")));
                 }
             }
+            Ok(Event::Empty(tag)) => {
+                policy.empty(&tag).map_err(invalid)?;
+            }
             Ok(Event::End(_)) => {
                 depth = depth
                     .checked_sub(1)
                     .ok_or_else(|| invalid("end tag with no open element".to_string()))?;
+                policy.close();
             }
             Ok(Event::Eof) if depth > 0 => {
                 return Err(invalid(format!("{depth} element(s) left unclosed")));
@@ -1068,6 +1077,45 @@ mod tests {
         assert!(admit(&fine, InputLimits::default()).is_ok());
     }
 
+    /// N01/N02: parts reaching the DOM parser carry bounded tag width and
+    /// namespace budgets — the admission scan refuses them before any node
+    /// or attribute is constructed, whatever the part is named.
+    #[test]
+    fn pathological_tags_and_namespaces_are_refused_at_admission() {
+        let wide_attrs = format!(
+            "<a{}/>",
+            (0..300).map(|i| format!(" a{i}='v'")).collect::<String>()
+        );
+        let alias = "<a xmlns:p='urn:x' xmlns:q='urn:x' p:b='1' q:b='2'/>";
+        let big_uri = format!("<a xmlns:p='{}'/>", "u".repeat(9000));
+        let many_live = format!(
+            "<a{}/>",
+            (0..300)
+                .map(|i| format!(" xmlns:p{i}='urn:{i}'"))
+                .collect::<String>()
+        );
+        for (name, xml) in [
+            ("word/wide.xml", wide_attrs.as_str()),
+            ("word/alias.xml", alias),
+            ("word/uri.xml", big_uri.as_str()),
+            ("word/rels/live.rels", many_live.as_str()),
+        ] {
+            let bytes = docx_with(&[(name, xml.as_bytes())]);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::InvalidXml,
+                "{xml}"
+            );
+        }
+        // The exact boundaries still admit.
+        let at_cap = format!(
+            "<a{}/>",
+            (0..256).map(|i| format!(" a{i}='v'")).collect::<String>()
+        );
+        let bytes = docx_with(&[("word/capped.xml", at_cap.as_bytes())]);
+        assert!(admit(&bytes, InputLimits::default()).is_ok());
+    }
+
     #[test]
     fn utf16_and_non_utf8_parts_are_scanned_not_refused() {
         // SharePoint writes customXml items as UTF-16 and Word opens them;
@@ -1283,5 +1331,25 @@ mod tests {
         // Codes are whole segments, never substrings.
         assert_eq!(code_first("INPUT_LIMITS: x"), None);
         assert_eq!(code_first("no code here"), None);
+    }
+
+    /// Word's own `o:gfxdata` VML attribute lives in `word/header*.xml`
+    /// and reaches ~366 KiB in the bench corpus. The admission scan runs
+    /// the checked gate on every XML part, including headers, so the same
+    /// input the unit test builds must also pass `admit` on a real docx.
+    #[test]
+    fn a_word_gfxdata_header_is_admitted_on_a_real_docx() {
+        let gfx_value: String = "A".repeat(400 * 1024);
+        let header = format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:p><w:r><w:pict><v:shape o:gfxdata="{gfx_value}"/></w:pict></w:r></w:p></w:hdr>"#
+        );
+        let header_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let bytes = docx_with(&[
+            ("word/header1.xml", header.as_bytes()),
+            ("word/_rels/header1.xml.rels", header_rels.as_bytes()),
+        ]);
+        let admitted = admit(&bytes, InputLimits::default())
+            .expect("Word's o:gfxdata header must be admitted");
+        assert!(admitted.entries >= 5);
     }
 }
