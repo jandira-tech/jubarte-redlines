@@ -333,14 +333,12 @@ impl Origin {
                 (g < paragraph_nodes.len()).then_some(g)
             })
             .collect();
-        let mut exact = vec![None; paragraph_nodes.len()];
-        let mut seen = vec![false; paragraph_nodes.len()];
-        for (post, tag) in tags.iter().enumerate() {
-            if let Some(g) = *tag {
-                exact[g] = if seen[g] { None } else { Some(post) };
-                seen[g] = true;
-            }
-        }
+        let exact = exact_correspondence(
+            &tags,
+            settled_story,
+            &paragraph_story,
+            paragraph_nodes.len(),
+        );
         let control_ids: Vec<String> = crate::inspect::collect_controls(&opened.dom, opened.body)
             .into_iter()
             .map(|c| c.id)
@@ -484,6 +482,67 @@ impl Origin {
     }
 }
 
+/// Follow unique source tags. Settlement keeps, removes or merges source
+/// paragraphs, and a merged paragraph carries no tag: an untagged settled
+/// paragraph holds the text of sources whose tags vanished beside it. When
+/// no source between its tagged neighbours (in source order, within one
+/// story) vanished, the untagged paragraph came from no source paragraph, so
+/// one of those neighbours was split, and neither is exact. A split beside a
+/// merge stays undetected: tags alone cannot tell the two apart.
+fn exact_correspondence(
+    tags: &[Option<usize>],
+    settled_story: &[(usize, usize)],
+    paragraph_story: &[(usize, usize)],
+    sources: usize,
+) -> Vec<Option<usize>> {
+    let mut exact = vec![None; sources];
+    let mut seen = vec![false; sources];
+    for (post, tag) in tags.iter().enumerate() {
+        if let Some(g) = *tag {
+            exact[g] = if seen[g] { None } else { Some(post) };
+            seen[g] = true;
+        }
+    }
+    let story = |g: usize| paragraph_story[g].0;
+    let vanished = |g: usize| !seen[g];
+    let explained = |before: Option<usize>, after: Option<usize>| match (before, after) {
+        (Some(a), Some(b)) => (a + 1..b).any(vanished),
+        (Some(a), None) => (a + 1..sources)
+            .take_while(|&g| story(g) == story(a))
+            .any(vanished),
+        (None, Some(b)) => (0..b)
+            .rev()
+            .take_while(|&g| story(g) == story(b))
+            .any(vanished),
+        (None, None) => true,
+    };
+    let mut post = 0;
+    while post < tags.len() {
+        if tags[post].is_some() {
+            post += 1;
+            continue;
+        }
+        let start = post;
+        while post < tags.len() && tags[post].is_none() {
+            post += 1;
+        }
+        let same_story = |other: usize| settled_story[other].0 == settled_story[start].0;
+        let before = start
+            .checked_sub(1)
+            .filter(|&p| same_story(p))
+            .and_then(|p| tags[p]);
+        let after = (post < tags.len() && same_story(post))
+            .then_some(post)
+            .and_then(|p| tags[p]);
+        if !explained(before, after) {
+            for g in [before, after].into_iter().flatten() {
+                exact[g] = None;
+            }
+        }
+    }
+    exact
+}
+
 /// Where each of `count` source paragraphs went, from the source tag each
 /// settled paragraph carries (`tags`). A tagged paragraph is kept. Between
 /// two kept paragraphs, the source paragraphs whose tags vanished map in
@@ -582,6 +641,129 @@ fn tag_control(dom: &mut Dom, sdt: NodeId, tag: usize) {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_correspondence_is_refused_by_origin() {
+        let source = crate::edit::deeper_boundary_fixture::docx("<w:p/><w:p/><w:p/>");
+        let mut opened = Opened::open(&source).unwrap();
+        let Loaded {
+            stories,
+            paragraph_nodes,
+            paragraph_story,
+        } = load_stories(&mut opened).unwrap();
+        let origin = Origin {
+            opened,
+            story_ids: stories.into_iter().map(|s| s.id).collect(),
+            paragraph_nodes,
+            paragraph_story,
+            fates: vec![Fate::Kept(0), Fate::Kept(2), Fate::Kept(3)],
+            exact: exact_correspondence(
+                &[Some(0), None, Some(1), Some(2)],
+                &[(0, 0), (0, 1), (0, 2), (0, 3)],
+                &[(0, 0), (0, 1), (0, 2)],
+                3,
+            ),
+            control_ids: Vec::new(),
+            control_fates: Vec::new(),
+        };
+        for source in [0, 1] {
+            let result = origin.exact(source);
+            assert!(result.is_err(), "split source {source} must not be exact");
+            assert_eq!(result.unwrap_err().0, "UNSUPPORTED_CORRESPONDENCE");
+        }
+        assert_eq!(origin.exact(2), Ok(3));
+    }
+
+    #[test]
+    fn exact_correspondence_keeps_unique_tags() {
+        assert_eq!(
+            exact_correspondence(
+                &[Some(0), Some(1), Some(2)],
+                &[(0, 0), (0, 1), (1, 0)],
+                &[(0, 0), (0, 1), (1, 0)],
+                3
+            ),
+            [Some(0), Some(1), Some(2)]
+        );
+    }
+
+    #[test]
+    fn exact_correspondence_refuses_merges_and_duplicate_tags() {
+        assert_eq!(
+            exact_correspondence(&[None], &[(0, 0)], &[(0, 0), (0, 1)], 2),
+            [None, None]
+        );
+        assert_eq!(
+            exact_correspondence(
+                &[Some(0), Some(0), Some(0)],
+                &[(0, 0), (0, 1), (0, 2)],
+                &[(0, 0)],
+                1
+            ),
+            [None]
+        );
+    }
+
+    #[test]
+    fn exact_correspondence_keeps_the_neighbours_of_a_merge() {
+        // Sources 1 and 2 merged into one untagged paragraph (settlement
+        // gives a merged paragraph no tag): their tags vanished, so the
+        // untagged paragraph is theirs, and 0 and 3 are still exact.
+        assert_eq!(
+            exact_correspondence(
+                &[Some(0), None, Some(3)],
+                &[(0, 0), (0, 1), (0, 2)],
+                &[(0, 0), (0, 1), (0, 2), (0, 3)],
+                4
+            ),
+            [Some(0), None, None, Some(2)]
+        );
+        // An emptied cell's repair paragraph sits where the cell's only
+        // source vanished; at a story edge the same holds.
+        assert_eq!(
+            exact_correspondence(&[None, Some(1)], &[(0, 0), (0, 1)], &[(0, 0), (0, 1)], 2),
+            [None, Some(1)]
+        );
+    }
+
+    #[test]
+    fn exact_correspondence_refuses_both_split_neighbours_in_the_same_story() {
+        assert_eq!(
+            exact_correspondence(
+                &[Some(0), None, Some(1), Some(2), Some(3)],
+                &[(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)],
+                &[(0, 0), (0, 1), (0, 2), (1, 0)],
+                4
+            ),
+            [None, None, Some(3), Some(4)]
+        );
+    }
+
+    #[test]
+    fn exact_correspondence_refuses_split_neighbours_at_story_edges() {
+        for (tags, stories, sources, expected) in [
+            (
+                vec![Some(0), None, Some(1), Some(2)],
+                vec![(0, 0), (0, 1), (1, 0), (1, 1)],
+                vec![(0, 0), (1, 0), (1, 1)],
+                vec![None, Some(2), Some(3)],
+            ),
+            (
+                vec![Some(0), None, Some(1), Some(2)],
+                vec![(0, 0), (1, 0), (1, 1), (1, 2)],
+                vec![(0, 0), (1, 0), (1, 1)],
+                vec![Some(0), None, Some(3)],
+            ),
+            (
+                vec![Some(0), None, None, Some(1), Some(2)],
+                vec![(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)],
+                vec![(0, 0), (0, 1), (1, 0)],
+                vec![None, None, Some(4)],
+            ),
+        ] {
+            assert_eq!(exact_correspondence(&tags, &stories, &sources, 3), expected);
+        }
+    }
 
     #[test]
     fn untagged_paragraphs_are_merges_of_the_text_that_vanished_around_them() {
