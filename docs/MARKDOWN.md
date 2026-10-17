@@ -124,6 +124,16 @@ CLI reads them.
 | `x ^2^`, `x ~2~` | superscript, subscript, at word edges only (pulldown-cmark opens neither inside a word: `H~2~O` is text) |
 | `$x^2$`, `$$\frac{a}{b}$$` | an equation (`m:oMath`; display math in an `m:oMathPara`), see below |
 
+A body text box's words are editable Markdown paragraphs after its anchor,
+between `<!-- text-box dN.0 -->` and `<!-- /text-box -->`. The suffix
+numbers boxes in that drawing from zero; these markers do not contain
+any document words or consume paragraph ids. Keep the markers when
+editing, including when adding or removing paragraphs. The drawing's
+reference definition holds its frame and a text-free template. Matching
+Markdown and word hashes restore the template's original structure (apart
+from package relationship and drawing ids); edited paragraphs rebuild the
+box content inside the same frame. The payload cannot override edited words.
+
 Images are read relative to the Markdown file, or to `--resource-path`;
 URLs are not fetched.
 

@@ -48,6 +48,16 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | ` ```mermaid dN ` fence | a chart (`c:chartSpace` pie, bar or line) alone in its paragraph | the fence holds `pie`/`xychart-beta`; `<!-- dN drawing:… -->` keeps the payload and a hash of the printed text — unchanged writes the part back verbatim, edited rewrites its categories, values and title |
 | `---`, GFM table | bordered paragraph, `TableGrid` table | header row repeats |
 
+A body text box's words are editable Markdown paragraphs after its anchor,
+between `<!-- text-box dN.0 -->` and `<!-- /text-box -->`. The suffix
+numbers boxes in that drawing from zero; these markers do not contain
+any document words or consume paragraph ids. Keep the markers when
+editing, including when adding or removing paragraphs. The drawing's
+reference definition holds its frame and a text-free template. Matching
+Markdown and word hashes restore the template's original structure (apart
+from package relationship and drawing ids); edited paragraphs rebuild the
+box content inside the same frame. The payload cannot override edited words.
+
 **Changes and comments (CriticMarkup, read before the Markdown)**
 
 | Write | Word |

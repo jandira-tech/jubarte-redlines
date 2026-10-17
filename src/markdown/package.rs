@@ -1542,7 +1542,7 @@ impl Relate for PartRelate<'_, '_, '_> {
         &mut self,
         index: usize,
         next_doc_pr: &mut u32,
-        story: Option<&str>,
+        story: Option<&[(String, String)]>,
     ) -> Option<String> {
         let drawing = self.document.drawings.get(index)?;
         let existing: HashSet<String> = self.package.parts().into_iter().collect();
@@ -1556,7 +1556,7 @@ impl Relate for PartRelate<'_, '_, '_> {
         )?;
         // A text box's frame is refilled from the story the view printed.
         match story {
-            Some(story) => Some(super::from_docx::drawing::fill_empty_boxes(&xml, story)),
+            Some(story) => Some(super::from_docx::drawing::fill_boxes(&xml, drawing, story)),
             None => Some(xml),
         }
     }

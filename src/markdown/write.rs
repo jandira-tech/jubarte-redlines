@@ -139,6 +139,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     let source = page_commands(&source);
     let source = inline_math(table_pipes(&source));
     let mut writer = Writer::new(options);
+    writer.box_markdown = text_box_sources(markdown);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
     writer.item_levels = item_levels(&source);
@@ -246,6 +247,27 @@ fn inline_math_passes(mut source: String) -> (String, usize) {
         escaped.push_str(&source[from..]);
         source = escaped;
     }
+}
+
+/// The visible paragraphs bounded by each box's structural markers.
+fn text_box_sources(markdown: &str) -> HashMap<String, String> {
+    let mut boxes = HashMap::new();
+    let mut rest = markdown;
+    while let Some(start) = rest.find("<!-- text-box ") {
+        rest = &rest[start + "<!-- text-box ".len()..];
+        let Some((name, content)) = rest.split_once("-->") else {
+            break;
+        };
+        let Some((content, after)) = content.split_once("<!-- /text-box -->") else {
+            break;
+        };
+        boxes.insert(
+            name.trim().to_string(),
+            content.trim().replace("<br>", "\n"),
+        );
+        rest = after;
+    }
+    boxes
 }
 
 /// CriticMarkup changes that hold whole blocks, rewritten so the Markdown
@@ -1711,6 +1733,10 @@ struct Writer<'o, 'a> {
     /// language, its backing's name and the source accumulated so far.
     drawing_block: Option<(String, String, String)>,
     metadata: Option<String>,
+    box_markdown: HashMap<String, String>,
+    box_names: HashMap<String, usize>,
+    box_open: Option<(String, Option<String>, usize)>,
+    box_spans: Vec<(String, Option<String>, usize, usize)>,
 
     // Inline formatting depth.
     bold: u32,
@@ -1847,6 +1873,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             image: None,
             drawing_block: None,
             metadata: None,
+            box_markdown: HashMap::new(),
+            box_names: HashMap::new(),
+            box_open: None,
+            box_spans: Vec::new(),
             bold: 0,
             italic: 0,
             strike: 0,
@@ -2385,6 +2415,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::HtmlBlock => {
                 if let Some(block) = self.html_block.take() {
+                    if self.box_boundary(block.trim()) {
+                        return;
+                    }
                     let view_lines = self.view
                         && self.cell.is_none()
                         && self.comment.is_none()
@@ -3838,6 +3871,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn inline_html(&mut self, html: &str) {
+        if self.box_boundary(html.trim()) {
+            return;
+        }
         if self.note_clause(html) {
             return;
         }
@@ -4031,6 +4067,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 Ok(drawing) => {
                     self.document.drawings.push(drawing);
                     let index = self.document.drawings.len() - 1;
+                    self.box_names.insert(id, index);
                     self.push(Content::Drawing(index));
                 }
                 Err(_) => self.plain(alt.trim()),
@@ -4508,99 +4545,56 @@ impl<'o, 'a> Writer<'o, 'a> {
         (author, date)
     }
 
-    /// The story of each text box the view prints as the blocks after the
-    /// paragraph that anchors it: the payload holds the box's frame, and
-    /// the writer refills it from what the view shows. A box whose
-    /// payload kept its words (its blocks do not say it whole) drains its
-    /// blocks all the same — the payload is what writes — so its text is
-    /// not written twice. Only a paragraph an id line names bounds a
-    /// story: its blocks end where the next named paragraph, a row or a
-    /// cell starts. A paragraph holding two boxes takes the first one's
-    /// name for the one story the view printed after it.
+    /// Box markers delimit editable paragraphs in plain and agent views.
+    fn box_boundary(&mut self, html: &str) -> bool {
+        if let Some(name) = html
+            .strip_prefix("<!-- text-box ")
+            .and_then(|s| s.strip_suffix(" -->"))
+        {
+            if !self.box_markdown.contains_key(name) {
+                return false;
+            }
+            self.end_paragraph();
+            let start = self.story().len();
+            self.box_open = Some((name.to_string(), self.target.clone(), start));
+            true
+        } else if html == "<!-- /text-box -->" {
+            self.end_paragraph();
+            if let Some((name, target, start)) = self.box_open.take() {
+                let end = self.story().len();
+                self.box_spans.push((name, target, start, end));
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     fn box_frames(&mut self) {
-        let mut stories = std::mem::take(&mut self.document.box_stories);
-        let mut spans: Vec<(usize, usize)> = Vec::new();
-        let mut at = 0;
-        while at < self.body.len() {
-            let Some(Item::Paragraph(paragraph)) = self.body.get(at) else {
-                at += 1;
+        for (name, target, start, end) in std::mem::take(&mut self.box_spans).into_iter().rev() {
+            let Some((drawing, ordinal)) = name.rsplit_once('.') else {
                 continue;
             };
-            at += 1;
-            if paragraph.number.is_none() || paragraph.text_box.is_some() {
-                continue;
-            }
-            let Some(end_of) = self.body[at..]
-                .iter()
-                .position(|item| matches!(item, Item::ParagraphEnd))
-                .map(|skip| at + skip)
-            else {
+            let Some(index) = self.box_names.get(drawing).copied() else {
                 continue;
             };
-            let Some(index) = self.body[at..end_of].iter().find_map(|item| match item {
-                Item::Run(Run {
-                    content: Content::Drawing(index),
-                    ..
-                }) => self
-                    .document
-                    .drawings
-                    .get(*index)
-                    .filter(|drawing| drawing.holds_text_box())
-                    .map(|_| *index),
-                _ => None,
-            }) else {
+            let Ok(ordinal) = ordinal.parse::<usize>() else {
                 continue;
             };
-            // The blocks after the paragraph's end, until a paragraph an
-            // id line names, or the row or cell the anchor sits in ends —
-            // a table inside the story is one the story holds.
-            let mut depth = 0usize;
-            let mut end = end_of + 1;
-            let mut content: Vec<Item> = Vec::new();
-            while let Some(item) = self.body.get(end) {
-                let stop = match item {
-                    Item::Paragraph(named) => named.number.is_some(),
-                    Item::Row { .. } | Item::RowEnd | Item::Cell { .. } | Item::CellEnd => {
-                        depth == 0
-                    }
-                    Item::Table { .. } => depth == 0 && content.is_empty(),
-                    Item::TableEnd => {
-                        depth = depth.saturating_sub(1);
-                        false
-                    }
-                    Item::RangeStart(_)
-                    | Item::RangeEnd(_)
-                    | Item::CommentReference(_)
-                    | Item::LinkStart(..)
-                    | Item::LinkEnd
-                    | Item::Bookmark(_) => true,
-                    Item::ParagraphEnd | Item::Run(_) => false,
-                };
-                if stop {
-                    break;
-                }
-                if matches!(item, Item::Table { .. }) {
-                    depth += 1;
-                }
-                content.push(item.clone());
-                end += 1;
-            }
-            let holds_text = content
-                .iter()
-                .any(|item| matches!(item, Item::Paragraph(named) if named.number.is_none()));
-            if !holds_text {
+            if ordinal >= 4096 {
                 continue;
             }
-            stories.insert(index, content);
-            spans.push((end_of + 1, end));
-        }
-        for (at, boxed) in stories {
-            self.document.box_stories.insert(at, boxed);
-        }
-        for (start, end) in spans.into_iter().rev() {
-            if end > start {
-                self.body.drain(start..end);
-            }
+            let items = match target {
+                Some(label) => self.definitions.get_mut(&label),
+                None => Some(&mut self.body),
+            };
+            let Some(items) = items.filter(|items| end <= items.len() && start <= end) else {
+                continue;
+            };
+            let items = items.drain(start..end).collect();
+            let stories = self.document.box_stories.entry(index).or_default();
+            stories.resize_with(stories.len().max(ordinal + 1), Default::default);
+            stories[ordinal] = (self.box_markdown.remove(&name).unwrap_or_default(), items);
         }
     }
 

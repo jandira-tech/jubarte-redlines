@@ -711,7 +711,10 @@ fn editing_a_text_boxs_words_writes_them_into_the_box() {
     let box_at = document
         .find("txbxContent")
         .unwrap_or_else(|| panic!("no text box:\n{document}"));
-    let box_xml = document[box_at - 3..].split("</w:txbxContent>").next().unwrap();
+    let box_xml = document[box_at - 3..]
+        .split("</w:txbxContent>")
+        .next()
+        .unwrap();
     assert!(box_xml.contains("Edited words"), "{document}");
     assert!(!document.contains("Added box"), "{document}");
 }
@@ -750,12 +753,19 @@ fn xml_element<'a>(xml: &'a str, name: &str) -> &'a str {
 #[test]
 fn plain_markdown_edits_stay_inside_the_text_box() {
     use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
-    let view = docx_to_markdown(&text_box_docx(), &MarkdownOptions::default()).unwrap().markdown;
+    let view = docx_to_markdown(&text_box_docx(), &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
     assert!(view.contains("\nAdded box\n"), "{view}");
     let edited = view.replace("Added box", "Edited **box**\n\nSecond paragraph");
-    let out = markdown_to_docx(&edited, &DocxOptions::default()).unwrap().docx;
+    let out = markdown_to_docx(&edited, &DocxOptions::default())
+        .unwrap()
+        .docx;
     let xml = part(&out, "word/document.xml");
-    assert!(xml.contains("<w:txbxContent>"), "box content is empty: {xml}");
+    assert!(
+        xml.contains("<w:txbxContent>"),
+        "box content is empty: {xml}"
+    );
     let boxed = xml_element(&xml, "w:txbxContent");
     assert!(boxed.contains("Edited "), "{xml}");
     assert!(boxed.contains("Second paragraph"), "{xml}");
@@ -788,16 +798,127 @@ fn a_box_with_its_own_change_remains_editable() {
         "<w:p><w:ins w:id=\"90\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:t>Added box</w:t></w:r></w:ins></w:p>",
     );
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("in.docx"), replace_entry(&original, "word/document.xml", xml.as_bytes())).unwrap();
+    std::fs::write(
+        dir.path().join("in.docx"),
+        replace_entry(&original, "word/document.xml", xml.as_bytes()),
+    )
+    .unwrap();
     let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
     assert!(view.contains("Added box"), "{view}");
-    std::fs::write(dir.path().join("edit.md"), view.replace("Added box", "Edited words")).unwrap();
+    std::fs::write(
+        dir.path().join("edit.md"),
+        view.replace("Added box", "Edited words"),
+    )
+    .unwrap();
     jubarte(dir.path(), &["convert", "edit.md", "-o", "out.docx"]);
     let out = std::fs::read(dir.path().join("out.docx")).unwrap();
     let xml = part(&out, "word/document.xml");
     let boxed = xml_element(&xml, "w:txbxContent");
     assert!(boxed.contains("Edited words"), "{xml}");
     assert!(!xml.contains("Added box"), "{xml}");
+}
+
+#[test]
+fn two_boxes_at_one_anchor_keep_separate_stories() {
+    use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
+    let input = text_box_docx();
+    let xml = part(&input, "word/document.xml");
+    let drawing = xml_element(&xml, "w:drawing");
+    let xml = xml.replace(
+        drawing,
+        &format!(
+            "{drawing}</w:r><w:r>{}",
+            drawing
+                .replace("Added box", "Other box")
+                .replace("id=\"7\"", "id=\"8\"")
+        ),
+    );
+    let input = replace_entry(&input, "word/document.xml", xml.as_bytes());
+    let view = docx_to_markdown(&input, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    let out = markdown_to_docx(
+        &view.replace("Other box", "Second edited"),
+        &DocxOptions::default(),
+    )
+    .unwrap()
+    .docx;
+    let xml = part(&out, "word/document.xml");
+    let first = xml_element(&xml, "w:txbxContent");
+    assert!(
+        first.contains("Added box") && !first.contains("Second edited"),
+        "{xml}"
+    );
+    let rest = &xml[xml.find(first).unwrap() + first.len()..];
+    let second = xml_element(rest, "w:txbxContent");
+    assert!(
+        second.contains("Second edited") && !second.contains("Added box"),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("Second edited").count(), 1, "{xml}");
+}
+
+#[test]
+fn deleting_all_box_words_leaves_a_valid_empty_paragraph() {
+    use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
+    let view = docx_to_markdown(&text_box_docx(), &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    let out = markdown_to_docx(&view.replace("Added box", ""), &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let xml = part(&out, "word/document.xml");
+    assert!(
+        xml.contains("<w:txbxContent><w:p/></w:txbxContent>"),
+        "{xml}"
+    );
+    assert!(!xml.contains("Added box"), "{xml}");
+}
+
+#[test]
+fn a_box_in_a_table_cell_keeps_edited_words_in_the_box() {
+    use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
+    let input = text_box_docx();
+    let xml = part(&input, "word/document.xml");
+    let drawing = xml_element(&xml, "w:drawing");
+    let body = format!(
+        "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t>{drawing}</w:r></w:p></w:tc></w:tr></w:tbl>"
+    );
+    let input = docx_with(&body, &[]);
+    let view = docx_to_markdown(&input, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    let out = markdown_to_docx(
+        &view.replace("Added box", "Cell box edited"),
+        &DocxOptions::default(),
+    )
+    .unwrap()
+    .docx;
+    let xml = part(&out, "word/document.xml");
+    assert!(
+        xml_element(&xml, "w:txbxContent").contains("Cell box edited"),
+        "{view}\n{xml}"
+    );
+    assert_eq!(xml.matches("Cell box edited").count(), 1, "{xml}");
+}
+
+#[test]
+fn a_box_payload_carries_no_document_words() {
+    use base64::Engine as _;
+    use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
+    let view = docx_to_markdown(&text_box_docx(), &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    let payload = view
+        .lines()
+        .find_map(|line| line.strip_prefix("[d1]: drawing:"))
+        .unwrap();
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
+    assert!(!json["xml"].as_str().unwrap().contains("Added box"));
+    assert_eq!(view.matches("Added box").count(), 1, "{view}");
 }
 
 /// A raster drawing — here a floating anchor — is image bytes to the

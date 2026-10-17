@@ -663,7 +663,9 @@ fn view_text(block: &str) -> String {
     let images = Regex::new(r"!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
     // `<mailto:a@b>` shows the address the document holds.
-    let text = plain_anchor(block).replace("<mailto:", "<");
+    let box_markers = Regex::new(r"(?m)^<!-- (?:text-box d\d+\.\d+|/text-box) -->$").unwrap();
+    let text = box_markers.replace_all(block, "");
+    let text = plain_anchor(&text).replace("<mailto:", "<");
     let text = refs.replace_all(&text, "");
     let text = images.replace_all(&text, "");
     let tags = Regex::new(r#"</?[a-z]+(?:\s[^>]*)?>"#).unwrap();
@@ -672,6 +674,15 @@ fn view_text(block: &str) -> String {
     let fields = Regex::new(r#"\{[A-Z]+(?:\s(?:[^{}"]|"[^"]*")*)?\}|\{/\}"#).unwrap();
     let text = fields.replace_all(&text, "");
     letters(&links.replace_all(&text, "]"))
+}
+
+#[test]
+fn box_boundary_metadata_is_not_document_text() {
+    let deleted = "<!-- text-box d1.0 -->\n{--hello--}{>>r0 @C<<}\n<!-- /text-box -->";
+    assert_eq!(view_text(deleted), "");
+    let visible = "<!-- text-box d1.0 -->\nVisible box words\n<!-- /text-box -->";
+    assert_eq!(view_text(visible), "Visibleboxwords");
+    assert_eq!(view_text(r"\<!-- text-box d1.0 -->"), "textboxd10");
 }
 
 // ---------------------------------------------------------------- checks

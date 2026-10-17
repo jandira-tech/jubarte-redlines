@@ -100,6 +100,16 @@ pub(crate) struct Drawing {
     /// Never in the payload: the fence is the text's home.
     #[serde(skip)]
     mermaid: Option<String>,
+    /// Text-free box templates and the hashes of their visible paragraphs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    boxes: Vec<BoxFrame>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct BoxFrame {
+    hash: String,
+    text_hash: String,
+    lengths: Vec<usize>,
 }
 
 /// One relationship of the element's part or of a dependent part.
@@ -203,12 +213,8 @@ pub(crate) struct Pending {
     scope: Scope,
     /// Inside a `w:r` (see [`Drawing::wrap`]).
     wrap: bool,
-    /// The box's words print as blocks of the view, so the payload drops
-    /// them and the writer refills the frame from what the view shows.
-    /// `false` keeps the words in the payload: the blocks cannot rebuild
-    /// the box whole, or the story does not print as blocks at all (a
-    /// header's box, a note's).
-    story: bool,
+    /// The visible Markdown of each box in the shown branch.
+    stories: Vec<String>,
 }
 
 impl Pending {
@@ -220,7 +226,7 @@ impl Pending {
         part: &str,
         scope: Scope,
         wrap: bool,
-        story: bool,
+        stories: Vec<String>,
     ) -> String {
         let label = label(element);
         if list.len() >= MAX_PENDING {
@@ -232,7 +238,7 @@ impl Pending {
             part: part.to_string(),
             scope,
             wrap,
-            story,
+            stories,
         });
         image(&label, &format!("d{}", index + 1))
     }
@@ -584,9 +590,7 @@ pub(crate) fn resolve(
     let mhash = mermaid.as_deref().map(mermaid_hash);
     normalize_ids(&mut root);
     declare(&mut root, &pending.scope);
-    if pending.story {
-        strip_box_words(&mut root);
-    }
+    let boxes = strip_box_words(&mut root, &pending.stories);
     Some(Drawing {
         xml: serialize(&root),
         wrap: pending.wrap,
@@ -595,6 +599,7 @@ pub(crate) fn resolve(
         slot,
         mhash,
         mermaid,
+        boxes,
     })
 }
 
@@ -671,20 +676,47 @@ fn media_slot(root: &Element, rels: &[PayRel], deps: &Deps<'_>) -> Option<usize>
     None
 }
 
-/// Empty every `w:txbxContent` under `element`: a text box's words print
-/// as blocks of the view, so its payload carries the frame only and the
-/// writer refills the box from what the view shows. Every branch's —
-/// a `mc:Fallback` copy holds the same words as the branch Word shows.
-fn strip_box_words(element: &mut Element) {
-    if local(&element.name) == "txbxContent" {
-        element.children.clear();
-        return;
-    }
-    for child in &mut element.children {
-        if let Node::Element(inner) = child {
-            strip_box_words(inner);
+/// Keep the box's structure, with text slots instead of words. The
+/// visible paragraphs supply the words again on an unchanged write.
+fn strip_box_words(element: &mut Element, stories: &[String]) -> Vec<BoxFrame> {
+    fn strip(element: &mut Element, lengths: &mut Vec<usize>, text: &mut String) {
+        if matches!(element.local(), "t" | "delText") {
+            let value = element.text();
+            lengths.push(value.len());
+            text.push_str(&value);
+            element.children.clear();
+        } else {
+            for child in &mut element.children {
+                if let Node::Element(child) = child {
+                    strip(child, lengths, text);
+                }
+            }
         }
     }
+    fn walk(element: &mut Element, stories: &[String], boxes: &mut Vec<BoxFrame>) {
+        if element.is("txbxContent") {
+            let Some(markdown) = stories.get(boxes.len() % stories.len().max(1)) else {
+                return;
+            };
+            let mut frame = BoxFrame {
+                hash: mermaid_hash(markdown),
+                ..BoxFrame::default()
+            };
+            let mut text = String::new();
+            strip(element, &mut frame.lengths, &mut text);
+            frame.text_hash = mermaid_hash(&text);
+            boxes.push(frame);
+            return;
+        }
+        for child in &mut element.children {
+            if let Node::Element(child) = child {
+                walk(child, stories, boxes);
+            }
+        }
+    }
+    let mut boxes = Vec::new();
+    walk(element, stories, &mut boxes);
+    boxes
 }
 
 /// The `[Content_Types]` entries of `package`: `/part` for each override,
@@ -1323,24 +1355,84 @@ pub(crate) fn capturable_alternate(element: &Element) -> bool {
     })
 }
 
-/// `xml` with every empty `w:txbxContent` — whatever prefix it carries,
-/// `w:` or a Strict one — holding `content`: the frame the payload kept,
-/// refilled with the story the view printed.
-pub(crate) fn fill_empty_boxes(xml: &str, content: &str) -> String {
-    let mut out = String::with_capacity(xml.len());
-    let mut rest = xml;
-    while let Some(at) = rest.find(":txbxContent/>") {
-        // `at` is the colon: the tag is `<PREFIX:txbxContent/>`.
-        let Some(open) = rest[..at].rfind('<') else {
-            break;
-        };
-        let prefix = &rest[open + 1..at];
-        out.push_str(&rest[..at]);
-        let _ = write!(out, ":txbxContent>{content}</{prefix}:txbxContent>");
-        rest = &rest[at + ":txbxContent/>".len()..];
+/// Refill the text-free templates. The exact path restores their text
+/// slots only when both the Markdown and its words match their hashes.
+pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, String)]) -> String {
+    fn words(element: &Element, text: &mut String) {
+        if matches!(element.local(), "t" | "delText") {
+            text.push_str(&element.text());
+        } else {
+            for child in element.elements() {
+                words(child, text);
+            }
+        }
     }
-    out.push_str(rest);
-    out
+    fn refill(
+        element: &mut Element,
+        lengths: &mut impl Iterator<Item = usize>,
+        text: &mut &str,
+    ) -> Option<()> {
+        if matches!(element.local(), "t" | "delText") {
+            let end = lengths.next()?;
+            let value = text.get(..end)?;
+            element.children = vec![Node::Text(value.to_string())];
+            *text = &text[end..];
+        } else {
+            for child in &mut element.children {
+                if let Node::Element(child) = child {
+                    refill(child, lengths, text)?;
+                }
+            }
+        }
+        Some(())
+    }
+    fn walk(
+        element: &mut Element,
+        drawing: &Drawing,
+        stories: &[(String, String)],
+        at: &mut usize,
+    ) {
+        if element.is("txbxContent") {
+            let index = *at;
+            *at += 1;
+            let Some((markdown, xml)) = stories.get(index % stories.len().max(1)) else {
+                return;
+            };
+            let Ok(content) = parse_xml(format!("<story>{xml}</story>").as_bytes()) else {
+                return;
+            };
+            let mut text = String::new();
+            words(&content, &mut text);
+            if let Some(frame) = drawing.boxes.get(index)
+                && frame.hash == mermaid_hash(markdown)
+                && frame.text_hash == mermaid_hash(&text)
+            {
+                let mut exact = element.clone();
+                if refill(
+                    &mut exact,
+                    &mut frame.lengths.iter().copied(),
+                    &mut text.as_str(),
+                )
+                .is_some()
+                {
+                    *element = exact;
+                    return;
+                }
+            }
+            element.children = content.children;
+            return;
+        }
+        for child in &mut element.children {
+            if let Node::Element(child) = child {
+                walk(child, drawing, stories, at);
+            }
+        }
+    }
+    let Ok(mut root) = parse_xml(xml.as_bytes()) else {
+        return xml.to_string();
+    };
+    walk(&mut root, drawing, stories, &mut 0);
+    serialize(&root)
 }
 
 /// Write `drawing` into `package` as content of `part`: the XML with fresh
@@ -1354,29 +1446,6 @@ impl Drawing {
     /// AlternateContent).
     pub(crate) fn wraps_run(&self) -> bool {
         self.wrap
-    }
-
-    /// Whether the element holds a `w:txbxContent` at all: a text box,
-    /// whose words the view prints as the blocks after its anchor.
-    pub(crate) fn holds_text_box(&self) -> bool {
-        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
-            return false;
-        };
-        let mut boxes = Vec::new();
-        root.find_all("txbxContent", &mut boxes);
-        !boxes.is_empty()
-    }
-
-    /// Whether every `w:txbxContent` the element holds is empty: the
-    /// payload carries the frame only, and the writer refills the box
-    /// from the story the view printed.
-    pub(crate) fn holds_empty_text_box(&self) -> bool {
-        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
-            return false;
-        };
-        let mut boxes = Vec::new();
-        root.find_all("txbxContent", &mut boxes);
-        !boxes.is_empty() && boxes.iter().all(|content| content.children.is_empty())
     }
 
     /// `self` with the readable layer's bytes out of the payload: the

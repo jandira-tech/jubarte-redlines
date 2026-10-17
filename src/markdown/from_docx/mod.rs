@@ -955,10 +955,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                         &path,
                                         story_scopes.scope(element),
                                         wrap,
-                                        // A header's box prints no blocks
-                                        // of its own: the payload keeps
-                                        // its words.
-                                        false,
+                                        Vec::new(),
                                     ))
                                 }),
                                 own,
@@ -3384,16 +3381,9 @@ impl Writer<'_> {
             self.drawing_text(element, out, extra);
             return;
         }
-        // The box's words are document text: they print as the blocks
-        // after the anchor. The payload drops them where the view's write
-        // can refill them: the agent view's id lines bound the story, and
-        // a plain view writes no box content exact — its blocks are the
-        // write — so its payload drops them too, or they would write
-        // twice. A box with a change of its own keeps its words where the
-        // id lines bound the story: its blocks print without the change's
-        // own mark, so only the payload says it whole.
+        let first = extra.len();
         self.box_blocks(element, extra);
-        let story = self.story.is_none() && (!self.agent || !holds_boxed_change(element));
+        let stories = extra[first..].to_vec();
         let mut plain_image = false;
         if drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
@@ -3416,13 +3406,18 @@ impl Writer<'_> {
         if !plain_image {
             let scope = self.scopes.scope(element);
             let part = self.part.clone();
+            let name = format!("d{}", self.pendings.len() + 1);
+            for (index, block) in extra[first..].iter_mut().enumerate() {
+                *block =
+                    format!("<!-- text-box {name}.{index} -->\n\n{block}\n\n<!-- /text-box -->");
+            }
             out.raw(&drawing::Pending::push(
                 &mut self.pendings,
                 element,
                 &part,
                 scope,
                 wrap,
-                story,
+                stories,
             ));
         }
     }
@@ -3916,29 +3911,6 @@ fn collect_named<'a>(
             collect_named(child, name, wrappers, out);
         }
     }
-}
-
-/// Whether a tracked change sits inside any text box of `element` —
-/// the branch Word shows or a `mc:Fallback` copy. Such a box's blocks
-/// print without the change's own mark (a paragraph mark's change, a
-/// nested change the outer one absorbs), so the view cannot rebuild it:
-/// its payload keeps the words and the round trip stays exact.
-fn holds_boxed_change(element: &Element) -> bool {
-    fn revised(element: &Element) -> bool {
-        matches!(
-            element.local(),
-            "ins" | "del" | "moveFrom" | "moveTo" | "cellIns" | "cellDel" | "cellMerge"
-        ) || element.local().ends_with("PrChange")
-            || element.local() == "tblGridChange"
-            || element.elements().any(revised)
-    }
-    fn walk(element: &Element) -> bool {
-        if element.is("txbxContent") {
-            return revised(element);
-        }
-        element.elements().any(walk)
-    }
-    walk(element)
 }
 
 /// Office Math (OMML) to LaTeX, covering the structures Word's equation
@@ -5244,6 +5216,13 @@ mod tests {
             payloads_elided(&md(&bytes)),
             "{--![x][d1]--}\n\n[d1]: drawing:…\n"
         );
+        let view = md(&bytes);
+        let dest = view
+            .lines()
+            .find_map(|line| line.strip_prefix("[d1]: "))
+            .unwrap();
+        let payload = serde_json::to_value(drawing::decode(dest).unwrap()).unwrap();
+        assert_eq!(payload["rels"][0]["raw"], "word/media/a--}~>{b}<.png");
     }
 
     #[test]
@@ -5367,11 +5346,7 @@ mod tests {
         // print as the block after it, in the same mark.
         assert_eq!(
             payloads_elided(&md(&docx(&body, &[]))),
-            "{--![Text Box 7][d1]--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n\
-             {--Deleted box--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n\
-             Keep{++![Text Box 7][d2]++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n\
-             {++Added box++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n\
-             [d1]: drawing:…\n[d2]: drawing:…\n"
+            "{--![Text Box 7][d1]--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- text-box d1.0 -->\n\n{--Deleted box--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- /text-box -->\n\nKeep{++![Text Box 7][d2]++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- text-box d2.0 -->\n\n{++Added box++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n[d2]: drawing:…\n"
         );
     }
 
@@ -5746,7 +5721,7 @@ mod tests {
         // range: they print as the block after it.
         assert_eq!(
             payloads_elided(&with_comments(&body, &xml)),
-            "{==anchor![Text Box 7][d1]==}{>>Ana: n<<}\n\ninside\n\n[d1]: drawing:…\n"
+            "{==anchor![Text Box 7][d1]==}{>>Ana: n<<}\n\n<!-- text-box d1.0 -->\n\ninside\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n"
         );
     }
 
@@ -5904,10 +5879,7 @@ mod tests {
         .concat();
         assert_eq!(
             payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
-            "A{++\n\n## ++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n\n\
-             1. one{--\n2. two--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\
-             3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}E\n\n\
-             F\n\n|G|\n|-|\n\nH![Text Box 7][d1]\n\nbox\n\nI\n\nJ\n\n[d1]: drawing:…\n"
+            "A{++\n\n## ++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n\n1. one{--\n2. two--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}E\n\nF\n\n|G|\n|-|\n\nH![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\nbox\n\n<!-- /text-box -->\n\nI\n\nJ\n\n[d1]: drawing:…\n"
         );
     }
 
@@ -5995,7 +5967,7 @@ mod tests {
         );
         assert_eq!(
             payloads_elided(&md(&docx(&body, &[]))),
-            "|{--cell![Text Box 7][d1]<br>box--}|{--control--}|\n|-|-|\n\n[d1]: drawing:…\n"
+            "|{--cell![Text Box 7][d1]<br>--}<!-- text-box d1.0 --><br><br>{--box--}<br><br><!-- /text-box -->|{--control--}|\n|-|-|\n\n[d1]: drawing:…\n"
         );
     }
 
@@ -6020,7 +5992,7 @@ mod tests {
         let numbering = format!(
             r#"<w:numbering {W}><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#
         );
-        let expected = "{--![][d1]--}\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n[d1]: drawing:…\n";
+        let expected = "{--![][d1]--}\n\n<!-- text-box d1.0 -->\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n";
         for drawing in ["drawing", "pict", "object"] {
             let run = format!("<w:r><w:{drawing}>{content}</w:{drawing}></w:r>");
             for body in [
@@ -6050,7 +6022,7 @@ mod tests {
         // so the token joins that mark instead of opening its own line.
         assert_eq!(
             payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
-            "Keep {--Old![][d1]--}\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n\
+            "Keep {--Old![][d1]--}\n\n<!-- text-box d1.0 -->\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n<!-- /text-box -->\n\n\
              [d1]: drawing:…\n"
         );
     }
@@ -6440,12 +6412,11 @@ mod tests {
         let bytes = docx(&body, &[("word/footnotes.xml", &footnotes)]);
         assert_eq!(
             payloads_elided(&resolved(&bytes, Revisions::Accept)),
-            "Keep![Text Box 7][d1][^1]\n\nAdded box\n\n[^1]: Source updatedpage 4\n\n\
-             [d1]: drawing:…\n"
+            "Keep![Text Box 7][d1][^1]\n\n<!-- text-box d1.0 -->\n\nAdded box\n\n<!-- /text-box -->\n\n[^1]: Source updatedpage 4\n\n[d1]: drawing:…\n"
         );
         assert_eq!(
             payloads_elided(&resolved(&bytes, Revisions::Reject)),
-            "![Text Box 7][d1]\n\nDeleted box\n\nKeep[^1]\n\n[^1]: Source page 4\n\n\
+            "![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\nDeleted box\n\n<!-- /text-box -->\n\nKeep[^1]\n\n[^1]: Source page 4\n\n\
              [d1]: drawing:…\n"
         );
     }

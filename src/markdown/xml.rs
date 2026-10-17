@@ -313,10 +313,9 @@ pub(super) struct Document {
     pub pictures: Vec<Picture>,
     /// `drawing:` payloads to splice back, in the order the runs name them.
     pub drawings: Vec<super::from_docx::drawing::Drawing>,
-    /// A text box drawing's story, by its index in `drawings`: the items
-    /// the view printed as the blocks after the anchor, which refill the
-    /// frame's empty `w:txbxContent` when the view is written back.
-    pub box_stories: HashMap<usize, Vec<Item>>,
+    /// Each drawing's visible box stories: their Markdown and parsed
+    /// items refill the text-free templates when the view is written back.
+    pub box_stories: HashMap<usize, Vec<(String, Vec<Item>)>>,
     /// The view's drawing reference definitions, by name: a `dN` maps to
     /// its `drawing:` destination, an `imageK` to its `data:` one. The
     /// stories' `![…][dN]` and `![…][imageK]` tokens resolve through them.
@@ -483,7 +482,7 @@ pub(super) trait Relate {
         &mut self,
         index: usize,
         next_doc_pr: &mut u32,
-        story: Option<&str>,
+        story: Option<&[(String, String)]>,
     ) -> Option<String>;
 }
 
@@ -1977,13 +1976,22 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
                 .is_some_and(|drawing| drawing.wraps_run());
             // A text box's payload holds its frame only: the story the
             // view printed as the blocks after the anchor refills it.
-            let story = context
-                .document
-                .drawings
-                .get(*index)
-                .filter(|drawing| drawing.holds_empty_text_box())
-                .and_then(|_| context.document.box_stories.get(index))
-                .map(|items| story(context, items, relate, None));
+            let story = context.document.box_stories.get(index).map(|boxes| {
+                boxes
+                    .iter()
+                    .map(|(markdown, items)| {
+                        let xml = story(context, items, relate, None);
+                        (
+                            markdown.clone(),
+                            if xml.is_empty() {
+                                "<w:p/>".to_string()
+                            } else {
+                                xml
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
             if let Some(drawing) =
                 relate.drawing(*index, &mut context.next_drawing, story.as_deref())
             {
