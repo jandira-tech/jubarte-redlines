@@ -2467,16 +2467,15 @@ mod tests {
     fn many_failed_openers_with_comments_stay_linear() {
         // Each `{~~x` is a failed substitution opener (no separator, no
         // closer); each `{>>` opens a complete comment containing both
-        // `~~}` and `~>`.
+        // `~~}` and `~>`. #1083: the bound is closer-search steps, not
+        // the wall clock this test once read.
         let failed = "{~~x".repeat(2_000);
         let comment = "{>>payload ~~} ~> body<<} ".repeat(2_000);
         let source = format!("{failed}{comment}");
-        let started = std::time::Instant::now();
-        let output = encode(&source);
-        let elapsed = started.elapsed();
+        let (output, steps) = encode_counted(&source);
         assert!(
-            elapsed.as_secs() < 2,
-            "took {elapsed:?} for {} bytes",
+            steps <= 16 * source.len(),
+            "{steps} closer-search steps for {} bytes: an opener rescans the comments",
             source.len()
         );
         // Sanity: the failed openers leave the markers as text, the
@@ -2491,16 +2490,15 @@ mod tests {
     #[test]
     fn highlight_openers_before_comment_held_closers_stay_linear() {
         // Every `{==` fails (each `==}` sits inside a comment), and each
-        // comment is complete.
+        // comment is complete. #1083: the bound is closer-search steps,
+        // not the wall clock this test once read.
         let openers = "{==".repeat(20_000);
         let comments = "{>>x==}y<<} ".repeat(20_000);
         let source = format!("{openers}{comments}");
-        let started = std::time::Instant::now();
-        let output = encode(&source);
-        let elapsed = started.elapsed();
+        let (output, steps) = encode_counted(&source);
         assert!(
-            elapsed.as_secs() < 2,
-            "took {elapsed:?} for {} bytes",
+            steps <= 16 * source.len(),
+            "{steps} closer-search steps for {} bytes: the pairing pass re-skips the comments per opener",
             source.len()
         );
         // The openers stay text and the comments are recognised.
