@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from harness.exec import build_order, render_argv
-from harness.models import AgentConfig, ArmConfig, OrderEntry, Task
+from harness.models import ArmConfig, Task
 
 
 def _task(task_id: str, family: str = "exact_replace") -> Task:
@@ -51,10 +51,23 @@ def test_render_argv_substitutes_every_placeholder(tmp_path: Path) -> None:
     run_dir = tmp_path
 
     rendered = render_argv(
-        ["{binary}", "edit", "{input}", "-o", "{output}",
-         "--author", "{author}", "--fail-mode", "{fail_mode}",
-         "--prompt", "{prompt_file}", "--task", "{task_file}",
-         "--run-dir", "{run_dir}"],
+        [
+            "{binary}",
+            "edit",
+            "{input}",
+            "-o",
+            "{output}",
+            "--author",
+            "{author}",
+            "--fail-mode",
+            "{fail_mode}",
+            "--prompt",
+            "{prompt_file}",
+            "--task",
+            "{task_file}",
+            "--run-dir",
+            "{run_dir}",
+        ],
         binary=binary,
         input_path=input_path,
         output_path=output_path,
@@ -78,6 +91,7 @@ def test_render_argv_substitutes_every_placeholder(tmp_path: Path) -> None:
 
 def test_render_argv_rejects_unknown_placeholder(tmp_path: Path) -> None:
     import pytest
+
     with pytest.raises(ValueError, match="unknown placeholder"):
         render_argv(
             ["{binary}", "edit", "{missing_thing}"],

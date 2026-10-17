@@ -13,23 +13,12 @@ mistake before it leaks into a JSONL ledger.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from harness.models import (
-    AgentConfig,
-    ArmConfig,
-    CheckResult,
     GradeRecord,
-    NamedResult,
-    OrderEntry,
     RubricAssessment,
-    RunConfig,
     RunRecord,
-    StubSpec,
-    StubStep,
     Task,
     canonical_task_sha256,
 )
@@ -183,8 +172,7 @@ def test_grade_record_omits_unassessed_rubric() -> None:
         tool_correctness_overall=True,
         task_checks=[],
         task_completion_overall=True,
-        rubric=[RubricAssessment(id="r1", description="x",
-                                 status="unassessed")],
+        rubric=[RubricAssessment(id="r1", description="x", status="unassessed")],
         claim_value="success",
         claim_expected="success",
         claim_accuracy="accurate",

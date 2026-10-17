@@ -7,8 +7,8 @@
 """Task loading and the family-counts invariant.
 
 The pilot refuses to run unless every task JSON loads, every fixture
-sha256 still matches, and the six families each contain exactly two
-tasks. We assert those conditions against the live task directory
+sha256 still matches, and the six families match the predeclared
+12-task mix. We assert those conditions against the live task directory
 because the test fails closed if a task was added without balancing
 its family.
 """
@@ -19,8 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from harness.models import FAMILIES, Task, canonical_task_sha256
+from harness.models import FAMILIES, canonical_task_sha256
 from harness.tasks import TaskError, load_task, load_tasks
+
+pytestmark = pytest.mark.integration
 
 
 def test_loads_every_task_with_a_balanced_family_count(
@@ -31,7 +33,14 @@ def test_loads_every_task_with_a_balanced_family_count(
     counts = {family: 0 for family in FAMILIES}
     for task in tasks.values():
         counts[task.family] += 1
-    assert all(c == 2 for c in counts.values()), counts
+    assert counts == {
+        "exact_replace": 4,
+        "multi_edit": 1,
+        "received_redline": 2,
+        "comments": 2,
+        "template_flow": 2,
+        "unsupported": 1,
+    }
 
 
 def test_every_task_pins_a_real_fixture_in_the_repo(
@@ -69,16 +78,12 @@ def test_fixture_sha256_drift_is_refused(
 ) -> None:
     tasks = load_tasks(tasks_dir, repo_root)
     target = next(iter(tasks.values()))
-    # Replace the fixture with a tampered file whose sha256 is unchanged.
-    fixture = repo_root / target.source.path
-    backup = tmp_path / "fixture-backup"
-    backup.write_bytes(fixture.read_bytes())
-    try:
-        fixture.write_bytes(b"different bytes\n")
-        with pytest.raises(TaskError, match="sha256 drifted"):
-            load_task(tasks_dir / f"{target.id}.json", repo_root)
-    finally:
-        fixture.write_bytes(backup.read_bytes())
+    # Tamper only an isolated fixture tree; the repository remains read-only.
+    fixture = tmp_path / target.source.path
+    fixture.parent.mkdir(parents=True)
+    fixture.write_bytes(b"different bytes\n")
+    with pytest.raises(TaskError, match="sha256 drifted"):
+        load_task(tasks_dir / f"{target.id}.json", repo_root=tmp_path)
 
 
 def test_canonical_sha256_changes_only_when_payload_changes(

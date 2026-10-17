@@ -87,10 +87,18 @@ def load_tasks(tasks_dir: Path, repo_root: Path) -> dict[str, Task]:
             raise TaskError(
                 f"{task.id}: genuinely_unsupported must match the unsupported family"
             )
+    expected = {
+        "exact_replace": 4,
+        "multi_edit": 1,
+        "received_redline": 2,
+        "comments": 2,
+        "template_flow": 2,
+        "unsupported": 1,
+    }
     for family in FAMILIES:
-        if counts[family] != 2:
+        if counts[family] != expected[family]:
             raise TaskError(
-                f"family {family} must have exactly two tasks, has {counts[family]}"
+                f"family {family} must have {expected[family]} tasks, has {counts[family]}"
             )
     return tasks
 

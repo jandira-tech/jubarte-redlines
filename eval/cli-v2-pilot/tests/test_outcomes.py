@@ -33,10 +33,6 @@ the evaluator cannot silently flip a passing run to a failing one.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from harness.models import (
     ClaimObservation,
     PreservationDefect,
@@ -46,16 +42,19 @@ from harness.models import (
 )
 from harness.snapshot import Snapshot
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
 
-def _task(task_id: str = "demo", *, family: str = "exact_replace",
-          genuinely_unsupported: bool = False,
-          expected_claim: str = "success",
-          settlement: bool = False) -> Task:
+def _task(
+    task_id: str = "demo",
+    *,
+    family: str = "exact_replace",
+    genuinely_unsupported: bool = False,
+    expected_claim: str = "success",
+    settlement: bool = False,
+) -> Task:
     return Task.model_validate(
         {
             "schema_version": 1,
@@ -75,8 +74,12 @@ def _task(task_id: str = "demo", *, family: str = "exact_replace",
     )
 
 
-def _make_run(*, artifact_exists: bool, claim_value: str | None = "success",
-              right_censored: bool = False) -> RunRecord:
+def _make_run(
+    *,
+    artifact_exists: bool,
+    claim_value: str | None = "success",
+    right_censored: bool = False,
+) -> RunRecord:
     return RunRecord(
         run_id="r",
         pilot_id="pilot",
@@ -114,8 +117,7 @@ def _make_run(*, artifact_exists: bool, claim_value: str | None = "success",
         artifact_exists=artifact_exists,
         run_dir_files=[],
         claim=(
-            ClaimObservation(raw=f"JUBARTE_RESULT: {claim_value}",
-                             value=claim_value)
+            ClaimObservation(raw=f"JUBARTE_RESULT: {claim_value}", value=claim_value)
             if claim_value
             else None
         ),
@@ -132,10 +134,13 @@ def _source_two_paragraphs() -> Snapshot:
     return Snapshot(
         ok=True,
         paragraphs=[
-            {"id": "p0", "text": "keep this targeted paragraph",
-             "runs": [], "limitations": []},
-            {"id": "p1", "text": "untargeted paragraph",
-             "runs": [], "limitations": []},
+            {
+                "id": "p0",
+                "text": "keep this targeted paragraph",
+                "runs": [],
+                "limitations": [],
+            },
+            {"id": "p1", "text": "untargeted paragraph", "runs": [], "limitations": []},
         ],
         revisions=[],
         comments=[],
@@ -147,10 +152,13 @@ def _artifact_with_unintended_edit() -> Snapshot:
     return Snapshot(
         ok=True,
         paragraphs=[
-            {"id": "p0", "text": "keep this targeted paragraph",
-             "runs": [], "limitations": []},
-            {"id": "p1", "text": "changed by mistake",
-             "runs": [], "limitations": []},
+            {
+                "id": "p0",
+                "text": "keep this targeted paragraph",
+                "runs": [],
+                "limitations": [],
+            },
+            {"id": "p1", "text": "changed by mistake", "runs": [], "limitations": []},
         ],
         revisions=[],
         comments=[],
@@ -186,15 +194,20 @@ def test_unintended_edit_zero_when_no_change_outside_targets() -> None:
     art = Snapshot(
         ok=True,
         paragraphs=[
-            {"id": "p0", "text": "keep this targeted paragraph MODIFIED",
-             "runs": [], "limitations": []},
-            {"id": "p1", "text": "untargeted paragraph",
-             "runs": [], "limitations": []},
+            {
+                "id": "p0",
+                "text": "keep this targeted paragraph MODIFIED",
+                "runs": [],
+                "limitations": [],
+            },
+            {"id": "p1", "text": "untargeted paragraph", "runs": [], "limitations": []},
         ],
         revisions=[],
         comments=[],
     )
-    edits = compute_unintended_edits(src, art, {"p0"})
+    edits = compute_unintended_edits(
+        src, art, authorized_text={"p0": "keep this targeted paragraph MODIFIED"}
+    )
     assert edits == []
 
 
@@ -214,8 +227,15 @@ def test_preservation_defect_when_pre_existing_comment_lost() -> None:
         ok=True,
         paragraphs=[{"id": "p0", "text": "x", "runs": [], "limitations": []}],
         revisions=[],
-        comments=[{"id": "c1", "ref": "c1", "author": "X",
-                   "text": "old comment", "paragraph": "p0"}],
+        comments=[
+            {
+                "id": 1,
+                "ref": "c1",
+                "author": "X",
+                "text": "old comment",
+                "paragraph": "p0",
+            }
+        ],
     )
     art = Snapshot(
         ok=True,
@@ -240,8 +260,16 @@ def test_preservation_defect_when_pre_existing_revision_lost() -> None:
     src = Snapshot(
         ok=True,
         paragraphs=[{"id": "p0", "text": "x", "runs": [], "limitations": []}],
-        revisions=[{"id": "r0", "ref": "r0", "kind": "insertion",
-                    "author": "X", "text": "old", "paragraph": "p0"}],
+        revisions=[
+            {
+                "id": "r0",
+                "ref": "r0",
+                "kind": "insertion",
+                "author": "X",
+                "text": "old",
+                "paragraph": "p0",
+            }
+        ],
         comments=[],
     )
     art = Snapshot(
@@ -265,8 +293,16 @@ def test_preservation_defect_skips_settlement_targets() -> None:
     src = Snapshot(
         ok=True,
         paragraphs=[{"id": "p0", "text": "x", "runs": [], "limitations": []}],
-        revisions=[{"id": "r0", "ref": "r0", "kind": "insertion",
-                    "author": "X", "text": "old", "paragraph": "p0"}],
+        revisions=[
+            {
+                "id": "r0",
+                "ref": "r0",
+                "kind": "insertion",
+                "author": "X",
+                "text": "old",
+                "paragraph": "p0",
+            }
+        ],
         comments=[],
     )
     art = Snapshot(
@@ -290,11 +326,11 @@ def test_classify_refusal_legitimate_for_unsupported_task() -> None:
 
     from harness.grading import classify_refusal
 
-    task = _task(family="unsupported", genuinely_unsupported=True,
-                 expected_claim="failed")
+    task = _task(
+        family="unsupported", genuinely_unsupported=True, expected_claim="failed"
+    )
     run = _make_run(claim_value="failed", artifact_exists=False)
-    cls = classify_refusal(run, task, task_checks_pass=False,
-                           preservation_defects=[])
+    cls = classify_refusal(run, task, task_checks_pass=False, preservation_defects=[])
     assert cls == "legitimate_refusal"
 
 
@@ -308,9 +344,13 @@ def test_classify_refusal_legitimate_when_checks_expect_no_artifact() -> None:
 
     task = _task(family="exact_replace", expected_claim="failed")
     run = _make_run(claim_value="failed", artifact_exists=False)
-    cls = classify_refusal(run, task, task_checks_pass=False,
-                           preservation_defects=[],
-                           checks_expect_no_artifact=True)
+    cls = classify_refusal(
+        run,
+        task,
+        task_checks_pass=False,
+        preservation_defects=[],
+        checks_expect_no_artifact=True,
+    )
     assert cls == "legitimate_refusal"
 
 
@@ -323,9 +363,13 @@ def test_classify_refusal_false_positive_when_supported_and_refused() -> None:
 
     task = _task(family="exact_replace", expected_claim="success")
     run = _make_run(claim_value="failed", artifact_exists=False)
-    cls = classify_refusal(run, task, task_checks_pass=False,
-                           preservation_defects=[],
-                           checks_expect_no_artifact=False)
+    cls = classify_refusal(
+        run,
+        task,
+        task_checks_pass=False,
+        preservation_defects=[],
+        checks_expect_no_artifact=False,
+    )
     assert cls == "false_positive_refusal"
 
 
@@ -336,8 +380,7 @@ def test_classify_refusal_nonexecution_when_no_artifact_no_claim() -> None:
 
     task = _task()
     run = _make_run(claim_value=None, artifact_exists=False)
-    cls = classify_refusal(run, task, task_checks_pass=False,
-                           preservation_defects=[])
+    cls = classify_refusal(run, task, task_checks_pass=False, preservation_defects=[])
     assert cls == "nonexecution"
 
 
@@ -347,15 +390,12 @@ def test_classify_refusal_nonexecution_when_right_censored() -> None:
     from harness.grading import classify_refusal
 
     task = _task()
-    run = _make_run(claim_value="success", artifact_exists=True,
-                    right_censored=True)
-    cls = classify_refusal(run, task, task_checks_pass=True,
-                           preservation_defects=[])
+    run = _make_run(claim_value="success", artifact_exists=True, right_censored=True)
+    cls = classify_refusal(run, task, task_checks_pass=True, preservation_defects=[])
     assert cls == "nonexecution"
 
 
-def test_classify_refusal_false_negative_on_preservation_defect_with_success(
-) -> None:
+def test_classify_refusal_false_negative_on_preservation_defect_with_success() -> None:
     """A run that produced an artifact and claimed success but lost a
     pre-existing comment is a false-negative acceptance."""
 
@@ -364,8 +404,9 @@ def test_classify_refusal_false_negative_on_preservation_defect_with_success(
     task = _task(expected_claim="success")
     run = _make_run(claim_value="success", artifact_exists=True)
     defects = [PreservationDefect(kind="comment", id="c1", text="old")]
-    cls = classify_refusal(run, task, task_checks_pass=True,
-                           preservation_defects=defects)
+    cls = classify_refusal(
+        run, task, task_checks_pass=True, preservation_defects=defects
+    )
     assert cls == "false_negative_acceptance"
 
 
@@ -377,8 +418,7 @@ def test_classify_refusal_false_negative_on_failed_checks_with_success() -> None
 
     task = _task(expected_claim="success")
     run = _make_run(claim_value="success", artifact_exists=True)
-    cls = classify_refusal(run, task, task_checks_pass=False,
-                           preservation_defects=[])
+    cls = classify_refusal(run, task, task_checks_pass=False, preservation_defects=[])
     assert cls == "false_negative_acceptance"
 
 

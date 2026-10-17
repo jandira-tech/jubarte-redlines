@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SCHEMA_VERSION = 1
 
@@ -60,14 +60,18 @@ REFUSAL_CLASSES: tuple[RefusalClass, ...] = (
 )
 
 
-class FixtureRef(BaseModel):
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class FixtureRef(StrictModel):
     """A docx already in this repository, pinned by relative path and sha256."""
 
     path: str
     sha256: str
 
 
-class Selector(BaseModel):
+class Selector(StrictModel):
     """Locates one paragraph in the artifact snapshot by a unique substring.
 
     The selector is matched against the paragraph's final logical text
@@ -78,30 +82,36 @@ class Selector(BaseModel):
     contains: str
 
 
-class TextEquals(BaseModel):
+class TextEquals(StrictModel):
     kind: Literal["text_equals"] = "text_equals"
     selector: Selector
     text: str
 
 
-class TextContains(BaseModel):
+class TextContains(StrictModel):
     kind: Literal["text_contains"] = "text_contains"
     text: str
+    selector: Selector | None = None
 
 
-class TextAbsent(BaseModel):
+class TextAbsent(StrictModel):
     kind: Literal["text_absent"] = "text_absent"
     text: str
     selector: Selector | None = None
 
 
-class RevisionCount(BaseModel):
+class RevisionCount(StrictModel):
     kind: Literal["revision_count"] = "revision_count"
     min: int = 0
     max: int
 
 
-class RevisionPresent(BaseModel):
+class RevisionAbsent(StrictModel):
+    kind: Literal["revision_absent"] = "revision_absent"
+    ref: str
+
+
+class RevisionPresent(StrictModel):
     """Some revision carries text containing `text`, optionally by `author`."""
 
     kind: Literal["revision_present"] = "revision_present"
@@ -109,16 +119,20 @@ class RevisionPresent(BaseModel):
     author: str | None = None
 
 
-class CommentPresent(BaseModel):
+class CommentPresent(StrictModel):
     """A comment whose text contains `text`, optionally by `author` and done."""
 
     kind: Literal["comment_present"] = "comment_present"
     text: str
     author: str | None = None
     done: bool | None = None
+    ref: str | None = None
+    parent_ref: str | None = None
+    paragraph: str | None = None
+    anchor_text: str | None = None
 
 
-class NoArtifact(BaseModel):
+class NoArtifact(StrictModel):
     """The declared output must not exist (unsupported-report tasks)."""
 
     kind: Literal["no_artifact"] = "no_artifact"
@@ -130,16 +144,17 @@ Check = Annotated[
     | TextAbsent
     | RevisionCount
     | RevisionPresent
+    | RevisionAbsent
     | CommentPresent
     | NoArtifact,
     Field(discriminator="kind"),
 ]
 
 
-class RubricItem(BaseModel):
+class RubricItem(StrictModel):
     """A quality judgment only an external grader can make.
 
-    The harness never fills these in; `grade.py --rubric` does.
+    The harness never fills these in; an external adjudication step must do so.
     """
 
     id: str
@@ -148,7 +163,7 @@ class RubricItem(BaseModel):
     note: str | None = None
 
 
-class StubStep(BaseModel):
+class StubStep(StrictModel):
     """One jubarte CLI invocation the deterministic stub agent replays.
 
     `argv` may reference `{binary}`, `{input}`, `{output}`, `{author}` and
@@ -163,14 +178,14 @@ class StubStep(BaseModel):
     expect_rc: int = 0
 
 
-class StubSpec(BaseModel):
+class StubSpec(StrictModel):
     """How the model-free stub agent performs this task, for tests/smoke."""
 
     expected_claim: ClaimValue
     steps: list[StubStep] = Field(default_factory=list)
 
 
-class Task(BaseModel):
+class Task(StrictModel):
     """One held-out pilot task."""
 
     schema_version: int = SCHEMA_VERSION
@@ -186,6 +201,11 @@ class Task(BaseModel):
     checks: list[Check] = Field(default_factory=list)
     rubric: list[RubricItem] = Field(default_factory=list)
     stub: StubSpec
+    expected_paragraphs: dict[str, str] = Field(default_factory=dict)
+    comment_updates: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    settled_revisions: list[str] = Field(default_factory=list)
+    coverage_tags: list[str] = Field(default_factory=list)
+    unchanged: bool = False
 
     @field_validator("output_path")
     @classmethod
@@ -195,7 +215,7 @@ class Task(BaseModel):
         return value
 
 
-class AgentConfig(BaseModel):
+class AgentConfig(StrictModel):
     """A command template for one agent CLI, with provenance strings.
 
     `argv` entries may contain the placeholders `{binary}` (the arm's
@@ -208,9 +228,11 @@ class AgentConfig(BaseModel):
     model: str | None = None
     provider: str | None = None
     version: str | None = None
+    version_argv: list[str] = Field(default_factory=list)
+    stub: bool = False
 
 
-class ArmConfig(BaseModel):
+class ArmConfig(StrictModel):
     """One interface arm: a jubarte binary pinned by path and sha256."""
 
     label: Literal["A", "B"]
@@ -219,7 +241,7 @@ class ArmConfig(BaseModel):
     role: str
 
 
-class OrderEntry(BaseModel):
+class OrderEntry(StrictModel):
     """One cell of the randomized execution order."""
 
     order_index: int
@@ -228,29 +250,33 @@ class OrderEntry(BaseModel):
     repetition: int
 
 
-class RunConfig(BaseModel):
+class RunConfig(StrictModel):
     """Everything a pilot run was bound to, written beside the ledger."""
 
     schema_version: int = SCHEMA_VERSION
     pilot_id: str
     seed: int
-    repetitions: int
-    timeout_seconds: float
+    repetitions: int = Field(ge=1)
+    margin_unintended: int = Field(ge=0)
+    margin_preservation: int = Field(ge=0)
+    seed_scope: str = "cell ordering only; not a model sampling seed"
+    timeout_seconds: float = Field(gt=0)
     fail_mode: str
     agent: AgentConfig
     arms: list[ArmConfig]
     order: list[OrderEntry]
     created_at: str
+    task_families: dict[str, Family] = Field(default_factory=dict)
 
 
-class ClaimObservation(BaseModel):
+class ClaimObservation(StrictModel):
     """The result marker the task prompt asks the agent to print last."""
 
     raw: str
     value: ClaimValue
 
 
-class RunRecord(BaseModel):
+class RunRecord(StrictModel):
     """One executed run: the harness's own observations only.
 
     Success is never inferred from a log tail or a shell status: the only
@@ -276,6 +302,7 @@ class RunRecord(BaseModel):
     repetition: int
     order_index: int
     seed: int
+    seed_scope: str = "cell ordering only; not a model sampling seed"
     started_at: str
     ended_at: str | None = None
     duration_seconds: float | None = None
@@ -303,7 +330,7 @@ class RunRecord(BaseModel):
     claim: ClaimObservation | None = None
 
 
-class CheckResult(BaseModel):
+class CheckResult(StrictModel):
     """The outcome of one typed check against the artifact snapshot."""
 
     check: dict[str, Any]
@@ -311,44 +338,46 @@ class CheckResult(BaseModel):
     detail: str
 
 
-class UnintendedEdit(BaseModel):
+class UnintendedEdit(StrictModel):
     """One artifact paragraph outside the task's declared targets whose
     final text differs from the source.
 
     `paragraph_id` is the source-side paragraph id when present; the
-    alignment method (by position with the same paragraph count,
-    otherwise by id) is documented in `grading.compute_unintended_edits`.
+    sequence text alignment method is documented in
+    `grading.compute_unintended_edits`.
     """
 
     paragraph_id: str | None
     text_before: str
     text_after: str
+    adjudication_required: bool = False
 
 
-class PreservationDefect(BaseModel):
+class PreservationDefect(StrictModel):
     """A pre-existing comment or tracked revision the task did not
-    target that is no longer present in the artifact (counts before /
-    after, by id where the read view gives ids)."""
+    target that is absent or materially altered in the artifact, or an
+    exposed structural property that changed. Unexposed dimensions are
+    listed separately as not assessed."""
 
-    kind: Literal["comment", "revision"]
+    kind: Literal["comment", "revision", "structure"]
     id: str
     text: str
 
 
-class NamedResult(BaseModel):
+class NamedResult(StrictModel):
     name: str
     status: Literal["pass", "fail", "error", "not_run"]
     detail: str = ""
 
 
-class RubricAssessment(BaseModel):
+class RubricAssessment(StrictModel):
     id: str
     description: str
     status: Literal["unassessed", "pass", "fail"]
     note: str | None = None
 
 
-class GradeRecord(BaseModel):
+class GradeRecord(StrictModel):
     """The three-axis grade for one run, plus the primary outcomes the
     design requires.
 
@@ -382,16 +411,19 @@ class GradeRecord(BaseModel):
     claim_accuracy: Literal["accurate", "inaccurate", "missing"]
     claim_detail: str
     unintended_edits: list[UnintendedEdit] = Field(default_factory=list)
-    unintended_edit_count: int = 0
+    unintended_edit_count: int | None = None
     preservation_defects: list[PreservationDefect] = Field(default_factory=list)
-    preservation_defect_count: int = 0
+    preservation_defect_count: int | None = None
+    preservation_status: Literal["assessed", "not_assessed"] = "not_assessed"
+    unassessed: list[str] = Field(default_factory=list)
+    inspection_errors: list[str] = Field(default_factory=list)
     refusal_class: RefusalClass | None = None
     graded_at: str
     grader_binary_path: str
     grader_binary_sha256: str
 
 
-class MarginResult(BaseModel):
+class MarginResult(StrictModel):
     """The pass/fail result of the regression-margin gate.
 
     The margin is a configured allowance (default 0 in both axes):
