@@ -1332,4 +1332,24 @@ mod tests {
         assert_eq!(code_first("INPUT_LIMITS: x"), None);
         assert_eq!(code_first("no code here"), None);
     }
+
+    /// Word's own `o:gfxdata` VML attribute lives in `word/header*.xml`
+    /// and reaches ~366 KiB in the bench corpus. The admission scan runs
+    /// the checked gate on every XML part, including headers, so the same
+    /// input the unit test builds must also pass `admit` on a real docx.
+    #[test]
+    fn a_word_gfxdata_header_is_admitted_on_a_real_docx() {
+        let gfx_value: String = "A".repeat(400 * 1024);
+        let header = format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:p><w:r><w:pict><v:shape o:gfxdata="{gfx_value}"/></w:pict></w:r></w:p></w:hdr>"#
+        );
+        let header_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let bytes = docx_with(&[
+            ("word/header1.xml", header.as_bytes()),
+            ("word/_rels/header1.xml.rels", header_rels.as_bytes()),
+        ]);
+        let admitted = admit(&bytes, InputLimits::default())
+            .expect("Word's o:gfxdata header must be admitted");
+        assert!(admitted.entries >= 5);
+    }
 }

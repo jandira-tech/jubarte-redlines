@@ -33,18 +33,23 @@ use super::{Dom, NodeId, XDeclaration, XName, XNamespace};
 // admission), so every checked entry path — `validate_xml`, the package
 // admission scan (`admission::check_xml_depth`), and `try_parse_xdocument` —
 // enforces these bounds *before* a DOM node or attribute is constructed.
-// The numbers are deliberately far above anything a legal WordprocessingML
-// part needs; they exist to stop pathological width, not to shape content.
+// The attribute-count and name caps stop quadratic width (N01). The value
+// and tag-byte caps sit at the part budget because Word's own `o:gfxdata`
+// reaches 366 KiB in the corpus and a long value costs linear time already
+// bounded by `InputLimits::max_part_bytes`.
 
 /// Attributes (namespace declarations included) on one element. 256 matches
 /// quick-xml's namespace-declaration default and the OPC metadata budget.
 pub(crate) const MAX_ELEMENT_ATTRIBUTES: usize = 256;
 /// Bytes in one element or attribute name.
 pub(crate) const MAX_NAME_BYTES: usize = 4096;
-/// Bytes in one attribute value.
-pub(crate) const MAX_ATTRIBUTE_VALUE_BYTES: usize = 256 * 1024;
-/// Total attribute bytes (names + values) on one element.
-pub(crate) const MAX_TAG_ATTRIBUTE_BYTES: usize = 1024 * 1024;
+/// Bytes in one attribute value. Matches `InputLimits::max_part_bytes`
+/// (`64 * 1024 * 1024`); Word's own `o:gfxdata` reaches ≈366 KiB in the
+/// corpus, so the cap has to be above what Word writes today.
+pub(crate) const MAX_ATTRIBUTE_VALUE_BYTES: usize = 64 * 1024 * 1024;
+/// Total attribute bytes (names + values) on one element. Twice the value
+/// cap, so one value at its cap plus its name fits inside the tag cap.
+pub(crate) const MAX_TAG_ATTRIBUTE_BYTES: usize = 128 * 1024 * 1024;
 /// Bytes in one namespace URI.
 pub(crate) const MAX_NAMESPACE_URI_BYTES: usize = 8192;
 /// Bytes in one namespace prefix.
@@ -960,12 +965,128 @@ mod tag_policy_tests {
 
     #[test]
     fn tag_whole_width_is_bounded() {
-        // 256 names × ~4 KiB values exceeds the per-tag attribute-byte
-        // budget while every individual cap still passes.
+        // 256 names × ~600 KiB values exceeds the per-tag attribute-byte
+        // budget while every individual cap still passes (each value is
+        // far below MAX_ATTRIBUTE_VALUE_BYTES).
+        let per_value = 600 * 1024;
+        assert!(
+            per_value < MAX_ATTRIBUTE_VALUE_BYTES,
+            "fixture relies on per_value staying under the value cap"
+        );
         let attrs = (0..MAX_ELEMENT_ATTRIBUTES)
-            .map(|i| format!(" a{i}='{}'", "v".repeat(4096)))
+            .map(|i| format!(" a{i}='{}'", "v".repeat(per_value)))
             .collect::<String>();
         assert!(validate_xml(&format!("<a{attrs}/>")).is_err());
+    }
+
+    /// Word writes a VML `o:gfxdata` attribute of up to ~366 KiB inside
+    /// `word/header*.xml` parts of its own documents; the checked gate (N01)
+    /// must admit the real attribute size Word uses, not a value the engine
+    /// happens to like. The base64 alphabet carries no XML-special bytes,
+    /// so the value at the threshold is what a body parser sees verbatim.
+    #[test]
+    fn a_word_gfxdata_attribute_is_admitted() {
+        // 400 * 1024 = 409,600 bytes — comfortably above the corpus's
+        // largest o:gfxdata (≈366 KiB) and the previous 262,144-byte cap.
+        let gfx_value: String = "A".repeat(400 * 1024);
+        let header = format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:p><w:r><w:pict><v:shape o:gfxdata="{gfx_value}"/></w:pict></w:r></w:p></w:hdr>"#
+        );
+        let value_len = gfx_value.len();
+        assert_eq!(validate_xml(&header), Ok(()), "{value_len} bytes refused");
+        let mut dom = Dom::new();
+        let document =
+            try_parse_xdocument(&mut dom, &header).expect("try_parse must admit Word's gfxdata");
+        // Walk to the <v:shape> so the test mirrors how `body` reads it.
+        let w = crate::xmllinq::XNamespace::get(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        );
+        let v = crate::xmllinq::XNamespace::get("urn:schemas-microsoft-com:vml");
+        let root = dom.root(document).unwrap();
+        let p = dom.element(root, &w.name("p")).expect("w:p");
+        let r = dom.element(p, &w.name("r")).expect("w:r");
+        let pict = dom.element(r, &w.name("pict")).expect("w:pict");
+        let shape = dom
+            .element(pict, &v.name("shape"))
+            .expect("v:shape must be admitted through the parser");
+        let gfx_attr = dom
+            .attribute(
+                shape,
+                &crate::xmllinq::XName::get("gfxdata", "urn:schemas-microsoft-com:office:office"),
+            )
+            .expect("o:gfxdata must round-trip through the DOM");
+        assert_eq!(gfx_attr.len(), value_len);
+    }
+
+    /// The exact-boundary contract for the new value cap: a value byte at
+    /// `MAX_ATTRIBUTE_VALUE_BYTES` is admitted (it is the inclusive cap);
+    /// one byte more is refused with the gate's structured error.
+    #[test]
+    fn a_value_at_the_attribute_byte_cap_is_admitted_one_more_refused() {
+        let at_cap = "v".repeat(MAX_ATTRIBUTE_VALUE_BYTES);
+        assert_eq!(
+            validate_xml(&format!("<a b='{at_cap}'/>")),
+            Ok(()),
+            "value at MAX_ATTRIBUTE_VALUE_BYTES must be admitted"
+        );
+        let over_cap = "v".repeat(MAX_ATTRIBUTE_VALUE_BYTES + 1);
+        let over_xml = format!("<a b='{over_cap}'/>");
+        let err = validate_xml(&over_xml).expect_err("one byte over MAX_ATTRIBUTE_VALUE_BYTES");
+        assert!(
+            err.contains(&format!("{MAX_ATTRIBUTE_VALUE_BYTES} bytes")),
+            "expected gate error naming the cap, got {err:?}"
+        );
+        let mut dom = Dom::new();
+        assert!(
+            try_parse_xdocument(&mut dom, &over_xml).is_err(),
+            "try_parse must refuse one byte over MAX_ATTRIBUTE_VALUE_BYTES"
+        );
+    }
+
+    /// The exact-boundary contract for the new tag-byte cap: attribute bytes
+    /// totalling exactly `MAX_TAG_ATTRIBUTE_BYTES` are admitted; one byte
+    /// more is refused while every individual value stays under the value
+    /// cap. Three values of ≈MAX_TAG_ATTRIBUTE_BYTES / 3 ≈ 43 MiB each
+    /// cost the tag cap together but no individual attribute trips the
+    /// value cap.
+    #[test]
+    fn a_tag_at_the_attribute_byte_cap_is_admitted_one_more_refused() {
+        // Three keys (`a0`, `a1`, `a2`, 2 bytes each) plus one tag name byte
+        // leave the per-value headroom so the three values fit under the tag
+        // cap exactly. Each value stays well below the value cap.
+        let per_value = (MAX_TAG_ATTRIBUTE_BYTES - 7) / 3;
+        assert!(
+            per_value + 1 < MAX_ATTRIBUTE_VALUE_BYTES,
+            "fixture relies on per_value staying under the value cap"
+        );
+        let attrs: String = (0..3)
+            .map(|i| format!(" a{i}='{}'", "v".repeat(per_value)))
+            .collect();
+        let at_cap = format!("<a{attrs}/>");
+        assert_eq!(
+            validate_xml(&at_cap),
+            Ok(()),
+            "tag at MAX_TAG_ATTRIBUTE_BYTES must be admitted"
+        );
+        // Bump the third value enough to exceed the tag cap by at least one
+        // byte while every individual value is still well below
+        // MAX_ATTRIBUTE_VALUE_BYTES. `per_value` rounded down leaves a
+        // remainder in the per-byte budget, so two extra bytes is enough.
+        let remainder = (MAX_TAG_ATTRIBUTE_BYTES - 7) % 3;
+        let bump = remainder + 1;
+        let over_attrs: String = (0..3)
+            .map(|i| {
+                let extra = if i == 2 { bump } else { 0 };
+                format!(" a{i}='{}'", "v".repeat(per_value + extra))
+            })
+            .collect();
+        let just_over = format!("<a{over_attrs}/>");
+        let err = validate_xml(&just_over)
+            .expect_err("one tag-byte over MAX_TAG_ATTRIBUTE_BYTES must refuse");
+        assert!(
+            err.contains(&format!("{MAX_TAG_ATTRIBUTE_BYTES} attribute bytes")),
+            "expected gate error naming the tag cap, got {err:?}"
+        );
     }
 
     #[test]
