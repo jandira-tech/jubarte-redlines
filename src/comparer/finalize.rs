@@ -11483,6 +11483,18 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
 /// attributes (`w:sz`, …) are never touched (LO mis-paginates the
 /// `strict01` pairs).
 pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
+    normalize_measures(dom, root, true);
+}
+
+/// [`normalize_universal_measures`] without the fractional-plain-value
+/// rounding: only unit-bearing spellings ("612pt") are rewritten. The
+/// render diagnostic reports a plain value (gdocs-style `1440.4`) as the
+/// file spells it — a diagnostic does not repair what it describes.
+pub fn normalize_unit_measures(dom: &mut Dom, root: NodeId) {
+    normalize_measures(dom, root, false);
+}
+
+fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool) {
     // Cell-margin children (w:tcMar / w:tblCellMar) carry @w:w in twips; the
     // like-named border elements carry @w:sz (eighth-points) and never @w:w,
     // so keying on (element local, attr) stays safe.
@@ -11499,7 +11511,7 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
             "ind",
             &["left", "right", "hanging", "firstLine", "start", "end"],
         ),
-        ("spacing", &["before", "after", "line"]),
+        ("spacing", &["before", "after", "line", "val"]),
         ("tab", &["pos"]),
         ("defaultTabStop", &["val"]),
         ("tblW", &["w"]),
@@ -11528,12 +11540,16 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
         ("start", &["w"]),
         ("end", &["w"]),
     ];
-    fn to_twips(v: &str) -> Option<i64> {
+    fn to_twips(v: &str, round_plain_fractional: bool) -> Option<i64> {
         if let Some(tw) = crate::util::universal_measure_twips(v) {
             return Some(tw.round() as i64);
         }
         // fractional plain values ("100.0") on integer-typed attributes →
-        // rounded (gdocs-exported styles carry them; validator: Int16 fail)
+        // rounded (gdocs-exported styles carry them; validator: Int16 fail).
+        // Output-side repair only: the render diagnostic keeps the literal.
+        if !round_plain_fractional {
+            return None;
+        }
         let t = v.trim();
         if t.contains('.') {
             return t.parse::<f64>().ok().map(|f| f.round() as i64);
@@ -11556,7 +11572,10 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
             let an = W::name(a);
             // and_then keeps this allocation-free for the common untouched
             // case — the i64 releases the dom borrow before the mutation
-            if let Some(tw) = dom.attribute(el, &an).and_then(to_twips) {
+            if let Some(tw) = dom
+                .attribute(el, &an)
+                .and_then(|v| to_twips(v, round_plain_fractional))
+            {
                 dom.set_attribute_value(el, &an, Some(&tw.to_string()));
             }
         }

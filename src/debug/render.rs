@@ -108,8 +108,9 @@ fn parse(pkg: &Package, name: &str) -> Option<(Dom, NodeId)> {
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc)?;
     // Strict files write universal measures (`612pt`) where Transitional
-    // writes integer twips: list them alike.
-    crate::comparer::finalize::normalize_universal_measures(&mut dom, root);
+    // writes integer twips: list them alike. A plain value stays as the
+    // file spells it — the diagnostic reports, it does not repair.
+    crate::comparer::finalize::normalize_unit_measures(&mut dom, root);
     Some((dom, root))
 }
 
@@ -1498,6 +1499,35 @@ mod story_diagnostic_contract_tests {
             strict
         );
         assert!(sect(r#"w:w="6..1" w:h="792pt""#, "").contains("page=6..1x15840"));
+    }
+
+    #[test]
+    fn section_prints_a_plain_value_as_the_file_spells_it() {
+        // A plain fractional dxa (gdocs-style) is the file's own literal,
+        // not a unit spelling to canonicalize: the diagnostic reports what
+        // the part carries (#531 review defect 3). Only unit-bearing
+        // measures ("612pt") list as the twips they name.
+        let sect = |mar: &str| {
+            let main = document(&format!(
+                r#"<w:p><w:r><w:t>x</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar {mar}/></w:sectPr>"#
+            ));
+            let root_rels = format!(
+                r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+            );
+            let pkg = package(&[("_rels/.rels", &root_rels), ("word/document.xml", &main)]);
+            render_parts(&pkg, None)["word/document.xml"]
+                .0
+                .iter()
+                .find(|l| l.starts_with("  section"))
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(
+            sect(
+                r#"w:top="1440.4" w:right="1440" w:bottom="1in" w:left="1440" w:header="720" w:footer="720""#
+            ),
+            "  section 1 page=12240x15840 margins=1440.4,1440,1440,1440 header=720 footer=720"
+        );
     }
 
     #[test]

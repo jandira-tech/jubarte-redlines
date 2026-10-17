@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: mbx remote cache
+description: Run Cargo through mbx, backed by the self-hosted runners' cache server
+
+# The self-hosted runners share one mbx cache server on their private Docker
+# network (`mbx-cache`), so a crate one runner compiled is a cache hit on the
+# others. The server takes no token: mbx sends none over plain HTTP, and only
+# the runners can reach it. mbx publishes only from pushes to a protected
+# branch; pull requests read. GitHub-hosted runners cannot reach the server,
+# so jobs that also run there keep Swatinem/rust-cache on those legs.
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2
+      with:
+        backend: remote
+        version: "1.24.1"
+        remote-url: http://mbx-cache:7543
+        namespace: jandira-tech/jubarte-redlines
+    # The Cargo shim puts every `cargo` behind mbx, including the ones
+    # scripts, maturin and cargo-llvm-cov start, so steps keep plain `cargo`.
+    - name: route cargo through mbx
+      shell: bash
+      run: |
+        mbx setup --yes
+        echo "${XDG_DATA_HOME:-$HOME/.local/share}/mbx/bin" >> "$GITHUB_PATH"

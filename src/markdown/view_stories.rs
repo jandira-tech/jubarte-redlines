@@ -123,6 +123,12 @@ pub(super) struct People {
     pub range_ends: HashMap<String, String>,
     /// The handles of `range_ends` whose first mark is written.
     pub started: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// The view's drawing reference definitions, by name: a `dN` maps to
+    /// its `drawing:` destination, an `imageK` to its `data:` one. A
+    /// story's `![…][dN]` and `![…][imageK]` tokens resolve through them.
+    pub drawing_defs: HashMap<String, String>,
+    /// The view's `<!-- NAME drawing:… -->` backing comments, by name.
+    pub drawing_backings: HashMap<String, String>,
 }
 
 /// The marks of one story part being written: their people and the next
@@ -600,8 +606,9 @@ pub(super) fn section(entry: &str) -> Stories {
 /// `{~~old~>new~~}` the insertion then the deletion, as Word's Compare
 /// writes them, each with the author, date and `w:id` its `{>>…<<}` tag
 /// names. Any other `{>>…<<}` is a comment, which Word does not take in a
-/// header or footer. A `![…](drawing:…)` token splices its materialized
-/// drawing from `drawings`.
+/// header or footer. A `![…][dN]` or `![…][imageK]` token (or an older
+/// view's `![…](drawing:…)`) splices its materialized drawing from
+/// `drawings`.
 fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -> String {
     let mut out = String::new();
     let mut plain = String::new();
@@ -1180,8 +1187,16 @@ fn story_part(
                 rest = &rest[c.len_utf8()..];
                 continue;
             };
+            // A `dN` name resolves through the view's reference
+            // definitions, an `imageK` through its backing comment and
+            // `data:` bytes; a `drawing:` destination carries its payload.
+            let drawing = super::from_docx::drawing::lookup(
+                dest,
+                &marks.people.drawing_defs,
+                &marks.people.drawing_backings,
+            );
             if !drawings.contains_key(dest)
-                && let Ok(payload) = super::from_docx::drawing::decode(dest)
+                && let Some(payload) = drawing
                 && let Some(xml) = super::from_docx::drawing::materialize(
                     &payload, package, &part, &existing, &mut used, &mut next,
                 )

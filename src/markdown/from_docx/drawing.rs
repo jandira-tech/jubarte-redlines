@@ -2,27 +2,37 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Drawings a Markdown image cannot describe — floating anchors, charts,
-//! shapes, text boxes, connectors, VML pictures, AlternateContent — kept
-//! verbatim as `drawing:` payloads.
+//! Drawings, in the three readable forms the view gives them. Every one
+//! keeps a `drawing:` payload — URL-safe base64 of a JSON envelope holding
+//! the element's XML, its relationships, and every package part they
+//! reach, recursively — under a `<!-- drawings -->` marker at the view's
+//! end, so the body text stays readable past it.
 //!
-//! The reader prints `![label](drawing:PAYLOAD)` where an image would go:
-//! `label` is the `wp:docPr` description or name (empty is fine), and
-//! `PAYLOAD` is URL-safe base64 of a JSON envelope holding the element's XML,
-//! its relationships, and every package part they reach, recursively. The
-//! writer splices the XML back and gives each stored part and relationship
-//! the id the new package assigns it, so the whole drawing is lossless even
-//! where the Markdown shows only its label.
+//! - A drawing the readable forms cannot say — a shape, text box,
+//!   connector, chart, VML picture, AlternateContent — is `![label][dN]`
+//!   where an image would go, `dN` its number in reading order; a
+//!   reference definition holds the payload: `[dN]: drawing:PAYLOAD`.
+//! - A raster (PNG, JPEG, GIF, BMP, TIFF) is `![label][imageK]`: the
+//!   `data:` definition `[imageK]: <data:mime;base64,…>` holds the bytes
+//!   and a backing comment `<!-- imageK drawing:PAYLOAD -->` the payload,
+//!   whose image part the bytes fill on the way back.
+//! - An `asvg:svgBlip` a paragraph holds alone is a ` ```svg ` fence with
+//!   its source; `<!-- dN drawing:PAYLOAD -->` backs it, PNG fallback
+//!   inside. Anywhere else an SVG is a `data:` raster like the others.
 //!
-//! An image is a `drawing:` payload when it is not a plain inline raster
-//! collected under `--media-dir`: `wp:anchor`, a chart, a text box, or a
-//! raster that was not extracted. Everything the payload needs travels
-//! inside it, so `jubarte read` — which extracts no media — keeps the
-//! drawing whole.
+//! `label` is the `wp:docPr` description or name (empty is fine). The
+//! writer splices the payload's XML back and gives each stored part and
+//! relationship the id the new package assigns it, so the whole drawing
+//! is lossless even where the Markdown shows only its readable form.
+//!
+//! A plain inline raster collected under `--media-dir` still extracts to
+//! a file; everything else the payload needs travels inside the view, so
+//! `jubarte read` — which extracts no media — keeps the drawing whole.
 //!
 //! Reading is two-phase: the walk queues a [`Pending`] per element and
-//! prints `drawing:N` placeholders; once the package can be borrowed again,
-//! [`resolve`] captures each element and the payload replaces `drawing:N`.
+//! prints the `![label][dN]` reference; once the package can be borrowed
+//! again, [`fill`] captures each element, picks its form and appends the
+//! definitions.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -69,6 +79,20 @@ pub(crate) struct Drawing {
     /// Package parts the relationships reach, in capture order.
     #[serde(default)]
     deps: Vec<Dep>,
+    /// The `deps` index whose bytes the readable layer carries: a raster's
+    /// `data:` definition or an `svg` fence's source. Its `b64` is empty in
+    /// a backing payload; the writer fills it from the readable form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slot: Option<usize>,
+    /// SHA-256 of the ` ```mermaid ` fence's text the view printed for a
+    /// chart, hex. An unchanged fence's hash matches and the drawing
+    /// writes back byte for byte; an edited one rebuilds its chart part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mhash: Option<String>,
+    /// The Mermaid text `mhash` hashes, for the fence `fill` prints.
+    /// Never in the payload: the fence is the text's home.
+    #[serde(skip)]
+    mermaid: Option<String>,
 }
 
 /// One relationship of the element's part or of a dependent part.
@@ -175,8 +199,8 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
-    /// Queue `element`, printing its `![label](drawing:N)` placeholder.
-    /// `label` is the drawing's `wp:docPr` description, title or name.
+    /// Queue `element`, printing its `![label][dN]` reference. `label` is
+    /// the drawing's `wp:docPr` description, title or name.
     pub(crate) fn push(
         list: &mut Vec<Pending>,
         element: &Element,
@@ -195,14 +219,19 @@ impl Pending {
             scope,
             wrap,
         });
-        image(&label, &format!("drawing:{index}"))
+        image(&label, &format!("d{}", index + 1))
     }
 }
 
-/// `![label](dest)` with the label made a Markdown alt text: one line,
-/// brackets escaped.
-fn image(label: &str, dest: &str) -> String {
-    format!("![{label}]({dest})")
+/// `![label][name]` with the label made a Markdown alt text: one line,
+/// brackets escaped. An empty `name` is `![label]()` — an empty image the
+/// writer reads as alt text.
+fn image(label: &str, name: &str) -> String {
+    if name.is_empty() {
+        format!("![{label}]()")
+    } else {
+        format!("![{label}][{name}]")
+    }
 }
 
 /// The `wp:docPr` description, title or name as the token's label.
@@ -515,6 +544,9 @@ pub(crate) fn resolve(
     if deps.failed.is_some() {
         return None;
     }
+    let slot = media_slot(&root, &out, &deps);
+    let mermaid = chart_mermaid(&deps);
+    let mhash = mermaid.as_deref().map(mermaid_hash);
     normalize_ids(&mut root);
     declare(&mut root, &pending.scope);
     Some(Drawing {
@@ -522,7 +554,83 @@ pub(crate) fn resolve(
         wrap: pending.wrap,
         rels: out,
         deps: deps.parts,
+        slot,
+        mhash,
+        mermaid,
     })
+}
+
+/// The chart part's Mermaid text when the payload holds a `chartSpace`
+/// `pie`/`xychart-beta` can say: a standalone drawing prints it as a
+/// ` ```mermaid ` fence and `mhash` says whether the text came back
+/// unchanged. Charts that hold relationships keep their fences too —
+/// [`Drawing::rebuild_mermaid`] patches their `xml` in place.
+fn chart_mermaid(deps: &Deps<'_>) -> Option<String> {
+    let dep = deps
+        .parts
+        .iter()
+        .find(|dep| dep.kind.ends_with("chart+xml"))?;
+    let xml = if dep.xml.is_empty() {
+        String::from_utf8(base64_decode(&dep.b64)?).ok()?
+    } else {
+        dep.xml.clone()
+    };
+    super::mermaid::chart(&xml)
+}
+
+/// SHA-256 of `text`, hex: the hash `mhash` carries for a fence's text.
+fn mermaid_hash(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.trim().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The image part the readable layer carries for `root`, as a `deps` index:
+/// an `asvg:svgBlip`'s SVG source, else the `a:blip`'s PNG, JPEG, GIF, BMP
+/// or TIFF raster. `None` when the element is a picture of nothing the
+/// readable forms name (EMF, WMF, an external or missing target) or holds
+/// content the payload must keep — a text box's story, a chart's frame.
+fn media_slot(root: &Element, rels: &[PayRel], deps: &Deps<'_>) -> Option<usize> {
+    if root.find("txbxContent").is_some() || root.find("graphicFrame").is_some() {
+        return None;
+    }
+    // The dependency a relationship symbol `rN` names.
+    let dep_of = |element: &Element| {
+        element.attrs.iter().find_map(|(name, sym)| {
+            if !name.contains(':') {
+                return None;
+            }
+            let rel = rels.iter().find(|rel| rel.sym == *sym)?;
+            let index = match rel.part {
+                Some(index) => index,
+                None => *deps.index.get(rel.raw.as_deref()?)?,
+            };
+            (index < deps.parts.len()).then_some(index)
+        })
+    };
+    // The SVG form names its source, not the PNG fallback `a:blip` beside it.
+    if let Some(blip) = root.find("svgBlip")
+        && let Some(index) = dep_of(blip)
+        && deps.parts[index].kind.starts_with("image/")
+    {
+        return Some(index);
+    }
+    const RASTER: [&str; 5] = [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/bmp",
+        "image/tiff",
+    ];
+    if let Some(blip) = root.find("blip")
+        && let Some(index) = dep_of(blip)
+        && RASTER.contains(&deps.parts[index].kind.as_str())
+    {
+        return Some(index);
+    }
+    None
 }
 
 /// The `[Content_Types]` entries of `package`: `/part` for each override,
@@ -553,8 +661,14 @@ pub(crate) fn content_types(package: &mut Package<'_>) -> HashMap<String, String
     types
 }
 
-/// `markdown` with each `drawing:N` placeholder resolved to its payload.
-/// A pending that failed to capture becomes `![label]()`: the label stays
+/// `markdown` with its `![label][dN]` references given their readable
+/// form and their payloads appended under a `<!-- drawings -->` marker. A
+/// raster the layer reads as bytes is `![label][imageK]` backed by a
+/// `data:` definition and a `drawing:` comment; an SVG the paragraph holds
+/// alone is a ` ```svg ` fence backed by a comment; every other drawing
+/// keeps the `dN` reference to a `drawing:` definition. Two pendings that
+/// captured the same payload share one name and one definition. A pending
+/// that failed to capture loses its reference: `![label]()` stays
 /// readable and the writer writes it as alt text.
 pub(crate) fn fill(
     markdown: &str,
@@ -562,33 +676,183 @@ pub(crate) fn fill(
     types: &HashMap<String, String>,
     pendings: &[Pending],
 ) -> String {
+    if pendings.is_empty() {
+        return markdown.to_string();
+    }
     let mut out = markdown.to_string();
+    // A token's place is found in the whole text — a header's `dN` names
+    // its line in the YAML summary, printed before the body's pendings —
+    // except inside the spans a fence just took: `][dN]` there is source.
+    let mut fences: Vec<(usize, usize)> = Vec::new();
+    // `token`'s first occurrence outside every `fences` span.
+    let find_token = |out: &str, token: &str, fences: &[(usize, usize)]| -> Option<usize> {
+        let mut from = 0;
+        while let Some(pos) = out[from..].find(token) {
+            let pos = from + pos;
+            if fences.iter().all(|&(s, e)| pos < s || pos >= e) {
+                return Some(pos);
+            }
+            from = pos + 1;
+        }
+        None
+    };
+    let mut appendix = String::new();
+    let mut media = 0usize;
+    let mut names: HashMap<String, String> = HashMap::new();
     for (index, pending) in pendings.iter().enumerate() {
-        let encoded = resolve(package, types, pending)
-            .map(|drawing| encode(&drawing))
-            .unwrap_or_default();
-        out = out.replace(
-            &format!("(drawing:{index})"),
-            &format!("(drawing:{encoded})"),
-        );
+        let d = format!("d{}", index + 1);
+        let token = format!("][{d}]");
+        let Some(drawing) = resolve(package, types, pending) else {
+            // `![label][dN]` is the one shape push prints; only a capture
+            // failure turns it into `![label]()`.
+            if let Some(pos) = find_token(&out, &token, &fences) {
+                out.replace_range(pos..pos + token.len(), "]()");
+            }
+            continue;
+        };
+        let Some(pos) = find_token(&out, &token, &fences) else {
+            continue;
+        };
+        let end = pos + token.len();
+        // A chart its paragraph holds alone prints its Mermaid: a
+        // ` ```mermaid ` fence the payload comment backs. Anywhere else —
+        // run content — the fence could not sit, so it keeps `[dN]`.
+        if let Some(text) = drawing.mermaid.clone()
+            && let Some((start, text_end)) = standalone(&out, pos, end)
+        {
+            let label = label(&pending.element);
+            let info = if label.is_empty() {
+                format!("mermaid {d}")
+            } else {
+                format!("mermaid {d} {label}")
+            };
+            let fence = fenced(&info, &text);
+            out.replace_range(start..text_end, &fence);
+            fences.push((start, start + fence.len()));
+            let _ = writeln!(appendix, "<!-- {d} drawing:{} -->", encode(&drawing));
+            continue;
+        }
+        let Some(slot) = drawing.slot else {
+            let _ = writeln!(appendix, "[{d}]: drawing:{}", encode(&drawing));
+            continue;
+        };
+        let dep = &drawing.deps[slot];
+        let is_svg = dep.kind == "image/svg+xml" && !dep.b64.is_empty();
+        if is_svg
+            && let Some((start, text_end)) = standalone(&out, pos, end)
+            && let Some(svg) = base64_decode(&dep.b64)
+            && let Ok(svg) = str::from_utf8(&svg)
+        {
+            let label = label(&pending.element);
+            let info = if label.is_empty() {
+                format!("svg {d}")
+            } else {
+                format!("svg {d} {label}")
+            };
+            let fence = fenced(&info, svg.trim());
+            out.replace_range(start..text_end, &fence);
+            fences.push((start, start + fence.len()));
+            let _ = writeln!(
+                appendix,
+                "<!-- {d} drawing:{} -->",
+                encode(&drawing.without_slot_bytes())
+            );
+            continue;
+        }
+        // A raster, or an SVG run content cannot leave a fence: its
+        // `data:` definition, with the payload as a backing comment.
+        let key = encode(&drawing);
+        let name = match names.get(&key) {
+            Some(name) => name.clone(),
+            None => {
+                media += 1;
+                let name = format!("image{media}");
+                names.insert(key.clone(), name.clone());
+                let _ = writeln!(appendix, "[{name}]: <data:{};base64,{}>", dep.kind, dep.b64);
+                let _ = writeln!(
+                    appendix,
+                    "<!-- {name} drawing:{} -->",
+                    encode(&drawing.without_slot_bytes())
+                );
+                name
+            }
+        };
+        out.replace_range(pos + 2..end - 1, &name);
+    }
+    if !appendix.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let _ = write!(out, "\n<!-- drawings -->\n\n{appendix}");
     }
     out
 }
 
-/// The Markdown `![label](drawing:PAYLOAD)` at `text`'s start, if any: the
-/// `drawing:` destination and the token's whole length.
+/// The span of a `![label][dN]` token that is a whole line: its `![`
+/// opening and its line's end. `None` when anything else shares the line
+/// — a run of text, a change mark — where a fence could not sit.
+fn standalone(out: &str, pos: usize, end: usize) -> Option<(usize, usize)> {
+    let start = out[..pos].rfind("![")?;
+    let (name, len) = at(&out[start..])?;
+    if !(name.starts_with('d')
+        && name.len() > 1
+        && name.bytes().skip(1).all(|b| b.is_ascii_digit())
+        && start + len == end)
+    {
+        return None;
+    }
+    let line_start = out[..start].rfind('\n').map_or(0, |n| n + 1);
+    let line_end = out[end..].find('\n').map_or(out.len(), |n| end + n);
+    (out[line_start..start].trim().is_empty() && out[end..line_end].trim().is_empty())
+        .then_some((start, line_end))
+}
+
+/// `text` as a fenced code block carrying `info`, the fence one backtick
+/// wider than any run inside.
+fn fenced(info: &str, text: &str) -> String {
+    let mut widest = 0usize;
+    let mut run = 0usize;
+    for b in text.bytes() {
+        if b == b'`' {
+            run += 1;
+            widest = widest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let ticks = "`".repeat((widest + 1).max(3));
+    format!("{ticks} {info}\n{text}\n{ticks}")
+}
+
+/// The Markdown drawing token at `text`'s start, if any —
+/// `![label][dN]`, or a `![label](drawing:PAYLOAD)` of a view an older
+/// build wrote. What the token resolves by: the `dN` reference name or the
+/// `drawing:` destination, and the token's whole length.
 pub(crate) fn at(text: &str) -> Option<(&str, usize)> {
     let rest = text.strip_prefix("![")?;
     let label_end = rest.find(']')?;
-    let inner = rest[label_end + 1..].strip_prefix('(')?;
-    let end = inner.find(')')?;
-    let dest = &inner[..end];
-    let payload = dest.strip_prefix("drawing:")?;
-    (!payload.is_empty()
-        && payload
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'=')))
-    .then(|| (dest, 2 + label_end + 2 + dest.len() + 1))
+    let after = &rest[label_end + 1..];
+    if let Some(inner) = after.strip_prefix('(') {
+        let end = inner.find(')')?;
+        let dest = &inner[..end];
+        let payload = dest.strip_prefix("drawing:")?;
+        return (!payload.is_empty()
+            && payload
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'=')))
+        .then(|| (dest, 2 + label_end + 2 + dest.len() + 1));
+    }
+    let name = after
+        .strip_prefix('[')
+        .and_then(|inner| inner.split_once(']'))
+        .map(|(name, _)| name)?;
+    let digits = name
+        .strip_prefix('d')
+        .or_else(|| name.strip_prefix("image"))?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then(|| {
+        let start = 2 + label_end + 2;
+        (&text[start..start + name.len()], start + name.len() + 1)
+    })
 }
 
 /// Whether cutting `text` at `cut` splits a `![…](drawing:…)` token.
@@ -626,11 +890,63 @@ fn base64_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn base64_decode(encoded: &str) -> Option<Vec<u8>> {
+pub(crate) fn base64_decode(encoded: &str) -> Option<Vec<u8>> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .ok()
+}
+
+/// A `data:` destination's `(mime, base64)` parts: `data:mime;base64,…`.
+/// `data:` with no `;base64` marker reads as no media bytes.
+pub(crate) fn data_uri(dest: &str) -> Option<(&str, &str)> {
+    let rest = dest.strip_prefix("data:")?;
+    let (meta, data) = rest.split_once(',')?;
+    let mime = meta.strip_suffix(";base64")?;
+    (!mime.is_empty() && !data.is_empty()).then_some((mime, data))
+}
+
+/// The `<!-- NAME drawing:PAYLOAD -->` backing comments of a view's
+/// drawings appendix, `NAME` → the `drawing:` destination.
+pub(crate) fn backing_comments(source: &str) -> HashMap<String, String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let inner = line
+                .trim()
+                .strip_prefix("<!--")?
+                .strip_suffix("-->")?
+                .trim();
+            let (name, dest) = inner.split_once(' ')?;
+            (dest.starts_with("drawing:") && !name.is_empty())
+                .then(|| (name.to_string(), dest.to_string()))
+        })
+        .collect()
+}
+
+/// The `Drawing` a reference name or destination in the view resolves to:
+/// a `drawing:` destination or `dN` definition as it is; an `imageK` name
+/// through its backing comment, the `data:` definition's bytes filling
+/// the slot the readable layer carries. `None` when no form resolves.
+pub(crate) fn lookup(
+    key_or_dest: &str,
+    defs: &HashMap<String, String>,
+    backings: &HashMap<String, String>,
+) -> Option<Drawing> {
+    if let Some(dest) = key_or_dest
+        .starts_with("drawing:")
+        .then_some(key_or_dest)
+        .or_else(|| defs.get(key_or_dest).map(String::as_str))
+    {
+        if dest.starts_with("drawing:") {
+            return decode(dest).ok();
+        }
+        if let Some((mime, b64)) = data_uri(dest) {
+            let mut drawing = decode(backings.get(key_or_dest)?).ok()?;
+            return drawing.fill_slot_data(b64, mime).then_some(drawing);
+        }
+    }
+    None
 }
 
 /// Whether `element` or a descendant holds a drawing: `w:drawing`, `w:pict`
@@ -688,6 +1004,64 @@ impl Drawing {
     /// AlternateContent).
     pub(crate) fn wraps_run(&self) -> bool {
         self.wrap
+    }
+
+    /// `self` with the readable layer's bytes out of the payload: the
+    /// backing comment of a `data:` definition or an `svg` fence.
+    fn without_slot_bytes(&self) -> Drawing {
+        let mut backing = self.clone();
+        if let Some(slot) = backing.slot
+            && let Some(dep) = backing.deps.get_mut(slot)
+        {
+            dep.b64.clear();
+            dep.xml.clear();
+        }
+        backing
+    }
+
+    /// Fill the slot with `b64` bytes and, when `kind` differs, its
+    /// content type; `false` when the payload carries no slot.
+    pub(crate) fn fill_slot_data(&mut self, b64: &str, kind: &str) -> bool {
+        let Some(dep) = self.slot.and_then(|slot| self.deps.get_mut(slot)) else {
+            return false;
+        };
+        dep.b64 = b64.to_string();
+        dep.xml.clear();
+        if dep.kind != kind {
+            dep.kind = kind.to_string();
+        }
+        true
+    }
+
+    /// `text` is the ` ```mermaid ` fence this drawing printed: its hash
+    /// is `mhash`'s, so the drawing writes back byte for byte.
+    pub(crate) fn mermaid_unchanged(&self, text: &str) -> bool {
+        self.mhash.as_deref() == Some(mermaid_hash(text).as_str())
+    }
+
+    /// The fence's text edited: patch the chart part it names in place,
+    /// keeping everything the Mermaid cannot say. `false` when the
+    /// payload names no chart part the patch can reach.
+    pub(crate) fn rebuild_mermaid(&mut self, text: &str) -> bool {
+        let Some(dep) = self
+            .deps
+            .iter_mut()
+            .find(|dep| dep.kind.ends_with("chart+xml"))
+        else {
+            return false;
+        };
+        let xml = if dep.xml.is_empty() {
+            base64_decode(&dep.b64).and_then(|b| String::from_utf8(b).ok())
+        } else {
+            Some(dep.xml.clone())
+        };
+        let Some(patched) = xml.and_then(|xml| super::mermaid::patch(&xml, text)) else {
+            return false;
+        };
+        dep.xml = patched;
+        dep.b64.clear();
+        self.mhash = Some(mermaid_hash(text));
+        true
     }
 }
 
@@ -885,6 +1259,14 @@ mod tests {
         assert!(at("![a](media/x.png)").is_none());
         assert!(at("x![a](drawing:Zg)").is_none());
         assert!(at("![a](drawing:has space)").is_none());
+        let text = "![Text Box 2][d12] next";
+        let (dest, len) = at(text).unwrap();
+        assert_eq!(dest, "d12");
+        assert_eq!(&text[..len], "![Text Box 2][d12]");
+        assert!(at("![a][d]").is_none());
+        assert!(at("![a][dx]").is_none());
+        assert!(at("![a][other]").is_none());
+        assert!(at("![a][d1").is_none());
     }
 
     #[test]

@@ -59,10 +59,33 @@ fn universal_measure(value: &str, per_point: f64) -> Option<f64> {
         ("pi", 12.0),
     ] {
         if let Some(n) = t.strip_suffix(suffix) {
-            return n.trim().parse::<f64>().ok().map(|f| f * points * per_point);
+            // The schema's spelling and magnitude only: Rust's f64 grammar
+            // is wider (exponents, `nan`, `inf`, `5.`, `+5`), and a value
+            // past the twips domain's i64 saturates when callers cast.
+            return schema_number(n.trim()).and_then(|f| {
+                let v = f * points * per_point;
+                (v.is_finite() && v.abs() <= i64::MAX as f64).then_some(v)
+            });
         }
     }
     None
+}
+
+/// `ST_UniversalMeasure`'s numeric part, `-?[0-9]+(\.[0-9]+)?`: digits on
+/// both sides of the point, a leading `-` as the only sign, no exponent.
+fn schema_number(s: &str) -> Option<f64> {
+    let unsigned = s.strip_prefix('-').unwrap_or(s);
+    let (int_part, frac_part) = match unsigned.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (unsigned, None),
+    };
+    if int_part.is_empty() || !int_part.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if frac_part.is_some_and(|f| f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    s.parse::<f64>().ok()
 }
 
 #[cfg(test)]
@@ -100,6 +123,31 @@ mod tests {
     fn a_plain_number_or_garbage_is_not_a_universal_measure() {
         for value in ["1440", "12.95", "12PT", "1ptx", "pt", ""] {
             assert_eq!(universal_measure_twips(value), None, "{value}");
+        }
+    }
+
+    /// The schema's numeric part is `-?digits(.digits)?`: no exponent, no
+    /// `nan`/`inf`, no `+`, no bare or dangling point — Rust's f64 grammar
+    /// is wider, and a magnitude past the twips domain's i64 saturates
+    /// when the callers cast. None of them is a measure (#531).
+    #[test]
+    fn an_absurd_or_out_of_range_measure_is_not_a_measure() {
+        for value in [
+            "nanpt",
+            "infpt",
+            "-infpt",
+            "NaNpt",
+            "1e300pt",
+            "1E2pt",
+            "1.5e2pt",
+            "5.pt",
+            ".5pt",
+            "+5pt",
+            "1pt.",
+            "999999999999999999999999999pt",
+        ] {
+            assert_eq!(universal_measure_twips(value), None, "{value}");
+            assert_eq!(universal_measure_half_points(value), None, "{value}");
         }
     }
 

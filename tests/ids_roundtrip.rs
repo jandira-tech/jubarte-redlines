@@ -454,6 +454,7 @@ struct Patterns {
     cells_rows: Regex,
     story: Regex,
     definition: Regex,
+    drawing_definition: Regex,
 }
 
 fn patterns() -> &'static Patterns {
@@ -476,6 +477,7 @@ fn patterns() -> &'static Patterns {
         // A long story id holds colons, so the header quotes it.
         story: Regex::new(r#"\{id: "?([^,}\s"]+)"?"#).unwrap(),
         definition: Regex::new(r"^(?:\{(?:--|\+\+))?\[\^\d+\]: ").unwrap(),
+        drawing_definition: Regex::new(r"^\[d\d+\]: ").unwrap(),
     })
 }
 
@@ -608,7 +610,13 @@ fn printed(view: &str) -> Printed {
         // A note's definition (`[^1]: …`, or wrapped in the change that
         // deleted its reference: `{--[^1]: …--}`) closes the paragraph's text,
         // and so does the definition's own id line (`<!-- footnotes.p0 -->`).
-        if pat.definition.is_match(line) || is_note_id_line(line) {
+        // So does the drawings section: its marker and its `[dN]:` lines
+        // are payload, not text.
+        if pat.definition.is_match(line)
+            || is_note_id_line(line)
+            || line == "<!-- drawings -->"
+            || pat.drawing_definition.is_match(line)
+        {
             current = None;
             continue;
         }
@@ -645,7 +653,8 @@ fn letters(text: &str) -> String {
 /// `inspect` does not print: note references `[^1]` and link targets.
 fn view_text(block: &str) -> String {
     let refs = Regex::new(r"\[\^\d+\]").unwrap();
-    let images = Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap();
+    // `![alt](…)` and the reference form `![alt][dN]` the drawings use.
+    let images = Regex::new(r"!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
     // `<mailto:a@b>` shows the address the document holds.
     let text = plain_anchor(block).replace("<mailto:", "<");

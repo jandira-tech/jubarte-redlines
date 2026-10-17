@@ -15,6 +15,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fractional plain values on table and frame geometry are rounded in
+  redline output — a validity repair.** A gdocs-style fractional dxa
+  (`w:tblpX="100.5"`, `w:framePr w:x="33.5"`) is schema-invalid on the
+  integer-typed attributes the Strict measure whitelist reads
+  (OpenXmlValidator: not a valid Int32), so `convert`'s output sweep rounds
+  them (101, 34) as it already did for indents, spacing and cell margins.
+  `jubarte debug` still reports the literal value: a diagnostic describes,
+  it does not repair.
+
 ### Added
 
 - **`convert --commonmark`** writes Word as plain CommonMark with
@@ -349,6 +360,28 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   document page (`X-page-03.png`), also under `--changed-pages`.
 
 ### Fixed
+
+- **Literal CriticMarkup delimiters in a code block stay text.** A
+  `SourceCode` paragraph whose text holds `{++x++}` printed it into its
+  fence as is, and the next convert read it as a tracked change. The views
+  now break such delimiters for the fence, and only there, where Markdown
+  reads no backslash escape: a delimiter shape with a run of backslashes at
+  its break point (`{` + the run + `++`, `++` + the run + `}`, `~` + the
+  run + `>`) is written with the run made odd and read back halved
+  (`{\++` for literal `{++`, `{\\\++` for literal `{\++`), every other
+  backslash staying as written. The text comes back exactly, tracked
+  changes inside a code block still round-trip (their delimiters are never
+  escaped by a backslash before them), and hand-written code such as
+  `C:\\path`, a regex `\\d+` or LaTeX `\\` reaches Word byte-identical
+  instead of losing half its backslashes.
+
+- **`--commonmark` escapes CriticMarkup and Markdown syntax.** A document
+  without tracked changes printed its text as is, so Word text such as
+  `{++a++}`, `\{++a++}`, `- not a list`, `1. not a list`, `# not a
+  heading`, `> not a quote`, `*not em*`, `` `not code` ``, `[not](link)`
+  or `<b>not html</b>` came back as real changes, lists, a heading, a
+  quote, emphasis, code, a link or HTML. The plain conversion now escapes
+  both, as the agent view always did, and round-trips as itself.
 
 - **A header or footer keeps its own text colour, borders and alignment.**
   The view prints a story whose paragraphs carry them paragraph by paragraph

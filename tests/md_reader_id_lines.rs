@@ -1930,25 +1930,28 @@ fn idless_chain(markdown: &str) -> (String, Vec<u8>, Vec<u8>) {
     (c, b, d)
 }
 
-/// `$x_{--}$` is the text `--`. Spacing the brace so it is not a
-/// CriticMarkup delimiter puts that space into the equation.
+/// `$x_{--}$` is text that looks like an equation: the escapes the view
+/// writes keep it text through the chain, with no math built from it.
 #[test]
 fn literal_math_delimiters_keep_their_page_text() {
     let markdown = include_str!("fixtures/from-docx/critic/synthetic/hard-delimiters.accept.md");
     let (c, b, d) = idless_chain(markdown);
     assert!(
         c.lines()
-            .any(|line| line == "Math-like text $x_{{}--{}}$ and $y^{{}++{}}$ stays."),
+            .any(|line| line == r"Math-like text $x\_{\--\}$ and $y\^{\++\}$ stays."),
         "{c}"
     );
     for (name, docx) in [("B", &b), ("D", &d)] {
         let xml = document_xml(docx);
-        assert!(xml.contains("<m:t>--</m:t>"), "{name} lost `--`: {xml}");
-        assert!(xml.contains("<m:t>++</m:t>"), "{name} lost `++`: {xml}");
         assert!(
-            !xml.contains("> -- <") && !xml.contains("> ++ <"),
-            "{name} drew a space around the delimiter text"
+            xml.contains("<w:t xml:space=\"preserve\">--</w:t>"),
+            "{name} lost `--`: {xml}"
         );
+        assert!(
+            xml.contains("<w:t xml:space=\"preserve\">++</w:t>"),
+            "{name} lost `++`: {xml}"
+        );
+        assert!(!xml.contains("<m:oMath"), "{name} built math from text");
     }
 }
 

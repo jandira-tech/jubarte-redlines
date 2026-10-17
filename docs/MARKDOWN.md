@@ -42,7 +42,10 @@ notes and headers.
 (`-o` names another file, `-o draft.pdf` or `-t png` renders it). The
 Markdown is CommonMark with GitHub's tables, strikethrough, task lists and
 footnotes, and a YAML front matter's `title:` and `author:` become the
-document's properties. Its `track_changes: on` (or `off`) sets Word's Track
+document's properties. In a table row an even backslash run before a pipe
+(`\\|`) is escaped backslashes and then the cell separator, as GFM reads
+it; a pipe behind an odd run (`\|`) is a literal pipe in the cell. Its
+`track_changes: on` (or `off`) sets Word's Track
 Changes switch in the output; `--tracking on|off` overrides the key. With
 neither, the output keeps the `--reference-doc`'s switch, else tracking is
 off. Tracked changes the Markdown holds never turn the switch on by
@@ -111,7 +114,10 @@ CLI reads them.
 | `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. Reading Word back, reader and writer share github-slugger's names (a repeat `-1`, `-2`): only the exact name the writer gives a heading is its own bookmark and prints no anchor; any other (`title-01`, a lone `title-1`) stays an `<a id>` anchor, and a heading in a table cell claims no slug. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
 | `[^note]` | footnote; a label defined twice (a footnote and an endnote both `[^1]`) is two notes: its first reference names the first definition and its next the second, which takes the next free number, with a warning |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
-| `![alt](drawing:PAYLOAD)` | a drawing the image syntax cannot say — a floating anchor, shape, text box, connector, chart, VML picture or `mc:AlternateContent`, or a picture whose raster was not extracted. `PAYLOAD` is URL-safe base64 of a JSON envelope the reader writes: the element's XML, its relationships, and every part they reach. The writer splices it back verbatim (fresh relationship and `docPr` ids, each part re-written); a payload that does not decode is dropped with a warning |
+| `![alt][dN]` with `[dN]: drawing:PAYLOAD` | a drawing the readable forms cannot say — a shape, text box, connector, VML picture or `mc:AlternateContent`. The reference's name is the drawing's number in reading order; the definition sits with the others after a `<!-- drawings -->` marker at the end of the view, so the body text stays free of payloads. `PAYLOAD` is URL-safe base64 of a JSON envelope the reader writes: the element's XML, its relationships, and every part they reach. The writer splices it back verbatim (fresh relationship and `docPr` ids, each part re-written); a payload that does not decode is dropped with a warning. The older inline form `![alt](drawing:PAYLOAD)` reads the same |
+| `![alt][imageN]` with `[imageN]: <data:mime;base64,…>` and `<!-- imageN drawing:PAYLOAD -->` | a raster picture (PNG, JPEG, GIF, BMP, TIFF), inline or floating. The `data:` definition holds the image's bytes; the backing comment the payload of everything else (anchor, wrap, `docPr`). Written back, the bytes fill the payload's image part; an edited `data:` writes the new image. Two identical payloads share one name and one definition. Without its backing comment the `data:` picture is a plain inline image |
+| ` ```svg dN ` fence with `<!-- dN drawing:PAYLOAD -->` | an `asvg:svgBlip` the paragraph holds alone, as its source code: the fence's text is the SVG part, the backing comment the payload with the PNG fallback inside. An edited source writes the new SVG into the part and keeps the fallback |
+| ` ```mermaid dN ` fence with `<!-- dN drawing:PAYLOAD -->` | a chart the paragraph holds alone, as its data: a `pie` fence for a pie chart, `xychart-beta` for bar and line. The backing comment holds the payload and a hash of the printed text: a fence that comes back unchanged writes the chart part byte for byte; an edited one rewrites the part's categories, values and title in place — styling, axes and everything else the Mermaid cannot say stay the part's own. A chart that shares its paragraph with text keeps `![alt][dN]` instead |
 | `---` | a paragraph with a bottom border |
 | `<br>`, `<sup>`, `<sub>`, `<u>` | line break, superscript, subscript, underline (in a cell or a note of the tracked view, `<br>` ends a paragraph and `<br/>` is a line break; see below) |
 | `<b>`/`<strong>`, `<i>`/`<em>`, `<s>`/`<del>`, `<code>`, `<mark>` | bold, italic, strike, `VerbatimChar`, yellow highlight; attributes and case do not matter, a tag left open closes with its block, and any other tag keeps its text and is named once in a warning |
@@ -635,11 +641,26 @@ Text that reads like a field code is escaped with `\{` (`\{PAGE}`), in the
 body and in headers and footers, and text that reads like a mark has its
 delimiter broken (`{\++`); converting back restores both.
 
-Document text that CommonMark would read as markup is escaped in the agent
-view: a paragraph that starts with `# `, `- `, `> ` or `1. ` (also after a
-line break), and `*`, `` ` ``, `\`, `~~`, `==`, `[^`, a tag-like `<` and a
-word-edge `_`, `~` or `^` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes
-read back as the characters. `convert -t md` (ids off) does not escape.
+A code fence has its own rule, because Markdown reads no backslash escape
+there while CriticMarkup still marks tracked changes in code: the delimiter
+itself carries the escape. A delimiter shape with a run of backslashes at
+its break point (`{` + the run + `++`, `++` + the run + `}`, `~` + the run
++ `>`) is written with the run made odd — literal `{++` prints as `{\++`,
+literal `{\++` as `{\\\++` — and reading halves an odd run back
+(`{\++` in a fence is the text `{++`). Every other backslash in a fence is
+text as written, so hand-written `C:\\path`, `\\d+` and LaTeX `\\` reach
+Word byte-identical; a delimiter behind an even run (`{\\++`) is text as
+written too and opens nothing, and a bare delimiter is the change itself,
+never escaped by what precedes it. CommonMark's indented code blocks (four
+spaces or more) hold their text verbatim the same way: nothing opens there
+and no fence sits inside one.
+
+Document text that CommonMark would read as markup is escaped in every
+view, the agent view and `convert --commonmark` alike: a paragraph that
+starts with `# `, `- `, `> ` or `1. ` (also after a line break), and `*`,
+`` ` ``, `\`, `~~`, `==`, `[^`, a tag-like `<` and a word-edge `_`, `~` or
+`^` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes read back
+as the characters.
 
 An `edit` anchor copied out of the view may carry marks that are not
 document text (`# Fees`, `**secret**`, a CriticMarkup note). The literal
@@ -772,6 +793,8 @@ Payment is due in [-30-]{+45+} days.
 - The `+++` line names who made the changes and when, once. A change by
   anyone else (a tracked change already in a Word document) is followed
   by `{>>Name (date)<<}`, and every comment carries its author and date.
+  A substitution whose two sides two people made is two changes, each
+  named after itself: `[-old-]{>>Ana (date)<<}{+new+}{>>Bo (date)<<}`.
   `-a/--author` defaults to Redline; `-d/--datetime` to now.
 - Changes grow to whole words, numbers, formatting spans and links, so
   `[-**twelve**-]{+**eighteen**+}` rather than a change inside the bold.

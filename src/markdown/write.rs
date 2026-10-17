@@ -14,7 +14,9 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Alignment, CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
+};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
@@ -134,12 +136,20 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         (markdown.to_string(), Vec::new())
     };
     let source = page_commands(&source);
+    let source = table_pipes(&source);
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
     writer.item_levels = item_levels(&source);
     writer.label_definitions = label_definitions(&source);
-    for event in Parser::new_ext(&source, parser_options()) {
+    let parser = Parser::new_ext(&source, parser_options());
+    writer.document.drawing_defs = parser
+        .reference_definitions()
+        .iter()
+        .map(|(name, def)| (name.to_string(), def.dest.to_string()))
+        .collect();
+    writer.document.drawing_backings = super::from_docx::drawing::backing_comments(&source);
+    for event in parser {
         writer.event(event);
     }
     let mut document = writer.finish();
@@ -310,6 +320,211 @@ fn page_commands(source: &str) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// GFM reads an even backslash run before a table row's pipe (`\\|`) as
+/// escaped backslashes and then the cell separator, but pulldown-cmark
+/// shields a pipe behind any backslash, so the rows the reader writes
+/// (`|\\|\\\\|` for the cells `\` and `\\`) and hand-written ones lose
+/// cells, or the table with them. A space moves such a run off its pipe —
+/// a cell's surrounding spaces are not its text — in the rows of tables
+/// whose columns then match their delimiter row, and nowhere else: front
+/// matter and fenced code keep every line, and a line a space would
+/// change without making the table is left as it was.
+fn table_pipes(source: &str) -> String {
+    let lines: Vec<&str> = source.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(source.len());
+    let mut fence: Option<&str> = None;
+    let mut front_matter = source.starts_with("---\n") || source.starts_with("---\r\n");
+    let mut in_table = false;
+    for (n, line) in lines.iter().enumerate() {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        let trimmed = bare.trim();
+        if front_matter {
+            if n > 0 && (trimmed == "---" || trimmed == "...") {
+                front_matter = false;
+            }
+            out.push_str(line);
+            continue;
+        }
+        let indent = bare.len() - bare.trim_start().len();
+        if let Some(open) = fence {
+            if indent < 4
+                && trimmed.starts_with(open)
+                && trimmed.trim_start_matches(open).trim().is_empty()
+            {
+                fence = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if indent < 4 && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
+            fence = Some(&trimmed[..3]);
+            in_table = false;
+            out.push_str(line);
+            continue;
+        }
+        let row = indent < 4 && trimmed.starts_with('|');
+        if !row {
+            in_table = false;
+            out.push_str(line);
+            continue;
+        }
+        let unshielded = unshield_pipes(bare);
+        if in_table || unshielded == bare {
+            out.push_str(&unshielded);
+            out.push_str(&line[bare.len()..]);
+            continue;
+        }
+        // The row opens a table only when the columns it names, with the
+        // runs moved off their pipes, are the delimiter row's.
+        in_table = lines.get(n + 1).is_some_and(|next| {
+            let next = next.trim_end_matches(['\n', '\r']);
+            let columns = next.len() - next.trim_start().len();
+            columns < 4 && delimiter_row(next)
+        }) && row_columns(&unshielded)
+            == lines
+                .get(n + 1)
+                .map(|next| row_columns(next.trim_end_matches(['\n', '\r'])))
+                .unwrap_or(0);
+        out.push_str(if in_table { &unshielded } else { bare });
+        out.push_str(&line[bare.len()..]);
+    }
+    out
+}
+
+/// `line` with every even backslash run before a pipe moved off it by a
+/// space. Code spans, equations and HTML tags are skipped: a pipe inside
+/// them is part of the cell, backslashes or not, and a space would change
+/// their text.
+fn unshield_pipes(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    // The backslash run before the byte at `at`.
+    let mut run = 0usize;
+    let mut at = 0usize;
+    while at < bytes.len() {
+        let rest = &line[at..];
+        let c = rest.chars().next().unwrap_or_default();
+        match c {
+            '\\' => {
+                run += 1;
+                out.push('\\');
+                at += 1;
+            }
+            '`' if run.is_multiple_of(2) => {
+                let ticks = rest.chars().take_while(|&c| c == '`').count();
+                let close = rest[ticks..]
+                    .char_indices()
+                    .find(|(i, _)| {
+                        rest[ticks + i..].starts_with(&"`".repeat(ticks))
+                            && rest[ticks + i + ticks..]
+                                .chars()
+                                .next()
+                                .is_none_or(|c| c != '`')
+                    })
+                    .map(|(i, _)| ticks + i + ticks);
+                let end = close.unwrap_or(ticks);
+                out.push_str(&rest[..end]);
+                at += end;
+                run = 0;
+            }
+            '$' if run.is_multiple_of(2) => {
+                let fence = usize::from(rest.starts_with("$$")) + 1;
+                let mut close = None;
+                let mut i = at + fence;
+                while i < bytes.len() {
+                    let step = line[i..].chars().next().map_or(1, char::len_utf8);
+                    match bytes[i] {
+                        // A backslash escapes the character after it, as an
+                        // equation's closing `$` is found.
+                        b'\\' => i += 1 + line[i + 1..].chars().next().map_or(1, char::len_utf8),
+                        b'$' if line[i..].starts_with(&"$".repeat(fence)) => {
+                            close = Some(i + fence);
+                            break;
+                        }
+                        _ => i += step,
+                    }
+                }
+                // An unclosed `$` is text, as pulldown-cmark reads it.
+                let end = close.unwrap_or(at + 1);
+                out.push_str(&line[at..end]);
+                at = end;
+                run = 0;
+            }
+            '<' if run.is_multiple_of(2)
+                && rest
+                    .chars()
+                    .nth(1)
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '/') =>
+            {
+                let end = rest
+                    .find('>')
+                    .filter(|&close| html_tag(&rest[..=close]).is_some())
+                    .map_or(1, |close| close + 1);
+                out.push_str(&rest[..end]);
+                at += end;
+                run = 0;
+            }
+            '|' => {
+                if run >= 2 && run.is_multiple_of(2) {
+                    out.push(' ');
+                }
+                out.push('|');
+                at += 1;
+                run = 0;
+            }
+            _ => {
+                out.push(c);
+                at += c.len_utf8();
+                run = 0;
+            }
+        }
+    }
+    out
+}
+
+/// Whether `line` is a pipe table's delimiter row (`|---|:-:|`), every
+/// column `:`-padded hyphens.
+fn delimiter_row(line: &str) -> bool {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let line = line.strip_suffix('|').unwrap_or(line);
+    line.split('|').all(|cell| {
+        let cell = cell.trim();
+        let cell = cell.strip_prefix(':').unwrap_or(cell);
+        let cell = cell.strip_suffix(':').unwrap_or(cell);
+        !cell.is_empty() && cell.bytes().all(|b| b == b'-')
+    })
+}
+
+/// The columns a table row names, its pipes counted the GFM way: an odd
+/// backslash run before a pipe escapes it, an even one is backslashes the
+/// row's cells hold.
+fn row_columns(line: &str) -> usize {
+    let line = line.trim_end();
+    let bytes = line.as_bytes();
+    let (mut pipes, mut run, mut last_pipe) = (0usize, 0usize, None);
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'\\' => run += 1,
+            b'|' => {
+                if run.is_multiple_of(2) {
+                    pipes += 1;
+                    last_pipe = Some(i);
+                }
+                run = 0;
+            }
+            _ => run = 0,
+        }
+    }
+    if line.starts_with('|') {
+        pipes -= 1;
+    }
+    match last_pipe {
+        Some(i) if line[i + 1..].trim().is_empty() => pipes,
+        _ => pipes + 1,
+    }
 }
 
 /// What the view's table line says about one table, read before the table:
@@ -1224,9 +1439,13 @@ struct Writer<'o, 'a> {
     /// Runs a task list marker wrote at the start of the paragraph: a
     /// change that starts right after them takes them in.
     prefix_runs: Vec<usize>,
-    /// The image being read: its destination, its alt text, and the
-    /// CriticMarkup tokens the alt held that cross its edge.
-    image: Option<(String, String, Vec<Token>)>,
+    /// The open image: its destination, its reference name (`image1` of
+    /// `![alt][image1]`, else the destination), its alt text so far, and
+    /// the CriticMarkup tokens the alt held that cross its edge.
+    image: Option<(String, String, String, Vec<Token>)>,
+    /// A ` ```svg NAME ` or ` ```mermaid NAME ` fence being read: its
+    /// language, its backing's name and the source accumulated so far.
+    drawing_block: Option<(String, String, String)>,
     metadata: Option<String>,
 
     // Inline formatting depth.
@@ -1355,6 +1574,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_cells: RowCells::Empty,
             prefix_runs: Vec::new(),
             image: None,
+            drawing_block: None,
             metadata: None,
             bold: 0,
             italic: 0,
@@ -1416,6 +1636,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     block.push_str(&text);
                 }
             }
+            Event::Text(text) if self.drawing_block.is_some() => {
+                if let Some((_, _, block)) = &mut self.drawing_block {
+                    block.push_str(&text);
+                }
+            }
             Event::Text(text) => self.text(&text),
             Event::Code(text) => {
                 self.code += 1;
@@ -1474,10 +1699,23 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.quote += 1;
             }
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(kind) => {
                 self.end_paragraph();
                 self.code_block = true;
                 self.begin_paragraph();
+                // ` ```svg NAME ` and ` ```mermaid NAME ` are a drawing's
+                // readable layer: gather the source and let the block's
+                // end splice `NAME`'s backing.
+                if let CodeBlockKind::Fenced(info) = &kind {
+                    let mut words = info.split_whitespace();
+                    if let Some(lang) = words.next()
+                        && matches!(lang, "svg" | "mermaid")
+                        && let Some(name) = words.next()
+                    {
+                        self.drawing_block =
+                            Some((lang.to_string(), name.to_string(), String::new()));
+                    }
+                }
             }
             Tag::List(first) => {
                 self.end_paragraph();
@@ -1673,9 +1911,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 };
                 self.link_start(&dest, title);
             }
-            Tag::Image { dest_url, .. } => {
+            Tag::Image { dest_url, id, .. } => {
                 if self.image.is_none() {
-                    self.image = Some((critic::decode(&dest_url), String::new(), Vec::new()));
+                    self.image = Some((
+                        critic::decode(&dest_url),
+                        critic::decode(&id),
+                        String::new(),
+                        Vec::new(),
+                    ));
                 }
             }
             Tag::MetadataBlock(_) => self.metadata = Some(String::new()),
@@ -1704,6 +1947,52 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.quote = self.quote.saturating_sub(1);
             }
             TagEnd::CodeBlock => {
+                if let Some((lang, name, text)) = self.drawing_block.take() {
+                    use super::from_docx::drawing;
+                    let dest = self.document.drawing_backings.get(&name).cloned();
+                    let drawing = dest.and_then(|dest| drawing::decode(&dest).ok()).and_then(
+                        |mut drawing| match lang.as_str() {
+                            "svg" => {
+                                use base64::Engine;
+                                drawing
+                                    .fill_slot_data(
+                                        &base64::engine::general_purpose::STANDARD
+                                            .encode(text.trim().as_bytes()),
+                                        "image/svg+xml",
+                                    )
+                                    .then_some(drawing)
+                            }
+                            // A `mermaid` fence's text is the chart it
+                            // was: unchanged, the payload writes back byte
+                            // for byte; edited, its chart part is patched.
+                            _ if drawing.mermaid_unchanged(&text) => Some(drawing),
+                            _ if drawing.rebuild_mermaid(&text) => Some(drawing),
+                            _ => {
+                                self.document.warnings.push(format!(
+                                    "mermaid '{name}' names a drawing this text cannot edit"
+                                ));
+                                Some(drawing)
+                            }
+                        },
+                    );
+                    match drawing {
+                        Some(drawing) => {
+                            // A drawing's paragraph: not SourceCode.
+                            if let Some(index) = self.paragraph
+                                && let Some(Item::Paragraph(paragraph)) =
+                                    self.story().get_mut(index)
+                            {
+                                paragraph.style = None;
+                            }
+                            self.document.drawings.push(drawing);
+                            let index = self.document.drawings.len() - 1;
+                            self.push(Content::Drawing(index));
+                        }
+                        // No backing, or one that did not read: the fence
+                        // stays the code it shows.
+                        None => self.plain(&text),
+                    }
+                }
                 // The block's last line ends in a newline: no break after it.
                 let story = self.story();
                 if matches!(
@@ -2439,7 +2728,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             metadata.push_str(text);
             return;
         }
-        if let Some((_, alt, loose)) = &mut self.image {
+        if let Some((_, _, alt, loose)) = &mut self.image {
             // Alt text is kept, its markup is not; the CriticMarkup it
             // holds still took effect when it was read, before Markdown,
             // so the delimiters of spans that cross the image's edge are
@@ -2480,7 +2769,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             let text = format!("{fence}{}{fence}", critic::restore(latex));
             if let Some(metadata) = &mut self.metadata {
                 metadata.push_str(&text);
-            } else if let Some((_, alt, loose)) = &mut self.image {
+            } else if let Some((_, _, alt, loose)) = &mut self.image {
                 let mut tokens = Vec::new();
                 self.pieces.feed(&text, |piece| match piece {
                     Piece::Text(text) => alt.push_str(text),
@@ -3305,7 +3594,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn picture(&mut self) {
-        let Some((url, alt, loose)) = self.image.take() else {
+        let Some((url, id, alt, loose)) = self.image.take() else {
             return;
         };
         // A `drawing:` destination is a whole element and its parts,
@@ -3318,6 +3607,47 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.push(Content::Drawing(index));
                 }
                 Err(_) => self.plain(alt.trim()),
+            }
+            return;
+        }
+        // A `data:` destination names its bytes. A `<!-- imageN drawing:…
+        // -->` backing makes it the drawing it was: the anchor, the
+        // wrapping, the parts, with the `data:` bytes filling the slot the
+        // readable layer carries. Without a backing it is a plain picture,
+        // shared with any other `data:` picture of the same bytes.
+        if let Some((_mime, b64)) = super::from_docx::drawing::data_uri(&url) {
+            use super::from_docx::drawing;
+            if let Some(drawing) = drawing::lookup(
+                &id,
+                &self.document.drawing_defs,
+                &self.document.drawing_backings,
+            ) {
+                self.document.drawings.push(drawing);
+                let index = self.document.drawings.len() - 1;
+                self.push(Content::Drawing(index));
+                return;
+            }
+            let picture =
+                drawing::base64_decode(b64).and_then(|bytes| read_picture(bytes, alt.trim()));
+            match picture {
+                Some(picture) => {
+                    let index = self
+                        .document
+                        .pictures
+                        .iter()
+                        .position(|seen| seen.bytes == picture.bytes)
+                        .unwrap_or_else(|| {
+                            self.document.pictures.push(picture);
+                            self.document.pictures.len() - 1
+                        });
+                    self.push(Content::Picture(index));
+                }
+                None => {
+                    self.document
+                        .warnings
+                        .push(format!("image '{id}' was written as its alt text"));
+                    self.plain(alt.trim());
+                }
             }
             return;
         }
@@ -4629,6 +4959,42 @@ pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn even_backslash_runs_move_off_the_pipes_they_shield() {
+        // GFM reads an even backslash run before a table row's pipe as
+        // escaped backslashes and then the cell separator, but
+        // pulldown-cmark shields a pipe behind any backslash: the run moves
+        // off it by a space, which is not a cell's text. An odd run escapes
+        // the pipe, which is the cell's own.
+        assert_eq!(unshield_pipes(r"|\\|\\\\|"), r"|\\ |\\\\ |");
+        assert_eq!(unshield_pipes(r"a\|b \\| c"), r"a\|b \\ | c");
+        assert_eq!(unshield_pipes(r"|\\\|x"), r"|\\\|x");
+        // A pipe inside a code span, an equation or an HTML tag is part of
+        // the cell, backslashes or not: a space there would change its
+        // text, so everything is left as written.
+        let spans = "|`a\\\\|b` x|$a\\\\|b$|<i t=\"a\\\\|b\"> y|";
+        assert_eq!(unshield_pipes(spans), spans);
+    }
+
+    #[test]
+    fn a_rows_pipes_unshield_only_where_a_table_matches_them() {
+        // The rows of tables whose columns, runs moved off their pipes,
+        // match the delimiter row; a row that opens none keeps its bytes,
+        // and so does everything that is not a table row at all.
+        assert_eq!(
+            table_pipes("|\\\\|\\\\\\\\|\n|-|-|\n"),
+            "|\\\\ |\\\\\\\\ |\n|-|-|\n"
+        );
+        assert_eq!(table_pipes("|\\\\|x|y\n|-|-|\n"), "|\\\\|x|y\n|-|-|\n");
+        assert_eq!(table_pipes("\\\\|x\n"), "\\\\|x\n");
+        assert_eq!(table_pipes("    \\\\|x\n"), "    \\\\|x\n");
+        assert_eq!(table_pipes("```\n\\\\|x\n```\n"), "```\n\\\\|x\n```\n");
+        assert_eq!(
+            table_pipes("---\ntext: |\n  \\\\|x\n---\n"),
+            "---\ntext: |\n  \\\\|x\n---\n"
+        );
+    }
 
     #[test]
     fn dates_are_iso_8601_to_the_minute_or_finer() {
