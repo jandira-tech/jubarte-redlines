@@ -14,8 +14,8 @@
 //! Phase, effect and predicted effect are coupled by [`ResultData::validate`]:
 //! a `generated` or `validated` phase is only representable with a
 //! `not_applied` effect, and `predicted_effect` only appears with a
-//! `validated` phase. The constructor returns a typed [`ResultDataError`] for
-//! invalid combinations so the build can fail loudly during preparation,
+//! `validated` phase. [`Envelope::ok`] returns a typed [`ResultDataError`]
+//! for invalid combinations so the build can fail loudly during preparation,
 //! instead of producing a JSON shape that contradicts its own rules.
 //!
 //! Exit status mapping follows proposal §12 verbatim. JSONL streams carry
@@ -605,10 +605,11 @@ impl std::fmt::Display for ResultDataError {
 impl std::error::Error for ResultDataError {}
 
 impl ResultData {
-    /// Build a result data block. The combination is validated eagerly:
-    /// `generated` and `validated` phases require `not_applied`; the
-    /// `predicted_effect` is set with [`ResultData::set_predicted`] and
-    /// only allowed for `validated`.
+    /// Build a result data block. `generated` and `validated` phases
+    /// require `not_applied`; the `predicted_effect` is set with
+    /// [`ResultData::set_predicted`] and only allowed for `validated`.
+    /// [`Envelope::ok`] enforces both rules through
+    /// [`ResultData::validate`].
     pub fn new(phase: Phase, effect: Effect) -> Self {
         Self {
             phase,
@@ -718,13 +719,19 @@ impl Envelope {
     }
 
     /// Build a terminal envelope with `status: ok` and the supplied `data`.
+    ///
+    /// Returns [`ResultDataError`] when `data` pairs its phase with an
+    /// effect or predicted effect the envelope rules forbid (see
+    /// [`ResultData::validate`]), so no contradictory `ok` envelope can be
+    /// built.
     pub fn ok(
         command: impl Into<String>,
         source: Source,
         data: ResultData,
         runtime: Runtime,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ResultDataError> {
+        data.validate()?;
+        Ok(Self {
             schema_version: ENVELOPE_SCHEMA_VERSION,
             command: command.into(),
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -737,7 +744,7 @@ impl Envelope {
             error: None,
             effective_options: BTreeMap::new(),
             continuation: None,
-        }
+        })
     }
 
     /// Build a terminal envelope with `status: refused` and a typed
@@ -1096,7 +1103,8 @@ mod tests {
             Source::new(&fixture()),
             data,
             Runtime::native(),
-        );
+        )
+        .expect("valid result data");
         let stream = write_jsonl_stream(&[], &terminal);
         let parsed = read_jsonl_stream(&stream).expect("round-trip parses");
         assert!(matches!(
