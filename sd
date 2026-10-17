@@ -1,0 +1,6 @@
+Nested change: should the parser accept a deletion inside an insertion, or should the Word reader split the insertion around it? This decides the fix for bug 1. --> for reading docx into markdown: the Word reader split the insertion around it
+Should --commonmark always escape CriticMarkup and Markdown syntax? My recommendation is yes: today it silently creates tracked changes and lists. --> yes
+Should there be a bare spec-CriticMarkup output (no rN notes) for tools like pandiff? --> no
+Literal delimiters in code: fence rule (read inside) or code-span rule (literal)? --> easiest and cleanest to implement
+zip: quick lockfile, or the zip 9 + rdocx-opc migration? --> full migration
+Is MAX_PAIRINGS = 400 a deliberate performance bound? --> i dont know what it is, remove

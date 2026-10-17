@@ -1025,11 +1025,19 @@ pub(super) fn story(
                         (
                             formats.cells.get(&at).cloned(),
                             formats.cell_marks.get(&at).cloned(),
-                            formats
-                                .cell_borders
-                                .iter()
-                                .find(|(cells, _)| cells.holds(at.0, at.1))
-                                .map(|(_, sides)| super::borders::xml(sides)),
+                            // Every group that holds the cell gives it its
+                            // sides; a side two groups name keeps the first.
+                            Some(super::borders::ordered(
+                                &formats
+                                    .cell_borders
+                                    .iter()
+                                    .filter(|(cells, _)| cells.holds(at.0, at.1))
+                                    .flat_map(|(_, sides)| sides.iter().cloned())
+                                    .collect::<Vec<_>>(),
+                                &super::borders::CELL_SIDES,
+                            ))
+                            .filter(|sides| !sides.is_empty())
+                            .map(|sides| super::borders::xml(&sides)),
                         )
                     })
                     .unwrap_or_default();

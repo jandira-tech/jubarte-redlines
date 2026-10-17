@@ -8,7 +8,8 @@
 //!
 //! A border reads `single 0.5pt 000000`: Word's `w:val`, its width in points
 //! (`w:sz` is eighths of a point), its colour when it is not automatic, and
-//! `space 1pt` when it keeps a gap. Sides that share a border print as one
+//! `space 1pt` when it keeps a gap, then Word's theme colour and effects:
+//! `theme accent1`, `tint 66`, `shade BF`, `shadow`, `frame`. Sides that share a border print as one
 //! group (`top,bottom single 1.5pt`), groups joined by ` + `; a table's group
 //! naming all six of its sides drops their names (`borders single 0.5pt`).
 //! A side Word turns off (`nil`, `none`) is `none`. `start` and `end` are
@@ -34,6 +35,13 @@ pub(crate) struct Border {
     pub color: Option<String>,
     /// `w:space`, in points, when not zero.
     pub space: Option<u32>,
+    /// `w:themeColor`, `w:themeTint` and `w:themeShade`, as Word wrote them.
+    pub theme: Option<String>,
+    pub tint: Option<String>,
+    pub shade: Option<String>,
+    /// `w:shadow` and `w:frame` on.
+    pub shadow: bool,
+    pub frame: bool,
 }
 
 impl Border {
@@ -54,7 +62,28 @@ impl Border {
             space: space
                 .and_then(|s| s.parse().ok())
                 .filter(|&s| !off && s > 0),
+            theme: None,
+            tint: None,
+            shade: None,
+            shadow: false,
+            frame: false,
         }
+    }
+
+    /// The border with its theme colour and effects (`w:themeColor`,
+    /// `w:themeTint`, `w:themeShade`, `w:shadow`, `w:frame`), read by `attr`.
+    pub(crate) fn with_theme<'a>(mut self, attr: impl Fn(&str) -> Option<&'a str>) -> Self {
+        if self.val == "none" {
+            return self;
+        }
+        let word = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric()) && !s.is_empty();
+        self.theme = attr("themeColor").filter(|s| word(s)).map(str::to_string);
+        self.tint = attr("themeTint").filter(|s| word(s)).map(str::to_string);
+        self.shade = attr("themeShade").filter(|s| word(s)).map(str::to_string);
+        let on = |s: Option<&str>| matches!(s, Some("1" | "true" | "on"));
+        self.shadow = on(attr("shadow"));
+        self.frame = on(attr("frame"));
+        self
     }
 
     fn text(&self) -> String {
@@ -71,6 +100,21 @@ impl Border {
         if let Some(space) = self.space {
             text.push_str(&format!(" space {space}pt"));
         }
+        for (word, value) in [
+            ("theme", &self.theme),
+            ("tint", &self.tint),
+            ("shade", &self.shade),
+        ] {
+            if let Some(value) = value {
+                text.push_str(&format!(" {word} {value}"));
+            }
+        }
+        if self.shadow {
+            text.push_str(" shadow");
+        }
+        if self.frame {
+            text.push_str(" frame");
+        }
         text
     }
 
@@ -84,12 +128,31 @@ impl Border {
             size: None,
             color: None,
             space: None,
+            theme: None,
+            tint: None,
+            shade: None,
+            shadow: false,
+            frame: false,
         };
         let mut rest = rest.iter();
+        let value = |word: Option<&&str>| {
+            word.filter(|w| w.chars().all(|c| c.is_ascii_alphanumeric()))
+                .map(|w| (*w).to_string())
+        };
         while let Some(word) = rest.next() {
             if *word == "space" {
                 let pt = rest.next()?.strip_suffix("pt")?;
                 border.space = Some(pt.parse().ok()?);
+            } else if *word == "theme" {
+                border.theme = Some(value(rest.next())?);
+            } else if *word == "tint" {
+                border.tint = Some(value(rest.next())?);
+            } else if *word == "shade" {
+                border.shade = Some(value(rest.next())?);
+            } else if *word == "shadow" {
+                border.shadow = true;
+            } else if *word == "frame" {
+                border.frame = true;
             } else if let Some(pt) = word.strip_suffix("pt") {
                 let pt: f64 = pt.parse().ok()?;
                 border.size = Some(eighths(pt)?);
@@ -114,6 +177,21 @@ impl Border {
         xml.push_str(&format!(" w:space=\"{}\"", self.space.unwrap_or(0)));
         if let Some(color) = &self.color {
             xml.push_str(&format!(" w:color=\"{color}\""));
+        }
+        for (name, value) in [
+            ("themeColor", &self.theme),
+            ("themeTint", &self.tint),
+            ("themeShade", &self.shade),
+        ] {
+            if let Some(value) = value {
+                xml.push_str(&format!(" w:{name}=\"{value}\""));
+            }
+        }
+        if self.shadow {
+            xml.push_str(" w:shadow=\"1\"");
+        }
+        if self.frame {
+            xml.push_str(" w:frame=\"1\"");
         }
         xml.push_str("/>");
         xml

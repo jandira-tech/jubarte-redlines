@@ -339,3 +339,66 @@ fn a_grid_and_a_borderless_table_keep_their_own() {
     assert_eq!(table_borders(&document)[0], None);
     assert_eq!(second, first);
 }
+
+#[test]
+fn cell_border_groups_that_share_a_cell_all_reach_it() {
+    // The view prints each cell in one group; a hand-edited line can name
+    // a cell in two, and both its sides are the cell's.
+    let rule = "<w:tcBorders><w:top w:val=\"double\" w:sz=\"4\"/></w:tcBorders>";
+    let first = view(&docx(&table_with("", &["", rule, "", rule])));
+    let line = ", cell-borders top double 0.5pt in t0.row0.cell1 t0.row1.cell1";
+    assert!(first.contains(line), "{first}");
+    let edited = first.replace(
+        line,
+        &format!("{line}; bottom single 1pt in t0.row1.cell1 t0.row0.cell0"),
+    );
+    let cells = cell_borders(&part(&write(&edited), "word/document.xml"));
+    let top = "<w:top w:val=\"double\" w:sz=\"4\" w:space=\"0\"/>";
+    let bottom = "<w:bottom w:val=\"single\" w:sz=\"8\" w:space=\"0\"/>";
+    assert_eq!(
+        cells,
+        [
+            Some(bottom.to_string()),
+            Some(top.to_string()),
+            None,
+            Some(format!("{top}{bottom}")),
+        ]
+    );
+}
+
+#[test]
+fn theme_colours_and_effects_come_back() {
+    let props = "<w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\" \
+                 w:themeColor=\"accent1\" w:themeTint=\"66\" w:shadow=\"1\"/></w:tblBorders>";
+    let cell = "<w:tcBorders><w:bottom w:val=\"single\" w:sz=\"8\" w:space=\"0\" w:color=\"2F5496\" \
+                w:themeColor=\"accent1\" w:themeShade=\"BF\" w:frame=\"1\"/></w:tcBorders>";
+    let (first, again, second) = round_trip(&docx(&table_with(props, &[cell, "", "", ""])));
+    assert!(
+        first.contains(", borders top single 0.5pt theme accent1 tint 66 shadow"),
+        "{first}"
+    );
+    assert!(
+        first.contains(
+            ", cell-borders bottom single 1pt 2F5496 theme accent1 shade BF frame in t0.row0.cell0"
+        ),
+        "{first}"
+    );
+    let document = part(&again, "word/document.xml");
+    let table = table_borders(&document);
+    assert_eq!(
+        table[0].as_deref(),
+        Some(
+            "<w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:themeColor=\"accent1\" \
+             w:themeTint=\"66\" w:shadow=\"1\"/>"
+        )
+    );
+    let cells = cell_borders(&document);
+    assert_eq!(
+        cells[0].as_deref(),
+        Some(
+            "<w:bottom w:val=\"single\" w:sz=\"8\" w:space=\"0\" w:color=\"2F5496\" \
+             w:themeColor=\"accent1\" w:themeShade=\"BF\" w:frame=\"1\"/>"
+        )
+    );
+    assert_eq!(second, first);
+}

@@ -1573,7 +1573,8 @@ fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
                     side.attr("sz"),
                     side.attr("color"),
                     side.attr("space"),
-                );
+                )
+                .with_theme(|name| side.attr(name));
                 Some((name, border))
             })
             .collect();
