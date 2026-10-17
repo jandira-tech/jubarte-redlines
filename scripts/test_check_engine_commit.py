@@ -189,6 +189,17 @@ class CheckEngineCommit(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("not a commit", r.stderr)
 
+    def test_a_stamp_that_is_not_a_full_commit_hash_is_refused(self) -> None:
+        # A ref or a short hash resolves too, and HEAD resolves to the checked
+        # commit itself, so the ancestry and diff checks would pass for any
+        # artifacts. build-npm.sh writes the full hash; nothing else vouches.
+        for stamp in ["HEAD", "main", self.engine[:12]]:
+            with self.subTest(stamp=stamp):
+                self.stamp(stamp)
+                r = self.check()
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("full commit hash", r.stderr)
+
     def test_the_stamp_is_read_from_the_checked_revision(self) -> None:
         # A release checks the tagged commit, not whatever the working tree
         # holds: an uncommitted restamp must not vouch for the tag.

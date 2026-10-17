@@ -37,8 +37,13 @@ git rev-parse -q --verify "$rev^{commit}" >/dev/null \
 
 stamp=$(git show "$rev:$STAMP_FILE" 2>/dev/null | tr -d '[:space:]' || true)
 [ -n "$stamp" ] || refuse "$rev has no $STAMP_FILE: the npm build names no engine commit"
-git rev-parse -q --verify "$stamp^{commit}" >/dev/null \
+resolved=$(git rev-parse -q --verify "$stamp^{commit}" || true)
+[ -n "$resolved" ] \
   || refuse "$STAMP_FILE names $stamp, which is not a commit in this repository"
+# A ref or a short hash resolves too, and HEAD names the checked commit
+# itself: the stamp vouches only as the full hash build-npm.sh writes.
+[ "$resolved" = "$stamp" ] \
+  || refuse "$STAMP_FILE names $stamp, not the full commit hash build-npm.sh writes"
 git merge-base --is-ancestor "$stamp" "$rev" \
   || refuse "$STAMP_FILE names ${stamp:0:12}, which is not an ancestor of $rev: its artifacts cannot be rebuilt from $rev's history"
 
