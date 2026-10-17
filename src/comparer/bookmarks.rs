@@ -49,6 +49,12 @@ struct Marker {
     /// No text precedes the start in its paragraph. An empty bookmark there
     /// belongs to the paragraph that follows it, not to the text before it.
     leads: bool,
+    /// A nonempty start at its paragraph's text end belongs after the
+    /// preceding text, rather than before a newly inserted next paragraph.
+    start_trails: bool,
+    /// An end at its paragraph's text start belongs before the following
+    /// text, rather than after a newly inserted preceding paragraph.
+    end_leads: bool,
     /// `w:colFirst`/`w:colLast`, kept verbatim as Word does (Google Docs
     /// writes them on plain paragraph bookmarks).
     cols: Option<(String, String)>,
@@ -116,11 +122,23 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
                 let last = dom.attribute(n, &col_last).unwrap_or(first);
                 (first.to_string(), last.to_string())
             });
+            let paragraph = paragraph_of(&dom, n);
+            let leads = paragraph.is_none_or(|p| !with_text.contains(&p));
+            let start_trails = !leads
+                && paragraph.is_some_and(|p| {
+                    dom.descendant_nodes(p)
+                        .into_iter()
+                        .skip_while(|&node| node != n)
+                        .skip(1)
+                        .all(|node| !dom.name_is(node, &t) || dom.value(node).is_empty())
+                });
             let marker = Marker {
                 name: bm.to_string(),
                 start: text.len(),
                 end: text.len(),
-                leads: paragraph_of(&dom, n).is_none_or(|p| !with_text.contains(&p)),
+                leads,
+                start_trails,
+                end_leads: false,
                 cols,
                 in_sdt: !dom.ancestors(n, Some(&W::name("sdt"))).is_empty(),
             };
@@ -129,6 +147,7 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
             && let Some(mut marker) = open.remove(id)
         {
             marker.end = text.len();
+            marker.end_leads = paragraph_of(&dom, n).is_some_and(|p| !with_text.contains(&p));
             markers.push(marker);
         }
     }
@@ -248,14 +267,20 @@ fn inject_side(
             (m.start, m.end)
         } else {
             let empty = m.end == m.start;
-            let Some(s) = map_point(src, &merged, m.start, hint, !empty || m.leads) else {
+            let Some(s) = map_point(
+                src,
+                &merged,
+                m.start,
+                hint,
+                if empty { m.leads } else { !m.start_trails },
+            ) else {
                 continue; // its text is gone from this side of the redline
             };
             hint = s;
             let e = if empty {
                 s
             } else {
-                map_point(src, &merged, m.end, s, false)
+                map_point(src, &merged, m.end, s, m.end_leads)
                     .filter(|&e| e >= s)
                     .unwrap_or(s)
             };
@@ -264,8 +289,19 @@ fn inject_side(
         let (start, end) = new_markers(dom, m, *next_id);
         *next_id += 1;
         if s < e {
-            place_before_offset(dom, &mut segs, s, start);
-            place_after_offset(dom, &mut segs, e, end);
+            // Text offsets alone cannot distinguish the two paragraph sides
+            // of a boundary. Retain the source endpoint's side so an adjacent
+            // insertion cannot acquire it inside its revision container.
+            if m.start_trails {
+                place_after_offset(dom, &mut segs, s, start);
+            } else {
+                place_before_offset(dom, &mut segs, s, start);
+            }
+            if m.end_leads {
+                place_before_offset(dom, &mut segs, e, end);
+            } else {
+                place_after_offset(dom, &mut segs, e, end);
+            }
         } else if m.leads {
             place_before_offset(dom, &mut segs, s, start);
             dom.add_after_self(start, end);
