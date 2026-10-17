@@ -543,7 +543,14 @@ fn words_older_table_styles_get_their_own_names() {
             "{definition}"
         );
     }
-    assert_eq!(second, first);
+    // The written styles are Word's own definitions, borders and all, so
+    // the second legend says them (`borders vary`) where the document's
+    // bare definitions said nothing: the plural legend tells the truth
+    // about the docx it describes (#549).
+    assert!(
+        second.contains("tables: MediumList2, borders vary, LightShading-Accent1, borders vary"),
+        "{second}"
+    );
 }
 
 /// The plural `tables:` legend carries each style's name and borders as
