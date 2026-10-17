@@ -145,6 +145,8 @@ impl OutputRoot {
             &mut FsBackend {
                 root: Some(&self.dir),
                 overwrite,
+                #[cfg(test)]
+                fail: None,
             },
             files,
         )
@@ -163,6 +165,8 @@ pub fn publish_paths(files: &[(PathBuf, &[u8])], overwrite: bool) -> Result<(), 
         &mut FsBackend {
             root: None,
             overwrite,
+            #[cfg(test)]
+            fail: None,
         },
         files,
     )
@@ -186,7 +190,14 @@ fn validate_relative(path: &Path) -> io::Result<()> {
             || part.len() > 255
             || part.ends_with(['.', ' '])
             || part.chars().any(|c| {
-                c.is_control() || matches!(c, '\\' | ':' | '%' | '<' | '>' | '"' | '|' | '?' | '*')
+                c.is_control()
+                    || matches!(
+                        c,
+                        '\\' | ':' | '%' | '<' | '>' | '"' | '|' | '?' | '*'
+                            | '\u{061c}' | '\u{200e}' | '\u{200f}'
+                            | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                            | '\u{feff}'
+                    )
             })
         {
             return Err(bad());
@@ -212,6 +223,8 @@ fn validate_relative(path: &Path) -> io::Result<()> {
 struct FsBackend<'a> {
     root: Option<&'a cap_std::fs::Dir>,
     overwrite: bool,
+    #[cfg(test)]
+    fail: Option<Phase>,
 }
 /// Verified bytes held in private staging beside an authorized local output.
 /// Dropping an uncommitted file removes its staging directory best effort.
@@ -229,6 +242,8 @@ impl StagedFile {
         let mut backend = FsBackend {
             root: None,
             overwrite,
+            #[cfg(test)]
+            fail: None,
         };
         let mut staged = backend.stage(path)?;
         for phase in [Phase::Write, Phase::Flush, Phase::Sync, Phase::Validate] {
@@ -243,6 +258,8 @@ impl StagedFile {
         let mut backend = FsBackend {
             root: None,
             overwrite: self.overwrite,
+            #[cfg(test)]
+            fail: None,
         };
         backend
             .step(&mut self, Phase::Commit, &[])
@@ -367,6 +384,14 @@ impl Backend for FsBackend<'_> {
     }
     fn step(&mut self, staged: &mut StagedFile, phase: Phase, bytes: &[u8]) -> io::Result<()> {
         use std::io::{Read, Seek, SeekFrom, Write};
+        #[cfg(test)]
+        if self.fail == Some(phase) {
+            if phase == Phase::Commit {
+                staged.scratch.remove_file("bytes")?;
+            } else {
+                return Err(io::Error::other(format!("injected {phase:?}")));
+            }
+        }
         let file = staged.file.as_mut().expect("open staging file");
         match phase {
             Phase::Write => file.write_all(bytes),
@@ -470,6 +495,64 @@ mod tests {
         [("a".into(), b"new a"), ("b".into(), b"new b")]
     }
 
+    fn fs_failure(phase: Phase) {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("output"), b"old output").unwrap();
+        let root = OutputRoot::open(temp.path()).unwrap();
+        let mut backend = FsBackend {
+            root: Some(&root.dir),
+            overwrite: true,
+            fail: Some(phase),
+        };
+        let error = transaction(&mut backend, &[("output".into(), b"new output")])
+            .expect_err("configured filesystem fault must fail publication");
+        let installed = phase == Phase::SyncParent;
+        assert_eq!(
+            root.read(Path::new("output")).unwrap(),
+            if installed {
+                b"new output"
+            } else {
+                b"old output"
+            }
+        );
+        assert_eq!(
+            error.committed,
+            if installed {
+                vec![PathBuf::from("output")]
+            } else {
+                vec![]
+            }
+        );
+        assert_eq!(error.durability_uncertain, installed);
+        if installed {
+            assert!(
+                error.to_string().contains("durability uncertain"),
+                "{error}"
+            );
+            assert!(
+                error.source.to_string().contains("injected SyncParent"),
+                "{error}"
+            );
+        } else {
+            assert_eq!(error.source.kind(), io::ErrorKind::NotFound);
+        }
+        let remaining: Vec<_> = std::fs::read_dir(temp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(remaining, [std::ffi::OsString::from("output")]);
+    }
+
+    #[test]
+    fn audit_d13_fs_rename_failure_preserves_prior_output_and_cleans_staging() {
+        fs_failure(Phase::Commit);
+    }
+
+    #[test]
+    fn audit_d13_fs_parent_sync_failure_reports_installed_output_and_cleans_staging() {
+        fs_failure(Phase::SyncParent);
+    }
+
     #[test]
     fn audit_d13_all_precommit_failures_preserve_every_prior_output() {
         for phase in [Phase::Write, Phase::Flush, Phase::Sync, Phase::Validate] {
@@ -557,6 +640,19 @@ mod tests {
             "a/%2e%2e/b",
             "a/%2Ftmp",
             "a/line\n",
+            "a\u{061c}b",
+            "a\u{200e}b",
+            "a\u{200f}b",
+            "a\u{202a}b",
+            "a\u{202b}b",
+            "a\u{202c}b",
+            "a\u{202d}b",
+            "a\u{202e}b",
+            "a\u{2066}b",
+            "a\u{2067}b",
+            "a\u{2068}b",
+            "a\u{2069}b",
+            "a\u{feff}b",
         ] {
             assert!(
                 validate_relative(Path::new(path)).is_err(),
@@ -568,6 +664,8 @@ mod tests {
             "page-01.png",
             "media/0123456789abcdef.png",
             "new folder/redline.docx",
+            "نام\u{200c}نامه.docx",
+            "नाम\u{200d}पत्र.docx",
         ] {
             assert!(validate_relative(Path::new(path)).is_ok(), "refused {path}");
         }

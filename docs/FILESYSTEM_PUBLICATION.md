@@ -45,14 +45,20 @@ empty directory, refusing foreign contents and inputs. That two-rename
 replacement is not a single atomic swap. Bundle members are flushed, synced
 and byte-verified before publication; the final parent is synced after the
 rename. Alias, collision and source-state checks still run before commit.
+If a recheck or installation fails after the old bundle was moved aside,
+restoration is attempted. A failed restoration adds the original bundle's
+aside path and the restore error to the initial error; inspect that path to
+recover the original bundle before retrying. Successful restoration retains
+the initial error unchanged.
 MCP bundles retain per-file commit points.
 
 MCP opens its trusted root once at server construction. Subsequent file reads,
 parent creation, staging and publication use directory handles, with confined
 relative resolution. Absolute paths provided to MCP are accepted only when
 lexically inside its root. Output names reject traversal, percent escapes,
-Windows drive/stream syntax, reserved device names, control characters and
-trailing spaces/dots. The adapter does not decode percent-encoded filenames.
+Windows drive/stream syntax, reserved device names, control characters, bidi
+controls, U+FEFF and trailing spaces/dots. The adapter does not decode
+percent-encoded filenames.
 Output symlinks are refused. Parent symlinks cannot resolve outside the granted
 root; a pathname swapped after a diagnostic check does not grant new authority.
 A held directory remains a granted directory if somebody renames it.

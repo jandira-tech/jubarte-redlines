@@ -1673,15 +1673,25 @@ fn publish_dir(
             format!("moving aside {}: no free staging name", dir.display()),
         ))
     })?;
+    let restore = |error: (u8, String)| {
+        let (code, message) = failed(error);
+        match std::fs::rename(&aside, dir) {
+            Ok(()) => (code, message),
+            Err(e) => (
+                code,
+                format!(
+                    "{message}; restoring original bundle from {} to {} failed: {e}",
+                    aside.display(),
+                    dir.display()
+                ),
+            ),
+        }
+    };
     if let Err(error) = recheck() {
-        let _ = std::fs::remove_dir_all(stage);
-        let _ = std::fs::rename(&aside, dir);
-        return Err(error);
+        return Err(restore(error));
     }
     if let Err(e) = std::fs::rename(stage, dir) {
-        let _ = std::fs::remove_dir_all(stage);
-        let _ = std::fs::rename(&aside, dir);
-        return Err((1, format!("publishing {}: {e}", dir.display())));
+        return Err(restore((1, format!("publishing {}: {e}", dir.display()))));
     }
     sync_bundle_parent(dir)?;
     // The old directory is replaced, not merged: drop what it held.
@@ -3564,6 +3574,82 @@ fn refresh_fields(bytes: &[u8]) -> Result<(jubarte::fields::Updated, String), St
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
+
+    fn bundle_restore_failure(recheck_fails: bool, restore_fails: bool) {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("bundle");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("original"), b"old bundle").unwrap();
+        let stage = stage_bundle_dir(&dir).unwrap();
+        std::fs::write(stage.join("replacement"), b"new bundle").unwrap();
+        let aside = staging_path(&dir, 100);
+        let restore_error = std::cell::RefCell::new(String::new());
+        let original_error = std::cell::RefCell::new(String::new());
+        let error = publish_dir(&stage, &dir, true, || {
+            if !aside.exists() {
+                return Ok(());
+            }
+            if restore_fails {
+                std::fs::write(&dir, b"obstruction").unwrap();
+                *restore_error.borrow_mut() =
+                    std::fs::rename(&aside, &dir).unwrap_err().to_string();
+            }
+            if recheck_fails {
+                let message = "SOURCE_CHANGED: deterministic recheck failure".to_string();
+                *original_error.borrow_mut() = message.clone();
+                return Err((EXIT_USAGE, message));
+            }
+            std::fs::remove_dir_all(&stage).unwrap();
+            *original_error.borrow_mut() = format!(
+                "publishing {}: {}",
+                dir.display(),
+                std::fs::rename(&stage, &dir).unwrap_err()
+            );
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(error.0, if recheck_fails { EXIT_USAGE } else { 1 });
+        assert!(!stage.exists(), "staging was not cleaned up");
+        if restore_fails {
+            assert_eq!(
+                std::fs::read(aside.join("original")).unwrap(),
+                b"old bundle"
+            );
+            assert_eq!(std::fs::read(&dir).unwrap(), b"obstruction");
+            assert!(error.1.contains(&*original_error.borrow()), "{}", error.1);
+            assert!(
+                error.1.contains(&aside.display().to_string()),
+                "{}",
+                error.1
+            );
+            assert!(error.1.contains("restoring"), "{}", error.1);
+            assert!(error.1.contains(&*restore_error.borrow()), "{}", error.1);
+        } else {
+            assert_eq!(std::fs::read(dir.join("original")).unwrap(), b"old bundle");
+            assert!(!aside.exists());
+            assert_eq!(error.1, *original_error.borrow());
+        }
+    }
+
+    #[test]
+    fn audit_d13_bundle_recheck_restore_failure_names_original() {
+        bundle_restore_failure(true, true);
+    }
+
+    #[test]
+    fn audit_d13_bundle_install_restore_failure_names_original() {
+        bundle_restore_failure(false, true);
+    }
+
+    #[test]
+    fn audit_d13_bundle_recheck_restore_success_keeps_message() {
+        bundle_restore_failure(true, false);
+    }
+
+    #[test]
+    fn audit_d13_bundle_install_restore_success_keeps_message() {
+        bundle_restore_failure(false, false);
+    }
 
     #[test]
     fn append_parses_files_output_and_break() {
