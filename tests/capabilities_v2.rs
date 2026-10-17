@@ -5,7 +5,8 @@
 //! Integration checks for focused discovery through the shipped CLI.
 mod common;
 
-use common::docx::{docx, para};
+use common::docx::{Part, W_NS, docx, docx_with, para};
+use jubarte::edit::for_edit::{ForEdit, ForEditRequest, for_edit};
 use serde_json::{Value, json};
 use std::process::Command;
 
@@ -156,12 +157,13 @@ fn reply_comment_fields_from_one_focused_call() {
         &serde_json::json!(27)
     ));
     assert!(v2["fields"]["target"]["properties"]["short_id"].is_object());
+    assert_eq!(v2["dispatched"], true);
     assert!(
         v2["support"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|r| r["status"] == "unsupported")
+            .all(|r| r["status"] == "conditional")
     );
 }
 
@@ -266,19 +268,26 @@ fn each_runtime_advertises_only_dispatched_operations() {
         let refused = dispatch(&stranger).expect_err("the dispatcher refuses an unknown kind");
         assert!(refused.contains("unknown kind"), "{refused}");
         assert!(!advertised.contains("definitely_not_an_operation"));
-        assert_eq!(matrix["edit_plan_versions"], serde_json::json!([1]));
-        assert!(
-            matrix["profiles"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|p| p["plan_version"] == 2)
-                .all(|p| p["support"]
+        // PlanV2 dispatch is a runtime property: the CLI routes it end to
+        // end, the bindings have no entry point for it. The v2 rows
+        // themselves are probed against prepare_v2 below.
+        if runtime == "cli" {
+            assert_eq!(matrix["edit_plan_versions"], serde_json::json!([1, 2]));
+        } else {
+            assert_eq!(matrix["edit_plan_versions"], serde_json::json!([1]));
+            assert!(
+                matrix["profiles"]
                     .as_array()
                     .unwrap()
                     .iter()
-                    .all(|r| r["status"] == "unsupported"))
-        );
+                    .filter(|p| p["plan_version"] == 2)
+                    .all(|p| p["support"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|r| r["status"] == "unsupported"))
+            );
+        }
     }
 }
 
@@ -298,6 +307,184 @@ fn parser_operations() -> Value {
         {"kind":"edit_comment","target":c,"text":"new"},
         {"kind":"delete_comment","target":c,"include_replies":false}
     ])
+}
+
+/// Two body paragraphs with one existing comment: `p0` "Zero" carries
+/// `c0`, `p1` "Six" is plain. Every v2 kind resolves a target on it.
+fn commented_source() -> Vec<u8> {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Other"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    docx_with(
+        &format!(
+            r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Zero</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>{}"#,
+            para("Six")
+        ),
+        &[Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    )
+}
+
+/// One v2 plan wrapping `operation` under the row's track and
+/// remaining-revision policy, bound to `source`'s digest.
+fn v2_plan(source: &[u8], track: &str, existing: &str, operation: &Value) -> String {
+    json!({
+        "schema_version": 2,
+        "source": {"sha256": jubarte::inspect::source_sha256(source)},
+        "policy": {"track": track, "existing_revisions": existing, "text_view": "final"},
+        "resolve_revisions": {"accept": [], "reject": []},
+        "author": "Ann Counsel",
+        "date": "2026-10-01T09:00:00Z",
+        "scope": {"kind": "all"},
+        "operations": [operation],
+    })
+    .to_string()
+}
+
+/// One smallest operation of each v2 kind against `commented_source`,
+/// addressed by the paired ids `read --for-edit` prints for it. Text edits
+/// target `p1`, which carries no comment: erasing a comment's whole
+/// anchor is a source-structure refusal, not a policy one.
+fn v2_operation(kind: &str, view: &ForEdit) -> Value {
+    let row = |short: &str| {
+        view.paragraphs
+            .iter()
+            .find(|row| row.target.short_id == short)
+            .unwrap_or_else(|| panic!("no for-edit row {short}"))
+    };
+    let p0 = row("p0");
+    let p1 = row("p1");
+    let paragraph = |row: &jubarte::edit::for_edit::ForEditRow| json!({"short_id": row.target.short_id, "long_id": row.target.long_id});
+    let before_sha256 = || {
+        p1.working
+            .as_ref()
+            .and_then(|working| working.before_sha256.clone())
+            .expect("p1 working hash")
+    };
+    let comment = || {
+        let comment = p0.comments.first().expect("c0 anchored on p0");
+        json!({"short_id": comment.short_id, "long_id": comment.long_id})
+    };
+    match kind {
+        "replace" => {
+            json!({"kind": "replace", "target": paragraph(p1), "find": "Six", "text": "Nine"})
+        }
+        "insert" => json!({"kind": "insert", "target": paragraph(p1), "text": "!",
+            "after_text": "Six"}),
+        "delete" => json!({"kind": "delete", "target": paragraph(p1), "find": "Six"}),
+        "rewrite" => json!({"kind": "rewrite", "target": paragraph(p1),
+            "before_sha256": before_sha256(), "text": "Seven"}),
+        "insert_paragraph" => json!({"kind": "insert_paragraph", "target": paragraph(p1),
+            "position": "after", "text": "New paragraph."}),
+        "delete_paragraph" => {
+            json!({"kind": "delete_paragraph", "target": paragraph(p1)})
+        }
+        "comment" => json!({"kind": "comment", "target": paragraph(p0), "text": "A note."}),
+        "reply_comment" => {
+            json!({"kind": "reply_comment", "target": comment(), "text": "Reply."})
+        }
+        "resolve_comment" => json!({"kind": "resolve_comment", "target": comment(), "done": true}),
+        "edit_comment" => {
+            json!({"kind": "edit_comment", "target": comment(), "text": "Edited."})
+        }
+        "delete_comment" => {
+            json!({"kind": "delete_comment", "target": comment(), "include_replies": false})
+        }
+        other => panic!("no v2 base operation for {other}"),
+    }
+}
+
+/// The v2 counterpart of the v1 probe above: every v2 row the CLI
+/// advertises is probed through `jubarte::edit::prepare_v2`, the entry
+/// point the CLI's `edit apply --plan` and inline routes dispatch. A row
+/// marked supported must be accepted on a real fixture; a row marked
+/// unsupported must refuse with the code it carries. Python and wasm have
+/// no PlanV2 entry point, so they stay on `[1]` with every v2 row
+/// unsupported.
+#[test]
+fn cli_v2_rows_match_prepare_v2_and_bindings_stay_on_v1() {
+    let matrix = jubarte::capabilities::discovery("cli", None, None);
+    assert_eq!(matrix["edit_plan_versions"], json!([1, 2]));
+    assert_eq!(query(&[])["edit_plan_versions"], json!([1, 2]));
+    for runtime in ["python", "wasm"] {
+        let bound = jubarte::capabilities::discovery(runtime, None, None);
+        assert_eq!(bound["edit_plan_versions"], json!([1]));
+        for profile in bound["profiles"].as_array().unwrap() {
+            if profile["plan_version"] == 2 {
+                assert_eq!(profile["dispatched"], false, "{runtime}");
+                assert!(
+                    profile["support"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|r| r["status"] == "unsupported"),
+                    "{runtime}"
+                );
+            }
+        }
+    }
+    let source = commented_source();
+    let view = for_edit(
+        &source,
+        &ForEditRequest {
+            all: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for profile in matrix["profiles"].as_array().unwrap() {
+        if profile["plan_version"] != 2 {
+            continue;
+        }
+        let kind = profile["operation"].as_str().unwrap();
+        let operation = v2_operation(kind, &view);
+        for row in profile["support"].as_array().unwrap() {
+            // v2 has a track policy: a v1-only refusal must not leak into
+            // a v2 row.
+            let conditions = row["conditions"].as_str().unwrap();
+            assert!(
+                !conditions.contains("v1 has no track policy")
+                    && !conditions.contains("the legacy emitter"),
+                "{kind}: {conditions}"
+            );
+            let plan = v2_plan(
+                &source,
+                row["track"].as_str().unwrap(),
+                row["existing_revisions"].as_str().unwrap(),
+                &operation,
+            );
+            let parsed = jubarte::edit::v2::PlanV2::from_json(&plan).unwrap();
+            let probed = jubarte::edit::prepare_v2(
+                &source,
+                &parsed,
+                &jubarte::edit::PrepareOptions::default(),
+            );
+            let row_name = format!(
+                "{kind} target={} track={} existing_revisions={}",
+                row["target"], row["track"], row["existing_revisions"]
+            );
+            match probed {
+                Ok(_) => assert_ne!(
+                    row["status"], "unsupported",
+                    "{row_name} is marked unsupported but prepare_v2 accepts it"
+                ),
+                Err(e) => {
+                    assert_eq!(
+                        row["status"], "unsupported",
+                        "{row_name} is advertised but prepare_v2 refuses it: {e}"
+                    );
+                    let code = row["code"].as_str().unwrap_or_else(|| {
+                        panic!("{row_name} is unsupported without a refusal code")
+                    });
+                    assert_eq!(e.code, code, "{row_name}");
+                }
+            }
+        }
+    }
 }
 
 #[test]

@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Focused syntax discovery and executable edit support. V2 parsing does not
-//! imply dispatch: until a runtime has an adapter, all its V2 rows refuse.
+//! Focused syntax discovery and executable edit support. V2 parsing does
+//! not imply dispatch: a runtime without a PlanV2 adapter keeps all its V2
+//! rows refused.
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
@@ -67,11 +68,13 @@ fn profiles(runtime: &str) -> Vec<Value> {
             ] {
                 constraints.remove(key);
             }
+            let dispatched =
+                version == crate::inspect::SCHEMA_VERSION || super::dispatches_v2(runtime);
             profiles.push(json!({
                 "operation": kind, "plan_version": version, "fields": fields,
                 "required": schema["required"], "constraints": constraints,
                 "description": schema["description"],
-                "dispatched": version == crate::inspect::SCHEMA_VERSION,
+                "dispatched": dispatched,
                 "support": support(runtime, version, kind, &schema),
             }));
         }
@@ -116,7 +119,11 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
     for target in targets(version, schema) {
         for track in ["on", "off"] {
             for existing in ["refuse", "accept", "reject", "keep"] {
-                let refusal = if version != crate::inspect::SCHEMA_VERSION {
+                let refusal = if version == 2 && super::dispatches_v2(runtime) {
+                    // V2 has a track policy and the preserving engine path:
+                    // every combination is dispatched, source checks aside.
+                    None
+                } else if version == 2 {
                     Some("PlanV2 is parsed by the library but is not dispatched by this runtime")
                 } else if track == "off" {
                     Some(
@@ -129,6 +136,19 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
                 };
                 let conditions = if let Some(reason) = refusal {
                     reason.to_string()
+                } else if version == 2 {
+                    let mut conditions = String::from(
+                        "requires the bound source digest, target pairs naming one entity, nonconflicting edits and supported source structure; composed edits may not remove a comment's whole anchor",
+                    );
+                    if existing == "refuse" {
+                        conditions.push_str(
+                            "; no remaining revision anywhere after selected decisions, including unknown revision forms",
+                        );
+                    }
+                    if existing == "keep" {
+                        conditions.push_str("; remaining revisions stay beside the new edits");
+                    }
+                    conditions
                 } else {
                     let mut conditions = String::from(
                         "requires valid selectors, nonconflicting edits and supported source structure; opaque edit ranges refuse",
@@ -188,7 +208,9 @@ fn distance(a: &str, b: &str) -> usize {
 /// `dispatched` and the support rows describe execution. `schema_version`
 /// is `1`, as the manifest's is, so an agent can date a build from any
 /// focused answer. No full plan schema is embedded. All three hosts share
-/// the same v1 edit dispatcher today.
+/// the same v1 edit dispatcher; PlanV2 dispatch differs per host (the CLI
+/// routes it through `edit::prepare_v2`, the bindings have no entry point
+/// for it yet).
 #[must_use]
 pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) -> Value {
     let all = profiles(runtime);
@@ -231,7 +253,7 @@ pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) ->
         json!({"runtime": runtime, "schema_version": 1, "supported": true, "profiles": selected});
     if operation.is_none() && field.is_none() {
         answer["edit_operations"] = json!(crate::edit::dispatched_operation_kinds());
-        answer["edit_plan_versions"] = json!([crate::inspect::SCHEMA_VERSION]);
+        answer["edit_plan_versions"] = json!(super::dispatched_plan_versions(runtime));
     }
     answer
 }
@@ -343,10 +365,23 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|p| p["dispatched"] == true)
+            .filter(|p| p["plan_version"] == 1 && p["dispatched"] == true)
             .map(|p| p["operation"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(dispatched, actual);
+        // V2 dispatches as a whole runtime property, not per kind: every
+        // v2 row is dispatched, or none is.
+        let v2 = matrix["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["plan_version"] == 2);
+        for profile in v2 {
+            assert_eq!(
+                profile["dispatched"],
+                json!(super::super::dispatches_v2(runtime))
+            );
+        }
     }
 
     #[test]

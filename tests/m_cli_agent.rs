@@ -582,7 +582,7 @@ fn capabilities_describe_the_built_binary() {
     ] {
         assert_eq!(v["operations"][op], true, "{op}");
     }
-    assert_eq!(v["edit_plan_versions"], serde_json::json!([1]));
+    assert_eq!(v["edit_plan_versions"], serde_json::json!([1, 2]));
     let kinds = v["edit_operations"].as_array().unwrap();
     assert!(kinds.iter().any(|k| k == "insert_paragraph"));
     assert_eq!(
@@ -622,7 +622,7 @@ fn capabilities_print_a_text_summary_by_default() {
     );
     assert_eq!(lines[1], "compare: yes");
     assert!(lines.contains(&"png: yes"), "{text}");
-    assert!(lines.contains(&"edit plan versions: 1"), "{text}");
+    assert!(lines.contains(&"edit plan versions: 1, 2"), "{text}");
     for prefix in [
         "edit operations: replace, insert, ",
         "stories: body, header, footer, footnotes, endnotes",
@@ -669,7 +669,7 @@ fn capabilities_print_a_text_summary_by_default() {
     expected.sort();
     printed.sort();
     assert_eq!(printed, expected);
-    assert_eq!(lines[operations.len() + 1], "edit plan versions: 1");
+    assert_eq!(lines[operations.len() + 1], "edit plan versions: 1, 2");
     let (limits, input) = (&v["limits"], &v["limits"]["input"]);
     let limits_line = format!(
         "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \

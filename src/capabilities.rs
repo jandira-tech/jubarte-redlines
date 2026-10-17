@@ -11,9 +11,10 @@
 //! is no feature to derive `operations` from and each is reported `true`. A
 //! wrapper that compiles an operation out overrides that field in its own
 //! manifest, as jubarte-wasm does for `pdf` (its `pdf` feature) and `png`
-//! (never). The rest is read from the modules that implement it: the edit
-//! plan schema version and the story kinds come from `crate::inspect`, so
-//! the manifest cannot drift from the parser.
+//! (never). The rest is read from the modules that implement it: the v1 plan
+//! version and the story kinds come from `crate::inspect`, and whether a
+//! runtime dispatches PlanV2 from its own surface, so the manifest cannot
+//! drift from what a host can actually run.
 
 mod discovery;
 pub use discovery::{discovery, discovery_text};
@@ -37,7 +38,10 @@ pub struct Capabilities {
     pub runtime: String,
     /// Operation name to availability in this build.
     pub operations: Operations,
-    /// Edit plan schema versions this build accepts (currently `1`).
+    /// Edit plan schema versions `runtime` dispatches: `1`, plus `2`
+    /// where the runtime routes plans through [`crate::edit::prepare_v2`]
+    /// (the CLI and a Rust embedder; the Python and WASM bindings have
+    /// no PlanV2 entry point yet).
     pub edit_plan_versions: Vec<u32>,
     /// Operation kinds an edit plan may contain
     /// ([`crate::edit::OperationKind`] variants, in a stable order).
@@ -347,6 +351,25 @@ pub const IDS_NOTE: &str = "body ids print without a story (r12); every other st
      {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under their table \
      (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh";
 
+/// Whether `runtime` dispatches PlanV2 end to end. The CLI runs `edit
+/// apply --plan`, templates and inline edits through
+/// [`crate::edit::prepare_v2`], and a Rust embedder calls it directly; the
+/// Python and WASM bindings expose no PlanV2 entry point yet, so their
+/// hosts stay on plan version 1.
+fn dispatches_v2(runtime: &str) -> bool {
+    matches!(runtime, "cli" | "rust")
+}
+
+/// The plan versions `runtime` dispatches, ascending: the manifest's
+/// `edit_plan_versions` and the focused matrix agree on it.
+fn dispatched_plan_versions(runtime: &str) -> Vec<u32> {
+    if dispatches_v2(runtime) {
+        vec![crate::inspect::SCHEMA_VERSION, 2]
+    } else {
+        vec![crate::inspect::SCHEMA_VERSION]
+    }
+}
+
 /// Builds a [`Capabilities`] manifest for `runtime` (typically `cli`,
 /// `python`, `rust`, `wasm`). Every operation in the default build is
 /// `true`; a wrapper overrides fields in its own manifest when it
@@ -384,7 +407,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             scrub: true,
             audit: true,
         },
-        edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
+        edit_plan_versions: dispatched_plan_versions(runtime),
         edit_operations: crate::edit::dispatched_operation_kinds(),
         limits: Limits {
             stories: std::iter::once(crate::inspect::BODY_STORY)
@@ -517,7 +540,7 @@ mod tests {
         let c = capabilities("rust");
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
-        assert_eq!(c.edit_plan_versions, [1]);
+        assert_eq!(c.edit_plan_versions, [1, 2]);
         assert_eq!(c.edit_operations.len(), 24);
         assert!(c.operations.fields);
         for op in ["insert_toc", "redact", "settings"] {

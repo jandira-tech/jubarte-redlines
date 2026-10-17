@@ -29,11 +29,14 @@ and operation names return `supported: false`, a reason, and up to three nearest
 valid names in prose. These are successful discovery answers (exit 0); malformed CLI
 arguments are usage errors. Field queries without an operation search all kinds.
 
-`dispatched` is separate from syntax recognition. On this branch the three
-runtimes dispatch all 24 v1 kinds through the same Rust editor. The eleven v2
-kinds have a library parser but no execution adapter. Their syntax is discoverable
-and every execution row is `unsupported`; the executable plan versions remain
-`[1]`. Selective revision decisions remain plan-level data, not an extra kind.
+`dispatched` is separate from syntax recognition. The three runtimes dispatch all
+24 v1 kinds through the same Rust editor. The CLI also dispatches the eleven
+v2 kinds end to end (`edit apply --plan`, templates and inline edits run
+`edit::prepare_v2`), so its v2 rows are conditional and its executable plan
+versions are `[1, 2]`. The Python and WASM bindings expose no PlanV2 entry
+point: their v2 syntax stays discoverable, every execution row is
+`unsupported`, and the executable plan versions remain `[1]`. Selective
+revision decisions remain plan-level data, not an extra kind.
 
 The matrix publishes an entry per operation, target category, `track`, and
 `existing_revisions`. A `conditional` row still requires source-specific selector,
@@ -49,6 +52,10 @@ emitter refuses `fill_control`, `insert_footnote`, `insert_image`, and `page_set
 Other operations remain conditional, including checks on existing paragraph/run
 history and a refusal of plan-level `update_fields` with `keep`. Settings,
 watermarks and redaction have inherently untracked effects, stated in their rows.
+V2 has a track policy: both `track` values dispatch through the preserving
+engine, and `keep` retains other parties' revisions beside the new edits, so no
+v2 row carries a v1-only refusal. A v2 `refuse` row still demands no remaining
+revision anywhere after the selected decisions.
 
 The Rust model derives v1 field facts with Schemars. Its shared schema table also
 checks parser keys and provides the manifest's operation list and emitter's keep
