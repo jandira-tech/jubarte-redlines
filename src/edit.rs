@@ -61,7 +61,7 @@ pub mod v2_apply;
 /// Exact v2 literal-anchor candidates and selection; v1 retains its fallbacks.
 pub use anchor::{v2_candidates, v2_select, v2_select_all};
 /// v2 anchor selection with structured, bounded, actionable refusals.
-pub use anchor_error::{AnchorRefusal, v2_resolve, v2_resolve_all};
+pub use anchor_error::{AnchorRefusal, Working, v2_resolve, v2_resolve_all};
 /// Which content control a `fill_control` operation fills.
 pub use controls::ControlSelector;
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and

@@ -6,7 +6,7 @@
 mod common;
 
 use common::docx::{docx, para};
-use jubarte::edit::{AnchorRefusal, EditPlan, apply_plan, v2_resolve};
+use jubarte::edit::{AnchorRefusal, EditPlan, Working, apply_plan, v2_resolve};
 use jubarte::inspect::paragraphs;
 
 fn plan(operations: &str) -> EditPlan {
@@ -504,30 +504,84 @@ fn a_leading_space_the_view_writes_as_a_reference_is_found_as_a_space() {
     assert_eq!(op.anchor_read_as.as_deref(), Some(" lead"));
 }
 
-/// V2-11 (#841), edit plan §5: a wrong target and a repeated anchor return
-/// context. v2 matches exact characters only, so an anchor typed with a
-/// straight apostrophe against a curly one misses — and the refusal shows
-/// the actual target characters, bounded and escaped, so the agent can copy
-/// the real text instead of guessing at what it cannot see.
+/// V2-11 (#841), edit plan §5: exact occurrence semantics, bounded context
+/// and no automatic retargeting, on the exact characters a reader cannot
+/// tell apart. The document's curly apostrophe and NBSP repeat, so the exact
+/// anchor reports the complete count and the occurrence picks one; the
+/// lookalike anchor misses and the refusal carries the target's actual
+/// characters, escaped; an anchor that lives in another paragraph is a read
+/// suggestion while the refusal keeps naming the requested target; and the
+/// engine still refuses the wrong-target plan, so nothing is edited.
 #[test]
 fn wrong_target_and_repeated_anchor_return_context() {
+    let exact = "don’t pay\u{a0}upfront";
     let source = docx(&format!(
         "{}{}",
-        para("don’t pay\u{a0}upfront."),
-        para("tail")
+        para(&format!("{exact}, {exact}.")),
+        para("pay later instead")
     ));
     let p0 = paragraphs(&source).unwrap()[0].text.clone();
-    assert_eq!(p0, "don’t pay\u{a0}upfront.");
+    assert_eq!(p0, format!("{exact}, {exact}."));
 
-    // The lookalike anchor misses under the v2 exact rules.
+    // The exact repeated anchor: the complete count, the first match shown
+    // in context, and the occurrence that picks one.
     let refused = v2_resolve(
         &source,
-        &p0,
+        Working::InSource,
         &AnchorRefusal {
             operation: Some("/operations/0"),
             target: "p0",
+            anchor: exact,
+            path: Some("exact.docx"),
+        },
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "AMBIGUOUS_ANCHOR");
+    assert_eq!(refused.matches, Some(2));
+    let context = refused.context.as_ref().unwrap();
+    assert_eq!(context.matched, exact);
+    assert_eq!(context.before, "");
+    assert!(context.after.starts_with(", "), "{context:?}");
+    assert!(!context.truncated);
+    assert!(
+        refused.message.contains("occurs 2 times")
+            && refused.message.contains(r#"set "occurrence" to 1..=2"#),
+        "{}",
+        refused.message
+    );
+    // Occurrence selection: replacing the picked span spells the result.
+    let (start, end) = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("p0", exact),
+        Some(2),
+    )
+    .unwrap();
+    assert_eq!(
+        format!("{}[X]{}", &p0[..start], &p0[end..]),
+        format!("{exact}, [X].")
+    );
+    let (start, end) = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("p0", exact),
+        Some(1),
+    )
+    .unwrap();
+    assert_eq!((start, end), (0, exact.len()));
+
+    // The lookalike anchor (straight apostrophe, plain spaces) misses under
+    // the v2 exact rules; the refusal carries the document's actual
+    // characters as data and escapes them in the message.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: Some("/operations/1"),
+            target: "p0",
             anchor: "don't pay upfront",
-            path: Some("lookalike.docx"),
+            path: Some("exact.docx"),
         },
         None,
     )
@@ -535,13 +589,9 @@ fn wrong_target_and_repeated_anchor_return_context() {
     assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
     assert_eq!(refused.target.as_deref(), Some("p0"));
     assert_eq!(refused.matches, Some(0));
-    // The whole paragraph fits the window: complete, untruncated context
-    // carrying the document's actual characters as data.
     let context = refused.context.as_ref().unwrap();
-    assert_eq!(context.before, "don’t pay\u{a0}upfront.");
+    assert!(context.before.starts_with("don’t pay\u{a0}"), "{context:?}");
     assert_eq!(context.matched, "");
-    assert!(!context.truncated);
-    // The message escapes what the eye cannot tell apart.
     assert!(
         refused.message.contains("\\u{2019}") && refused.message.contains("\\u{a0}"),
         "{}",
@@ -549,29 +599,59 @@ fn wrong_target_and_repeated_anchor_return_context() {
     );
     assert_eq!(
         refused.next_actions[0].argv,
-        ["jubarte", "read", "lookalike.docx", "-p", "p0"]
+        ["jubarte", "read", "exact.docx", "-p", "p0"]
     );
 
-    // The exact characters resolve; and v1 keeps its lookalike reading in
-    // its own versioned adapter, so the two boundaries stay distinct.
-    assert!(
-        v2_resolve(
-            &source,
-            &p0,
-            &AnchorRefusal {
-                operation: None,
-                target: "p0",
-                anchor: "don’t pay\u{a0}upfront",
-                path: None
-            },
-            None,
-        )
-        .is_ok()
-    );
-    let out = apply_plan(
+    // No automatic retargeting: the anchor that lives in p1 is offered as a
+    // read suggestion — the caller's decision, said as a prerequisite —
+    // while the refusal keeps naming p0.
+    let refused = v2_resolve(
         &source,
-        &plan(r#"[{"kind":"replace","paragraph":"p0","find":"don't pay upfront","replacement":"pay first"}]"#),
+        Working::InSource,
+        &AnchorRefusal {
+            operation: Some("/operations/2"),
+            target: "p0",
+            anchor: "pay later",
+            path: Some("exact.docx"),
+        },
+        None,
     )
-    .unwrap();
-    assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "pay first.");
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(refused.target.as_deref(), Some("p0"));
+    assert!(refused.message.contains("p1 (1)"), "{}", refused.message);
+    let suggestion = refused
+        .next_actions
+        .iter()
+        .find(|a| a.argv == ["jubarte", "read", "exact.docx", "-p", "p1"])
+        .unwrap();
+    assert!(
+        suggestion
+            .purpose
+            .as_deref()
+            .unwrap_or_default()
+            .contains("suggestion"),
+        "{:?}",
+        suggestion.purpose
+    );
+    assert!(
+        suggestion
+            .prerequisites
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|p| p.contains("re-targeting")),
+        "{:?}",
+        suggestion.prerequisites
+    );
+
+    // The engine refuses the wrong-target plan, so p1 is not edited by a
+    // request that named p0. The v1 lookalike reading stays in its own
+    // versioned adapter, distinct from the v2 exact rules above.
+    let wrong =
+        plan(r#"[{"kind":"replace","paragraph":"p0","find":"pay later","replacement":"pay now"}]"#);
+    assert_eq!(
+        apply_plan(&source, &wrong).unwrap_err().code,
+        "ANCHOR_NOT_FOUND"
+    );
 }
