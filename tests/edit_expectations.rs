@@ -932,3 +932,638 @@ fn a_passing_typed_check_does_not_mark_its_requirement_satisfied() {
     // Documents the field types the test file relies on.
     let _: &CheckOutcome = check;
 }
+
+// ---------------------------------------------------------------------------
+// Parity between `parse_expectations` and the bundled JSON Schema.
+//
+// `parse_expectations` enforces every constraint the schema states in plain
+// Rust so the WASM and Python lockfiles do not pull in `jsonschema` at
+// runtime. The bundled schema (mirrored from `docs/design/cli-v2/`) is the
+// contract; the Rust parser must accept what the schema accepts and reject
+// what the schema rejects. This test exercises every positive/negative case
+// used elsewhere in this file (plus the design example) through BOTH the
+// Rust parser and the schema validator, and asserts they agree.
+// ---------------------------------------------------------------------------
+
+const BUNDLED_SCHEMA_PATH: &str = "schemas/expectations-v1.schema.json";
+
+fn schema_validator() -> jsonschema::Validator {
+    let schema_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), BUNDLED_SCHEMA_PATH);
+    let schema_text = std::fs::read_to_string(&schema_path).unwrap_or_else(|e| {
+        panic!("bundled expectations JSON Schema at {schema_path} is unreadable: {e}")
+    });
+    let schema_value: serde_json::Value =
+        serde_json::from_str(&schema_text).expect("bundled schema is valid JSON");
+    jsonschema::validator_for(&schema_value).expect("bundled schema builds a validator")
+}
+
+/// Run `document` through both `parse_expectations` and the bundled JSON
+/// Schema validator, and assert they agree on accept/reject. `expect_accepted`
+/// is what the schema says; the assertion fails if either side disagrees.
+fn assert_parity(document: &str, expect_accepted: bool, label: &str) {
+    let validator = schema_validator();
+    let value: serde_json::Value = serde_json::from_str(document)
+        .unwrap_or_else(|e| panic!("[{label}] document is not valid JSON: {e}"));
+    let schema_says = validator.is_valid(&value);
+    let parser_says = parse_expectations(document).is_ok();
+    assert_eq!(
+        schema_says, expect_accepted,
+        "[{label}] bundled schema disagreed with expected accept={expect_accepted}"
+    );
+    assert_eq!(
+        parser_says, expect_accepted,
+        "[{label}] parse_expectations disagreed with expected accept={expect_accepted}"
+    );
+    assert_eq!(
+        schema_says, parser_says,
+        "[{label}] parse_expectations and the bundled schema disagreed: \
+         parser_ok={parser_says}, schema_ok={schema_says}"
+    );
+}
+
+#[test]
+fn parse_expectations_and_bundled_schema_agree_on_every_document() {
+    // POSITIVE cases: documents the parser must accept, and the bundled
+    // schema must accept. The design example is the canonical one; the
+    // others are the typed-check shapes the parser must accept too.
+
+    // 1. The design example as shipped in `examples/expectations.json`.
+    assert_parity(EXAMPLE_EXPECTATIONS, true, "design example");
+
+    // 2. text_equals with non-empty text (basic shape).
+    let bytes = two_paragraph_docx();
+    let hash = source_sha256(&bytes);
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "Hello world."
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        true,
+        "text_equals non-empty text",
+    );
+
+    // 3. text_equals with EMPTY text (schema allows empty on text_equals).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": ""
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        true,
+        "text_equals empty text",
+    );
+
+    // 4. text_contains with non-empty text.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_contains",
+          "target": {{ "short_id": "p1", "long_id": "document.w:p.j:short.p1" }},
+          "text": "paragraph"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        true,
+        "text_contains non-empty text",
+    );
+
+    // 5. text_absent with non-empty text.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_absent",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "Goodbye"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        true,
+        "text_absent non-empty text",
+    );
+
+    // 6. Empty checks array (unassessed requirement). Valid per the
+    //    schema: `checks` is required but its items are not.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "k", "description": "d", "checks": [] }}
+  ]
+}}"#
+        ),
+        true,
+        "empty checks list",
+    );
+
+    // 7. Multiple requirements with multiple distinct check kinds.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "first",
+      "description": "first",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "Hello world."
+        }}
+      ]
+    }},
+    {{
+      "key": "second",
+      "description": "second",
+      "checks": [
+        {{
+          "kind": "text_contains",
+          "target": {{ "short_id": "p1", "long_id": "document.w:p.j:short.p1" }},
+          "text": "paragraph"
+        }},
+        {{
+          "kind": "text_absent",
+          "target": {{ "short_id": "p1", "long_id": "document.w:p.j:short.p1" }},
+          "text": "missing"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        true,
+        "multiple requirements and mixed check kinds",
+    );
+
+    // NEGATIVE cases: documents the parser must reject, and the bundled
+    // schema must reject. The disagreement would mean the parser is
+    // missing a constraint or the schema drifted from the Rust type.
+
+    // 8. Unknown top-level field (closed shape).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}],
+  "extra": "not allowed"
+}}"#
+        ),
+        false,
+        "unknown top-level field",
+    );
+
+    // 9. Unknown field inside a check (closed shape).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "x",
+          "extra": "no"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "unknown field inside a check",
+    );
+
+    // 10. Unknown field inside the source object (closed shape).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}", "path": "/tmp/x.docx" }},
+  "text_view": "final",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#
+        ),
+        false,
+        "unknown field inside source",
+    );
+
+    // 11. schema_version != 1.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 2,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#
+        ),
+        false,
+        "schema_version != 1",
+    );
+
+    // 12. UPPERCASE hex sha256.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{}" }},
+  "text_view": "final",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#,
+            hash.to_uppercase()
+        ),
+        false,
+        "uppercase hex sha256",
+    );
+
+    // 13. Trailing newline on the hash (anchored pattern).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}\n" }},
+  "text_view": "final",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#
+        ),
+        false,
+        "hash with trailing newline",
+    );
+
+    // 14. sha256 shorter than 64 chars.
+    assert_parity(
+        r#"{
+  "schema_version": 1,
+  "source": { "sha256": "00000000000000000000000000000000000000000000000000000000000000" },
+  "text_view": "final",
+  "requirements": [ { "key": "k", "description": "d", "checks": [] } ]
+}"#,
+        false,
+        "sha256 shorter than 64",
+    );
+
+    // 15. sha256 longer than 64 chars.
+    assert_parity(
+        r#"{
+  "schema_version": 1,
+  "source": { "sha256": "000000000000000000000000000000000000000000000000000000000000000000" },
+  "text_view": "final",
+  "requirements": [ { "key": "k", "description": "d", "checks": [] } ]
+}"#,
+        false,
+        "sha256 longer than 64",
+    );
+
+    // 16. sha256 containing a non-hex char.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{}" }},
+  "text_view": "final",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#,
+            "z".repeat(64)
+        ),
+        false,
+        "sha256 with non-hex character",
+    );
+
+    // 17. Empty requirements array (minItems: 1).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": []
+}}"#
+        ),
+        false,
+        "empty requirements array",
+    );
+
+    // 18. text_contains with EMPTY text (the schema's per-kind minLength).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_contains",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": ""
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "text_contains with empty text",
+    );
+
+    // 19. text_absent with EMPTY text.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_absent",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": ""
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "text_absent with empty text",
+    );
+
+    // 20. Unknown check kind (closed oneOf).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_starts_with",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "x"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "unknown check kind",
+    );
+
+    // 21. text_view other than "final".
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "tracked",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#
+        ),
+        false,
+        "text_view other than final",
+    );
+
+    // 22. Requirement key containing whitespace (regex `not` clause).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "two words", "description": "d", "checks": [] }}
+  ]
+}}"#
+        ),
+        false,
+        "requirement key with whitespace",
+    );
+
+    // 23. Requirement key starting with a digit (regex `^[A-Za-z]...`).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "1leading", "description": "d", "checks": [] }}
+  ]
+}}"#
+        ),
+        false,
+        "requirement key starting with digit",
+    );
+
+    // 24. Duplicate requirement keys (the schema's `$comment` "compiler
+    //     check": `uniqueItems` does not express it for object keys, so
+    //     the parser enforces it directly. The bundled schema itself
+    //     does NOT reject this case, so we don't add it to the parity
+    //     set; the parser-enforced rule is covered by the dedicated
+    //     `parser_rejects_duplicate_keys` test above.)
+
+    // 25. Empty description (minLength: 1).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "k", "description": "", "checks": [] }}
+  ]
+}}"#
+        ),
+        false,
+        "empty description",
+    );
+
+    // 26. Empty target.short_id.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "", "long_id": "document.w:p.j:short.p0" }},
+          "text": "x"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "empty target.short_id",
+    );
+
+    // 27. Empty target.long_id.
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "" }},
+          "text": "x"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "empty target.long_id",
+    );
+
+    // 28. Missing `description` on a requirement (required field).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "k", "checks": [] }}
+  ]
+}}"#
+        ),
+        false,
+        "missing description",
+    );
+
+    // 29. Missing `checks` on a requirement (required field).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "k", "description": "d" }}
+  ]
+}}"#
+        ),
+        false,
+        "missing checks",
+    );
+
+    // 30. Missing top-level `source` (required field).
+    assert_parity(
+        r#"{
+  "schema_version": 1,
+  "text_view": "final",
+  "requirements": [ { "key": "k", "description": "d", "checks": [] } ]
+}"#,
+        false,
+        "missing source",
+    );
+}
+
+#[test]
+fn bundled_schema_is_loaded_from_disk_in_tests() {
+    // The bundled schema file is preserved so this parity test, and any
+    // external validator, can check that `parse_expectations` and the
+    // schema agree. The runtime crate does not.
+    let schema_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), BUNDLED_SCHEMA_PATH);
+    let schema_text = std::fs::read_to_string(&schema_path)
+        .expect("bundled schema file exists at schemas/expectations-v1.schema.json");
+    assert!(
+        schema_text.contains("\"$id\": \"urn:jubarte:proposal:expectations-v1\""),
+        "bundled schema carries the design's id"
+    );
+}

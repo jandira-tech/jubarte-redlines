@@ -89,8 +89,8 @@ pub struct Requirement {
     /// Natural-language description. The initial profile does not assess
     /// it; callers read it as reference text.
     pub description: String,
-    /// Typed checks; empty means the requirement is unassessed.
-    #[serde(default)]
+    /// Typed checks; an empty array means the requirement is unassessed.
+    /// The schema requires this field, so missing keys refuse.
     pub checks: Vec<Check>,
 }
 
@@ -274,41 +274,122 @@ pub struct ExpectationReport {
 }
 
 /// Parse the closed `schema_version: 1` expectations document. The
-/// `ExpectationsV1` Rust type and the bundled JSON Schema enforce the
-/// same closed shape; parsing fails with a plain string for the
-/// caller to surface.
+/// Rust type's `deny_unknown_fields` and the explicit checks below
+/// enforce every constraint the bundled JSON Schema states, so the
+/// parser does not need a runtime JSON Schema validator (the WASM and
+/// Python lockfiles therefore stay free of `jsonschema` and ~40
+/// transitive crates for a closed object with four fields). The tests
+/// run every accepted/rejected document through both this function and
+/// the bundled schema to keep them in lockstep.
+///
+/// Parsing fails with a plain string for the caller to surface.
 pub fn parse_expectations(json: &str) -> Result<ExpectationsV1, String> {
-    // Closed shape first (Rust type, deny_unknown_fields). Then run the
-    // bundled JSON Schema for the additional constraints the Rust type
-    // cannot express (the key regex, text_view == "final", the check
-    // `oneOf`, the empty-text rules on `text_contains`/`text_absent`).
-    let value: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("malformed JSON: {e}"))?;
-    let schema =
-        serde_json::from_str(SCHEMA_JSON).expect("bundled expectations JSON Schema parses");
-    let validator = jsonschema::validator_for(&schema)
-        .map_err(|e| format!("could not build expectations JSON Schema validator: {e}"))?;
-    let errors: Vec<_> = validator.iter_errors(&value).collect();
-    if !errors.is_empty() {
-        let detail = errors
-            .into_iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(format!("expectations JSON Schema rejected: {detail}"));
+    // Closed shape first (Rust type, deny_unknown_fields).
+    let parsed: ExpectationsV1 =
+        serde_json::from_str(json).map_err(|e| format!("expectations Rust type rejected: {e}"))?;
+
+    // schema_version == 1 (the schema's `const`).
+    if parsed.schema_version != EXPECTATIONS_SCHEMA_VERSION {
+        return Err(format!(
+            "schema_version {} is not supported (expected {})",
+            parsed.schema_version, EXPECTATIONS_SCHEMA_VERSION
+        ));
     }
-    let parsed: ExpectationsV1 = serde_json::from_value(value)
-        .map_err(|e| format!("expectations Rust type rejected: {e}"))?;
-    // The schema's `$comment` calls for a "compiler check" on unique
-    // keys; `uniqueItems` does not express it because the keys are
-    // object properties, not array elements.
+
+    // source.sha256: exactly 64 lowercase hexadecimal characters, no
+    // trailing newline (the schema's anchored `^[0-9a-f]{64}$`).
+    if !is_lowercase_hex_64(&parsed.source.sha256) {
+        return Err(
+            "source.sha256 must be exactly 64 lowercase hexadecimal characters".to_string(),
+        );
+    }
+
+    // text_view: `final` only at this stage (the schema's `const`).
+    if !matches!(parsed.text_view, TextView::Final) {
+        return Err("text_view must be \"final\"".to_string());
+    }
+
+    // requirements: non-empty (the schema's `minItems: 1`).
+    if parsed.requirements.is_empty() {
+        return Err("requirements must contain at least one item".to_string());
+    }
+
     let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for requirement in &parsed.requirements {
+        // key: `^[A-Za-z][A-Za-z0-9_.-]*$` (the schema's `pattern`
+        // plus its `not` clause, which forbids any character outside
+        // the allowed set including whitespace).
+        if !is_valid_key(&requirement.key) {
+            return Err(format!(
+                "requirement key {:?} must match ^[A-Za-z][A-Za-z0-9_.-]*$",
+                requirement.key
+            ));
+        }
+
+        // description: non-empty (the schema's `minLength: 1`).
+        if requirement.description.is_empty() {
+            return Err(format!(
+                "requirement {:?} description must be non-empty",
+                requirement.key
+            ));
+        }
+
+        // The schema's `$comment` calls for a "compiler check" on
+        // unique keys; `uniqueItems` does not express it because the
+        // keys are object properties, not array elements.
         if !seen.insert(requirement.key.as_str()) {
             return Err(format!("duplicate requirement key: {}", requirement.key));
         }
+
+        for check in &requirement.checks {
+            // target: short_id and long_id must be non-empty
+            // (the schema's `minLength: 1`).
+            if check.target.short_id.is_empty() || check.target.long_id.is_empty() {
+                return Err(format!(
+                    "requirement {:?} check target requires non-empty short_id and long_id",
+                    requirement.key
+                ));
+            }
+
+            // text_contains / text_absent: non-empty text. text_equals
+            // allows empty text (the schema's per-kind `minLength`).
+            if matches!(check.kind, CheckKind::TextContains | CheckKind::TextAbsent)
+                && check.text.is_empty()
+            {
+                return Err(format!(
+                    "requirement {:?} text_contains/text_absent requires non-empty text",
+                    requirement.key
+                ));
+            }
+        }
     }
+
     Ok(parsed)
+}
+
+/// True iff `s` is exactly 64 bytes of `[0-9a-f]` (no trailing
+/// newline, no uppercase).
+fn is_lowercase_hex_64(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 64
+        && bytes
+            .iter()
+            .all(|&b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// True iff `s` matches the schema's key regex `^[A-Za-z][A-Za-z0-9_.-]*$`.
+fn is_valid_key(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let first = bytes[0];
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-')
 }
 
 /// SHA-256 of arbitrary content, lowercase hex.
@@ -581,7 +662,3 @@ fn is_paragraph_target(short_id: &str) -> bool {
         Err(_) => false,
     }
 }
-
-/// The bundled JSON Schema, mirrored from `docs/design/cli-v2/`'s
-/// `jubarte-expectations-v1.schema.json` (the design, unchanged).
-const SCHEMA_JSON: &str = include_str!("../schemas/expectations-v1.schema.json");
