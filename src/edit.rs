@@ -55,6 +55,7 @@ mod whole;
 
 /// Source-bound PlanV2 text-and-review requests and exact logical text codec.
 pub mod v2;
+pub mod v2_apply;
 
 /// Exact v2 literal-anchor candidates and selection; v1 retains its fallbacks.
 pub use anchor::{v2_candidates, v2_select, v2_select_all};
