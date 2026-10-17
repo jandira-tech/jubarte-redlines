@@ -606,6 +606,14 @@ pub(super) fn story(
             _ => None,
         };
         let in_note = note_change(&context.document.note_changes, item);
+        // A range or bookmark with no run left before the paragraph ends
+        // sits inside the mark a suspended change holds, after the inner
+        // ones end: only the open mark closes, the suspended ones wait.
+        let inner_only = matches!(
+            item,
+            Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
+        ) && !marks.is_empty()
+            && !runs_ahead(&items[at + 1..]);
         let inside = match item {
             Item::Run(_) => true,
             _ if in_note.is_some() => true,
@@ -619,11 +627,14 @@ pub(super) fn story(
             | Item::CommentReference(_) => {
                 fields.last().copied().flatten().is_some()
                     || continues(context.document, &items[at + 1..], open, &marks)
+                    || inner_only
             }
             _ => false,
         };
         if !inside {
             close_marks(context, &natural, &mut out, &mut open, &mut marks);
+        } else if inner_only {
+            close_mark(context, &natural, &mut out, &mut open);
         }
         if let Some(change) = in_note
             && open != Some(change)
@@ -840,6 +851,22 @@ pub(super) fn story(
                         let wrap = context.revision(change.0, Some(change.1));
                         let _ = write!(out, "<{wrap}>");
                         open = Some(change);
+                    } else if let Some(change) = run.change
+                        && let Some(&(kind, by)) = context.document.wraps.get(&change.1)
+                        && kind != change.0
+                        && marks
+                            .iter()
+                            .any(|outer| continues_change(context.document, (kind, by), *outer))
+                    {
+                        // A change whose note names, after ` on `, a change
+                        // whose mark sits suspended in `marks` opens inside
+                        // it: the outer holds several changes, and its mark
+                        // stays open around each of them.
+                        close_mark(context, &natural, &mut out, &mut open);
+                        spend(&mut natural, change.1);
+                        let wrap = context.revision(change.0, Some(change.1));
+                        let _ = write!(out, "<{wrap}>");
+                        open = run.change;
                     } else {
                         close_marks(context, &natural, &mut out, &mut open, &mut marks);
                         // A change that was another's only content sits
@@ -1256,6 +1283,14 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
             .into_iter()
             .chain(marks.iter().copied())
             .any(|outer| continues_change(document, change, outer))
+        // Or it names, after ` on `, a change whose mark sits suspended:
+        // it opens inside that one, as a piece of it does.
+        || marks.iter().any(|outer| {
+            document
+                .wraps
+                .get(&change.1)
+                .is_some_and(|&wrap| continues_change(document, wrap, *outer))
+        })
     {
         return true;
     }
@@ -1316,6 +1351,11 @@ fn resumes_after(document: &Document, rest: &[Item], inner: Change, outer: Chang
         }
     }
     false
+}
+
+/// Whether any run is left in `rest`.
+fn runs_ahead(rest: &[Item]) -> bool {
+    rest.iter().any(|item| matches!(item, Item::Run(..)))
 }
 
 /// Whether `outer`'s change holds another change ahead in `rest`: a run
