@@ -384,6 +384,17 @@ fn fill_task_date(task: &mut Command) {
     }
 }
 
+/// A path as the CLI's agent-facing outputs spell it: `/` between the
+/// parts on every OS (#568). The paths `parse_json` resolves and the
+/// view's `source:` line are identifiers an agent reads back, so their
+/// spelling must not change with the OS; human status lines (`wrote …`)
+/// keep the native path. A `\` inside a file name is replaced too: these
+/// outputs name files the CLI itself resolved or wrote, whose names hold
+/// none.
+pub fn slash_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// `--plan` without a value (D16) is `<FILE's dir>/<stem>_plan.json`.
 fn resolve_plan(task: &mut Command) {
     let (Command::Edit {
@@ -3182,8 +3193,14 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                     EditTarget::Single(path) => (Some(path), None),
                     EditTarget::Bundle(dir) => (None, Some(dir)),
                 };
-                value["args"]["output"] = serde_json::to_value(output).expect("UTF-8 path");
-                value["args"]["out_dir"] = serde_json::to_value(out_dir).expect("UTF-8 path");
+                // Resolved paths are identifiers: `/` on every OS (#568).
+                let slashed = |path: Option<&PathBuf>| {
+                    path.map(|p| serde_json::Value::String(slash_path(p)))
+                        .unwrap_or(serde_json::Value::Null)
+                };
+                value["args"]["plan"] = slashed(plan.as_ref());
+                value["args"]["output"] = slashed(output.as_ref());
+                value["args"]["out_dir"] = slashed(out_dir.as_ref());
             }
             let written = match &task {
                 Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),

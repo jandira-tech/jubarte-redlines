@@ -548,3 +548,21 @@ fn plan_without_a_value_is_file_plan_json() {
         "{err}"
     );
 }
+
+/// #568: the usage line names `jubarte`, not the binary's own file name:
+/// on windows-latest the help said `jubarte.exe edit` and broke the check
+/// above. Pinned from a hard link under another name, which every OS
+/// takes without privileges.
+#[test]
+fn the_help_names_jubarte_even_when_the_binary_is_jubarte_exe() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("jubarte.exe");
+    std::fs::hard_link(BIN, &exe).unwrap();
+    let out = Command::new(&exe)
+        .args(["edit", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("Usage: jubarte edit"), "{help}");
+}

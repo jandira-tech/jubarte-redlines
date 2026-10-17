@@ -941,6 +941,27 @@ fn parse_json_resolves_a_bare_plan() {
     );
 }
 
+/// #568: the JSON fields an agent parses name the CLI-resolved paths
+/// with `/` on every OS, whatever spelling FILE was given in (a Windows
+/// `d\a.docx` must not leak `\` into `plan`, `output` or `out_dir`).
+#[test]
+fn parse_json_prints_resolved_paths_with_forward_slashes() {
+    let edit = ["edit", "d\\a.docx", "-p", "p1", "--content", "x"];
+    let bare = parse(&[&edit[..], &["--plan"]].concat(), &["edit"]);
+    assert_eq!(bare["args"]["plan"], "d/a_plan.json", "{bare}");
+    let row = |args: &[&str]| {
+        let parsed = parse(args, &["edit"]);
+        assert_eq!(parsed["exit_code"], 0, "{args:?}: {parsed}");
+        (
+            parsed["args"]["output"].clone(),
+            parsed["args"]["out_dir"].clone(),
+        )
+    };
+    assert_eq!(row(&edit), (Value::from("d/a_modified.docx"), Value::Null));
+    let bundle = [&edit[..], &["--out-dir"]].concat();
+    assert_eq!(row(&bundle), (Value::Null, Value::from("d/a.edit")));
+}
+
 /// pi review av4 F11: a revision timestamp is an xsd:dateTime (`w:date`);
 /// clap refuses anything else instead of writing it into the document.
 #[test]
