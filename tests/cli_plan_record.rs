@@ -551,13 +551,20 @@ fn plan_without_a_value_is_file_plan_json() {
 
 /// #568: the usage line names `jubarte`, not the binary's own file name:
 /// on windows-latest the help said `jubarte.exe edit` and broke the check
-/// above. Pinned from a hard link under another name, which every OS
-/// takes without privileges.
+/// above. Pinned from another name for the program: a hard link beside
+/// the binary, which every OS takes without privileges. #1082: the
+/// system temp can sit on another volume, which windows-latest cannot
+/// link across, so the link is made in the binary's own directory, and
+/// a copy (the help reads argv[0], not the file's identity) is the
+/// fallback where even that link cannot be made.
 #[test]
 fn the_help_names_jubarte_even_when_the_binary_is_jubarte_exe() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(Path::new(BIN).parent().unwrap()).unwrap();
     let exe = dir.path().join("jubarte.exe");
-    std::fs::hard_link(BIN, &exe).unwrap();
+    if let Err(err) = std::fs::hard_link(BIN, &exe) {
+        assert_eq!(err.kind(), std::io::ErrorKind::CrossesDevices, "{err}");
+        std::fs::copy(BIN, &exe).unwrap();
+    }
     let out = Command::new(&exe)
         .args(["edit", "--help"])
         .output()
