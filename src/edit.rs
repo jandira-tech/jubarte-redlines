@@ -1135,6 +1135,14 @@ pub struct EditResult {
     pub report: EditReport,
 }
 
+#[cfg(test)]
+thread_local! {
+    static COMMENT_MARK_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Stable engine code for comment mapping conflicts, independent of prose.
+const COMMENT_ANCHOR_CONFLICT: &str = "COMMENT_ANCHOR_CONFLICT";
+
 /// Why a plan was refused. `outcomes` lists every operation's status so the
 /// caller can see which anchors resolved before the failure.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2137,18 +2145,21 @@ impl<'p> Transaction<'p> {
     /// Each comment range marker of paragraph `para`, in document order:
     /// its `w:id`, whether it opens the range, and its projection offset.
     fn comment_marks(&self, para: usize) -> Vec<(String, bool, usize)> {
+        #[cfg(test)]
+        COMMENT_MARK_SCANS.with(|scans| scans.set(scans.get() + 1));
         let dom = &self.opened.dom;
-        let segments = &self.projections[para].segments;
+        let mut ends = BTreeMap::new();
+        for segment in &self.projections[para].segments {
+            let node = match segment.piece {
+                Piece::Text { t, .. } => t,
+                Piece::Glyph { element, .. } => element,
+            };
+            ends.entry(node.0).or_insert(segment.end);
+        }
         let mut offset = 0;
         let mut marks = Vec::new();
         for node in dom.descendants(self.paragraph_nodes[para], None) {
-            let end = segments.iter().find_map(|s| match s.piece {
-                Piece::Text { t: n, .. } | Piece::Glyph { element: n, .. } if n == node => {
-                    Some(s.end)
-                }
-                _ => None,
-            });
-            if let Some(end) = end {
+            if let Some(&end) = ends.get(&node.0) {
                 offset = end;
                 continue;
             }
@@ -2165,6 +2176,34 @@ impl<'p> Transaction<'p> {
             }
         }
         marks
+    }
+
+    /// Every complete range in one document pass. Like `comment_text`,
+    /// retain the first start and first following end for each literal id.
+    fn comment_anchors(&self) -> BTreeMap<String, Covered> {
+        let mut open = BTreeMap::new();
+        let mut covered = BTreeMap::new();
+        for para in 0..self.paragraph_nodes.len() {
+            for (id, starts, offset) in self.comment_marks(para) {
+                if covered.contains_key(&id) {
+                    continue;
+                }
+                if starts {
+                    open.entry(id).or_insert((para, offset));
+                } else if let Some((first, start)) = open.remove(&id) {
+                    covered.insert(
+                        id,
+                        Covered {
+                            first,
+                            start,
+                            last: para,
+                            end: offset,
+                        },
+                    );
+                }
+            }
+        }
+        covered
     }
 
     /// The text comment `n` covers (`cN.text`), from its range start to
@@ -4004,6 +4043,22 @@ impl<'p> Transaction<'p> {
     }
 
     fn check_conflicts(&self) -> Result<(), EditError> {
+        self.check_conflicts_with_comments(false)
+    }
+
+    fn check_conflicts_v2(&self) -> Result<(), EditError> {
+        self.check_conflicts_with_comments(true)
+    }
+
+    fn check_conflicts_with_comments(&self, v2: bool) -> Result<(), EditError> {
+        let comment_conflict = |i, message| {
+            let mut error = self.conflict(i, message);
+            if v2 {
+                error.code = COMMENT_ANCHOR_CONFLICT.into();
+                error.outcomes[i].code = Some(error.code.clone());
+            }
+            error
+        };
         let mut deleted: Vec<usize> = Vec::new();
         for (i, r) in &self.resolved {
             if let Resolved::DeleteParagraph { para } = r {
@@ -4026,7 +4081,7 @@ impl<'p> Transaction<'p> {
                 } => (*para, *start, *end),
                 Resolved::CommentRange { para, .. } => {
                     if deleted.contains(para) {
-                        return Err(self.conflict(*i, "comments on a deleted paragraph"));
+                        return Err(comment_conflict(*i, "comments on a deleted paragraph"));
                     }
                     continue;
                 }
@@ -4057,8 +4112,15 @@ impl<'p> Transaction<'p> {
                     continue;
                 }
                 Resolved::CommentSpan { para, last, .. } => {
-                    if (*para..=*last).any(|p| deleted.contains(&p)) {
-                        return Err(self.conflict(*i, "comments on a deleted paragraph"));
+                    // V2 has tested preservation across interior deletions;
+                    // the adapter separately checks content and endpoints.
+                    let removes_anchor = if v2 {
+                        deleted.contains(para) || deleted.contains(last)
+                    } else {
+                        (*para..=*last).any(|p| deleted.contains(&p))
+                    };
+                    if removes_anchor {
+                        return Err(comment_conflict(*i, "comments on a deleted paragraph"));
                     }
                     continue;
                 }
@@ -4109,7 +4171,10 @@ impl<'p> Transaction<'p> {
                     e > s && ((*start > s && *start < e) || (*end > s && *end < e))
                 });
             if cuts {
-                return Err(self.conflict(*i, "comment range cuts through an edited range"));
+                return Err(comment_conflict(
+                    *i,
+                    "comment range cuts through an edited range",
+                ));
             }
         }
         // Formatting applies to source text: no text edit may change it.
