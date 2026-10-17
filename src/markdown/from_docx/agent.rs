@@ -2742,6 +2742,36 @@ mod tests {
         assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
     }
 
+    /// A parsable-but-absurd measure is not a measure the schema spells
+    /// (`1e300pt`, `nanpt`): the clause drops, as it did before the Strict
+    /// reader, instead of printing 250-digit inches or `NaNin`
+    /// (#531 review defect 5).
+    #[test]
+    fn an_absurd_measure_indent_drops_its_clause() {
+        for start in ["1e300pt", "nanpt", "999999999999999999999999999in"] {
+            let p = body(&format!(
+                r#"<w:p><w:pPr><w:ind w:start="{start}" w:end="36pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#
+            ));
+            let p = p.child("p").unwrap();
+            let facts = LineFacts {
+                index: 0,
+                style: None,
+                default_style: None,
+                heading: None,
+                marker: None,
+                level: 0,
+                page_break: false,
+                resolved: false,
+                comments: &[],
+                spans: &[],
+                empty: false,
+                unshown: &[],
+            };
+            let line = id_line(p, &facts, &Handles::default());
+            assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");
+        }
+    }
+
     #[test]
     fn nested_tables_are_not_numbered() {
         let mut body = body(
