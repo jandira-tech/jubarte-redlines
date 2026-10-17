@@ -64,7 +64,8 @@ def test_two_markdown_texts_keep_their_lines() -> None:
         f"--- a/old.md\n+++ b/new.md{HEADER}@@ [line:3] @@\nPayment is due in [-30-]{{+45+}} days.\n"
     ), d.text
     assert d.hunks[0].at == "line:3"
-    assert "{+Returns+}" in d.text
+    # A list item added mid-list opens with its line break (6425ea19).
+    assert "- Delivery{+\n- Returns+}" in d.text
 
 
 def test_paths_name_the_patch_and_read_documents_remember_their_names(tmp_path: Path) -> None:
@@ -97,7 +98,7 @@ def test_columns_wrap_the_lines_and_zero_does_not() -> None:
 
 def test_critic_format_is_the_whole_document_as_criticmarkup() -> None:
     d = jubarte.diff(OLD_MD, NEW_MD, format="critic", **OWNER)
-    assert d.text == "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery\n- {++Returns++}\n- Warranty\n"
+    assert d.text == "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery{++\n- Returns++}\n- Warranty\n"
     assert d.hunks == ()
     word = letter().diff(letter("an"), format="critic", **OWNER)
     assert "{~~his or her~>an~~}" in word.text or "{--his or her--}{++an++}" in word.text, word.text
