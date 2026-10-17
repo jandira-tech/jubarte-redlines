@@ -455,6 +455,7 @@ struct Patterns {
     story: Regex,
     definition: Regex,
     drawing_definition: Regex,
+    backing_comment: Regex,
 }
 
 fn patterns() -> &'static Patterns {
@@ -477,7 +478,12 @@ fn patterns() -> &'static Patterns {
         // A long story id holds colons, so the header quotes it.
         story: Regex::new(r#"\{id: "?([^,}\s"]+)"?"#).unwrap(),
         definition: Regex::new(r"^(?:\{(?:--|\+\+))?\[\^\d+\]: ").unwrap(),
-        drawing_definition: Regex::new(r"^\[d\d+\]: ").unwrap(),
+        // Drawing payloads: `[dN]: drawing:…` definitions and the
+        // Google Docs form's `[imageN]: <data:…>` ones.
+        drawing_definition: Regex::new(r"^\[(?:d|image)\d+\]: ").unwrap(),
+        // A payload that backs a readable form: `<!-- dN drawing:… -->`,
+        // `<!-- imageN drawing:… -->`.
+        backing_comment: Regex::new(r"^ *<!-- \S+ drawing:").unwrap(),
     })
 }
 
@@ -610,12 +616,12 @@ fn printed(view: &str) -> Printed {
         // A note's definition (`[^1]: …`, or wrapped in the change that
         // deleted its reference: `{--[^1]: …--}`) closes the paragraph's text,
         // and so does the definition's own id line (`<!-- footnotes.p0 -->`).
-        // So does the drawings section: its marker and its `[dN]:` lines
-        // are payload, not text.
+        // So does the drawings appendix: its `[dN]:`/`[imageN]:` lines and
+        // `<!-- … drawing:… -->` backings are payload, not text.
         if pat.definition.is_match(line)
             || is_note_id_line(line)
-            || line == "<!-- drawings -->"
             || pat.drawing_definition.is_match(line)
+            || pat.backing_comment.is_match(line)
         {
             current = None;
             continue;
