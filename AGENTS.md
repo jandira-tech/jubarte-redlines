@@ -78,9 +78,11 @@ new semantics.
   the `miri` component; `.config/nextest.toml` holds its `default-miri`
   profile). Know its cost before starting it:
   - Under nextest, Miri compiles the test crate again for every test.
-  - Miri cannot spawn processes and implements few platform APIs. The
-    tests that run the `jubarte` binary or touch the file system fail
-    under it for that reason, not because of a bug in jubarte.
+  - Miri cannot spawn processes, and this repository runs it with its
+    default isolation (no `-Zmiri-disable-isolation` in `MIRIFLAGS`),
+    which refuses the host's file system. The tests that run the
+    `jubarte` binary (`CARGO_BIN_EXE_jubarte`) or read fixtures from disk
+    fail under it for that reason, not because of a bug in jubarte.
 - Rebuild native and WASM benchmark consumers from this checkout. Never patch a
   copied binary or generated WASM artifact as a substitute for a source fix.
 - Fidelity gates precede speed claims: native/WASM `script_redlines` scores must

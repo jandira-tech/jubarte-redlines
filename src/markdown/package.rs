@@ -184,6 +184,8 @@ pub(super) fn assemble(
         author: options.author.clone(),
         date: options.date.clone(),
         range_ends: document.story_range_ends.clone(),
+        drawing_defs: document.drawing_defs.clone(),
+        drawing_backings: document.drawing_backings.clone(),
         ..super::view_stories::People::default()
     };
     // A header's fresh ids sit far above the body's.
@@ -500,13 +502,18 @@ fn separators_only(xml: &str) -> String {
 
 /// `styles` with a definition for each table style the view names that it
 /// lacks: one of Word's built-in Grid and List Tables as Word defines it,
-/// its colours from `theme`; else the name is the id, on Word's Normal
-/// Table, with the legend's border all round when it gives one.
-fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme: &str) -> String {
+/// its colours from `theme`; else the name is the view's (`named …`),
+/// Word's own for an id Word names, else the id, on Word's Normal Table,
+/// with the legend's border all round when it gives one.
+fn with_table_styles(
+    styles: &str,
+    wanted: &BTreeMap<String, (Option<u32>, Option<String>)>,
+    theme: &str,
+) -> String {
     let missing: String = wanted
         .iter()
         .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
-        .map(|(id, border)| {
+        .map(|(id, (border, name))| {
             if let Some(style) = built_in_table_style(id, theme) {
                 return style;
             }
@@ -519,13 +526,15 @@ fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme
                     .collect();
                 format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
             });
-            // Table Grid keeps Word's name for it.
-            let name = if id == "TableGrid" { "Table Grid" } else { id };
+            let name = name
+                .clone()
+                .or_else(|| word_table_style_name(id))
+                .unwrap_or_else(|| id.clone());
             format!(
                 "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
                  <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
                 id = escape(id),
-                name = escape(name)
+                name = escape(&name)
             )
         })
         .collect();
@@ -595,6 +604,62 @@ fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
 /// writer defines as Word does.
 pub(super) fn is_built_in_table_style(id: &str) -> bool {
     built_in_table_style(id, "").is_some()
+}
+
+/// The table-style families Word named before its Grid and List Tables
+/// (`LightShading-Accent1`, `MediumList2`), each with the accents 1 to 6.
+const OLD_TABLE_FAMILIES: [&str; 15] = [
+    "TableGrid",
+    "LightShading",
+    "LightList",
+    "LightGrid",
+    "MediumShading1",
+    "MediumShading2",
+    "MediumList1",
+    "MediumList2",
+    "MediumGrid1",
+    "MediumGrid2",
+    "MediumGrid3",
+    "DarkList",
+    "ColorfulShading",
+    "ColorfulList",
+    "ColorfulGrid",
+];
+
+/// Word's name for a built-in table style `id`: the Grid and List Tables
+/// from their definitions, the older families and the two defaults by
+/// the id itself (`TableGrid` → `Table Grid`, `LightShading-Accent1` →
+/// `Light Shading Accent 1`). `None` for an id Word does not name, whose
+/// name is the id until the view says another (#528).
+pub(super) fn word_table_style_name(id: &str) -> Option<String> {
+    if let Some(style) = built_in_table_style(id, "") {
+        let open = "<w:name w:val=\"";
+        let at = style.find(open)? + open.len();
+        let end = style[at..].find('"')?;
+        return Some(style[at..at + end].to_string());
+    }
+    let (family, accent) = match id.split_once("-Accent") {
+        Some((family, n)) if matches!(n, "1" | "2" | "3" | "4" | "5" | "6") => {
+            (family, format!(" Accent {n}"))
+        }
+        _ => (id, String::new()),
+    };
+    if family == "TableNormal" {
+        return Some("Normal Table".to_string());
+    }
+    OLD_TABLE_FAMILIES.contains(&family).then(|| {
+        let mut name = String::new();
+        for c in family.chars() {
+            if c.is_uppercase() && !name.is_empty() {
+                name.push(' ');
+            }
+            if c.is_ascii_digit() && name.chars().last().is_some_and(|last| last.is_alphabetic()) {
+                name.push(' ');
+            }
+            name.push(c);
+        }
+        format!("{name}{accent}")
+    })
 }
 
 /// `xml` with each `@` colour resolved from `theme` as Word resolves a
@@ -1421,6 +1486,19 @@ impl Relate for PartRelate<'_, '_, '_> {
             &self.part,
             &format!("{RELS}/image"),
             &relative_rel_target(&self.part, &target),
+        )
+    }
+
+    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {
+        let drawing = self.document.drawings.get(index)?;
+        let existing: HashSet<String> = self.package.parts().into_iter().collect();
+        super::from_docx::drawing::materialize(
+            drawing,
+            self.package,
+            &self.part,
+            &existing,
+            &mut self.media.used,
+            next_doc_pr,
         )
     }
 }
