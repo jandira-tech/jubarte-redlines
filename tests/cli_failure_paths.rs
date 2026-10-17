@@ -904,3 +904,45 @@ fn a_word_input_that_is_not_a_zip_reads_the_same_on_every_task() {
         assert!(out.stdout.is_empty(), "{args:?}");
     }
 }
+
+/// V2-05 (plan §5): a reporting failure after a successful commit says
+/// which files were committed, and the commit stands on disk. stdout is a
+/// full nonblocking socket, so the post-commit report write fails with
+/// EAGAIN (a read-only fd would not work: Rust's stdout swallows EBADF).
+#[cfg(unix)]
+#[test]
+fn publication_failure_reports_actual_commit_state() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.docx"), docx(&para("One."))).unwrap();
+    let (_reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+    writer.set_nonblocking(true).unwrap();
+    let junk = [b'x'; 65536];
+    loop {
+        match writer.write(&junk) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(e) => panic!("{e}"),
+        }
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args(["edit", "a.docx", "-p", "p0", "--content", "Two."])
+        .stdout(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+            writer,
+        )))
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("committed"), "{err}");
+    assert!(err.contains("a_modified.docx"), "{err}");
+    // The commit is not rolled back: the output is a readable docx.
+    let committed = std::fs::read(dir.path().join("a_modified.docx")).unwrap();
+    assert!(committed.starts_with(b"PK"), "{committed:?}");
+}

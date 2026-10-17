@@ -395,7 +395,9 @@ fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
         );
         assert_eq!(plan(dir)["operations"].as_array().unwrap().len(), 2);
     }
-    // A plan an output overwrites is not deleted as if it were the plan.
+    // V2-05: a bundle member that names the plan is an input alias; the
+    // publication is refused before anything is written, so --consume has
+    // nothing to delete and the plan survives untouched.
     std::fs::create_dir(dir.join("out")).unwrap();
     std::fs::copy(dir.join("plan.json"), dir.join("out/report.jsonl")).unwrap();
     let (code, _, err) = run(
@@ -411,10 +413,13 @@ fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
             "--consume",
         ],
     );
-    assert_eq!(code, 1);
-    assert!(err.contains("it no longer holds the plan"), "{err}");
-    assert!(dir.join("out/redline.docx").exists());
-    assert!(dir.join("out/report.jsonl").exists());
+    assert_eq!(code, 2);
+    assert!(err.contains("OUTPUT_ALIAS"), "{err}");
+    assert!(!dir.join("out/redline.docx").exists());
+    assert_eq!(
+        std::fs::read(dir.join("out/report.jsonl")).unwrap(),
+        std::fs::read(dir.join("plan.json")).unwrap()
+    );
 }
 
 /// D16: `--plan` without a value is `<FILE's dir>/<stem>_plan.json`, for
