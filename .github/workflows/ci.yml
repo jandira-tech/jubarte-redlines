@@ -266,10 +266,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The runner's system Python is 3.8; the script tests need newer syntax
+      # (test_release_sh.py's parenthesized `with (…)` needs 3.9+). uv
+      # installs 3.14 and puts its venv first on PATH, so every `python3`
+      # below is 3.14.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/scripts-py
+      - name: python3 is 3.14
+        run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version; print(sys.version)'
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: OpenSSF attestation script tests with coverage
         run: |
           uv run --with coverage coverage run --branch --include='scripts/openssf_attest.py' scripts/test_openssf_attest.py
