@@ -27,7 +27,75 @@
 //! style, and that style for every other.
 
 use super::from_docx::Element;
-use super::xml::escape;
+use super::xml::{FormatMark, escape};
+
+/// `styles` with a tracked change on each holder the view's
+/// `style_changes:` names: one `w:pPrChange` and `w:rPrChange` per tag a
+/// style's entry gives, a `w:rPrChange` on `docDefaults`, each carrying an
+/// empty previous properties element as the view names no payload. A
+/// holder the part has no style of is left out.
+pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMark>)]) -> String {
+    let mut out = styles.to_string();
+    for (holder, marks) in changes {
+        for mark in marks {
+            let date = if mark.date.is_empty() {
+                String::new()
+            } else {
+                format!(" w:date=\"{}\"", escape(&mark.date))
+            };
+            let id = mark
+                .id
+                .map_or_else(String::new, |id| format!(" w:id=\"{id}\""));
+            let change = |name: &str, inner: &str| {
+                format!(
+                    "<w:{name}Change{id} w:author=\"{}\"{date}><w:{inner}/></w:{name}Change>",
+                    escape(&mark.author)
+                )
+            };
+            if holder == "docDefaults" {
+                let carrier = change("rPr", "rPr");
+                let defaults = out.find("<w:docDefaults>").unwrap_or(0);
+                let end = out[defaults..]
+                    .find("</w:docDefaults>")
+                    .map_or(out.len(), |i| defaults + i);
+                if let Some(close) = out[defaults..end].rfind("</w:rPr>") {
+                    out.insert_str(defaults + close, &carrier);
+                } else {
+                    out.insert_str(
+                        end,
+                        &format!("<w:rPrDefault><w:rPr>{carrier}</w:rPr></w:rPrDefault>"),
+                    );
+                }
+                continue;
+            }
+            let key = format!("w:styleId=\"{}\"", escape(holder));
+            let Some(at) = out.find(&key) else {
+                continue;
+            };
+            let Some(end) = out[at..].find("</w:style>").map(|i| at + i) else {
+                continue;
+            };
+            let mut block = out[at..end].to_string();
+            // `w:pPr` is the style's own first: the one before `w:rPr`,
+            // never the previous-properties one inside a change.
+            let ppr_end = block.find("<w:rPr>").unwrap_or(block.len());
+            if let Some(close) = block[..ppr_end].rfind("</w:pPr>") {
+                block.insert_str(close, &change("pPr", "pPr"));
+            } else {
+                block.insert_str(ppr_end, &format!("<w:pPr>{}</w:pPr>", change("pPr", "pPr")));
+            }
+            let rpr_at = block.find("<w:rPr>");
+            if let Some(close) = rpr_at.and_then(|at| block[at..].find("</w:rPr>").map(|i| at + i))
+            {
+                block.insert_str(close, &change("rPr", "rPr"));
+            } else {
+                block.push_str(&format!("<w:rPr>{}</w:rPr>", change("rPr", "rPr")));
+            }
+            out.replace_range(at..end, &block);
+        }
+    }
+    out
+}
 
 /// One style the legend describes.
 #[derive(Clone, Debug, PartialEq)]
@@ -201,8 +269,9 @@ fn unquote(value: &str) -> Option<String> {
 /// heading's (`"#": Heading1, …`) and each other style's (`TOC2: …`), after
 /// the default's. Lines that do not read are left out.
 /// The legend's `table:` style, which every table takes: its id and, when
-/// the legend says `all borders 0.5pt`, that border in eighths of a point.
-pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>)> {
+/// the legend says `all borders 0.5pt`, that border in eighths of a point;
+/// `, named …` keeps the style's own name when it is not the writer's.
+pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<String>)> {
     let mut inside = false;
     for line in yaml.lines() {
         if !line.starts_with(' ') {
@@ -217,14 +286,18 @@ pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>)> {
         else {
             continue;
         };
-        let (id, rest) = value.split_once(", ").unwrap_or((&value, ""));
+        let (value, name) = match value.rsplit_once(", named ") {
+            Some((value, name)) => (value, Some(name.to_string())),
+            None => (value.as_str(), None),
+        };
+        let (id, rest) = value.split_once(", ").unwrap_or((value, ""));
         let border = rest
             .strip_prefix("all borders ")
             .and_then(|pt| pt.strip_suffix("pt"))
             .and_then(|pt| pt.parse::<f64>().ok())
             .filter(|pt| (0.25..=6.0).contains(pt))
             .map(|pt| (pt * 8.0).round() as u32);
-        return unquote(id).map(|id| (id, border));
+        return unquote(id).map(|id| (id, border, name));
     }
     None
 }

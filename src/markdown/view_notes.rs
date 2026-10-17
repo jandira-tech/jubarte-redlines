@@ -538,10 +538,11 @@ pub(crate) enum CellMark {
     Merge,
 }
 
-/// The header's `unplaced: [r40 @AL in p1, …]`: each change no other line
-/// shows, and the paragraph it is in. One without a paragraph, or not a
+/// The header's `unplaced: [ins r40 @AL in p1, …]`: each change no other
+/// line shows, the paragraph it is in and its kind (`ins`, `del`, `fmt`;
+/// a kindless one is an insertion). One without a paragraph, or not a
 /// change's tag, is left out.
-pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
+pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
     let (list, _) = value.split_once(" #").unwrap_or((value, ""));
     let Some(list) = list
         .trim()
@@ -554,7 +555,13 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
         .filter_map(|entry| {
             let (entry, _) = scalar_and_comment(entry.trim());
             let (tag, at) = entry.rsplit_once(" in ")?;
-            Some((crate::ids::short_number(at, 'p')?, first_tag(tag)?))
+            let (kind, tag) = match tag.split_once(' ') {
+                Some(("del", tag)) => ("del", tag),
+                Some(("fmt", tag)) => ("fmt", tag),
+                Some(("ins", tag)) => ("ins", tag),
+                _ => ("ins", tag),
+            };
+            Some((crate::ids::short_number(at, 'p')?, kind, first_tag(tag)?))
         })
         .collect()
 }
@@ -1163,6 +1170,8 @@ fn split_clauses(text: &str) -> Vec<&str> {
 /// twips.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct IdLine {
+    /// The paragraph's number, as its line names it (`p5`).
+    pub number: usize,
     pub style: Option<String>,
     pub align: Option<&'static str>,
     pub first_line: Option<i64>,
@@ -1186,8 +1195,12 @@ pub(super) struct IdLine {
     pub break_del: Option<Tag>,
     /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
     pub fmt: Vec<Tag>,
-    /// The marks its text shows nothing of (`rev r9 @AL`).
+    /// The marks its text shows nothing of (`rev r9 @AL`, `rev-del r10
+    /// @AL`); a `rev-del` tag is in `rev_del` too.
     pub rev: Vec<Tag>,
+    /// The `rev` tags a `rev-del` clause named: deletions, while `rev`
+    /// alone names insertions.
+    pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
 }
@@ -1201,8 +1214,11 @@ pub(super) fn id_line(line: &str) -> Option<IdLine> {
         .strip_suffix("-->")?
         .trim();
     let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
-    crate::ids::short_number(id, 'p')?;
-    let mut parsed = IdLine::default();
+    let number = crate::ids::short_number(id, 'p')?;
+    let mut parsed = IdLine {
+        number,
+        ..IdLine::default()
+    };
     // The style is the head's second word, quoted when it is no plain
     // word: `p5 TitlePage[ clause]`, `p5 "My Style"[ clause]`.
     let rest = match take_style(rest) {
@@ -1265,6 +1281,11 @@ impl IdLine {
             }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
+            Some(("rev-del", v)) => {
+                let tags: Vec<Tag> = revision_tags(v).into_iter().flatten().collect();
+                self.rev.extend(tags.iter().cloned());
+                self.rev_del.extend(tags);
+            }
             Some(_) => {}
         }
     }

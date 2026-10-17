@@ -111,10 +111,11 @@ fn revisions_keep_the_numbers_their_tags_name() {
 }
 
 #[test]
-fn a_revision_number_is_written_once() {
-    // A change written as several marks (two runs, or a view that names one
-    // number for two changes) keeps its number on the first mark; the rest
-    // take fresh ones, so no two marks share a `w:id`.
+fn a_revision_number_is_written_as_often_as_the_view_names_it() {
+    // Two separately named changes keep the number both name (`r5` twice,
+    // as Word's own files repeat an id). A change written as several marks
+    // (two runs) keeps its number on the first; the rest take fresh ones,
+    // so a number the view names once is on no two marks.
     let body = "<!-- p0 -->\n{++**Bold** plain++}{>>r4 @AC<<} and {++one++}{>>r5 @AC<<} \
                 {++two++}{>>r5 @AC<<}.\n";
     let docx = markdown_to_docx(
@@ -123,14 +124,28 @@ fn a_revision_number_is_written_once() {
     )
     .expect("the view reads")
     .docx;
-    assert_word_valid_package(&docx);
+    // The one duplicate is the twice-named `r5`, as in Word's own files;
+    // nothing else may be invalid.
+    let report = common::validity::check_word_valid_package(&docx);
+    let repeated: Vec<&jubarte::validate::Finding> = report
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "DUPLICATE_REVISION_ID")
+        .collect();
+    assert_eq!(report.findings.len(), repeated.len(), "{report:#?}");
+    assert!(
+        repeated.len() == 1 && repeated[0].message.contains("'5'"),
+        "{report:#?}"
+    );
     let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
-    for id in ["4", "5"] {
-        assert!(
-            document.contains(&format!("w:ins w:id=\"{id}\"")),
-            "w:id {id} kept: {document}"
-        );
-    }
+    assert!(
+        document.matches("w:ins w:id=\"5\"").count() == 2,
+        "r5 on both changes: {document}"
+    );
+    assert!(
+        document.matches("w:ins w:id=\"4\"").count() == 1,
+        "r4 on the first mark only: {document}"
+    );
 }
 
 #[test]
@@ -140,6 +155,108 @@ fn a_paragraph_mark_change_comes_back_with_its_number() {
                 <!-- p2 empty, break-del r6 @AC -->\n\n\
                 <!-- p3 BodyText center, break-ins r8 @AC -->\nStyled.\n\n<!-- p4 -->\nLast.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+}
+
+#[test]
+fn a_text_box_stays_in_its_anchor_paragraph() {
+    // The view prints a text box's content as blocks with no id lines,
+    // after the paragraph whose `rev` clause names the anchor's change,
+    // and the header's `unplaced:` names the box's own carriers. Written
+    // back, the box is anchored in that paragraph — no paragraph of its
+    // own, so no stamp shifts — and its carriers read back as `unplaced:`
+    // again.
+    let body = "<!-- p0 -->\nKept text.\n\n\
+                <!-- p1 break-del r2 @AC, rev r3 @AC -->\n{--Gone. --}{>>r4 @AC<<}\n\n\
+                {++Boxed.++}{>>r3 @AC<<}\n\n\
+                <!-- p2 -->\nAfter.\n";
+    let header = "---\nauthors:\n  AC: Ann Counsel                  # 2026-10-01T09:00:00Z\n\
+unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]\n---\n\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{header}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    let anchor = document
+        .find("<w:drawing>")
+        .and_then(|at| {
+            document[at..]
+                .find("</w:drawing>")
+                .and_then(|end| document[..at + end].rfind("<w:ins "))
+        })
+        .unwrap_or(0);
+    let text = document.find("Gone.").unwrap_or(0);
+    assert!(anchor < text, "the drawing before the text: {document}");
+    let box_at = document.find("<w:txbxContent>").unwrap_or(0);
+    let boxed = &document[box_at..document.find("</w:txbxContent>").unwrap_or(0)];
+    assert!(boxed.contains("Boxed."), "the text in the box: {document}");
+    assert!(
+        document.contains("w:ins w:id=\"5\""),
+        "the box's mark: {document}"
+    );
+    assert!(
+        document.contains("w:ins w:id=\"6\""),
+        "the box's text: {document}"
+    );
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert!(
+        view.contains("unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]"),
+        "{view}"
+    );
+    assert!(
+        view.contains("<!-- p2 -->\nAfter."),
+        "no stamp shift: {view}"
+    );
+}
+
+#[test]
+fn an_unshown_deletion_holds_the_comment_marks_it_wraps() {
+    // A paragraph whose text prints only comment marks, inside a deletion
+    // its id line names (`rev-del`): the deletion wraps the marks, as in
+    // Word, and so counts as a change when read back — an empty `w:del`
+    // is hollow, and the `revisions:` header would lose it.
+    let body = "<!-- p0 -->\nText.\n\n\
+                <!-- p1 break-del r2 @AC, rev-del r3 @AC -->\n{>>c0 @AC: Note.<<}\n";
+    let docx = markdown_to_docx(
+        &as_view(&format!("{AUTHORS}{body}")),
+        &DocxOptions::default(),
+    )
+    .expect("the view reads")
+    .docx;
+    assert_word_valid_package(&docx);
+    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
+    let del = document
+        .find("<w:del ")
+        .and_then(|at| {
+            document[at..]
+                .find("</w:del>")
+                .map(|end| &document[at..at + end])
+        })
+        .unwrap_or_default();
+    assert!(del.contains("w:commentReference"), "{document}");
+    let view = read(
+        &docx,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert!(
+        view.lines().any(|line| line.contains("1 deletion")),
+        "{view}"
+    );
 }
 
 #[test]
@@ -706,7 +823,7 @@ fn a_note_inserted_or_deleted_with_its_reference_keeps_words_shape() {
                 <!-- footnotes.p0 -->\n\
                 {++[^1]: An inserted note.++}{>>r10 @AC<<} <!-- rev footnotes.r11 @AC; footnotes.r12 @AC -->\n\
                 <!-- footnotes.p1 -->\n\
-                {--[^2]: A deleted note.--}{>>r20 @AC<<} <!-- rev footnotes.r21 @AC; footnotes.r22 @AC -->";
+                {--[^2]: A deleted note.--}{>>r20 @AC<<} <!-- rev-del footnotes.r21 @AC; footnotes.r22 @AC -->";
     let docx = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}\n")),
         &DocxOptions::default(),
@@ -761,7 +878,7 @@ fn a_tracked_note_reads_with_one_space_after_its_label() {
     .markdown;
     for line in [
         "{++[^1]: An inserted note.++}{>>r10 @AL<<} <!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->",
-        "{--[^2]: A deleted note.--}{>>r20 @AL<<} <!-- rev footnotes.r21 @AL; footnotes.r22 @AL -->",
+        "{--[^2]: A deleted note.--}{>>r20 @AL<<} <!-- rev-del footnotes.r21 @AL; footnotes.r22 @AL -->",
     ] {
         assert!(view.contains(line), "{line} in {view}");
     }

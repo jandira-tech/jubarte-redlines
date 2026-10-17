@@ -160,6 +160,7 @@ pub(super) fn assemble(
         let styles = with_styles(&styles, &wanted);
         let styles = with_named_styles(&styles, &named);
         let styles = super::view_styles::apply(&styles, &document.style_specs);
+        let styles = super::view_styles::with_style_changes(&styles, &document.style_changes);
         let theme = related(&package, &main, "/theme")
             .and_then(|part| package.part_string(&part))
             .unwrap_or_else(|| crate::word_default_theme::WORD_DEFAULT_THEME.to_string());
@@ -500,17 +501,22 @@ fn separators_only(xml: &str) -> String {
 
 /// `styles` with a definition for each table style the view names that it
 /// lacks: one of Word's built-in Grid and List Tables as Word defines it,
-/// its colours from `theme`; else the name is the id, on Word's Normal
-/// Table, with the legend's border all round when it gives one.
-fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme: &str) -> String {
+/// its colours from `theme`; else the name is the legend's (`, named …`) or
+/// the writer's own, on Word's Normal Table, with the legend's border all
+/// round when it gives one.
+fn with_table_styles(
+    styles: &str,
+    wanted: &BTreeMap<String, (Option<u32>, Option<String>)>,
+    theme: &str,
+) -> String {
     let missing: String = wanted
         .iter()
         .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
-        .map(|(id, border)| {
+        .map(|(id, (border, name))| {
             if let Some(style) = built_in_table_style(id, theme) {
                 return style;
             }
-            let borders = border.map_or_else(String::new, |sz| {
+            let borders = (*border).map_or_else(String::new, |sz| {
                 let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
                     .iter()
                     .map(|side| {
@@ -519,13 +525,14 @@ fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme
                     .collect();
                 format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
             });
-            // Table Grid keeps Word's name for it.
-            let name = if id == "TableGrid" { "Table Grid" } else { id };
-            format!(
-                "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
-                 <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
+            // The legend's `, named …`, else the name the writer gives the
+            // style: Table Grid keeps Word's name for it.
+            let name = name.clone().unwrap_or_else(|| table_style_name(id));
+              format!(
+                  "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
+                   <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
                 id = escape(id),
-                name = escape(name)
+                  name = escape(&name)
             )
         })
         .collect();
@@ -543,10 +550,34 @@ fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme
 /// scripts/table_styles_asset.py).
 const WORD_TABLE_STYLES: &str = include_str!("word_table_styles.tsv");
 
+/// The `w:name` the writer gives a table style `id` it defines: Word's own
+/// for a built-in, `TableGrid` or `TableNormal` (`Grid Table 1 Light`,
+/// `Table Grid`, `Normal Table`), else the id itself.
+pub(crate) fn table_style_name(id: &str) -> String {
+    match id {
+        "TableGrid" => return "Table Grid".to_string(),
+        "TableNormal" => return "Normal Table".to_string(),
+        _ => {}
+    }
+    built_in(id).map_or_else(|| id.to_string(), |(name, _)| name)
+}
+
 /// The definition of `id` when it is one of Word's built-in Grid or List
 /// Tables (`GridTable4-Accent1`, `ListTable6Colorful`), named as Word names
 /// it (`Grid Table 4 Accent 1`), its colours from `theme`.
 fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
+    let (name, body) = built_in(id)?;
+    Some(format!(
+        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
+        escape(id),
+        escape(&name),
+        with_theme_colours(&body, theme)
+    ))
+}
+
+/// `id` as Word names it and its unstyled body, when it is one of the
+/// built-in Grid or List Tables.
+fn built_in(id: &str) -> Option<(String, String)> {
     let (family, accent) = match id.split_once("-Accent") {
         Some((family, n)) if matches!(n, "1" | "2" | "3" | "4" | "5" | "6") => (family, Some(n)),
         Some(_) => return None,
@@ -583,12 +614,7 @@ fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
         name.push_str(" Accent ");
         name.push_str(n);
     }
-    Some(format!(
-        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
-        escape(id),
-        escape(&name),
-        with_theme_colours(&body, theme)
-    ))
+    Some((name, body))
 }
 
 /// Whether `id` is one of Word's built-in Grid or List Tables, which the
