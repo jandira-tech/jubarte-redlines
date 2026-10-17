@@ -869,7 +869,7 @@ else
 fi
 # A resumed run keeps the npm build it finds, so the stamp is checked on the
 # tag itself: npm ships only artifacts the tagged engine produces (#1088).
-scripts/check_engine_commit.sh "$TAG^{commit}" || die "the npm build in $TAG is not the tagged engine's (above): rebuild it with jubarte-wasm/build-npm.sh"
+scripts/check_engine_commit.sh "$TAG^{commit}" || die "scripts/check_engine_commit.sh refused $TAG (its reason is above)"
 check_now 8
 
 # =============================================================================

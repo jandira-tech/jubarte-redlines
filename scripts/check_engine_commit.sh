@@ -16,13 +16,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 STAMP_FILE=jubarte-wasm/npm/ENGINE_COMMIT.txt
-# Every input to the wasm build: the crate and its lockfile, the files it
-# embeds with include_bytes!/include_str! (fonts, the release key, the plan
-# schema; test-only embeds of tests/fixtures excluded), and the binding crate
-# with its .cargo/config.toml RUSTFLAGS. The binding's lockfile is checked
-# apart, below.
+# Every input to the wasm build: the engine crate's sources and manifest, the
+# files it embeds with include_bytes!/include_str! outside its test modules
+# (the fonts under assets, the plan schema, the tables beside src), and the
+# binding crate with its .cargo/config.toml RUSTFLAGS. The root Cargo.lock is
+# not one: jubarte-wasm is its own [workspace] and resolves from its own lock,
+# which is checked apart, below.
 ENGINE_PATHS=(
-  src Cargo.toml Cargo.lock assets keys schemas
+  src Cargo.toml assets schemas
   jubarte-wasm/src jubarte-wasm/Cargo.toml jubarte-wasm/.cargo
 )
 WASM_LOCK=jubarte-wasm/Cargo.lock
@@ -57,10 +58,12 @@ changed=$(printf '%s\n%s\n' "$changed" "$lock" | sed '/^$/d' | sort -u)
 if [ -n "$changed" ]; then
   {
     echo "check_engine_commit: the engine changed after the npm build (${stamp:0:12}); rebuild with jubarte-wasm/build-npm.sh:"
-    printf '%s\n' "$changed" | head -20 | sed 's/^/  /'
+    # sed reads the whole list: `head` would close the pipe early and, under
+    # pipefail, a list past the pipe buffer would die of SIGPIPE here.
+    sed -n '1,20s/^/  /p' <<<"$changed"
     n=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
     [ "$n" -le 20 ] || echo "  … and $((n - 20)) more"
   } >&2
   exit 1
 fi
-echo "npm build matches the engine at $(git rev-parse --short "$rev^{commit}") (built from ${stamp:0:12})"
+echo "npm build matches the engine at $(git rev-parse --short=12 "$rev^{commit}") (built from ${stamp:0:12})"

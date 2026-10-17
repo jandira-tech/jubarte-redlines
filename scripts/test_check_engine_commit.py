@@ -94,8 +94,8 @@ class CheckEngineCommit(unittest.TestCase):
         # it embeds (include_bytes!/include_str!), and the binding crate with
         # the RUSTFLAGS in its .cargo/config.toml.
         for rel in [
-            "Cargo.toml", "Cargo.lock", "assets/fonts/a.ttf",
-            "keys/release-signing.pub", "schemas/edit-plan-v2.schema.json",
+            "Cargo.toml", "assets/fonts/a.ttf", "schemas/edit-plan-v2.schema.json",
+            "src/convert/word_substitutions.toml",
             "jubarte-wasm/src/lib.rs", "jubarte-wasm/Cargo.toml",
             "jubarte-wasm/Cargo.lock", "jubarte-wasm/.cargo/config.toml",
         ]:
@@ -107,6 +107,44 @@ class CheckEngineCommit(unittest.TestCase):
                 r = self.check()
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn(rel, r.stderr)
+
+    def test_the_root_lock_is_not_an_input_of_the_wasm_build(self) -> None:
+        # jubarte-wasm is its own [workspace]: its build resolves from
+        # jubarte-wasm/Cargo.lock, never the root's (a dev-dependency bump
+        # moves the root lock alone).
+        self.write("Cargo.lock", "old\n")
+        base = self.commit("root lock")
+        self.stamp(base)
+        self.write("Cargo.lock", "dev-dependency bump\n")
+        self.commit("root lock bump")
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_many_changes_are_listed_up_to_twenty_then_counted(self) -> None:
+        # Enough paths to fill a pipe buffer several times over: the listing
+        # must not die of SIGPIPE under pipefail before it counts the rest.
+        self.stamp(self.engine)
+        names = [f"src/module_with_a_long_descriptive_name_{i:04}.rs" for i in range(2000)]
+        for name in names:
+            self.write(name, "pub fn f() {}\n")
+        self.commit("many engine files")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        listed = [l for l in r.stderr.splitlines() if l.startswith("  src/")]
+        self.assertEqual(len(listed), 20, r.stderr[-400:])
+        self.assertIn("… and 1980 more", r.stderr)
+
+    def test_a_lock_change_before_the_artifacts_commit_is_refused(self) -> None:
+        # Only the artifacts commit may carry the lock the build resolved; a
+        # lock committed between the stamped commit and the build is not it.
+        self.write("jubarte-wasm/Cargo.lock", "old\n")
+        base = self.commit("lock")
+        self.write("jubarte-wasm/Cargo.lock", "between\n")
+        self.commit("lock between")
+        self.stamp(base)
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("jubarte-wasm/Cargo.lock", r.stderr)
 
     def test_the_lock_the_build_resolved_ships_with_the_artifacts(self) -> None:
         # build-npm.sh re-resolves jubarte-wasm/Cargo.lock after its clean-tree
