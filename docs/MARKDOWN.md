@@ -800,8 +800,9 @@ $ jubarte diff old.md new.md -a "Arthur Rodrigues"
 @@ [line:3] @@
 Payment is due in [-30-]{+45+} days.
 
-@@ [line:6] @@
-- {+Returns+}
+@@ [line:5] @@
+- Delivery{+
+- Returns+}
 ```
 
 - Only the changed paragraphs are shown, each whole. `@@ [line:N] @@` is
@@ -852,21 +853,26 @@ $ jubarte diff old.md new.md --format critic
 
 Payment is due in {~~30~>45~~} days.
 
-- Delivery
-- {++Returns++}
+- Delivery{++
+- Returns++}
 - Warranty
 ```
 
 Lines are aligned first, then words within the lines that pair up; changes
-separated only by spaces merge, so a rewritten phrase is one change. A
-change never starts a line, so list, heading, quote and footnote markers
-stay in place and both versions keep their structure. A block added or
-removed whole is one change over its text, which Word writes as a
-paragraph added or removed. A table row added or removed is marked cell by
-cell, since a table drops text outside its cells. An ordered list's numbers
-are not compared: Word numbers items itself. CriticMarkup delimiters
-already in either document are escaped, so they stay text. The patch is
-built from this alignment.
+separated only by spaces merge, so a rewritten phrase is one change. On
+lines both versions share, list, heading, quote and footnote markers stay
+outside the change. A marker that itself changed — a renumbered item, `#`
+becoming `##`, a task box ticked — takes the whole block with it into one
+substitution, and a block added or removed whole is one change over its
+text and line breaks, so accepting and rejecting rebuild both documents
+byte for byte. Word writes such a change as structure, never as text: a
+deleted heading is a deleted Heading paragraph, a ticked task box changes
+the box itself. A table row added or removed is marked cell by cell, since
+a table drops text outside its cells. An ordered list's numbers do not
+steer the line pairing: Word numbers items itself, and an item renumbered
+by an insertion above is changed whole. CriticMarkup delimiters already
+in either document are escaped, so they stay text. The patch is built from
+this alignment.
 
 For a Word redline (`jubarte compare old.md new.md -o r.docx`) the two
 Markdown documents are written to Word and compared by the same engine as

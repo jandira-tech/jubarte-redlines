@@ -193,6 +193,81 @@ pub(crate) fn encode(source: &str) -> String {
     encode_spans(source, ALL, true)
 }
 
+/// A top-level change span of a source: an insertion, a deletion or a
+/// substitution that no other span holds.
+pub(crate) struct ChangeRegion {
+    /// Where the opener (`{++`, `{--`, `{~~`) starts.
+    pub(crate) open: usize,
+    /// The change's text, between its delimiters.
+    pub(crate) body: std::ops::Range<usize>,
+    /// Where a substitution's `~>` sits, inside `body`'s span in `source`.
+    pub(crate) split: Option<usize>,
+    /// Just past the closing delimiter.
+    pub(crate) close: usize,
+    /// An insertion (`{++`) against a deletion (`{--}`); a substitution is
+    /// both and names neither.
+    pub(crate) inserted: bool,
+}
+
+/// The top-level change spans of `source`, in order, outside the parts
+/// Markdown reads literally (code spans and fenced code blocks, where the
+/// marks are printed, not tracked). What
+/// [`write`](super::write) uses to rewrite a change that holds whole
+/// blocks so the Markdown reader still sees the blocks.
+pub(crate) fn change_regions(source: &str) -> Vec<ChangeRegion> {
+    let closers = Closers::new(source);
+    let mut regions = Vec::new();
+    let mut at = 0;
+    while at < source.len() {
+        if let Some(end) = closers.literal.verbatim_end(at) {
+            at = end;
+            continue;
+        }
+        let rest = &source[at..];
+        let here = if closers.literal.in_fence(at) {
+            ALL & !(MARK | FIELD)
+        } else {
+            ALL
+        };
+        let span = SPANS
+            .iter()
+            .find(|(open, ..)| rest.starts_with(*open))
+            .filter(|span| here & kind_of(span.3) != 0)
+            .filter(|_| !escaped(source, at))
+            .and_then(|&(open, close, separator, start, _)| {
+                let from = at + open.len();
+                let to = closers.find(close, from, source.len())?;
+                let split = match separator {
+                    Some(separator) => Some((closers.find(separator, from, to)?, separator.len())),
+                    None => None,
+                };
+                Some((from..to, to + close.len(), split, start))
+            });
+        match span {
+            Some((body, after, split, start)) => {
+                // Fenced code and the front matter print their marks; a
+                // change there is not blocks to hand them to.
+                if kind_of(start) & CHANGES != 0 && !closers.literal.in_fence(at) {
+                    regions.push(ChangeRegion {
+                        open: at,
+                        body,
+                        split: split.map(|(mid, _)| mid),
+                        close: after,
+                        inserted: start == Token::InsertStart,
+                    });
+                }
+                // Top level only: the span, nested changes and all, is one.
+                at = after;
+            }
+            None => {
+                let c = rest.chars().next().unwrap_or_default();
+                at += c.len_utf8();
+            }
+        }
+    }
+    regions
+}
+
 /// [`encode`], plus a warning for every malformed delimiter that comes
 /// out text: an opener without its closer or separator, a closer that
 /// closed nothing.
@@ -857,6 +932,16 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
     ends
 }
 
+/// The end of the HTML comment that starts at `at` (`<!-- … -->`), if it
+/// closes. [`verbatim_ranges`] counts a comment whole; the CriticMarkup
+/// reader does not (#520: a closer inside one still closes its span).
+fn comment_end(source: &str, at: usize) -> Option<usize> {
+    if !source[at..].starts_with("<!--") {
+        return None;
+    }
+    source[at + 4..].find("-->").map(|close| at + 4 + close + 3)
+}
+
 /// The end of an autolink (`<https://a.example>`) at `at`: a scheme, `:`,
 /// then no space or `<` up to `>`.
 fn autolink_end(source: &str, at: usize) -> Option<usize> {
@@ -1472,6 +1557,39 @@ fn footnote_label(text: &str) -> Option<&str> {
 /// reading the markup rather than the Markdown.
 pub(crate) fn encode_spans_only(source: &str) -> String {
     encode_spans(source, ALL, false)
+}
+
+/// The ranges of `source` the Markdown diff escaper must leave alone:
+/// the reader's own verbatim (code spans across single line breaks, link
+/// destinations, autolinks) plus every complete HTML comment — a
+/// backslash inside one changes the comment's text, and the delimiter
+/// the escaper would escape drops with the comment anyway. The
+/// CriticMarkup reader still counts a delimiter inside a comment (#520:
+/// [`Literal`] leaves comments to it), so the comment ranges live here,
+/// not in [`Literal`]. Sorted, disjoint.
+pub(super) fn verbatim_ranges(source: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Literal::new(source).verbatim;
+    let mut at = 0;
+    while let Some(open) = source[at..].find("<!--") {
+        let open = at + open;
+        match comment_end(source, open) {
+            Some(end) => {
+                ranges.push(open..end);
+                at = end;
+            }
+            // An unclosed comment is text to the reader, not a comment.
+            None => at = open + "<!--".len(),
+        }
+    }
+    ranges.sort_by_key(|range| range.start);
+    let mut disjoint: Vec<std::ops::Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match disjoint.last_mut() {
+            Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
+            _ => disjoint.push(range),
+        }
+    }
+    disjoint
 }
 
 /// The source of text that holds no stand-ins, as it was.

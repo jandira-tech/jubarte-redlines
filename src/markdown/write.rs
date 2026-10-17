@@ -20,6 +20,7 @@ use pulldown_cmark::{
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
+use super::diff::{continues, marker_len, table_row, table_row_change};
 use super::xml::{
     Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link, List, Note,
     Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
@@ -131,7 +132,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         markdown
     };
     let (source, critic_warnings) = if options.critic {
-        critic::encode_checked(markdown)
+        critic::encode_checked(&block_changes(markdown))
     } else {
         (markdown.to_string(), Vec::new())
     };
@@ -155,6 +156,134 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     let mut document = writer.finish();
     document.warnings.splice(..0, critic_warnings);
     document
+}
+
+/// CriticMarkup changes that hold whole blocks, rewritten so the Markdown
+/// reader still sees the blocks: a change that opens a line hands its marks
+/// to the blocks inside it — a deleted heading `# {--B--}` reads as a
+/// heading whose text, and paragraph mark, are deleted, where `{--# B`,
+/// the marks in front of the marker, reads as the plain paragraph `{--# B`.
+/// A substitution whose sides hold blocks becomes its deleted blocks, then
+/// its inserted ones. A change that opens inside a line is inline text and
+/// stays; the diff writes whole blocks as changes that open a line.
+fn block_changes(source: &str) -> String {
+    let regions = critic::change_regions(source);
+    let mut out = String::with_capacity(source.len());
+    let mut at = 0;
+    for region in regions {
+        out.push_str(&source[at..region.open]);
+        at = region.close;
+        // Only a change that opens a line holds blocks; one that opens
+        // inside a line is inline text and stays.
+        let starts_line = region.open == 0 || source[..region.open].ends_with('\n');
+        let after = &source[region.close..];
+        let rewritten = if !starts_line {
+            None
+        } else if let Some(mid) = region.split {
+            substitution_blocks(
+                &source[region.body.start..mid],
+                &source[mid + "~>".len()..region.body.end],
+                after.is_empty() || after.starts_with('\n'),
+            )
+        } else {
+            let (open, close) = if region.inserted {
+                ("{++", "++}")
+            } else {
+                ("{--", "--}")
+            };
+            // The closer ends a line, or begins one: the blocks end where
+            // a line does either way.
+            let ends_line = after.is_empty()
+                || after.starts_with('\n')
+                || source[..region.body.end].ends_with('\n');
+            let content = &source[region.body.clone()];
+            (ends_line && blocky(content))
+                .then(|| distribute(content, open, close))
+                .flatten()
+        };
+        match rewritten {
+            Some(text) => out.push_str(&text),
+            None => out.push_str(&source[region.open..region.close]),
+        }
+    }
+    out.push_str(&source[at..]);
+    out
+}
+
+/// A substitution whose sides hold blocks, as the deleted side's blocks
+/// then the inserted side's. `ends_line`: the substitution's closer ends
+/// its line, so no text after it belongs to a side.
+fn substitution_blocks(old: &str, new: &str, ends_line: bool) -> Option<String> {
+    if !ends_line || !(blocky(old) || blocky(new)) {
+        return None;
+    }
+    let (old, new) = (distribute(old, "{--", "--}"), distribute(new, "{++", "++}"));
+    Some(format!("{}\n{}", old?, new?))
+}
+
+/// Whether any line of the text begins a block a change's marks would
+/// hide: it has a marker, or is a table row or a code fence.
+fn blocky(content: &str) -> bool {
+    content.lines().any(|line| {
+        let fenced = ["```", "~~~"]
+            .iter()
+            .any(|fence| line.trim_start().starts_with(fence));
+        fenced || marker_len(line) > 0 || table_row(line)
+    })
+}
+
+/// The text of a change handed to the blocks inside it, the marks around
+/// each block: a heading or a list item keeps its marker and changes its
+/// text, a quote run opens after its first marker and closes on its last
+/// line, a table row marks its cells, and lines that continue one another
+/// share one change across their line breaks. `None` when a block cannot
+/// hold the marks: a code fence, whose text is literal, or a block whose
+/// first line is marker and nothing else.
+fn distribute(content: &str, open: &str, close: &str) -> Option<String> {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mut out = String::with_capacity(content.len());
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        if line.trim().is_empty() {
+            out.push_str(line);
+            at += 1;
+        } else if table_row(line) {
+            out.push_str(&table_row_change(line, open, close));
+            at += 1;
+        } else {
+            let marker = marker_len(line);
+            let length = if line.trim_start().starts_with('>') {
+                // A quote run: every quoted line, the marks across their
+                // line breaks.
+                1 + lines[at + 1..]
+                    .iter()
+                    .take_while(|l| l.trim_start().starts_with('>'))
+                    .count()
+            } else if line[..marker].contains('#') {
+                // A heading stands alone: the lines after it are not its.
+                1
+            } else {
+                1 + lines[at + 1..].iter().take_while(|l| continues(l)).count()
+            };
+            if length == 1 && line[marker..].is_empty() {
+                return None;
+            }
+            out.push_str(&line[..marker]);
+            out.push_str(open);
+            out.push_str(&line[marker..]);
+            for block_line in &lines[at + 1..at + length] {
+                out.push('\n');
+                out.push_str(block_line);
+            }
+            out.push_str(close);
+            at += length;
+        }
+        if at < lines.len() {
+            out.push('\n');
+        }
+    }
+    Some(out)
 }
 
 /// The styles [`DocxOptions::scholar`] sets, as the front matter's
@@ -1365,6 +1494,14 @@ impl Anchor {
 
 struct Writer<'o, 'a> {
     options: &'o DocxOptions<'a>,
+    /// A soft line break holds until the words after it arrive: the space
+    /// it stands for belongs inside the change delimiters around it, and
+    /// one the paragraph ends on (a change that takes the paragraph's own
+    /// line break) holds no words at all and is dropped.
+    soft_break: bool,
+    /// The change delimiters held behind a soft line break, replayed when
+    /// the words arrive (or when the paragraph ends, without the space).
+    held: Vec<critic::Token>,
     body: Vec<Item>,
     /// Footnote definitions by label.
     definitions: HashMap<String, Vec<Item>>,
@@ -1548,6 +1685,8 @@ struct Writer<'o, 'a> {
 impl<'o, 'a> Writer<'o, 'a> {
     fn new(options: &'o DocxOptions<'a>) -> Self {
         Self {
+            soft_break: false,
+            held: Vec::new(),
             options,
             body: Vec::new(),
             definitions: HashMap::new(),
@@ -1667,6 +1806,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Event::Text(text) => self.text(&text),
             Event::Code(text) => {
+                self.soft_break_resolved(true);
                 self.code += 1;
                 self.text(&text);
                 self.code -= 1;
@@ -1679,7 +1819,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 None => self.id_lines(&html),
             },
             Event::FootnoteReference(label) => self.note_reference(&label),
-            Event::SoftBreak => self.text(" "),
+            Event::SoftBreak => self.soft_break = true,
             Event::HardBreak => {
                 if let Some(comment) = &mut self.comment {
                     comment.paragraphs.push(String::new());
@@ -2636,6 +2776,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// Ends the open paragraph. Its mark is in the change still open, or in
     /// the change that is the paragraph's whole text.
     fn end_paragraph(&mut self) {
+        // A soft line break the paragraph ends on was the paragraph's own
+        // line break: no words follow it, so it holds no space.
+        self.soft_break_resolved(false);
         let Some(index) = self.paragraph.take() else {
             return;
         };
@@ -2848,6 +2991,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn text(&mut self, text: &str) {
+        if self.metadata.is_some() || self.image.is_some() || !self.options.critic {
+            self.soft_break_resolved(true);
+        }
         if let Some(metadata) = &mut self.metadata {
             metadata.push_str(text);
             return;
@@ -2879,15 +3025,38 @@ impl<'o, 'a> Writer<'o, 'a> {
         });
         for piece in pieces {
             match piece {
-                Ok(text) => self.plain(&text),
-                Err(token) => self.token(token),
+                Ok(text) => {
+                    self.soft_break_resolved(true);
+                    self.plain(&text);
+                }
+                Err(token) => {
+                    if self.soft_break {
+                        self.held.push(token);
+                    } else {
+                        self.token(token);
+                    }
+                }
             }
+        }
+    }
+
+    /// Resolves a held soft line break: the words after it have arrived
+    /// (`words`) or the paragraph has ended. The change delimiters held
+    /// behind it replay either way; the space only when words follow, and
+    /// before them, inside the change it sat in.
+    fn soft_break_resolved(&mut self, words: bool) {
+        if std::mem::take(&mut self.soft_break) && words {
+            self.plain(" ");
+        }
+        for token in std::mem::take(&mut self.held) {
+            self.token(token);
         }
     }
 
     /// `$latex$` (or `$$latex$$` when `display`): an equation, or its
     /// LaTeX as text where an equation cannot go (a comment, alt text).
     fn math(&mut self, latex: &str, display: bool) {
+        self.soft_break_resolved(true);
         if self.metadata.is_some() || self.image.is_some() || self.comment.is_some() {
             let fence = if display { "$$" } else { "$" };
             let text = format!("{fence}{}{fence}", critic::restore(latex));

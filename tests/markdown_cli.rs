@@ -407,7 +407,7 @@ fn diff_prints_critic_markup_like_pandiff() {
     ));
     assert_eq!(
         stdout,
-        "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery\n- {++Returns++}\n- Warranty\n"
+        "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery{++\n- Returns++}\n- Warranty\n"
     );
     // Written to a file, the view is not printed too.
     let printed = ok(&jubarte(
@@ -444,7 +444,7 @@ fn diff_prints_a_patch_of_the_changed_paragraphs_by_default() {
         ),
         "{stdout}"
     );
-    assert!(stdout.contains("{+Returns+}"), "{stdout}");
+    assert!(stdout.contains("{+\n- Returns+}"), "{stdout}");
     assert!(!stdout.contains("# Terms"), "{stdout}");
     // Nothing changed, nothing printed.
     let same = [&["diff", "old.md", "old.md"][..], &OWNER].concat();
@@ -758,7 +758,7 @@ fn diff_and_compare_take_word_against_markdown() {
     assert!(
         std::fs::read_to_string(dir.path().join("changes.md"))
             .unwrap()
-            .contains("{++Returns++}")
+            .contains("{++\n- Returns++}")
     );
 }
 
