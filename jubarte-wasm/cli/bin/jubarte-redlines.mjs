@@ -430,6 +430,15 @@ function recordPlan(verb, file, docx, o) {
   return EXIT_OK;
 }
 
+// lstat refuses links even where O_NOFOLLOW is unavailable; compare the
+// opened file with the name using bigint identities to avoid rounding inos.
+function planIdentityMatches(fd, name) {
+  const opened = fs.fstatSync(fd, { bigint: true });
+  const named = fs.lstatSync(name, { bigint: true });
+  if (named.isSymbolicLink()) throw Object.assign(new Error("symbolic link"), { code: "ELOOP" });
+  return (opened.ino === 0n && named.ino === 0n) || (opened.dev === named.dev && opened.ino === named.ino);
+}
+
 function runEdit(verb, file, o) {
   const docx = read(file);
   if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
@@ -442,10 +451,8 @@ function runEdit(verb, file, o) {
   if (o.consume && !o.dry_run) {
     try {
       planFd = fs.openSync(o.plan, (fs.constants.O_NOFOLLOW ?? 0) | fs.constants.O_RDONLY);
-      // Windows has no O_NOFOLLOW: there the open follows a link, so the
-      // name is checked after it, and the refusal is the one ELOOP gives.
-      if (fs.constants.O_NOFOLLOW === undefined && fs.lstatSync(o.plan).isSymbolicLink()) {
-        throw Object.assign(new Error("symbolic link"), { code: "ELOOP" });
+      if (!planIdentityMatches(planFd, o.plan)) {
+        throw new Error("the plan name changed while it was being read");
       }
       consumed = fs.readFileSync(planFd);
     } catch (e) {
@@ -456,22 +463,36 @@ function runEdit(verb, file, o) {
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
     }
   }
-  const code = applyEdit(verb, file, docx, o);
-  if (planFd !== undefined) fs.closeSync(planFd);
-  if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
-    const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
-    let current;
-    try {
-      current = fs.readFileSync(o.plan);
-    } catch {}
-    if (!current?.equals(consumed)) throw kept("it no longer holds the plan (an output was written over it?)");
-    try {
-      fs.unlinkSync(o.plan);
-    } catch (e) {
-      throw kept(osError(e));
+  try {
+    const code = applyEdit(verb, file, docx, o);
+    if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
+      const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
+      let unchanged = false;
+      try {
+        // The original read advanced the fd: reread positionally, including
+        // one extra byte so an append cannot compare equal to the plan.
+        const current = Buffer.alloc(consumed.length + 1);
+        let length = 0;
+        while (length < current.length) {
+          const read = fs.readSync(planFd, current, length, current.length - length, length);
+          if (read === 0) break;
+          length += read;
+        }
+        unchanged = current.subarray(0, length).equals(consumed) && planIdentityMatches(planFd, o.plan);
+      } catch {}
+      if (!unchanged) throw kept("it no longer holds the plan (an output was written over it?)");
+      // Unavoidable race window between the last lstat and unlinkSync:
+      // Node has no unlink-by-handle API.
+      try {
+        fs.unlinkSync(o.plan);
+      } catch (e) {
+        throw kept(osError(e));
+      }
     }
+    return code;
+  } finally {
+    if (planFd !== undefined) fs.closeSync(planFd);
   }
-  return code;
 }
 
 function applyEdit(verb, file, docx, o) {

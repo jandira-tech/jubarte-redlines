@@ -30,9 +30,9 @@
 // yourself, then let scripts/release.sh commit, tag and publish.
 // See docs/VERSIONING.md.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 /** Every regular-expression metacharacter in `text`, escaped, backslash
  * first: a version interpolated into a RegExp must match literally, and a
@@ -148,6 +148,6 @@ function main() {
 
 // The codemod runs only when executed; scripts/bump-version.test.mjs imports
 // the helpers above without touching Cargo.toml or the README.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
   main();
 }
