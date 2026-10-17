@@ -1,0 +1,7 @@
+{
+  "name": "pi-prompt",
+  "argv": ["pi", "-p"],
+  "model": null,
+  "provider": "anthropic",
+  "version": "unknown"
+}

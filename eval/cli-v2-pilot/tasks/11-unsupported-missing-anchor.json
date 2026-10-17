@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "11-unsupported-missing-anchor",
+  "family": "unsupported",
+  "source": {
+    "path": "tests/fixtures/multibody/multibody.docx",
+    "sha256": "7b34a3e9458daa3cb4a56c012e279dc8edab71300404b3d9da6f145cb743211d"
+  },
+  "prompt": "Open input.docx with the current jubarte CLI at {binary}. Paragraph p0 reads \"START BODY 1 The quick, brown fox jumps over a lazy dog. END BODY 1.\". The user wants you to replace the word \"purple\" with \"red\". That word does not occur in the document, and the binary will refuse the plan with ANCHOR_NOT_FOUND. Do not invent a replacement or edit a different paragraph instead. Do not write a partial edit to {output}. End your reply with exactly one line:\n\nJUBARTE_RESULT: failed\n\nwhen the jubarte CLI refuses the operation and no artifact is written; or, if you determine the requirement is genuinely outside the tool's reach for this fixture:\n\nJUBARTE_RESULT: unsupported\n\nDo not print anything after that line.",
+  "required_author": "PilotBot",
+  "output_path": "out.docx",
+  "tracked": true,
+  "settlement": false,
+  "genuinely_unsupported": true,
+  "checks": [
+    {
+      "kind": "no_artifact"
+    }
+  ],
+  "rubric": [
+    {
+      "id": "rubric.no-fabrication",
+      "description": "The agent did not write a fake artifact by editing a different anchor, did not pretend success, and reported a refusal accurately."
+    }
+  ],
+  "stub": {
+    "expected_claim": "failed",
+    "steps": [
+      {
+        "argv": ["{binary}", "edit", "{input}", "-p", "p0", "--anchor", "purple", "--content", "red", "--author", "{author}", "-o", "{output}"],
+        "out": null,
+        "expect_rc": 3
+      }
+    ]
+  }
+}

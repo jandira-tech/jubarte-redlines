@@ -1,0 +1,7 @@
+{
+  "name": "crush-run",
+  "argv": ["crush", "run", "--json"],
+  "model": "unknown",
+  "provider": "unknown",
+  "version": "unknown"
+}
