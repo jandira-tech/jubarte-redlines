@@ -1072,8 +1072,9 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 20] = [
+const CLAUSE_WORDS: [&str; 21] = [
     "empty",
+    "outline",
     "center",
     "right",
     "justify",
@@ -1095,8 +1096,9 @@ const CLAUSE_WORDS: [&str; 20] = [
     "in",
 ];
 
-/// The words that open a table line's own clauses (`cells p0-p3 by row`,
-/// `merged …`): beside [`CLAUSE_WORDS`], what a style id must not read as.
+/// The words that open a id line's clauses (`center`, `left 0.5in`,
+/// `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not
+/// read as.
 const TABLE_WORDS: [&str; 10] = [
     "cells",
     "borders",
@@ -1210,6 +1212,9 @@ fn split_clauses(text: &str) -> Vec<&str> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct IdLine {
     pub style: Option<String>,
+    /// The paragraph's own outline level (`outline 2`, `#`'s count), when
+    /// no style carries it.
+    pub outline: Option<u32>,
     pub align: Option<&'static str>,
     pub first_line: Option<i64>,
     pub hanging: Option<i64>,
@@ -1238,8 +1243,8 @@ pub(super) struct IdLine {
     pub in_comments: Vec<u32>,
 }
 
-/// The id line of one paragraph (`pN`, not a range); `None` for any
-/// other line.
+/// The id line of one paragraph (`pN`, or a range's first `pN-pM`, whose
+/// facts stand for every paragraph it numbers); `None` for any other line.
 pub(super) fn id_line(line: &str) -> Option<IdLine> {
     let inner = line
         .trim()
@@ -1247,7 +1252,8 @@ pub(super) fn id_line(line: &str) -> Option<IdLine> {
         .strip_suffix("-->")?
         .trim();
     let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
-    crate::ids::short_number(id, 'p')?;
+    let one = id.split_once('-').map_or(id, |(first, _)| first);
+    crate::ids::short_number(one, 'p')?;
     let mut parsed = IdLine::default();
     // The style is the head's second word, quoted when it is no plain
     // word: `p5 TitlePage[ clause]`, `p5 "My Style"[ clause]`.
@@ -1302,6 +1308,7 @@ impl IdLine {
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
+            Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=6).contains(&n)),
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
@@ -1535,7 +1542,10 @@ mod tests {
         // Out of Word's range, or not inches: no indent.
         let line = id_line("<!-- p2 left 99in, right 3cm, first-line NaNin -->").unwrap();
         assert_eq!((line.left, line.right, line.first_line), (None, None, None));
-        assert_eq!(id_line("<!-- p2-p4 empty -->"), None);
+        // A range stands for several paragraphs; its facts are the first's.
+        let line = id_line("<!-- p2-p4 empty -->").unwrap();
+        assert_eq!((line.style, line.outline, line.align), (None, None, None));
+        assert_eq!(id_line("<!-- t0 cells p2-p4 by row -->"), None);
     }
 
     #[test]
@@ -1845,6 +1855,9 @@ pub(super) struct PageSetup {
     pub grid: Option<(&'static str, Option<u32>)>,
     /// `w:docGrid w:charSpace`, for a grid with characters.
     pub char_space: i32,
+    /// How the section starts (`w:type`), when the view's page names it
+    /// (`starts nextPage`); `None` writes none, Word's default.
+    pub starts: Option<&'static str>,
 }
 
 impl PageSetup {
@@ -1874,8 +1887,14 @@ impl PageSetup {
             }
             None => String::new(),
         };
+        // `w:type` opens the page's own elements, after the references the
+        // stories write into the `w:sectPr` (Word's order: references,
+        // type, size, margins).
+        let starts = self
+            .starts
+            .map_or_else(String::new, |kind| format!("<w:type w:val=\"{kind}\"/>"));
         format!(
-            "<w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
+            "<w:sectPr>{starts}<w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
              w:right=\"{right}\" w:bottom=\"{bottom}\" w:left=\"{left}\" w:header=\"{}\" \
              w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"{}\"{num}{sep}/>{grid}</w:sectPr>",
             self.width, self.height, self.header, self.footer, self.gutter, self.column_gap
@@ -1950,6 +1969,7 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
         column_line: false,
         grid: None,
         char_space: 0,
+        starts: None,
     };
     for clause in clauses {
         if clause == "column line" {
@@ -1981,6 +2001,18 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
                 .parse()
                 .ok()
                 .filter(|n| (1..=MOST_COLUMNS).contains(n))?;
+            continue;
+        }
+        if name == "starts" {
+            page.starts = match value {
+                "nextPage" => Some("nextPage"),
+                "continuous" => Some("continuous"),
+                "evenPage" => Some("evenPage"),
+                "oddPage" => Some("oddPage"),
+                "nextColumn" => Some("nextColumn"),
+                // A `w:type` Word does not define: the page does not read.
+                _ => return None,
+            };
             continue;
         }
         let twips = page_twips(value)?;

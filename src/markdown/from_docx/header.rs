@@ -643,6 +643,17 @@ fn page_setup(sect: &Element) -> String {
             out.push_str(&format!(", char space {space}"));
         }
     }
+    // How the section starts, when its `w:sectPr` states it: `nextPage`
+    // is Word's default, but a document that says so keeps saying it
+    // (#528). A value outside Word's five says nothing the view can write.
+    if let Some(kind) = sect.child("type").and_then(|t| t.attr("val")).filter(|v| {
+        matches!(
+            *v,
+            "nextPage" | "continuous" | "evenPage" | "oddPage" | "nextColumn"
+        )
+    }) {
+        out.push_str(&format!(", starts {kind}"));
+    }
     out
 }
 
@@ -896,11 +907,24 @@ fn named(styles: Option<&Element>, id: &str, expected: &str) -> String {
 }
 
 fn table_style_line(styles: Option<&Element>, id: &str) -> String {
+    // The style's name, when it is not the one the writer would give the
+    // id (`9` is named `Normal Table`, `TableGrid0` `TableGrid`, #528).
+    let named = styles
+        .and_then(|s| style_by_id(s, id))
+        .and_then(|s| s.child("name"))
+        .and_then(|n| n.attr("val"))
+        .filter(|name| {
+            *name
+                != super::super::package::word_table_style_name(id)
+                    .unwrap_or_else(|| id.to_string())
+        })
+        .map(|name| format!(", named {name}"))
+        .unwrap_or_default();
     let borders = styles
         .and_then(|s| style_by_id(s, id))
         .and_then(|s| s.path(&["tblPr", "tblBorders"]));
     let Some(borders) = borders else {
-        return id.to_string();
+        return format!("{id}{named}");
     };
     // The strict `start`/`end` elements name the `left`/`right` borders.
     let sides = [
@@ -932,11 +956,11 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
             let pt = sz.parse::<f64>().map(|s| s / 8.0).unwrap_or(0.5);
             let pt = format!("{pt:.2}");
             format!(
-                "{id}, all borders {}pt",
+                "{id}, all borders {}pt{named}",
                 pt.trim_end_matches('0').trim_end_matches('.')
             )
         }
-        _ => format!("{id}, borders vary"),
+        _ => format!("{id}, borders vary{named}"),
     }
 }
 

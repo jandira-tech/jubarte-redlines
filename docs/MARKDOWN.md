@@ -294,15 +294,22 @@ One per body paragraph, on the line above it: a head, one space, then
 clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
-head:     p{N}[ {Style}]
+head:     p{N}[ {Style}][ outline {n}]
 clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
 - `N` counts every `w:p` under `w:body` in document order, table cells
   included, text boxes excluded.
-- `Style` prints when it is not the default paragraph style and, for a
-  heading, not `Heading{level}`.
+- `Style` prints whenever the paragraph's own `w:pPr` states a `w:pStyle`,
+  the document's default and `Normal` included: the statement is the
+  document's, not the view's to drop. A heading's own `Heading{level}` is
+  the one exception, the `#` count says it — an empty paragraph has no
+  `#`, so even that one prints (`<!-- p19 Heading2 empty -->`).
+- `outline {n}` prints when the paragraph states its `w:outlineLvl` with
+  no style at all: `# Text` alone would give the writer's `HeadingN`
+  where the document had none (the writer then writes the `w:outlineLvl`
+  alone).
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches, with as many decimals (two to four) as it takes to
@@ -339,7 +346,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   `section-break`:
   its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
   the YAML header names for its section (`page:` for the first,
-  `sections:` for the others). A page's text columns are its clauses
+  `sections:` for the others). A page that states how its section starts
+  (`w:type`) says so: `starts nextPage` — Word's default, but the
+  statement is the document's — or `starts continuous`, `evenPage`,
+  `oddPage`; the writer puts the `w:type` first in its `w:sectPr`. A
+  page's text columns are its clauses
   too: `columns 2`, `column gap 0.25in` when not Word's 0.5in, and
   `column line` for a rule between them (`w:cols w:sep`). A grid the lines
   snap to (`w:docGrid` with a type) is a clause as well: `line grid 15.6pt`,
@@ -363,8 +374,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   clause says which thread a scope belongs to.
 - Empty paragraphs: `<!-- p19 empty -->`, consecutive ones
   `<!-- p19-p23 empty -->`. An empty paragraph that holds a tracked mark, a
-  formatting change, a resolved revision or a hidden comment keeps its own
-  line: `<!-- p4 empty, break-ins r3 @AC -->`.
+  formatting change, a resolved revision, a hidden comment or a stated
+  style keeps its own line: `<!-- p4 empty, break-ins r3 @AC -->`,
+  `<!-- p19 TitlePage empty -->`; a range of styled ones
+  (`<!-- p19-p23 TitlePage empty -->`) stands for every paragraph it
+  numbers, each with what the line says.
 - Page markers: `<!-- page N of M -->` before the first block that starts on
   page N, `<!-- page 1 of M -->` first. They come from the layout pass.
   With `--no-page-markers` none print; through the library without layout
@@ -406,7 +420,12 @@ font and size, `before`/`after`, `line`, alignment, `keep-next`,
 `keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, and
 `contextual spacing` (no space between paragraphs of that style, as List
 Paragraph has). A line ends `, named Text Heading 2` when the style's name
-is not its id (for a `HeadingN` heading, not `heading N`). Converting the
+is not its id (for a `HeadingN` heading, not `heading N`). The `table:`
+line of the legend ends `, named Normal Table` the same way when the
+style's name is not the one the writer would give its id; a style the
+writer knows as Word's own (Table Grid, the Grid and List Tables, the
+older Light Shading and Medium List families) needs no `named`, and is
+written as Word defines it, shading bands and all. Converting the
 view back defines each style as its line says, and a style Word knows
 (`ListParagraph`, `Quote`) keeps Word's own gallery settings.
 
@@ -419,7 +438,10 @@ endnote text names their styles after the id, one per paragraph, the last
 for every paragraph after it: `<!-- endnotes.p0 Endnote -->` for a note in
 LibreOffice's `Endnote`, `<!-- footnotes.p1-p2 FootnoteText, "My Note" -->`
 for one whose second paragraph is in `My Note` (an id that is no plain word
-is quoted). A silent line is Word's own style. A table cell does the same: `<br>` ends one of the cell's
+is quoted). A silent line is Word's own style, spelled as Word spells it
+(`footnote text`); a document that renames it (`Footnote Text`) names the
+style, and the styles legend the name, so the writer defines it as
+spelled. A table cell does the same: `<br>` ends one of the cell's
 paragraphs, `<br/>` is a line break (`w:br`) within one. A view written
 before that distinction still converts: when the id or table line's
 paragraph count and the `<br>`s disagree, the writer reads every `<br>`

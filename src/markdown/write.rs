@@ -1736,22 +1736,30 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .table_plan
                     .as_ref()
                     .and_then(|plan| plan.style.clone())
-                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()))
+                    .or_else(|| {
+                        self.document
+                            .table_style
+                            .as_ref()
+                            .map(|(id, _, _)| id.clone())
+                    })
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
-                    let border = self
+                    let legend = self
                         .document
                         .table_style
                         .as_ref()
-                        .filter(|(legend, _)| legend == id)
-                        .and_then(|(_, border)| *border);
+                        .filter(|(legend, ..)| legend == id);
+                    let border = legend.and_then(|(_, border, _)| *border);
                     // Word's thin Table Grid, unless the legend gives it a
                     // border of its own (`TableGrid, all borders 1.5pt`).
                     if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
                         self.document.styles.insert("TableGrid");
                     } else {
-                        self.document.table_styles.insert(id.clone(), border);
+                        let name = legend.and_then(|(_, _, name)| name.clone());
+                        self.document
+                            .table_styles
+                            .insert(id.clone(), (border, name));
                     }
                 }
                 let formats = self.table_formats();
@@ -2098,12 +2106,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.textless_paragraph();
             if let Some(count) = view_notes::empty_paragraphs(line) {
                 self.end_paragraph();
-                // One empty paragraph whose id line says more than `empty`.
+                // An id line that says more than `empty` (`<!-- p7
+                // page-break -->`, `<!-- p2 TitlePage, empty -->`) stands
+                // for every paragraph it numbers, each with what it says.
                 if let Some(said) =
                     view_notes::id_line(line).filter(|said| *said != view_notes::IdLine::default())
                 {
-                    self.id_line = Some(said);
-                    self.textless_paragraph();
+                    for _ in 0..count {
+                        self.id_line = Some(said.clone());
+                        self.textless_paragraph();
+                    }
                     continue;
                 }
                 for _ in 0..count {
@@ -2218,6 +2230,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 paragraph.style = Some(style.into());
                 // `# Text` under its own style: the level goes with it.
                 paragraph.outline = self.heading.map(|level| level - 1);
+            } else if let Some(outline) = line.outline {
+                // `# Text` that states its own level, with no style: the
+                // writer's `HeadingN` must not step in where the document
+                // had none.
+                paragraph.style = None;
+                // The clause's bound is 1..=6, so the level cannot be empty.
+                paragraph.outline = outline.checked_sub(1).map(|level| level as usize);
             }
             paragraph.align = line.align.or(paragraph.align);
             self.page_break_due = line.page_break;
@@ -3562,7 +3581,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.document.table_style = view_styles::table_style(text);
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
-        if let Some((id, None)) = &self.document.table_style
+        if let Some((id, None, _)) = &self.document.table_style
             && !super::package::is_built_in_table_style(id)
             && text.lines().any(|line| {
                 let line = view_styles::without_comment(line).trim();

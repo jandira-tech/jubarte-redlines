@@ -393,7 +393,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         resolved: accept.is_some(),
         dates: options.dates,
         handles: handles.clone(),
-        default_style: default_style.clone(),
         pending_empty: Vec::new(),
         line_indent: 0,
         cached_pages,
@@ -496,13 +495,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         .filter(|id| Some(*id) != default_style.as_deref());
                     match id {
                         None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
-                        // Word's own, under any id (`a5` in a localized document).
+                        // Word's own, under any id (`a5` in a localized
+                        // document), spelled as Word spells it.
                         Some(id)
                             if writer
                                 .styles
                                 .by_id
                                 .get(id)
-                                .map_or(id.eq_ignore_ascii_case(own), |s| s.name == own_name) =>
+                                .map_or(id.eq_ignore_ascii_case(own), |s| {
+                                    s.exact_name == own_name
+                                }) =>
                         {
                             None
                         }
@@ -858,7 +860,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let mut sections: Vec<header::SectionFact> = Vec::new();
             let mut first = 0;
             for (last, sect) in ends {
-                let title_page = sect.child("titlePg").is_some();
+                // `w:titlePg w:val="0"` states the default: off. Word writes
+                // the switch out when a change turns the first page off
+                // (ids-tables, #528).
+                let title_page = sect
+                    .child("titlePg")
+                    .is_some_and(|t| !matches!(t.attr("val"), Some("0" | "false" | "off")));
                 let mut stories = Vec::new();
                 for reference in sect.elements() {
                     let kind = match reference.local() {
@@ -1650,6 +1657,10 @@ fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) 
 #[derive(Default, Clone)]
 struct Style {
     name: String,
+    /// The name as the document writes it: Word's own are lower case
+    /// (`footnote text`), and a style that spells one differently is the
+    /// document's own (#528).
+    exact_name: String,
     based_on: Option<String>,
     outline: Option<usize>,
     num: Option<(String, usize)>,
@@ -1690,6 +1701,11 @@ impl Styles {
                         .and_then(|n| n.attr("val"))
                         .unwrap_or(id)
                         .to_ascii_lowercase(),
+                    exact_name: style
+                        .path(&["name"])
+                        .and_then(|n| n.attr("val"))
+                        .unwrap_or(id)
+                        .to_string(),
                     based_on: style
                         .path(&["basedOn"])
                         .and_then(|n| n.attr("val"))
@@ -2268,8 +2284,6 @@ struct Writer<'a> {
     /// Agent view: inline timestamps on notes (`Options::dates`).
     dates: bool,
     handles: agent::Handles,
-    /// Agent view: the default paragraph style id (`w:default="1"`).
-    default_style: Option<String>,
     /// Agent view: empty paragraphs not yet written as `<!-- pN empty -->`.
     pending_empty: Vec<usize>,
     /// Agent view: the indentation of the comment lines written before a
@@ -2553,6 +2567,7 @@ impl Writer<'_> {
             };
             if empty
                 && !numbered
+                && style.is_none()
                 && comments.is_empty()
                 && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
@@ -2599,8 +2614,11 @@ impl Writer<'_> {
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
-                default_style: self.default_style.as_deref(),
                 heading,
+                // The level the paragraph states itself (`w:outlineLvl`),
+                // which without a `w:pStyle` is the only place a `#` can
+                // come from: `outline 2`.
+                outline: style.is_none().then_some(heading).flatten(),
                 marker,
                 level,
                 page_break,
@@ -3404,7 +3422,6 @@ impl Writer<'_> {
     /// paragraphs in a style other than the default, consecutive ones in
     /// one style as a range.
     fn cell_styles(&self, table: &Element) -> Vec<String> {
-        let default = self.default_style.as_deref().unwrap_or("Normal");
         let mut runs: Vec<(usize, usize, &str)> = Vec::new();
         for tr in table_rows(table) {
             for tc in row_cells(tr) {
@@ -3418,9 +3435,8 @@ impl Writer<'_> {
                     ) else {
                         continue;
                     };
-                    if style == default || style == "Normal" {
-                        continue;
-                    }
+                    // A cell that states a style names it, the default too
+                    // (#528); one without `w:pStyle` names none.
                     match runs.last_mut() {
                         Some((_, last, said)) if *last + 1 == index && *said == style => {
                             *last = index;

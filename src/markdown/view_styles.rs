@@ -202,7 +202,7 @@ fn unquote(value: &str) -> Option<String> {
 /// the default's. Lines that do not read are left out.
 /// The legend's `table:` style, which every table takes: its id and, when
 /// the legend says `all borders 0.5pt`, that border in eighths of a point.
-pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>)> {
+pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<String>)> {
     let mut inside = false;
     for line in yaml.lines() {
         if !line.starts_with(' ') {
@@ -217,6 +217,12 @@ pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>)> {
         else {
             continue;
         };
+        // The style's name, when the view says it differs from the
+        // writer's own for the id (`9, named Normal Table`).
+        let (value, name) = match value.rsplit_once(", named ") {
+            Some((value, name)) => (value.to_string(), Some(name.to_string())),
+            None => (value, None),
+        };
         let (id, rest) = value.split_once(", ").unwrap_or((&value, ""));
         let border = rest
             .strip_prefix("all borders ")
@@ -224,7 +230,7 @@ pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>)> {
             .and_then(|pt| pt.parse::<f64>().ok())
             .filter(|pt| (0.25..=6.0).contains(pt))
             .map(|pt| (pt * 8.0).round() as u32);
-        return unquote(id).map(|id| (id, border));
+        return unquote(id).map(|id| (id, border, name));
     }
     None
 }

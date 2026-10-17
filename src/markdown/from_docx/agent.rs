@@ -780,7 +780,6 @@ pub(crate) fn runs(indices: &[usize]) -> Vec<(usize, usize)> {
 pub(crate) struct LineFacts<'a> {
     pub index: usize,
     pub style: Option<&'a str>,
-    pub default_style: Option<&'a str>,
     pub heading: Option<usize>,
     /// The list marker the converter computed (`1.`, `(a)`, `-`).
     pub marker: Option<&'a str>,
@@ -788,6 +787,10 @@ pub(crate) struct LineFacts<'a> {
     /// view prints no list indentation, since each id line ends the
     /// Markdown list.
     pub level: usize,
+    /// The paragraph's own `w:outlineLvl`, when no style carries the
+    /// level (`outline 2`): the `#` count alone would give the writer's
+    /// `HeadingN`.
+    pub outline: Option<usize>,
     pub page_break: bool,
     /// Accept-all or reject-all view: print the `rev` tags.
     pub resolved: bool,
@@ -1448,13 +1451,16 @@ pub(crate) fn line(head: &str, clauses: &[String]) -> String {
 }
 
 /// `<!-- p3 justify, first-line 0.5in, comments c5 -->` (the plan's grammar).
+/// A paragraph that states a style names it, the default too: the statement
+/// is the document's own, not the view's to drop (#528). A heading's own
+/// `HeadingN` with text needs no name, the `#` count says it; an empty
+/// paragraph has no `#`, so even that one is named.
 pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     let mut head = format!("p{}", f.index);
     if let Some(style) = f.style {
-        let implied = match f.heading {
-            Some(level) => style == format!("Heading{level}"),
-            None => Some(style) == f.default_style || style == "Normal",
-        };
+        let implied = !f.empty
+            && f.heading
+                .is_some_and(|level| style == format!("Heading{level}"));
         if !implied {
             head.push(' ');
             head.push_str(&crate::markdown::view_notes::style_token(style));
@@ -1462,6 +1468,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     let ppr = p.child("pPr");
     let mut clauses: Vec<String> = Vec::new();
+    if let Some(outline) = f.outline {
+        clauses.push(format!("outline {outline}"));
+    }
     if f.empty {
         clauses.push("empty".to_string());
     }
