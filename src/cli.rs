@@ -7,6 +7,8 @@
 pub use crate::edit::flags::FlagOp;
 /// Typed edit action grammar, independent of legacy flag grouping.
 pub mod edit_actions;
+/// Desired-text template generation grammar.
+pub mod edit_template;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -775,6 +777,14 @@ pub enum Command {
     #[command(name = "__edit-v2", hide = true, bin_name = "jubarte edit")]
     #[serde(rename = "edit")]
     TypedEdit(edit_actions::TypedEdit),
+    /// Generate a complete source-bound PlanV2 without applying edits.
+    #[command(
+        name = "__edit-template",
+        hide = true,
+        bin_name = "jubarte edit template"
+    )]
+    #[serde(rename = "edit")]
+    EditTemplate(edit_template::TemplateDispatch),
     /// Compare documents: print the redline as the agent view, or write it with -o.
     #[command(
         visible_alias = "redline",
@@ -1032,7 +1042,7 @@ pub enum Command {
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
         t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12\n\
-        (a revision).\n\nTyped actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
+        (a revision).\n\nTyped actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  jubarte edit template FILE --select p12,p20-p25 -o edits.json\n  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
@@ -2826,6 +2836,9 @@ fn validate_matches(
             ErrorKind::MissingRequiredArgument,
             "compare needs <MODIFIED> (or -m FILE)",
         ));
+    }
+    if name == "__edit-template" {
+        return edit_template::validate(args, command);
     }
     if name == "__edit-v2" {
         return edit_actions::validate(args, command);
