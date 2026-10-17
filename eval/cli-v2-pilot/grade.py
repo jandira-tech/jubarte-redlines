@@ -47,7 +47,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     runs_root = args.runs_root.resolve()
-    tasks = load_tasks(args.tasks_dir.resolve(), args.repo_root.resolve())
+    repo_root = args.repo_root.resolve()
+    tasks = load_tasks(args.tasks_dir.resolve(), repo_root)
     grader_binary = args.grader_binary.resolve()
 
     config_path = runs_root / "config.json"
@@ -65,7 +66,7 @@ def main(argv: list[str]) -> int:
             print(f"unknown task_id {run.task_id} in {runs_root}/runs.jsonl",
                   file=sys.stderr)
             return 1
-        grades.append(grade_one(run, task, grader_binary))
+        grades.append(grade_one(run, task, grader_binary, repo_root=repo_root))
 
     write_jsonl_atomic(runs_root / "grades.jsonl", grades)
     return 0

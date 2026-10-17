@@ -53,9 +53,62 @@ writes one `GradeRecord` per run with three independent axes:
   `JUBARTE_RESULT:` marker agree with what the artifact and the
   checks actually show?
 
-`report.py` writes a Markdown summary per arm and family, lists
-right-censored runs, and refuses to make any effect-size claim
-beyond what the counts show.
+The grading core also computes the **primary outcomes** the design
+requires (per
+[`docs/design/cli-v2/jubarte-cli-evidence-review.md`](../docs/design/cli-v2/jubarte-cli-evidence-review.md)
+section "Stage 3: release-relevant matched evaluation"):
+
+- **unintended_edits** — for every graded artifact, paragraphs
+  outside the task's declared targets whose final text differs
+  from the source (`harness.grading.compute_unintended_edits`).
+  The grader reads `jubarte read --json` against both the source
+  and the artifact with arm A's binary, aligns paragraphs by
+  position when their counts match (and by id otherwise; the
+  method and its positional-drift limit are documented in the
+  function docstring), and records each affected paragraph with
+  its before/after text. Per-run: the list of edits plus the
+  count. The target paragraph set is the union of the source
+  paragraphs matched by any `Selector.contains` in the task's
+  typed checks and any paragraph id named in the prompt
+  (`paragraph p6`, etc.).
+- **preservation** — pre-existing comments and tracked revisions
+  the task does not target that are no longer present in the
+  artifact (`harness.grading.compute_preservation_defects`).
+  Counts before/after, by id where the read view gives ids.
+  Settlement tasks (the `received_redline` family) intentionally
+  accept or reject the revisions and comments their prompt
+  names; those ids are pulled from the prompt text by regex and
+  excluded from the defect set. Every other pre-existing id
+  absent from the artifact is a defect.
+- **refusal_class** — one of `legitimate_refusal`,
+  `false_positive_refusal`, `nonexecution`, or
+  `false_negative_acceptance`
+  (`harness.grading.classify_refusal`):
+  - `legitimate_refusal` — the task is in the unsupported family
+    (or its typed checks include `no_artifact`) and the agent
+    refused with `JUBARTE_RESULT: failed|unsupported` and no
+    artifact;
+  - `false_positive_refusal` — a supported task with no artifact
+    and a refusal claim (the agent refused a valid request);
+  - `nonexecution` — no artifact and no claim, or right-censored
+    (timeout / cancelled); missing artifacts and censored runs
+    stay in every denominator;
+  - `false_negative_acceptance` — an artifact that fails a typed
+    check or has a preservation defect while the agent claims
+    `success`.
+
+`report.py` writes a Markdown summary per arm and family with three
+new sections: **Unintended edits and preservation defects per arm**
+and **per family and arm** (counts and number of runs that
+contributed), **Refusal classes per arm** (counts of each refusal
+class plus the overall total), and **Regression margin** (the gate
+described below). The report states pass/fail of the margin only;
+it does not claim an effect size. Missing artifacts and
+right-censored runs remain in every denominator. Rubric items stay
+`unassessed` until an external grader fills them; an LLM-rubric
+grade must be accompanied by an independent audit of an artifact
+sample (`docs/design/cli-v2/jubarte-cli-evidence-review.md`
+section "Stage 3").
 
 ## What is recorded
 
@@ -80,9 +133,10 @@ Every `RunRecord` carries:
 
 Every `GradeRecord` carries the per-check outcomes, the rubric items
 (`unassessed` unless filled in), the claim value, the claim
-accuracy, the grader binary's path and sha256, and the timestamp.
-Missing artifacts and right-censored runs stay in the ledger and in
-every denominator.
+accuracy, the grader binary's path and sha256, the per-run
+`unintended_edits` / `preservation_defects` lists and counts, the
+`refusal_class`, and the timestamp. Missing artifacts and
+right-censored runs stay in the ledger and in every denominator.
 
 ## The 12 held-out tasks
 
@@ -153,6 +207,19 @@ uv run python report.py \
     --output /tmp/pilot-runs/report.md
 ```
 
+`report.py` accepts two regression-margin parameters, both default
+to 0:
+
+- `--margin-unintended N` — arm B may exceed arm A by up to `N`
+  unintended edits across the pilot without failing the gate.
+- `--margin-preservation N` — same idea for preservation defects.
+
+The gate states pass/fail only; it never claims an effect size.
+Trials are expanded where release-relevant uncertainty remains
+(high unexplained counts in either arm, narrow cell coverage on
+the families that carry the change, or a refused / censored
+share that swallows the signal).
+
 The pilot writes:
 
 - `runs-root/config.json` — the bound `RunConfig` (seed, arms,
@@ -212,6 +279,9 @@ The suite covers:
 - `render_argv` placeholder substitution and `build_order` seed
   determinism
 - the grading per-check semantics, in isolation from the binary
+- the primary outcomes: unintended edits, preservation defects,
+  the four refusal classes, and the regression-margin gate
+  (`tests/test_outcomes.py`)
 - end-to-end `run.py → grade.py → report.py` with the stub agent
   and the real jubarte binary
 
@@ -230,7 +300,7 @@ eval/cli-v2-pilot/
 ├── stub_agent.py            # model-free reproducer
 ├── stub-agent.json          # agent config for the stub
 ├── run.py                   # pilot driver
-├── grade.py                 # three-axis grader (thin wrapper)
+├── grade.py                 # grader (thin wrapper around `harness.grading`)
 ├── report.py                # Markdown summary
 ├── agents/                  # sample agent configs (codex, pi, crush)
 ├── harness/                 # importable library
@@ -239,7 +309,17 @@ eval/cli-v2-pilot/
 │   ├── exec.py              # subprocess execution, capture, ledger append
 │   ├── ledger.py            # atomic JSONL writes
 │   ├── snapshot.py          # jubarte read/validate wrappers
-│   └── grading.py           # three-axis grading core
+│   └── grading.py           # grading core: three axes + unintended
+│                             # edits + preservation + refusal class + margin
 ├── tasks/                   # 12 held-out tasks (two per family)
 └── tests/                   # pytest suite
+    ├── test_exec.py
+    ├── test_grade.py
+    ├── test_harness_models.py
+    ├── test_ledger.py
+    ├── test_outcomes.py      # unintended edits, preservation, refusal, margin
+    ├── test_pipeline.py
+    ├── test_snapshot.py
+    ├── test_stub_agent.py
+    └── test_tasks.py
 ```

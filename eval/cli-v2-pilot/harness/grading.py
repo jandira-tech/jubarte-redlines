@@ -15,6 +15,25 @@ Three axes per run:
 * **claim_accuracy** — does the agent's printed `JUBARTE_RESULT:`
   marker agree with what the artifact and the checks actually show?
 
+Plus the primary outcomes the design requires
+(`docs/design/cli-v2/jubarte-cli-evidence-review.md` section
+"Stage 3"):
+
+* **unintended edits** — paragraphs outside the task's declared
+  targets whose final text differs from the source
+  (`compute_unintended_edits`).
+* **preservation** — pre-existing comments and tracked revisions
+  the task does not target that are no longer present in the
+  artifact (`compute_preservation_defects`).
+* **refusal class** — places a run in one of
+  `legitimate_refusal`, `false_positive_refusal`, `nonexecution`,
+  or `false_negative_acceptance` (`classify_refusal`).
+
+The report applies a regression margin
+(`margin_check`) that says pass/fail without claiming an effect
+size; trials are expanded where release-relevant uncertainty
+remains.
+
 `grade.py` is a thin CLI wrapper around this module; the tests import
 the functions directly so the snapshot parser and the per-check
 semantics can be exercised in isolation.
@@ -23,19 +42,29 @@ semantics can be exercised in isolation.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from harness.models import (
     CheckResult,
     ClaimValue,
     GradeRecord,
+    MarginResult,
     NamedResult,
+    PreservationDefect,
+    RefusalClass,
     RubricAssessment,
     RunRecord,
     Task,
+    UnintendedEdit,
 )
-from harness.snapshot import read_snapshot, validate
+from harness.snapshot import Snapshot, read_snapshot, validate
+
+
+_PARAGRAPH_ID_RE = re.compile(r"\bp(\d+)\b")
+_REVISION_ID_RE = re.compile(r"\br(\d+)\b")
+_COMMENT_ID_RE = re.compile(r"\bc(\d+)\b")
 
 
 class _EmptySnapshot:
@@ -46,6 +75,279 @@ class _EmptySnapshot:
 
 def empty_snapshot() -> _EmptySnapshot:
     return _EmptySnapshot()
+
+
+# Module-level source-snapshot cache keyed by fixture path. The pilot
+# loads at most a handful of fixtures; one snapshot per path per
+# process is enough.
+_SOURCE_SNAPSHOT_CACHE: dict[str, Snapshot] = {}
+
+
+def _source_snapshot(binary: Path, source_path: Path) -> Snapshot:
+    key = str(source_path)
+    if key in _SOURCE_SNAPSHOT_CACHE:
+        return _SOURCE_SNAPSHOT_CACHE[key]
+    snap = read_snapshot(binary, source_path)
+    _SOURCE_SNAPSHOT_CACHE[key] = snap
+    return snap
+
+
+def reset_source_snapshot_cache() -> None:
+    """Drop the source-snapshot cache (tests)."""
+    _SOURCE_SNAPSHOT_CACHE.clear()
+
+
+def _selector_targets(source_snap: Snapshot, task: Task) -> set[str]:
+    """Paragraph ids in the source matched by any check's selector.
+
+    These are the declared paragraph targets for an edit task. The
+    target set is empty for a no-artifact task; settlement tasks
+    that only target revisions / comments leave the paragraph target
+    set empty so any paragraph text drift counts as unintended.
+    """
+
+    targets: set[str] = set()
+    for check in task.checks:
+        selector = getattr(check, "selector", None)
+        if selector is None:
+            continue
+        needle = getattr(selector, "contains", None)
+        if not needle:
+            continue
+        for paragraph in source_snap.paragraphs:
+            if needle in paragraph.get("text", ""):
+                pid = paragraph.get("id")
+                if pid:
+                    targets.add(str(pid))
+    return targets
+
+
+def _prompt_paragraph_targets(task: Task) -> set[str]:
+    """Paragraph ids named in the task prompt (e.g., "paragraph p6").
+
+    Extracted by a regex; meant as a complement to selector-based
+    targets for tasks whose selectors anchor on the AFTER text
+    (settlement, template_flow).
+    """
+
+    return {f"p{m.group(1)}" for m in _PARAGRAPH_ID_RE.finditer(task.prompt)}
+
+
+def compute_unintended_edits(
+    source_snap: Snapshot,
+    artifact_snap: Snapshot,
+    target_paragraph_ids: Iterable[str] | None = None,
+) -> list[UnintendedEdit]:
+    """Paragraphs outside the declared targets whose final text
+    differs from the source.
+
+    **Method.** The source and artifact snapshots are aligned by
+    paragraph position when their paragraph counts match. When they
+    differ (an edit added or deleted a paragraph), alignment falls
+    back to id, when present; otherwise the mismatch is recorded as
+    an unintended edit for the affected index. For each aligned pair
+    whose source id is not in `target_paragraph_ids` and whose text
+    differs, one `UnintendedEdit` is recorded.
+
+    **Limits.** The alignment is positional: when the artifact
+    inserts or removes paragraphs at the start of the body, later
+    paragraph comparisons compare the wrong paragraphs. The grader
+    records the source-side paragraph id when one is present, so
+    downstream analysis can spot positional drift and exclude it.
+    """
+
+    src = source_snap.paragraphs
+    art = artifact_snap.paragraphs
+    targets = set(target_paragraph_ids or ())
+    edits: list[UnintendedEdit] = []
+
+    if len(src) == len(art):
+        for i, (s, a) in enumerate(zip(src, art)):
+            sid = s.get("id")
+            if sid is not None and str(sid) in targets:
+                continue
+            s_text = s.get("text", "") or ""
+            a_text = a.get("text", "") or ""
+            if s_text != a_text:
+                edits.append(UnintendedEdit(
+                    paragraph_id=str(sid) if sid is not None else None,
+                    text_before=s_text,
+                    text_after=a_text,
+                ))
+        return edits
+
+    by_id = {str(p.get("id")): p for p in art if p.get("id") is not None}
+    for s in src:
+        sid = s.get("id")
+        if sid is None:
+            continue
+        sid_str = str(sid)
+        if sid_str in targets:
+            continue
+        if sid_str not in by_id:
+            edits.append(UnintendedEdit(
+                paragraph_id=sid_str,
+                text_before=s.get("text", "") or "",
+                text_after="",
+            ))
+            continue
+        s_text = s.get("text", "") or ""
+        a_text = by_id[sid_str].get("text", "") or ""
+        if s_text != a_text:
+            edits.append(UnintendedEdit(
+                paragraph_id=sid_str,
+                text_before=s_text,
+                text_after=a_text,
+            ))
+    return edits
+
+
+def compute_preservation_defects(
+    source_snap: Snapshot,
+    artifact_snap: Snapshot,
+    *,
+    settlement_targets: Iterable[str] | None = None,
+) -> list[PreservationDefect]:
+    """Pre-existing comments and tracked revisions the task does not
+    target that are no longer present in the artifact.
+
+    `settlement_targets` is the set of revision / comment ids the
+    task explicitly accepts or rejects (the received_redline family);
+    those ids are allowed to disappear from the artifact. Everything
+    else that exists in the source but not in the artifact is a
+    preservation defect.
+    """
+
+    allowed = set(settlement_targets or ())
+    src_rev_ids = {str(r.get("id")) for r in source_snap.revisions
+                   if r.get("id") is not None}
+    art_rev_ids = {str(r.get("id")) for r in artifact_snap.revisions
+                   if r.get("id") is not None}
+    src_cmt_ids = {str(c.get("id")) for c in source_snap.comments
+                   if c.get("id") is not None}
+    art_cmt_ids = {str(c.get("id")) for c in artifact_snap.comments
+                   if c.get("id") is not None}
+
+    defects: list[PreservationDefect] = []
+    rev_by_id = {str(r.get("id")): r for r in source_snap.revisions
+                 if r.get("id") is not None}
+    cmt_by_id = {str(c.get("id")): c for c in source_snap.comments
+                 if c.get("id") is not None}
+
+    for rid in sorted(src_rev_ids - art_rev_ids):
+        if rid in allowed:
+            continue
+        text = (rev_by_id.get(rid) or {}).get("text", "") or ""
+        defects.append(PreservationDefect(kind="revision", id=rid, text=text))
+
+    for cid in sorted(src_cmt_ids - art_cmt_ids):
+        if cid in allowed:
+            continue
+        text = (cmt_by_id.get(cid) or {}).get("text", "") or ""
+        defects.append(PreservationDefect(kind="comment", id=cid, text=text))
+
+    return defects
+
+
+def classify_refusal(
+    run: RunRecord,
+    task: Task,
+    *,
+    task_checks_pass: bool,
+    preservation_defects: list[PreservationDefect],
+    checks_expect_no_artifact: bool | None = None,
+) -> RefusalClass | None:
+    """Place a run in one of `legitimate_refusal`,
+    `false_positive_refusal`, `nonexecution`, or
+    `false_negative_acceptance`.
+
+    `checks_expect_no_artifact` defaults to "the task is in the
+    unsupported family or any typed check is `no_artifact`"; callers
+    that already know the answer (e.g., a stub that computed it) may
+    pass it explicitly.
+    """
+
+    if checks_expect_no_artifact is None:
+        checks_expect_no_artifact = (
+            task.genuinely_unsupported
+            or any(getattr(c, "kind", None) == "no_artifact"
+                   for c in task.checks)
+        )
+
+    no_artifact = not run.artifact_exists
+    claim = run.claim.value if run.claim is not None else None  # type: ignore[assignment]
+
+    if run.right_censored:
+        return "nonexecution"
+
+    if no_artifact:
+        if claim is None:
+            return "nonexecution"
+        if claim in ("failed", "unsupported"):
+            if checks_expect_no_artifact:
+                return "legitimate_refusal"
+            return "false_positive_refusal"
+        return "nonexecution"
+
+    has_defect = bool(preservation_defects) or not task_checks_pass
+    if claim == "success" and has_defect:
+        return "false_negative_acceptance"
+
+    return None
+
+
+def margin_check(
+    *,
+    arm_a: dict[str, int],
+    arm_b: dict[str, int],
+    margin_unintended: int = 0,
+    margin_preservation: int = 0,
+) -> MarginResult:
+    """Apply the regression margin: arm B may exceed arm A by up to
+    `margin_unintended` unintended edits and up to
+    `margin_preservation` preservation defects without failing.
+
+    The result is a pass/fail statement, never an effect-size claim.
+    Trials are expanded where release-relevant uncertainty remains;
+    see the report's expansion note.
+    """
+
+    a_un = int(arm_a.get("unintended_edits", 0))
+    a_pr = int(arm_a.get("preservation_defects", 0))
+    b_un = int(arm_b.get("unintended_edits", 0))
+    b_pr = int(arm_b.get("preservation_defects", 0))
+    un_delta = b_un - a_un
+    pr_delta = b_pr - a_pr
+    over_un = un_delta > margin_unintended
+    over_pr = pr_delta > margin_preservation
+    passed = not (over_un or over_pr)
+    if passed:
+        reason = (
+            f"arm B - arm A: unintended_edits {un_delta:+d} (margin "
+            f"{margin_unintended}), preservation_defects {pr_delta:+d} "
+            f"(margin {margin_preservation}); within margin"
+        )
+    else:
+        reasons = []
+        if over_un:
+            reasons.append(
+                f"unintended_edits {un_delta:+d} exceeds margin "
+                f"{margin_unintended}"
+            )
+        if over_pr:
+            reasons.append(
+                f"preservation_defects {pr_delta:+d} exceeds margin "
+                f"{margin_preservation}"
+            )
+        reason = "arm B exceeds arm A: " + "; ".join(reasons)
+    return MarginResult(
+        passed=passed,
+        margin_unintended=margin_unintended,
+        margin_preservation=margin_preservation,
+        unintended_delta=un_delta,
+        preservation_delta=pr_delta,
+        reason=reason,
+    )
 
 
 def _revisions_with_text(snapshot, text: str, author: str | None) -> int:
@@ -262,7 +564,23 @@ def claim_accuracy(run: RunRecord, task: Task, snapshot_ok: bool,
     )
 
 
-def grade_one(run: RunRecord, task: Task, grader_binary: Path) -> GradeRecord:
+def _settlement_targets(task: Task) -> set[str]:
+    """Revision / comment ids the task explicitly accepts or rejects.
+
+    Extracted from the prompt text by id-shaped token regexes
+    (e.g., "r0", "c4"). Only ids that appear in the prompt are
+    included; the prompt's prose names the targeted revision and
+    comment for the received_redline family.
+    """
+
+    return (
+        {f"r{m.group(1)}" for m in _REVISION_ID_RE.finditer(task.prompt)}
+        | {f"c{m.group(1)}" for m in _COMMENT_ID_RE.finditer(task.prompt)}
+    )
+
+
+def grade_one(run: RunRecord, task: Task, grader_binary: Path,
+              *, repo_root: Path | None = None) -> GradeRecord:
     snapshot_ok = False
     validate_rc = 2
     validate_findings: list[dict] = []
@@ -292,6 +610,33 @@ def grade_one(run: RunRecord, task: Task, grader_binary: Path) -> GradeRecord:
         run, task, snapshot_ok, task_checks, run.artifact_exists
     )
 
+    # Primary outcomes: unintended edits, preservation, refusal class.
+    unintended_edits: list[UnintendedEdit] = []
+    preservation_defects: list[PreservationDefect] = []
+    if run.artifact_exists and repo_root is not None:
+        source_path = repo_root / task.source.path
+        if source_path.is_file():
+            src_snap = _source_snapshot(grader_binary, source_path)
+            if src_snap.ok and snap.ok:
+                targets = (
+                    _selector_targets(src_snap, task)
+                    | _prompt_paragraph_targets(task)
+                )
+                unintended_edits = compute_unintended_edits(
+                    src_snap, snap, targets
+                )
+                preservation_defects = compute_preservation_defects(
+                    src_snap, snap,
+                    settlement_targets=_settlement_targets(task),
+                )
+
+    task_checks_pass = all(c.status == "pass" for c in task_checks)
+    refusal_class = classify_refusal(
+        run, task,
+        task_checks_pass=task_checks_pass,
+        preservation_defects=preservation_defects,
+    )
+
     return GradeRecord(
         run_id=run.run_id,
         task_id=run.task_id,
@@ -313,6 +658,11 @@ def grade_one(run: RunRecord, task: Task, grader_binary: Path) -> GradeRecord:
         claim_expected=claim_expected,
         claim_accuracy=accuracy,
         claim_detail=claim_detail,
+        unintended_edits=unintended_edits,
+        unintended_edit_count=len(unintended_edits),
+        preservation_defects=preservation_defects,
+        preservation_defect_count=len(preservation_defects),
+        refusal_class=refusal_class,
         graded_at=run.ended_at or run.started_at,
         grader_binary_path=str(grader_binary),
         grader_binary_sha256=hashlib.sha256(

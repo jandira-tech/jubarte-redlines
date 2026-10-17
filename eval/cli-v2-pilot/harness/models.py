@@ -44,6 +44,21 @@ FAMILIES: tuple[Family, ...] = (
 ClaimValue = Literal["success", "unsupported", "failed"]
 StopReason = Literal["exit", "timeout", "cancelled"]
 
+# Primary outcomes beyond the three-axis grade
+# (docs/design/cli-v2/jubarte-cli-evidence-review.md section "Stage 3").
+RefusalClass = Literal[
+    "legitimate_refusal",
+    "false_positive_refusal",
+    "nonexecution",
+    "false_negative_acceptance",
+]
+REFUSAL_CLASSES: tuple[RefusalClass, ...] = (
+    "legitimate_refusal",
+    "false_positive_refusal",
+    "nonexecution",
+    "false_negative_acceptance",
+)
+
 
 class FixtureRef(BaseModel):
     """A docx already in this repository, pinned by relative path and sha256."""
@@ -296,6 +311,30 @@ class CheckResult(BaseModel):
     detail: str
 
 
+class UnintendedEdit(BaseModel):
+    """One artifact paragraph outside the task's declared targets whose
+    final text differs from the source.
+
+    `paragraph_id` is the source-side paragraph id when present; the
+    alignment method (by position with the same paragraph count,
+    otherwise by id) is documented in `grading.compute_unintended_edits`.
+    """
+
+    paragraph_id: str | None
+    text_before: str
+    text_after: str
+
+
+class PreservationDefect(BaseModel):
+    """A pre-existing comment or tracked revision the task did not
+    target that is no longer present in the artifact (counts before /
+    after, by id where the read view gives ids)."""
+
+    kind: Literal["comment", "revision"]
+    id: str
+    text: str
+
+
 class NamedResult(BaseModel):
     name: str
     status: Literal["pass", "fail", "error", "not_run"]
@@ -310,7 +349,8 @@ class RubricAssessment(BaseModel):
 
 
 class GradeRecord(BaseModel):
-    """The three-axis grade for one run.
+    """The three-axis grade for one run, plus the primary outcomes the
+    design requires.
 
     tool_correctness asks whether declared operations were realized or
     correctly refused (artifact-level CLI checks); task_completion asks
@@ -318,6 +358,10 @@ class GradeRecord(BaseModel):
     unless an external grader supplies them); claim_accuracy asks whether
     the final response's success/failure/unsupported claim matches the
     artifact and the checks.
+
+    `unintended_edits`, `preservation_defects`, and `refusal_class` add
+    the primary outcomes (unintended edits, preservation, refusal
+    classification) the design requires alongside the three axes.
     """
 
     schema_version: int = SCHEMA_VERSION
@@ -337,9 +381,33 @@ class GradeRecord(BaseModel):
     claim_expected: ClaimValue
     claim_accuracy: Literal["accurate", "inaccurate", "missing"]
     claim_detail: str
+    unintended_edits: list[UnintendedEdit] = Field(default_factory=list)
+    unintended_edit_count: int = 0
+    preservation_defects: list[PreservationDefect] = Field(default_factory=list)
+    preservation_defect_count: int = 0
+    refusal_class: RefusalClass | None = None
     graded_at: str
     grader_binary_path: str
     grader_binary_sha256: str
+
+
+class MarginResult(BaseModel):
+    """The pass/fail result of the regression-margin gate.
+
+    The margin is a configured allowance (default 0 in both axes):
+    arm B may exceed arm A by up to `margin_unintended` unintended
+    edits and up to `margin_preservation` preservation defects
+    without failing the gate. A positive `passed=False` is not an
+    effect-size claim; it says only that the configured margin was
+    exceeded.
+    """
+
+    passed: bool
+    margin_unintended: int
+    margin_preservation: int
+    unintended_delta: int
+    preservation_delta: int
+    reason: str
 
 
 def canonical_task_sha256(task: Task) -> str:
