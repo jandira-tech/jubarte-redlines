@@ -3385,9 +3385,15 @@ impl Writer<'_> {
             return;
         }
         // The box's words are document text: they print as the blocks
-        // after the anchor, and the payload keeps the frame only when the
-        // blocks say the box whole.
-        let story = self.story.is_none() && self.box_blocks(element, extra);
+        // after the anchor. The payload drops them where the view's write
+        // can refill them: the agent view's id lines bound the story, and
+        // a plain view writes no box content exact — its blocks are the
+        // write — so its payload drops them too, or they would write
+        // twice. A box with a change of its own keeps its words where the
+        // id lines bound the story: its blocks print without the change's
+        // own mark, so only the payload says it whole.
+        self.box_blocks(element, extra);
+        let story = self.story.is_none() && (!self.agent || !holds_boxed_change(element));
         let mut plain_image = false;
         if drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
@@ -3425,11 +3431,7 @@ impl Writer<'_> {
     /// `mc:AlternateContent`, only the shown branch's, never the
     /// `mc:Fallback` copy — each printed as a block of `extra`: the box's
     /// words, where a reader reads them and an edit lands (#1101 A).
-    /// `false` when the blocks cannot carry the box whole — a tracked
-    /// change of its own, which prints without its own mark, or a Word
-    /// `Fallback` twin — so the payload keeps the words and the write
-    /// stays exact.
-    fn box_blocks(&mut self, element: &Element, extra: &mut Vec<String>) -> bool {
+    fn box_blocks(&mut self, element: &Element, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
         let root = match element
             .child("Choice")
@@ -3440,7 +3442,7 @@ impl Writer<'_> {
         };
         root.find_all("txbxContent", &mut boxes);
         if boxes.is_empty() {
-            return false;
+            return;
         }
         let open_comments = std::mem::take(&mut self.open_comments);
         let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
@@ -3454,7 +3456,6 @@ impl Writer<'_> {
         self.in_box = in_box;
         self.open_comments = open_comments;
         self.hidden_ranges = hidden_ranges;
-        !holds_boxed_change(element)
     }
 
     /// A drawing's printable content inside a comment or a drawn text box:
