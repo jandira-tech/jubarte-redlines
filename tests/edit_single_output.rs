@@ -873,6 +873,37 @@ fn a_typed_route_refuses_a_source_changed_after_staging() {
     }
 }
 
+/// The template route publishes its plan through the same recheck: a source
+/// changed after staging publishes no plan.
+#[cfg(unix)]
+#[test]
+fn edit_template_refuses_a_source_changed_after_staging() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    let replacement = docx(&para("A different named source."));
+    let mut injected = false;
+    let args: Vec<std::ffi::OsString> = ["edit", "template", "a.docx", "-o", "plan.json", "--json"]
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect();
+    let out = publication_hook(dir, &args, |phase, _| {
+        if phase == "staged" {
+            std::fs::write(dir.join("a.docx"), &replacement).unwrap();
+            injected = true;
+        }
+    });
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(injected, "the source mutation ran: {stdout}");
+    let envelope: serde_json::Value = serde_json::from_str(stdout.trim()).expect("envelope");
+    assert_eq!(envelope["error"]["code"], "STALE_SOURCE", "{stdout}");
+    assert_eq!(
+        envelope["error"]["commit_state"], "not_committed",
+        "{stdout}"
+    );
+    assert!(written(dir).is_empty(), "{:?}", written(dir));
+}
+
 /// C1: an entry created after the last taken check must not be clobbered.
 #[cfg(unix)]
 #[test]

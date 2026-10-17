@@ -185,13 +185,15 @@ fn generate(
     if let Some((path, bytes)) = options.report.as_ref().zip(report.as_ref()) {
         outputs.push((path.clone(), bytes.as_slice()));
     }
-    publish_files(&outputs).map_err(|message| {
-        Box::new(
-            Error::new("IO_ERROR")
-                .with_message(message)
-                .with_commit_state(CommitState::Unknown),
-        )
-    })?;
+    publish_files(
+        &outputs,
+        &Recheck {
+            force: options.force,
+            alias: &|path| refuse_output_alias(path, &[(options.file.as_path(), "the source")]),
+            source: &|| recheck_edit_source(&options.file, source),
+        },
+    )
+    .map_err(edit_typed::publish_failure)?;
     Ok((receipt, output.is_none().then_some(bytes)))
 }
 
