@@ -458,6 +458,11 @@ fn anchor_refusals_name_missing_targets_and_keep_argv_structured() {
     assert_eq!(refused.code, "OVERLAPPING_EDITS");
     assert_eq!(refused.matches, Some(2));
     assert_eq!(
+        refused.message,
+        "\"ee\" occurs 2 times in p2 and those ranges overlap, so none of them is replaced"
+    );
+    assert!(!refused.message.contains("all-matches"));
+    assert_eq!(
         refused.source_digest.as_deref(),
         Some(source_sha256(&source).as_str())
     );
