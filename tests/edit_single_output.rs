@@ -275,6 +275,30 @@ fn the_bundle_says_wrote_on_stderr() {
     assert!(!out.contains("\nwrote "), "{out}");
 }
 
+/// #568: the view's `source:` line and the bundle's report name the
+/// written files with `/` on every OS — an agent reads them back —
+/// whatever spelling FILE was given in. `d\a.docx` is a Windows path;
+/// on a Unix it is one odd file name, so the test runs on both.
+#[test]
+fn the_views_source_line_spells_paths_with_forward_slashes() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir);
+    std::fs::create_dir_all(dir.join("d")).unwrap();
+    std::fs::rename(dir.join("a.docx"), dir.join("d\\a.docx")).unwrap();
+    let edit = ["edit", "d\\a.docx", "-p", "p1", "--content", "New line."];
+    let (code, out, err) = run(dir, &edit);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("\nsource: d/a_modified.docx\n"), "{out}");
+    let mut bundle = edit.to_vec();
+    bundle.push("--out-dir");
+    let (code, out, err) = run(dir, &bundle);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("\nsource: d/a.edit/redline.docx\n"), "{out}");
+    let report = std::fs::read_to_string(dir.join("d\\a.edit").join("report.jsonl")).unwrap();
+    assert!(report.contains("\"dir\":\"d/a.edit\""), "{report}");
+}
+
 /// zcode-13b F1: the advice names the extension as typed.
 #[test]
 fn a_text_output_is_refused_naming_its_own_extension() {
