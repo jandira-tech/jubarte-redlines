@@ -326,7 +326,9 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - `outline {n}` prints when the paragraph states its `w:outlineLvl` with
   no style at all: `# Text` alone would give the writer's `HeadingN`
   where the document had none (the writer then writes the `w:outlineLvl`
-  alone).
+  alone). `n` runs 1 to 9; past the heading styles (`outline 7` to
+  `outline 9`) no `#` count reaches the level, so the paragraph stays
+  body text and the clause alone carries it.
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches, with as many decimals (two to four) as it takes to
@@ -442,7 +444,17 @@ line of the legend ends `, named Normal Table` the same way when the
 style's name is not the one the writer would give its id; a style the
 writer knows as Word's own (Table Grid, the Grid and List Tables, the
 older Light Shading and Medium List families) needs no `named`, and is
-written as Word defines it, shading bands and all. Converting the
+written as Word defines it, shading bands and all — but its `named`,
+when the view gives one, renames it: the document renamed the built-in.
+A table style's name that holds a comma or a quote quotes in the legend
+(`named "Foo, named Bar"`, a JSON string), so the clause's grammar
+stays unambiguous — and the writer writes no comma into a style's
+`w:name` (Word forbids one, reading it as an alias list): the comma
+becomes a space, and the conversion says so in a warning.
+When the tables differ the legend is plural, one entry per style in
+first-use order (`tables: TableNormal, Ledger, borders vary`), each
+entry saying what the singular `table:` line says (the borders clause,
+the name). Converting the
 view back defines each style as its line says, and a style Word knows
 (`ListParagraph`, `Quote`) keeps Word's own gallery settings.
 

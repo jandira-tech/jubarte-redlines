@@ -2000,16 +2000,20 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
+                    // The singular legend's word for the style, else the
+                    // plural `tables:` line's entry for it.
                     let legend = self
                         .document
                         .table_style
                         .as_ref()
-                        .filter(|(legend, ..)| legend == id);
-                    let border = legend.and_then(|(_, border, _)| *border);
+                        .filter(|(legend, ..)| legend == id)
+                        .map(|(_, border, name)| (*border, name.clone()))
+                        .or_else(|| self.document.table_legend.get(id).cloned());
+                    let border = legend.as_ref().and_then(|(border, _)| *border);
                     // Word's thin Table Grid, unless the legend gives it a
                     // border or a name of its own (`TableGrid, all borders
                     // 1.5pt`, `TableGrid, named …`).
-                    let name = legend.and_then(|(_, _, name)| name.clone());
+                    let name = legend.and_then(|(_, name)| name);
                     if id == "TableGrid" && border.is_none_or(|sz| sz == 4) && name.is_none() {
                         self.document.styles.insert("TableGrid");
                     } else {
@@ -2548,7 +2552,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 // writer's `HeadingN` must not step in where the document
                 // had none.
                 paragraph.style = None;
-                // The clause's bound is 1..=6, so the level cannot be empty.
+                // The clause's bound is 1..=9, so the level cannot be empty.
                 paragraph.outline = outline.checked_sub(1).map(|level| level as usize);
             }
             paragraph.align = line.align.or(paragraph.align);
@@ -4065,6 +4069,29 @@ impl<'o, 'a> Writer<'o, 'a> {
             );
         }
         self.document.table_style = view_styles::table_style(text);
+        self.document.table_legend = view_styles::table_legend(text);
+        // A legend name that holds a comma cannot be a `w:name` (Word
+        // reads one as the start of an alias list), so the writer replaces
+        // it with a space and says so (#549).
+        for (id, name) in self
+            .document
+            .table_style
+            .iter()
+            .filter_map(|(id, _, name)| name.as_ref().map(|name| (id, name)))
+            .chain(
+                self.document
+                    .table_legend
+                    .iter()
+                    .filter_map(|(id, (_, name))| name.as_ref().map(|name| (id, name))),
+            )
+            .filter(|(_, name)| name.contains(','))
+        {
+            self.document.warnings.push(format!(
+                "table: {id}, named {name}: a style's w:name holds no comma, \
+                 so it is written '{}'",
+                name.replace(',', " ")
+            ));
+        }
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
         if let Some((id, None, _)) = &self.document.table_style

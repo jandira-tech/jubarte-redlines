@@ -332,6 +332,10 @@ pub(super) struct Document {
     /// with the name the view gives the style when it differs from the
     /// writer's own (`named …`).
     pub table_style: Option<(String, Option<u32>, Option<String>)>,
+    /// The `tables:` legend's entries, keyed by style id: a document
+    /// whose tables differ, each with the border and the name its entry
+    /// states.
+    pub table_legend: BTreeMap<String, (Option<u32>, Option<String>)>,
     /// Table styles Word has no definition of here, each with the border
     /// the legend gives it and the name the view says, when it does:
     /// defined by name.

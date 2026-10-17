@@ -543,5 +543,141 @@ fn words_older_table_styles_get_their_own_names() {
             "{definition}"
         );
     }
+    // The written styles are Word's own definitions, borders and all, so
+    // the second legend says them (`borders vary`) where the document's
+    // bare definitions said nothing: the plural legend tells the truth
+    // about the docx it describes (#549).
+    assert!(
+        second.contains("tables: MediumList2, borders vary, LightShading-Accent1, borders vary"),
+        "{second}"
+    );
+}
+
+/// The plural `tables:` legend carries each style's name and borders as
+/// the singular `table:` line does: a styled table beside an unstyled one
+/// (or any two styles) must not drop them, for the writer would name the
+/// style by its id (#549).
+#[test]
+fn the_plural_tables_legend_carries_each_styles_name() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="X"><w:name w:val="X Name"/><w:basedOn w:val="TableNormal"/></w:style></w:styles>"#,
+        jubarte::namespaces::W::URI
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let body = format!(
+        "{}{}",
+        table(r#"<w:tblStyle w:val="X"/>"#),
+        table(r#"<w:tblStyle w:val="TableNormal"/>"#)
+    );
+    let docx = common::docx::docx_with(&body, &parts);
+    let (first, again, second) = round_trip(&docx);
+    assert!(
+        first.contains("tables: X, named X Name, TableNormal"),
+        "{first}"
+    );
+    let written = part(&again, "word/styles.xml");
+    let definition = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"X\""))
+        .unwrap_or_else(|| panic!("no style X: {written}"));
+    assert!(
+        definition.contains(r#"<w:name w:val="X Name"/>"#),
+        "{definition}"
+    );
     assert_eq!(second, first);
+}
+
+/// A `named` clause on one of Word's own table-style ids renames Word's
+/// template: the document renamed the built-in (`GridTable2` named
+/// `My Grid`), and the writer writes the document's name, not Word's
+/// (#549).
+#[test]
+fn a_named_built_in_table_style_keeps_the_documents_name() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="GridTable2"><w:name w:val="My Grid"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="8"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="8"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="8"/></w:tblBorders></w:tblPr></w:style></w:styles>"#,
+        jubarte::namespaces::W::URI
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let docx = common::docx::docx_with(&table(r#"<w:tblStyle w:val="GridTable2"/>"#), &parts);
+    let (first, again, second) = round_trip(&docx);
+    assert!(
+        first.contains("table: GridTable2, borders vary, named My Grid"),
+        "{first}"
+    );
+    let written = part(&again, "word/styles.xml");
+    let definition = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"GridTable2\""))
+        .unwrap_or_else(|| panic!("no GridTable2: {written}"));
+    assert!(
+        definition.contains(r#"<w:name w:val="My Grid"/>"#),
+        "{definition}"
+    );
+    assert!(!definition.contains("Grid Table 2"), "{definition}");
+    assert_eq!(second, first);
+}
+
+/// A table style's name that holds the `named` separator or a comma
+/// quotes in the legend (`named "Foo, named Bar"`), so the clause's
+/// grammar stays unambiguous, and the writer writes no comma into
+/// `w:name` — Word forbids one there — replacing it with a space and
+/// saying so in a warning (#549).
+#[test]
+fn table_style_names_with_commas_quote_and_sanitize() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="X"><w:name w:val="Foo, named Bar"/><w:basedOn w:val="TableNormal"/></w:style><w:style w:type="table" w:styleId="Y"><w:name w:val="A, Comma"/><w:basedOn w:val="TableNormal"/></w:style></w:styles>"#,
+        jubarte::namespaces::W::URI
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let body = format!(
+        "{}{}",
+        table(r#"<w:tblStyle w:val="X"/>"#),
+        table(r#"<w:tblStyle w:val="Y"/>"#)
+    );
+    let docx = common::docx::docx_with(&body, &parts);
+    let first_view = view(&docx);
+    assert!(
+        first_view.contains(r#"tables: X, named "Foo, named Bar", Y, named "A, Comma""#),
+        "{first_view}"
+    );
+    let (first, again, second) = round_trip(&docx);
+    let written = part(&again, "word/styles.xml");
+    assert!(
+        written.contains(r#"<w:name w:val="Foo  named Bar"/>"#),
+        "{written}"
+    );
+    assert!(
+        written.contains(r#"<w:name w:val="A  Comma"/>"#),
+        "{written}"
+    );
+    assert!(!written.contains("A, Comma"), "{written}");
+    assert!(second.contains("named Foo  named Bar"), "{second}");
+    assert!(second.contains("named A  Comma"), "{second}");
+    // The writer says what it did to each name.
+    let converted = markdown_to_docx(&first, &DocxOptions::default()).expect("the view reads");
+    for name in ["Foo, named Bar", "A, Comma"] {
+        assert!(
+            converted.warnings.iter().any(|w| w.contains(name)),
+            "no warning names {name}: {:?}",
+            converted.warnings
+        );
+    }
 }

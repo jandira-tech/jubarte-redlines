@@ -501,6 +501,34 @@ fn separators_only(xml: &str) -> String {
     }
 }
 
+/// The table style `xml` with its `w:name` replaced by `name`: a
+/// built-in template keeps Word's definition, the name is the
+/// document's own.
+fn renamed(xml: &str, name: &str) -> String {
+    const OPEN: &str = "<w:name w:val=\"";
+    let Some(at) = xml.find(OPEN) else {
+        return xml.to_string();
+    };
+    let value = at + OPEN.len();
+    let Some(end) = xml[value..].find('"').map(|e| value + e) else {
+        return xml.to_string();
+    };
+    format!(
+        "{}{}{}",
+        &xml[..value],
+        escape(&word_name(name)),
+        &xml[end..]
+    )
+}
+
+/// The `w:name` value for `name`: no comma, which `w:name` forbids
+/// (`[^,]*`; Word reads one as the start of an alias list), so every
+/// docx the writer makes is Word-valid. The comma becomes a space, as
+/// the paragraph styles' names do.
+fn word_name(name: &str) -> String {
+    name.replace(',', " ")
+}
+
 /// `styles` with a definition for each table style the view names that it
 /// lacks: one of Word's built-in Grid and List Tables as Word defines it,
 /// its colours from `theme`; else the name is the view's (`named …`),
@@ -516,6 +544,12 @@ fn with_table_styles(
         .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
         .map(|(id, (border, name))| {
             if let Some(style) = built_in_table_style(id, theme) {
+                // The legend's `named` renames even Word's own template:
+                // the document renamed the built-in, and the name is its
+                // (#549).
+                if let Some(name) = name {
+                    return renamed(&style, name);
+                }
                 return style;
             }
             let borders = (*border).map_or_else(String::new, |sz| {
@@ -535,7 +569,7 @@ fn with_table_styles(
                 "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
                  <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
                 id = escape(id),
-                name = escape(&name)
+                name = escape(&word_name(&name))
             )
         })
         .collect();
