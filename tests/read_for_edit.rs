@@ -866,3 +866,349 @@ mod selection_grammar {
         assert_eq!(ids, ["p1", "p2"]);
     }
 }
+
+mod cursor_basis {
+    use super::*;
+
+    fn document() -> Vec<u8> {
+        docx(&format!(
+            "{}{}{}",
+            PENDING,
+            PENDING
+                .replace("w:id=\"8\"", "w:id=\"10\"")
+                .replace("w:id=\"7\"", "w:id=\"9\""),
+            para("Governing law: Delaware.")
+        ))
+    }
+
+    fn request() -> ForEditRequest {
+        ForEditRequest {
+            select: Some("p0-p1".to_string()),
+            limit: Some(1),
+            ..ForEditRequest::default()
+        }
+    }
+
+    fn refuses_changed_basis(original: &ForEditRequest, changed: &ForEditRequest) {
+        let doc = document();
+        let first = for_edit(&doc, original).unwrap();
+        let cursor = first.next_cursor.expect("the first page continues");
+        let same = for_edit(
+            &doc,
+            &ForEditRequest {
+                cursor: Some(cursor.clone()),
+                ..original.clone()
+            },
+        )
+        .expect("an unchanged basis continues");
+        assert_eq!(same.paragraphs[0].target.short_id, "p1");
+        let error = for_edit(
+            &doc,
+            &ForEditRequest {
+                cursor: Some(cursor),
+                ..changed.clone()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "CURSOR_BASIS_CHANGED");
+    }
+
+    #[test]
+    fn accept_decisions_bind_the_cursor() {
+        let original = request();
+        let mut changed = original.clone();
+        changed.accept = vec!["r7".to_string()];
+        refuses_changed_basis(&original, &changed);
+    }
+
+    #[test]
+    fn reject_decisions_bind_the_cursor() {
+        let original = request();
+        let mut changed = original.clone();
+        changed.reject = vec!["r7".to_string()];
+        refuses_changed_basis(&original, &changed);
+    }
+
+    #[test]
+    fn existing_revision_policy_binds_the_cursor() {
+        let original = request();
+        for policy in [ExistingRevisions::Accept, ExistingRevisions::Reject] {
+            let mut changed = original.clone();
+            changed.existing_revisions = policy;
+            refuses_changed_basis(&original, &changed);
+        }
+    }
+
+    #[test]
+    fn selection_binds_the_cursor() {
+        let original = request();
+        let mut changed = original.clone();
+        changed.select = Some("p1-p2".to_string());
+        refuses_changed_basis(&original, &changed);
+    }
+
+    fn same_membership(original: &ForEditRequest, changed: &ForEditRequest) {
+        let doc = document();
+        let ids = |request: &ForEditRequest| {
+            for_edit(
+                &doc,
+                &ForEditRequest {
+                    all: true,
+                    ..request.clone()
+                },
+            )
+            .unwrap()
+            .paragraphs
+            .into_iter()
+            .map(|row| row.target.short_id)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(original),
+            ids(changed),
+            "only the filter changes, not membership"
+        );
+        refuses_changed_basis(original, changed);
+    }
+
+    macro_rules! filter_test {
+        ($name:ident, $field:ident, $value:expr $(, $base_field:ident, $base_value:expr)?) => {
+            #[test]
+            fn $name() {
+                let original = ForEditRequest {
+                    $($base_field: $base_value,)?
+                    ..request()
+                };
+                let changed = ForEditRequest { $field: $value, ..original.clone() };
+                same_membership(&original, &changed);
+            }
+        };
+    }
+
+    filter_test!(
+        selector_spelling_binds_the_cursor,
+        select,
+        Some("p0,p1".to_string())
+    );
+    filter_test!(story_binds_the_cursor, story, Some("body".to_string()));
+    filter_test!(head_binds_the_cursor, head, Some(2));
+    filter_test!(tail_binds_the_cursor, tail, Some(3));
+    filter_test!(find_binds_the_cursor, find, Some("Payment".to_string()));
+    filter_test!(regex_binds_the_cursor, regex, Some("Payment".to_string()));
+    filter_test!(
+        ignore_case_binds_the_cursor,
+        ignore_case,
+        true,
+        find,
+        Some("Payment".to_string())
+    );
+    filter_test!(changed_binds_the_cursor, changed, true);
+    filter_test!(
+        by_binds_the_cursor,
+        by,
+        Some("Other".to_string()),
+        changed,
+        true
+    );
+    filter_test!(
+        by_any_binds_the_cursor,
+        by_any,
+        vec!["Other".to_string()],
+        changed,
+        true
+    );
+    filter_test!(context_binds_the_cursor, context, 1);
+}
+
+mod cli_policy {
+    use super::*;
+    use std::process::{Command, Output};
+
+    fn read(input: &std::path::Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .arg("read")
+            .arg(input)
+            .arg("--for-edit")
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn view(output: &Output) -> Value {
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+
+    fn with_source(test: impl FnOnce(&std::path::Path, &[u8])) {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("pending.docx");
+        let bytes = source();
+        std::fs::write(&input, &bytes).unwrap();
+        test(&input, &bytes);
+        assert_eq!(
+            std::fs::read(&input).unwrap(),
+            bytes,
+            "read leaves the source intact"
+        );
+    }
+
+    fn agrees_with_library(actual: &Value, bytes: &[u8], request: &ForEditRequest) {
+        assert_eq!(
+            *actual,
+            serde_json::to_value(for_edit(bytes, request).unwrap()).unwrap()
+        );
+    }
+
+    fn settled_ids<'a>(view: &'a Value, decision: &str) -> Vec<&'a str> {
+        let mut ids: Vec<&str> = view["settled"][decision]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|id| id.as_str().unwrap())
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    #[test]
+    fn track_flag_reports_the_declared_basis_with_its_rows() {
+        with_source(|input, bytes| {
+            for (mode, track) in [("on", true), ("off", false)] {
+                let actual = view(&read(input, &["--track", mode]));
+                assert_eq!(actual["basis"]["track"], mode);
+                assert_eq!(
+                    actual["paragraphs"][0]["working"]["text"],
+                    "Payment is due within 45 days. Late interest is 2%."
+                );
+                assert_eq!(
+                    actual["paragraphs"][0]["blockers"][0]["kind"],
+                    "tracked_insertion"
+                );
+                agrees_with_library(
+                    &actual,
+                    bytes,
+                    &ForEditRequest {
+                        track,
+                        ..ForEditRequest::default()
+                    },
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn existing_revision_flag_settles_the_returned_rows() {
+        with_source(|input, bytes| {
+            for (mode, policy, number, revisions) in [
+                ("keep", ExistingRevisions::Keep, "45", 2),
+                ("accept", ExistingRevisions::Accept, "45", 0),
+                ("reject", ExistingRevisions::Reject, "30", 0),
+            ] {
+                let actual = view(&read(input, &["--existing-revisions", mode]));
+                assert_eq!(actual["basis"]["existing_revisions"], mode);
+                let row = &actual["paragraphs"][0];
+                assert_eq!(
+                    row["working"]["text"],
+                    format!("Payment is due within {number} days. Late interest is 2%.")
+                );
+                assert_eq!(row["revisions"].as_array().map_or(0, Vec::len), revisions);
+                agrees_with_library(
+                    &actual,
+                    bytes,
+                    &ForEditRequest {
+                        existing_revisions: policy,
+                        ..ForEditRequest::default()
+                    },
+                );
+            }
+            let refused = read(input, &["--existing-revisions", "refuse"]);
+            assert_eq!(refused.status.code(), Some(3));
+            assert!(refused.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&refused.stderr).contains("EXISTING_REVISIONS"));
+        });
+    }
+
+    #[test]
+    fn repeated_accept_change_flags_keep_every_decision() {
+        with_source(|input, bytes| {
+            let actual = view(&read(
+                input,
+                &["--accept-change", "r7", "--accept-change", "r8"],
+            ));
+            assert_eq!(settled_ids(&actual, "accepted"), ["r7", "r8"]);
+            let row = &actual["paragraphs"][0];
+            assert_eq!(
+                row["working"]["text"],
+                "Payment is due within 45 days. Late interest is 2%."
+            );
+            assert!(row["blockers"].as_array().is_none_or(Vec::is_empty));
+            assert!(row["revisions"].as_array().is_none_or(Vec::is_empty));
+            agrees_with_library(
+                &actual,
+                bytes,
+                &ForEditRequest {
+                    accept: vec!["r7".to_string(), "r8".to_string()],
+                    ..ForEditRequest::default()
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn repeated_reject_change_flags_keep_every_decision() {
+        with_source(|input, bytes| {
+            let actual = view(&read(
+                input,
+                &["--reject-change", "r7", "--reject-change", "r8"],
+            ));
+            assert_eq!(settled_ids(&actual, "rejected"), ["r7", "r8"]);
+            let row = &actual["paragraphs"][0];
+            assert_eq!(
+                row["working"]["text"],
+                "Payment is due within 30 days. Late interest is 2%."
+            );
+            assert!(row["blockers"].as_array().is_none_or(Vec::is_empty));
+            agrees_with_library(
+                &actual,
+                bytes,
+                &ForEditRequest {
+                    reject: vec!["r7".to_string(), "r8".to_string()],
+                    ..ForEditRequest::default()
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn stale_cursor_refuses_changed_decisions_and_policies() {
+        with_source(|input, _| {
+            let first = view(&read(input, &["--limit", "1"]));
+            let cursor = first["next_cursor"].as_str().expect("page one continues");
+            let same = view(&read(input, &["--limit", "1", "--cursor", cursor]));
+            assert_eq!(same["paragraphs"][0]["target"]["short_id"], "p1");
+            for flags in [
+                ["--accept-change", "r7"],
+                ["--reject-change", "r7"],
+                ["--existing-revisions", "accept"],
+                ["--existing-revisions", "reject"],
+                ["--track", "off"],
+            ] {
+                let refused = read(
+                    input,
+                    &["--limit", "1", "--cursor", cursor, flags[0], flags[1]],
+                );
+                assert_eq!(refused.status.code(), Some(3), "{flags:?}");
+                assert!(refused.stdout.is_empty(), "{flags:?}");
+                assert!(
+                    String::from_utf8_lossy(&refused.stderr).contains("CURSOR_BASIS_CHANGED"),
+                    "{flags:?}"
+                );
+            }
+        });
+    }
+}

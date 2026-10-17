@@ -1792,3 +1792,43 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         next_cursor,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_binds_frozen_membership_independently_of_request_filters() {
+        let request = ForEditRequest::default();
+        let mut selection = Selection {
+            selected: vec![0, 1],
+            matched_by: HashMap::new(),
+            context: 0,
+        };
+        let source = source_sha256(b"source");
+        let basis = basis_digest(&source, &request, &selection);
+        let cursor = cursor_token(&basis, 1);
+        assert_eq!(cursor_offset(&cursor, &basis).unwrap(), 1);
+        selection.selected = vec![1, 2];
+        let changed = basis_digest(&source, &request, &selection);
+        let error = cursor_offset(&cursor, &changed).unwrap_err();
+        assert_eq!(error.code, "CURSOR_BASIS_CHANGED");
+    }
+
+    #[test]
+    fn cursor_binds_source_digest_independently_of_selection() {
+        let request = ForEditRequest::default();
+        let selection = Selection {
+            selected: vec![0, 1],
+            matched_by: HashMap::new(),
+            context: 0,
+        };
+        let source = source_sha256(b"source");
+        let basis = basis_digest(&source, &request, &selection);
+        let cursor = cursor_token(&basis, 1);
+        assert_eq!(cursor_offset(&cursor, &basis).unwrap(), 1);
+        let changed = basis_digest(&source_sha256(b"other"), &request, &selection);
+        let error = cursor_offset(&cursor, &changed).unwrap_err();
+        assert_eq!(error.code, "CURSOR_BASIS_CHANGED");
+    }
+}
