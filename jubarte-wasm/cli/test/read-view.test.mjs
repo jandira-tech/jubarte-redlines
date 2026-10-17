@@ -122,7 +122,7 @@ test("shared CLI parsing applies changed conflicts to read and text aliases", ()
   }
 });
 
-test("short selectors edit the intended body and table cells and report canonical ids", () => {
+test("short selectors edit the intended body and table cells and report their short ids", () => {
   const original = wasm.markdownToDocx("Intro\n\n| Item | Due |\n|---|---|\n| Report | Friday |\n\nTail\n");
   const result = wasm.applyEditPlan(original, plan([
     { kind: "replace", paragraph: "p0", find: "Intro", replacement: "Opening" },
@@ -131,7 +131,7 @@ test("short selectors edit the intended body and table cells and report canonica
   ]));
   try {
     assert.equal(result.ok, true, result.json);
-    assert.deepEqual(JSON.parse(result.json).operations.map((op) => op.paragraph), ["body:p:0", "body:p:4", "body:p:5"]);
+    assert.deepEqual(JSON.parse(result.json).operations.map((op) => op.paragraph), ["p0", "p4", "p5"]);
     const clean = body(read(result.clean));
     assert.match(clean, /Opening/);
     assert.match(clean, /\|Report\|Monday\|/);
