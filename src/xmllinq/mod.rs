@@ -111,7 +111,7 @@ impl XNamespace {
         }
     }
 
-    /// The empty namespace (no URI). Equal to `XNamespace::get("")`; the
+    /// The empty namespace (no URI). Equal to `XNamespace::get(""); the
     /// XML namespace in OOXML for unqualified elements.
     pub fn none() -> XNamespace {
         XNamespace::get("")
@@ -265,6 +265,15 @@ impl std::fmt::Debug for XName {
 
 use std::any::Any;
 use std::collections::HashMap;
+
+/// N01 mechanism counter (tests only): attribute-name comparisons the DOM
+/// performs. Incremental `set_attribute_value` insertion pays one Vec scan
+/// per name (quadratic in a tag's width); the parser's bulk
+/// `set_attributes` probes a hash index instead.
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub(crate) static ATTR_NAME_PROBES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// Handle into a [`Dom`] arena: the slot index of a node, plus a `Debug` /
 /// `Copy` so it can travel cheaply through hot loops (compare, atomize).
@@ -890,6 +899,46 @@ impl Dom {
         (&a.name, a.value.as_str())
     }
 
+    /// Insert a batch of attributes in declaration order. The parser uses
+    /// this: pushing N attributes through [`Self::set_attribute_value`]
+    /// re-scans the growing `attrs` Vec for each name (N(N-1)/2
+    /// comparisons); here the scan is O(N) — one hash probe per name against
+    /// an index built once. Semantics match the incremental path exactly:
+    /// a name already present (existing, or repeated in `attrs` after
+    /// expansion) keeps its first declaration-order slot and takes the
+    /// latest value — what N `set_attribute_value` calls produce.
+    pub(crate) fn set_attributes(&mut self, id: NodeId, attrs: Vec<(XName, String)>) {
+        let data = self.data_mut(id);
+        if attrs.is_empty() {
+            return;
+        }
+        if attrs.len() <= 4 {
+            // Tiny tags dominate real OOXML; the linear path beats hashing.
+            for (name, value) in attrs {
+                if let Some(a) = data.attrs.iter_mut().find(|a| a.name == name) {
+                    a.value = value;
+                } else {
+                    data.attrs.push(Attr { name, value });
+                }
+            }
+            return;
+        }
+        let mut index: HashMap<XName, usize> =
+            HashMap::with_capacity(data.attrs.len() + attrs.len());
+        for (i, a) in data.attrs.iter().enumerate() {
+            index.entry(a.name.clone()).or_insert(i);
+        }
+        for (name, value) in attrs {
+            match index.get(&name) {
+                Some(&i) => data.attrs[i].value = value,
+                None => {
+                    index.insert(name.clone(), data.attrs.len());
+                    data.attrs.push(Attr { name, value });
+                }
+            }
+        }
+    }
+
     /// Add or update an attribute. Passing `Some(value)` inserts the
     /// attribute when missing or replaces its value when present;
     /// `None` removes any matching attribute. Matches the TS
@@ -899,8 +948,22 @@ impl Dom {
         match value {
             None => attrs.retain(|a| &a.name != name),
             Some(v) => {
-                if let Some(a) = attrs.iter_mut().find(|a| &a.name == name) {
-                    a.value = v.to_string();
+                #[cfg(test)]
+                let found = {
+                    let mut hit = None;
+                    for (i, a) in attrs.iter().enumerate() {
+                        ATTR_NAME_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if &a.name == name {
+                            hit = Some(i);
+                            break;
+                        }
+                    }
+                    hit
+                };
+                #[cfg(not(test))]
+                let found = attrs.iter().position(|a| &a.name == name);
+                if let Some(i) = found {
+                    attrs[i].value = v.to_string();
                 } else {
                     attrs.push(Attr {
                         name: name.clone(),
@@ -1204,6 +1267,17 @@ impl Dom {
     /// parsing semantics. A leading UTF-8 BOM is stripped before parsing.
     pub fn parse_xdocument(&mut self, xml: &str) -> NodeId {
         parse::parse_xdocument(self, xml)
+    }
+
+    /// Checked variant of [`Self::parse_xdocument`]: refuses input that
+    /// fails [`parse::validate_xml`] (including the tag-width and namespace
+    /// budgets) before any DOM node is built.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`parse::validate_xml`] error string unchanged.
+    pub fn try_parse_xdocument(&mut self, xml: &str) -> Result<NodeId, String> {
+        parse::try_parse_xdocument(self, xml)
     }
     /// Serialize an element subtree to an XML string. See
     /// [`serialize::serialize_element`] for namespace-prefix scope rules.
