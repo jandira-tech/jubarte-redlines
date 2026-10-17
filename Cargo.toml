@@ -117,10 +117,6 @@ quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) befo
 quick-xml-041 = { package = "quick-xml", version = "0.41", default-features = false }
 sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
 schemars = "1.2.2" # Legacy edit discovery derives field facts from the Serde model.
-# `expect` validates the bundled expectations JSON Schema at parse time so the
-# Rust type and the JSON Schema stay in lockstep on closed shape, hash
-# pattern, key regex, `text_view` value and the check `oneOf`.
-jsonschema = { version = "0.59", default-features = false }
 serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan / report wire types
 serde_json = "1"
 base64 = "0.23" # `drawing:` payloads embed their dependent parts (already in the tree transitively)
@@ -166,7 +162,11 @@ name = "cli_flags"
 required-features = ["cli"]
 
 [dev-dependencies]
-# Independent Draft 2020-12 conformance checks; no remote retrieval in tests.
+# Dev-only JSON Schema validator. `parse_expectations` (src/expect.rs)
+# enforces the same constraints in plain Rust so the WASM and Python
+# lockfiles do not pull this crate in at runtime. The tests load the
+# bundled schema from disk and use this validator only to confirm
+# parse_expectations and the bundled schema agree on accept/reject.
 jsonschema = { version = "0.59", default-features = false }
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
