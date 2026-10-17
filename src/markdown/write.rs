@@ -1146,9 +1146,9 @@ struct Writer<'o, 'a> {
     /// The open image's destination, its reference name (`image1` of
     /// `![alt][image1]`, else the destination), and its alt text so far.
     image: Option<(String, String, String)>,
-    /// A ` ```svg NAME ` fence being read: its backing's name and the
-    /// source accumulated so far.
-    svg_block: Option<(String, String)>,
+    /// A ` ```svg NAME ` or ` ```mermaid NAME ` fence being read: its
+    /// language, its backing's name and the source accumulated so far.
+    drawing_block: Option<(String, String, String)>,
     metadata: Option<String>,
 
     // Inline formatting depth.
@@ -1277,7 +1277,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_cells: RowCells::Empty,
             prefix_runs: Vec::new(),
             image: None,
-            svg_block: None,
+            drawing_block: None,
             metadata: None,
             bold: 0,
             italic: 0,
@@ -1339,9 +1339,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                     block.push_str(&text);
                 }
             }
-            Event::Text(text) if self.svg_block.is_some() => {
-                if let Some((_, svg)) = &mut self.svg_block {
-                    svg.push_str(&text);
+            Event::Text(text) if self.drawing_block.is_some() => {
+                if let Some((_, _, block)) = &mut self.drawing_block {
+                    block.push_str(&text);
                 }
             }
             Event::Text(text) => self.text(&text),
@@ -1406,14 +1406,18 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.code_block = true;
                 self.begin_paragraph();
-                // ` ```svg NAME ` is a drawing's readable layer: gather the
-                // source and let the block's end splice `NAME`'s backing.
-                if let CodeBlockKind::Fenced(info) = &kind
-                    && let Some(rest) = info.strip_prefix("svg")
-                    && (rest.is_empty() || rest.starts_with(char::is_whitespace))
-                    && let Some(name) = rest.split_whitespace().next()
-                {
-                    self.svg_block = Some((name.to_string(), String::new()));
+                // ` ```svg NAME ` and ` ```mermaid NAME ` are a drawing's
+                // readable layer: gather the source and let the block's
+                // end splice `NAME`'s backing.
+                if let CodeBlockKind::Fenced(info) = &kind {
+                    let mut words = info.split_whitespace();
+                    if let Some(lang) = words.next()
+                        && matches!(lang, "svg" | "mermaid")
+                        && let Some(name) = words.next()
+                    {
+                        self.drawing_block =
+                            Some((lang.to_string(), name.to_string(), String::new()));
+                    }
                 }
             }
             Tag::List(first) => {
@@ -1637,22 +1641,34 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.quote = self.quote.saturating_sub(1);
             }
             TagEnd::CodeBlock => {
-                if let Some((name, svg)) = self.svg_block.take() {
-                    let drawing = self
-                        .document
-                        .drawing_backings
-                        .get(&name)
-                        .and_then(|dest| super::from_docx::drawing::decode(dest).ok())
-                        .and_then(|mut drawing| {
-                            use base64::Engine;
-                            drawing
-                                .fill_slot_data(
-                                    &base64::engine::general_purpose::STANDARD
-                                        .encode(svg.trim().as_bytes()),
-                                    "image/svg+xml",
-                                )
-                                .then_some(drawing)
-                        });
+                if let Some((lang, name, text)) = self.drawing_block.take() {
+                    use super::from_docx::drawing;
+                    let dest = self.document.drawing_backings.get(&name).cloned();
+                    let drawing = dest.and_then(|dest| drawing::decode(&dest).ok()).and_then(
+                        |mut drawing| match lang.as_str() {
+                            "svg" => {
+                                use base64::Engine;
+                                drawing
+                                    .fill_slot_data(
+                                        &base64::engine::general_purpose::STANDARD
+                                            .encode(text.trim().as_bytes()),
+                                        "image/svg+xml",
+                                    )
+                                    .then_some(drawing)
+                            }
+                            // A `mermaid` fence's text is the chart it
+                            // was: unchanged, the payload writes back byte
+                            // for byte; edited, its chart part is patched.
+                            _ if drawing.mermaid_unchanged(&text) => Some(drawing),
+                            _ if drawing.rebuild_mermaid(&text) => Some(drawing),
+                            _ => {
+                                self.document.warnings.push(format!(
+                                    "mermaid '{name}' names a drawing this text cannot edit"
+                                ));
+                                Some(drawing)
+                            }
+                        },
+                    );
                     match drawing {
                         Some(drawing) => {
                             // A drawing's paragraph: not SourceCode.
@@ -1668,7 +1684,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         }
                         // No backing, or one that did not read: the fence
                         // stays the code it shows.
-                        None => self.plain(&svg),
+                        None => self.plain(&text),
                     }
                 }
                 // The block's last line ends in a newline: no break after it.

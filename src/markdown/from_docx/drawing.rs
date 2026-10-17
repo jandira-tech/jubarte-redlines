@@ -84,6 +84,15 @@ pub(crate) struct Drawing {
     /// a backing payload; the writer fills it from the readable form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     slot: Option<usize>,
+    /// SHA-256 of the ` ```mermaid ` fence's text the view printed for a
+    /// chart, hex. An unchanged fence's hash matches and the drawing
+    /// writes back byte for byte; an edited one rebuilds its chart part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mhash: Option<String>,
+    /// The Mermaid text `mhash` hashes, for the fence `fill` prints.
+    /// Never in the payload: the fence is the text's home.
+    #[serde(skip)]
+    mermaid: Option<String>,
 }
 
 /// One relationship of the element's part or of a dependent part.
@@ -536,6 +545,8 @@ pub(crate) fn resolve(
         return None;
     }
     let slot = media_slot(&root, &out, &deps);
+    let mermaid = chart_mermaid(&deps);
+    let mhash = mermaid.as_deref().map(mermaid_hash);
     normalize_ids(&mut root);
     declare(&mut root, &pending.scope);
     Some(Drawing {
@@ -544,7 +555,36 @@ pub(crate) fn resolve(
         rels: out,
         deps: deps.parts,
         slot,
+        mhash,
+        mermaid,
     })
+}
+
+/// The chart part's Mermaid text when the payload holds a `chartSpace`
+/// `pie`/`xychart-beta` can say: a standalone drawing prints it as a
+/// ` ```mermaid ` fence and `mhash` says whether the text came back
+/// unchanged. Charts that hold relationships keep their fences too —
+/// [`Drawing::rebuild_mermaid`] patches their `xml` in place.
+fn chart_mermaid(deps: &Deps<'_>) -> Option<String> {
+    let dep = deps
+        .parts
+        .iter()
+        .find(|dep| dep.kind.ends_with("chart+xml"))?;
+    let xml = if dep.xml.is_empty() {
+        String::from_utf8(base64_decode(&dep.b64)?).ok()?
+    } else {
+        dep.xml.clone()
+    };
+    super::mermaid::chart(&xml)
+}
+
+/// SHA-256 of `text`, hex: the hash `mhash` carries for a fence's text.
+fn mermaid_hash(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.trim().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// The image part the readable layer carries for `root`, as a `deps` index:
@@ -640,9 +680,22 @@ pub(crate) fn fill(
         return markdown.to_string();
     }
     let mut out = markdown.to_string();
-    // The cursor past the last token filled: `][dN]` names resolve in
-    // order, and a fence the fill just wrote must not hide the next one.
-    let mut at = 0;
+    // A token's place is found in the whole text — a header's `dN` names
+    // its line in the YAML summary, printed before the body's pendings —
+    // except inside the spans a fence just took: `][dN]` there is source.
+    let mut fences: Vec<(usize, usize)> = Vec::new();
+    // `token`'s first occurrence outside every `fences` span.
+    let find_token = |out: &str, token: &str, fences: &[(usize, usize)]| -> Option<usize> {
+        let mut from = 0;
+        while let Some(pos) = out[from..].find(token) {
+            let pos = from + pos;
+            if fences.iter().all(|&(s, e)| pos < s || pos >= e) {
+                return Some(pos);
+            }
+            from = pos + 1;
+        }
+        None
+    };
     let mut appendix = String::new();
     let mut media = 0usize;
     let mut names: HashMap<String, String> = HashMap::new();
@@ -652,21 +705,39 @@ pub(crate) fn fill(
         let Some(drawing) = resolve(package, types, pending) else {
             // `![label][dN]` is the one shape push prints; only a capture
             // failure turns it into `![label]()`.
-            if let Some(pos) = out[at..].find(&token) {
-                out.replace_range(at + pos..at + pos + token.len(), "]()");
+            if let Some(pos) = find_token(&out, &token, &fences) {
+                out.replace_range(pos..pos + token.len(), "]()");
             }
             continue;
         };
+        let Some(pos) = find_token(&out, &token, &fences) else {
+            continue;
+        };
+        let end = pos + token.len();
+        // A chart its paragraph holds alone prints its Mermaid: a
+        // ` ```mermaid ` fence the payload comment backs. Anywhere else —
+        // run content — the fence could not sit, so it keeps `[dN]`.
+        if let Some(text) = drawing.mermaid.clone()
+            && let Some((start, text_end)) = standalone(&out, pos, end)
+        {
+            let label = label(&pending.element);
+            let info = if label.is_empty() {
+                format!("mermaid {d}")
+            } else {
+                format!("mermaid {d} {label}")
+            };
+            let fence = fenced(&info, &text);
+            out.replace_range(start..text_end, &fence);
+            fences.push((start, start + fence.len()));
+            let _ = writeln!(appendix, "<!-- {d} drawing:{} -->", encode(&drawing));
+            continue;
+        }
         let Some(slot) = drawing.slot else {
             let _ = writeln!(appendix, "[{d}]: drawing:{}", encode(&drawing));
             continue;
         };
         let dep = &drawing.deps[slot];
         let is_svg = dep.kind == "image/svg+xml" && !dep.b64.is_empty();
-        let Some(pos) = out[at..].find(&token).map(|p| at + p) else {
-            continue;
-        };
-        let end = pos + token.len();
         if is_svg
             && let Some((start, text_end)) = standalone(&out, pos, end)
             && let Some(svg) = base64_decode(&dep.b64)
@@ -679,9 +750,8 @@ pub(crate) fn fill(
                 format!("svg {d} {label}")
             };
             let fence = fenced(&info, svg.trim());
-            let len = fence.len();
             out.replace_range(start..text_end, &fence);
-            at = start + len;
+            fences.push((start, start + fence.len()));
             let _ = writeln!(
                 appendix,
                 "<!-- {d} drawing:{} -->",
@@ -708,7 +778,6 @@ pub(crate) fn fill(
             }
         };
         out.replace_range(pos + 2..end - 1, &name);
-        at = pos + 2 + name.len() + 1;
     }
     if !appendix.is_empty() {
         if !out.ends_with('\n') {
@@ -961,6 +1030,37 @@ impl Drawing {
         if dep.kind != kind {
             dep.kind = kind.to_string();
         }
+        true
+    }
+
+    /// `text` is the ` ```mermaid ` fence this drawing printed: its hash
+    /// is `mhash`'s, so the drawing writes back byte for byte.
+    pub(crate) fn mermaid_unchanged(&self, text: &str) -> bool {
+        self.mhash.as_deref() == Some(mermaid_hash(text).as_str())
+    }
+
+    /// The fence's text edited: patch the chart part it names in place,
+    /// keeping everything the Mermaid cannot say. `false` when the
+    /// payload names no chart part the patch can reach.
+    pub(crate) fn rebuild_mermaid(&mut self, text: &str) -> bool {
+        let Some(dep) = self
+            .deps
+            .iter_mut()
+            .find(|dep| dep.kind.ends_with("chart+xml"))
+        else {
+            return false;
+        };
+        let xml = if dep.xml.is_empty() {
+            base64_decode(&dep.b64).and_then(|b| String::from_utf8(b).ok())
+        } else {
+            Some(dep.xml.clone())
+        };
+        let Some(patched) = xml.and_then(|xml| super::mermaid::patch(&xml, text)) else {
+            return false;
+        };
+        dep.xml = patched;
+        dep.b64.clear();
+        self.mhash = Some(mermaid_hash(text));
         true
     }
 }

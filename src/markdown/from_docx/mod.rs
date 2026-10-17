@@ -18,6 +18,7 @@ mod critic;
 pub(crate) mod drawing;
 mod header;
 mod media;
+mod mermaid;
 mod ooxml;
 mod revise;
 

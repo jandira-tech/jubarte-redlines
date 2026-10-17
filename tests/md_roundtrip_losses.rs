@@ -697,3 +697,134 @@ fn a_standalone_svg_blip_is_a_fenced_source() {
     .unwrap();
     assert_eq!(png, PNG_1X1);
 }
+
+/// A bar chart part with two series over four categories.
+const BAR_CHART: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+    <c:chart><c:title><c:tx><c:rich><a:p xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+    <a:r><a:t>Quarterly Revenue</a:t></a:r></a:p></c:rich></c:tx></c:title>\
+    <c:plotArea><c:layout/><c:barChart><c:ser>\
+    <c:tx><c:strRef><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>Revenue</c:v></c:pt></c:strCache></c:strRef></c:tx>\
+    <c:cat><c:strRef><c:strCache><c:ptCount val=\"4\"/>\
+    <c:pt idx=\"0\"><c:v>Q1</c:v></c:pt><c:pt idx=\"1\"><c:v>Q2</c:v></c:pt>\
+    <c:pt idx=\"2\"><c:v>Q3</c:v></c:pt><c:pt idx=\"3\"><c:v>Q4</c:v></c:pt>\
+    </c:strCache></c:strRef></c:cat>\
+    <c:val><c:numRef><c:numCache><c:ptCount val=\"4\"/>\
+    <c:pt idx=\"0\"><c:v>12</c:v></c:pt><c:pt idx=\"1\"><c:v>18</c:v></c:pt>\
+    <c:pt idx=\"2\"><c:v>15</c:v></c:pt><c:pt idx=\"3\"><c:v>22</c:v></c:pt>\
+    </c:numCache></c:numRef></c:val></c:ser><c:ser>\
+    <c:tx><c:strRef><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>Costs</c:v></c:pt></c:strCache></c:strRef></c:tx>\
+    <c:cat><c:strRef><c:strCache><c:ptCount val=\"4\"/>\
+    <c:pt idx=\"0\"><c:v>Q1</c:v></c:pt><c:pt idx=\"1\"><c:v>Q2</c:v></c:pt>\
+    <c:pt idx=\"2\"><c:v>Q3</c:v></c:pt><c:pt idx=\"3\"><c:v>Q4</c:v></c:pt>\
+    </c:strCache></c:strRef></c:cat>\
+    <c:val><c:numRef><c:numCache><c:ptCount val=\"4\"/>\
+    <c:pt idx=\"0\"><c:v>8</c:v></c:pt><c:pt idx=\"1\"><c:v>11</c:v></c:pt>\
+    <c:pt idx=\"2\"><c:v>9</c:v></c:pt><c:pt idx=\"3\"><c:v>13</c:v></c:pt>\
+    </c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>";
+
+/// A pie chart part: one series, three slices.
+const PIE_CHART: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+    <c:chart><c:title><c:tx><c:rich><a:p xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+    <a:r><a:t>Market Share</a:t></a:r></a:p></c:rich></c:tx></c:title>\
+    <c:plotArea><c:layout/><c:pieChart><c:ser>\
+    <c:cat><c:strRef><c:strCache><c:ptCount val=\"3\"/>\
+    <c:pt idx=\"0\"><c:v>Alpha</c:v></c:pt><c:pt idx=\"1\"><c:v>Beta</c:v></c:pt>\
+    <c:pt idx=\"2\"><c:v>Gamma</c:v></c:pt></c:strCache></c:strRef></c:cat>\
+    <c:val><c:numRef><c:numCache><c:ptCount val=\"3\"/>\
+    <c:pt idx=\"0\"><c:v>45</c:v></c:pt><c:pt idx=\"1\"><c:v>30</c:v></c:pt>\
+    <c:pt idx=\"2\"><c:v>25</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>\
+    </c:pieChart></c:plotArea></c:chart></c:chartSpace>";
+
+/// A `w:drawing` holding an inline chart reference to `rid`.
+fn chart_drawing(rid: &str) -> String {
+    format!(
+        "<w:p><w:r><w:drawing><wp:inline \
+        xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+        distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"4572000\" cy=\"2743200\"/><wp:docPr id=\"0\" name=\"\"/>\
+        <a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+        <a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+        <c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" \
+        xmlns:r=\"{R_NS}\" r:id=\"{rid}\"/>\
+        </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+    )
+}
+
+/// A docx whose body is a bar chart and a pie chart, each a paragraph's
+/// only drawing, `word/charts/chart{1,2}.xml` the parts.
+fn charts_docx() -> Vec<u8> {
+    let chart_type = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+    let chart_rel = format!("{R_NS}/chart");
+    docx_with(
+        &(para("Before.") + &chart_drawing("rIdX0") + &chart_drawing("rIdX1")),
+        &[
+            Part {
+                name: "word/charts/chart1.xml",
+                content_type: chart_type,
+                rel_type: &chart_rel,
+                xml: BAR_CHART,
+            },
+            Part {
+                name: "word/charts/chart2.xml",
+                content_type: chart_type,
+                rel_type: &chart_rel,
+                xml: PIE_CHART,
+            },
+        ],
+    )
+}
+
+/// A chart a paragraph holds alone prints its Mermaid — `xychart-beta`
+/// for a bar chart, `pie` for a pie — under ` ```mermaid ` fences the
+/// `<!-- dN drawing:… -->` backings keep whole. An unchanged fence writes
+/// the chart part back byte for byte.
+#[test]
+fn a_standalone_chart_prints_mermaid_and_round_trips_exactly() {
+    let (view, out) = docx_round_trip(&charts_docx());
+    for want in [
+        "``` mermaid d1\nxychart-beta\n",
+        "title \"Quarterly Revenue\"",
+        "x-axis [\"Q1\", \"Q2\", \"Q3\", \"Q4\"]",
+        "bar [12, 18, 15, 22]",
+        "bar [8, 11, 9, 13]",
+        "``` mermaid d2\npie title Market Share\n",
+        "\"Alpha\" : 45",
+    ] {
+        assert!(view.contains(want), "{want} not in:\n{view}");
+    }
+    for backing in ["<!-- d1 drawing:", "<!-- d2 drawing:"] {
+        assert!(view.contains(backing), "{backing} not in:\n{view}");
+    }
+    assert_eq!(
+        part_string(&out, "word/charts/chart1.xml").as_deref(),
+        Some(BAR_CHART)
+    );
+    assert_eq!(
+        part_string(&out, "word/charts/chart2.xml").as_deref(),
+        Some(PIE_CHART)
+    );
+}
+
+/// A fence the user edited rebuilds the chart part: the changed values
+/// reach `c:v` and the rest — series, counts, styling — stays.
+#[test]
+fn an_edited_mermaid_fence_rewrites_the_chart() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), charts_docx()).unwrap();
+    let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
+    let edited = view
+        .replace("bar [12, 18, 15, 22]", "bar [99, 18, 15, 22]")
+        .replace("\"Beta\" : 30", "\"Beta\" : 31");
+    std::fs::write(dir.path().join("view.md"), &edited).unwrap();
+    jubarte(dir.path(), &["convert", "view.md", "-o", "out.docx"]);
+    jubarte(dir.path(), &["validate", "out.docx"]);
+    let out = std::fs::read(dir.path().join("out.docx")).unwrap();
+    let bar = part_string(&out, "word/charts/chart1.xml").expect("chart1.xml");
+    assert!(bar.contains("<c:v>99</c:v>"), "{bar}");
+    assert!(bar.contains("<c:v>Costs</c:v>"), "{bar}");
+    let pie = part_string(&out, "word/charts/chart2.xml").expect("chart2.xml");
+    assert!(pie.contains("<c:v>31</c:v>"), "{pie}");
+    assert!(pie.contains("<c:v>Gamma</c:v>"), "{pie}");
+}
