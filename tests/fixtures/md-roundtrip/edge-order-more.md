@@ -6,7 +6,7 @@ comments: 1 thread open            # 1 comment: c0
 authors:
   document_owner: none             # no docProps/core.xml
   AL: Ann Lee                      # 10 revisions, 2026-03-02T10:00:00Z
-  EF: Eve Fox                      # 2 revisions, 2026-03-02..2026-03-04
+  EF: Eve Fox                      # 2 revisions, latest 2026-03-04T16:30:00Z
   B: Bo Chen                       # 1 comment, 2026-03-02T10:00:00Z
 body: p0-p4, 0 tables, 1 page      # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in

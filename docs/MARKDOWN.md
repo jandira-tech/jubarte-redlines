@@ -616,10 +616,15 @@ thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
 A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
 header's `authors:` line gives each handle's name, counts and its
-timestamp, or the day range when the author has several
-(`2026-03-02..2026-03-04`). Converting back, the author's undated marks
-and comments take the first day at `00:00:00Z`, and one of them, when
-another keeps the first day, takes the last day at `23:59:59Z`: an undated
+shared timestamp, or `latest 2026-10-17T16:59:00Z` when the author has
+several timestamps. Revisions and comments both count. Converting back,
+undated marks and comments take that latest timestamp; explicit inline
+`--dates` timestamps keep their own dates. If every mark then shares one
+timestamp, reading the result prints it bare.
+
+Older views with a day range (`2026-03-02..2026-03-04`) still convert as
+before: undated marks and comments take the first day at `00:00:00Z`, and
+one of them, when another keeps the first day, takes the last day at `23:59:59Z`: an undated
 formatting mark, else the last undated comment, else the last change's
 marks (each cell of an inserted row the view tags), else the author's
 header and footer marks. One mark keeps only the first day. A date the

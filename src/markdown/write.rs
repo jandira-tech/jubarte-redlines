@@ -4383,11 +4383,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// The author a view handle names and the date for one of their notes:
-    /// the note's own, else the one the `authors:` table gives them all. An
-    /// author the table knows without one date (several, printed as a day
-    /// range) gets none: the note is written undated, never with the
-    /// conversion's date. An unknown handle stands for itself, dated as the
-    /// conversion is.
+    /// the note's own timestamp, else the author's shared or latest one,
+    /// else a legacy range's first day. A known author without timestamps
+    /// gets none; an unknown handle takes the conversion's date.
     fn view_author(&self, handle: &str, date: Option<&str>) -> (String, String) {
         let known = self.authors.get(handle);
         // `??` names no one: the mark's author is empty, as it was.
@@ -4403,14 +4401,19 @@ impl<'o, 'a> Writer<'o, 'a> {
         );
         let date = match (date, known) {
             (Some(date), _) => date.to_string(),
-            (None, Some(known)) => known.date.clone().unwrap_or_else(|| {
-                // A range's first day; its last mark takes the last day.
-                known
-                    .range
-                    .as_ref()
-                    .map(|(first, _)| format!("{first}T00:00:00Z"))
-                    .unwrap_or_default()
-            }),
+            (None, Some(known)) => known
+                .date
+                .as_ref()
+                .or(known.latest.as_ref())
+                .cloned()
+                .unwrap_or_else(|| {
+                    // A range's first day; its last mark takes the last day.
+                    known
+                        .range
+                        .as_ref()
+                        .map(|(first, _)| format!("{first}T00:00:00Z"))
+                        .unwrap_or_default()
+                }),
             (None, None) => self.options.date.clone(),
         };
         (author, date)

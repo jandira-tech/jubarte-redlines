@@ -12,12 +12,14 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::xml::Label;
 
-/// An author of the `authors:` table: the full name, and the timestamp
-/// every one of their changes and comments shares, when they share one.
+/// An author of the `authors:` table and its timestamps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Author {
     pub name: String,
+    /// The timestamp every change and comment shares, when they share one.
     pub date: Option<String>,
+    /// The latest timestamp of marks with several timestamps (`latest X`).
+    pub latest: Option<String>,
     /// The first and last days of an author whose marks have several
     /// timestamps (`# 2 revisions, 2026-03-02..2026-03-04`).
     pub range: Option<(String, String)>,
@@ -62,12 +64,18 @@ pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
                 super::write::is_date(&midnight).then_some(midnight)
             }
         });
+        let latest = last
+            .and_then(|d| d.strip_prefix("latest "))
+            .map(str::trim)
+            .filter(|d| super::write::is_date(d))
+            .map(str::to_string);
         let range = last.and_then(day_range);
         table.insert(
             handle.to_string(),
             Author {
                 name: value,
                 date,
+                latest,
                 range,
             },
         );
@@ -1686,6 +1694,36 @@ mod tests {
     }
 
     #[test]
+    fn latest_is_not_a_shared_date_or_a_range() {
+        let yaml = "authors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n";
+        let table = authors(yaml);
+        assert_eq!(table["AL"].date, None);
+        assert_eq!(table["AL"].range, None);
+        assert_eq!(table["AL"].latest.as_deref(), Some("2026-10-17T16:59:00Z"));
+        assert!(reversed_ranges(yaml).is_empty());
+        for invalid in ["", "2026-02-30T16:59:00Z", "2026-10-17", "yesterday"] {
+            let yaml = format!("authors:\n  AL: Ann Lee  # 2 revisions, latest {invalid}\n");
+            let table = authors(&yaml);
+            assert_eq!(table["AL"].date, None);
+            assert_eq!(table["AL"].latest, None);
+            assert_eq!(table["AL"].range, None);
+        }
+    }
+
+    #[test]
+    fn old_author_ranges_keep_their_days_and_reversed_warning() {
+        let yaml = "authors:\n  AL: Ann Lee  # 2 revisions, 2026-03-02..2026-03-04\n  BC: Bo Chen  # 2 revisions, 2026-03-04..2026-03-02\n";
+        let table = authors(yaml);
+        assert_eq!(table["AL"].date, None);
+        assert_eq!(
+            table["AL"].range,
+            Some(("2026-03-02".into(), "2026-03-04".into()))
+        );
+        assert_eq!(table["BC"].range, None);
+        assert_eq!(reversed_ranges(yaml), ["BC"]);
+    }
+
+    #[test]
     fn the_authors_table_names_each_handle() {
         let yaml = "source: r.docx\nauthors:\n  document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy\n  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z\n  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z\n  JD: \"Jo #1 Doe\"  # 2 revisions, 2026-10-01..2026-10-02\n  R: Redline\nbody: p0-p20\n  XX: not an author\n";
         let table = authors(yaml);
@@ -1695,6 +1733,7 @@ mod tests {
             Author {
                 name: "Ann Counsel".into(),
                 date: Some("2026-10-01T09:00:00Z".into()),
+                latest: None,
                 range: None,
             }
         );
@@ -1704,6 +1743,7 @@ mod tests {
             Author {
                 name: "Jo #1 Doe".into(),
                 date: None,
+                latest: None,
                 range: Some(("2026-10-01".into(), "2026-10-02".into())),
             }
         );

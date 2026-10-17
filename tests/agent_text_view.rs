@@ -2105,21 +2105,43 @@ fn header_view_lines_for_hidden_comments_accept_and_reject() {
 }
 
 #[test]
-fn header_prints_a_day_range_for_an_author_with_several_timestamps() {
-    let p = format!(
-        "<w:p>{}{}{}{}</w:p>",
-        run("a "),
-        ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "b"),
-        run(" c "),
-        ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "d")
-    );
-    let out = agent(&docx(&p));
-    let lines = header_lines(&out);
-    // lines[7] is the owner line, which every header prints.
-    assert_eq!(
-        lines[8],
-        "  AC: Ann Counsel                  # 2 revisions, 2026-10-01..2026-10-03"
-    );
+fn header_prints_latest_for_several_timestamps_and_bare_for_one() {
+    for (comment_date, latest) in [
+        ("2026-10-17T16:59:00Z", "2026-10-17T16:59:00Z"),
+        ("2026-10-02T11:00:00Z", "2026-10-03T14:05:00Z"),
+    ] {
+        let p = format!(
+            "<w:p>{} {} {}{}</w:p>",
+            ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "one"),
+            ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "two"),
+            ins_at(3, "Bo Chen", "2026-10-17T04:56:00Z", "once"),
+            reference(5),
+        );
+        let comments = format!(
+            r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+            comment(5, "Ann Counsel", "AC", comment_date, "11A5D0F2", "Check.")
+        );
+        let bytes = common::docx::docx_with(
+            &p,
+            &[Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            }],
+        );
+        let out = agent(&bytes);
+        let lines = header_lines(&out);
+        assert_eq!(
+            lines[8],
+            format!("  AC: Ann Counsel                  # 2 revisions, 1 comment, latest {latest}")
+        );
+        assert_eq!(
+            lines[9],
+            "  BC: Bo Chen                      # 1 revision, 2026-10-17T04:56:00Z"
+        );
+        assert!(!lines.iter().any(|line| line.contains("..")), "{out}");
+    }
 }
 
 const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";

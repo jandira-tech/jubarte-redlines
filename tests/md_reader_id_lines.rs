@@ -797,6 +797,37 @@ fn a_bookmark_between_two_changes_stays_between_them() {
 }
 
 #[test]
+fn latest_dates_undated_revisions_marks_and_comments() {
+    let latest = "2026-10-17T16:59:00.125+02:00";
+    let explicit = "2026-10-01T09:00:00Z";
+    let view = format!(
+        "---\nauthors:\n  AL: Ann Lee  # 4 revisions, 2 comments, latest {latest}\n---\n\n\
+         <!-- p0 break-ins r3 @AL -->\n\
+         A {{~~old~>new~~}}{{>>r2+1 @AL<<}} {{++dated++}}{{>>r4 @AL {explicit}<<}} \
+         {{==one==}}{{>>c0 @AL: Undated.<<}} {{==two==}}{{>>c1 @AL {explicit}: Dated.<<}}\n\n\
+         <!-- p1 -->\nEnd.\n"
+    );
+    let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    let changes = jubarte::changes::list_changes(&docx).unwrap();
+    assert_eq!(changes.len(), 4, "{changes:?}");
+    for change in changes {
+        assert_eq!(change.author.as_deref(), Some("Ann Lee"));
+        let expected = if change.text == "dated" {
+            explicit
+        } else {
+            latest
+        };
+        assert_eq!(change.date.as_deref(), Some(expected), "{change:?}");
+    }
+    let comments = jubarte::comments::list_comments(&docx).unwrap();
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0].date.as_deref(), Some(latest));
+    assert_eq!(comments[1].date.as_deref(), Some(explicit));
+}
+
+#[test]
 fn a_dated_range_puts_its_last_day_on_the_mark_written_last() {
     // `first..last` comes back as the first mark's first day and the last
     // mark's last day; a substitution writes its insertion first.
@@ -1026,6 +1057,11 @@ fn a_dated_range_survives_on_comments_and_paragraph_marks() {
         let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
             .expect("the view reads")
             .docx;
+        let document = part_string(&docx, "word/document.xml").unwrap();
+        let comments = part_string(&docx, "word/comments.xml").unwrap_or_default();
+        let marks = format!("{document}{comments}");
+        assert!(marks.contains("2026-03-02T00:00:00Z"), "{marks}");
+        assert!(marks.contains("2026-03-04T23:59:59Z"), "{marks}");
         let again = read(
             &docx,
             &ReadOptions {
@@ -1036,7 +1072,7 @@ fn a_dated_range_survives_on_comments_and_paragraph_marks() {
         .expect("the docx reads")
         .markdown;
         assert!(
-            again.contains("2026-03-02..2026-03-04"),
+            again.contains("latest 2026-03-04T23:59:59Z"),
             "{authors}: {again}"
         );
     }

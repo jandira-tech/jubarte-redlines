@@ -112,15 +112,21 @@ fn a_row_wider_than_its_grid_keeps_its_cells_and_merges() {
 }
 
 #[test]
-fn an_authors_range_comes_back_whatever_change_ends_it() {
+fn an_authors_latest_comes_back_whatever_change_ends_it() {
     let dir = tempfile::tempdir().unwrap();
-    // The range's last day on a formatting change, an inserted row, a
+    // The latest timestamp on a formatting change, an inserted row, a
     // header's insertion.
     for name in ["A-fmt.docx", "B-row.docx", "C-header.docx"] {
         let (first, second) = round_trip(dir.path(), &fixture(name));
-        let range = "# 2 revisions, 2026-03-02..2026-03-04";
-        assert!(first.contains(range), "{name}: {first}");
-        assert!(second.contains(range), "{name} written back:\n{second}");
+        let latest = "2026-03-04T16:30:00Z";
+        assert!(
+            first.contains(&format!("# 2 revisions, latest {latest}")),
+            "{name}: {first}"
+        );
+        assert!(
+            second.contains(&format!("# 2 revisions, {latest}")),
+            "{name} written back:\n{second}"
+        );
     }
 }
 
@@ -144,7 +150,7 @@ fn a_date_the_view_writes_out_is_kept() {
     let at = |text: &str| comments.find(text).unwrap();
     assert!(at("2026-03-04T23:59:59Z") < at(">one<"), "{comments}");
     assert!(at("2026-03-02T00:00:00Z") > at(">one<"), "{comments}");
-    // A comment dated on the first day, not at midnight, keeps the range.
+    // A comment dated on the first day stays so beside the range's end.
     let out = dir.path().join("m.docx");
     jubarte(
         dir.path(),
@@ -157,7 +163,7 @@ fn a_date_the_view_writes_out_is_kept() {
         ],
     );
     assert!(
-        read(dir.path(), &out).contains("2026-03-02..2026-03-04"),
+        read(dir.path(), &out).contains("latest 2026-03-04T23:59:59Z"),
         "M-noon"
     );
 }
@@ -407,17 +413,21 @@ fn an_unread_date_key_warns_only_when_nothing_else_dates_the_file() {
     )));
 }
 
-/// A range only headers or footers carry (round-7 dates review, finding
-/// 1): the first story mark keeps the first day, the later ones take the
-/// last.
+/// A latest timestamp only the headers or footers carry survives conversion.
 #[test]
-fn a_range_only_headers_or_footers_carry_comes_back() {
+fn the_latest_only_headers_or_footers_carry_comes_back() {
     let dir = tempfile::tempdir().unwrap();
     for name in ["H-hdr-only.docx", "I-ftr-only.docx"] {
         let (first, second) = round_trip(dir.path(), &fixture(name));
-        let range = "# 2 revisions, 2026-03-02..2026-03-04";
-        assert!(first.contains(range), "{name}: {first}");
-        assert!(second.contains(range), "{name} written back:\n{second}");
+        let latest = "2026-03-04T16:30:00Z";
+        assert!(
+            first.contains(&format!("# 2 revisions, latest {latest}")),
+            "{name}: {first}"
+        );
+        assert!(
+            second.contains(&format!("# 2 revisions, {latest}")),
+            "{name} written back:\n{second}"
+        );
     }
 }
 
@@ -440,9 +450,12 @@ fn a_timestamp_range_reads_as_days_and_a_tag_outside_it_warns() {
             "1970-01-01T00:00:00Z",
         ],
     );
+    let document = part(&out, "word/document.xml");
+    assert!(document.contains("2026-03-02T00:00:00Z"), "{document}");
+    assert!(document.contains("2026-03-04T23:59:59Z"), "{document}");
     let view = read(dir.path(), &out);
     assert!(
-        view.contains("# 2 revisions, 2026-03-02..2026-03-04"),
+        view.contains("# 2 revisions, latest 2026-03-04T23:59:59Z"),
         "{view}"
     );
     let out = dir.path().join("k.docx");

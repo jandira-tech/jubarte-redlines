@@ -6,7 +6,8 @@
 //! lost). Every `.md` in `tests/fixtures/md-roundtrip` must come back
 //! exactly after md → docx → md, and every docx listed in its `docx.txt`
 //! must print the same Markdown after docx → md → docx → md. Only the
-//! `source:`/`sha256:` lines, which name the file, are left out. Arthur,
+//! `source:`/`sha256:` lines, which name the file, and `latest` becoming
+//! a shared timestamp after reconstruction are normalized. Arthur,
 //! 2026-10-13: "Start strict! Fail fail fail until we fix": there is no list
 //! of known failures.
 //!
@@ -112,6 +113,53 @@ fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
         ],
     )?;
     Ok(docx)
+}
+
+// Undated marks take the latest timestamp, which can become shared.
+fn round_trip_comparable(markdown: &str) -> String {
+    let mut front_matter = false;
+    let mut authors = false;
+    let mut out = String::new();
+    for (i, line) in comparable(markdown).lines().enumerate() {
+        if line == "---" {
+            front_matter = i == 0;
+        }
+        if front_matter && !line.starts_with(' ') {
+            authors = line == "authors:";
+        }
+        if front_matter
+            && authors
+            && line.starts_with(' ')
+            && let Some((before, date)) = line.rsplit_once(", latest ")
+        {
+            out.push_str(before);
+            out.push_str(", ");
+            out.push_str(date);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[test]
+fn latest_and_shared_headers_compare_after_undated_marks_take_latest() {
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\nbody: p0\n---\n\n  AL: body, latest 2026-10-17T16:59:00Z\n";
+    let shared = latest.replacen(
+        "# 2 revisions, latest 2026-10-17T16:59:00Z",
+        "# 2 revisions, 2026-10-17T16:59:00Z",
+        1,
+    );
+    assert_eq!(
+        round_trip_comparable(latest),
+        round_trip_comparable(&shared)
+    );
+    assert!(round_trip_comparable(latest).contains("  AL: body, latest 2026-10-17T16:59:00Z"));
+    assert_ne!(
+        round_trip_comparable(latest),
+        round_trip_comparable(&shared.replace("16:59:00Z", "16:58:00Z"))
+    );
 }
 
 /// The first lines that differ, numbered, for the failure report.
@@ -337,7 +385,10 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
         }
     };
     let written = to_docx(dir, &source, "md");
-    let got = written.clone().and_then(|docx| view(dir, &docx));
+    let got = written
+        .clone()
+        .and_then(|docx| view(dir, &docx))
+        .map(|view| round_trip_comparable(&view));
     let docx = match (docx_source, &written) {
         (Some(original), Ok(written)) => match std::fs::copy(original, dir.join("original.docx")) {
             Ok(_) => docx_verdicts(dir, "original.docx", written),
@@ -350,7 +401,7 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
     };
     Case {
         name,
-        want: comparable(&source),
+        want: round_trip_comparable(&source),
         got,
         docx,
     }
@@ -373,10 +424,12 @@ fn docx_case(dir: &Path, path: &Path) -> Case {
                 Ok(written) => docx_verdicts(dir, "source/source.docx", written),
                 Err(_) => Vec::new(),
             };
-            let got = written.and_then(|docx| view(dir, &docx));
+            let got = written
+                .and_then(|docx| view(dir, &docx))
+                .map(|view| round_trip_comparable(&view));
             Case {
                 name,
-                want: first,
+                want: round_trip_comparable(&first),
                 got,
                 docx,
             }

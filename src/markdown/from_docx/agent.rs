@@ -57,16 +57,12 @@ impl Handles {
             .flatten()
     }
 
-    /// `first..last` days of an author with several timestamps.
-    pub(crate) fn date_range(&self, author: &str) -> Option<String> {
+    /// The latest whole timestamp of an author with several timestamps.
+    pub(crate) fn latest_date(&self, author: &str) -> Option<&str> {
         let dates = self.dates.get(author)?;
-        let day = |d: &String| d.get(..10).unwrap_or(d).to_string();
-        match (dates.iter().next(), dates.iter().next_back()) {
-            (Some(first), Some(last)) if dates.len() > 1 => {
-                Some(format!("{}..{}", day(first), day(last)))
-            }
-            _ => None,
-        }
+        (dates.len() > 1)
+            .then(|| dates.iter().next_back().map(String::as_str))
+            .flatten()
     }
 
     /// Whether a note of this author needs its timestamp inline (`--dates`).
@@ -3016,10 +3012,12 @@ mod tests {
         );
         assert_eq!(handles.unique_date("Al Cooper"), None);
         assert_eq!(
-            handles.date_range("Al Cooper"),
-            Some("2026-10-02..2026-10-03".to_string())
+            handles.latest_date("Al Cooper"),
+            Some("2026-10-03T08:30:00Z")
         );
         assert_eq!(handles.unique_date("Nobody"), None);
+        assert_eq!(handles.latest_date("Ann Counsel"), None);
+        assert_eq!(handles.latest_date("Nobody"), None);
     }
 
     #[test]

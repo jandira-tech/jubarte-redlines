@@ -507,8 +507,8 @@ pub(crate) fn render(f: &Facts) -> String {
         }
         if let Some(date) = f.handles.unique_date(author) {
             parts.push(date.to_string());
-        } else if let Some(range) = f.handles.date_range(author) {
-            parts.push(range);
+        } else if let Some(date) = f.handles.latest_date(author) {
+            parts.push(format!("latest {date}"));
         }
         kv(
             &mut out,

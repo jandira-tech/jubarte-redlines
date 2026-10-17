@@ -5,7 +5,7 @@ revisions: 67                      # 67 marks shown as 65 changes: 52 insertions
 comments: 0
 authors:
   document_owner: html-to-docx     # dc:creator
-  ASR: Arthur Souza Rodrigues      # 67 revisions, 2026-05-02..2026-05-02
+  ASR: Arthur Souza Rodrigues      # 67 revisions, latest 2026-05-02T10:42:00Z
 body: p0-p131, 2 tables, 5 pages   # pages from layout
 page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in
 styles:

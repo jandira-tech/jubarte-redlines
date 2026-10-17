@@ -5,9 +5,9 @@ revisions: 6                       # 6 marks shown as 4 changes: 4 insertions
 comments: 0
 authors:
   document_owner: none             # no docProps/core.xml
-  AL: Ann Lee                      # 2 revisions, 2026-03-02..2026-03-04
+  AL: Ann Lee                      # 2 revisions, latest 2026-03-04T16:30:00Z
   BC: Bo Chen                      # 1 revision, 2026-03-03T09:15:00Z
-  CD: Cy Diaz                      # 2 revisions, 2026-03-05..2026-03-05
+  CD: Cy Diaz                      # 2 revisions, latest 2026-03-05T20:00:00Z
   DE: Di Eng                       # 1 revision
 body: p0-p3, 0 tables, 1 page      # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in

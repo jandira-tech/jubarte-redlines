@@ -5,10 +5,10 @@ revisions: 64                      # 63 marks shown as 60 changes: 27 insertions
 comments: 30 threads open, style Normal  # 30 comments: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
-  AL: Ana Lima                     # 20 revisions, 11 comments, 2026-09-01..2026-09-01
-  DP: Dev Patel                    # 17 revisions, 5 comments, 2026-09-01..2026-09-01
-  BC: Bo Chen                      # 11 revisions, 7 comments, 2026-09-01..2026-09-01
-  CD: Carla Duarte                 # 16 revisions, 7 comments, 2026-09-01..2026-09-01
+  AL: Ana Lima                     # 20 revisions, 11 comments, latest 2026-09-01T10:37:00Z
+  DP: Dev Patel                    # 17 revisions, 5 comments, latest 2026-09-01T10:23:00Z
+  BC: Bo Chen                      # 11 revisions, 7 comments, latest 2026-09-01T10:51:00Z
+  CD: Carla Duarte                 # 16 revisions, 7 comments, latest 2026-09-01T10:44:00Z
 body: p0-p36, 1 table, 1 page      # pages from layout
 page: A4 portrait, margins 0.7875in, header/footer 0in, starts nextPage
 styles:

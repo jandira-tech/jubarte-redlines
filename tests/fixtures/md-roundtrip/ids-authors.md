@@ -5,8 +5,8 @@ revisions: 22                      # 22 marks shown as 21 changes: 6 insertions,
 comments: 0
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
-  AL: Ana Lima                     # 7 revisions, 2026-10-01..2026-10-01
-  BC: Bo Chen                      # 13 revisions, 2026-10-01..2026-10-01
+  AL: Ana Lima                     # 7 revisions, latest 2026-10-01T01:05:00Z
+  BC: Bo Chen                      # 13 revisions, latest 2026-10-01T01:00:00Z
   CD: Carla Duarte                 # 1 revision, 2026-10-01T00:15:00Z
   DP: Dev Patel                    # 1 revision, 2026-10-01T00:20:00Z
 body: p0-p16, 0 tables, 1 page     # pages from layout

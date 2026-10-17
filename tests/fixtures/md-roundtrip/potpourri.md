@@ -5,7 +5,7 @@ revisions: 176                     # 170 marks shown as 170 changes: 47 insertio
 comments: 0
 authors:
   document_owner: Arthur Souza Rodrigues  # dc:creator
-  ASR: Arthur Souza Rodrigues      # 176 revisions, 2026-05-02..2026-05-02
+  ASR: Arthur Souza Rodrigues      # 176 revisions, latest 2026-05-02T14:42:00Z
 body: p0-p145, 3 tables, 4 pages   # pages from Word's cached layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
