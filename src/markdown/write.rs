@@ -1506,18 +1506,22 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
+                    // The singular legend's word for the style, else the
+                    // plural `tables:` line's entry for it.
                     let legend = self
                         .document
                         .table_style
                         .as_ref()
-                        .filter(|(legend, ..)| legend == id);
-                    let border = legend.and_then(|(_, border, _)| *border);
+                        .filter(|(legend, ..)| legend == id)
+                        .map(|(_, border, name)| (*border, name.clone()))
+                        .or_else(|| self.document.table_legend.get(id).cloned());
+                    let border = legend.as_ref().and_then(|(border, _)| *border);
                     // Word's thin Table Grid, unless the legend gives it a
                     // border of its own (`TableGrid, all borders 1.5pt`).
                     if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
                         self.document.styles.insert("TableGrid");
                     } else {
-                        let name = legend.and_then(|(_, _, name)| name.clone());
+                        let name = legend.and_then(|(_, name)| name);
                         self.document
                             .table_styles
                             .insert(id.clone(), (border, name));
@@ -3190,6 +3194,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             );
         }
         self.document.table_style = view_styles::table_style(text);
+        self.document.table_legend = view_styles::table_legend(text);
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
         if let Some((id, None, _)) = &self.document.table_style

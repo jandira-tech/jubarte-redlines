@@ -1291,7 +1291,17 @@ fn part_two(out: &mut String, f: &Facts) {
         ),
         many => kv(
             out,
-            &format!("  tables: {}", scalar(&many.join(", "), false)),
+            &format!(
+                "  tables: {}",
+                scalar(
+                    &many
+                        .iter()
+                        .map(|id| table_style_line(f.styles, id))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    false
+                )
+            ),
             None,
         ),
     }

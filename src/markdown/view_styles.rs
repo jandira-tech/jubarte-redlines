@@ -203,36 +203,82 @@ fn unquote(value: &str) -> Option<String> {
 /// The legend's `table:` style, which every table takes: its id and, when
 /// the legend says `all borders 0.5pt`, that border in eighths of a point.
 pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<String>)> {
+    legend_line(yaml, "table: ")
+        .as_deref()
+        .and_then(table_style_entry)
+        .map(|(entry, _)| entry)
+}
+
+/// The `tables:` legend's entries, keyed by their style id: the styles of
+/// a document whose tables differ, each with the border and the name its
+/// entry states.
+pub(super) fn table_legend(
+    yaml: &str,
+) -> std::collections::BTreeMap<String, (Option<u32>, Option<String>)> {
+    let mut out = std::collections::BTreeMap::new();
+    let Some(value) = legend_line(yaml, "tables: ") else {
+        return out;
+    };
+    let mut rest = value.as_str();
+    while let Some(((id, border, name), next)) = table_style_entry(rest) {
+        out.insert(id, (border, name));
+        rest = next;
+    }
+    out
+}
+
+/// The `styles:` block's `key: ` line's value, unwrapped from its YAML
+/// quoting: `table: X, named My X`'s, `tables: …`'s.
+fn legend_line(yaml: &str, key: &str) -> Option<String> {
     let mut inside = false;
     for line in yaml.lines() {
         if !line.starts_with(' ') {
             inside = line.trim_end() == "styles:";
             continue;
         }
-        let Some(value) = without_comment(line)
+        if let Some(value) = without_comment(line)
             .trim()
-            .strip_prefix("table: ")
+            .strip_prefix(key)
             .filter(|_| inside)
             .and_then(|v| unquote(v.trim()))
-        else {
-            continue;
-        };
-        // The style's name, when the view says it differs from the
-        // writer's own for the id (`9, named Normal Table`).
-        let (value, name) = match value.rsplit_once(", named ") {
-            Some((value, name)) => (value.to_string(), Some(name.to_string())),
-            None => (value, None),
-        };
-        let (id, rest) = value.split_once(", ").unwrap_or((&value, ""));
-        let border = rest
-            .strip_prefix("all borders ")
-            .and_then(|pt| pt.strip_suffix("pt"))
-            .and_then(|pt| pt.parse::<f64>().ok())
-            .filter(|pt| (0.25..=6.0).contains(pt))
-            .map(|pt| (pt * 8.0).round() as u32);
-        return unquote(id).map(|id| (id, border, name));
+        {
+            return Some(value);
+        }
     }
     None
+}
+
+/// One `table:`/`tables:` entry — `X, all borders 0.5pt, named My X` —
+/// its id, the border it states and the name it gives the style, with
+/// the rest of the line after it (the `tables:` legend holds one entry
+/// per style). A clause that is none of the grammar's ends the entry.
+type TableStyleEntry = (String, Option<u32>, Option<String>);
+
+fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
+    let (id, mut rest) = value.split_once(", ").unwrap_or((value, ""));
+    let id = unquote(id.trim()).filter(|id| !id.is_empty())?;
+    let mut border = None;
+    let mut name = None;
+    while !rest.is_empty() {
+        let (clause, next) = rest.split_once(", ").unwrap_or((rest, ""));
+        if border.is_none()
+            && let Some(pt) = clause
+                .strip_prefix("all borders ")
+                .and_then(|pt| pt.strip_suffix("pt"))
+                .and_then(|pt| pt.parse::<f64>().ok())
+                .filter(|pt| (0.25..=6.0).contains(pt))
+        {
+            border = Some((pt * 8.0).round() as u32);
+        } else if name.is_none()
+            && let Some(named) = clause.strip_prefix("named ")
+        {
+            name = Some(named.to_string());
+        } else if clause != "borders vary" {
+            return Some(((id, border, name), rest));
+        }
+        rest = next;
+    }
+    Some(((id, border, name), ""))
 }
 
 pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {
